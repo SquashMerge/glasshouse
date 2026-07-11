@@ -2,7 +2,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose -f infra/compose.yaml
 COMPOSE_DEV := docker compose -f infra/compose.yaml -f infra/compose.override.yaml
 
-.PHONY: help dev build down logs ps db-migrate ch-schema redis-ping codegen openapi-snapshot smoke doctor setup-tools normalize lint typecheck test format install
+.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize lint typecheck test format install
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -48,8 +48,8 @@ ch-schema: ## Apply ClickHouse schema (idempotent)
 	done
 	@echo "✓ ClickHouse schema applied."
 
-redis-ping: ## Verify Redis is up
-	$(COMPOSE) exec -T redis redis-cli -a "$${REDIS_PASSWORD}" ping
+redis-ping: ## Verify Valkey is up (Redis-compatible)
+	$(COMPOSE) exec -T valkey valkey-cli -a "$${VALKEY_PASSWORD}" ping
 
 openapi-snapshot: ## Regenerate openapi.yaml snapshot from running Zod schemas
 	cd apps/api && bun run openapi:snapshot

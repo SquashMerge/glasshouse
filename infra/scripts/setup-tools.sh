@@ -122,9 +122,22 @@ step "Reshimming"
 asdf reshim >/dev/null 2>&1 || true
 ok "reshim complete"
 
+step "Prerequisites for asdf plugins"
+if ! command -v unzip >/dev/null 2>&1; then
+  echo "  ! unzip not installed. The bun asdf plugin needs it to extract the binary."
+  echo "    Install with: apt-get install unzip  (or: brew install unzip)"
+fi
+if ! command -v gcc >/dev/null 2>&1; then
+  echo "  ! gcc not installed. Some asdf plugins (e.g., postgres, erlang) build from source and need a C toolchain."
+  echo "    Install with: apt-get install build-essential"
+fi
+ok "prerequisites checked"
+
 step "Verifying"
 ACTUAL_BUN="$(asdf exec bun --version 2>/dev/null || echo 'not installed')"
-echo "  bun:  $ACTUAL_BUN"
+ACTUAL_NODE="$(asdf exec node --version 2>/dev/null || echo 'not installed')"
+echo "  bun:     $ACTUAL_BUN"
+echo "  node:    $ACTUAL_NODE"
 
 if [ "$INSTALL_OK" = "1" ]; then
   printf '\n\033[1;32m✓ Tools installed.\033[0m Next: \`make doctor\` then \`make dev\`.\n'

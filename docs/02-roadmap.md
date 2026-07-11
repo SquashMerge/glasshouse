@@ -4,7 +4,7 @@
 
 | Phase | Window | Status | Notes |
 |---|---|---|---|
-| MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Redis 7, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
+| MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Valkey 8, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
 | MVP — Ingest + trace viewer | Day 8–14 | Not started | OTLP receiver at `/v1/otel/v1/traces`; trace list / detail / search screens. Endpoint surface registered as 501 stubs. |
 | MVP — Agent + Experiment | Day 15–21 | Not started | Agent + Experiment REST CRUD; `hermes.register()`; framework adapters; eval runner. Endpoint surface registered as 501 stubs. |
 | MVP — Polish + dev mode | Day 22–30 | Not started | `hermes dev` single-binary; 3-tier prompt cache; prompts / datasets / experiments / settings UI. |
@@ -43,7 +43,7 @@ DAY 0────30────60────90────120───180
 | Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI | ✅ Shipped (`Bun.serve()` + Scalar at `/reference`) |
 | Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (7 idempotent migrations; 10 tables) |
 | ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
-| Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis 7 instance, persistent volume | ✅ Shipped (AOF + named volume; BullMQ consumers deferred to a later phase) |
+| Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis instance, persistent volume | ✅ Shipped as Valkey 8 (open-source Redis fork; wire-compatible — `ioredis` clients unchanged). AOF + named volume; BullMQ consumers deferred to a later phase. |
 | React 19 + Vite + TanStack scaffold | Frontend | `npm create vite`, Tailwind, Shadcn/UI, openapi-fetch + openapi-typescript wired | ✅ Shipped (Vite + TanStack Router + Tailwind 3.4 + Shadcn-style; typed client wired in a later slice) |
 | OpenAPI Codegen pipeline (TS + Python) | DevEx | `make codegen` regenerates typed clients from `openapi.yaml` | ✅ Shipped (`openapi-typescript` + `openapi-python-client`; byte-stable configs) |
 

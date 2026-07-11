@@ -42,6 +42,6 @@ export const HealthResponse = z.object({
   checks: z.object({
     postgres: z.enum(["up", "down"]),
     clickhouse: z.enum(["up", "down"]),
-    redis: z.enum(["up", "down"]),
+    valkey: z.enum(["up", "down"]),
   }),
 }).openapi("HealthResponse");

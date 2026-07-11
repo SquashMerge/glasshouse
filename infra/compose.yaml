@@ -44,29 +44,29 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    container_name: astraea-redis
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: astraea-valkey
     restart: unless-stopped
     command:
-      - redis-server
-      - /usr/local/etc/redis/redis.conf
+      - valkey-server
+      - /usr/local/etc/valkey/valkey.conf
       - --requirepass
-      - ${REDIS_PASSWORD}
+      - ${VALKEY_PASSWORD}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${VALKEY_PORT:-6379}:6379"
     volumes:
-      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-      - astraea_redis_data:/data
+      - ./valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+      - astraea_valkey_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   api:
     build:
-      context: .
+      context: ..
       dockerfile: apps/api/Dockerfile
     container_name: astraea-api
     restart: unless-stopped
@@ -78,7 +78,7 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      VALKEY_URL: valkey://:${VALKEY_PASSWORD}@valkey:6379
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:
@@ -86,7 +86,7 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3000/health"]
@@ -96,7 +96,7 @@ services:
 
   web:
     build:
-      context: .
+      context: ..
       dockerfile: apps/web/Dockerfile
     container_name: astraea-web
     restart: unless-stopped
@@ -120,5 +120,5 @@ volumes:
     driver: local
   astraea_ch_data:
     driver: local
-  astraea_redis_data:
+  astraea_valkey_data:
     driver: local

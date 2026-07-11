@@ -2,10 +2,9 @@
 # https://asdf-vm.com/manage/configuration.html
 #
 # `make setup-tools` (infra/scripts/setup-tools.sh) installs these via asdf.
-# uv and clickhouse are NOT in this file — they have no asdf plugins; install
-# those separately (see README Quick Start Option B).
+# Servers (Postgres, ClickHouse, Valkey) run in Docker — no host install
+# needed. CLI clients (psql, valkey-cli, clickhouse-client) are best installed
+# via your OS package manager; see README Quick Start Option B.
 
 bun 1.1.42
-nodejs 22.10.2
-postgres 16.6
-redis 7.4.1
+nodejs 22.11.0

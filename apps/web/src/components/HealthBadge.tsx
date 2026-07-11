@@ -5,7 +5,7 @@ type HealthResponse = {
   checks: {
     postgres: "up" | "down";
     clickhouse: "up" | "down";
-    redis: "up" | "down";
+    valkey: "up" | "down";
   };
 };
 
@@ -40,7 +40,7 @@ export function HealthBadge() {
       <div className="flex flex-wrap gap-2">
         <Pill label="postgres" state="loading" />
         <Pill label="clickhouse" state="loading" />
-        <Pill label="redis" state="loading" />
+        <Pill label="valkey" state="loading" />
       </div>
     );
   }
@@ -50,7 +50,7 @@ export function HealthBadge() {
       <div className="flex flex-wrap gap-2">
         <Pill label="postgres" state="down" />
         <Pill label="clickhouse" state="down" />
-        <Pill label="redis" state="down" />
+        <Pill label="valkey" state="down" />
       </div>
     );
   }
@@ -59,7 +59,7 @@ export function HealthBadge() {
     <div className="flex flex-wrap gap-2">
       <Pill label="postgres" state={data.checks.postgres} />
       <Pill label="clickhouse" state={data.checks.clickhouse} />
-      <Pill label="redis" state={data.checks.redis} />
+      <Pill label="valkey" state={data.checks.valkey} />
     </div>
   );
 }

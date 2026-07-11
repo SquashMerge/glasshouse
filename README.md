@@ -4,6 +4,8 @@
 
 > Named for the Titan goddess of innocence and purity: the idea that an agent eval platform should be honest about what your agent actually is, not just optimistic about what it could be.
 
+**Local dev stack:** Postgres 16 + ClickHouse 24 + [Valkey 8](https://valkey.io) (open-source Redis fork) + Hono + React dashboard, behind `make dev`.
+
 ## Why it exists
 
 AI teams in 2026 are building agents that are mostly glue code. A typical production agent looks like this:
@@ -62,7 +64,7 @@ MIT core. Sealed `enterprise/` wheel under a custom EULA for premium features (S
 
 ## Status
 
-Implementation is in progress. The MVP foundation ships via the factory run `phase-1-foundation`: a runnable local stack with Postgres, ClickHouse, Redis, the Hono backend, and the React dashboard, all behind a single command.
+Implementation is in progress. The MVP foundation ships via the factory run `phase-1-foundation`: a runnable local stack with Postgres, ClickHouse, Valkey, the Hono backend, and the React dashboard, all behind a single command.
 
 ## Quick Start
 
@@ -80,10 +82,10 @@ If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins the as
 
 ```
 bun 1.1.42
-nodejs 22.10.2
-postgres 16.6
-redis 7.4.1
+nodejs 22.11.0
 ```
+
+The Postgres, ClickHouse, and Valkey **servers** run in Docker (Compose brings them up). Their CLI clients (psql, clickhouse-client, valkey-cli) are best installed via your OS package manager — see Option B.
 
 Run once after cloning:
 
@@ -93,24 +95,24 @@ make setup-tools
 
 This installs asdf plugins for every tool and installs the pinned versions. Re-run anytime `.tool-versions` changes.
 
-#### Option B — install manually
+> Note: asdf-managed postgres/redis installs build from source and need a C toolchain + `unzip`/`uconv` etc. That's why the `.tool-versions` here only lists Bun and Node.js — the dev tools the runtime actually needs.
 
-`uv` and the `clickhouse` client are **not** in `.tool-versions` because they don't have asdf plugins — install them with their official installers:
+#### Option B — install manually
 
 | Tool | Install |
 |---|---|
 | Bun | `curl -fsSL https://bun.sh/install \| bash` (or via asdf) |
 | Node.js 22 | `nvm install 22` (or via asdf) |
 | uv | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Postgres client | `brew install postgresql@16` (or via asdf) |
-| Redis client | `brew install redis` (or via asdf) |
+| Postgres client (`psql`) | `apt-get install postgresql-client` / `brew install libpq` |
+| Valkey client (`valkey-cli`) | `apt-get install valkey-tools` / `brew install valkey` |
 | ClickHouse client | `curl https://clickhouse.com/ \| sh` (or `brew install clickhouse`) |
 
 `make doctor` checks the minimum versions after install.
 
 ### `make dev`
 
-Brings up the full stack (Postgres + ClickHouse + Redis + Hono API + Vite web) with healthchecks and waits for all services to be ready. Bootstraps the control plane at `.opencode/factory/`.
+Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Bootstraps the control plane at `.opencode/factory/`.
 
 ### URLs after `make dev`
 
@@ -118,7 +120,7 @@ Brings up the full stack (Postgres + ClickHouse + Redis + Hono API + Vite web) w
 |---|---|
 | http://localhost:5173 | Dashboard (initial placeholder page) |
 | http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract |
-| http://localhost:3000/health | Backend health check (Postgres + ClickHouse + Redis status) |
+| http://localhost:3000/health | Backend health check (Postgres + ClickHouse + Valkey status) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document |
 
 ### `make codegen`
