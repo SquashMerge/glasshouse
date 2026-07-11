@@ -46,6 +46,10 @@ dev-backend: ## Run the Hono API locally via bun (sources infra/.env, talks to d
 		echo "infra/.env not found. Copy infra/.env.example to infra/.env and edit."; \
 		exit 1; \
 	fi
+	@if grep -q $'\r' infra/.env; then \
+		echo "Stripping CRLF from infra/.env (Windows checkout detected)..."; \
+		tr -d '\r' < infra/.env > infra/.env.tmp && mv infra/.env.tmp infra/.env; \
+	fi
 	cd apps/api && set -a && . ../../infra/.env && set +a && bun run dev
 
 dev-frontend: ## Run the React dashboard locally via bun + Vite (proxies /v1 -> :3000)

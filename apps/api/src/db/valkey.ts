@@ -9,7 +9,12 @@ let _valkey: Redis | null = null;
 
 export function valkey(): Redis {
   if (_valkey) return _valkey;
-  const url = process.env.VALKEY_URL ?? "redis://localhost:6379";
+  // Prefer explicit VALKEY_URL; fall back to component vars so missing URL
+  // doesn't silently drop the password (which would NOAUTH-fail against a
+  // server started with --requirepass).
+  const url =
+    process.env.VALKEY_URL ??
+    `redis://:${process.env.VALKEY_PASSWORD ?? ""}@${process.env.VALKEY_HOST ?? "localhost"}:${process.env.VALKEY_PORT ?? "6379"}`;
   _valkey = new Redis(url, {
     enableOfflineQueue: false,
     maxRetriesPerRequest: 3,

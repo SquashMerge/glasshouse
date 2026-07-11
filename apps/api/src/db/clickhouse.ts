@@ -6,8 +6,10 @@ let _client: ClickHouseClient | null = null;
 
 export function ch(): ClickHouseClient {
   if (_client) return _client;
+  // Prefer explicit CLICKHOUSE_URL; fall back to component vars.
+  const url = process.env.CLICKHOUSE_URL ?? `http://${process.env.CLICKHOUSE_HOST ?? "localhost"}:8123`;
   _client = createClient({
-    url: process.env.CLICKHOUSE_URL ?? "http://localhost:8123",
+    url,
     database: process.env.CLICKHOUSE_DB ?? "astraea",
     username: process.env.CLICKHOUSE_USER ?? "astraea",
     password: process.env.CLICKHOUSE_PASSWORD ?? "",

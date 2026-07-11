@@ -25,6 +25,11 @@ makefile text eol=lf
 *.sql text eol=lf
 *.md text eol=lf
 
+# .env files must be LF — bash on Linux/macOS chokes on \r when sourcing them.
+.env* text eol=lf
+\!.env.example
+\!infra/.env.example
+
 # Dockerfile / compose are LF (Compose spec doesn't allow \r).
 Dockerfile* text eol=lf
 docker-compose*.yml text eol=lf
