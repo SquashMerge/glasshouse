@@ -1,4 +1,4 @@
-// Stub client for Wave 1; upgraded to real wiring in Wave 2.
+// ClickHouse client + ping helper for /health.
 
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 

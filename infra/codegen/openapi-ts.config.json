@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi-ts.dev/node/.json",
+  "input": "../../openapi.yaml",
+  "output": "../../clients/ts/api.d.ts",
+  "options": {
+    "enum": true,
+    "immutable": true,
+    "emptyObjects": false,
+    "alphabetize": true,
+    "defaultNonNullable": false
+  }
+}

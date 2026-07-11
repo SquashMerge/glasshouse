@@ -1,4 +1,4 @@
-// Stub client for Wave 1; upgraded to real wiring in Wave 2.
+// Redis (ioredis) client + ping helper for /health.
 
 import Redis from "ioredis";
 

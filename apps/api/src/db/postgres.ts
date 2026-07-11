@@ -1,6 +1,4 @@
-// Stub clients for Wave 1; upgraded to real wiring in Wave 2 (`db-schemas-and-clients`).
-// These are exported with the same shape as the real clients so health.ts compiles
-// before Wave 2 runs.
+// Postgres connection pool + ping helper for /health.
 
 import { Pool } from "pg";
 
