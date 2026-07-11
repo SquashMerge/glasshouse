@@ -137,10 +137,27 @@ Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 
 | URL | Purpose |
 |---|---|
-| http://localhost:5173 | Dashboard (initial placeholder page) |
-| http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract |
-| http://localhost:3000/health | Backend health check (Postgres + ClickHouse + Valkey status) |
-| http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document |
+| http://localhost:5173/login | Sign in (Basic Auth) |
+| http://localhost:5173 | Dashboard (auth-gated; redirects to /login if not signed in) |
+| http://localhost:5173/traces | Trace list (auth-gated) |
+| http://localhost:5173/traces/:id | Trace detail with span tree (auth-gated) |
+| http://localhost:3000/v1/otel/v1/traces | OTLP HTTP/JSON trace ingest (auth-gated; OTel SDK target) |
+| http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (public) |
+| http://localhost:3000/health | Backend health check (public; no auth) |
+| http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (public) |
+
+### Sending traces from your agent
+
+Set these four env vars on your instrumented agent:
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(echo -n 'astraea:YOUR_PASSWORD' | base64)"
+export OTEL_SERVICE_NAME="my-agent"
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
+```
+
+See [`docs/03-otel-ingest.md`](docs/03-otel-ingest.md) for Python and Node.js examples.
 
 ### `make codegen`
 
