@@ -42,15 +42,7 @@ deps-logs: ## Tail data services logs
 	$(COMPOSE_DEPS) logs -f --tail=100
 
 dev-backend: ## Run the Hono API locally via bun (sources infra/.env, talks to deps on localhost)
-	@if [ ! -f infra/.env ]; then \
-		echo "infra/.env not found. Copy infra/.env.example to infra/.env and edit."; \
-		exit 1; \
-	fi
-	@if grep -q $'\r' infra/.env; then \
-		echo "Stripping CRLF from infra/.env (Windows checkout detected)..."; \
-		tr -d '\r' < infra/.env > infra/.env.tmp && mv infra/.env.tmp infra/.env; \
-	fi
-	cd apps/api && set -a && . ../../infra/.env && set +a && bun run dev
+	bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run dev'
 
 dev-frontend: ## Run the React dashboard locally via bun + Vite (proxies /v1 -> :3000)
 	cd apps/web && bun run dev --host 0.0.0.0

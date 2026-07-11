@@ -185,3 +185,5 @@ The repo's `.gitattributes` enforces `eol=lf` for `*.sh`, `Makefile`, and all so
 **Local dev (`make dev-backend`) can't connect to Postgres / ClickHouse / Valkey** — `make deps-up` first; it brings the data services up on `localhost:5432 / 8123 / 6379`. If you ran `make dev` (full Docker stack) before, ports may still be bound; run `make down` and then `make deps-up`.
 
 **`/v1/*` requests from the local frontend 404** — make sure `make dev-backend` is running so the Vite proxy has something to forward to. Verify with `curl http://localhost:3000/health`.
+
+**`make dev-backend` fails with `unexpected EOF while looking for matching '`** — your `infra/.env` has Windows CRLF line endings. Pull the latest commit (which moved env-sourcing into `infra/scripts/with-local-env.sh` that self-normalizes) and re-run. Or run `make normalize` to strip CRLF in place.
