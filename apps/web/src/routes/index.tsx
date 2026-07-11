@@ -28,7 +28,7 @@ export function DashboardPage() {
           className="block rounded-lg border border-border bg-muted px-6 py-4 transition-colors hover:bg-muted/70"
         >
           <div className="text-sm font-medium text-muted-foreground">Health Check</div>
-          <div className="mt-1 text-base">/health — Postgres, ClickHouse, Redis status</div>
+          <div className="mt-1 text-base">/health — Postgres, ClickHouse, Valkey status</div>
         </a>
       </section>
 

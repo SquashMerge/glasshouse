@@ -52,14 +52,14 @@ services:
       - valkey-server
       - /usr/local/etc/valkey/valkey.conf
       - --requirepass
-      - ${VALKEY_PASSWORD}
+      - ${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}
     ports:
       - "${VALKEY_PORT:-6379}:6379"
     volumes:
       - ./valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
       - astraea_valkey_data:/data
     healthcheck:
-      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -78,7 +78,7 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
-      VALKEY_URL: valkey://:${VALKEY_PASSWORD}@valkey:6379
+      VALKEY_URL: redis://:${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}@valkey:6379
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:

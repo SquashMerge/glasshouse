@@ -370,6 +370,7 @@ __marimo__/
 .DS_Store
 .env
 .env.local
+.envrc
 infra/.env
 !infra/.env.example
 # Keep SETUP-NOTES.md tracked

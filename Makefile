@@ -1,8 +1,9 @@
 SHELL := /bin/bash
-COMPOSE := docker compose -f infra/compose.yaml
-COMPOSE_DEV := docker compose -f infra/compose.yaml -f infra/compose.override.yaml
+COMPOSE := docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml
+COMPOSE_DEPS := docker compose --project-directory . --env-file infra/.env -f infra/compose.deps.yaml
+COMPOSE_DEV := docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml -f infra/compose.override.yaml
 
-.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize lint typecheck test format install
+.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend lint typecheck test format install
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -26,10 +27,34 @@ dev: ## Boot the full stack (5 services) and wait for healthchecks
 	$(COMPOSE) up -d --build --wait
 	@echo "✓ All services up. Dashboard: http://localhost:$${WEB_PORT:-5173}  OpenAPI: http://localhost:$${API_PORT:-3000}/reference"
 
+deps-up: ## Boot only Postgres + ClickHouse + Valkey (for running api/web locally via bun)
+	@if [ ! -f infra/.env ]; then \
+		echo "infra/.env not found. Copy infra/.env.example to infra/.env and edit."; \
+		exit 1; \
+	fi
+	$(COMPOSE_DEPS) up -d --wait
+	@echo "✓ Data services up. Run 'make dev-backend' + 'make dev-frontend' in separate terminals."
+
+deps-down: ## Tear down only the data services
+	$(COMPOSE_DEPS) down
+
+deps-logs: ## Tail data services logs
+	$(COMPOSE_DEPS) logs -f --tail=100
+
+dev-backend: ## Run the Hono API locally via bun (sources infra/.env, talks to deps on localhost)
+	@if [ ! -f infra/.env ]; then \
+		echo "infra/.env not found. Copy infra/.env.example to infra/.env and edit."; \
+		exit 1; \
+	fi
+	cd apps/api && set -a && . ../../infra/.env && set +a && bun run dev
+
+dev-frontend: ## Run the React dashboard locally via bun + Vite (proxies /v1 -> :3000)
+	cd apps/web && bun run dev --host 0.0.0.0
+
 build: ## Build all images
 	$(COMPOSE) build
 
-down: ## Tear down the stack
+down: ## Tear down the full stack
 	$(COMPOSE) down
 
 logs: ## Tail logs
@@ -48,13 +73,13 @@ ch-schema: ## Apply ClickHouse schema (idempotent)
 	done
 	@echo "✓ ClickHouse schema applied."
 
-redis-ping: ## Verify Valkey is up (Redis-compatible)
+valkey-ping: ## Verify Valkey is up (Redis-compatible)
 	$(COMPOSE) exec -T valkey valkey-cli -a "$${VALKEY_PASSWORD}" ping
 
 openapi-snapshot: ## Regenerate openapi.yaml snapshot from running Zod schemas
 	cd apps/api && bun run openapi:snapshot
 
-codegen: openapi-snapshot ## Regenerate typed TS + Python clients
+codegen: openapi-snapshot ## Regenerate typed TS + Python clients (depends on snapshot)
 	cd apps/api && bun run codegen:ts
 	cd apps/api && bun run codegen:py
 

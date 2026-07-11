@@ -52,6 +52,25 @@ ok "asdf $(asdf --version)"
 [ -f .tool-versions ] || fail ".tool-versions not found at repo root"
 ok ".tool-versions present"
 
+step "Prerequisites for asdf plugins"
+PREREQ_OK=1
+if ! command -v unzip >/dev/null 2>&1; then
+  echo "  ! unzip not installed. The bun asdf plugin needs it to extract the binary."
+  echo "    Install with: apt-get install unzip  (or: brew install unzip)"
+  PREREQ_OK=0
+fi
+if ! command -v gcc >/dev/null 2>&1; then
+  echo "  ! gcc not installed. Some asdf plugins (e.g., postgres, erlang) build from source and need a C toolchain."
+  echo "    Install with: apt-get install build-essential"
+  # gcc is only required for plugins that build from source; the bun + nodejs
+  # plugins ship prebuilt binaries so we don't fail here.
+fi
+if [ "$PREREQ_OK" = "1" ]; then
+  ok "prerequisites present"
+else
+  echo "  ⚠ Some prerequisites missing; install them before the bun plugin install step below."
+fi
+
 # Read pinned versions from .tool-versions (skip comments / blanks).
 declare -A WANT
 while IFS= read -r line; do
@@ -121,17 +140,6 @@ done
 step "Reshimming"
 asdf reshim >/dev/null 2>&1 || true
 ok "reshim complete"
-
-step "Prerequisites for asdf plugins"
-if ! command -v unzip >/dev/null 2>&1; then
-  echo "  ! unzip not installed. The bun asdf plugin needs it to extract the binary."
-  echo "    Install with: apt-get install unzip  (or: brew install unzip)"
-fi
-if ! command -v gcc >/dev/null 2>&1; then
-  echo "  ! gcc not installed. Some asdf plugins (e.g., postgres, erlang) build from source and need a C toolchain."
-  echo "    Install with: apt-get install build-essential"
-fi
-ok "prerequisites checked"
 
 step "Verifying"
 ACTUAL_BUN="$(asdf exec bun --version 2>/dev/null || echo 'not installed')"

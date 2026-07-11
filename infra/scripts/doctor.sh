@@ -31,6 +31,18 @@ if grep -q '^[^#]*CHANGE_ME' infra/.env; then
 fi
 ok "no CHANGE_ME placeholders"
 
+step "Required env vars present in infra/.env"
+REQUIRED_VARS=(POSTGRES_USER POSTGRES_PASSWORD CLICKHOUSE_USER CLICKHOUSE_PASSWORD VALKEY_PASSWORD)
+MISSING=0
+for v in "${REQUIRED_VARS[@]}"; do
+  if ! grep -q "^${v}=" infra/.env; then
+    echo "  ! ${v} missing from infra/.env"
+    MISSING=1
+  fi
+done
+[ "$MISSING" = "0" ] || fail "missing required vars; edit infra/.env"
+ok "all required vars present"
+
 step "Docker"
 docker --version >/dev/null || fail "docker not installed"
 ok "docker installed"

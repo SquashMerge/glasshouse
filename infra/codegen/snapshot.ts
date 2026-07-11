@@ -6,7 +6,7 @@
 import { dump as yamlDump } from "js-yaml";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { openapiApp } from "../apps/api/src/openapi.ts";
+import { openapiApp } from "../../apps/api/src/openapi.ts";
 
 const OUT_PATH = resolve(process.cwd(), "openapi.yaml");
 

@@ -9,7 +9,7 @@ let _valkey: Redis | null = null;
 
 export function valkey(): Redis {
   if (_valkey) return _valkey;
-  const url = process.env.VALKEY_URL ?? "valkey://localhost:6379";
+  const url = process.env.VALKEY_URL ?? "redis://localhost:6379";
   _valkey = new Redis(url, {
     enableOfflineQueue: false,
     maxRetriesPerRequest: 3,

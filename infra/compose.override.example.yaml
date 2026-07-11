@@ -6,13 +6,13 @@ services:
   api:
     volumes:
       - ./apps/api/src:/app/apps/api/src
-    command: ["pnpm", "dev"]
+    command: ["bun", "run", "dev"]
 
   web:
     volumes:
       - ./apps/web/src:/app/apps/web/src
       - ./apps/web/index.html:/app/apps/web/index.html
       - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts
-    command: ["pnpm", "dev", "--host", "0.0.0.0"]
+    command: ["bun", "run", "dev", "--host", "0.0.0.0"]
     environment:
       NODE_ENV: development
