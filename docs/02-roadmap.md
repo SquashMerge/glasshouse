@@ -1,5 +1,17 @@
 # Hermes — 90-Day Roadmap
 
+## Implementation status
+
+| Phase | Window | Status | Notes |
+|---|---|---|---|
+| MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Redis 7, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
+| MVP — Ingest + trace viewer | Day 8–14 | Not started | OTLP receiver at `/v1/otel/v1/traces`; trace list / detail / search screens. Endpoint surface registered as 501 stubs. |
+| MVP — Agent + Experiment | Day 15–21 | Not started | Agent + Experiment REST CRUD; `hermes.register()`; framework adapters; eval runner. Endpoint surface registered as 501 stubs. |
+| MVP — Polish + dev mode | Day 22–30 | Not started | `hermes dev` single-binary; 3-tier prompt cache; prompts / datasets / experiments / settings UI. |
+| Wedge | Day 30–60 | Not started | Framework expansion (LangGraph / CrewAI / Pydantic AI); HTTP endpoint registration; evaluator library; manifest version binding. |
+| GitOps | Day 60–90 | Not started | GitHub Actions; manifest drift detection; atomic manifest rollback; `enterprise/` wheel. |
+| Moat | Day 90–180 | Not started | Failure radar; judge calibration; closed-loop prompt optimization; voice-agent support. |
+
 ## Phase overview
 
 ```
@@ -25,15 +37,15 @@ DAY 0────30────60────90────120───180
 
 ### Week 1 — Foundation (Days 1–7)
 
-| Task | Owner | Deliverable |
-|---|---|---|
-| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` |
-| Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI |
-| Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 |
-| ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 |
-| Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis 7 instance, persistent volume |
-| React 19 + Vite + TanStack scaffold | Frontend | `npm create vite`, Tailwind, Shadcn/UI, openapi-fetch + openapi-typescript wired |
-| OpenAPI Codegen pipeline (TS + Python) | DevEx | `make codegen` regenerates typed clients from `openapi.yaml` |
+| Task | Owner | Deliverable | Status |
+|---|---|---|---|
+| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; 31 stub routes + `/openapi.json`) |
+| Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI | ✅ Shipped (`Bun.serve()` + Scalar at `/reference`) |
+| Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (7 idempotent migrations; 10 tables) |
+| ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
+| Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis 7 instance, persistent volume | ✅ Shipped (AOF + named volume; BullMQ consumers deferred to a later phase) |
+| React 19 + Vite + TanStack scaffold | Frontend | `npm create vite`, Tailwind, Shadcn/UI, openapi-fetch + openapi-typescript wired | ✅ Shipped (Vite + TanStack Router + Tailwind 3.4 + Shadcn-style; typed client wired in a later slice) |
+| OpenAPI Codegen pipeline (TS + Python) | DevEx | `make codegen` regenerates typed clients from `openapi.yaml` | ✅ Shipped (`openapi-typescript` + `openapi-python-client`; byte-stable configs) |
 
 ### Week 2 — Ingest + trace viewer (Days 8–14)
 
