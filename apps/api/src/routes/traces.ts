@@ -1,14 +1,17 @@
 // Real implementations of /v1/traces, /v1/traces/{id}, /v1/traces/search.
 // Backed by ClickHouse via apps/api/src/db/traces-query.ts.
+//
+// Exports use the short names (listTraces, getTrace, searchTraces) to match
+// the imports in apps/api/src/openapi.ts.
 
 import { createRoute } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { Trace, TraceList, TraceSearchQuery, TraceStubResponses } from "../schemas/traces.js";
 import { IdParam } from "../schemas/common.js";
-import { defaultClient, getTrace, listTraces, searchTraces } from "../db/traces-query.js";
+import { defaultClient, getTrace as queryGetTrace, listTraces as queryListTraces, searchTraces as querySearchTraces } from "../db/traces-query.js";
 
 // GET /v1/traces
-export const listTracesRoute = createRoute({
+export const listTraces = createRoute({
   method: "get",
   path: "/v1/traces",
   tags: ["traces"],
@@ -32,7 +35,7 @@ export async function handleListTraces(c: Context): Promise<Response> {
     time_to: c.req.query("filter[time.to]") ?? undefined,
   };
   try {
-    const { items, total } = await listTraces(defaultClient(), filters, limit, offset);
+    const { items, total } = await queryListTraces(defaultClient(), filters, limit, offset);
     return c.json({ items, total });
   } catch (err) {
     console.error("GET /v1/traces failed:", (err as Error).message);
@@ -41,7 +44,7 @@ export async function handleListTraces(c: Context): Promise<Response> {
 }
 
 // GET /v1/traces/{id}
-export const getTraceRoute = createRoute({
+export const getTrace = createRoute({
   method: "get",
   path: "/v1/traces/{id}",
   tags: ["traces"],
@@ -64,14 +67,17 @@ export const getTraceRoute = createRoute({
         },
       },
     },
-    404: { description: "Trace not found", content: { "application/json": { schema: { type: "object", properties: { code: { type: "string" }, message: { type: "string" } } } } } },
+    404: {
+      description: "Trace not found",
+      content: { "application/json": { schema: { type: "object", properties: { code: { type: "string" }, message: { type: "string" } } } } },
+    },
   },
 });
 
 export async function handleGetTrace(c: Context): Promise<Response> {
   const traceId = c.req.valid("param").id as string;
   try {
-    const { trace, observations } = await getTrace(defaultClient(), traceId);
+    const { trace, observations } = await queryGetTrace(defaultClient(), traceId);
     if (!trace) {
       return c.json({ code: "NOT_FOUND", message: `Trace ${traceId} not found` }, 404);
     }
@@ -83,7 +89,7 @@ export async function handleGetTrace(c: Context): Promise<Response> {
 }
 
 // GET /v1/traces/search
-export const searchTracesRoute = createRoute({
+export const searchTraces = createRoute({
   method: "get",
   path: "/v1/traces/search",
   tags: ["traces"],
@@ -110,7 +116,7 @@ export async function handleSearchTraces(c: Context): Promise<Response> {
     sort: c.req.query("sort") ?? "start_time:desc",
   };
   try {
-    const { items, total } = await searchTraces(defaultClient(), q, limit, offset);
+    const { items, total } = await querySearchTraces(defaultClient(), q, limit, offset);
     return c.json({ items, total });
   } catch (err) {
     console.error("GET /v1/traces/search failed:", (err as Error).message);
