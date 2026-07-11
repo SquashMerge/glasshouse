@@ -363,10 +363,12 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Astraea-specific
-.opencode/
 .opencode/factory/
 .opencode/worktrees/
+.factory.lock
 *.log
 .DS_Store
 .env
 .env.local
+# Keep SETUP-NOTES.md tracked
+!.opencode/SETUP-NOTES.md
