@@ -1,0 +1,27 @@
+{
+  "name": "astraea",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Astraea",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "scripts": {
+    "dev": "make dev",
+    "build": "bun run --filter '*' build",
+    "lint": "bun run --filter '*' lint",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
+    "smoke": "make smoke",
+    "doctor": "make doctor",
+    "codegen": "make codegen",
+    "format": "bun run --filter '*' format"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4",
+    "@types/bun": "1.1.14"
+  }
+}

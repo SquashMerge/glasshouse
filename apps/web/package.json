@@ -1,0 +1,36 @@
+{
+  "name": "@astraea/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no lint configured yet'",
+    "format": "echo 'no format configured yet'",
+    "test": "echo 'no unit tests configured yet'",
+    "test:e2e": "playwright test --reporter=line"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.62.7",
+    "@tanstack/react-router": "1.91.1",
+    "openapi-fetch": "0.13.4",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1",
+    "@types/bun": "1.1.14",
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.5.4",
+    "vite": "6.0.7"
+  }
+}
