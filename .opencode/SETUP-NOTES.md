@@ -44,16 +44,16 @@ PATH=/home/hermes/.hermes/node/bin:$PATH feature-factory doctor --provider-smoke
 # Should show: "ok: provider minimax-coding-plan smoke (smoke passed)"
 ```
 
-The doctor reports two "missing" lines that are non-blocking and expected:
-
-1. `factory permissions non-interactive` — auto-seeded on first `factory start` per the README
-2. `provider auth` — cosmetic stale-state (real auth works; smoke test proves it)
-
 ## Known quirks
 
 - `minimax` and `minimax-coding-plan` are functionally identical providers (same endpoint, same env, same models). Using `minimax-coding-plan` for the friendly provider label.
 - All seven MiniMax models on this endpoint have `reasoning: true`, which maps to the "Thinking" toggle in the chat UI. The `variant` field is harmless if ignored — Gemini/OpenAI providers honor it, but MiniMax's `variant` shape is unknown.
 - The M3.7-highspeed model is the cheapest option (~$0 input / $0 output listed in models.dev pricing, but actual costs depend on subscription plan).
+
+## Git identity
+
+- Commits must be authored by `Daniel Sarlo <16106087+dsarlo@users.noreply.github.com>` (the GitHub noreply address). This is pinned via `git config user.email` in the local repo.
+- Always verify with `gh api repos/dsarlo/astraea/commits` after any push — every commit's `author.login` should be `dsarlo`. If anything looks wrong, re-author with the procedure in the Hermes session log (do not document it in this repo).
 
 ## Local clone
 
@@ -69,3 +69,48 @@ PATH=/home/hermes/.hermes/node/bin:$PATH opencode          # launch TUI
 # or
 PATH=/home/hermes/.hermes/node/bin:$PATH feature-factory start "description of feature"
 ```
+
+## Context7 MCP (added 2026-07-11)
+
+The platform's build agent has live access to up-to-date library docs via Context7 MCP. Agents are auto-instructed via `AGENTS.md` at the repo root to reach for context7 whenever a task touches a library — without needing `use context7` typed manually.
+
+**Config (`~/.config/opencode/opencode.json`):**
+
+```json
+"mcp": {
+  "context7": {
+    "type": "remote",
+    "url": "https://mcp.context7.com/mcp",
+    "headers": {}
+  }
+}
+```
+
+**What it gives you:**
+- Latest API docs for any library (React, Hono, FastAPI, ClickHouse, OpenTelemetry, all the frameworks in our design doc)
+- Version-specific code examples (so we get Hono 4.x patterns, not 3.x)
+- Server-side instructs the agent to use context7 *even when it thinks it knows the answer* — kills hallucinated APIs
+
+**Smoke test (verified working):**
+
+```bash
+cd ~/code/astraea
+PATH=/home/hermes/.hermes/node/bin:$PATH opencode run --model "minimax-coding-plan/MiniMax-M2.7-highspeed" \
+  "use context7 to fetch the current docs for Hono's Hono() factory function. After fetching, respond with exactly the version number and one line of the doc content."
+```
+
+Output observed:
+
+```
+⚙ context7_resolve-library-id {"query":"Hono factory function","libraryName":"Hono"}
+⚙ context7_query-docs {"libraryId":"/websites/hono_dev","query":"Hono() factory function constructor"}
+⚙ context7_query-docs {"libraryId":"/websites/hono_dev","query":"new Hono() constructor"}
+⚙ context7_query-docs {"libraryId":"/websites/hono_dev","query":"Hono version number"}
+% WebFetch https://hono.dev/docs/api/hono
+% WebFetch https://hono.dev
+% WebFetch https://hono.dev/docs
+% WebFetch https://cdn.jsdelivr.net/npm/hono/package.json
+**4.12.29** | The Hono object is the primary entry point for any Hono application.
+```
+
+**Optional upgrade:** get an API key from https://context7.com/dashboard for higher rate limits + private libraries, then add `"CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"` to the `headers` block and export the key.
