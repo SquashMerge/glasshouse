@@ -1,0 +1,43 @@
+{
+  "name": "@astraea/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --target=bun --outdir=dist",
+    "typecheck": "tsc --noEmit",
+    "start": "bun run src/index.ts",
+    "lint": "echo 'no lint configured yet'",
+    "format": "echo 'no format configured yet'",
+    "test": "echo 'no unit tests configured yet'",
+    "db:migrate": "node-pg-migrate up",
+    "openapi:snapshot": "bun run ../../infra/codegen/snapshot.ts",
+    "codegen:ts": "openapi-typescript ../../openapi.yaml --output ../../clients/ts/api.d.ts --enum --immutable --empty-objects false",
+    "codegen:py": "cd ../.. && openapi-python-client generate --path openapi.yaml --config-path infra/codegen/openapi-python-client.config.yaml"
+  },
+  "dependencies": {
+    "@clickhouse/client": "1.7.0",
+    "@hono/zod-openapi": "0.18.0",
+    "@scalar/hono-api-reference": "0.5.175",
+    "hono": "4.6.14",
+    "ioredis": "5.4.1",
+    "js-yaml": "4.1.0",
+    "node-pg-migrate": "7.6.1",
+    "openapi-fetch": "0.13.4",
+    "pg": "8.13.1",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "1.1.14",
+    "@types/js-yaml": "4.0.9",
+    "@types/node": "22.10.2",
+    "@types/pg": "8.11.10",
+    "typescript": "5.5.4"
+  },
+  "trustedDependencies": [
+    "@biomejs/biome",
+    "node-pg-migrate"
+  ]
+}

@@ -1,0 +1,18 @@
+# infra/compose.override.example.yaml
+# Local-dev overrides. Copy to infra/compose.override.yaml to enable (gitignored).
+# Adds bind mounts for hot-reload + dev tools into the api/web containers.
+
+services:
+  api:
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+    command: ["bun", "run", "dev"]
+
+  web:
+    volumes:
+      - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/index.html:/app/apps/web/index.html
+      - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts
+    command: ["bun", "run", "dev", "--host", "0.0.0.0"]
+    environment:
+      NODE_ENV: development

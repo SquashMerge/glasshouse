@@ -1,0 +1,47 @@
+# Enforce LF line endings for source files; CRLF for Windows-only files.
+# https://git-scm.com/docs/gitattributes
+
+# Default: LF for everything except the patterns below.
+* text=auto eol=lf
+
+# Shell scripts must be LF — bash on Linux/macOS chokes on \r.
+*.sh text eol=lf
+
+# Makefile must be LF — make on Linux/macOS chokes on \r.
+Makefile text eol=lf
+makefile text eol=lf
+*.mk text eol=lf
+
+# TS / JS / JSON / YAML / SQL are LF.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.sql text eol=lf
+*.md text eol=lf
+
+# .env files must be LF — bash on Linux/macOS chokes on \r when sourcing them.
+.env* text eol=lf
+\!.env.example
+\!infra/.env.example
+
+# Dockerfile / compose are LF (Compose spec doesn't allow \r).
+Dockerfile* text eol=lf
+docker-compose*.yml text eol=lf
+docker-compose*.yaml text eol=lf
+
+# Windows-specific files (none in this repo by default; example below).
+# *.bat text eol=crlf
+# *.ps1 text eol=crlf
+
+# Binary files (don't touch).
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary

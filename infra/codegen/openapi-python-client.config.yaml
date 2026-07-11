@@ -1,0 +1,15 @@
+# openapi-python-client config
+project_name_override: astraea-client
+package_name_override: astraea_client
+path: ../../openapi.yaml
+custom_template_path: ~
+meta: none
+post_hooks:
+  - "ruff check --fix"
+  - "ruff format"
+field_prefix: ""
+
+# Stability knobs — keep these so re-runs produce byte-stable output
+use_path_prefixes_for_title_model: false
+do_not_use_title_to_override_module_name: true
+literal_enums: false
