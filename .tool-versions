@@ -1,12 +1,11 @@
 # Astraea local dev tool versions (asdf).
 # https://asdf-vm.com/manage/configuration.html
 #
-# `make setup-tools` (infra/scripts/setup-tools.sh) installs these versions
-# via the appropriate asdf plugins. Run it once after cloning the repo.
+# `make setup-tools` (infra/scripts/setup-tools.sh) installs these via asdf.
+# uv and clickhouse are NOT in this file — they have no asdf plugins; install
+# those separately (see README Quick Start Option B).
 
 bun 1.1.42
 nodejs 22.10.2
-uv 0.5.11
 postgres 16.6
 redis 7.4.1
-clickhouse 24.10

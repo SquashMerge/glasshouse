@@ -76,15 +76,13 @@ On Apple Silicon (M-series) the ClickHouse image is pinned to `platform: linux/a
 
 #### Option A — automatic install via asdf
 
-If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins every dev tool at the version the project was built against:
+If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins the asdf-managed dev tools at the versions the project was built against:
 
 ```
 bun 1.1.42
 nodejs 22.10.2
-uv 0.5.11
 postgres 16.6
 redis 7.4.1
-clickhouse 24.10
 ```
 
 Run once after cloning:
@@ -97,7 +95,18 @@ This installs asdf plugins for every tool and installs the pinned versions. Re-r
 
 #### Option B — install manually
 
-If you don't use asdf, install the tools above with your platform's package manager. `make doctor` checks the minimum versions.
+`uv` and the `clickhouse` client are **not** in `.tool-versions` because they don't have asdf plugins — install them with their official installers:
+
+| Tool | Install |
+|---|---|
+| Bun | `curl -fsSL https://bun.sh/install \| bash` (or via asdf) |
+| Node.js 22 | `nvm install 22` (or via asdf) |
+| uv | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Postgres client | `brew install postgresql@16` (or via asdf) |
+| Redis client | `brew install redis` (or via asdf) |
+| ClickHouse client | `curl https://clickhouse.com/ \| sh` (or `brew install clickhouse`) |
+
+`make doctor` checks the minimum versions after install.
 
 ### `make dev`
 

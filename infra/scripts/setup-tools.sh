@@ -3,20 +3,20 @@
 # Reads .tool-versions and ensures every listed tool is installed with the
 # pinned version. Adds missing asdf plugins as needed.
 #
-# Self-normalizing: if this file was checked out with CRLF line endings
-# (Windows + git autocrlf), re-exec through `tr -d '\r'` so bash on Linux/macOS
-# can parse it. The .gitattributes in this repo enforces LF for *.sh, but
-# older checkouts may still have CRLF until you re-pull.
+# Self-normalizing: if this file (or .tool-versions) was checked out with
+# CRLF line endings (Windows + git autocrlf), re-exec through `tr -d '\r'`
+# so bash on Linux/macOS can parse it. The .gitattributes in this repo
+# enforces LF for *.sh and .tool-versions, but older checkouts may still
+# have CRLF until you re-pull + run `make normalize`.
 #
 
-# CRLF guard: re-exec through a normalized copy if any \r is present.
+# CRLF guard for this script.
 if grep -q $'\r' "$0" 2>/dev/null; then
   TMP="$(mktemp)"
   tr -d '\r' < "$0" > "$TMP"
   chmod +x "$TMP"
   exec bash "$TMP" "$@"
 fi
-# Idempotent: safe to re-run. Skips already-installed tools.
 
 set -euo pipefail
 
@@ -26,7 +26,14 @@ fail() { printf '  \033[1;31m✗\033[0m %s\n' "$1"; exit 1; }
 
 cd "$(dirname "$0")/../.."
 
-# asdf required
+# Self-normalize .tool-versions if needed.
+if [ -f .tool-versions ] && grep -q $'\r' .tool-versions; then
+  step "Stripping CRLF from .tool-versions (Windows checkout detected)"
+  tr -d '\r' < .tool-versions > .tool-versions.tmp && mv .tool-versions.tmp .tool-versions
+  ok ".tool-versions normalized to LF"
+fi
+
+# asdf required.
 if ! command -v asdf >/dev/null 2>&1; then
   cat <<'EOF'
 ✗ asdf not installed.
@@ -45,17 +52,6 @@ ok "asdf $(asdf --version)"
 [ -f .tool-versions ] || fail ".tool-versions not found at repo root"
 ok ".tool-versions present"
 
-# Plugin repo map. Keys are asdf tool names; values are plugin repos.
-# Format: <tool>:<repo>
-declare -a PLUGIN_SPECS=(
-  "bun:asdf-community/asdf-bun"
-  "nodejs:asdf-vm/asdf-nodejs"
-  "uv:virtualroot/asdf-uv"
-  "postgres:asdf-community/asdf-postgres"
-  "redis:asdf-community/asdf-redis"
-  "clickhouse:IFanRolll/asdf-clickhouse"
-)
-
 # Read pinned versions from .tool-versions (skip comments / blanks).
 declare -A WANT
 while IFS= read -r line; do
@@ -67,19 +63,40 @@ while IFS= read -r line; do
   WANT["$tool"]="$version"
 done < .tool-versions
 
+# Tools that have no asdf plugin at all (uv, clickhouse) are NOT listed in
+# .tool-versions — install them via their official installers (see README).
+# For tools that DO have asdf plugins, `asdf plugin add <name>` (no URL)
+# resolves via asdf's plugin index. Only fall back to a manual git URL when
+# the index lookup fails AND we have a known repo.
+
+declare -A FALLBACK_URLS=(
+  [bun]="https://github.com/axetroy/asdf-bun.git"
+)
+
 step "Ensuring asdf plugins are installed"
-for spec in "${PLUGIN_SPECS[@]}"; do
-  tool="${spec%%:*}"
-  repo="${spec##*:}"
+for tool in "${!WANT[@]}"; do
   if asdf plugin list 2>/dev/null | grep -qx "$tool"; then
     ok "plugin $tool already added"
-  else
-    if asdf plugin add "$tool" "$repo" 2>&1; then
-      ok "added plugin $tool"
-    else
-      echo "  ! failed to add $tool from $repo; skipping"
+    continue
+  fi
+
+  # Try asdf's plugin index first (no URL argument).
+  if asdf plugin add "$tool" 2>/dev/null; then
+    ok "added plugin $tool (from asdf index)"
+    continue
+  fi
+
+  # Try fallback URL if known.
+  fallback="${FALLBACK_URLS[$tool]:-}"
+  if [ -n "$fallback" ]; then
+    if asdf plugin add "$tool" "$fallback" 2>/dev/null; then
+      ok "added plugin $tool (from $fallback)"
+      continue
     fi
   fi
+
+  echo "  ! failed to add plugin $tool; skipping"
+  echo "    If you know the plugin URL, run: asdf plugin add $tool <url>"
 done
 
 step "Installing pinned tool versions"
@@ -87,8 +104,7 @@ INSTALL_OK=1
 for tool in "${!WANT[@]}"; do
   version="${WANT[$tool]}"
   if ! asdf plugin list 2>/dev/null | grep -qx "$tool"; then
-    echo "  ! skip $tool (plugin missing)"
-    continue
+    continue  # already logged in the previous step
   fi
   if asdf list "$tool" 2>/dev/null | grep -qx "$version"; then
     ok "$tool $version already installed"
@@ -108,9 +124,7 @@ ok "reshim complete"
 
 step "Verifying"
 ACTUAL_BUN="$(asdf exec bun --version 2>/dev/null || echo 'not installed')"
-ACTUAL_UV="$(asdf exec uv --version 2>/dev/null || echo 'not installed')"
 echo "  bun:  $ACTUAL_BUN"
-echo "  uv:   $ACTUAL_UV"
 
 if [ "$INSTALL_OK" = "1" ]; then
   printf '\n\033[1;32m✓ Tools installed.\033[0m Next: \`make doctor\` then \`make dev\`.\n'
