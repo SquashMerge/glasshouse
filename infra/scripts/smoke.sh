@@ -2,6 +2,14 @@
 # Astraea end-to-end smoke (AC1+AC2+AC9+AC10).
 # Exits 0 on full pass, non-zero on first failure.
 
+# CRLF guard: re-exec through a normalized copy if checked out with \r.
+if grep -q $'\r' "$0" 2>/dev/null; then
+  TMP="$(mktemp)"
+  tr -d '\r' < "$0" > "$TMP"
+  chmod +x "$TMP"
+  exec bash "$TMP" "$@"
+fi
+
 set -euo pipefail
 
 COMPOSE="${COMPOSE:-docker compose -f infra/compose.yaml}"

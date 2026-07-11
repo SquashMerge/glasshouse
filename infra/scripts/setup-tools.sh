@@ -3,6 +3,19 @@
 # Reads .tool-versions and ensures every listed tool is installed with the
 # pinned version. Adds missing asdf plugins as needed.
 #
+# Self-normalizing: if this file was checked out with CRLF line endings
+# (Windows + git autocrlf), re-exec through `tr -d '\r'` so bash on Linux/macOS
+# can parse it. The .gitattributes in this repo enforces LF for *.sh, but
+# older checkouts may still have CRLF until you re-pull.
+#
+
+# CRLF guard: re-exec through a normalized copy if any \r is present.
+if grep -q $'\r' "$0" 2>/dev/null; then
+  TMP="$(mktemp)"
+  tr -d '\r' < "$0" > "$TMP"
+  chmod +x "$TMP"
+  exec bash "$TMP" "$@"
+fi
 # Idempotent: safe to re-run. Skips already-installed tools.
 
 set -euo pipefail

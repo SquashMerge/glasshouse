@@ -2,7 +2,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose -f infra/compose.yaml
 COMPOSE_DEV := docker compose -f infra/compose.yaml -f infra/compose.override.yaml
 
-.PHONY: help dev build down logs ps db-migrate ch-schema redis-ping codegen openapi-snapshot smoke doctor setup-tools lint typecheck test format install
+.PHONY: help dev build down logs ps db-migrate ch-schema redis-ping codegen openapi-snapshot smoke doctor setup-tools normalize lint typecheck test format install
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -12,6 +12,10 @@ install: ## Install all workspace deps with bun
 
 setup-tools: ## Install pinned dev tool versions via asdf (reads .tool-versions)
 	bash infra/scripts/setup-tools.sh
+
+normalize: ## Strip CRLF line endings from shell scripts (fix Windows checkouts)
+	@find infra/scripts Makefile .tool-versions -type f -exec sed -i 's/\r$$//' {} +
+	@echo "✓ Line endings normalized to LF."
 
 dev: ## Boot the full stack (5 services) and wait for healthchecks
 	@if [ ! -f infra/.env ]; then \

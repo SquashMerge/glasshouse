@@ -127,6 +127,21 @@ Runs the end-to-end smoke (AC1 + AC2 + AC9 + AC10): brings up the stack, curls t
 - [`docs/02-roadmap.md`](docs/02-roadmap.md) — 90-day build plan
 - [`docs/research/`](docs/research/) — Competitive analysis and framework research
 
+### Troubleshooting
+
+**`$'\r': command not found` when running shell scripts** — your checkout has Windows CRLF line endings (Git on Windows defaults to `core.autocrlf=true`). Fix with one of:
+
+```sh
+# Re-normalize tracked files in place
+make normalize
+
+# Or, after pulling the latest .gitattributes, force git to re-checkout:
+git rm --cached infra/scripts/setup-tools.sh infra/scripts/smoke.sh infra/scripts/doctor.sh Makefile
+git checkout -- infra/scripts/setup-tools.sh infra/scripts/smoke.sh infra/scripts/doctor.sh Makefile
+```
+
+The repo's `.gitattributes` enforces `eol=lf` for `*.sh`, `Makefile`, and all source files so future checkouts normalize correctly.
+
 ## Docs
 
 - `docs/00-explainer.md` — General explainer (the "why" in plain terms)

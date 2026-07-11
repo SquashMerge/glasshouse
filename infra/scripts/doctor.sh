@@ -5,6 +5,14 @@
 #   - Required tools are installed at minimum versions
 # Exits 0 on ready, non-zero on first failure.
 
+# CRLF guard: re-exec through a normalized copy if checked out with \r.
+if grep -q $'\r' "$0" 2>/dev/null; then
+  TMP="$(mktemp)"
+  tr -d '\r' < "$0" > "$TMP"
+  chmod +x "$TMP"
+  exec bash "$TMP" "$@"
+fi
+
 set -euo pipefail
 
 step() { printf '\033[1;34m▶ %s\033[0m\n' "$1"; }
