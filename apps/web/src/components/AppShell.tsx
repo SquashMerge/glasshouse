@@ -59,7 +59,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button asChild={false} onClick={() => (window.location.href = "/login")}>
+            <Button onClick={() => (window.location.href = "/login")}>
               Sign in
             </Button>
           )}

@@ -1,6 +1,7 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { apiReference } from "@scalar/hono-api-reference";
 import { healthRoute, handleHealth } from "./routes/health.js";
+import { loginRoute, handleLogin } from "./routes/auth.js";
 import {
   createAgent, handleCreateAgent,
   listAgents, handleListAgents,
@@ -50,6 +51,9 @@ export const openapiApp = new OpenAPIHono();
 
 // Health (also mounted at /health by the bare handler in index.ts).
 openapiApp.openapi(healthRoute, handleHealth);
+
+// Auth (1 route) — gated by basicAuthMiddleware in index.ts via the parent /v1/* mount.
+openapiApp.openapi(loginRoute, handleLogin);
 
 // Agents (8 routes)
 openapiApp.openapi(createAgent, handleCreateAgent);

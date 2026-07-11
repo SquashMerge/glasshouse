@@ -4,7 +4,6 @@ import { handleHealth } from "./routes/health.js";
 import { basicAuthMiddleware } from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit } from "./middleware/body-size.js";
-import { loginRoute, handleLogin } from "./routes/auth.js";
 import { handleOtlpIngest } from "./routes/otlp.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
@@ -27,9 +26,6 @@ apiApp.get("/v1/health", (c) => handleHealth());
 
 // Auth middleware applies to all /v1/* routes EXCEPT /v1/health.
 apiApp.use("/v1/*", basicAuthMiddleware());
-
-// Auth-managed login endpoint
-apiApp.openapi(loginRoute, handleLogin);
 
 // OTLP HTTP/JSON trace ingest — auth-gated (mounted before openapiApp)
 // Mounted as raw handler (not via openapiApp) because it consumes the raw
