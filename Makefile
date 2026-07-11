@@ -3,7 +3,7 @@ COMPOSE := docker compose --project-directory . --env-file infra/.env -f infra/c
 COMPOSE_DEPS := docker compose --project-directory . --env-file infra/.env -f infra/compose.deps.yaml
 COMPOSE_DEV := docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml -f infra/compose.override.yaml
 
-.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend lint typecheck test format install
+.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-web test-e2e test lint typecheck format install
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -91,8 +91,16 @@ lint: ## Lint everything
 typecheck: ## Type-check everything
 	bun --filter "*" typecheck
 
-test: ## Run all unit tests
-	bun --filter "*" test
+test: test-api test-web ## Run all unit tests (api + web)
+
+test-api: ## Run backend unit + integration tests (bun:test)
+	cd apps/api && bun test
+
+test-web: ## Run frontend unit tests (vitest)
+	cd apps/web && bun run test
+
+test-e2e: ## Run frontend E2E tests (Playwright; requires deps-up + dev-backend + dev-frontend)
+	cd apps/web && bun run test:e2e
 
 format: ## Auto-format
 	bun --filter "*" format
