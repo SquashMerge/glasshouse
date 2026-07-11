@@ -1,6 +1,6 @@
 {
   "name": "@astraea/web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
   "dependencies": {
     "@tanstack/react-query": "5.62.7",
     "@tanstack/react-router": "1.91.1",
+    "class-variance-authority": "0.7.1",
     "openapi-fetch": "0.13.4",
     "react": "19.0.0",
     "react-dom": "19.0.0"
