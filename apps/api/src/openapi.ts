@@ -72,7 +72,7 @@ openapiApp.openapi(cancelExperiment, (c) => handleCancelExperiment(c.req.valid("
 
 // Traces (3 routes)
 openapiApp.openapi(listTraces, handleListTraces);
-openapiApp.openapi(getTrace, (c) => handleGetTrace(c.req.valid("param").id));
+openapiApp.openapi(getTrace, handleGetTrace);
 openapiApp.openapi(searchTraces, handleSearchTraces);
 
 // Prompts (6 routes)

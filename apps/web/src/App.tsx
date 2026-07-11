@@ -1,6 +1,8 @@
 import { createRouter, RouterProvider, createRootRoute, createRoute, Outlet } from "@tanstack/react-router";
 import { DashboardPage } from "./routes/index";
 import { LoginPage } from "./routes/login";
+import { TraceListPage } from "./routes/traces/index";
+import { TraceDetailPage } from "./routes/traces/$id";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 
@@ -36,8 +38,25 @@ const indexRoute = createRoute({
   component: DashboardPage,
 });
 
+// /traces — list (protected).
+const tracesRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/traces",
+  component: TraceListPage,
+});
+
+// /traces/$id — detail (protected).
+const traceDetailRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/traces/$id",
+  component: TraceDetailPage,
+});
+
 const router = createRouter({
-  routeTree: rootRoute.addChildren([loginRoute, protectedRoute.addChildren([indexRoute])]),
+  routeTree: rootRoute.addChildren([
+    loginRoute,
+    protectedRoute.addChildren([indexRoute, tracesRoute, traceDetailRoute]),
+  ]),
   defaultPreload: false,
 });
 
