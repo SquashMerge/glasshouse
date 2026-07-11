@@ -2,14 +2,24 @@ import { Hono } from "hono";
 import { openapiApp } from "./openapi.js";
 import { handleHealth } from "./routes/health.js";
 import { basicAuthMiddleware } from "./middleware/auth.js";
+import { securityHeaders } from "./middleware/security-headers.js";
+import { bodySizeLimit } from "./middleware/body-size.js";
 import { loginRoute, handleLogin } from "./routes/auth.js";
 import { handleOtlpIngest } from "./routes/otlp.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
+const MAX_BODY_BYTES = Number(process.env.API_MAX_BODY_BYTES ?? 1_048_576); // 1 MiB
 
 // Build the API as a small Hono app so we can mount auth middleware cleanly
 // around /v1/* before delegating to OpenAPIHono (which has the typed routes).
 const apiApp = new Hono();
+
+// Security headers (applied to ALL responses, public + auth-gated).
+apiApp.use(securityHeaders());
+
+// Body size limit (1 MiB by default; raise via API_MAX_BODY_BYTES env).
+// Applied BEFORE auth so unauth'd large payloads don't waste auth work.
+apiApp.use(bodySizeLimit(MAX_BODY_BYTES));
 
 // Public routes (no auth): health checks + OpenAPI doc + Scalar UI
 apiApp.get("/health", (c) => handleHealth());

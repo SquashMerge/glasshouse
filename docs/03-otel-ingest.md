@@ -82,6 +82,20 @@ sdk.start();
 
 Where `parseOtlpHeaders` is a small helper that splits the `k=v,k2=v2` string into a `Record<string, string>`.
 
+## Redacting sensitive data
+
+Astraea stores `input_text`, `output_text`, and a `metadata` JSON column of raw OTLP attributes. If your agents send PII or other sensitive data through the trace pipeline, configure redaction on the server side (set in the api container's env / compose env / .env):
+
+```sh
+# Replace input_text + output_text with "[REDACTED]" before persistence
+ASTRAEA_REDACT_INPUT=true
+
+# Strip these keys from the metadata column entirely (e.g. user emails, IPs)
+ASTRAEA_REDACT_KEYS=user.email,user.ip,http.url
+```
+
+Both flags default to off (dev-friendly). In production we recommend `ASTRAEA_REDACT_INPUT=true` and a curated `ASTRAEA_REDACT_KEYS` list.
+
 ## What gets captured
 
 Astraea accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normalized into:

@@ -31,8 +31,13 @@ export async function handleListTraces(c: Context): Promise<Response> {
     time_from: c.req.query("filter[time.from]") ?? undefined,
     time_to: c.req.query("filter[time.to]") ?? undefined,
   };
-  const { items, total } = await listTraces(defaultClient(), filters, limit, offset);
-  return c.json({ items, total });
+  try {
+    const { items, total } = await listTraces(defaultClient(), filters, limit, offset);
+    return c.json({ items, total });
+  } catch (err) {
+    console.error("GET /v1/traces failed:", (err as Error).message);
+    return c.json({ code: "INTERNAL", message: "Query failed; check server logs" }, 500);
+  }
 }
 
 // GET /v1/traces/{id}
@@ -65,11 +70,16 @@ export const getTraceRoute = createRoute({
 
 export async function handleGetTrace(c: Context): Promise<Response> {
   const traceId = c.req.valid("param").id as string;
-  const { trace, observations } = await getTrace(defaultClient(), traceId);
-  if (!trace) {
-    return c.json({ code: "NOT_FOUND", message: `Trace ${traceId} not found` }, 404);
+  try {
+    const { trace, observations } = await getTrace(defaultClient(), traceId);
+    if (!trace) {
+      return c.json({ code: "NOT_FOUND", message: `Trace ${traceId} not found` }, 404);
+    }
+    return c.json({ trace, observations });
+  } catch (err) {
+    console.error("GET /v1/traces/{id} failed:", (err as Error).message);
+    return c.json({ code: "INTERNAL", message: "Query failed; check server logs" }, 500);
   }
-  return c.json({ trace, observations });
 }
 
 // GET /v1/traces/search
@@ -99,6 +109,11 @@ export async function handleSearchTraces(c: Context): Promise<Response> {
     time_to: c.req.query("filter[time.to]") ?? undefined,
     sort: c.req.query("sort") ?? "start_time:desc",
   };
-  const { items, total } = await searchTraces(defaultClient(), q, limit, offset);
-  return c.json({ items, total });
+  try {
+    const { items, total } = await searchTraces(defaultClient(), q, limit, offset);
+    return c.json({ items, total });
+  } catch (err) {
+    console.error("GET /v1/traces/search failed:", (err as Error).message);
+    return c.json({ code: "INTERNAL", message: "Query failed; check server logs" }, 500);
+  }
 }

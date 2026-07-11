@@ -1,9 +1,10 @@
 // AuthGate — wraps protected routes. Checks localStorage on mount, redirects
-// to /login if absent. Renders children otherwise.
+// to /login if absent. Also listens for `astraea:auth-invalid` events (fired
+// by authedFetch on a 401 response) and routes to /login on those too.
 
 import * as React from "react";
-import { createRoute, useNavigate } from "@tanstack/react-router";
-import { getCredentials } from "../lib/auth";
+import { useNavigate } from "@tanstack/react-router";
+import { getCredentials, onAuthInvalid } from "../lib/auth";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -16,6 +17,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     } else {
       setReady(true);
     }
+
+    const off = onAuthInvalid(() => {
+      navigate({ to: "/login" });
+    });
+    return off;
   }, [navigate]);
 
   if (!ready) {
