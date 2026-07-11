@@ -74,6 +74,31 @@ Implementation is in progress. The MVP foundation ships via the factory run `pha
 
 On Apple Silicon (M-series) the ClickHouse image is pinned to `platform: linux/amd64` for compatibility.
 
+#### Option A — automatic install via asdf
+
+If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins every dev tool at the version the project was built against:
+
+```
+bun 1.1.42
+nodejs 22.10.2
+uv 0.5.11
+postgres 16.6
+redis 7.4.1
+clickhouse 24.10
+```
+
+Run once after cloning:
+
+```sh
+make setup-tools
+```
+
+This installs asdf plugins for every tool and installs the pinned versions. Re-run anytime `.tool-versions` changes.
+
+#### Option B — install manually
+
+If you don't use asdf, install the tools above with your platform's package manager. `make doctor` checks the minimum versions.
+
 ### `make dev`
 
 Brings up the full stack (Postgres + ClickHouse + Redis + Hono API + Vite web) with healthchecks and waits for all services to be ready. Bootstraps the control plane at `.opencode/factory/`.
