@@ -199,10 +199,10 @@ function dedupByKey<T>(items: T[], keyOf: (item: T) => string): T[] {
 }
 
 /**
- * Append-only SSE items buffer with a `requestAnimationFrame`-style coalesce:
- * we flush the buffer into React state at most once per `minIntervalMs` (the
- * slice 4 real hook will use `requestAnimationFrame` directly; this version
- * uses `setTimeout` for the stub so jsdom's fake timers behave deterministically).
+ * Append-only buffer for SSE items with a `minIntervalMs` coalesce.
+ * Flushes the buffer into React state at most once per window so a burst
+ * produces ~1 state update instead of N. Uses `setTimeout` (not RAF) so
+ * it works under jsdom test renders.
  */
 function useCoalescedStream<T>(minIntervalMs = 100) {
   const [items, setItems] = React.useState<T[]>([]);
@@ -316,7 +316,9 @@ function useTracesData() {
   const sse = useEventSource("/v1/traces/events", {
     enabled,
     onMessage: (msg) => {
-      const event = msg.data as TraceEvent;
+      // Wire format: `data: JSON.stringify({ trace: <TraceRow> })`.
+      // The detail-page hook (`useTraceStream`) reads the same wrapped shape.
+      const { trace: event } = msg.data as { trace: TraceEvent };
       const row: TraceRow = {
         trace_id: event.trace_id,
         project_id: event.project_id ?? "",
@@ -575,8 +577,13 @@ function useSpansData() {
   const sse = useEventSource("/v1/observations/events", {
     enabled,
     onMessage: (msg) => {
-      const event = msg.data as ObservationEvent;
-      const md = event.metadataParsed ?? null;
+      // Wire format: `data: JSON.stringify({ observation: <ObservationRow>, metadataParsed })`.
+      // The detail-page hook (`useTraceStream`) reads the same wrapped shape.
+      const { observation: event, metadataParsed } = msg.data as {
+        observation: ObservationEvent;
+        metadataParsed: ObservationEvent["metadataParsed"];
+      };
+      const md = metadataParsed ?? null;
       const row: ObservationRow = {
         observation_id: event.observation_id,
         trace_id: event.trace_id,

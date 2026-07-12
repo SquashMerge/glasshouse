@@ -143,9 +143,10 @@ describe("TracesTab — SSE merge + highlight", () => {
 
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
-    // Push one event through the mocked SSE.
+    // Push one event through the mocked SSE. Wire format wraps the row:
+    // `data: JSON.stringify({ trace: <TraceRow> })`.
     act(() => {
-      pushEvent!({ event: "trace", data: makeTraceEvent({ name: "first.call" }) });
+      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "first.call" }) } });
     });
 
     // Wait for the row to appear (the coalesce flush is 100ms).
@@ -170,13 +171,13 @@ describe("TracesTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!({ event: "trace", data: makeTraceEvent({ name: "dup.call" }) });
+      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "dup.call" }) } });
     });
     // Allow the first flush + render.
     await screen.findByText("dup.call");
 
     act(() => {
-      pushEvent!({ event: "trace", data: makeTraceEvent({ name: "dup.call" }) });
+      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "dup.call" }) } });
     });
 
     // Wait briefly for any second render to land, then assert single row.
@@ -190,7 +191,7 @@ describe("TracesTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!({ event: "trace", data: makeTraceEvent({ trace_id: TRACE_ID, name: "clickable" }) });
+      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ trace_id: TRACE_ID, name: "clickable" }) } });
     });
 
     const cell = await screen.findByText("clickable");
@@ -213,7 +214,7 @@ describe("TracesTab — SSE merge + highlight", () => {
     act(() => {
       pushEvent!({
         event: "trace",
-        data: makeTraceEvent({ trace_id: "c".repeat(32), name: "counter-one" }),
+        data: { trace: makeTraceEvent({ trace_id: "c".repeat(32), name: "counter-one" }) },
       });
     });
 

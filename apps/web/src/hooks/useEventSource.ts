@@ -163,21 +163,18 @@ export function useEventSource<T = unknown>(
     const batch = bufferRef.current;
     bufferRef.current = [];
     if (batch.length === 0) return;
-    // Drain the batch. The hook only updates `lastEventAt` once per flush to
-    // keep React render frequency bounded to ~10 Hz under load.
     const cb = onMessageRef.current;
     for (const msg of batch) cb(msg);
   }, []);
 
   const scheduleFlush = React.useCallback(() => {
-    if (rafIdRef.current !== null) return; // already pending
+    if (rafIdRef.current !== null) return;
     const now = typeof performance !== "undefined" ? performance.now() : Date.now();
     const elapsed = now - lastFlushAtRef.current;
     if (elapsed >= COALESCE_WINDOW_MS) {
-      // Eligible to flush on the next RAF.
       rafIdRef.current = requestAnimationFrame(flushBuffer);
     } else {
-      // Still inside the coalesce window — schedule a RAF that re-checks.
+      // Still inside the coalesce window — re-check on the next RAF.
       rafIdRef.current = requestAnimationFrame(() => {
         rafIdRef.current = null;
         scheduleFlush();
@@ -233,9 +230,9 @@ export function useEventSource<T = unknown>(
         if (done) break;
         if (value) carry += decoder.decode(value, { stream: true });
 
-        // Split into SSE frames (separated by a blank line).
+        // Manual loop so we keep a trailing partial frame in `carry` for
+        // the next chunk.
         let splitIdx: number;
-        // Use a manual loop so we keep the trailing partial frame in `carry`.
         while ((splitIdx = carry.indexOf("\n\n")) !== -1) {
           const rawFrame = carry.slice(0, splitIdx);
           carry = carry.slice(splitIdx + 2);
