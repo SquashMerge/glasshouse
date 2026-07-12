@@ -7,7 +7,7 @@ import { SpansTab, type ObservationEvent } from "../../src/routes/observability"
 // --- Mocks -----------------------------------------------------------------
 
 const navigate = vi.fn();
-let pushEvent: ((data: unknown) => void) | null = null;
+let pushEvent: ((msg: { event: string; data: unknown }) => void) | null = null;
 
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
@@ -36,7 +36,10 @@ vi.mock("../../src/hooks/useEventSource", async () => {
     ...actual,
     useEventSource: (
       _url: string,
-      opts: { enabled?: boolean; onMessage?: (data: unknown) => void } = {},
+      opts: {
+        enabled?: boolean;
+        onMessage?: (msg: { event: string; data: unknown }) => void;
+      } = {},
     ) => {
       pushEvent = opts.onMessage ?? null;
       return {
@@ -103,7 +106,7 @@ describe("SpansTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!(makeSpanEvent({ name: "first-span" }));
+      pushEvent!({ event: "observation", data: makeSpanEvent({ name: "first-span" }) });
     });
 
     const cell = await screen.findByText("first-span");
@@ -118,7 +121,10 @@ describe("SpansTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!(makeSpanEvent({ observation_id: SPAN_ID, trace_id: TRACE_ID, name: "clickable-span" }));
+      pushEvent!({
+        event: "observation",
+        data: makeSpanEvent({ observation_id: SPAN_ID, trace_id: TRACE_ID, name: "clickable-span" }),
+      });
     });
 
     const cell = await screen.findByText("clickable-span");
@@ -138,8 +144,9 @@ describe("SpansTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!(
-        makeSpanEvent({
+      pushEvent!({
+        event: "observation",
+        data: makeSpanEvent({
           observation_id: SPAN_ID,
           name: "metadata-span",
           // metadataParsed overrides name/type/model without a second fetch.
@@ -149,7 +156,7 @@ describe("SpansTab — SSE merge + highlight", () => {
             type: "tool",
           },
         }),
-      );
+      });
     });
 
     // The Name column reads from metadataParsed.tool.name first.

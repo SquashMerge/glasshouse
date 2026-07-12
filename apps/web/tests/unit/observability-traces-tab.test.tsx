@@ -12,7 +12,7 @@ import type { TraceEvent } from "../../src/routes/observability";
 // from the router package, so we don't need a full router instance.
 
 const navigate = vi.fn();
-let pushEvent: ((data: unknown) => void) | null = null;
+let pushEvent: ((msg: { event: string; data: unknown }) => void) | null = null;
 
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
@@ -41,7 +41,10 @@ vi.mock("../../src/hooks/useEventSource", async () => {
     ...actual,
     useEventSource: (
       _url: string,
-      opts: { enabled?: boolean; onMessage?: (data: unknown) => void } = {},
+      opts: {
+        enabled?: boolean;
+        onMessage?: (msg: { event: string; data: unknown }) => void;
+      } = {},
     ) => {
       pushEvent = opts.onMessage ?? null;
       return {
@@ -109,7 +112,7 @@ describe("TracesTab — SSE merge + highlight", () => {
 
     // Push one event through the mocked SSE.
     act(() => {
-      pushEvent!(makeTraceEvent({ name: "first.call" }));
+      pushEvent!({ event: "trace", data: makeTraceEvent({ name: "first.call" }) });
     });
 
     // Wait for the row to appear (the coalesce flush is 100ms).
@@ -134,13 +137,13 @@ describe("TracesTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!(makeTraceEvent({ name: "dup.call" }));
+      pushEvent!({ event: "trace", data: makeTraceEvent({ name: "dup.call" }) });
     });
     // Allow the first flush + render.
     await screen.findByText("dup.call");
 
     act(() => {
-      pushEvent!(makeTraceEvent({ name: "dup.call" }));
+      pushEvent!({ event: "trace", data: makeTraceEvent({ name: "dup.call" }) });
     });
 
     // Wait briefly for any second render to land, then assert single row.
@@ -154,7 +157,7 @@ describe("TracesTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!(makeTraceEvent({ trace_id: TRACE_ID, name: "clickable" }));
+      pushEvent!({ event: "trace", data: makeTraceEvent({ trace_id: TRACE_ID, name: "clickable" }) });
     });
 
     const cell = await screen.findByText("clickable");
@@ -175,7 +178,10 @@ describe("TracesTab — SSE merge + highlight", () => {
 
     // One SSE event → merged.length = 1, paginated.total = 0, streamed.length = 1.
     act(() => {
-      pushEvent!(makeTraceEvent({ trace_id: "c".repeat(32), name: "counter-one" }));
+      pushEvent!({
+        event: "trace",
+        data: makeTraceEvent({ trace_id: "c".repeat(32), name: "counter-one" }),
+      });
     });
 
     await screen.findByText("counter-one");

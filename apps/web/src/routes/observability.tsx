@@ -263,8 +263,8 @@ function useTracesData() {
 
   useEventSource("/v1/traces/events", {
     enabled,
-    onMessage: (raw) => {
-      const event = raw as TraceEvent;
+    onMessage: (msg) => {
+      const event = msg.data as TraceEvent;
       const row: TraceRow = {
         trace_id: event.trace_id,
         project_id: event.project_id ?? "",
@@ -519,8 +519,8 @@ function useSpansData() {
 
   useEventSource("/v1/observations/events", {
     enabled,
-    onMessage: (raw) => {
-      const event = raw as ObservationEvent;
+    onMessage: (msg) => {
+      const event = msg.data as ObservationEvent;
       const md = event.metadataParsed ?? null;
       const row: ObservationRow = {
         observation_id: event.observation_id,
