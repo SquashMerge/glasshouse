@@ -1,4 +1,3 @@
-import * as React from "react";
 import { LuCalendar, LuChevronDown } from "react-icons/lu";
 import { Input } from "./ui/input";
 import { cn } from "../lib/utils";
