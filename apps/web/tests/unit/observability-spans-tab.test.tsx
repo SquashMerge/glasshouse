@@ -32,6 +32,7 @@ vi.mock("../../src/hooks/useEventSource", async () => {
   const actual = await vi.importActual<typeof import("../../src/hooks/useEventSource")>(
     "../../src/hooks/useEventSource",
   );
+  type ReconnectFn = (opts?: { pause?: boolean }) => void;
   return {
     ...actual,
     useEventSource: (
@@ -42,11 +43,21 @@ vi.mock("../../src/hooks/useEventSource", async () => {
       } = {},
     ) => {
       pushEvent = opts.onMessage ?? null;
+      let paused = false;
+      const reconnect: ReconnectFn = (next) => {
+        if (next?.pause !== undefined) paused = next.pause;
+      };
       return {
-        status: opts.enabled === false ? "closed" : "open",
-        paused: false,
-        lastEventAt: null,
-        reconnect: () => {},
+        get status(): "connecting" | "open" | "closed" {
+          return opts.enabled === false ? "closed" : "open";
+        },
+        get paused(): boolean {
+          return paused;
+        },
+        get lastEventAt(): number | null {
+          return paused ? null : Date.now();
+        },
+        reconnect,
       };
     },
   };
@@ -166,5 +177,13 @@ describe("SpansTab — SSE merge + highlight", () => {
     // The Type badge shows "tool" (overridden by metadataParsed.type).
     const badges = screen.getAllByText("tool");
     expect(badges.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders a Live pill + Pause button on the SpansTab header", async () => {
+    renderWithQueryClient(<SpansTab />);
+    const header = await screen.findByTestId("live-tab-header");
+    expect(header.getAttribute("data-state")).toBe("live");
+    expect(screen.getByTestId("live-pill").textContent).toBe("Live");
+    expect(screen.getByTestId("live-pause-button")).toBeInTheDocument();
   });
 });

@@ -3,12 +3,13 @@ import { useNavigate, useLocation } from "@tanstack/react-router";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { LuActivity, LuListTree } from "react-icons/lu";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import {
   FilterableTable,
   type ColumnDef,
   type FilterFieldDef,
 } from "../components/FilterableTable";
-import { Badge } from "../components/ui/badge";
 import {
   listTraces,
   listObservations,
@@ -18,8 +19,54 @@ import {
   type ObservationRow,
 } from "../lib/api";
 import { defaultRange, toApiParams, type TimeRange } from "../components/TimeRangePicker";
-import { useEventSource } from "../hooks/useEventSource";
+import { useEventSource, type UseEventSourceResult } from "../hooks/useEventSource";
 type Tab = "traces" | "spans";
+
+/**
+ * `LiveTabHeader` — small UX strip rendered in `FilterableTable.headerActions`.
+ * Shows a colored pill for the SSE pipe state + Pause/Resume. Three visible
+ * states from `useEventSource`:
+ *   - status=open & !paused  → "Live" + Pause button
+ *   - status=open & paused   → "Paused" + Resume button
+ *   - status=closed & !paused → "Reconnecting" + Pause button
+ * `paused: false` on auto-hidden-close → Reconnecting (the auto-close path).
+ */
+function LiveTabHeader({ sse }: { sse: UseEventSourceResult }): React.ReactElement {
+  const label: { text: string; tone: "live" | "paused" | "reconnecting" } = (() => {
+    if (sse.paused) return { text: "Paused", tone: "paused" };
+    if (sse.status === "open") return { text: "Live", tone: "live" };
+    return { text: "Reconnecting", tone: "reconnecting" };
+  })();
+
+  const pillClass =
+    label.tone === "live"
+      ? "bg-green-500/15 text-green-700 dark:text-green-300 border-green-500/30"
+      : label.tone === "paused"
+        ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
+        : "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30";
+
+  return (
+    <div
+      className="flex items-center gap-2"
+      data-testid="live-tab-header"
+      data-state={label.tone}
+      aria-live="polite"
+    >
+      <Badge variant="outline" className={`text-[10px] font-mono uppercase tracking-wider ${pillClass}`} data-testid="live-pill">
+        {label.text}
+      </Badge>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 text-xs"
+        onClick={() => sse.reconnect({ pause: !sse.paused })}
+        data-testid={sse.paused ? "live-resume-button" : "live-pause-button"}
+      >
+        {sse.paused ? "Resume" : "Pause"}
+      </Button>
+    </div>
+  );
+}
 
 const VALID_TABS = new Set<Tab>(["traces", "spans"]);
 
@@ -215,10 +262,15 @@ function useTracesData() {
   }, [filters, timeRange]);
 
   const apiParams = React.useMemo(
-    () => ({ ...buildTraceApiParams(debouncedFilters, debouncedTimeRange), limit: PAGE_SIZE }),
+    () => buildTraceApiParams(debouncedFilters, debouncedTimeRange),
     [debouncedFilters, debouncedTimeRange],
   );
 
+  // SSE-only live updates — no `refetchInterval` polling. The hook below
+  // returns `{status, paused, lastEventAt, reconnect}` for the Live/Pause UX.
+  // If the SSE pipe is closed for too long the user sees a "Reconnecting" pill;
+  // the only "fallback" is for the user to hit Refresh or wait for SSE to
+  // reconnect (the hook handles exponential backoff).
   const query = useInfiniteQuery({
     queryKey: ["traces", apiParams],
     queryFn: ({ pageParam = 0 }) => listTraces({ ...(apiParams as ListTracesParams), offset: pageParam as number }),
@@ -227,7 +279,6 @@ function useTracesData() {
       const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
       return loaded < lastPage.total ? loaded : undefined;
     },
-    refetchInterval: 10_000,
   });
 
   const paginated = React.useMemo(
@@ -249,8 +300,9 @@ function useTracesData() {
   const [highlightedKeys, setHighlightedKeys] = React.useState<Set<string>>(new Set());
 
   // Visibility-aware: only subscribe to the SSE feed while the tab is visible.
-  // The stub for `useEventSource` returns closed unconditionally; the real
-  // hook (slice 4) reads `enabled` to skip subscribe work and disconnect.
+  // The real `useEventSource` hook reads `enabled` to skip subscribe work and
+  // disconnect. The hook's return value drives the Live/Pause/Reconnecting
+  // indicator in the table header.
   const [enabled, setEnabled] = React.useState<boolean>(() =>
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
   );
@@ -261,7 +313,7 @@ function useTracesData() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  useEventSource("/v1/traces/events", {
+  const sse = useEventSource("/v1/traces/events", {
     enabled,
     onMessage: (msg) => {
       const event = msg.data as TraceEvent;
@@ -315,6 +367,7 @@ function useTracesData() {
     setFilters,
     timeRange,
     setTimeRange,
+    sse,
   };
 }
 
@@ -326,6 +379,7 @@ export function TracesTab() {
   return (
     <FilterableTable<TraceRow>
       title="Traces"
+      headerActions={<LiveTabHeader sse={data.sse} />}
       noun={{ singular: "trace", plural: "traces" }}
       emptyHint={
         <>
@@ -481,6 +535,8 @@ function useSpansData() {
     [debouncedFilters, debouncedTimeRange],
   );
 
+  // SSE-only live updates — no `refetchInterval` polling. The hook returns
+  // `{status, paused, lastEventAt, reconnect}` for the Live/Pause UX.
   const query = useInfiniteQuery({
     queryKey: ["observations", apiParams],
     queryFn: ({ pageParam = 0 }) => listObservations({ ...(apiParams as ListObservationsParams), offset: pageParam as number }),
@@ -489,7 +545,6 @@ function useSpansData() {
       const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
       return loaded < lastPage.total ? loaded : undefined;
     },
-    refetchInterval: 10_000,
   });
 
   const paginated = React.useMemo(
@@ -517,7 +572,7 @@ function useSpansData() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  useEventSource("/v1/observations/events", {
+  const sse = useEventSource("/v1/observations/events", {
     enabled,
     onMessage: (msg) => {
       const event = msg.data as ObservationEvent;
@@ -570,6 +625,7 @@ function useSpansData() {
     setFilters,
     timeRange,
     setTimeRange,
+    sse,
   };
 }
 
@@ -581,6 +637,7 @@ export function SpansTab() {
   return (
     <FilterableTable<ObservationRow>
       title="Spans"
+      headerActions={<LiveTabHeader sse={data.sse} />}
       noun={{ singular: "span", plural: "spans" }}
       emptyHint={
         <>
