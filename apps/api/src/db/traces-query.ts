@@ -50,12 +50,6 @@ export interface TraceListFilters {
   input_text?: string;  // substring (case-insensitive) on input_text
 }
 
-export interface TraceSearchQuery extends TraceListFilters {
-  q?: string;
-  sort?: string;        // "start_time:desc" | "start_time:asc" | "duration_ms:desc" | ...
-  expand?: string;      // comma-separated, currently unused (deferred)
-}
-
 export interface ObservationListFilters {
   project_id?: string;
   agent_id?: string;
@@ -258,48 +252,6 @@ export async function listObservations(
 
   const totalResult = await client.query({
     query: `SELECT count() AS total FROM observations ${whereClause}`,
-    query_params: params,
-    format: "JSONEachRow",
-  });
-  const totalRows = (await totalResult.json()) as Array<{ total: string | number }>;
-  const total = totalRows.length > 0 ? Number(totalRows[0].total) : 0;
-
-  return { items, total };
-}
-
-export async function searchTraces(
-  client: ClickHouseClient,
-  query: TraceSearchQuery,
-  limit: number,
-  offset: number,
-): Promise<{ items: TraceRow[]; total: number }> {
-  const filters: TraceListFilters = query;
-  const params: Record<string, unknown> = { limit, offset };
-  const where: string[] = [];
-  if (query.q && query.q.length > 0) {
-    where.push("(positionCaseInsensitiveUTF8(input_text, {q: String}) > 0 OR positionCaseInsensitiveUTF8(output_text, {q: String}) > 0)");
-    params.q = query.q;
-  }
-  const baseClause = buildWhere(filters, params);
-  const whereClause = baseClause
-    ? `${baseClause} AND ${where.join(" AND ")}`
-    : (where.length > 0 ? `WHERE ${where.join(" AND ")}` : "");
-
-  // Sort: defaults to start_time:desc.
-  let orderBy = "ORDER BY start_time DESC";
-  if (query.sort === "start_time:asc") orderBy = "ORDER BY start_time ASC";
-  else if (query.sort === "duration_ms:desc") orderBy = "ORDER BY duration_ms DESC";
-  else if (query.sort === "duration_ms:asc") orderBy = "ORDER BY duration_ms ASC";
-
-  const itemsResult = await client.query({
-    query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause} ${orderBy} LIMIT {limit: Int32} OFFSET {offset: Int32}`,
-    query_params: params,
-    format: "JSONEachRow",
-  });
-  const items = (await itemsResult.json()) as TraceRow[];
-
-  const totalResult = await client.query({
-    query: `SELECT count() AS total FROM traces ${whereClause}`,
     query_params: params,
     format: "JSONEachRow",
   });
