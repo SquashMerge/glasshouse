@@ -56,12 +56,29 @@ function buildQs(params: Record<string, string | number | undefined | null>): st
   return s ? `?${s}` : "";
 }
 
-export async function listTraces(params: { limit?: number; offset?: number; env?: string; agent_id?: string } = {}): Promise<TraceListResponse> {
+export interface ListTracesParams {
+  limit?: number;
+  offset?: number;
+  env?: string;
+  agent_id?: string;
+  name?: string;
+  status?: string;
+  duration?: string;
+  scores?: string;
+  input_text?: string;
+}
+
+export async function listTraces(params: ListTracesParams = {}): Promise<TraceListResponse> {
   const qs = buildQs({
     limit: params.limit,
     offset: params.offset,
     "filter[env]": params.env,
     "filter[agent_id]": params.agent_id,
+    "filter[name]": params.name,
+    "filter[status]": params.status,
+    "filter[duration]": params.duration,
+    "filter[scores]": params.scores,
+    "filter[input_text]": params.input_text,
   });
   const res = await authedFetch(`/v1/traces${qs}`);
   if (!res.ok) throw new Error(`listTraces ${res.status}`);

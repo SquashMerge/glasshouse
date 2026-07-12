@@ -20,12 +20,18 @@ export const listTraces = createRoute({
 export async function handleListTraces(c: Context): Promise<Response> {
   const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
   const offset = Math.max(Number(c.req.query("offset") ?? "0"), 0);
+  const q = c.req.query("filter[q]");
   const filters = {
     project_id: c.req.query("filter[project_id]") ?? undefined,
     agent_id: c.req.query("filter[agent_id]") ?? undefined,
     env: c.req.query("filter[env]") ?? undefined,
     time_from: c.req.query("filter[time.from]") ?? undefined,
     time_to: c.req.query("filter[time.to]") ?? undefined,
+    name: c.req.query("filter[name]") ?? undefined,
+    status: c.req.query("filter[status]") ?? undefined,
+    duration: c.req.query("filter[duration]") ?? undefined,
+    scores: c.req.query("filter[scores]") ?? undefined,
+    input_text: q ?? c.req.query("filter[input_text]") ?? undefined,
   };
   try {
     const { items, total } = await queryListTraces(defaultClient(), filters, limit, offset);

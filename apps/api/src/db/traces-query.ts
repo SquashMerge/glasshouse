@@ -43,6 +43,11 @@ export interface TraceListFilters {
   env?: string;
   time_from?: string;   // ISO datetime
   time_to?: string;
+  name?: string;        // substring (case-insensitive) on the trace name
+  status?: string;      // exact: "ok" | "error"
+  duration?: string;    // "<500" | ">100" | "500" (exact ms)
+  scores?: string;      // substring (case-insensitive) on scores_summary
+  input_text?: string;  // substring (case-insensitive) on input_text
 }
 
 export interface TraceSearchQuery extends TraceListFilters {
@@ -61,14 +66,8 @@ function defaultClient(): ClickHouseClient {
   return ch();
 }
 
-export async function listTraces(
-  client: ClickHouseClient,
-  filters: TraceListFilters,
-  limit: number,
-  offset: number,
-): Promise<{ items: TraceRow[]; total: number }> {
+function buildWhere(filters: TraceListFilters, params: Record<string, unknown>): string {
   const where: string[] = [];
-  const params: Record<string, unknown> = { limit, offset };
   if (filters.project_id) {
     where.push("project_id = {project_id: String}");
     params.project_id = filters.project_id;
@@ -89,7 +88,44 @@ export async function listTraces(
     where.push("start_time <= {time_to: DateTime64(3)}");
     params.time_to = filters.time_to;
   }
-  const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  if (filters.name && filters.name.length > 0) {
+    where.push("positionCaseInsensitiveUTF8(name, {name: String}) > 0");
+    params.name = filters.name;
+  }
+  if (filters.status && filters.status.length > 0) {
+    where.push("status = {status: String}");
+    params.status = filters.status;
+  }
+  if (filters.duration && filters.duration.length > 0) {
+    const d = filters.duration.trim();
+    const m = /^(<=|<|>=|>|=)?\s*(\d+(?:\.\d+)?)$/.exec(d);
+    if (m) {
+      const op = m[1] ?? "=";
+      const num = Number(m[2]);
+      const safeOp = op === "=" ? "=" : op; // ClickHouse accepts all four
+      where.push(`duration_ms ${safeOp} {duration_ms: UInt32}`);
+      params.duration_ms = num;
+    }
+  }
+  if (filters.scores && filters.scores.length > 0) {
+    where.push("positionCaseInsensitiveUTF8(scores_summary, {scores: String}) > 0");
+    params.scores = filters.scores;
+  }
+  if (filters.input_text && filters.input_text.length > 0) {
+    where.push("positionCaseInsensitiveUTF8(input_text, {input_text: String}) > 0");
+    params.input_text = filters.input_text;
+  }
+  return where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+}
+
+export async function listTraces(
+  client: ClickHouseClient,
+  filters: TraceListFilters,
+  limit: number,
+  offset: number,
+): Promise<{ items: TraceRow[]; total: number }> {
+  const params: Record<string, unknown> = { limit, offset };
+  const whereClause = buildWhere(filters, params);
 
   const itemsResult = await client.query({
     query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause} ORDER BY start_time DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
@@ -135,36 +171,17 @@ export async function searchTraces(
   limit: number,
   offset: number,
 ): Promise<{ items: TraceRow[]; total: number }> {
-  // For full-text, use positionCaseInsensitiveUTF8 against input_text + output_text.
-  // tokenbf_v1 indexes (set up in infra/db/clickhouse/0001_traces.sql) accelerate this.
   const filters: TraceListFilters = query;
-  const where: string[] = [];
   const params: Record<string, unknown> = { limit, offset };
+  const where: string[] = [];
   if (query.q && query.q.length > 0) {
     where.push("(positionCaseInsensitiveUTF8(input_text, {q: String}) > 0 OR positionCaseInsensitiveUTF8(output_text, {q: String}) > 0)");
     params.q = query.q;
   }
-  if (filters.project_id) {
-    where.push("project_id = {project_id: String}");
-    params.project_id = filters.project_id;
-  }
-  if (filters.agent_id) {
-    where.push("agent_id = {agent_id: String}");
-    params.agent_id = filters.agent_id;
-  }
-  if (filters.env) {
-    where.push("env = {env: String}");
-    params.env = filters.env;
-  }
-  if (filters.time_from) {
-    where.push("start_time >= {time_from: DateTime64(3)}");
-    params.time_from = filters.time_from;
-  }
-  if (filters.time_to) {
-    where.push("start_time <= {time_to: DateTime64(3)}");
-    params.time_to = filters.time_to;
-  }
-  const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const baseClause = buildWhere(filters, params);
+  const whereClause = baseClause
+    ? `${baseClause} AND ${where.join(" AND ")}`
+    : (where.length > 0 ? `WHERE ${where.join(" AND ")}` : "");
 
   // Sort: defaults to start_time:desc.
   let orderBy = "ORDER BY start_time DESC";
