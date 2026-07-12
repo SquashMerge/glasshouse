@@ -1,6 +1,3 @@
-// /traces — list page. TanStack Table with columns: time, name, agent, status,
-// duration, score, input excerpt. Row click navigates to /traces/:id.
-
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createRoute, useNavigate } from "@tanstack/react-router";

@@ -1,6 +1,3 @@
-// /traces/:id — detail page. Header card with trace metadata + nested span
-// tree + Tabs for Input/Output/Details.
-
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createRoute, useParams } from "@tanstack/react-router";

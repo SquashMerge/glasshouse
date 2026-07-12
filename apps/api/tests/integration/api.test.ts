@@ -1,10 +1,5 @@
-// Integration tests for the full request/response flow.
-// Uses Hono's app.request() to test the composed apiApp end-to-end without
-// a real server. ClickHouse and Postgres are mocked via module replacement.
-
 import { describe, it, expect, beforeAll, mock } from "bun:test";
 
-// Mock the db writer so we can assert calls without hitting ClickHouse.
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
@@ -15,7 +10,6 @@ mock.module("../src/db/traces-writer", () => ({
   defaultClient,
 }));
 
-// Re-import after mocking
 const { default: apiApp } = await import("../src/index");
 
 const USER = "astraea";
@@ -189,7 +183,6 @@ describe("API integration: OTLP ingest", () => {
         }),
       );
       expect(res.status).toBe(200);
-      // The first call's first argument is the array of trace rows.
       const traces = insertTraces.mock.calls[0]?.[0] as Array<{ input_text: string }>;
       expect(traces[0]?.input_text).toBe("[REDACTED]");
     } finally {
@@ -209,7 +202,6 @@ describe("API integration: OTLP ingest", () => {
     expect(res.status).toBe(500);
     const body = (await res.json()) as { code: string; message: string };
     expect(body.code).toBe("INTERNAL");
-    // Body must NOT contain the internal error string.
     expect(body.message).not.toContain("Connection refused");
     expect(body.message).not.toContain("10.0.0.1");
   });

@@ -1,6 +1,3 @@
-// Unit tests for the OTLP request schema (Zod validation).
-// Verifies that valid payloads parse and invalid ones reject with typed errors.
-
 import { describe, it, expect } from "bun:test";
 import { ExportTraceServiceRequest, ExportTraceServiceResponse, Span } from "../../src/schemas/otlp";
 

@@ -48,7 +48,6 @@ describe("SpanTree", () => {
     expect(screen.getByText("root")).toBeInTheDocument();
     expect(screen.getByText("child1")).toBeInTheDocument();
     expect(screen.getByText("child2")).toBeInTheDocument();
-    // Root summary should mention 2 children
     expect(screen.getByText(/2 children/i)).toBeInTheDocument();
   });
 

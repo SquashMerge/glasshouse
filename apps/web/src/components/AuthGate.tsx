@@ -1,7 +1,3 @@
-// AuthGate — wraps protected routes. Checks localStorage on mount, redirects
-// to /login if absent. Also listens for `astraea:auth-invalid` events (fired
-// by authedFetch on a 401 response) and routes to /login on those too.
-
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { getCredentials, onAuthInvalid } from "../lib/auth";

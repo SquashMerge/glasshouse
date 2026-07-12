@@ -1,16 +1,5 @@
-// Security headers middleware.
-// Applied to ALL routes (public + auth-gated). Sets:
-//   - X-Content-Type-Options: nosniff       (block MIME sniffing)
-//   - X-Frame-Options: DENY                  (block clickjacking iframes)
-//   - Referrer-Policy: no-referrer           (don't leak the API URL to upstream services)
-//   - Permissions-Policy: ...                (lock down powerful browser features)
-//   - X-DNS-Prefetch-Control: off            (don't prefetch DNS for links in responses)
-//
-// For production (post-MVP), also add via the edge proxy:
-//   - Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
-//   - Content-Security-Policy: default-src 'self'
-//   - Cross-Origin-Opener-Policy: same-origin
-//   - Cross-Origin-Resource-Policy: same-site
+// TODO(post-MVP): add Strict-Transport-Security, Content-Security-Policy,
+// Cross-Origin-Opener-Policy, Cross-Origin-Resource-Policy at the edge proxy.
 
 import type { MiddlewareHandler } from "hono";
 

@@ -1,10 +1,3 @@
-// Request body size limit middleware. Rejects requests with bodies larger
-// than `maxBytes` (default 1 MiB) with 413 Payload Too Large.
-//
-// The OTLP spec recommends exporters chunk large trace batches; a 1 MiB body
-// limit is plenty for a typical export (a few hundred spans).
-// Production deployments can raise this via env: `API_MAX_BODY_BYTES`.
-
 import type { MiddlewareHandler } from "hono";
 
 export function bodySizeLimit(maxBytes: number = 1_048_576): MiddlewareHandler {
@@ -19,28 +12,45 @@ export function bodySizeLimit(maxBytes: number = 1_048_576): MiddlewareHandler {
         );
       }
     }
-    // Belt-and-suspenders: enforce at the stream level for chunked transfer
-    // encoding (where Content-Length is absent).
-    let total = 0;
-    const reader = c.req.raw.body?.getReader();
-    if (reader) {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          total += value.byteLength;
-          if (total > maxBytes) {
-            try { await reader.cancel(); } catch { /* noop */ }
-            return c.json(
-              { code: "PAYLOAD_TOO_LARGE", message: `Request body exceeds ${maxBytes} bytes` },
-              413,
-            );
-          }
-        }
-      } finally {
-        try { reader.releaseLock(); } catch { /* noop */ }
-      }
+
+    const incoming = c.req.raw.body;
+    if (!incoming) {
+      await next();
+      return;
     }
+
+    // Buffer the body so we can enforce a size cap AND let the handler read it.
+    // Without this, chunked bodies (no Content-Length) get consumed here and the
+    // handler then fails with "Body already used".
+    const reader = incoming.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          try { await reader.cancel(); } catch { /* noop */ }
+          return c.json(
+            { code: "PAYLOAD_TOO_LARGE", message: `Request body exceeds ${maxBytes} bytes` },
+            413,
+          );
+        }
+        chunks.push(value);
+      }
+    } finally {
+      try { reader.releaseLock(); } catch { /* noop */ }
+    }
+
+    const buf = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buf.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    c.req.raw = new Request(c.req.raw, { body: buf });
+
     await next();
   };
 }

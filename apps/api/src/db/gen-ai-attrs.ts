@@ -1,6 +1,5 @@
 // Normalize OTLP span attributes into our internal Trace / Observation shape.
-// Extracts gen_ai.* (OpenTelemetry GenAI semantic conventions) and falls back
-// to OpenInference (Arize Phoenix) attributes when gen_ai.* is absent.
+// gen_ai.* (OTel GenAI semantic conventions) wins; OpenInference is the fallback.
 
 import type { Span } from "../schemas/otlp.js";
 
@@ -23,8 +22,6 @@ function attrNumber(attrs: Attribute[], key: string): number | undefined {
   return undefined;
 }
 
-// Normalized span (matches the existing apps/api/src/schemas/traces.ts Trace +
-// Observation shape).
 export interface NormalizedTrace {
   trace_id: string;
   name: string;
@@ -60,8 +57,13 @@ export interface NormalizedObservation {
 }
 
 function isoFromUnixNano(nano: number): string {
-  // OTLP timestamps are in nanoseconds since epoch; JS Date uses ms.
-  return new Date(Math.floor(nano / 1_000_000)).toISOString();
+  // OTLP timestamps are nanoseconds since epoch; JS Date is milliseconds.
+  // Format as `YYYY-MM-DD HH:MM:SS.fff` (UTC) — ClickHouse's JSONEachRow parser
+  // doesn't accept the ISO `T`/`Z` form for DateTime64.
+  const d = new Date(Math.floor(nano / 1_000_000));
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
 }
 
 function durationMs(startNano: number | undefined, endNano: number | undefined): number | null {
@@ -76,8 +78,7 @@ function scorePairsAsCsv(pairs: Array<[string, number]>): string {
 export function normalizeSpan(span: Span): { trace: NormalizedTrace; observation: NormalizedObservation } {
   const attrs = (span.attributes ?? []) as Attribute[];
 
-  // gen_ai.* first (R2: precedence over OpenInference).
-  // OpenInference fallback.
+  // gen_ai.* takes precedence over OpenInference.
   const agentId =
     attrString(attrs, "gen_ai.agent.id") ??
     attrString(attrs, "agent.id") ??
@@ -114,7 +115,6 @@ export function normalizeSpan(span: Span): { trace: NormalizedTrace; observation
     attrString(attrs, "output.value") ??
     "";
 
-  // Scores summary: token usage + response finish reason.
   const scorePairs: Array<[string, number]> = [];
   const inTok = attrNumber(attrs, "gen_ai.usage.input_tokens") ?? attrNumber(attrs, "llm.token_count.prompt");
   const outTok = attrNumber(attrs, "gen_ai.usage.output_tokens") ?? attrNumber(attrs, "llm.token_count.completion");
@@ -122,14 +122,11 @@ export function normalizeSpan(span: Span): { trace: NormalizedTrace; observation
   if (outTok !== undefined) scorePairs.push(["output_tokens", outTok]);
   const scoresCsv = scorePairsAsCsv(scorePairs);
 
-  // Span status.
   let status: "ok" | "error" = "ok";
   if (span.status?.code === 2) status = "error";
-  // OpenInference exception marker.
   const exc = attrs.find((a) => a.key === "exception.type");
   if (exc) status = "error";
 
-  // Tags: span kind + OpenInference span kind.
   const tags: string[] = [];
   if (span.kind !== undefined) tags.push(`span.kind:${span.kind}`);
   const oiKind = attrString(attrs, "openinference.span.kind");

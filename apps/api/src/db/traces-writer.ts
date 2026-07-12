@@ -1,13 +1,8 @@
-// ClickHouse batch-insert helpers for traces + observations.
-// Uses @clickhouse/client's `insert()` (HTTP native protocol).
-// Multi-row VALUES: (...), (...), (...) — single round-trip per request.
-
 import type { ClickHouseClient } from "@clickhouse/client";
 import { ch } from "./clickhouse.js";
 import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
 
 interface ClickHouseRow {
-  // Property names match the ClickHouse column names exactly.
   [key: string]: string | number | null | string[];
 }
 

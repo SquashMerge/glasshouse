@@ -1,7 +1,6 @@
 import * as React from "react";
 import { cn } from "../../lib/utils";
 
-// Minimal shadcn-style Tabs (Radix-free, controlled component).
 interface TabsContextValue {
   value: string;
   setValue: (v: string) => void;

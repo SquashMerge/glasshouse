@@ -1,6 +1,3 @@
-// Unit tests for the security-headers middleware.
-// Verifies all expected headers are present on every response.
-
 import { describe, it, expect } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../src/middleware/security-headers";
@@ -40,7 +37,6 @@ describe("securityHeaders", () => {
       return c.json({ ok: true });
     });
     const res = await app.request("/x");
-    // Handler's explicit header wins.
     expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
   });
 });

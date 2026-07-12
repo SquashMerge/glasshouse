@@ -1,15 +1,3 @@
-// OTLP HTTP/JSON receiver at /v1/otel/v1/traces.
-// Accepts ExportTraceServiceRequest, validates with Zod, normalizes each span
-// (gen_ai.* + OpenInference), batch-inserts to ClickHouse, returns empty success.
-//
-// Errors are returned as typed envelopes with no internal details (to avoid
-// leaking ClickHouse error strings / SQL / etc. to the client).
-// Internal errors are logged via console.error for operator visibility.
-//
-// Optional redaction (env-controlled): ASTRAEA_REDACT_INPUT=true replaces
-// input_text / output_text with "[REDACTED]"; ASTRAEA_REDACT_KEYS=key1,key2
-// strips those keys from the metadata column.
-
 import { createRoute } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "../schemas/common.js";
 import {
@@ -51,11 +39,11 @@ export const otlpIngestRoute = createRoute({
 });
 
 export async function handleOtlpIngest(req: Request): Promise<Response> {
-  // Parse + validate body.
   let bodyJson: unknown;
   try {
     bodyJson = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("OTLP body parse failed:", (err as Error).message);
     return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
   }
 
@@ -67,7 +55,6 @@ export async function handleOtlpIngest(req: Request): Promise<Response> {
   const request = parsed.data;
   const redaction = loadRedactionOptions();
 
-  // Flatten spans and normalize.
   const traces = new Map<string, ReturnType<typeof normalizeSpan>["trace"]>();
   const observations: ReturnType<typeof normalizeSpan>["observation"][] = [];
 
@@ -75,7 +62,6 @@ export async function handleOtlpIngest(req: Request): Promise<Response> {
     for (const ss of rs.scope_spans) {
       for (const span of ss.spans) {
         const { trace, observation } = normalizeSpan(span);
-        // Apply optional redaction (env-controlled).
         trace.input_text = redactTraceText(trace.input_text, redaction);
         trace.output_text = redactTraceText(trace.output_text, redaction);
         observation.input_text = trace.input_text;
@@ -87,13 +73,11 @@ export async function handleOtlpIngest(req: Request): Promise<Response> {
     }
   }
 
-  // Batch insert.
   const client = defaultClient();
   try {
     await insertTraces(client, [...traces.values()]);
     await insertObservations(client, observations);
   } catch (err) {
-    // Log internally; never echo internals to the client.
     console.error("OTLP insert failed:", (err as Error).message);
     return jsonError(500, "INTERNAL", "Failed to persist traces; check server logs");
   }

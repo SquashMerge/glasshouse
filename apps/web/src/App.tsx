@@ -6,19 +6,16 @@ import { TraceDetailPage } from "./routes/traces/$id";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 
-// Public root route — no shell, no auth gate.
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
 });
 
-// /login — public.
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
 });
 
-// Protected layout: shell + auth gate. All nested routes get this.
 const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "protected",
@@ -31,21 +28,18 @@ const protectedRoute = createRoute({
   ),
 });
 
-// /  — dashboard (protected).
 const indexRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/",
   component: DashboardPage,
 });
 
-// /traces — list (protected).
 const tracesRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/traces",
   component: TraceListPage,
 });
 
-// /traces/$id — detail (protected).
 const traceDetailRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/traces/$id",

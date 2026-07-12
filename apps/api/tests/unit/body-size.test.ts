@@ -1,6 +1,3 @@
-// Unit tests for the body-size limit middleware.
-// Verifies Content-Length rejection AND streaming rejection.
-
 import { describe, it, expect } from "bun:test";
 import { Hono } from "hono";
 import { bodySizeLimit } from "../src/middleware/body-size";
@@ -39,7 +36,6 @@ describe("bodySizeLimit", () => {
 
   it("rejects streaming bodies that exceed the limit (no Content-Length)", async () => {
     const app = buildApp();
-    // Build a body larger than SMALL_LIMIT (100) without setting Content-Length.
     const big = "x".repeat(500);
     const res = await app.request("/x", {
       method: "POST",

@@ -1,6 +1,3 @@
-// ClickHouse read helpers for the trace query API.
-// Backed by skip + bloom + tokenbf_v1 indexes per the design doc §10.
-
 import type { ClickHouseClient } from "@clickhouse/client";
 import { ch } from "./clickhouse.js";
 

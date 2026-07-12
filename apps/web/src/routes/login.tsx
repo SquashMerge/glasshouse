@@ -1,7 +1,3 @@
-// /login — dedicated login page. Prompts for Basic Auth credentials, validates
-// against the backend via POST /v1/auth/login, stores in localStorage on
-// success, redirects to /. shadcn Card + Input + Button throughout.
-
 import * as React from "react";
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";

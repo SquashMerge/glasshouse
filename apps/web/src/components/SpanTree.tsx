@@ -1,7 +1,3 @@
-// SpanTree — recursive tree component that builds a tree from a flat list of
-// observations (using parent_observation_id) and renders it with collapsible
-// <details> nodes per span. Uses shadcn Card + Badge for visual structure.
-
 import * as React from "react";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";

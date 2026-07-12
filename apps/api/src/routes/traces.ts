@@ -1,16 +1,9 @@
-// Real implementations of /v1/traces, /v1/traces/{id}, /v1/traces/search.
-// Backed by ClickHouse via apps/api/src/db/traces-query.ts.
-//
-// Exports use the short names (listTraces, getTrace, searchTraces) to match
-// the imports in apps/api/src/openapi.ts.
-
 import { createRoute } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { Trace, TraceList, TraceSearchQuery, TraceStubResponses } from "../schemas/traces.js";
 import { IdParam } from "../schemas/common.js";
 import { defaultClient, getTrace as queryGetTrace, listTraces as queryListTraces, searchTraces as querySearchTraces } from "../db/traces-query.js";
 
-// GET /v1/traces
 export const listTraces = createRoute({
   method: "get",
   path: "/v1/traces",
@@ -43,7 +36,6 @@ export async function handleListTraces(c: Context): Promise<Response> {
   }
 }
 
-// GET /v1/traces/{id}
 export const getTrace = createRoute({
   method: "get",
   path: "/v1/traces/{id}",
@@ -88,7 +80,6 @@ export async function handleGetTrace(c: Context): Promise<Response> {
   }
 }
 
-// GET /v1/traces/search
 export const searchTraces = createRoute({
   method: "get",
   path: "/v1/traces/search",

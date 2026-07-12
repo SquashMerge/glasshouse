@@ -1,13 +1,3 @@
-// Unit tests for the basic auth middleware.
-// Verifies:
-//   - missing header → 401 with WWW-Authenticate: Basic realm
-//   - wrong scheme → 401
-//   - wrong username → 401
-//   - wrong password → 401
-//   - correct creds → passes (next() called)
-//   - constant-time compare (length-padded to avoid timing leakage)
-//   - throws at construction if env vars unset (fail-fast)
-
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
 import { basicAuthMiddleware } from "../src/middleware/auth";

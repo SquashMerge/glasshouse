@@ -3,7 +3,7 @@ COMPOSE := docker compose --project-directory . --env-file infra/.env -f infra/c
 COMPOSE_DEPS := docker compose --project-directory . --env-file infra/.env -f infra/compose.deps.yaml
 COMPOSE_DEV := docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml -f infra/compose.override.yaml
 
-.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-web test-e2e test lint typecheck format install
+.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-web test-e2e test lint typecheck format install seed-traces seed-traces-reset
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -65,9 +65,10 @@ db-migrate: ## Apply Postgres migrations (idempotent)
 ch-schema: ## Apply ClickHouse schema (idempotent)
 	@for f in infra/db/clickhouse/*.sql; do \
 		echo "Applying $$f..."; \
-		$(COMPOSE) exec -T clickhouse clickhouse-client --multiquery < $$f || exit 1; \
+		$(COMPOSE) exec -T -e CLICKHOUSE_DB=$${CLICKHOUSE_DB:-astraea} clickhouse \
+			clickhouse-client --multiquery --database $${CLICKHOUSE_DB:-astraea} < $$f || exit 1; \
 	done
-	@echo "✓ ClickHouse schema applied."
+	@echo "✓ ClickHouse schema applied to $${CLICKHOUSE_DB:-astraea}."
 
 valkey-ping: ## Verify Valkey is up (Redis-compatible)
 	$(COMPOSE) exec -T valkey valkey-cli -a "$${VALKEY_PASSWORD}" ping
@@ -104,3 +105,9 @@ test-e2e: ## Run frontend E2E tests (Playwright; requires deps-up + dev-backend 
 
 format: ## Auto-format
 	bun --filter "*" format
+
+seed-traces: ## Seed OTLP traces (default: 100k mixed genai+openinference, last 30 days)
+	bash infra/scripts/seed-traces.sh
+
+seed-traces-reset: ## Wipe ClickHouse traces + observations, then seed (100k mixed)
+	bash infra/scripts/seed-traces.sh --reset

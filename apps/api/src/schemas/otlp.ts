@@ -1,12 +1,6 @@
-// Zod schemas for OTLP HTTP/JSON trace exports.
-// Spec: https://opentelemetry.io/docs/specs/otlp/#otlphttp-default (OTLP 1.4.x)
-//
-// We accept the JSON shape of ExportTraceServiceRequest and validate strictly
-// enough to produce typed errors (400 with ErrorEnvelope) on malformed input.
-
 import { z } from "@hono/zod-openapi";
 
-// Hex-encoded bytes — OTLP uses lowercase hex with no "0x" prefix.
+// OTLP uses lowercase hex with no "0x" prefix.
 // trace_id = 16 bytes (32 hex chars), span_id = 8 bytes (16 hex chars).
 const hexBytes = (len: number) =>
   z.string().regex(new RegExp(`^[0-9a-f]{${len}}$`), `must be ${len} lowercase hex chars`);
@@ -15,9 +9,8 @@ export const TraceId = hexBytes(32);
 export type TraceId = z.infer<typeof TraceId>;
 export const SpanId = hexBytes(16);
 export type SpanId = z.infer<typeof SpanId>;
-export const ParentSpanId = SpanId.optional();
+export const ParentSpanId = SpanId.nullable().optional();
 
-// OTLP "any value" — oneof string/bool/int/double/array/kvlist/bytes.
 const AnyValue = z.union([
   z.object({ stringValue: z.string() }),
   z.object({ boolValue: z.boolean() }),
@@ -28,18 +21,17 @@ const AnyValue = z.union([
   z.object({ bytesValue: z.string() }),
 ]).openapi("AnyValue");
 
-// KeyValue — string key + AnyValue.
 const KeyValue = z.object({
   key: z.string().min(1),
   value: AnyValue.optional(),
 }).openapi("KeyValue");
 
-// OTLP SpanKind enum (0..5 + SPAN_KIND_UNSPECIFIED).
+// SpanKind: 0=UNSPECIFIED, 1=INTERNAL, 2=SERVER, 3=CLIENT, 4=PRODUCER, 5=CONSUMER.
 export const SpanKind = z.union([
   z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5),
 ]).openapi("SpanKind");
 
-// Status — code 0=UNSET, 1=OK, 2=ERROR.
+// Status code: 0=UNSET, 1=OK, 2=ERROR.
 export const SpanStatus = z.object({
   code: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
   message: z.string().optional(),
@@ -81,7 +73,6 @@ export const ExportTraceServiceRequest = z.object({
   resource_spans: z.array(ResourceSpans).min(1),
 }).openapi("ExportTraceServiceRequest");
 
-// Empty success response.
 export const ExportTraceServiceResponse = z.object({
   partial_success: z.object({
     rejected_spans: z.number().int().optional(),

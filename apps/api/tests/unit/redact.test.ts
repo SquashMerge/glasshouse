@@ -1,5 +1,3 @@
-// Unit tests for the trace redaction utilities.
-
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { loadRedactionOptions, redactAttributesJson, redactTraceText } from "../../src/db/redact";
 

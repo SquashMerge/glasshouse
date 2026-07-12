@@ -1,7 +1,3 @@
-// HTTP Basic Auth middleware for /v1/* routes.
-// Single credential via UI_USERNAME / UI_PASSWORD env vars.
-// Constant-time compare to avoid timing attacks.
-
 import { timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 
@@ -9,7 +5,8 @@ function constantTimeEqual(a: string, b: string): boolean {
   const A = new TextEncoder().encode(a);
   const B = new TextEncoder().encode(b);
   if (A.length !== B.length) {
-    // Still compare against a same-length buffer to avoid leaking length info via timing.
+    // Pad to a same-length buffer before timingSafeEqual so a length mismatch
+    // doesn't return early and leak the length via timing.
     const pad = new Uint8Array(A.length);
     timingSafeEqual(pad, pad);
     return false;

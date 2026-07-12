@@ -1,7 +1,3 @@
-// Unit tests for the trace normalization logic (gen_ai.* first, OpenInference fallback).
-// Verifies that span attributes are correctly mapped to our internal
-// NormalizedTrace / NormalizedObservation shape.
-
 import { describe, it, expect } from "bun:test";
 import { normalizeSpan } from "../../src/db/gen-ai-attrs";
 

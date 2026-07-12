@@ -1,6 +1,3 @@
-// Vitest config for unit tests in apps/web.
-// Uses jsdom (DOM environment) + @testing-library/react for component tests.
-
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 

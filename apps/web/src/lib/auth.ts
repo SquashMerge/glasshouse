@@ -1,7 +1,3 @@
-// Basic auth credentials stored in localStorage as separate keys (so they can
-// be cleared independently on logout). In dev / single-user MVP, this is
-// acceptable. For production we swap to OAuth / SSO.
-
 const KEY_USERNAME = "astraea.auth.username";
 const KEY_PASSWORD = "astraea.auth.password";
 
@@ -31,10 +27,6 @@ export function authHeader(creds: { username: string; password: string } | null)
   return { authorization: `Basic ${token}` };
 }
 
-// Convenience: fetch wrapper that auto-attaches Basic Auth if creds exist.
-// On 401, clears stored credentials (the password may have been rotated or
-// the user may have been disabled) and dispatches a `astraea:auth-invalid`
-// event so the app can route to /login.
 const AUTH_INVALID_EVENT = "astraea:auth-invalid";
 
 export function onAuthInvalid(handler: () => void): () => void {
@@ -50,7 +42,6 @@ export async function authedFetch(url: string, init?: RequestInit): Promise<Resp
   for (const [k, v] of Object.entries(auth)) headers.set(k, v);
   const res = await fetch(url, { ...init, headers });
   if (res.status === 401 && creds) {
-    // Credentials were present but rejected. Clear them so the app re-prompts.
     clearCredentials();
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT));

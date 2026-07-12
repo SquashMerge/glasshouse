@@ -1,7 +1,3 @@
-// Typed API client — wraps openapi-fetch with authedFetch (Basic Auth from localStorage).
-// Uses the openapi-typescript generated types from clients/ts/api.d.ts when present;
-// for now, defines local types matching the server's Zod schemas.
-
 import { authedFetch } from "./auth";
 
 export interface TraceRow {
