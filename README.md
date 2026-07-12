@@ -62,10 +62,6 @@ Most eval platforms measure only the LLM call. **Astraea** measures the whole ag
 
 MIT core. Sealed `enterprise/` wheel under a custom EULA for premium features (SSO, RBAC, AI-assisted eval suggestions, SOC2 evidence packs).
 
-## Status
-
-Implementation is in progress. The MVP foundation ships via the factory run `phase-1-foundation`: a runnable local stack with Postgres, ClickHouse, Valkey, the Hono backend, and the React dashboard, all behind a single command.
-
 ## Quick Start
 
 ### Prerequisites
