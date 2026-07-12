@@ -5,11 +5,7 @@ import { SpanTree, type ObservationLike } from "../../src/components/SpanTree";
 const obs = (
   partial: Partial<ObservationLike> & { observation_id: string; parent_observation_id: string | null; name: string },
 ): ObservationLike => ({
-  trace_id: "trace1",
-  project_id: "",
-  type: "span",
   start_time: "2026-01-01T00:00:00Z",
-  end_time: "2026-01-01T00:00:01Z",
   duration_ms: 1000,
   status: "ok",
   model: null,

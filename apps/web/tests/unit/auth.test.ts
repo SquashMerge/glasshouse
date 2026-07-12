@@ -120,8 +120,8 @@ describe("authedFetch 401 handling", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await authedFetch("http://x/v1/traces");
-    const calledWith = fetchMock.mock.calls[0];
-    const init = calledWith[1] as RequestInit;
+    const calledWith = fetchMock.mock.calls[0] as Parameters<typeof fetch> | undefined;
+    const init = (calledWith?.[1] ?? {}) as RequestInit;
     const headers = init.headers as Headers;
     expect(headers.get("authorization")).toBe("Basic " + Buffer.from("alice:hunter2").toString("base64"));
   });

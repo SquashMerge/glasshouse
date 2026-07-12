@@ -8,8 +8,10 @@ const PASS = process.env.UI_PASSWORD ?? "testpassword";
 
 async function gotoFresh(page: Page, path: string) {
   await page.context().clearCookies();
-  await page.evaluate(() => window.localStorage.clear());
+  // Navigate first so the page has a real document; localStorage is
+  // not accessible on `about:blank` (Playwright raises a SecurityError).
   await page.goto(path);
+  await page.evaluate(() => window.localStorage.clear());
 }
 
 test.describe("Login flow", () => {
@@ -19,8 +21,8 @@ test.describe("Login flow", () => {
     await expect(page.getByRole("heading", { name: /Sign in/i })).toBeVisible();
   });
 
-  test("unauthenticated /traces redirects to /login", async ({ page }) => {
-    await gotoFresh(page, "/traces");
+  test("unauthenticated /observability/traces/{32-hex} redirects to /login", async ({ page }) => {
+    await gotoFresh(page, "/observability/traces/0123456789abcdef0123456789abcdef");
     await expect(page).toHaveURL(/\/login$/);
   });
 
@@ -75,7 +77,7 @@ test.describe("Trace list", () => {
     await page.getByRole("button", { name: /Sign in/i }).click();
     await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-    await page.goto("/traces");
+    await page.goto("/observability?tab=traces");
     const table = page.locator("table");
     await expect(table).toBeVisible({ timeout: 5000 });
     const hasRows = await page.locator("tbody tr").count();
@@ -118,14 +120,14 @@ test.describe("Dashboard basics", () => {
     expect(errors, `console errors observed: ${errors.join("\n")}`).toEqual([]);
   });
 
-  test("dashboard links to /traces", async ({ page }) => {
+  test("sidebar links to /observability", async ({ page }) => {
     await gotoFresh(page, "/login");
     await page.getByLabel(/Username/i).fill(USER);
     await page.getByLabel(/Password/i).fill(PASS);
     await page.getByRole("button", { name: /Sign in/i }).click();
     await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-    await page.getByRole("link", { name: /Traces/i }).click();
-    await expect(page).toHaveURL(/\/traces$/);
+    await page.getByRole("link", { name: /Observability/i }).click();
+    await expect(page).toHaveURL(/\/observability$/);
   });
 });
