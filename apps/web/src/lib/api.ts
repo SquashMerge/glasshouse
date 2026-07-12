@@ -66,6 +66,8 @@ export interface ListTracesParams {
   duration?: string;
   scores?: string;
   input_text?: string;
+  time_from?: string;
+  time_to?: string;
 }
 
 export async function listTraces(params: ListTracesParams = {}): Promise<TraceListResponse> {
@@ -79,6 +81,8 @@ export async function listTraces(params: ListTracesParams = {}): Promise<TraceLi
     "filter[duration]": params.duration,
     "filter[scores]": params.scores,
     "filter[input_text]": params.input_text,
+    "filter[time.from]": params.time_from,
+    "filter[time.to]": params.time_to,
   });
   const res = await authedFetch(`/v1/traces${qs}`);
   if (!res.ok) throw new Error(`listTraces ${res.status}`);

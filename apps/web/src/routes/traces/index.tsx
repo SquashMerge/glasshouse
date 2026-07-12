@@ -10,6 +10,7 @@ import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { listTraces, type ListTracesParams, type TraceRow } from "../../lib/api";
 import { cn } from "../../lib/utils";
+import { TimeRangePicker, defaultRange, toApiParams, type TimeRange } from "../../components/TimeRangePicker";
 
 const PAGE_SIZE = 100;
 
@@ -44,11 +45,16 @@ export function TraceListPage() {
   const navigate = useNavigate();
   const [filters, setFilters] = React.useState<FilterValues>(EMPTY_FILTERS);
   const [debouncedFilters, setDebouncedFilters] = React.useState<FilterValues>(EMPTY_FILTERS);
+  const [timeRange, setTimeRange] = React.useState<TimeRange>(defaultRange());
+  const [debouncedTimeRange, setDebouncedTimeRange] = React.useState<TimeRange>(timeRange);
 
   React.useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedFilters(filters), 250);
+    const t = window.setTimeout(() => {
+      setDebouncedFilters(filters);
+      setDebouncedTimeRange(timeRange);
+    }, 250);
     return () => window.clearTimeout(t);
-  }, [filters]);
+  }, [filters, timeRange]);
 
   const apiParams: ListTracesParams = React.useMemo(() => {
     const out: ListTracesParams = { limit: PAGE_SIZE };
@@ -58,8 +64,11 @@ export function TraceListPage() {
     if (debouncedFilters.duration) out.duration = debouncedFilters.duration;
     if (debouncedFilters.scores) out.scores = debouncedFilters.scores;
     if (debouncedFilters.input_text) out.input_text = debouncedFilters.input_text;
+    const tr = toApiParams(debouncedTimeRange);
+    if (tr.time_from) out.time_from = tr.time_from;
+    if (tr.time_to) out.time_to = tr.time_to;
     return out;
-  }, [debouncedFilters]);
+  }, [debouncedFilters, debouncedTimeRange]);
 
   const query = useInfiniteQuery({
     queryKey: ["traces", apiParams],
@@ -77,7 +86,9 @@ export function TraceListPage() {
     [query.data],
   );
   const total = query.data?.pages[0]?.total ?? 0;
-  const hasActiveFilters = Object.values(filters).some((v) => v.length > 0);
+  const hasColumnFilters = Object.values(filters).some((v) => v.length > 0);
+  const hasTimeFilter = timeRange.kind !== "all";
+  const hasActiveFilters = hasColumnFilters || hasTimeFilter;
 
   const sentinelRef = React.useRef<HTMLTableRowElement>(null);
   React.useEffect(() => {
@@ -102,6 +113,7 @@ export function TraceListPage() {
 
   function clearFilters() {
     setFilters(EMPTY_FILTERS);
+    setTimeRange(defaultRange());
   }
 
   return (
@@ -127,6 +139,8 @@ export function TraceListPage() {
               Failed to load traces: {(query.error as Error).message}
             </div>
           )}
+
+          <TimeRangePicker value={timeRange} onChange={setTimeRange} />
 
           <Table>
             <TableHeader>
@@ -213,9 +227,7 @@ function FilterRow({
 }) {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableCell className="p-1">
-        <span className="px-2 text-xs text-muted-foreground">any time</span>
-      </TableCell>
+      <TableCell className="p-1" aria-hidden="true" />
       <FilterCell
         value={filters.name}
         placeholder={PLACEHOLDERS.name}
