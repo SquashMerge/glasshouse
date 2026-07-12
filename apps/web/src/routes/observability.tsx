@@ -347,7 +347,7 @@ export function TracesTab() {
         navigate({
           to: traceDetailPath(t.trace_id),
           params: { id: t.trace_id },
-        } as never);
+        });
       }}
     />
   );
@@ -603,7 +603,7 @@ export function SpansTab() {
           to: traceDetailPath(o.trace_id),
           params: { id: o.trace_id },
           search: { span: o.observation_id },
-        } as never);
+        });
       }}
     />
   );
@@ -616,11 +616,9 @@ function emptyFilters(fields: FilterFieldDef[]): Record<string, string> {
 }
 
 /**
- * Forward-compatible target route for the trace detail page. Slice 5 (route
- * restructure) will register `/observability/traces/$id`; until then the
- * router still serves `/traces/$id`. Tests assert the captured navigate
- * target string, which is independent of whether the route is currently
- * registered.
+ * Path helper for the trace detail route. The new route is registered
+ * under `/observability/traces/$id`; this helper keeps the row-click
+ * navigation target in one place so the list pages stay consistent.
  */
 function traceDetailPath(traceId: string): string {
   return `/observability/traces/${encodeURIComponent(traceId)}`;
