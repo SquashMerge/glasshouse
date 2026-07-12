@@ -37,23 +37,56 @@ vi.mock("../../src/hooks/useEventSource", async () => {
   const actual = await vi.importActual<typeof import("../../src/hooks/useEventSource")>(
     "../../src/hooks/useEventSource",
   );
+  type ReconnectFn = (opts?: { pause?: boolean }) => void;
+  // Shared, persistent state across renders. `paused` and `forcedStatus` are
+  // mutated by `reconnect` and by the `setSse*` helper functions; the
+  // triggering of a re-render after a mutation is the host component's job
+  // (in the real hook, `setPaused(true)` does it; in the mock, the test
+  // exercises `data-state` synchronously without re-rendering because the
+  // mutation is observable through the same closure that the LiveTabHeader
+  // reads via `useEventSource()`).
+  let paused = false;
+  let forcedStatus: "open" | "closed" | null = null;
+  const setSsePaused = (next: boolean) => {
+    paused = next;
+  };
+  const setSseStatus = (next: "open" | "closed" | null) => {
+    forcedStatus = next;
+  };
+  // Expose the mutators via the test scope.
+  Object.assign(globalThis as Record<string, unknown>, { __setSsePaused: setSsePaused, __setSseStatus: setSseStatus });
+
+  const reconnect: ReconnectFn = (next) => {
+    if (next?.pause !== undefined) paused = next.pause;
+  };
+
+  let _lastCallUrl = "";
   return {
     ...actual,
     useEventSource: (
-      _url: string,
+      url: string,
       opts: {
         enabled?: boolean;
         onMessage?: (msg: { event: string; data: unknown }) => void;
       } = {},
     ) => {
       pushEvent = opts.onMessage ?? null;
+      _lastCallUrl = url;
       return {
-        status: opts.enabled === false ? "closed" : "open",
-        paused: false,
-        lastEventAt: null,
-        reconnect: () => {},
+        get status(): "connecting" | "open" | "closed" {
+          if (forcedStatus) return forcedStatus;
+          return opts.enabled === false ? "closed" : "open";
+        },
+        get paused(): boolean {
+          return paused;
+        },
+        get lastEventAt(): number | null {
+          return paused ? null : Date.now();
+        },
+        reconnect,
       };
     },
+    __getSseUrl: () => _lastCallUrl,
   };
 });
 
@@ -190,5 +223,30 @@ describe("TracesTab — SSE merge + highlight", () => {
     // merged.length = 1. So the counter reads "1 of 1 trace".
     const counter = await screen.findByText("1 of 1 trace");
     expect(counter).toBeInTheDocument();
+  });
+
+  it("renders a Live pill + Pause button on the TracesTab header (SSE open, not paused)", async () => {
+    renderWithQueryClient(<TracesTab />);
+    const header = await screen.findByTestId("live-tab-header");
+    expect(header.getAttribute("data-state")).toBe("live");
+
+    const pill = screen.getByTestId("live-pill");
+    expect(pill.textContent).toBe("Live");
+
+    const pause = screen.getByTestId("live-pause-button");
+    expect(pause).toBeInTheDocument();
+  });
+
+  it("renders a Reconnecting pill when the SSE status is closed (mock) and not paused", async () => {
+    const setStatus = (globalThis as { __setSseStatus?: (s: "closed") => void }).__setSseStatus;
+    setStatus?.("closed");
+    try {
+      renderWithQueryClient(<TracesTab />);
+      const header = await screen.findByTestId("live-tab-header");
+      expect(header.getAttribute("data-state")).toBe("reconnecting");
+      expect(screen.getByTestId("live-pill").textContent).toBe("Reconnecting");
+    } finally {
+      setStatus?.(null as unknown as "closed");
+    }
   });
 });
