@@ -34,7 +34,6 @@ export const AgentList = z.object({
   total: z.number().int().openapi({ example: 42 }),
 }).openapi("AgentList");
 
-// Stub response shared by all 8 agent routes
 export const AgentStubResponses = {
   501: {
     description: "Not implemented",

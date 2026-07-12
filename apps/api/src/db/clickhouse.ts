@@ -1,12 +1,9 @@
-// ClickHouse client + ping helper for /health.
-
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 
 let _client: ClickHouseClient | null = null;
 
 export function ch(): ClickHouseClient {
   if (_client) return _client;
-  // Prefer explicit CLICKHOUSE_URL; fall back to component vars.
   const url = process.env.CLICKHOUSE_URL ?? `http://${process.env.CLICKHOUSE_HOST ?? "localhost"}:8123`;
   _client = createClient({
     url,

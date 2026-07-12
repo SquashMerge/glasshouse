@@ -1,13 +1,10 @@
-// Postgres connection pool + ping helper for /health.
-
 import { Pool } from "pg";
 
 let _pool: Pool | null = null;
 
 export function pgPool(): Pool {
   if (_pool) return _pool;
-  // Prefer explicit DATABASE_URL; fall back to component vars so missing URL
-  // doesn't silently drop the password.
+  // Fall back to component vars so a missing DATABASE_URL doesn't drop the password.
   const url =
     process.env.DATABASE_URL ??
     `postgres://${process.env.POSTGRES_USER ?? "postgres"}:${process.env.POSTGRES_PASSWORD ?? "postgres"}@${process.env.POSTGRES_HOST ?? "localhost"}:${process.env.POSTGRES_PORT ?? "5432"}/${process.env.POSTGRES_DB ?? "postgres"}`;

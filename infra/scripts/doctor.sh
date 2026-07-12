@@ -39,7 +39,7 @@ fi
 ok "no CHANGE_ME placeholders"
 
 step "Required env vars present in infra/.env"
-REQUIRED_VARS=(POSTGRES_USER POSTGRES_PASSWORD CLICKHOUSE_USER CLICKHOUSE_PASSWORD VALKEY_PASSWORD)
+REQUIRED_VARS=(POSTGRES_USER POSTGRES_PASSWORD CLICKHOUSE_USER CLICKHOUSE_PASSWORD VALKEY_PASSWORD UI_USERNAME UI_PASSWORD)
 MISSING=0
 for v in "${REQUIRED_VARS[@]}"; do
   if ! grep -q "^${v}=" infra/.env; then
@@ -48,6 +48,37 @@ for v in "${REQUIRED_VARS[@]}"; do
   fi
 done
 [ "$MISSING" = "0" ] || fail "missing required vars; edit infra/.env"
+
+step "Optional redaction env vars are well-formed (if set)"
+for v in ASTRAEA_REDACT_INPUT ASTRAEA_REDACT_KEYS API_MAX_BODY_BYTES; do
+  line=$(grep "^${v}=" infra/.env || true)
+  [ -z "$line" ] && continue
+  case "$v" in
+    ASTRAEA_REDACT_INPUT)
+      val="${line#*=}"
+      case "$val" in
+        true|false) ;;
+        *) echo "  ! ${v} must be 'true' or 'false' (got: $val)"; MISSING=1 ;;
+      esac
+      ;;
+    API_MAX_BODY_BYTES)
+      val="${line#*=}"
+      if ! printf '%d' "$val" >/dev/null 2>&1 || [ "$val" -le 0 ]; then
+        echo "  ! ${v} must be a positive integer (got: $val)"; MISSING=1
+      fi
+      ;;
+  esac
+done
+
+step "Auth vars UI_USERNAME and UI_PASSWORD must not be empty"
+for v in UI_USERNAME UI_PASSWORD; do
+  val=$(grep "^${v}=" infra/.env | cut -d= -f2-)
+  if [ -z "$val" ]; then
+    echo "  ! ${v} is empty in infra/.env"
+    MISSING=1
+  fi
+done
+[ "$MISSING" = "0" ] || fail "auth vars empty; edit infra/.env"
 ok "all required vars present"
 
 step "Docker"
