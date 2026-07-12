@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 import { TracesTab } from "../../src/routes/observability";
 import type { TraceEvent } from "../../src/routes/observability";
+import { listTraces } from "../../src/lib/api";
+
+vi.mocked(listTraces);
 
 // --- Mocks -----------------------------------------------------------------
 //
@@ -305,5 +308,38 @@ describe("TracesTab — SSE merge + highlight", () => {
     } finally {
       setStatus?.(null as unknown as "closed");
     }
+  });
+
+  it("re-runs the listTraces query when a filter input changes (filters flow to the API)", async () => {
+    // Regression: prior to wiring `onFiltersChange`, typing in the FilterableTable
+    // inputs updated only its local state — the host hook's `filters` state never
+    // changed, the queryKey stayed frozen, and no API call was made. This test
+    // types into the Name filter and asserts listTraces is called again with the
+    // new `name` param after the 250ms debounce.
+    const fn = vi.mocked(listTraces);
+    fn.mockClear();
+
+    renderWithQueryClient(<TracesTab />);
+
+    // First page fetch is unconditional on mount.
+    await screen.findByText("first.call", {}, { timeout: 2000 });
+    await waitFor(() => expect(fn.mock.calls.length).toBeGreaterThanOrEqual(1));
+    const initialCalls = fn.mock.calls.length;
+
+    // Type into the Name filter — the input whose placeholder is the
+    // TRACE_FILTER_FIELDS `name` placeholder ("e.g. llm.call or tool.search_db").
+    const nameInput = screen.getByPlaceholderText("e.g. llm.call or tool.search_db");
+    fireEvent.change(nameInput, { target: { value: "specific-name" } });
+
+    // FilterableTable debounces by 250ms; advance past it.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    await waitFor(() => expect(fn.mock.calls.length).toBeGreaterThan(initialCalls));
+
+    // The most recent call carries the new filter value.
+    const lastCall = fn.mock.calls[fn.mock.calls.length - 1]?.[0] as { name?: string };
+    expect(lastCall?.name).toBe("specific-name");
   });
 });

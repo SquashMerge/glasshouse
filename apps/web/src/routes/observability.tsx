@@ -350,6 +350,17 @@ function useTracesData() {
   // for the unlikely case where `merged` somehow underflows (defensive).
   const total = paginatedTotal + Math.max(0, merged.length - paginated.length);
 
+  // FilterableTable owns the raw filter inputs (uncontrolled) and debounces
+  // them. The host receives the debounced values here and feeds them into
+  // `filters` / `timeRange` state so the query key changes.
+  const onFiltersChange = React.useCallback(
+    (next: Record<string, string>, tr: TimeRange) => {
+      setFilters(next);
+      setTimeRange(tr);
+    },
+    [],
+  );
+
   return {
     merged,
     total,
@@ -365,6 +376,7 @@ function useTracesData() {
     setFilters,
     timeRange,
     setTimeRange,
+    onFiltersChange,
     sse,
   };
 }
@@ -395,6 +407,7 @@ export function TracesTab() {
       onLoadMore={data.fetchNextPage}
       highlightedKeys={data.highlightedKeys}
       rowKey={(t) => t.trace_id}
+      onFiltersChange={data.onFiltersChange}
       onRowClick={(t) => {
         navigate({
           to: traceDetailPath(t.trace_id),
@@ -636,6 +649,17 @@ function useSpansData() {
   // `merged.length - paginated.length` (and floored at 0 defensively).
   const total = paginatedTotal + Math.max(0, merged.length - paginated.length);
 
+  // FilterableTable owns the raw filter inputs (uncontrolled) and debounces
+  // them. The host receives the debounced values here and feeds them into
+  // `filters` / `timeRange` state so the query key changes.
+  const onFiltersChange = React.useCallback(
+    (next: Record<string, string>, tr: TimeRange) => {
+      setFilters(next);
+      setTimeRange(tr);
+    },
+    [],
+  );
+
   return {
     merged,
     total,
@@ -651,6 +675,7 @@ function useSpansData() {
     setFilters,
     timeRange,
     setTimeRange,
+    onFiltersChange,
     sse,
   };
 }
@@ -681,6 +706,7 @@ export function SpansTab() {
       onLoadMore={data.fetchNextPage}
       highlightedKeys={data.highlightedKeys}
       rowKey={(o) => o.observation_id}
+      onFiltersChange={data.onFiltersChange}
       onRowClick={(o) => {
         navigate({
           to: traceDetailPath(o.trace_id),

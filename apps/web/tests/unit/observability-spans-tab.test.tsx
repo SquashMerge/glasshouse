@@ -3,6 +3,9 @@ import { render, screen, waitFor, act, fireEvent, cleanup } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 import { SpansTab, type ObservationEvent } from "../../src/routes/observability";
+import { listObservations } from "../../src/lib/api";
+
+vi.mocked(listObservations);
 
 // --- Mocks -----------------------------------------------------------------
 
@@ -268,5 +271,31 @@ describe("SpansTab — SSE merge + highlight", () => {
     expect(header.getAttribute("data-state")).toBe("live");
     expect(screen.getByTestId("live-pill").textContent).toBe("Live");
     expect(screen.getByTestId("live-pause-button")).toBeInTheDocument();
+  });
+
+  it("re-runs the listObservations query when a filter input changes (filters flow to the API)", async () => {
+    // Regression: see observability-traces-tab.test.tsx for the same shape.
+    const fn = vi.mocked(listObservations);
+    fn.mockClear();
+
+    renderWithQueryClient(<SpansTab />);
+
+    await screen.findByText("first-span", {}, { timeout: 2000 });
+    await waitFor(() => expect(fn.mock.calls.length).toBeGreaterThanOrEqual(1));
+    const initialCalls = fn.mock.calls.length;
+
+    // SPAN_FILTER_FIELDS first non-type filter is `name`, placeholder
+    // "e.g. llm.call".
+    const nameInput = screen.getByPlaceholderText("e.g. llm.call");
+    fireEvent.change(nameInput, { target: { value: "specific-span" } });
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    await waitFor(() => expect(fn.mock.calls.length).toBeGreaterThan(initialCalls));
+
+    const lastCall = fn.mock.calls[fn.mock.calls.length - 1]?.[0] as { name?: string };
+    expect(lastCall?.name).toBe("specific-span");
   });
 });
