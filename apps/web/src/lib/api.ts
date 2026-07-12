@@ -22,6 +22,21 @@ export interface TraceRow {
 export interface ObservationRow {
   observation_id: string;
   trace_id: string;
+  parent_observation_id: string | null;
+  type: "span" | "event" | "generation" | "tool";
+  name: string;
+  start_time: string;
+  end_time: string | null;
+  duration_ms: number | null;
+  status: "ok" | "error";
+  model: string | null;
+  input_text: string;
+  output_text: string;
+}
+
+export interface ObservationRow {
+  observation_id: string;
+  trace_id: string;
   project_id: string;
   parent_observation_id: string | null;
   type: "span" | "event" | "generation" | "tool";
@@ -86,6 +101,46 @@ export async function listTraces(params: ListTracesParams = {}): Promise<TraceLi
   });
   const res = await authedFetch(`/v1/traces${qs}`);
   if (!res.ok) throw new Error(`listTraces ${res.status}`);
+  return res.json();
+}
+
+export interface ListObservationsParams {
+  limit?: number;
+  offset?: number;
+  agent_id?: string;
+  trace_id?: string;
+  type?: string;
+  name?: string;
+  status?: string;
+  duration?: string;
+  model?: string;
+  input_text?: string;
+  time_from?: string;
+  time_to?: string;
+}
+
+export interface ObservationListResponse {
+  items: ObservationRow[];
+  total: number;
+}
+
+export async function listObservations(params: ListObservationsParams = {}): Promise<ObservationListResponse> {
+  const qs = buildQs({
+    limit: params.limit,
+    offset: params.offset,
+    "filter[agent_id]": params.agent_id,
+    "filter[trace_id]": params.trace_id,
+    "filter[type]": params.type,
+    "filter[name]": params.name,
+    "filter[status]": params.status,
+    "filter[duration]": params.duration,
+    "filter[model]": params.model,
+    "filter[input_text]": params.input_text,
+    "filter[time.from]": params.time_from,
+    "filter[time.to]": params.time_to,
+  });
+  const res = await authedFetch(`/v1/observations${qs}`);
+  if (!res.ok) throw new Error(`listObservations ${res.status}`);
   return res.json();
 }
 

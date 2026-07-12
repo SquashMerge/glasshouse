@@ -56,10 +56,27 @@ export interface TraceSearchQuery extends TraceListFilters {
   expand?: string;      // comma-separated, currently unused (deferred)
 }
 
+export interface ObservationListFilters {
+  project_id?: string;
+  agent_id?: string;
+  trace_id?: string;    // exact match — useful for "all spans in this trace"
+  type?: string;        // exact: "span" | "event" | "generation" | "tool"
+  time_from?: string;
+  time_to?: string;
+  name?: string;        // substring (case-insensitive)
+  status?: string;
+  duration?: string;
+  model?: string;       // substring (case-insensitive)
+  input_text?: string;
+}
+
 const LIST_COLUMNS =
   "trace_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substring(input_text, 1, 200) AS input_text, output_text, scores_summary";
 
 const OBSERVATION_COLUMNS =
+  "observation_id, trace_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substring(input_text, 1, 200) AS input_text, output_text";
+
+const OBSERVATION_FULL_COLUMNS =
   "observation_id, trace_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, metadata";
 
 function defaultClient(): ClickHouseClient {
@@ -156,13 +173,98 @@ export async function getTrace(client: ClickHouseClient, traceId: string): Promi
   if (!trace) return { trace: null, observations: [] };
 
   const obsResult = await client.query({
-    query: `SELECT ${OBSERVATION_COLUMNS} FROM observations WHERE trace_id = {trace_id: String} ORDER BY start_time ASC`,
+    query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE trace_id = {trace_id: String} ORDER BY start_time ASC`,
     query_params: { trace_id: traceId },
     format: "JSONEachRow",
   });
   const observations = (await obsResult.json()) as ObservationRow[];
 
   return { trace, observations };
+}
+
+function buildObservationWhere(filters: ObservationListFilters, params: Record<string, unknown>): string {
+  const where: string[] = [];
+  if (filters.project_id) {
+    where.push("project_id = {project_id: String}");
+    params.project_id = filters.project_id;
+  }
+  if (filters.agent_id) {
+    // agent_id isn't a first-class column on observations; the OTLP normalizer
+    // serializes the span's attributes as JSON into `metadata`. Substring match
+    // on the rendered string. Good enough until we add an agent_id column.
+    where.push("positionCaseInsensitiveUTF8(metadata, {agent_id: String}) > 0");
+    params.agent_id = filters.agent_id;
+  }
+  if (filters.trace_id) {
+    where.push("trace_id = {trace_id: String}");
+    params.trace_id = filters.trace_id;
+  }
+  if (filters.type) {
+    where.push("type = {type: String}");
+    params.type = filters.type;
+  }
+  if (filters.time_from) {
+    where.push("start_time >= {time_from: DateTime64(3)}");
+    params.time_from = filters.time_from;
+  }
+  if (filters.time_to) {
+    where.push("start_time <= {time_to: DateTime64(3)}");
+    params.time_to = filters.time_to;
+  }
+  if (filters.name && filters.name.length > 0) {
+    where.push("positionCaseInsensitiveUTF8(name, {name: String}) > 0");
+    params.name = filters.name;
+  }
+  if (filters.status && filters.status.length > 0) {
+    where.push("status = {status: String}");
+    params.status = filters.status;
+  }
+  if (filters.duration && filters.duration.length > 0) {
+    const d = filters.duration.trim();
+    const m = /^(<=|<|>=|>|=)?\s*(\d+(?:\.\d+)?)$/.exec(d);
+    if (m) {
+      const op = m[1] ?? "=";
+      const num = Number(m[2]);
+      where.push(`duration_ms ${op} {duration_ms: UInt32}`);
+      params.duration_ms = num;
+    }
+  }
+  if (filters.model && filters.model.length > 0) {
+    where.push("positionCaseInsensitiveUTF8(model, {model: String}) > 0");
+    params.model = filters.model;
+  }
+  if (filters.input_text && filters.input_text.length > 0) {
+    where.push("positionCaseInsensitiveUTF8(input_text, {input_text: String}) > 0");
+    params.input_text = filters.input_text;
+  }
+  return where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+}
+
+export async function listObservations(
+  client: ClickHouseClient,
+  filters: ObservationListFilters,
+  limit: number,
+  offset: number,
+): Promise<{ items: ObservationRow[]; total: number }> {
+  const params: Record<string, unknown> = { limit, offset };
+  const whereClause = buildObservationWhere(filters, params);
+
+  const itemsResult = await client.query({
+    query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause} ORDER BY start_time DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
+    query_params: params,
+    format: "JSONEachRow",
+  });
+  const items = (await itemsResult.json()) as ObservationRow[];
+
+  const totalResult = await client.query({
+    query: `SELECT count() AS total FROM observations ${whereClause}`,
+    query_params: params,
+    format: "JSONEachRow",
+  });
+  const totalRows = (await totalResult.json()) as Array<{ total: string | number }>;
+  const total = totalRows.length > 0 ? Number(totalRows[0].total) : 0;
+
+  return { items, total };
 }
 
 export async function searchTraces(

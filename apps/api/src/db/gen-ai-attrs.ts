@@ -75,6 +75,20 @@ function scorePairsAsCsv(pairs: Array<[string, number]>): string {
   return pairs.map(([k, v]) => `${k}:${v}`).join(",");
 }
 
+function classifySpanType(attrs: Attribute[]): "span" | "event" | "generation" | "tool" {
+  // OpenInference span kind wins when present (most expressive).
+  const oi = attrString(attrs, "openinference.span.kind");
+  if (oi) {
+    const lower = oi.toLowerCase();
+    if (lower === "llm" || lower === "chain" || lower === "agent") return "generation";
+    if (lower === "tool" || lower === "retriever") return "tool";
+    if (lower === "embedding" || lower === "reranker") return "tool";
+  }
+  if (attrs.some((a) => a.key === "gen_ai.request.model" || a.key === "gen_ai.response.model")) return "generation";
+  if (attrs.some((a) => a.key === "tool.name")) return "tool";
+  return "span";
+}
+
 export function normalizeSpan(span: Span): { trace: NormalizedTrace; observation: NormalizedObservation } {
   const attrs = (span.attributes ?? []) as Attribute[];
 
@@ -154,7 +168,7 @@ export function normalizeSpan(span: Span): { trace: NormalizedTrace; observation
     observation_id: span.span_id,
     trace_id: span.trace_id,
     parent_observation_id: span.parent_span_id ?? null,
-    type: "span",
+    type: classifySpanType(attrs),
     name: span.name,
     start_time: trace.start_time,
     end_time: trace.end_time,

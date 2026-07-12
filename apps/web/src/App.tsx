@@ -1,8 +1,9 @@
-import { createRouter, RouterProvider, createRootRoute, createRoute, Outlet } from "@tanstack/react-router";
+import { createRouter, RouterProvider, createRootRoute, createRoute, Outlet, redirect } from "@tanstack/react-router";
 import { DashboardPage } from "./routes/index";
 import { LoginPage } from "./routes/login";
 import { TraceListPage } from "./routes/traces/index";
 import { TraceDetailPage } from "./routes/traces/$id";
+import { ObservabilityPage } from "./routes/observability";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 
@@ -34,10 +35,18 @@ const indexRoute = createRoute({
   component: DashboardPage,
 });
 
-const tracesRoute = createRoute({
+const observabilityRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/observability",
+  component: ObservabilityPage,
+});
+
+const tracesRedirectRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/traces",
-  component: TraceListPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/observability", search: { tab: "traces" } });
+  },
 });
 
 const traceDetailRoute = createRoute({
@@ -49,7 +58,7 @@ const traceDetailRoute = createRoute({
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     loginRoute,
-    protectedRoute.addChildren([indexRoute, tracesRoute, traceDetailRoute]),
+    protectedRoute.addChildren([indexRoute, observabilityRoute, tracesRedirectRoute, traceDetailRoute]),
   ]),
   defaultPreload: false,
 });

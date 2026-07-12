@@ -87,7 +87,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 
         <nav className="flex-1 space-y-1 p-2" aria-label="Sections">
           <SidebarLink to="/" label="Dashboard" icon={<LuHouse className="h-4 w-4" />} active={isActive("/")} collapsed={collapsed} />
-          <SidebarLink to="/traces" label="Traces" icon={<LuActivity className="h-4 w-4" />} active={isActive("/traces")} collapsed={collapsed} />
+          <SidebarLink to="/observability" label="Observability" icon={<LuActivity className="h-4 w-4" />} active={isActive("/observability") || isActive("/traces")} collapsed={collapsed} />
         </nav>
 
         {collapsed && (
@@ -163,7 +163,7 @@ function SidebarLink({
   active,
   collapsed,
 }: {
-  to: "/" | "/traces";
+  to: "/" | "/observability";
   label: string;
   icon: React.ReactNode;
   active: boolean;

@@ -1,8 +1,14 @@
 import { createRoute } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import { Trace, TraceList, TraceSearchQuery, TraceStubResponses } from "../schemas/traces.js";
+import { Trace, TraceList, TraceSearchQuery, TraceStubResponses, ObservationList } from "../schemas/traces.js";
 import { IdParam } from "../schemas/common.js";
-import { defaultClient, getTrace as queryGetTrace, listTraces as queryListTraces, searchTraces as querySearchTraces } from "../db/traces-query.js";
+import {
+  defaultClient,
+  getTrace as queryGetTrace,
+  listTraces as queryListTraces,
+  listObservations as queryListObservations,
+  searchTraces as querySearchTraces,
+} from "../db/traces-query.js";
 
 export const listTraces = createRoute({
   method: "get",
@@ -117,6 +123,44 @@ export async function handleSearchTraces(c: Context): Promise<Response> {
     return c.json({ items, total });
   } catch (err) {
     console.error("GET /v1/traces/search failed:", (err as Error).message);
+    return c.json({ code: "INTERNAL", message: "Query failed; check server logs" }, 500);
+  }
+}
+
+export const listObservations = createRoute({
+  method: "get",
+  path: "/v1/observations",
+  tags: ["traces"],
+  summary: "List observations (spans)",
+  description: "Returns up to 50 observations per page sorted by start_time DESC. input_text is truncated to 200 chars.",
+  security: [{ basicAuth: [] }],
+  responses: {
+    200: { description: "OK", content: { "application/json": { schema: ObservationList } } },
+    ...TraceStubResponses,
+  },
+});
+
+export async function handleListObservations(c: Context): Promise<Response> {
+  const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
+  const offset = Math.max(Number(c.req.query("offset") ?? "0"), 0);
+  const filters = {
+    project_id: c.req.query("filter[project_id]") ?? undefined,
+    agent_id: c.req.query("filter[agent_id]") ?? undefined,
+    trace_id: c.req.query("filter[trace_id]") ?? undefined,
+    type: c.req.query("filter[type]") ?? undefined,
+    time_from: c.req.query("filter[time.from]") ?? undefined,
+    time_to: c.req.query("filter[time.to]") ?? undefined,
+    name: c.req.query("filter[name]") ?? undefined,
+    status: c.req.query("filter[status]") ?? undefined,
+    duration: c.req.query("filter[duration]") ?? undefined,
+    model: c.req.query("filter[model]") ?? undefined,
+    input_text: c.req.query("filter[input_text]") ?? undefined,
+  };
+  try {
+    const { items, total } = await queryListObservations(defaultClient(), filters, limit, offset);
+    return c.json({ items, total });
+  } catch (err) {
+    console.error("GET /v1/observations failed:", (err as Error).message);
     return c.json({ code: "INTERNAL", message: "Query failed; check server logs" }, 500);
   }
 }
