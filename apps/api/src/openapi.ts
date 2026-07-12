@@ -27,6 +27,11 @@ import {
   listObservations, handleListObservations,
 } from "./routes/traces.js";
 import {
+  streamTraceEvents, handleStreamTraceEvents,
+  streamObservationEvents, handleStreamObservationEvents,
+  streamTraceDetailEvents, handleStreamTraceDetailEvents,
+} from "./routes/trace-events.js";
+import {
   listPrompts, handleListPrompts,
   createPrompt, handleCreatePrompt,
   getPrompt, handleGetPrompt,
@@ -73,8 +78,14 @@ openapiApp.openapi(getExperimentEvents, (c) => handleGetExperimentEvents(c.req.v
 openapiApp.openapi(cancelExperiment, (c) => handleCancelExperiment(c.req.valid("param").id));
 
 openapiApp.openapi(listTraces, handleListTraces);
+// Register the more specific /v1/traces/events SSE route BEFORE
+// /v1/traces/{id} so a literal "events" segment doesn't fall into the
+// `{id}` placeholder (which would fail the 32-hex regex validation).
+openapiApp.openapi(streamTraceEvents, handleStreamTraceEvents);
 openapiApp.openapi(getTrace, handleGetTrace);
 openapiApp.openapi(listObservations, handleListObservations);
+openapiApp.openapi(streamObservationEvents, handleStreamObservationEvents);
+openapiApp.openapi(streamTraceDetailEvents, (c) => handleStreamTraceDetailEvents(c));
 
 openapiApp.openapi(listPrompts, handleListPrompts);
 openapiApp.openapi(createPrompt, handleCreatePrompt);
