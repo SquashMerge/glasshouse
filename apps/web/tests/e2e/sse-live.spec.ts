@@ -1,16 +1,16 @@
+// AC11 walkthrough — Playwright E2E.
+//
+// Honest split:
+// - Coverage in unit tests (apps/web/tests/unit/observability-traces-detail.test.tsx): Pause/Resume, Recording/Recorded pill, ?span= deep-link, snapshot→stream merge, invalid-id gate.
+// - Coverage here (e2e): the live ingestion path requires a running apps/api + matched UI_USERNAME/UI_PASSWORD + a seeded dataset. Each case gates on envReady(); see slice brief §Test plan for the manual walkthrough when envReady is false.
+//
+// When envReady() returns false the test skips with a clear reason rather than passing on a swallowed assertion.
+//
 // Prereqs: `make deps-up`, then `make dev-backend` + `make dev-frontend` in
 // separate terminals. UI_USERNAME / UI_PASSWORD come from infra/.env (see
-// playwright.config). The seeder script `infra/scripts/seed_traces.py` must
-// be runnable (it lives outside the worktree in some setups — see the
-// per-test skip comments below for the exact contract).
-//
-// This file is the AC11 walkthrough for `sse-live-observability`. When the
-// env is not set up (most likely for the merge-only verification step in
-// the feature factory), every test is skipped with a documented reason so
-// the spec still loads structurally and Playwright reports a clean "skipped"
-// run rather than a failure.
+// playwright.config).
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 
 const USER = process.env.UI_USERNAME ?? "astraea";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
@@ -63,6 +63,104 @@ async function envReady(): Promise<boolean> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// OTLP payload builders
+//
+// Schema (apps/api/src/schemas/otlp.ts):
+//   ExportTraceServiceRequest { resource_spans: ResourceSpans[] }
+//   ResourceSpans            { resource?, scope_spans: ScopeSpans[] }
+//   ScopeSpans               { scope?, spans: Span[] }
+//   Span                     { trace_id (32 hex), span_id (16 hex), name,
+//                             kind (0..5), start_time_unix_nano (int),
+//                             end_time_unix_nano?, status?, attributes? }
+// ---------------------------------------------------------------------------
+
+/** Random lowercase hex string of `bytes*2` chars. */
+function hex(bytes: number): string {
+  const chars = "0123456789abcdef";
+  let out = "";
+  for (let i = 0; i < bytes * 2; i += 1) {
+    out += chars[Math.floor(Math.random() * 16)];
+  }
+  return out;
+}
+
+/** Current time in unix nanos, with optional offset. */
+function nowNanos(offsetMs = 0): number {
+  return Date.now() * 1_000_000 + offsetMs * 1_000_000;
+}
+
+/**
+ * Build an OTLP ExportTraceServiceRequest for a single trace with the given
+ * number of spans. Every span shares `traceId`; the first span is the root
+ * (no parent_span_id) and child spans reference `rootSpanId`.
+ */
+function buildTracePayload(
+  traceId: string,
+  rootSpanId: string,
+  spanCount: number,
+  traceName: string,
+): Record<string, unknown> {
+  const spans: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < spanCount; i += 1) {
+    spans.push({
+      trace_id: traceId,
+      span_id: i === 0 ? rootSpanId : hex(8),
+      parent_span_id: i === 0 ? null : rootSpanId,
+      name: i === 0 ? traceName : `${traceName}.child.${i}`,
+      kind: 1,
+      start_time_unix_nano: nowNanos(i * 50),
+      end_time_unix_nano: nowNanos(i * 50 + 100),
+      status: { code: 1 },
+      attributes: [],
+    });
+  }
+  return {
+    resource_spans: [
+      {
+        resource: {
+          attributes: [
+            { key: "service.name", value: { stringValue: "astraea-e2e" } },
+          ],
+        },
+        scope_spans: [
+          {
+            scope: { name: "astraea-e2e", version: "1.0.0" },
+            spans,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** POST one trace payload and assert the API accepted it. */
+async function postTrace(
+  request: APIRequestContext,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const res = await request.post(`${API_BASE}/v1/otel/v1/traces`, {
+    data: payload,
+    headers: { "content-type": "application/json" },
+  });
+  expect(res.status(), `OTLP ingest should accept payload, got ${res.status()}`).toBeLessThan(300);
+}
+
+/**
+ * Wait up to `timeoutMs` for at least `target` highlighted rows in the
+ * table; returns the final count (may be less than `target` on timeout).
+ */
+async function waitForHighlightedRows(page: Page, target: number, timeoutMs = 1500): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let count = 0;
+  while (Date.now() < deadline) {
+    count = await page.locator("table tbody tr[data-highlighted='true']").count();
+    if (count >= target) return count;
+    await page.waitForTimeout(50);
+  }
+  return count;
+}
+
 test.describe("SSE live pages — AC11 walkthrough", () => {
   test("invalid id renders the 'Trace not found' placeholder (regex gate, no API)", async ({ page }) => {
     // This test does NOT require the API — it is a pure client-side
@@ -77,43 +175,81 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
     await expect(page.getByTestId("trace-not-found")).toBeVisible();
   });
 
-  test("5 traces appear in the list within 1s with bg-accent/40 highlight", async ({ page }) => {
+  test("5 traces appear in the list within 1s with bg-accent/40 highlight", async ({ page, request }) => {
+    // The live ingestion path requires a running apps/api + matched
+    // UI_USERNAME/UI_PASSWORD. Skip cleanly rather than fake a passing
+    // assertion when the env is not set up.
     if (!(await envReady())) {
-      test.skip(true, "Requires running API + seeder; see slice brief for manual walkthrough");
+      test.skip(
+        true,
+        "Requires live API + seeder + matching UI_USERNAME/UI_PASSWORD; see slice brief for manual walkthrough steps.",
+      );
       return;
     }
     await login(page);
 
-    await page.goto("/observability?tab=traces");
-
-    // Five traces arrive; each row's `data-highlighted` flag flips on.
-    for (let i = 0; i < 5; i += 1) {
-      const name = `walkthrough-trace-${i}`;
-      // Placeholder: the actual ingest call would be a fetch to
-      // `${API_BASE}/v1/otel/v1/traces` with a 32-hex trace_id. Tests
-      // that need the real call should add it here; the walkthrough is
-      // structurally validated by the assertion below.
-      const row = page.locator(`[data-trace-name="${name}"]`).first();
-      // Allow 1s for the row to materialize from the SSE stream.
-      await expect(row).toBeVisible({ timeout: 1500 }).catch(() => {
-        // Fall back to "any row exists" — the ingest step is the part
-        // that depends on the seeder; this test still validates the
-        // route + tab navigation.
-      });
+    // Ingest 5 distinct traces via OTLP HTTP/JSON. The first name is kept
+    // for a downstream text-content sanity check.
+    const firstName = `walkthrough-trace-${Date.now()}-0`;
+    await postTrace(request, buildTracePayload(hex(16), hex(8), 1, firstName));
+    for (let i = 1; i < 5; i += 1) {
+      const traceId = hex(16);
+      const rootSpanId = hex(8);
+      const name = `walkthrough-trace-${Date.now()}-${i}`;
+      await postTrace(request, buildTracePayload(traceId, rootSpanId, 1, name));
     }
+
+    // Navigate to the traces tab.
+    await page.goto("/observability?tab=traces");
+    await expect(page).toHaveURL(/tab=traces/);
+
+    // The list page merges streamed rows via SSE; rows carry
+    // `data-highlighted="true"` and the `bg-accent/40` class for ~1.5s
+    // after arrival. Within that window we expect ≥5 highlighted rows.
+    const count = await waitForHighlightedRows(page, 5, 1500);
+    expect(count, "expected 5 highlighted trace rows to appear within 1.5s").toBeGreaterThanOrEqual(5);
+
+    // Every highlighted row must carry the highlight class.
+    const highlightedRows = page.locator("table tbody tr[data-highlighted='true']");
+    for (let i = 0; i < count; i += 1) {
+      const cls = (await highlightedRows.nth(i).getAttribute("class")) ?? "";
+      expect(cls, `row ${i} should carry bg-accent/40 highlight`).toContain("bg-accent/40");
+    }
+
+    // Sanity-check the first name is visible at least once in the table.
+    await expect(page.getByText(firstName)).toBeVisible();
   });
 
-  test("10 spans appear in the spans list within 1s", async ({ page }) => {
+  test("10 spans appear in the spans list within 1s", async ({ page, request }) => {
     if (!(await envReady())) {
-      test.skip(true, "Requires running API + seeder; see slice brief for manual walkthrough");
+      test.skip(
+        true,
+        "Requires live API + seeder + matching UI_USERNAME/UI_PASSWORD; see slice brief for manual walkthrough steps.",
+      );
       return;
     }
     await login(page);
-    await page.getByRole("tab", { name: /Spans/i }).click();
+
+    // One OTLP payload with a single trace that has 10 spans. The first
+    // span is the root; children reference its span_id.
+    const traceId = hex(16);
+    const rootSpanId = hex(8);
+    const traceName = `walkthrough-spans-${Date.now()}`;
+    await postTrace(request, buildTracePayload(traceId, rootSpanId, 10, traceName));
+
+    // Navigate to the spans tab.
+    await page.goto("/observability?tab=spans");
     await expect(page).toHaveURL(/tab=spans/);
 
-    // Walkthrough placeholder — assert the table is reachable.
-    await expect(page.locator("table")).toBeVisible();
+    // Wait for the spans to materialize via the SSE merge.
+    const count = await waitForHighlightedRows(page, 10, 1500);
+    expect(count, "expected 10 highlighted span rows to appear within 1.5s").toBeGreaterThanOrEqual(10);
+
+    // The root span name should be visible in the table; the trace_id is
+    // rendered in the Trace column (first 16 chars + ellipsis).
+    await expect(page.getByText(traceName).first()).toBeVisible();
+    const traceIdPrefix = traceId.slice(0, 16);
+    await expect(page.getByText(new RegExp(traceIdPrefix)).first()).toBeVisible();
   });
 
   test("Pause closes the SSE; Resume reopens it (detail page indicator)", async ({ page }) => {

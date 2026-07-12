@@ -8,6 +8,9 @@
  * AC1 — invalid id renders "Trace not found", SSE is not opened.
  * AC6 — Recording → Recorded pill transition on `onStatus("complete")`.
  * AC7 — Pause / Resume; live indicator greys out during pause.
+ * AC8 — `?span=<observation_id>` deep-link auto-selects the matching row on
+ *      mount (spans-tab row click); verified via the
+ *      `data-observation-id`/`data-selected` selectors.
  */
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -177,6 +180,72 @@ describe("TraceDetailPage — invalid id gate", () => {
     // The mock registry should be empty for invalid ids because the page
     // returns before calling `useTraceStream`.
     expect(handleByTraceId.has("not-hex")).toBe(false);
+  });
+});
+
+describe("TraceDetailPage — ?span= deep-link", () => {
+  it("auto-selects the observation whose id matches ?span= once the snapshot arrives", async () => {
+    // The spans-tab row click navigates with `?span=<observation_id>`.
+    // The trace detail page resolves it to the matching observation via a
+    // `React.useEffect` keyed on the search string. This test reproduces
+    // that wiring by setting the mocked `useLocation().searchStr` before
+    // rendering and then asserting both the detail panel and the span row
+    // flip into the selected state.
+    const SPAN_TARGET_ID = "e".repeat(32);
+    const ROOT_ID = "f".repeat(32);
+
+    renderAt(VALID_ID, SPAN_TARGET_ID);
+
+    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+    const handle = handleByTraceId.get(VALID_ID)!;
+
+    await act(async () => {
+      handle.callbacks!.onSnapshot({
+        observations: [
+          // Root observation present — without the deep-link, the page would
+          // select this as the default selection on mount.
+          makeObservation({ observation_id: ROOT_ID, name: "root" }),
+          // Non-root observation that the ?span= should target.
+          makeObservation({
+            observation_id: SPAN_TARGET_ID,
+            parent_observation_id: ROOT_ID,
+            name: "deep-link-target",
+            input_text: "TARGET_INPUT",
+          }),
+          // Sibling observation that should NOT be selected.
+          makeObservation({
+            observation_id: "9".repeat(32),
+            parent_observation_id: ROOT_ID,
+            name: "not-me",
+          }),
+        ],
+      });
+    });
+
+    // 1. The detail panel renders the deep-link target (not the root), proving
+    //    the `?span=` selector won the default-selection race.
+    const detail = await screen.findByTestId("observation-detail");
+    expect(detail).toHaveAttribute("data-observation-id", SPAN_TARGET_ID);
+    expect(screen.getByTestId("detail-input")).toHaveTextContent(/TARGET_INPUT/);
+
+    // 2. The matching span row carries the deterministic `data-selected`
+    //    attribute; the other rows do not. Three snapshot rows ⇒ use the
+    //    plural query.
+    const rows = await screen.findAllByTestId("span-row");
+    expect(rows).toHaveLength(3);
+    const matching = rows.find(
+      (r) => r.getAttribute("data-observation-id") === SPAN_TARGET_ID,
+    );
+    expect(matching).toBeDefined();
+    expect(matching!).toHaveAttribute("data-selected", "true");
+
+    const rootRow = rows.find((r) => r.getAttribute("data-observation-id") === ROOT_ID);
+    expect(rootRow).toBeDefined();
+    expect(rootRow!).toHaveAttribute("data-selected", "false");
+
+    const otherRow = rows.find((r) => r.getAttribute("data-observation-id") === "9".repeat(32));
+    expect(otherRow).toBeDefined();
+    expect(otherRow!).toHaveAttribute("data-selected", "false");
   });
 });
 

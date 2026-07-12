@@ -154,22 +154,37 @@ export function TraceDetailPage() {
     return `${Math.floor(delta / 60_000)}m ago`;
   })();
 
-  // Resolve the ?span= deep-link into a selected observation once the
-  // snapshot arrives.
+  // Resolve the `?span=` deep-link (preferred) or fall back to the root
+  // observation once the snapshot arrives. Kept as a single effect so the
+  // two `setSelectedObservationId` calls do not race within the same commit
+  // — if they did, whichever ran second would clobber the first and the
+  // deep-link would lose to the default selection whenever the snapshot
+  // also contained a root observation.
   React.useEffect(() => {
-    if (!spanDeepLink) return;
-    if (observations.some((o) => o.observation_id === spanDeepLink)) {
-      setSelectedObservationId(spanDeepLink);
-    }
-  }, [spanDeepLink, observations]);
-
-  // Default to the root observation once the snapshot lands.
-  React.useEffect(() => {
-    if (selectedObservationId !== null) return;
     if (observations.length === 0) return;
+
+    if (selectedObservationId !== null) {
+      // A previous render already selected something. Re-selection is
+      // only needed if the deep-link points to a different observation —
+      // the spans-tab row click (re-entry with the same id) is a no-op.
+      if (
+        spanDeepLink &&
+        observations.some((o) => o.observation_id === spanDeepLink) &&
+        selectedObservationId !== spanDeepLink
+      ) {
+        setSelectedObservationId(spanDeepLink);
+      }
+      return;
+    }
+
+    if (spanDeepLink && observations.some((o) => o.observation_id === spanDeepLink)) {
+      setSelectedObservationId(spanDeepLink);
+      return;
+    }
+
     const root = observations.find((o) => !o.parent_observation_id) ?? observations[0];
     if (root) setSelectedObservationId(root.observation_id);
-  }, [observations, selectedObservationId]);
+  }, [spanDeepLink, observations, selectedObservationId]);
 
   const selectedObservation = React.useMemo(
     () => observations.find((o) => o.observation_id === selectedObservationId) ?? null,
@@ -378,6 +393,8 @@ function ClickableSpanTree(props: ClickableSpanTreeProps) {
           )}
           data-testid="span-row"
           data-observation-id={o.observation_id}
+          data-selected={selectedObservationId === o.observation_id ? "true" : "false"}
+          aria-current={selectedObservationId === o.observation_id ? "true" : undefined}
         >
           <div className="flex items-center gap-2">
             <Badge variant={o.status === "error" ? "destructive" : "secondary"}>
