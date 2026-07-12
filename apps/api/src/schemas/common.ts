@@ -7,6 +7,15 @@ export const IdParam = z.object({
   }),
 });
 
+// 32-char lowercase hex (OTEL trace_id). Used by trace-scoped routes only;
+// IdParam (UUID) stays for agents / experiments / scores / datasets / prompts.
+export const TraceIdParam = z.object({
+  id: z.string().regex(/^[0-9a-f]{32}$/).openapi({
+    param: { name: "id", in: "path" },
+    example: "0123456789abcdef0123456789abcdef",
+  }),
+});
+
 export const PageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().openapi({ example: 50 }),
   offset: z.coerce.number().int().min(0).optional().openapi({ example: 0 }),

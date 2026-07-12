@@ -7,6 +7,7 @@ import {
 import { normalizeSpan } from "../db/gen-ai-attrs.js";
 import { loadRedactionOptions, redactAttributesJson, redactTraceText } from "../db/redact.js";
 import { insertObservations, insertTraces, defaultClient } from "../db/traces-writer.js";
+import { publishSync } from "../lib/event-bus.js";
 
 const tag = "otlp";
 
@@ -80,6 +81,15 @@ export async function handleOtlpIngest(req: Request): Promise<Response> {
   } catch (err) {
     console.error("OTLP insert failed:", (err as Error).message);
     return jsonError(500, "INTERNAL", "Failed to persist traces; check server logs");
+  }
+
+  // Fan out to the in-process bus (and Valkey if configured). publishSync
+  // catches its own errors so a subscriber crash can't 500 the ingest path.
+  try {
+    for (const t of [...traces.values()]) publishSync("trace.created", { trace: t });
+    for (const o of observations) publishSync("observation.created", { observation: o });
+  } catch (err) {
+    console.error("OTLP event publish failed (non-fatal):", (err as Error).message);
   }
 
   return new Response(JSON.stringify({ partial_success: {} }), {

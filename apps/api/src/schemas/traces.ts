@@ -1,3 +1,4 @@
+// schemas/traces.ts
 import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope, NotImplementedError } from "./common.js";
 
@@ -25,17 +26,6 @@ export const TraceList = z.object({
   items: z.array(Trace),
   total: z.number().int(),
 }).openapi("TraceList");
-
-export const TraceSearchQuery = z.object({
-  q: z.string().optional(),
-  "filter[project_id]": z.string().optional(),
-  "filter[agent_id]": z.string().optional(),
-  "filter[env]": z.string().optional(),
-  "filter[time.from]": z.string().datetime().optional(),
-  "filter[time.to]": z.string().datetime().optional(),
-  sort: z.string().optional().default("start_time:desc"),
-  expand: z.string().optional(),
-}).openapi("TraceSearchQuery");
 
 export const Observation = z.object({
   observation_id: z.string(),

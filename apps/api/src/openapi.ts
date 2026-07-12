@@ -24,7 +24,6 @@ import {
 import {
   listTraces, handleListTraces,
   getTrace, handleGetTrace,
-  searchTraces, handleSearchTraces,
   listObservations, handleListObservations,
 } from "./routes/traces.js";
 import {
@@ -75,7 +74,6 @@ openapiApp.openapi(cancelExperiment, (c) => handleCancelExperiment(c.req.valid("
 
 openapiApp.openapi(listTraces, handleListTraces);
 openapiApp.openapi(getTrace, handleGetTrace);
-openapiApp.openapi(searchTraces, handleSearchTraces);
 openapiApp.openapi(listObservations, handleListObservations);
 
 openapiApp.openapi(listPrompts, handleListPrompts);
