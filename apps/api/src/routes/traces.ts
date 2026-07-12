@@ -1,7 +1,7 @@
 import { createRoute } from "@hono/zod-openapi";
 import { z } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import { Trace, TraceList, TraceStubResponses, ObservationList } from "../schemas/traces.js";
+import { Trace, TraceList, TraceStubResponses, Observation, ObservationList } from "../schemas/traces.js";
 import { TraceIdParam } from "../schemas/common.js";
 import {
   defaultClient,
@@ -48,28 +48,9 @@ export async function handleListTraces(c: Context): Promise<Response> {
   }
 }
 
-// Inline schema for the getTrace response so we can attach `metadata` as a
-// union without touching the canonical `Observation` Zod schema (which is
-// pinned for `GET /v1/observations` wire-compat).
-const GetTraceObservationWithMetadata = {
-  allOf: [
-    { $ref: "#/components/schemas/Observation" },
-    {
-      type: "object",
-      properties: {
-        metadata: {
-          description:
-            "JSON-serialized attributes. With `?expand=metadata`, this is parsed into an object (or null on parse failure).",
-          oneOf: [
-            { type: "string" },
-            { type: "object", additionalProperties: true },
-            { type: "null" },
-          ],
-        },
-      },
-    },
-  ],
-};
+const GetTraceObservationWithMetadata = Observation.extend({
+  metadata: z.union([z.string(), z.record(z.unknown()), z.null()]),
+});
 
 export const getTrace = createRoute({
   method: "get",
@@ -83,24 +64,17 @@ export const getTrace = createRoute({
     params: TraceIdParam,
     query: z.object({
       expand: z.string().optional(),
-    }).optional(),
+    }),
   },
   responses: {
     200: {
       description: "OK",
       content: {
         "application/json": {
-          schema: {
-            type: "object",
-            properties: {
-              trace: { $ref: "#/components/schemas/Trace" },
-              observations: {
-                type: "array",
-                items: GetTraceObservationWithMetadata,
-              },
-            },
-            required: ["trace", "observations"],
-          },
+          schema: z.object({
+            trace: Trace,
+            observations: z.array(GetTraceObservationWithMetadata),
+          }),
         },
       },
     },
@@ -112,7 +86,7 @@ export const getTrace = createRoute({
 });
 
 export async function handleGetTrace(c: Context): Promise<Response> {
-  const traceId = c.req.valid("param").id as string;
+  const traceId = c.req.param("id");
   const expandMetadata = c.req.query("expand") === "metadata";
   try {
     const { trace, observations } = await queryGetTrace(defaultClient(), traceId);

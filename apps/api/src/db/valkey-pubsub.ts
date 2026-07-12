@@ -1,17 +1,13 @@
-// Thin wrappers around the lazy ioredis client in valkey.ts for pub/sub use.
-// Errors are logged + swallowed so the SSE handler never 500s because the
-// optional Valkey layer is down. Connection lifecycle events are logged at
-// debug noise — they don't fan out to subscribers.
-
 import Redis from "ioredis";
-import { valkey } from "./valkey.js";
+import { valkeyUrl } from "./valkey.js";
 
-let _valkeyPubsubHealthy = true;
-let _wiredEvents = false;
+const connectionHealthy = { publisher: true, subscriber: true };
+let _publisher: Redis | null = null;
+let _subscriber: Redis | null = null;
 let _connectingPromise: Promise<void> | null = null;
 
 export function valkeyPubSubHealthy(): boolean {
-  return _valkeyPubsubHealthy;
+  return connectionHealthy.publisher && connectionHealthy.subscriber;
 }
 
 /**
@@ -22,7 +18,7 @@ export function valkeyPubSubHealthy(): boolean {
  */
 export async function publishOnChannel(channel: string, json: string): Promise<void> {
   try {
-    const v = ensureClient();
+    const v = publisher();
     await v.publish(channel, json);
   } catch (err) {
     console.error(`[valkey-pubsub] publish to ${channel} failed:`, (err as Error).message);
@@ -33,12 +29,11 @@ export async function publishOnChannel(channel: string, json: string): Promise<v
  * Subscribe to a channel. Returns an unsubscribe fn. The handler is called
  * with the raw JSON string for each message; parsing is the caller's job.
  *
- * We share the lazy singleton from valkey.ts. ioredis `subscribe` is idempotent
- * per channel on a single connection; multiple handlers multiplex over the
- * one `message` event.
+ * ioredis `subscribe` is idempotent per channel on the dedicated subscriber
+ * connection; multiple handlers multiplex over its `message` event.
  */
 export function subscribeToChannel(channel: string, handler: (json: string) => void): () => void {
-  const v = ensureClient();
+  const v = subscriber();
 
   const onMessage = (ch: string, message: string) => {
     if (ch !== channel) return;
@@ -58,30 +53,42 @@ export function subscribeToChannel(channel: string, handler: (json: string) => v
 
   return () => {
     v.off("message", onMessage);
+    void v.unsubscribe(channel).catch((err: Error) => {
+      console.error(`[valkey-pubsub] unsubscribe(${channel}) failed:`, err.message);
+    });
   };
 }
 
-function ensureClient(): Redis {
-  const v = valkey();
-  if (!_wiredEvents) {
-    v.on("error", (err: Error) => {
-      _valkeyPubsubHealthy = false;
-      console.error(`[valkey-pubsub] client error:`, err.message);
-    });
-    v.on("end", () => {
-      _valkeyPubsubHealthy = false;
-      console.error(`[valkey-pubsub] connection ended; reconnecting in background`);
-    });
-    v.on("ready", () => {
-      _valkeyPubsubHealthy = true;
-    });
-    v.on("reconnecting", (delayMs: number) => {
-      _valkeyPubsubHealthy = false;
-      console.error(`[valkey-pubsub] reconnecting in ${delayMs}ms`);
-    });
-    _wiredEvents = true;
-  }
-  return v;
+function createClient(role: "publisher" | "subscriber"): Redis {
+  const client = new Redis(process.env.VALKEY_PUBSUB_URL ?? valkeyUrl(), {
+    enableOfflineQueue: role === "subscriber",
+    maxRetriesPerRequest: 3,
+    lazyConnect: role === "publisher",
+  });
+  client.on("error", (err: Error) => {
+    connectionHealthy[role] = false;
+    console.error(`[valkey-pubsub] ${role} error:`, err.message);
+  });
+  client.on("end", () => {
+    connectionHealthy[role] = false;
+  });
+  client.on("ready", () => {
+    connectionHealthy[role] = true;
+  });
+  client.on("reconnecting", () => {
+    connectionHealthy[role] = false;
+  });
+  return client;
+}
+
+function publisher(): Redis {
+  _publisher ??= createClient("publisher");
+  return _publisher;
+}
+
+function subscriber(): Redis {
+  _subscriber ??= createClient("subscriber");
+  return _subscriber;
 }
 
 /**
@@ -91,13 +98,13 @@ function ensureClient(): Redis {
 export async function ensureConnected(): Promise<void> {
   if (_connectingPromise) return _connectingPromise;
   _connectingPromise = (async () => {
-    const v = valkey();
+    const v = publisher();
     if (v.status === "wait" || v.status === "end") {
       try {
         await v.connect();
-        _valkeyPubsubHealthy = true;
+        connectionHealthy.publisher = true;
       } catch (err) {
-        _valkeyPubsubHealthy = false;
+        connectionHealthy.publisher = false;
         console.error(`[valkey-pubsub] initial connect failed:`, (err as Error).message);
       }
     }
@@ -110,7 +117,11 @@ export async function ensureConnected(): Promise<void> {
  * publish. Only call from tests that mutate env after import.
  */
 export function _resetForTests(): void {
-  _valkeyPubsubHealthy = true;
-  _wiredEvents = false;
+  _publisher?.disconnect();
+  _subscriber?.disconnect();
+  _publisher = null;
+  _subscriber = null;
+  connectionHealthy.publisher = true;
+  connectionHealthy.subscriber = true;
   _connectingPromise = null;
 }

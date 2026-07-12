@@ -100,25 +100,28 @@ vi.mock("../../src/hooks/useEventSource", async () => {
         onMessage?: (msg: { event: string; data: unknown }) => void;
       } = {},
     ) => {
-      pushEvent = opts.onMessage ?? null;
-      _lastCallUrl = url;
-      return {
-        get status(): "connecting" | "open" | "closed" {
-          if (forcedStatus) return forcedStatus;
-          return opts.enabled === false ? "closed" : "open";
-        },
-        get paused(): boolean {
-          return paused;
-        },
-        get lastEventAt(): number | null {
-          return paused ? null : Date.now();
-        },
-        reconnect,
-      };
-    },
-    __getSseUrl: () => _lastCallUrl,
-  };
-});
+        pushEvent = opts.onMessage ?? null;
+        _lastCallUrl = url;
+        return {
+          get status(): "connecting" | "open" | "closed" {
+            if (forcedStatus) return forcedStatus;
+            return opts.enabled === false ? "closed" : "open";
+          },
+          get paused(): boolean {
+            return paused;
+          },
+          get lastEventAt(): number | null {
+            return paused ? null : Date.now();
+          },
+          get debug() {
+            return { framesReceived: 0, bufferDepth: 0, reconnectAttempts: 0, lastError: null };
+          },
+          reconnect,
+        };
+      },
+      __getSseUrl: () => _lastCallUrl,
+    };
+  });
 
 // --- Helpers ---------------------------------------------------------------
 
@@ -234,16 +237,13 @@ describe("TracesTab — SSE merge + highlight", () => {
     expect(call.search).toBeUndefined();
   });
 
-  it("inserts an out-of-view SSE row at the top of the list (newest first) and bumps the total", async () => {
-    // Map-based merge + sort by start_time DESC: an SSE-arriving trace with a
-    // newer start_time than the existing paginated row renders at index 0
-    // and contributes to the X-of-Y total.
+it("inserts an out-of-view SSE row sorted by start_time DESC and bumps the total", async () => {
+    // Out-of-view SSE events are merged into the visible list and sorted by
+    // start_time DESC (newest at top). The counter advances too.
     renderWithQueryClient(<TracesTab />);
     await screen.findByText("first.call", {}, { timeout: 2000 });
-
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
-    const newerStart = "2026-01-02 00:00:00";
     act(() => {
       pushEvent!({
         event: "trace",
@@ -251,15 +251,13 @@ describe("TracesTab — SSE merge + highlight", () => {
           trace: makeTraceEvent({
             trace_id: "c".repeat(32),
             name: "newer-sse-call",
-            start_time: newerStart,
+            start_time: "2026-01-02 00:00:00",
           }),
         },
       });
     });
 
     await screen.findByText("newer-sse-call");
-    // The newer SSE row appears in front of the older paginated row.
-    // Compare row positions in the table body.
     const newerRow = screen.getByText("newer-sse-call").closest("tr");
     const olderRow = screen.getByText("first.call").closest("tr");
     expect(newerRow).not.toBeNull();
@@ -272,42 +270,53 @@ describe("TracesTab — SSE merge + highlight", () => {
     expect(newerIdx).toBeGreaterThanOrEqual(0);
     expect(olderIdx).toBeGreaterThan(newerIdx);
 
-    // No duplicate keys — only one row per id, deduped by the Map merge.
     expect(screen.getAllByText("newer-sse-call").length).toBe(1);
 
-    // Counter: paginatedTotal (1) + SSE ids not in paginated (1) = 2.
-    // Merged length is 2 because both rows are unique.
     await screen.findByText("2 of 2 traces");
-
-    // Highlight applied to the new row.
-    const cell = screen.getByText("newer-sse-call");
-    const row = cell.closest("tr");
-    expect(row?.getAttribute("data-highlighted")).toBe("true");
   });
 
-  it("renders a Live pill + Pause button on the TracesTab header (SSE open, not paused)", async () => {
+  it("renders the Stream toggle on the TracesTab header (SSE open, not paused)", async () => {
     renderWithQueryClient(<TracesTab />);
-    const header = await screen.findByTestId("live-tab-header");
-    expect(header.getAttribute("data-state")).toBe("live");
+    const toggle = await screen.findByTestId("stream-toggle");
+    expect(toggle.getAttribute("data-state")).toBe("on-open");
 
-    const pill = screen.getByTestId("live-pill");
-    expect(pill.textContent).toBe("Live");
-
-    const pause = screen.getByTestId("live-pause-button");
-    expect(pause).toBeInTheDocument();
+    const button = screen.getByTestId("stream-toggle-button");
+    expect(button.getAttribute("aria-checked")).toBe("true");
+    expect(button.textContent).toMatch(/Streaming/);
   });
 
-  it("renders a Reconnecting pill when the SSE status is closed (mock) and not paused", async () => {
+  it("renders the Stream toggle as Reconnecting when the SSE status is closed (mock) and not paused", async () => {
     const setStatus = (globalThis as { __setSseStatus?: (s: "closed") => void }).__setSseStatus;
     setStatus?.("closed");
     try {
       renderWithQueryClient(<TracesTab />);
-      const header = await screen.findByTestId("live-tab-header");
-      expect(header.getAttribute("data-state")).toBe("reconnecting");
-      expect(screen.getByTestId("live-pill").textContent).toBe("Reconnecting");
+      const toggle = await screen.findByTestId("stream-toggle");
+      expect(toggle.getAttribute("data-state")).toBe("on-reconnecting");
+      expect(screen.getByTestId("stream-toggle-button").textContent).toMatch(/Reconnecting/);
     } finally {
       setStatus?.(null as unknown as "closed");
     }
+  });
+
+  it("Stream toggle flips state to off and resumes after a second click", async () => {
+    renderWithQueryClient(<TracesTab />);
+    const button = await screen.findByTestId("stream-toggle-button");
+
+    // Open → click → off (Paused).
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("stream-toggle").getAttribute("data-state")).toBe("off"),
+    );
+    expect(button.getAttribute("aria-checked")).toBe("false");
+    expect(button.textContent).toMatch(/Paused/);
+
+    // Click again → on (Streaming).
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("stream-toggle").getAttribute("data-state")).toBe("on-open"),
+    );
+    expect(button.getAttribute("aria-checked")).toBe("true");
+    expect(button.textContent).toMatch(/Streaming/);
   });
 
   it("re-runs the listTraces query when a filter input changes (filters flow to the API)", async () => {

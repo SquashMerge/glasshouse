@@ -79,6 +79,20 @@ vi.mock("../../src/hooks/useTraceStream", async () => {
         get lastEventAt() {
           return Date.now();
         },
+        reconnect: (next?: { pause?: boolean }) => {
+          if (next?.pause !== undefined) {
+            if (next.pause) {
+              setPaused(true);
+              setStatus("closed");
+            } else {
+              setPaused(false);
+              setStatus("open");
+            }
+          }
+        },
+        get debug() {
+          return { framesReceived: 0, bufferDepth: 0, reconnectAttempts: 0, lastError: null };
+        },
         pause: () => {
           setPaused(true);
           setStatus("closed");
@@ -316,8 +330,8 @@ describe("TraceDetailPage — snapshot + live observations", () => {
   });
 });
 
-describe("TraceDetailPage — Recording → Recorded pill transition", () => {
-  it("flips the pill from Recording to Recorded when onStatus('complete') fires", async () => {
+describe("TraceDetailPage — Stream toggle", () => {
+  it("starts On/Streaming on a connected snapshot", async () => {
     renderAt(VALID_ID);
 
     await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
@@ -325,56 +339,17 @@ describe("TraceDetailPage — Recording → Recorded pill transition", () => {
 
     await act(async () => {
       handle.callbacks!.onSnapshot({
-        observations: [
-          makeObservation({ observation_id: "a".repeat(32), name: "live" }),
-        ],
+        observations: [makeObservation({ observation_id: "a".repeat(32), name: "live" })],
       });
     });
 
-    // Initially the pill reads "Recording".
-    const pill = await screen.findByTestId("recording-pill");
-    expect(pill).toHaveTextContent(/Recording/i);
-
-    // Server fires `status: complete` after the 30s grace.
-    await act(async () => {
-      handle.callbacks!.onStatus("complete");
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("recording-pill")).toHaveTextContent(/Recorded/i);
-    });
-  });
-});
-
-describe("TraceDetailPage — Pause / Resume", () => {
-  it("clicking Pause greys the live indicator and shows the Resume button", async () => {
-    renderAt(VALID_ID);
-
-    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
-    const handle = handleByTraceId.get(VALID_ID)!;
-
-    await act(async () => {
-      handle.callbacks!.onSnapshot({
-        observations: [
-          makeObservation({ observation_id: "a".repeat(32), name: "before-pause" }),
-        ],
-      });
-    });
-
-    // Click pause.
-    fireEvent.click(screen.getByTestId("pause-button"));
-
-    // The live indicator should now read "Paused".
-    await waitFor(() => {
-      expect(screen.getByTestId("live-indicator")).toHaveAttribute("data-state", "paused");
-    });
-    expect(screen.getByTestId("live-label")).toHaveTextContent(/Paused/i);
-
-    // A button labelled "Resume" should be visible now.
-    expect(screen.getByTestId("resume-button")).toBeInTheDocument();
+    const toggle = await screen.findByTestId("stream-toggle");
+    expect(toggle.getAttribute("data-state")).toBe("on-open");
+    expect(screen.getByTestId("stream-toggle-button").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("stream-toggle-button").textContent).toMatch(/Streaming/);
   });
 
-  it("clicking Resume restores the live indicator label and the Pause button", async () => {
+  it("clicking the toggle flips it to Off/Paused, clicking again restores it", async () => {
     renderAt(VALID_ID);
 
     await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
@@ -382,24 +357,23 @@ describe("TraceDetailPage — Pause / Resume", () => {
 
     await act(async () => {
       handle.callbacks!.onSnapshot({
-        observations: [
-          makeObservation({ observation_id: "a".repeat(32), name: "before-pause" }),
-        ],
+        observations: [makeObservation({ observation_id: "a".repeat(32), name: "before-pause" })],
       });
     });
 
-    fireEvent.click(screen.getByTestId("pause-button"));
-    await waitFor(() => {
-      expect(screen.getByTestId("live-indicator")).toHaveAttribute("data-state", "paused");
-    });
+    const button = await screen.findByTestId("stream-toggle-button");
 
-    fireEvent.click(screen.getByTestId("resume-button"));
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("stream-toggle").getAttribute("data-state")).toBe("off"),
+    );
+    expect(button.textContent).toMatch(/Paused/);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("live-indicator")).toHaveAttribute("data-state", "live");
-    });
-    expect(screen.getByTestId("live-label")).toHaveTextContent(/Live/i);
-    expect(screen.getByTestId("pause-button")).toBeInTheDocument();
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.getByTestId("stream-toggle").getAttribute("data-state")).toBe("on-open"),
+    );
+    expect(button.textContent).toMatch(/Streaming/);
   });
 });
 

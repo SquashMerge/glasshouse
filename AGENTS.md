@@ -18,3 +18,11 @@ Shorthand: if a task touches a library (OpenAI SDK, Anthropic SDK, React, Hono, 
 - License: MIT (see LICENSE)
 - Branch: `main` (force-push with `--force-with-lease`)
 - Don't introduce additional git remotes without asking.
+
+## Terminology
+
+Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, route, page, stored field, or classification rule, or notice two names being used for the same thing, update the glossary in the same change.
+
+## Comments
+
+Don't add unnecessary comments throughout the codebase. Code should speak for itself. Only comment when the code is complex, easy to misread, hides a non-obvious decision (ordering, race, perf trade-off, pinned contract from a brief), or when a brief/issue requires it. Future readers will thank you for fewer lines.

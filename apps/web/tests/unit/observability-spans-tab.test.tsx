@@ -83,6 +83,9 @@ vi.mock("../../src/hooks/useEventSource", async () => {
         get lastEventAt(): number | null {
           return paused ? null : Date.now();
         },
+        get debug() {
+          return { framesReceived: 0, bufferDepth: 0, reconnectAttempts: 0, lastError: null };
+        },
         reconnect,
       };
     },
@@ -181,10 +184,7 @@ describe("SpansTab — SSE merge + highlight", () => {
     expect(call.search?.span).toBe(SPAN_ID);
   });
 
-  it("uses metadataParsed to populate tool/model/type cells when SSE arrives for in-view observation", async () => {
-    // Map-based merge: SSE rows are last-write-wins over paginated rows for
-    // the same observation_id, so metadataParsed-derived name/type/model
-    // propagate into the cells without a REST refetch.
+  it("highlights an in-view observation on SSE; cell content stays from paginated", async () => {
     renderWithQueryClient(<SpansTab />);
     await screen.findByText("first-span", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
@@ -203,25 +203,17 @@ describe("SpansTab — SSE merge + highlight", () => {
       });
     });
 
-    // Name column reads metadataParsed.tool.name first.
-    await screen.findByText("tool-from-metadata");
-    expect(screen.queryByText("first-span")).not.toBeInTheDocument();
-    // Model column reads metadataParsed.model.
-    expect(screen.getByText("gpt-4o-from-metadata")).toBeInTheDocument();
-    // Type badge reflects metadataParsed.type = "tool".
-    expect(screen.getAllByText("tool").length).toBeGreaterThanOrEqual(1);
+    // Paginated values are still what the cells show; the list page does
+    // not consume metadataParsed (detail page does via useTraceStream).
+    expect(screen.queryByText("tool-from-metadata")).not.toBeInTheDocument();
+    expect(screen.queryByText("gpt-4o-from-metadata")).not.toBeInTheDocument();
 
-    // Same key — only one row renders, no React duplicate-key warning.
-    const cell = screen.getByText("tool-from-metadata");
+    const cell = screen.getByText("first-span");
     const row = cell.closest("tr");
-    expect(row).not.toBeNull();
-    expect(row!.getAttribute("data-highlighted")).toBe("true");
+    expect(row?.getAttribute("data-highlighted")).toBe("true");
   });
 
-  it("inserts an out-of-view SSE row at the top of the list (newest first) without duplicates", async () => {
-    // Newer observation (later start_time) arrives via SSE for an id that
-    // is NOT in the paginated page. mergeByIdDesc sorts by start_time DESC,
-    // so it appears at index 0.
+  it("inserts an out-of-view SSE observation sorted by start_time DESC and bumps the total", async () => {
     renderWithQueryClient(<SpansTab />);
     await screen.findByText("first-span", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
@@ -243,7 +235,6 @@ describe("SpansTab — SSE merge + highlight", () => {
     });
 
     await screen.findByText("newer-sse-span");
-    // Newer SSE row is above the older paginated row in render order.
     const newerRow = screen.getByText("newer-sse-span").closest("tr");
     const olderRow = screen.getByText("first-span").closest("tr");
     expect(newerRow).not.toBeNull();
@@ -256,21 +247,16 @@ describe("SpansTab — SSE merge + highlight", () => {
     expect(newerIdx).toBeGreaterThanOrEqual(0);
     expect(olderIdx).toBeGreaterThan(newerIdx);
 
-    // Total bumps by 1 — paginatedTotal (1) + 1 new SSE id.
     await screen.findByText("2 of 2 spans");
-
-    // Highlight applied to the new row.
-    const cell = screen.getByText("newer-sse-span");
-    const row = cell.closest("tr");
-    expect(row?.getAttribute("data-highlighted")).toBe("true");
   });
 
-  it("renders a Live pill + Pause button on the SpansTab header", async () => {
+  it("renders the Stream toggle on the SpansTab header (SSE open, not paused)", async () => {
     renderWithQueryClient(<SpansTab />);
-    const header = await screen.findByTestId("live-tab-header");
-    expect(header.getAttribute("data-state")).toBe("live");
-    expect(screen.getByTestId("live-pill").textContent).toBe("Live");
-    expect(screen.getByTestId("live-pause-button")).toBeInTheDocument();
+    const toggle = await screen.findByTestId("stream-toggle");
+    expect(toggle.getAttribute("data-state")).toBe("on-open");
+    const button = screen.getByTestId("stream-toggle-button");
+    expect(button.getAttribute("aria-checked")).toBe("true");
+    expect(button.textContent).toMatch(/Streaming/);
   });
 
   it("re-runs the listObservations query when a filter input changes (filters flow to the API)", async () => {

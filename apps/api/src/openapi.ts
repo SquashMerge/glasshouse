@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { apiReference } from "@scalar/hono-api-reference";
+import type { Context } from "hono";
 import { healthRoute, handleHealth } from "./routes/health.js";
 import { loginRoute, handleLogin } from "./routes/auth.js";
 import {
@@ -53,56 +54,63 @@ import {
 } from "./routes/scores.js";
 
 export const openapiApp = new OpenAPIHono();
+openapiApp.openAPIRegistry.registerComponent("securitySchemes", "basicAuth", {
+  type: "http",
+  scheme: "basic",
+});
+const register = (route: unknown, handler: unknown): void => {
+  openapiApp.openapi(route as never, handler as never);
+};
 
 // Health (also mounted at /health by the bare handler in index.ts).
-openapiApp.openapi(healthRoute, handleHealth);
+register(healthRoute, handleHealth);
 
 // Login: gated by basicAuthMiddleware in index.ts via the parent /v1/* mount.
-openapiApp.openapi(loginRoute, handleLogin);
+register(loginRoute, handleLogin);
 
-openapiApp.openapi(createAgent, handleCreateAgent);
-openapiApp.openapi(listAgents, handleListAgents);
-openapiApp.openapi(getAgent, (c) => handleGetAgent(c.req.valid("param").id));
-openapiApp.openapi(patchAgent, (c) => handlePatchAgent(c.req.valid("param").id));
-openapiApp.openapi(deleteAgent, (c) => handleDeleteAgent(c.req.valid("param").id));
-openapiApp.openapi(syncAgent, (c) => handleSyncAgent(c.req.valid("param").id));
-openapiApp.openapi(runAgent, (c) => handleRunAgent(c.req.valid("param").id));
-openapiApp.openapi(listAgentVersions, (c) => handleListAgentVersions(c.req.valid("param").id));
+register(createAgent, handleCreateAgent);
+register(listAgents, handleListAgents);
+register(getAgent, (c: Context) => handleGetAgent(c.req.param("id")));
+register(patchAgent, (c: Context) => handlePatchAgent(c.req.param("id")));
+register(deleteAgent, (c: Context) => handleDeleteAgent(c.req.param("id")));
+register(syncAgent, (c: Context) => handleSyncAgent(c.req.param("id")));
+register(runAgent, (c: Context) => handleRunAgent(c.req.param("id")));
+register(listAgentVersions, (c: Context) => handleListAgentVersions(c.req.param("id")));
 
-openapiApp.openapi(createExperiment, handleCreateExperiment);
-openapiApp.openapi(listExperiments, handleListExperiments);
-openapiApp.openapi(getExperiment, (c) => handleGetExperiment(c.req.valid("param").id));
-openapiApp.openapi(getExperimentResults, (c) => handleGetExperimentResults(c.req.valid("param").id));
-openapiApp.openapi(getExperimentSummary, (c) => handleGetExperimentSummary(c.req.valid("param").id));
-openapiApp.openapi(getExperimentEvents, (c) => handleGetExperimentEvents(c.req.valid("param").id));
-openapiApp.openapi(cancelExperiment, (c) => handleCancelExperiment(c.req.valid("param").id));
+register(createExperiment, handleCreateExperiment);
+register(listExperiments, handleListExperiments);
+register(getExperiment, (c: Context) => handleGetExperiment(c.req.param("id")));
+register(getExperimentResults, (c: Context) => handleGetExperimentResults(c.req.param("id")));
+register(getExperimentSummary, (c: Context) => handleGetExperimentSummary(c.req.param("id")));
+register(getExperimentEvents, (c: Context) => handleGetExperimentEvents(c.req.param("id")));
+register(cancelExperiment, (c: Context) => handleCancelExperiment(c.req.param("id")));
 
-openapiApp.openapi(listTraces, handleListTraces);
+register(listTraces, handleListTraces);
 // Register the more specific /v1/traces/events SSE route BEFORE
 // /v1/traces/{id} so a literal "events" segment doesn't fall into the
 // `{id}` placeholder (which would fail the 32-hex regex validation).
-openapiApp.openapi(streamTraceEvents, handleStreamTraceEvents);
-openapiApp.openapi(getTrace, handleGetTrace);
-openapiApp.openapi(listObservations, handleListObservations);
-openapiApp.openapi(streamObservationEvents, handleStreamObservationEvents);
-openapiApp.openapi(streamTraceDetailEvents, (c) => handleStreamTraceDetailEvents(c));
+register(streamTraceEvents, handleStreamTraceEvents);
+register(getTrace, handleGetTrace);
+register(listObservations, handleListObservations);
+register(streamObservationEvents, handleStreamObservationEvents);
+register(streamTraceDetailEvents, handleStreamTraceDetailEvents);
 
-openapiApp.openapi(listPrompts, handleListPrompts);
-openapiApp.openapi(createPrompt, handleCreatePrompt);
-openapiApp.openapi(getPrompt, (c) => handleGetPrompt(c.req.valid("param").id));
-openapiApp.openapi(listPromptVersions, (c) => handleListPromptVersions(c.req.valid("param").id));
-openapiApp.openapi(createPromptVersion, (c) => handleCreatePromptVersion(c.req.valid("param").id));
-openapiApp.openapi(patchPromptLabels, (c) => handlePatchPromptLabels(c.req.valid("param").id));
+register(listPrompts, handleListPrompts);
+register(createPrompt, handleCreatePrompt);
+register(getPrompt, (c: Context) => handleGetPrompt(c.req.param("id")));
+register(listPromptVersions, (c: Context) => handleListPromptVersions(c.req.param("id")));
+register(createPromptVersion, (c: Context) => handleCreatePromptVersion(c.req.param("id")));
+register(patchPromptLabels, (c: Context) => handlePatchPromptLabels(c.req.param("id")));
 
-openapiApp.openapi(listDatasets, handleListDatasets);
-openapiApp.openapi(createDataset, handleCreateDataset);
-openapiApp.openapi(getDataset, (c) => handleGetDataset(c.req.valid("param").id));
-openapiApp.openapi(listDatasetItems, (c) => handleListDatasetItems(c.req.valid("param").id));
-openapiApp.openapi(addDatasetItem, (c) => handleAddDatasetItem(c.req.valid("param").id));
-openapiApp.openapi(deleteDatasetItem, (c) => handleDeleteDatasetItem(c.req.valid("param").id, c.req.valid("param").itemId));
+register(listDatasets, handleListDatasets);
+register(createDataset, handleCreateDataset);
+register(getDataset, (c: Context) => handleGetDataset(c.req.param("id")));
+register(listDatasetItems, (c: Context) => handleListDatasetItems(c.req.param("id")));
+register(addDatasetItem, (c: Context) => handleAddDatasetItem(c.req.param("id")));
+register(deleteDatasetItem, (c: Context) => handleDeleteDatasetItem(c.req.param("id"), c.req.param("itemId")));
 
-openapiApp.openapi(createScore, handleCreateScore);
-openapiApp.openapi(getScore, (c) => handleGetScore(c.req.valid("param").id));
+register(createScore, handleCreateScore);
+register(getScore, (c: Context) => handleGetScore(c.req.param("id")));
 
 openapiApp.doc("/openapi.json", {
   openapi: "3.1.0",

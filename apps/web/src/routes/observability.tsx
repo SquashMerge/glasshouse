@@ -4,12 +4,13 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { LuActivity, LuListTree } from "react-icons/lu";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
 import {
   FilterableTable,
   type ColumnDef,
   type FilterFieldDef,
 } from "../components/FilterableTable";
+import { StreamToggle } from "../components/StreamToggle";
+import { SseDebugOverlay } from "../components/SseDebugOverlay";
 import {
   listTraces,
   listObservations,
@@ -19,54 +20,8 @@ import {
   type ObservationRow,
 } from "../lib/api";
 import { defaultRange, toApiParams, type TimeRange } from "../components/TimeRangePicker";
-import { useEventSource, type UseEventSourceResult } from "../hooks/useEventSource";
+import { useEventSource } from "../hooks/useEventSource";
 type Tab = "traces" | "spans";
-
-/**
- * `LiveTabHeader` — small UX strip rendered in `FilterableTable.headerActions`.
- * Shows a colored pill for the SSE pipe state + Pause/Resume. Three visible
- * states from `useEventSource`:
- *   - status=open & !paused  → "Live" + Pause button
- *   - status=open & paused   → "Paused" + Resume button
- *   - status=closed & !paused → "Reconnecting" + Pause button
- * `paused: false` on auto-hidden-close → Reconnecting (the auto-close path).
- */
-function LiveTabHeader({ sse }: { sse: UseEventSourceResult }): React.ReactElement {
-  const label: { text: string; tone: "live" | "paused" | "reconnecting" } = (() => {
-    if (sse.paused) return { text: "Paused", tone: "paused" };
-    if (sse.status === "open") return { text: "Live", tone: "live" };
-    return { text: "Reconnecting", tone: "reconnecting" };
-  })();
-
-  const pillClass =
-    label.tone === "live"
-      ? "bg-green-500/15 text-green-700 dark:text-green-300 border-green-500/30"
-      : label.tone === "paused"
-        ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
-        : "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30";
-
-  return (
-    <div
-      className="flex items-center gap-2"
-      data-testid="live-tab-header"
-      data-state={label.tone}
-      aria-live="polite"
-    >
-      <Badge variant="outline" className={`text-[10px] font-mono uppercase tracking-wider ${pillClass}`} data-testid="live-pill">
-        {label.text}
-      </Badge>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 px-2 text-xs"
-        onClick={() => sse.reconnect({ pause: !sse.paused })}
-        data-testid={sse.paused ? "live-resume-button" : "live-pause-button"}
-      >
-        {sse.paused ? "Resume" : "Pause"}
-      </Button>
-    </div>
-  );
-}
 
 const VALID_TABS = new Set<Tab>(["traces", "spans"]);
 
@@ -186,26 +141,17 @@ export interface TraceEvent {
 
 const PAGE_SIZE = 100;
 
-/**
- * Cap on the `streamedRows` map per page tab. Each live SSE event costs one
- * entry; we drop the oldest (FIFO) beyond this to keep the rendered list
- * bounded regardless of SSE rate. The full set is still fetched via REST
- * on the next filter change / window-focus refetch.
- */
-const STREAMED_CAP = 200;
+// Cap streamed rows inserted into the visible list. The pending-id set still
+// tracks unique rows outside the paginated pages so the total stays accurate.
+const VISIBLE_SSE_CAP = 30;
 
 /**
- * Map-based merge with dedup by id. SSE rows win over paginated rows for
- * the same id (last-write-wins), so SSE-driven field updates (status,
- * duration_ms, metadataParsed-derived name/type/model) propagate to the
- * cells immediately instead of waiting for the next REST refetch.
- *
- * Result is sorted by `start_time` DESC so newer items render at the top
- * regardless of which source they came from. Without the sort, SSE rows
- * (appended after REST) would render at the bottom — confusing for a
- * "Live" tab.
+ * Merge paginated + streamed rows into one list deduped by id, sorted by
+ * `start_time` DESC so newer items render at the top regardless of source.
+ * Matches the order returned by the REST `listTraces` / `listObservations`
+ * endpoints, so live view and reload look the same.
  */
-function mergeByIdDesc<TRow extends { start_time: string }>(
+function mergeByStartDesc<TRow extends { start_time: string }>(
   keyOf: (row: TRow) => string,
   paginated: ReadonlyArray<TRow>,
   streamed: ReadonlyMap<string, TRow>,
@@ -213,12 +159,98 @@ function mergeByIdDesc<TRow extends { start_time: string }>(
   const map = new Map<string, TRow>();
   for (const r of paginated) map.set(keyOf(r), r);
   for (const r of streamed.values()) map.set(keyOf(r), r);
-  return Array.from(map.values()).sort((a, b) => b.start_time.localeCompare(a.start_time));
+  return Array.from(map.values()).sort(
+    (a, b) => b.start_time.localeCompare(a.start_time) || keyOf(b).localeCompare(keyOf(a)),
+  );
+}
+
+interface LiveRows<TRow> {
+  scope: string;
+  rows: Map<string, TRow>;
+  pendingIds: Set<string>;
+  highlightVersions: Map<string, number>;
+}
+
+function emptyLiveRows<TRow>(scope: string): LiveRows<TRow> {
+  return {
+    scope,
+    rows: new Map<string, TRow>(),
+    pendingIds: new Set<string>(),
+    highlightVersions: new Map<string, number>(),
+  };
+}
+
+function countPending(pendingIds: ReadonlySet<string>, paginatedIds: ReadonlySet<string>): number {
+  let count = pendingIds.size;
+  for (const id of paginatedIds) {
+    if (pendingIds.has(id)) count -= 1;
+  }
+  return count;
+}
+
+function matchesDuration(value: number | null | undefined, filter?: string): boolean {
+  if (!filter) return true;
+  if (value === null || value === undefined) return false;
+  const match = /^(<=|<|>=|>|=)?\s*(\d+(?:\.\d+)?)$/.exec(filter.trim());
+  if (!match) return true;
+  const expected = Number(match[2]);
+  switch (match[1] ?? "=") {
+    case "<": return value < expected;
+    case "<=": return value <= expected;
+    case ">": return value > expected;
+    case ">=": return value >= expected;
+    default: return value === expected;
+  }
+}
+
+function includesFolded(value: string | null | undefined, filter?: string): boolean {
+  return !filter || (value ?? "").toLocaleLowerCase().includes(filter.toLocaleLowerCase());
+}
+
+function matchesTimeRange(startTime: string, range: TimeRange, params: { time_from?: string; time_to?: string }): boolean {
+  if (range.kind === "last") {
+    const cutoff = new Date(Date.now() - range.minutes * 60_000);
+    const cutoffText = cutoff.toISOString().replace("T", " ").replace("Z", "");
+    return startTime >= cutoffText;
+  }
+  if (params.time_from && startTime < params.time_from) return false;
+  if (params.time_to && startTime > params.time_to) return false;
+  return true;
+}
+
+function matchesTraceEvent(event: TraceEvent, params: ListTracesParams, range: TimeRange): boolean {
+  return (
+    (!params.env || event.env === params.env) &&
+    (!params.agent_id || event.agent_id === params.agent_id) &&
+    (!params.status || event.status === params.status) &&
+    includesFolded(event.name, params.name) &&
+    includesFolded(event.scores_summary, params.scores) &&
+    includesFolded(event.input_text, params.input_text) &&
+    matchesDuration(event.duration_ms, params.duration) &&
+    matchesTimeRange(event.start_time, range, params)
+  );
+}
+
+function matchesObservationEvent(
+  event: ObservationEvent,
+  params: ListObservationsParams,
+  range: TimeRange,
+): boolean {
+  return (
+    (!params.trace_id || event.trace_id === params.trace_id) &&
+    (!params.type || event.type === params.type) &&
+    (!params.status || event.status === params.status) &&
+    includesFolded(event.name, params.name) &&
+    includesFolded(event.model, params.model) &&
+    includesFolded(event.input_text, params.input_text) &&
+    includesFolded(event.metadata, params.agent_id) &&
+    matchesDuration(event.duration_ms, params.duration) &&
+    matchesTimeRange(event.start_time, range, params)
+  );
 }
 
 /**
- * Hook that owns the data fetch for TracesTab and the SSE merge. Exposed so
- * the test file can also import it (and so we keep `TracesTab` small).
+ * Hook that owns the data fetch for TracesTab and the SSE merge.
  */
 function useTracesData() {
   const [filters, setFilters] = React.useState<Record<string, string>>(() => emptyFilters(TRACE_FILTER_FIELDS));
@@ -238,6 +270,7 @@ function useTracesData() {
     () => buildTraceApiParams(debouncedFilters, debouncedTimeRange),
     [debouncedFilters, debouncedTimeRange],
   );
+  const streamScope = JSON.stringify(apiParams);
 
   // SSE-only live updates — no `refetchInterval` polling. The hook below
   // returns `{status, paused, lastEventAt, reconnect}` for the Live/Pause UX.
@@ -271,15 +304,14 @@ function useTracesData() {
   }, [query.data]);
   const paginatedTotal = query.data?.pages[0]?.total ?? 0;
 
-  // SSE state — Map keyed by trace_id. SSE rows are last-write-wins over
-  // paginated rows for the same id, so updated fields (status, duration_ms,
-  // metadataParsed-driven name/type/model) propagate immediately.
-  const [streamedRows, setStreamedRows] = React.useState<Map<string, TraceRow>>(
-    () => new Map<string, TraceRow>(),
-  );
-  const [highlightedKeys, setHighlightedKeys] = React.useState<Set<string>>(
-    () => new Set<string>(),
-  );
+  const paginatedIds = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const t of paginated) s.add(t.trace_id);
+    return s;
+  }, [paginated]);
+
+  const [liveRows, setLiveRows] = React.useState<LiveRows<TraceRow>>(() => emptyLiveRows(streamScope));
+  const activeLiveRows = liveRows.scope === streamScope ? liveRows : emptyLiveRows<TraceRow>(streamScope);
 
   // Visibility-aware: only subscribe to the SSE feed while the tab is visible.
   // The real `useEventSource` hook reads `enabled` to skip subscribe work and
@@ -298,8 +330,9 @@ function useTracesData() {
   const sse = useEventSource("/v1/traces/events", {
     enabled,
     onMessage: (msg) => {
-      // Wire format: `data: JSON.stringify({ trace: <TraceRow> })`.
       const { trace: event } = msg.data as { trace: TraceEvent };
+      if (!matchesTraceEvent(event, apiParams, debouncedTimeRange)) return;
+      const id = event.trace_id;
       const row: TraceRow = {
         trace_id: event.trace_id,
         project_id: event.project_id ?? "",
@@ -318,37 +351,35 @@ function useTracesData() {
         output_text: event.output_text ?? "",
         scores_summary: event.scores_summary ?? "",
       };
-      setStreamedRows((prev) => {
-        const next = new Map(prev);
-        next.set(row.trace_id, row);
-        // FIFO eviction past the cap so a busy SSE stream doesn't grow the
-        // map without bound. The oldest entry is dropped; the user can
-        // re-fetch via filter change / window focus to recover it.
-        if (next.size > STREAMED_CAP) {
-          const oldest = next.keys().next().value;
-          if (oldest !== undefined) next.delete(oldest);
+      setLiveRows((previous) => {
+        const current = previous.scope === streamScope ? previous : emptyLiveRows<TraceRow>(streamScope);
+        const rows = new Map(current.rows);
+        rows.delete(id);
+        rows.set(id, row);
+        if (rows.size > VISIBLE_SSE_CAP) rows.delete(rows.keys().next().value!);
+
+        const pendingIds = current.pendingIds;
+        if (!paginatedIds.has(id)) pendingIds.add(id);
+
+        const highlightVersions = new Map(current.highlightVersions);
+        highlightVersions.delete(id);
+        highlightVersions.set(id, (current.highlightVersions.get(id) ?? 0) + 1);
+        if (highlightVersions.size > VISIBLE_SSE_CAP) {
+          highlightVersions.delete(highlightVersions.keys().next().value!);
         }
-        return next;
-      });
-      setHighlightedKeys((prev) => {
-        if (prev.has(row.trace_id)) return prev;
-        const next = new Set(prev);
-        next.add(row.trace_id);
-        return next;
+        return { scope: streamScope, rows, pendingIds, highlightVersions };
       });
     },
   });
 
+  // Merge paginated + capped streamed rows; sort by start_time DESC so the
+  // live view matches the order returned by the REST endpoint on reload.
   const merged = React.useMemo(
-    () => mergeByIdDesc((t) => t.trace_id, paginated, streamedRows),
-    [paginated, streamedRows],
+    () => mergeByStartDesc((t) => t.trace_id, paginated, activeLiveRows.rows),
+    [paginated, activeLiveRows.rows],
   );
-
-  // Total = REST-reported count + number of SSE ids that aren't already in
-  // paginated. `merged.length - paginated.length` is exactly that count
-  // because both layers feed `mergeByIdDesc` last-write-wins. Floor at 0
-  // for the unlikely case where `merged` somehow underflows (defensive).
-  const total = paginatedTotal + Math.max(0, merged.length - paginated.length);
+  const pendingCount = countPending(activeLiveRows.pendingIds, paginatedIds);
+  const total = paginatedTotal + pendingCount;
 
   // FilterableTable owns the raw filter inputs (uncontrolled) and debounces
   // them. The host receives the debounced values here and feeds them into
@@ -371,7 +402,7 @@ function useTracesData() {
     fetchNextPage: () => {
       if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
     },
-    highlightedKeys,
+    highlightVersions: activeLiveRows.highlightVersions,
     filters,
     setFilters,
     timeRange,
@@ -387,34 +418,37 @@ export function TracesTab() {
   const data = useTracesData();
 
   return (
-    <FilterableTable<TraceRow>
-      title="Traces"
-      headerActions={<LiveTabHeader sse={data.sse} />}
-      noun={{ singular: "trace", plural: "traces" }}
-      emptyHint={
-        <>
-          No traces yet. Send one to <code>/v1/otel/v1/traces</code> to get started.
-        </>
-      }
-      noMatchMessage="No traces match the current filters."
-      columns={TRACE_COLUMNS}
-      filterFields={TRACE_FILTER_FIELDS}
-      items={data.merged}
-      total={data.total}
-      isLoading={data.isLoading}
-      isError={data.isError}
-      hasNextPage={data.hasNextPage}
-      onLoadMore={data.fetchNextPage}
-      highlightedKeys={data.highlightedKeys}
-      rowKey={(t) => t.trace_id}
-      onFiltersChange={data.onFiltersChange}
-      onRowClick={(t) => {
-        navigate({
-          to: traceDetailPath(t.trace_id),
-          params: { id: t.trace_id },
-        });
-      }}
-    />
+    <>
+      <FilterableTable<TraceRow>
+        title="Traces"
+        headerActions={<StreamToggle sse={data.sse} />}
+        noun={{ singular: "trace", plural: "traces" }}
+        emptyHint={
+          <>
+            No traces yet. Send one to <code>/v1/otel/v1/traces</code> to get started.
+          </>
+        }
+        noMatchMessage="No traces match the current filters."
+        columns={TRACE_COLUMNS}
+        filterFields={TRACE_FILTER_FIELDS}
+        items={data.merged}
+        total={data.total}
+        isLoading={data.isLoading}
+        isError={data.isError}
+        hasNextPage={data.hasNextPage}
+        onLoadMore={data.fetchNextPage}
+        highlightedVersions={data.highlightVersions}
+        rowKey={(t) => t.trace_id}
+        onFiltersChange={data.onFiltersChange}
+        onRowClick={(t) => {
+          navigate({
+            to: traceDetailPath(t.trace_id),
+            params: { id: t.trace_id },
+          });
+        }}
+      />
+      <SseDebugOverlay sse={data.sse} label="traces" />
+    </>
   );
 }
 
@@ -510,7 +544,8 @@ export interface ObservationEvent {
   name: string;
   start_time: string;
   end_time?: string | null;
-  duration_ms?: number | null;  status: "ok" | "error";
+  duration_ms?: number | null;
+  status: "ok" | "error";
   model?: string | null;
   input_text?: string;
   output_text?: string;
@@ -545,6 +580,7 @@ function useSpansData() {
     () => ({ ...buildSpanApiParams(debouncedFilters, debouncedTimeRange), limit: PAGE_SIZE }),
     [debouncedFilters, debouncedTimeRange],
   );
+  const streamScope = JSON.stringify(apiParams);
 
   // SSE-only live updates — no `refetchInterval` polling. The hook returns
   // `{status, paused, lastEventAt, reconnect}` for the Live/Pause UX.
@@ -574,16 +610,14 @@ function useSpansData() {
   }, [query.data]);
   const paginatedTotal = query.data?.pages[0]?.total ?? 0;
 
-  // SSE state — Map keyed by observation_id. SSE rows override paginated
-  // rows for the same id (last-write-wins), which is how status / duration
-  // updates from a still-running trace flow into the cell content. The
-  // metadataParsed override (tool.name, model, type) flows through here too.
-  const [streamedRows, setStreamedRows] = React.useState<Map<string, ObservationRow>>(
-    () => new Map<string, ObservationRow>(),
-  );
-  const [highlightedKeys, setHighlightedKeys] = React.useState<Set<string>>(
-    () => new Set<string>(),
-  );
+  const paginatedIds = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const o of paginated) s.add(o.observation_id);
+    return s;
+  }, [paginated]);
+
+  const [liveRows, setLiveRows] = React.useState<LiveRows<ObservationRow>>(() => emptyLiveRows(streamScope));
+  const activeLiveRows = liveRows.scope === streamScope ? liveRows : emptyLiveRows<ObservationRow>(streamScope);
 
   const [enabled, setEnabled] = React.useState<boolean>(() =>
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
@@ -598,56 +632,52 @@ function useSpansData() {
   const sse = useEventSource("/v1/observations/events", {
     enabled,
     onMessage: (msg) => {
-      // Wire format: `data: JSON.stringify({ observation: <ObservationRow>, metadataParsed })`.
-      // The detail-page hook (`useTraceStream`) reads the same wrapped shape.
-      const { observation: event, metadataParsed } = msg.data as {
-        observation: ObservationEvent;
-        metadataParsed: ObservationEvent["metadataParsed"];
-      };
-      const md = metadataParsed ?? null;
+      const { observation: event } = msg.data as { observation: ObservationEvent };
+      if (!matchesObservationEvent(event, apiParams, debouncedTimeRange)) return;
+      const id = event.observation_id;
       const row: ObservationRow = {
         observation_id: event.observation_id,
         trace_id: event.trace_id,
         project_id: event.project_id ?? "",
         parent_observation_id: event.parent_observation_id ?? null,
-        type: (md?.type as ObservationRow["type"]) ?? event.type,
-        name: md?.tool?.name ?? event.name,
+        type: event.type,
+        name: event.name,
         start_time: event.start_time,
         end_time: event.end_time ?? null,
         duration_ms: event.duration_ms ?? null,
         status: event.status,
-        model: md?.model ?? event.model ?? null,
+        model: event.model ?? null,
         input_text: event.input_text ?? "",
         output_text: event.output_text ?? "",
-        metadata: event.metadata ?? JSON.stringify(md ?? {}),
+        metadata: event.metadata ?? "",
       };
-      setStreamedRows((prev) => {
-        const next = new Map(prev);
-        next.set(row.observation_id, row);
-        if (next.size > STREAMED_CAP) {
-          const oldest = next.keys().next().value;
-          if (oldest !== undefined) next.delete(oldest);
+      setLiveRows((previous) => {
+        const current = previous.scope === streamScope ? previous : emptyLiveRows<ObservationRow>(streamScope);
+        const rows = new Map(current.rows);
+        rows.delete(id);
+        rows.set(id, row);
+        if (rows.size > VISIBLE_SSE_CAP) rows.delete(rows.keys().next().value!);
+
+        const pendingIds = current.pendingIds;
+        if (!paginatedIds.has(id)) pendingIds.add(id);
+
+        const highlightVersions = new Map(current.highlightVersions);
+        highlightVersions.delete(id);
+        highlightVersions.set(id, (current.highlightVersions.get(id) ?? 0) + 1);
+        if (highlightVersions.size > VISIBLE_SSE_CAP) {
+          highlightVersions.delete(highlightVersions.keys().next().value!);
         }
-        return next;
-      });
-      setHighlightedKeys((prev) => {
-        if (prev.has(row.observation_id)) return prev;
-        const next = new Set(prev);
-        next.add(row.observation_id);
-        return next;
+        return { scope: streamScope, rows, pendingIds, highlightVersions };
       });
     },
   });
 
   const merged = React.useMemo(
-    () => mergeByIdDesc((o) => o.observation_id, paginated, streamedRows),
-    [paginated, streamedRows],
+    () => mergeByStartDesc((o) => o.observation_id, paginated, activeLiveRows.rows),
+    [paginated, activeLiveRows.rows],
   );
-
-  // Total = REST-reported count + number of SSE ids that aren't already in
-  // paginated. See useTracesData for why this is exactly
-  // `merged.length - paginated.length` (and floored at 0 defensively).
-  const total = paginatedTotal + Math.max(0, merged.length - paginated.length);
+  const pendingCount = countPending(activeLiveRows.pendingIds, paginatedIds);
+  const total = paginatedTotal + pendingCount;
 
   // FilterableTable owns the raw filter inputs (uncontrolled) and debounces
   // them. The host receives the debounced values here and feeds them into
@@ -670,7 +700,7 @@ function useSpansData() {
     fetchNextPage: () => {
       if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
     },
-    highlightedKeys,
+    highlightVersions: activeLiveRows.highlightVersions,
     filters,
     setFilters,
     timeRange,
@@ -686,35 +716,38 @@ export function SpansTab() {
   const data = useSpansData();
 
   return (
-    <FilterableTable<ObservationRow>
-      title="Spans"
-      headerActions={<LiveTabHeader sse={data.sse} />}
-      noun={{ singular: "span", plural: "spans" }}
-      emptyHint={
-        <>
-          No spans yet. Send one to <code>/v1/otel/v1/traces</code> to get started.
-        </>
-      }
-      noMatchMessage="No spans match the current filters."
-      columns={SPAN_COLUMNS}
-      filterFields={SPAN_FILTER_FIELDS}
-      items={data.merged}
-      total={data.total}
-      isLoading={data.isLoading}
-      isError={data.isError}
-      hasNextPage={data.hasNextPage}
-      onLoadMore={data.fetchNextPage}
-      highlightedKeys={data.highlightedKeys}
-      rowKey={(o) => o.observation_id}
-      onFiltersChange={data.onFiltersChange}
-      onRowClick={(o) => {
-        navigate({
-          to: traceDetailPath(o.trace_id),
-          params: { id: o.trace_id },
-          search: { span: o.observation_id },
-        });
-      }}
-    />
+    <>
+      <FilterableTable<ObservationRow>
+        title="Spans"
+        headerActions={<StreamToggle sse={data.sse} />}
+        noun={{ singular: "span", plural: "spans" }}
+        emptyHint={
+          <>
+            No spans yet. Send one to <code>/v1/otel/v1/traces</code> to get started.
+          </>
+        }
+        noMatchMessage="No spans match the current filters."
+        columns={SPAN_COLUMNS}
+        filterFields={SPAN_FILTER_FIELDS}
+        items={data.merged}
+        total={data.total}
+        isLoading={data.isLoading}
+        isError={data.isError}
+        hasNextPage={data.hasNextPage}
+        onLoadMore={data.fetchNextPage}
+        highlightedVersions={data.highlightVersions}
+        rowKey={(o) => o.observation_id}
+        onFiltersChange={data.onFiltersChange}
+        onRowClick={(o) => {
+          navigate({
+            to: traceDetailPath(o.trace_id),
+            params: { id: o.trace_id },
+            search: { span: o.observation_id },
+          });
+        }}
+      />
+      <SseDebugOverlay sse={data.sse} label="spans" />
+    </>
   );
 }
 

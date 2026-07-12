@@ -15,12 +15,12 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 function parseBasic(header: string | undefined): { user: string; pass: string } | null {
-  if (!header) return null;
+  if (!header || header.length > 8192) return null;
   const m = /^Basic\s+([A-Za-z0-9+/=]+)\s*$/.exec(header);
   if (!m) return null;
   let decoded: string;
   try {
-    decoded = Buffer.from(m[1], "base64").toString("utf8");
+    decoded = Buffer.from(m[1]!, "base64").toString("utf8");
   } catch {
     return null;
   }

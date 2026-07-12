@@ -1,9 +1,10 @@
 import * as React from "react";
 import { useParams, useLocation } from "@tanstack/react-router";
-import { LuCircleDot, LuPause, LuPlay } from "react-icons/lu";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../../components/ui/tabs";
+import { StreamToggle } from "../../../components/StreamToggle";
+import { SseDebugOverlay } from "../../../components/SseDebugOverlay";
 import { useTraceStream, type ObservationRowLike } from "../../../hooks/useTraceStream";
 import { cn } from "../../../lib/utils";
 
@@ -29,10 +30,7 @@ import { cn } from "../../../lib/utils";
 const TRACE_ID_REGEX = /^[0-9a-f]{32}$/;
 const HIGHLIGHT_MS = 1500;
 
-type PillState = "recording" | "recorded" | "paused" | "reconnecting";
-type IndicatorLabel = "Live" | "Paused" | "Reconnecting" | "Live · waiting";
-
-export interface DetailObservationLike {
+interface DetailObservationLike {
   observation_id: string;
   parent_observation_id: string | null;
   name: string;
@@ -57,7 +55,6 @@ export function TraceDetailPage() {
 
   const validId = TRACE_ID_REGEX.test(id);
   const [observations, setObservations] = React.useState<DetailObservationLike[]>([]);
-  const [recording, setRecording] = React.useState(true);
   const [notFound, setNotFound] = React.useState(false);
   const [newObservationIds, setNewObservationIds] = React.useState<Set<string>>(new Set());
   const [selectedObservationId, setSelectedObservationId] = React.useState<string | null>(null);
@@ -97,9 +94,11 @@ export function TraceDetailPage() {
         }, HIGHLIGHT_MS);
       },
       onStatus: (status: "complete" | "not_found") => {
-        if (status === "complete") {
-          setRecording(false);
-        } else if (status === "not_found") {
+        // The server's `event: status\ndata: {"status":"complete"}` frame is
+        // server-driven and orthogonal to the user-toggleable "Stream" state
+        // — the SSE pipe stays open until the user pauses it. We just flip
+        // the 404 placeholder if the trace isn't found.
+        if (status === "not_found") {
           setNotFound(true);
         }
       },
@@ -116,43 +115,6 @@ export function TraceDetailPage() {
     const root = observations.find((o) => !o.parent_observation_id) ?? observations[0]!;
     return root.name || "—";
   }, [observations]);
-
-  const pillState: PillState = stream.paused
-    ? "paused"
-    : recording
-      ? "recording"
-      : "recorded";
-
-  const indicatorLabel: IndicatorLabel = stream.paused
-    ? "Paused"
-    : stream.status === "closed"
-      ? "Reconnecting"
-      : stream.lastEventAt === null
-        ? "Live · waiting"
-        : "Live";
-
-  const liveDotClass =
-    stream.paused
-      ? "bg-muted-foreground/50"
-      : stream.status === "closed"
-        ? "bg-amber-500"
-        : "bg-success animate-pulse";
-
-  // Recompute "Xs ago" once per second so the string stays fresh.
-  const [, setTick] = React.useState(0);
-  React.useEffect(() => {
-    if (stream.paused || stream.lastEventAt === null) return;
-    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
-    return () => window.clearInterval(t);
-  }, [stream.paused, stream.lastEventAt]);
-
-  const lastEventLabel = (() => {
-    if (stream.lastEventAt === null) return "waiting";
-    const delta = Date.now() - stream.lastEventAt;
-    if (delta < 1500) return "just now";
-    if (delta < 60_000) return `${Math.floor(delta / 1000)}s ago`;
-    return `${Math.floor(delta / 60_000)}m ago`;
-  })();
 
   // Resolve the `?span=` deep-link (preferred) or fall back to the root
   // observation once the snapshot arrives. Kept as a single effect so the
@@ -232,8 +194,7 @@ export function TraceDetailPage() {
       {/* Header band */}
       <Card>
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <RecordingPill state={pillState} />
+          <div className="flex min-w-0 items-center gap-3">
             <div className="min-w-0">
               <div className="truncate text-lg font-semibold" data-testid="trace-name">
                 {traceName}
@@ -244,52 +205,7 @@ export function TraceDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs",
-                stream.paused && "text-muted-foreground",
-                stream.status === "closed" && !stream.paused && "text-amber-700",
-              )}
-              data-testid="live-indicator"
-              data-state={stream.paused ? "paused" : stream.status === "closed" ? "reconnecting" : "live"}
-            >
-              <span
-                className={cn("h-1.5 w-1.5 rounded-full", liveDotClass)}
-                aria-hidden="true"
-              />
-              {indicatorLabel === "Live · waiting" ? (
-                <span data-testid="live-label">Live · waiting</span>
-              ) : (
-                <>
-                  <span data-testid="live-label">{indicatorLabel}</span>
-                  {indicatorLabel === "Live" && (
-                    <span className="text-muted-foreground">· {lastEventLabel}</span>
-                  )}
-                </>
-              )}
-            </div>
-            {stream.paused ? (
-              <button
-                type="button"
-                data-testid="resume-button"
-                onClick={() => stream.resume()}
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                <LuPlay className="h-3 w-3" />
-                Resume
-              </button>
-            ) : (
-              <button
-                type="button"
-                data-testid="pause-button"
-                onClick={() => stream.pause()}
-                disabled={stream.status === "connecting"}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"
-              >
-                <LuPause className="h-3 w-3" />
-                Pause
-              </button>
-            )}
+            <StreamToggle sse={stream} />
           </div>
         </CardContent>
       </Card>
@@ -333,36 +249,8 @@ export function TraceDetailPage() {
           </Card>
         }
       />
+      <SseDebugOverlay sse={stream} label={`trace/${id.slice(0, 8)}…`} />
     </div>
-  );
-}
-
-function RecordingPill({ state }: { state: PillState }) {
-  const label =
-    state === "recording"
-      ? "Recording"
-      : state === "recorded"
-        ? "Recorded"
-        : state === "paused"
-          ? "Paused"
-          : "Reconnecting";
-  const className =
-    state === "recording"
-      ? "bg-primary text-primary-foreground"
-      : state === "recorded"
-        ? "bg-muted text-foreground"
-        : state === "paused"
-          ? "bg-amber-500/30 text-amber-900"
-          : "bg-amber-500/30 text-amber-900";
-  return (
-    <Badge
-      className={cn("text-xs", className)}
-      data-testid="recording-pill"
-      data-state={state}
-    >
-      <LuCircleDot className="mr-1 h-3 w-3" />
-      {label}
-    </Badge>
   );
 }
 

@@ -105,6 +105,7 @@ function fakeContext(opts: { traceId: string; expand?: string }): Context {
   return {
     req: {
       valid: () => ({ id: opts.traceId }),
+      param: (name: string) => name === "id" ? opts.traceId : undefined,
       query: (name: string) =>
         name === "expand" ? (opts.expand ?? undefined) : undefined,
       raw: req,

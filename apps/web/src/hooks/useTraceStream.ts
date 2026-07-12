@@ -61,9 +61,22 @@ export interface UseTraceStreamOptions {
 export interface UseTraceStreamResult {
   status: EventSourceStatus;
   paused: boolean;
+  /**
+   * Direct passthrough to the underlying `useEventSource.reconnect`. Pass
+   * `{ pause: true }` to enter user-paused state (no reconnects until called
+   * again with `pause: false`); no args (or `{ pause: false }`) to leave
+   * user-paused state and reconnect immediately. The `pause` / `resume`
+   * helpers below are retained for callers that prefer the explicit API.
+   */
+  reconnect: (opts?: { pause?: boolean }) => void;
   pause: () => void;
   resume: () => void;
   lastEventAt: number | null;
+  /**
+   * Diagnostic counters exposed by `useEventSource.debug`. Same shape, so the
+   * `SseDebugOverlay` component can consume either hook's result directly.
+   */
+  debug: import("./useEventSource").UseEventSourceResult["debug"];
 }
 
 interface EnvelopeMsg {
@@ -89,7 +102,6 @@ export function useTraceStream(
 
   const validTraceId = TRACE_ID_REGEX.test(traceId);
 
-  // Route the parsed envelope to the caller-supplied handlers.
   const onMessage = React.useCallback((msg: EnvelopeMsg) => {
     switch (msg.event) {
       case "snapshot":
@@ -152,6 +164,10 @@ export function useTraceStream(
     },
     get lastEventAt() {
       return es.lastEventAt;
+    },
+    reconnect: es.reconnect,
+    get debug() {
+      return es.debug;
     },
     pause,
     resume,
