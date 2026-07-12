@@ -52,6 +52,11 @@ export const Observation = z.object({
   output_text: z.string().default(""),
 }).openapi("Observation");
 
+export const ObservationList = z.object({
+  items: z.array(Observation),
+  total: z.number().int(),
+}).openapi("ObservationList");
+
 export const TraceStubResponses = {
   501: { description: "Not implemented", content: { "application/json": { schema: NotImplementedError } } },
   404: { description: "Trace not found", content: { "application/json": { schema: ErrorEnvelope } } },

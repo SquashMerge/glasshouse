@@ -9,9 +9,13 @@
 # enforces LF for *.sh and .tool-versions, but older checkouts may still
 # have CRLF until you re-pull + run `make normalize`.
 #
+# Bash 3.2+ compatible: no associative arrays (`declare -A`) — Apple ships
+# bash 3.2.57 as /bin/bash, and `declare -A` is a bash 4 feature. We use
+# parallel indexed arrays + a lookup helper instead.
+#
 
 # CRLF guard for this script.
-if grep -q $'\r' "$0" 2>/dev/null; then
+if printf '%s' "$0" | grep -q $'\r' 2>/dev/null; then
   TMP="$(mktemp)"
   tr -d '\r' < "$0" > "$TMP"
   chmod +x "$TMP"
@@ -27,7 +31,7 @@ fail() { printf '  \033[1;31m✗\033[0m %s\n' "$1"; exit 1; }
 cd "$(dirname "$0")/../.."
 
 # Self-normalize .tool-versions if needed.
-if [ -f .tool-versions ] && grep -q $'\r' .tool-versions; then
+if [ -f .tool-versions ] && printf '%s' "$(cat .tool-versions)" | grep -q $'\r' 2>/dev/null; then
   step "Stripping CRLF from .tool-versions (Windows checkout detected)"
   tr -d '\r' < .tool-versions > .tool-versions.tmp && mv .tool-versions.tmp .tool-versions
   ok ".tool-versions normalized to LF"
@@ -62,8 +66,6 @@ fi
 if ! command -v gcc >/dev/null 2>&1; then
   echo "  ! gcc not installed. Some asdf plugins (e.g., postgres, erlang) build from source and need a C toolchain."
   echo "    Install with: apt-get install build-essential"
-  # gcc is only required for plugins that build from source; the bun + nodejs
-  # plugins ship prebuilt binaries so we don't fail here.
 fi
 if [ "$PREREQ_OK" = "1" ]; then
   ok "prerequisites present"
@@ -72,28 +74,45 @@ else
 fi
 
 # Read pinned versions from .tool-versions (skip comments / blanks).
-declare -A WANT
+# We use parallel indexed arrays (TOOLS / VERSIONS) instead of an associative
+# array so this script works under bash 3.2 (Apple's /bin/bash).
+TOOLS=()
+VERSIONS=()
 while IFS= read -r line; do
   line="${line%%#*}"
   line="$(echo "$line" | xargs || true)"
   [ -z "$line" ] && continue
   tool="${line%% *}"
   version="${line#* }"
-  WANT["$tool"]="$version"
+  TOOLS+=("$tool")
+  VERSIONS+=("$version")
 done < .tool-versions
 
-# Tools that have no asdf plugin at all (uv, clickhouse) are NOT listed in
-# .tool-versions — install them via their official installers (see README).
-# For tools that DO have asdf plugins, `asdf plugin add <name>` (no URL)
-# resolves via asdf's plugin index. Only fall back to a manual git URL when
-# the index lookup fails AND we have a known repo.
+# Fallback URLs for plugins that aren't in asdf's index. Parallel arrays keyed
+# by index (not name) so we don't need associative arrays.
+FALLBACK_TOOL=("bun")
+FALLBACK_URL=("https://github.com/axetroy/asdf-bun.git")
 
-declare -A FALLBACK_URLS=(
-  [bun]="https://github.com/axetroy/asdf-bun.git"
-)
+# Returns the fallback URL for a given tool, or empty string.
+get_fallback_url() {
+  local tool="$1"
+  local i
+  for i in "${!FALLBACK_TOOL[@]}"; do
+    if [ "${FALLBACK_TOOL[$i]}" = "$tool" ]; then
+      echo "${FALLBACK_URL[$i]}"
+      return 0
+    fi
+  done
+  echo ""
+}
 
 step "Ensuring asdf plugins are installed"
-for tool in "${!WANT[@]}"; do
+i=0
+while [ "$i" -lt "${#TOOLS[@]}" ]; do
+  tool="${TOOLS[$i]}"
+  version="${VERSIONS[$i]}"
+  i=$((i + 1))
+
   if asdf plugin list 2>/dev/null | grep -qx "$tool"; then
     ok "plugin $tool already added"
     continue
@@ -106,7 +125,7 @@ for tool in "${!WANT[@]}"; do
   fi
 
   # Try fallback URL if known.
-  fallback="${FALLBACK_URLS[$tool]:-}"
+  fallback="$(get_fallback_url "$tool")"
   if [ -n "$fallback" ]; then
     if asdf plugin add "$tool" "$fallback" 2>/dev/null; then
       ok "added plugin $tool (from $fallback)"
@@ -120,8 +139,12 @@ done
 
 step "Installing pinned tool versions"
 INSTALL_OK=1
-for tool in "${!WANT[@]}"; do
-  version="${WANT[$tool]}"
+i=0
+while [ "$i" -lt "${#TOOLS[@]}" ]; do
+  tool="${TOOLS[$i]}"
+  version="${VERSIONS[$i]}"
+  i=$((i + 1))
+
   if ! asdf plugin list 2>/dev/null | grep -qx "$tool"; then
     continue  # already logged in the previous step
   fi

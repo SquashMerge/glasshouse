@@ -1,6 +1,7 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { apiReference } from "@scalar/hono-api-reference";
 import { healthRoute, handleHealth } from "./routes/health.js";
+import { loginRoute, handleLogin } from "./routes/auth.js";
 import {
   createAgent, handleCreateAgent,
   listAgents, handleListAgents,
@@ -24,6 +25,7 @@ import {
   listTraces, handleListTraces,
   getTrace, handleGetTrace,
   searchTraces, handleSearchTraces,
+  listObservations, handleListObservations,
 } from "./routes/traces.js";
 import {
   listPrompts, handleListPrompts,
@@ -51,7 +53,9 @@ export const openapiApp = new OpenAPIHono();
 // Health (also mounted at /health by the bare handler in index.ts).
 openapiApp.openapi(healthRoute, handleHealth);
 
-// Agents (8 routes)
+// Login: gated by basicAuthMiddleware in index.ts via the parent /v1/* mount.
+openapiApp.openapi(loginRoute, handleLogin);
+
 openapiApp.openapi(createAgent, handleCreateAgent);
 openapiApp.openapi(listAgents, handleListAgents);
 openapiApp.openapi(getAgent, (c) => handleGetAgent(c.req.valid("param").id));
@@ -61,7 +65,6 @@ openapiApp.openapi(syncAgent, (c) => handleSyncAgent(c.req.valid("param").id));
 openapiApp.openapi(runAgent, (c) => handleRunAgent(c.req.valid("param").id));
 openapiApp.openapi(listAgentVersions, (c) => handleListAgentVersions(c.req.valid("param").id));
 
-// Experiments (7 routes)
 openapiApp.openapi(createExperiment, handleCreateExperiment);
 openapiApp.openapi(listExperiments, handleListExperiments);
 openapiApp.openapi(getExperiment, (c) => handleGetExperiment(c.req.valid("param").id));
@@ -70,12 +73,11 @@ openapiApp.openapi(getExperimentSummary, (c) => handleGetExperimentSummary(c.req
 openapiApp.openapi(getExperimentEvents, (c) => handleGetExperimentEvents(c.req.valid("param").id));
 openapiApp.openapi(cancelExperiment, (c) => handleCancelExperiment(c.req.valid("param").id));
 
-// Traces (3 routes)
 openapiApp.openapi(listTraces, handleListTraces);
-openapiApp.openapi(getTrace, (c) => handleGetTrace(c.req.valid("param").id));
+openapiApp.openapi(getTrace, handleGetTrace);
 openapiApp.openapi(searchTraces, handleSearchTraces);
+openapiApp.openapi(listObservations, handleListObservations);
 
-// Prompts (6 routes)
 openapiApp.openapi(listPrompts, handleListPrompts);
 openapiApp.openapi(createPrompt, handleCreatePrompt);
 openapiApp.openapi(getPrompt, (c) => handleGetPrompt(c.req.valid("param").id));
@@ -83,7 +85,6 @@ openapiApp.openapi(listPromptVersions, (c) => handleListPromptVersions(c.req.val
 openapiApp.openapi(createPromptVersion, (c) => handleCreatePromptVersion(c.req.valid("param").id));
 openapiApp.openapi(patchPromptLabels, (c) => handlePatchPromptLabels(c.req.valid("param").id));
 
-// Datasets (6 routes incl. nested item)
 openapiApp.openapi(listDatasets, handleListDatasets);
 openapiApp.openapi(createDataset, handleCreateDataset);
 openapiApp.openapi(getDataset, (c) => handleGetDataset(c.req.valid("param").id));
@@ -91,11 +92,9 @@ openapiApp.openapi(listDatasetItems, (c) => handleListDatasetItems(c.req.valid("
 openapiApp.openapi(addDatasetItem, (c) => handleAddDatasetItem(c.req.valid("param").id));
 openapiApp.openapi(deleteDatasetItem, (c) => handleDeleteDatasetItem(c.req.valid("param").id, c.req.valid("param").itemId));
 
-// Scores (2 routes)
 openapiApp.openapi(createScore, handleCreateScore);
 openapiApp.openapi(getScore, (c) => handleGetScore(c.req.valid("param").id));
 
-// OpenAPI JSON document endpoint
 openapiApp.doc("/openapi.json", {
   openapi: "3.1.0",
   info: {
@@ -106,7 +105,6 @@ openapiApp.doc("/openapi.json", {
   servers: [{ url: "http://localhost:3000", description: "Local dev" }],
 });
 
-// Scalar UI at /reference
 openapiApp.get(
   "/reference",
   apiReference({

@@ -1,6 +1,5 @@
 import { z } from "@hono/zod-openapi";
 
-// Reusable parameter schemas
 export const IdParam = z.object({
   id: z.string().uuid().openapi({
     param: { name: "id", in: "path" },
@@ -13,7 +12,6 @@ export const PageQuery = z.object({
   offset: z.coerce.number().int().min(0).optional().openapi({ example: 0 }),
 });
 
-// Standard error envelope returned by all endpoints (501 stubs and 4xx/5xx real)
 export const ErrorCode = z.enum([
   "NOT_IMPLEMENTED",
   "BAD_REQUEST",
@@ -36,7 +34,6 @@ export const NotImplementedError = ErrorEnvelope.extend({
   message: z.string(),
 }).openapi("NotImplementedError");
 
-// Health response
 export const HealthResponse = z.object({
   status: z.literal("ok").or(z.literal("degraded")),
   checks: z.object({

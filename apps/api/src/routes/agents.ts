@@ -6,7 +6,6 @@ import { notImplemented } from "./_stub.js";
 
 const tag = "agents";
 
-// POST /v1/agents
 export const createAgent = createRoute({
   method: "post",
   path: "/v1/agents",
@@ -17,7 +16,6 @@ export const createAgent = createRoute({
 });
 export const handleCreateAgent = () => notImplemented();
 
-// GET /v1/agents
 export const listAgents = createRoute({
   method: "get",
   path: "/v1/agents",
@@ -27,7 +25,6 @@ export const listAgents = createRoute({
 });
 export const handleListAgents = () => notImplemented();
 
-// GET /v1/agents/{id}
 export const getAgent = createRoute({
   method: "get",
   path: "/v1/agents/{id}",
@@ -38,7 +35,6 @@ export const getAgent = createRoute({
 });
 export const handleGetAgent = (_id: string) => notImplemented();
 
-// PATCH /v1/agents/{id}
 export const patchAgent = createRoute({
   method: "patch",
   path: "/v1/agents/{id}",
@@ -49,7 +45,6 @@ export const patchAgent = createRoute({
 });
 export const handlePatchAgent = (_id: string) => notImplemented();
 
-// DELETE /v1/agents/{id}
 export const deleteAgent = createRoute({
   method: "delete",
   path: "/v1/agents/{id}",
@@ -60,7 +55,6 @@ export const deleteAgent = createRoute({
 });
 export const handleDeleteAgent = (_id: string) => notImplemented();
 
-// POST /v1/agents/{id}/sync
 export const syncAgent = createRoute({
   method: "post",
   path: "/v1/agents/{id}/sync",
@@ -71,7 +65,6 @@ export const syncAgent = createRoute({
 });
 export const handleSyncAgent = (_id: string) => notImplemented();
 
-// POST /v1/agents/{id}/run
 export const runAgent = createRoute({
   method: "post",
   path: "/v1/agents/{id}/run",
@@ -82,7 +75,6 @@ export const runAgent = createRoute({
 });
 export const handleRunAgent = (_id: string) => notImplemented();
 
-// GET /v1/agents/{id}/versions
 export const listAgentVersions = createRoute({
   method: "get",
   path: "/v1/agents/{id}/versions",

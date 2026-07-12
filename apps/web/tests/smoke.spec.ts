@@ -11,22 +11,18 @@ test("dashboard renders with title, links, zero console errors", async ({ page }
 
   await page.goto("/", { waitUntil: "networkidle" });
 
-  // Title
   await expect(page).toHaveTitle("Astraea · MVP Foundation");
 
-  // Heading
   const h1 = page.locator("h1");
   await expect(h1).toContainText("Astraea");
 
-  // Two outbound links: /reference and /health
   const referenceLink = page.locator('a[href="/reference"]');
   const healthLink = page.locator('a[href="/health"]');
   await expect(referenceLink).toBeVisible();
   await expect(healthLink).toBeVisible();
 
-  // HealthBadge renders (even if /health is down — the component itself must mount)
+  // HealthBadge must mount even when /health is down — that's a UI concern, not a backend one.
   await expect(page.getByText(/postgres:/i)).toBeVisible();
 
-  // Zero console errors during page load
   expect(consoleErrors, `console errors observed: ${consoleErrors.join("\n")}`).toEqual([]);
 });

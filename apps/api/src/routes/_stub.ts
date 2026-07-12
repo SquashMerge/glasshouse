@@ -1,5 +1,3 @@
-// Stub route helper. Returns 501 Not Implemented with the standard error envelope.
-
 import type { ErrorCode } from "../schemas/common.js";
 
 export function notImplemented(): Response {
