@@ -22,9 +22,32 @@ vi.mock("@tanstack/react-router", async () => {
 
 vi.mock("../../src/lib/api", async () => {
   const actual = await vi.importActual<typeof import("../../src/lib/api")>("../../src/lib/api");
+  // Default `listObservations` returns a single row matching the default
+  // SPAN_ID so SSE pushes with `SPAN_ID` hit the "in-view" path
+  // (highlight + render). Tests push other ids via `mockResolvedValueOnce`.
   return {
     ...actual,
-    listObservations: vi.fn(async () => ({ items: [], total: 0 })),
+    listObservations: vi.fn(async () => ({
+      items: [
+        {
+          observation_id: SPAN_ID,
+          trace_id: TRACE_ID,
+          project_id: "proj-1",
+          parent_observation_id: null,
+          type: "span",
+          name: "first-span",
+          start_time: "2026-01-01 00:00:00",
+          end_time: "2026-01-01 00:00:01",
+          duration_ms: 1000,
+          status: "ok",
+          model: null,
+          input_text: "",
+          output_text: "",
+          metadata: "",
+        },
+      ],
+      total: 1,
+    })),
   };
 });
 
@@ -111,9 +134,10 @@ afterEach(() => {
 // --- Tests -----------------------------------------------------------------
 
 describe("SpansTab — SSE merge + highlight", () => {
-  it("appends an SSE event row with the highlight class", async () => {
+  it("highlights an in-view SSE event row", async () => {
     renderWithQueryClient(<SpansTab />);
-
+    // Wait for the paginated row to render (proves paginatedIds is populated).
+    await screen.findByText("first-span", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
@@ -131,7 +155,7 @@ describe("SpansTab — SSE merge + highlight", () => {
 
   it("navigates to /observability/traces/{32-hex}?span={obs_id} on row click", async () => {
     renderWithQueryClient(<SpansTab />);
-
+    const cell = await screen.findByText("first-span", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
@@ -144,7 +168,6 @@ describe("SpansTab — SSE merge + highlight", () => {
       });
     });
 
-    const cell = await screen.findByText("clickable-span");
     const row = cell.closest("tr");
     expect(row).not.toBeNull();
     fireEvent.click(row!);
@@ -155,17 +178,20 @@ describe("SpansTab — SSE merge + highlight", () => {
     expect(call.search?.span).toBe(SPAN_ID);
   });
 
-  it("uses metadataParsed to populate tool/model/type cells when present", async () => {
+  it("does not mutate in-view cells when SSE metadataParsed is present (highlight only)", async () => {
+    // Perf refactor: `merged = paginated` — SSE events on in-view ids only
+    // toggle the 1.5s highlight. metadataParsed arrives in the wire shape
+    // but is intentionally not merged into rows (page data already carries
+    // the resolved tool/model/type from the REST listObservations fetch).
     renderWithQueryClient(<SpansTab />);
-
+    await screen.findByText("first-span", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
       pushEvent!({
         event: "observation",
         data: {
-          observation: makeSpanEvent({ observation_id: SPAN_ID, name: "metadata-span" }),
-          // metadataParsed overrides name/type/model without a second fetch.
+          observation: makeSpanEvent({ observation_id: SPAN_ID, name: "first-span" }),
           metadataParsed: {
             tool: { name: "tool-from-metadata" },
             model: "gpt-4o-from-metadata",
@@ -175,13 +201,21 @@ describe("SpansTab — SSE merge + highlight", () => {
       });
     });
 
-    // The Name column reads from metadataParsed.tool.name first.
-    expect(await screen.findByText("tool-from-metadata")).toBeInTheDocument();
-    // The Model column reads from metadataParsed.model.
-    expect(await screen.findByText("gpt-4o-from-metadata")).toBeInTheDocument();
-    // The Type badge shows "tool" (overridden by metadataParsed.type).
-    const badges = screen.getAllByText("tool");
-    expect(badges.length).toBeGreaterThanOrEqual(1);
+    // Row still reflects paginated values — SSE metadataParsed does not
+    // mutate the rendered cells.
+    expect(await screen.findByText("first-span")).toBeInTheDocument();
+    expect(screen.queryByText("tool-from-metadata")).not.toBeInTheDocument();
+    expect(screen.queryByText("gpt-4o-from-metadata")).not.toBeInTheDocument();
+
+    // Type badge from paginated ("span"), not the metadataParsed override.
+    expect(screen.getAllByText("span").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("tool")).not.toBeInTheDocument();
+
+    // Highlight is applied in place.
+    const cell = screen.getByText("first-span");
+    const row = cell.closest("tr");
+    expect(row).not.toBeNull();
+    expect(row!.getAttribute("data-highlighted")).toBe("true");
   });
 
   it("renders a Live pill + Pause button on the SpansTab header", async () => {

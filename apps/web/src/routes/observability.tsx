@@ -186,66 +186,9 @@ export interface TraceEvent {
 
 const PAGE_SIZE = 100;
 
-function dedupByKey<T>(items: T[], keyOf: (item: T) => string): T[] {
-  const seen = new Set<string>();
-  const out: T[] = [];
-  for (const it of items) {
-    const k = keyOf(it);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(it);
-  }
-  return out;
-}
-
 /**
- * Append-only buffer for SSE items with a `minIntervalMs` coalesce.
- * Flushes the buffer into React state at most once per window so a burst
- * produces ~1 state update instead of N. Uses `setTimeout` (not RAF) so
- * it works under jsdom test renders.
- */
-function useCoalescedStream<T>(minIntervalMs = 100) {
-  const [items, setItems] = React.useState<T[]>([]);
-  const bufferRef = React.useRef<T[]>([]);
-  const timerRef = React.useRef<number | null>(null);
-
-  const flush = React.useCallback(() => {
-    if (bufferRef.current.length === 0) return;
-    const drained = bufferRef.current;
-    bufferRef.current = [];
-    setItems((prev) => [...prev, ...drained]);
-  }, []);
-
-  const push = React.useCallback(
-    (incoming: T[]) => {
-      if (incoming.length === 0) return;
-      for (const i of incoming) bufferRef.current.push(i);
-      if (timerRef.current !== null) return;
-      timerRef.current = window.setTimeout(() => {
-        timerRef.current = null;
-        flush();
-      }, minIntervalMs);
-    },
-    [flush, minIntervalMs],
-  );
-
-  React.useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  const reset = React.useCallback(() => {
-    bufferRef.current = [];
-    setItems([]);
-  }, []);
-
-  return { items, push, reset };
-}
-
-/**
- * Hook that owns the data fetch for TracesTab and the SSE merge. Exposed so
- * the test file can also import it (and so we keep `TracesTab` small).
+ * Hook that owns the data fetch for TracesTab. Exposed so the test file can
+ * import it (and so we keep `TracesTab` small).
  */
 function useTracesData() {
   const [filters, setFilters] = React.useState<Record<string, string>>(() => emptyFilters(TRACE_FILTER_FIELDS));
@@ -287,17 +230,20 @@ function useTracesData() {
   );
   const paginatedTotal = query.data?.pages[0]?.total ?? 0;
 
-  const [streamed, setStreamed] = React.useState<TraceRow[]>([]);
-  const stream = useCoalescedStream<TraceRow>(100);
-  // Mirror the coalesced-stream items into `streamed` so the merged render
-  // sees them. The coalesced buffer smooths bursts at the cost of one frame
-  // of latency, which is fine for a live list.
-  React.useEffect(() => {
-    if (stream.items.length === 0) return;
-    setStreamed((prev) => dedupByKey([...prev, ...stream.items], (t) => t.trace_id));
-    stream.reset();
-  }, [stream.items, stream]);
-  const [highlightedKeys, setHighlightedKeys] = React.useState<Set<string>>(new Set());
+  // Set of ids currently in the loaded page. Used to decide whether a
+  // streamed event is an "in-view" insertion (highlight in place) or an
+  // "out-of-view" arrival (just bump the total counter — no table re-render).
+  // Memoized so the Set is rebuilt only when `paginated` changes.
+  const paginatedIds = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const t of paginated) s.add(t.trace_id);
+    return s;
+  }, [paginated]);
+
+  const [highlightedKeys, setHighlightedKeys] = React.useState<Set<string>>(
+    () => new Set<string>(),
+  );
+  const [extraStreamedCount, setExtraStreamedCount] = React.useState(0);
 
   // Visibility-aware: only subscribe to the SSE feed while the tab is visible.
   // The real `useEventSource` hook reads `enabled` to skip subscribe work and
@@ -317,42 +263,33 @@ function useTracesData() {
     enabled,
     onMessage: (msg) => {
       // Wire format: `data: JSON.stringify({ trace: <TraceRow> })`.
-      // The detail-page hook (`useTraceStream`) reads the same wrapped shape.
       const { trace: event } = msg.data as { trace: TraceEvent };
-      const row: TraceRow = {
-        trace_id: event.trace_id,
-        project_id: event.project_id ?? "",
-        name: event.name,
-        start_time: event.start_time,
-        end_time: event.end_time ?? null,
-        duration_ms: event.duration_ms ?? null,
-        status: event.status,
-        user_id: event.user_id ?? "",
-        session_id: event.session_id ?? "",
-        agent_id: event.agent_id ?? "",
-        agent_version: event.agent_version ?? "",
-        env: event.env ?? "",
-        tags: event.tags ?? [],
-        input_text: event.input_text ?? "",
-        output_text: event.output_text ?? "",
-        scores_summary: event.scores_summary ?? "",
-      };
-      stream.push([row]);
-      setHighlightedKeys((prev) => {
-        if (prev.has(row.trace_id)) return prev;
-        const next = new Set(prev);
-        next.add(row.trace_id);
-        return next;
-      });
+      const id = event.trace_id;
+      if (paginatedIds.has(id)) {
+        // In-view: flag for a 1.5s highlight. The HighlightedRow component
+        // owns its own setTimeout so the visual fades; we just track ids.
+        // No table mutation — `merged = paginated`, and the row is already
+        // there.
+        setHighlightedKeys((prev) => {
+          if (prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
+      } else {
+        // Out-of-view: bump total. Don't touch the rendered list — the
+        // user will see the bumped counter and can scroll / load more to
+        // surface the row.
+        setExtraStreamedCount((c) => c + 1);
+      }
     },
   });
 
-  const merged = React.useMemo(
-    () => dedupByKey([...paginated, ...streamed], (t) => t.trace_id),
-    [paginated, streamed],
-  );
-
-  const total = paginatedTotal + streamed.length;
+  // Merged is just the paginated view. SSE items either highlight in place
+  // (in-view) or just bump the counter (out-of-view). Keeps the rendered
+  // table bounded to the current page size regardless of SSE rate.
+  const merged = paginated;
+  const total = paginatedTotal + extraStreamedCount;
 
   return {
     merged,
@@ -555,14 +492,18 @@ function useSpansData() {
   );
   const paginatedTotal = query.data?.pages[0]?.total ?? 0;
 
-  const [streamed, setStreamed] = React.useState<ObservationRow[]>([]);
-  const stream = useCoalescedStream<ObservationRow>(100);
-  React.useEffect(() => {
-    if (stream.items.length === 0) return;
-    setStreamed((prev) => dedupByKey([...prev, ...stream.items], (o) => o.observation_id));
-    stream.reset();
-  }, [stream.items, stream]);
-  const [highlightedKeys, setHighlightedKeys] = React.useState<Set<string>>(new Set());
+  // Set of ids currently in the loaded page. See useTracesData for the
+  // full in-view / out-of-view rationale.
+  const paginatedIds = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const o of paginated) s.add(o.observation_id);
+    return s;
+  }, [paginated]);
+
+  const [highlightedKeys, setHighlightedKeys] = React.useState<Set<string>>(
+    () => new Set<string>(),
+  );
+  const [extraStreamedCount, setExtraStreamedCount] = React.useState(0);
 
   const [enabled, setEnabled] = React.useState<boolean>(() =>
     typeof document === "undefined" ? true : document.visibilityState !== "hidden",
@@ -578,44 +519,25 @@ function useSpansData() {
     enabled,
     onMessage: (msg) => {
       // Wire format: `data: JSON.stringify({ observation: <ObservationRow>, metadataParsed })`.
-      // The detail-page hook (`useTraceStream`) reads the same wrapped shape.
-      const { observation: event, metadataParsed } = msg.data as {
-        observation: ObservationEvent;
-        metadataParsed: ObservationEvent["metadataParsed"];
-      };
-      const md = metadataParsed ?? null;
-      const row: ObservationRow = {
-        observation_id: event.observation_id,
-        trace_id: event.trace_id,
-        project_id: event.project_id ?? "",
-        parent_observation_id: event.parent_observation_id ?? null,
-        type: (md?.type as ObservationRow["type"]) ?? event.type,
-        name: md?.tool?.name ?? event.name,
-        start_time: event.start_time,
-        end_time: event.end_time ?? null,
-        duration_ms: event.duration_ms ?? null,
-        status: event.status,
-        model: md?.model ?? event.model ?? null,
-        input_text: event.input_text ?? "",
-        output_text: event.output_text ?? "",
-        metadata: event.metadata ?? JSON.stringify(md ?? {}),
-      };
-      stream.push([row]);
-      setHighlightedKeys((prev) => {
-        if (prev.has(row.observation_id)) return prev;
-        const next = new Set(prev);
-        next.add(row.observation_id);
-        return next;
-      });
+      // We only need the id for routing — `merged = paginated`, so when the
+      // id matches, the row is already in the table. HighlightedRow owns the
+      // 1.5s visual setTimeout locally.
+      const id = (msg.data as { observation: { observation_id: string } }).observation.observation_id;
+      if (paginatedIds.has(id)) {
+        setHighlightedKeys((prev) => {
+          if (prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
+      } else {
+        setExtraStreamedCount((c) => c + 1);
+      }
     },
   });
 
-  const merged = React.useMemo(
-    () => dedupByKey([...paginated, ...streamed], (o) => o.observation_id),
-    [paginated, streamed],
-  );
-
-  const total = paginatedTotal + streamed.length;
+  const merged = paginated;
+  const total = paginatedTotal + extraStreamedCount;
 
   return {
     merged,

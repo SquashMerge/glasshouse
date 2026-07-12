@@ -27,9 +27,36 @@ vi.mock("@tanstack/react-router", async () => {
 
 vi.mock("../../src/lib/api", async () => {
   const actual = await vi.importActual<typeof import("../../src/lib/api")>("../../src/lib/api");
+  // Default `listTraces` returns a single row matching the default TRACE_ID
+  // so SSE pushes with `TRACE_ID` hit the "in-view" path (highlight + render).
+  // Tests that push events with a different id can `mockResolvedValueOnce`
+  // to override. Tests that exercise the out-of-view path use the default
+  // empty list (mock the response to return `[]`).
   return {
     ...actual,
-    listTraces: vi.fn(async () => ({ items: [], total: 0 })),
+    listTraces: vi.fn(async () => ({
+      items: [
+        {
+          trace_id: TRACE_ID,
+          project_id: "proj-1",
+          name: "first.call",
+          start_time: "2026-01-01 00:00:00",
+          end_time: "2026-01-01 00:00:01",
+          duration_ms: 1000,
+          status: "ok",
+          user_id: "u1",
+          session_id: "s1",
+          agent_id: "agent-1",
+          agent_version: "v1",
+          env: "dev",
+          tags: [],
+          input_text: "hello",
+          output_text: "world",
+          scores_summary: "",
+        },
+      ],
+      total: 1,
+    })),
   };
 });
 
@@ -138,63 +165,60 @@ afterEach(() => {
 // --- Tests -----------------------------------------------------------------
 
 describe("TracesTab — SSE merge + highlight", () => {
-  it("appends an SSE event row and highlights it for ~1.5s", async () => {
+  it("highlights an in-view SSE event row", async () => {
     renderWithQueryClient(<TracesTab />);
+
+    // Wait for the paginated row to render — proves `paginatedIds` is
+    // populated before the SSE handler runs (otherwise the row goes through
+    // the out-of-view path and never gets highlighted).
+    await screen.findByText("first.call", {}, { timeout: 2000 });
 
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
-    // Push one event through the mocked SSE. Wire format wraps the row:
-    // `data: JSON.stringify({ trace: <TraceRow> })`.
+    // Wire format: `data: JSON.stringify({ trace: <TraceRow> })`.
+    // The default makeTraceEvent() uses TRACE_ID, which matches paginatedIds.
     act(() => {
       pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "first.call" }) } });
     });
 
-    // Wait for the row to appear (the coalesce flush is 100ms).
-    const cell = await screen.findByText("first.call", {}, { timeout: 2000 });
-    expect(cell).toBeInTheDocument();
-
+    const cell = await screen.findByText("first.call");
     const row = cell.closest("tr");
     expect(row).not.toBeNull();
     expect(row!.getAttribute("data-highlighted")).toBe("true");
-
-    // Advance past the 1.5s highlight window via fake timers.
-    vi.useFakeTimers();
-    act(() => {
-      vi.advanceTimersByTime(1700);
-    });
-    vi.useRealTimers();
   });
 
-  it("dedups by trace_id when the same event arrives twice", async () => {
+  it("does not double-count when the same SSE event arrives twice (highlight Set dedup)", async () => {
     renderWithQueryClient(<TracesTab />);
-
+    await screen.findByText("first.call", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
+    // Push the same in-view event twice → Set-based highlight dedup keeps
+    // `highlightedKeys` a single entry per id, and the rendered row appears
+    // exactly once (paginated is untouched by SSE).
     act(() => {
-      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "dup.call" }) } });
+      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "first.call" }) } });
     });
-    // Allow the first flush + render.
-    await screen.findByText("dup.call");
-
     act(() => {
-      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "dup.call" }) } });
+      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "first.call" }) } });
     });
 
-    // Wait briefly for any second render to land, then assert single row.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.getAllByText("dup.call")).toHaveLength(1);
+    const cell = await screen.findByText("first.call");
+    const row = cell.closest("tr");
+    expect(row).not.toBeNull();
+    expect(row!.getAttribute("data-highlighted")).toBe("true");
   });
 
   it("navigates to /observability/traces/{32-hex} with NO query string on row click", async () => {
     renderWithQueryClient(<TracesTab />);
-
+    // The mock returns a single row with trace_id = TRACE_ID and name = "first.call".
+    // Wait for it to render (proves paginatedIds is populated).
+    const cell = await screen.findByText("first.call", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
+    // Drive an SSE event for the same trace_id → highlights the row in place.
     act(() => {
-      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ trace_id: TRACE_ID, name: "clickable" }) } });
+      pushEvent!({ event: "trace", data: { trace: makeTraceEvent({ name: "clickable" }) } });
     });
-
-    const cell = await screen.findByText("clickable");
     const row = cell.closest("tr");
     expect(row).not.toBeNull();
     fireEvent.click(row!);
@@ -205,12 +229,16 @@ describe("TracesTab — SSE merge + highlight", () => {
     expect(call.search).toBeUndefined();
   });
 
-  it("renders the X-of-Y counter using merged.length and total + streamed.length", async () => {
+  it("bumps the X-of-Y total for out-of-view SSE events without rendering them", async () => {
     renderWithQueryClient(<TracesTab />);
+    // Wait for paginated to render (proves paginatedTotal = 1).
+    await screen.findByText("first.call", {}, { timeout: 2000 });
 
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
-    // One SSE event → merged.length = 1, paginated.total = 0, streamed.length = 1.
+    // Push an event whose trace_id is NOT in paginatedIds — out-of-view path:
+    // extraStreamedCount bumps; the row is NOT rendered (no dedup with
+    // paginated; merged = paginated stays a single row).
     act(() => {
       pushEvent!({
         event: "trace",
@@ -218,12 +246,11 @@ describe("TracesTab — SSE merge + highlight", () => {
       });
     });
 
-    await screen.findByText("counter-one");
+    // The out-of-view row must NOT render in the table.
+    expect(screen.queryByText("counter-one")).not.toBeInTheDocument();
 
-    // Total = paginatedTotal (0 from mocked listTraces) + streamed.length (1) = 1.
-    // merged.length = 1. So the counter reads "1 of 1 trace".
-    const counter = await screen.findByText("1 of 1 trace");
-    expect(counter).toBeInTheDocument();
+    // Counter shows: merged = paginated (1) of total = paginatedTotal (1) + extraStreamedCount (1) = 2.
+    await screen.findByText("1 of 2 traces");
   });
 
   it("renders a Live pill + Pause button on the TracesTab header (SSE open, not paused)", async () => {
