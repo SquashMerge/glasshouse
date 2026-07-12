@@ -19,21 +19,11 @@ export interface TraceRow {
   scores_summary: string;
 }
 
-export interface ObservationRow {
-  observation_id: string;
-  trace_id: string;
-  parent_observation_id: string | null;
-  type: "span" | "event" | "generation" | "tool";
-  name: string;
-  start_time: string;
-  end_time: string | null;
-  duration_ms: number | null;
-  status: "ok" | "error";
-  model: string | null;
-  input_text: string;
-  output_text: string;
-}
-
+/**
+ * Canonical row shape returned by `GET /v1/observations` and the
+ * `GET /v1/observations/events` SSE stream. `metadata` is a JSON-encoded
+ * string (parsed lazily by the UI when the user expands a row).
+ */
 export interface ObservationRow {
   observation_id: string;
   trace_id: string;
@@ -151,27 +141,3 @@ export async function getTrace(traceId: string): Promise<TraceDetailResponse> {
   return res.json();
 }
 
-export async function searchTraces(params: {
-  q?: string;
-  env?: string;
-  agent_id?: string;
-  time_from?: string;
-  time_to?: string;
-  sort?: string;
-  limit?: number;
-  offset?: number;
-} = {}): Promise<TraceListResponse> {
-  const qs = buildQs({
-    q: params.q,
-    "filter[env]": params.env,
-    "filter[agent_id]": params.agent_id,
-    "filter[time.from]": params.time_from,
-    "filter[time.to]": params.time_to,
-    sort: params.sort,
-    limit: params.limit,
-    offset: params.offset,
-  });
-  const res = await authedFetch(`/v1/traces/search${qs}`);
-  if (!res.ok) throw new Error(`searchTraces ${res.status}`);
-  return res.json();
-}
