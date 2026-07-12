@@ -29,7 +29,9 @@ export interface FilterFieldDef {
  * `onFiltersChange` so the host can re-run its query.
  */
 export interface FilterableTableProps<TRow> {
-  title: string;
+  title: React.ReactNode;
+  /** Optional element rendered to the right of the title (e.g. Live / Pause UX). */
+  headerActions?: React.ReactNode;
   noun: { singular: string; plural: string };
   emptyHint: React.ReactNode;
   noMatchMessage: string;
@@ -91,6 +93,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
     onRowClick,
     onFiltersChange,
     highlightedKeys,
+    headerActions,
     disableHighlightTimeout = false,
   } = props;
   const totalColCount = columns.length;
@@ -148,6 +151,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <CardTitle>{title}</CardTitle>
         <div className="flex items-center gap-3">
+          {headerActions}
           {hasActiveFilters && (
             <Button variant="ghost" size="sm" onClick={clearFilters} className="h-7 px-2 text-xs">
               <LuX className="h-3 w-3" />
