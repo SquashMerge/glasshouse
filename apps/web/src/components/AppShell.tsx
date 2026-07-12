@@ -57,15 +57,15 @@ export function AppShell({ children, currentPath }: AppShellProps) {
   const width = collapsed ? "w-[3.5rem]" : "w-56";
 
   return (
-    <div className="min-h-screen flex bg-background text-foreground">
+    <div className="flex bg-background text-foreground">
       <aside
         aria-label="Primary"
         className={cn(
-          "flex shrink-0 flex-col border-r border-border bg-background transition-[width] duration-200",
+          "sticky top-0 flex h-screen shrink-0 flex-col border-r border-border bg-background transition-[width] duration-200",
           width,
         )}
       >
-        <div className={cn("flex h-14 items-center border-b border-border", collapsed ? "justify-center px-2" : "justify-between px-4")}>
+        <div className={cn("flex h-14 shrink-0 items-center border-b border-border", collapsed ? "justify-center px-2" : "justify-between px-4")}>
           <Link to="/" className={cn("flex items-center gap-2 font-semibold tracking-tight", collapsed && "justify-center")}>
             <LuHexagon className="h-5 w-5 shrink-0" aria-hidden="true" />
             <span className={cn("text-base", collapsed && "hidden")}>Astraea</span>
@@ -85,13 +85,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
           )}
         </div>
 
-        <nav className="flex-1 space-y-1 p-2" aria-label="Sections">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" aria-label="Sections">
           <SidebarLink to="/" label="Dashboard" icon={<LuHouse className="h-4 w-4" />} active={isActive("/")} collapsed={collapsed} />
           <SidebarLink to="/observability" label="Observability" icon={<LuActivity className="h-4 w-4" />} active={isActive("/observability") || isActive("/traces")} collapsed={collapsed} />
         </nav>
 
         {collapsed && (
-          <div className="flex justify-center border-t border-border p-2">
+          <div className="flex shrink-0 justify-center border-t border-border p-2">
             <Button
               type="button"
               variant="ghost"
@@ -106,9 +106,9 @@ export function AppShell({ children, currentPath }: AppShellProps) {
           </div>
         )}
 
-        <Separator />
+        <Separator className="shrink-0" />
 
-        <div className={cn("p-2", collapsed ? "flex justify-center" : "")}>
+        <div className={cn("shrink-0 p-2", collapsed ? "flex justify-center" : "")}>
           {creds ? (
             <DropdownMenu>
               <DropdownMenuTrigger
