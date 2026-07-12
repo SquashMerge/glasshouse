@@ -117,7 +117,10 @@ describe("SpansTab — SSE merge + highlight", () => {
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
     act(() => {
-      pushEvent!({ event: "observation", data: makeSpanEvent({ name: "first-span" }) });
+      pushEvent!({
+        event: "observation",
+        data: { observation: makeSpanEvent({ name: "first-span" }), metadataParsed: null },
+      });
     });
 
     const cell = await screen.findByText("first-span");
@@ -134,7 +137,10 @@ describe("SpansTab — SSE merge + highlight", () => {
     act(() => {
       pushEvent!({
         event: "observation",
-        data: makeSpanEvent({ observation_id: SPAN_ID, trace_id: TRACE_ID, name: "clickable-span" }),
+        data: {
+          observation: makeSpanEvent({ observation_id: SPAN_ID, trace_id: TRACE_ID, name: "clickable-span" }),
+          metadataParsed: null,
+        },
       });
     });
 
@@ -157,16 +163,15 @@ describe("SpansTab — SSE merge + highlight", () => {
     act(() => {
       pushEvent!({
         event: "observation",
-        data: makeSpanEvent({
-          observation_id: SPAN_ID,
-          name: "metadata-span",
+        data: {
+          observation: makeSpanEvent({ observation_id: SPAN_ID, name: "metadata-span" }),
           // metadataParsed overrides name/type/model without a second fetch.
           metadataParsed: {
             tool: { name: "tool-from-metadata" },
             model: "gpt-4o-from-metadata",
             type: "tool",
           },
-        }),
+        },
       });
     });
 
