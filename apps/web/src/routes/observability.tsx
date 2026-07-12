@@ -199,10 +199,10 @@ function dedupByKey<T>(items: T[], keyOf: (item: T) => string): T[] {
 }
 
 /**
- * Append-only SSE items buffer with a `requestAnimationFrame`-style coalesce:
- * we flush the buffer into React state at most once per `minIntervalMs` (the
- * slice 4 real hook will use `requestAnimationFrame` directly; this version
- * uses `setTimeout` for the stub so jsdom's fake timers behave deterministically).
+ * Append-only buffer for SSE items with a `minIntervalMs` coalesce.
+ * Flushes the buffer into React state at most once per window so a burst
+ * produces ~1 state update instead of N. Uses `setTimeout` (not RAF) so
+ * it works under jsdom test renders.
  */
 function useCoalescedStream<T>(minIntervalMs = 100) {
   const [items, setItems] = React.useState<T[]>([]);
