@@ -178,11 +178,10 @@ describe("SpansTab — SSE merge + highlight", () => {
     expect(call.search?.span).toBe(SPAN_ID);
   });
 
-  it("does not mutate in-view cells when SSE metadataParsed is present (highlight only)", async () => {
-    // Perf refactor: `merged = paginated` — SSE events on in-view ids only
-    // toggle the 1.5s highlight. metadataParsed arrives in the wire shape
-    // but is intentionally not merged into rows (page data already carries
-    // the resolved tool/model/type from the REST listObservations fetch).
+  it("uses metadataParsed to populate tool/model/type cells when SSE arrives for in-view observation", async () => {
+    // Map-based merge: SSE rows are last-write-wins over paginated rows for
+    // the same observation_id, so metadataParsed-derived name/type/model
+    // propagate into the cells without a REST refetch.
     renderWithQueryClient(<SpansTab />);
     await screen.findByText("first-span", {}, { timeout: 2000 });
     await waitFor(() => expect(pushEvent).not.toBeNull());
@@ -201,21 +200,66 @@ describe("SpansTab — SSE merge + highlight", () => {
       });
     });
 
-    // Row still reflects paginated values — SSE metadataParsed does not
-    // mutate the rendered cells.
-    expect(await screen.findByText("first-span")).toBeInTheDocument();
-    expect(screen.queryByText("tool-from-metadata")).not.toBeInTheDocument();
-    expect(screen.queryByText("gpt-4o-from-metadata")).not.toBeInTheDocument();
+    // Name column reads metadataParsed.tool.name first.
+    await screen.findByText("tool-from-metadata");
+    expect(screen.queryByText("first-span")).not.toBeInTheDocument();
+    // Model column reads metadataParsed.model.
+    expect(screen.getByText("gpt-4o-from-metadata")).toBeInTheDocument();
+    // Type badge reflects metadataParsed.type = "tool".
+    expect(screen.getAllByText("tool").length).toBeGreaterThanOrEqual(1);
 
-    // Type badge from paginated ("span"), not the metadataParsed override.
-    expect(screen.getAllByText("span").length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText("tool")).not.toBeInTheDocument();
-
-    // Highlight is applied in place.
-    const cell = screen.getByText("first-span");
+    // Same key — only one row renders, no React duplicate-key warning.
+    const cell = screen.getByText("tool-from-metadata");
     const row = cell.closest("tr");
     expect(row).not.toBeNull();
     expect(row!.getAttribute("data-highlighted")).toBe("true");
+  });
+
+  it("inserts an out-of-view SSE row at the top of the list (newest first) without duplicates", async () => {
+    // Newer observation (later start_time) arrives via SSE for an id that
+    // is NOT in the paginated page. mergeByIdDesc sorts by start_time DESC,
+    // so it appears at index 0.
+    renderWithQueryClient(<SpansTab />);
+    await screen.findByText("first-span", {}, { timeout: 2000 });
+    await waitFor(() => expect(pushEvent).not.toBeNull());
+
+    const newerId = "0123456789abcdef0123456789abcdee";
+    act(() => {
+      pushEvent!({
+        event: "observation",
+        data: {
+          observation: makeSpanEvent({
+            observation_id: newerId,
+            name: "newer-sse-span",
+            start_time: "2026-01-02 00:00:00",
+            end_time: "2026-01-02 00:00:01",
+          }),
+          metadataParsed: null,
+        },
+      });
+    });
+
+    await screen.findByText("newer-sse-span");
+    // Newer SSE row is above the older paginated row in render order.
+    const newerRow = screen.getByText("newer-sse-span").closest("tr");
+    const olderRow = screen.getByText("first-span").closest("tr");
+    expect(newerRow).not.toBeNull();
+    expect(olderRow).not.toBeNull();
+    const tbody = newerRow!.parentElement;
+    expect(tbody).not.toBeNull();
+    const children = Array.from(tbody!.children);
+    const newerIdx = children.indexOf(newerRow!);
+    const olderIdx = children.indexOf(olderRow!);
+    expect(newerIdx).toBeGreaterThanOrEqual(0);
+    expect(olderIdx).toBeGreaterThan(newerIdx);
+
+    // Total bumps by 1 — paginatedTotal (1) + 1 new SSE id.
+    await screen.findByText("2 of 2 spans");
+
+    // Highlight applied to the new row.
+    const cell = screen.getByText("newer-sse-span");
+    const row = cell.closest("tr");
+    expect(row?.getAttribute("data-highlighted")).toBe("true");
   });
 
   it("renders a Live pill + Pause button on the SpansTab header", async () => {

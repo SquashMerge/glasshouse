@@ -121,14 +121,16 @@ vi.mock("../../src/hooks/useEventSource", async () => {
 
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 
-function makeTraceEvent(overrides: Partial<{ trace_id: string; name: string; status: "ok" | "error" }> = {}): TraceEvent {
+function makeTraceEvent(
+  overrides: Partial<Pick<TraceEvent, "trace_id" | "name" | "status" | "start_time" | "end_time" | "duration_ms">> = {},
+): TraceEvent {
   return {
     trace_id: overrides.trace_id ?? TRACE_ID,
     project_id: "proj-1",
     name: overrides.name ?? "llm.call",
-    start_time: "2026-01-01 00:00:00",
-    end_time: "2026-01-01 00:00:01",
-    duration_ms: 1000,
+    start_time: overrides.start_time ?? "2026-01-01 00:00:00",
+    end_time: overrides.end_time ?? "2026-01-01 00:00:01",
+    duration_ms: overrides.duration_ms ?? 1000,
     status: overrides.status ?? "ok",
     user_id: "u1",
     session_id: "s1",
@@ -229,28 +231,55 @@ describe("TracesTab — SSE merge + highlight", () => {
     expect(call.search).toBeUndefined();
   });
 
-  it("bumps the X-of-Y total for out-of-view SSE events without rendering them", async () => {
+  it("inserts an out-of-view SSE row at the top of the list (newest first) and bumps the total", async () => {
+    // Map-based merge + sort by start_time DESC: an SSE-arriving trace with a
+    // newer start_time than the existing paginated row renders at index 0
+    // and contributes to the X-of-Y total.
     renderWithQueryClient(<TracesTab />);
-    // Wait for paginated to render (proves paginatedTotal = 1).
     await screen.findByText("first.call", {}, { timeout: 2000 });
 
     await waitFor(() => expect(pushEvent).not.toBeNull());
 
-    // Push an event whose trace_id is NOT in paginatedIds — out-of-view path:
-    // extraStreamedCount bumps; the row is NOT rendered (no dedup with
-    // paginated; merged = paginated stays a single row).
+    const newerStart = "2026-01-02 00:00:00";
     act(() => {
       pushEvent!({
         event: "trace",
-        data: { trace: makeTraceEvent({ trace_id: "c".repeat(32), name: "counter-one" }) },
+        data: {
+          trace: makeTraceEvent({
+            trace_id: "c".repeat(32),
+            name: "newer-sse-call",
+            start_time: newerStart,
+          }),
+        },
       });
     });
 
-    // The out-of-view row must NOT render in the table.
-    expect(screen.queryByText("counter-one")).not.toBeInTheDocument();
+    await screen.findByText("newer-sse-call");
+    // The newer SSE row appears in front of the older paginated row.
+    // Compare row positions in the table body.
+    const newerRow = screen.getByText("newer-sse-call").closest("tr");
+    const olderRow = screen.getByText("first.call").closest("tr");
+    expect(newerRow).not.toBeNull();
+    expect(olderRow).not.toBeNull();
+    const tbody = newerRow!.parentElement;
+    expect(tbody).not.toBeNull();
+    const children = Array.from(tbody!.children);
+    const newerIdx = children.indexOf(newerRow!);
+    const olderIdx = children.indexOf(olderRow!);
+    expect(newerIdx).toBeGreaterThanOrEqual(0);
+    expect(olderIdx).toBeGreaterThan(newerIdx);
 
-    // Counter shows: merged = paginated (1) of total = paginatedTotal (1) + extraStreamedCount (1) = 2.
-    await screen.findByText("1 of 2 traces");
+    // No duplicate keys — only one row per id, deduped by the Map merge.
+    expect(screen.getAllByText("newer-sse-call").length).toBe(1);
+
+    // Counter: paginatedTotal (1) + SSE ids not in paginated (1) = 2.
+    // Merged length is 2 because both rows are unique.
+    await screen.findByText("2 of 2 traces");
+
+    // Highlight applied to the new row.
+    const cell = screen.getByText("newer-sse-call");
+    const row = cell.closest("tr");
+    expect(row?.getAttribute("data-highlighted")).toBe("true");
   });
 
   it("renders a Live pill + Pause button on the TracesTab header (SSE open, not paused)", async () => {
