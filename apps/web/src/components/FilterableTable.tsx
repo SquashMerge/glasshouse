@@ -1,22 +1,18 @@
 import * as React from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
 import { LuLoader, LuSearchX, LuX } from "react-icons/lu";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { cn } from "../lib/utils";
-import { TimeRangePicker, defaultRange, toApiParams, type TimeRange } from "./TimeRangePicker";
-
-const PAGE_SIZE = 100;
+import { TimeRangePicker, defaultRange, type TimeRange } from "./TimeRangePicker";
 
 export interface ColumnDef<TRow> {
   header: string;
   width?: string;
   className?: string;
-  cell: (row: TRow) => React.ReactNode;
+  cell: (row: TRow, info: { isNew: boolean }) => React.ReactNode;
 }
 
 export interface FilterFieldDef {
@@ -25,6 +21,13 @@ export interface FilterFieldDef {
   className?: string;
 }
 
+/**
+ * Presentational list table. The host page owns the data source (HTTP fetch,
+ * SSE merge, etc.) and passes rows + loading flags down. FilterableTable keeps
+ * the filter inputs, debounce, time-range picker, clear-filters button, and
+ * the infinite-scroll sentinel; it surfaces debounced filter changes via
+ * `onFiltersChange` so the host can re-run its query.
+ */
 export interface FilterableTableProps<TRow> {
   title: string;
   noun: { singular: string; plural: string };
@@ -39,15 +42,57 @@ export interface FilterableTableProps<TRow> {
    * column (e.g. "Time") has no per-column filter.
    */
   filterFields: FilterFieldDef[];
-  queryKey: string;
-  buildApiParams: (filters: Record<string, string>, timeRange: TimeRange) => Record<string, unknown>;
-  queryFn: (params: Record<string, unknown>) => Promise<{ items: TRow[]; total: number }>;
+
+  /** Merged, deduplicated rows for the current view (paginated + streamed). */
+  items: TRow[];
+  /** Total count to display in the "X of Y" counter (host already adds SSE). */
+  total: number;
+  isLoading: boolean;
+  isError: Error | null;
+  hasNextPage: boolean;
+  onLoadMore: () => void;
+
   rowKey: (row: TRow) => string;
   onRowClick: (row: TRow) => void;
+
+  /**
+   * Called with the current debounced filter values + time range whenever
+   * either changes. The host uses this to drive its data fetch.
+   */
+  onFiltersChange?: (filters: Record<string, string>, timeRange: TimeRange) => void;
+
+  /**
+   * Set of row keys currently in the "briefly highlighted" state (e.g. just
+   * arrived via SSE). Rows whose key is in this set get `bg-accent/40` applied.
+   * FilterableTable will clear entries from this set after 1.5s on its own.
+   */
+  highlightedKeys?: Set<string>;
+  /** Disable the highlight effect (e.g. in tests). */
+  disableHighlightTimeout?: boolean;
 }
 
+const HIGHLIGHT_MS = 1500;
+
 export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
-  const { columns, filterFields, queryKey, buildApiParams, queryFn, rowKey, onRowClick, title, noun, emptyHint, noMatchMessage } = props;
+  const {
+    columns,
+    filterFields,
+    title,
+    noun,
+    emptyHint,
+    noMatchMessage,
+    items,
+    total,
+    isLoading,
+    isError,
+    hasNextPage,
+    onLoadMore,
+    rowKey,
+    onRowClick,
+    onFiltersChange,
+    highlightedKeys,
+    disableHighlightTimeout = false,
+  } = props;
   const totalColCount = columns.length;
   const leadingSpacerCount = Math.max(0, columns.length - filterFields.length);
 
@@ -64,27 +109,10 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
     return () => window.clearTimeout(t);
   }, [filters, timeRange]);
 
-  const apiParams = React.useMemo(
-    () => ({ ...buildApiParams(debouncedFilters, debouncedTimeRange), limit: PAGE_SIZE }),
-    [buildApiParams, debouncedFilters, debouncedTimeRange],
-  );
+  React.useEffect(() => {
+    onFiltersChange?.(debouncedFilters, debouncedTimeRange);
+  }, [debouncedFilters, debouncedTimeRange, onFiltersChange]);
 
-  const query = useInfiniteQuery({
-    queryKey: [queryKey, apiParams],
-    queryFn: ({ pageParam = 0 }) => queryFn({ ...apiParams, offset: pageParam }),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
-      return loaded < lastPage.total ? loaded : undefined;
-    },
-    refetchInterval: 10_000,
-  });
-
-  const items: TRow[] = React.useMemo(
-    () => query.data?.pages.flatMap((p) => p.items) ?? [],
-    [query.data],
-  );
-  const total = query.data?.pages[0]?.total ?? 0;
   const hasColumnFilters = Object.values(filters).some((v) => v.length > 0);
   const hasTimeFilter = timeRange.kind !== "all";
   const hasActiveFilters = hasColumnFilters || hasTimeFilter;
@@ -96,15 +124,15 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
     const observer = new IntersectionObserver(
       (entries) => {
         const first = entries[0];
-        if (first?.isIntersecting && query.hasNextPage && !query.isFetchingNextPage) {
-          query.fetchNextPage();
+        if (first?.isIntersecting && hasNextPage && !isLoading) {
+          onLoadMore();
         }
       },
       { rootMargin: "200px 0px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
+  }, [hasNextPage, isLoading, onLoadMore]);
 
   function setFilter(key: string, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -127,14 +155,16 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
             </Button>
           )}
           <div className="text-xs text-muted-foreground">
-            {query.isLoading ? "loading…" : `${items.length} of ${total} ${total === 1 ? noun.singular : noun.plural}`}
+            {isLoading && items.length === 0
+              ? "loading…"
+              : `${items.length} of ${total} ${total === 1 ? noun.singular : noun.plural}`}
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {query.isError && (
+        {isError && (
           <div className="text-sm text-destructive">
-            Failed to load: {(query.error as Error).message}
+            Failed to load: {isError.message}
           </div>
         )}
 
@@ -152,7 +182,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
           </TableHeader>
           <TableBody>
             <FilterRow filterFields={filterFields} filters={filters} setFilter={setFilter} leadingSpacerCount={leadingSpacerCount} />
-            {query.isLoading && items.length === 0 ? (
+            {isLoading && items.length === 0 ? (
               Array.from({ length: 8 }).map((_, i) => (
                 <TableRow key={`s-${i}`}>
                   <TableCell colSpan={totalColCount} className="p-0">
@@ -174,31 +204,31 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((row) => (
-                <TableRow
-                  key={rowKey(row)}
-                  className="cursor-pointer"
-                  onClick={() => onRowClick(row)}
-                >
-                  {columns.map((c) => (
-                    <TableCell key={c.header} className={cn(c.className)}>
-                      {c.cell(row)}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
+              items.map((row) => {
+                const key = rowKey(row);
+                return (
+                  <HighlightedRow
+                    key={key}
+                    highlighted={highlightedKeys?.has(key) ?? false}
+                    disableTimeout={disableHighlightTimeout}
+                    onClick={() => onRowClick(row)}
+                  >
+                    {columns.map((c) => (
+                      <TableCell key={c.header} className={cn(c.className)}>
+                        {c.cell(row, { isNew: highlightedKeys?.has(key) ?? false })}
+                      </TableCell>
+                    ))}
+                  </HighlightedRow>
+                );
+              })
             )}
-            {query.hasNextPage && (
+            {hasNextPage && (
               <TableRow ref={sentinelRef} className="hover:bg-transparent">
                 <TableCell colSpan={totalColCount} className="py-3 text-center text-xs text-muted-foreground">
-                  {query.isFetchingNextPage ? (
-                    <span className="inline-flex items-center gap-2">
-                      <LuLoader className="h-3.5 w-3.5 animate-spin" />
-                      Loading more…
-                    </span>
-                  ) : (
-                    "Scroll to load more"
-                  )}
+                  <span className="inline-flex items-center gap-2">
+                    <LuLoader className="h-3.5 w-3.5 animate-spin" />
+                    Loading more…
+                  </span>
                 </TableCell>
               </TableRow>
             )}
@@ -242,6 +272,45 @@ function FilterRow({
           />
         </TableCell>
       ))}
+    </TableRow>
+  );
+}
+
+/**
+ * Row wrapper that applies the `bg-accent/40` highlight class while the row is
+ * flagged as new, then clears the flag locally after 1.5 s so the parent does
+ * not need to manage a timer per row.
+ */
+function HighlightedRow({
+  highlighted,
+  disableTimeout,
+  onClick,
+  children,
+}: {
+  highlighted: boolean;
+  disableTimeout: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const [active, setActive] = React.useState(highlighted);
+  React.useEffect(() => {
+    if (highlighted) {
+      setActive(true);
+      if (disableTimeout) return;
+      const t = window.setTimeout(() => setActive(false), HIGHLIGHT_MS);
+      return () => window.clearTimeout(t);
+    }
+    setActive(false);
+    return;
+  }, [highlighted, disableTimeout]);
+
+  return (
+    <TableRow
+      className={cn("cursor-pointer", active && "bg-accent/40")}
+      data-highlighted={active ? "true" : "false"}
+      onClick={onClick}
+    >
+      {children}
     </TableRow>
   );
 }
