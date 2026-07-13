@@ -139,7 +139,7 @@ export async function listTraces(
   const whereClause = buildWhere(filters, params);
 
   const itemsResult = await client.query({
-    query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause} ORDER BY start_time DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
+    query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause} ORDER BY start_time DESC, trace_id DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
     query_params: params,
     format: "JSONEachRow",
   });
@@ -151,7 +151,7 @@ export async function listTraces(
     format: "JSONEachRow",
   });
   const totalRows = (await totalResult.json()) as Array<{ total: string | number }>;
-  const total = totalRows.length > 0 ? Number(totalRows[0].total) : 0;
+  const total = Number(totalRows[0]?.total ?? 0);
 
   return { items, total };
 }
@@ -244,7 +244,7 @@ export async function listObservations(
   const whereClause = buildObservationWhere(filters, params);
 
   const itemsResult = await client.query({
-    query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause} ORDER BY start_time DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
+    query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause} ORDER BY start_time DESC, observation_id DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
     query_params: params,
     format: "JSONEachRow",
   });
@@ -256,7 +256,7 @@ export async function listObservations(
     format: "JSONEachRow",
   });
   const totalRows = (await totalResult.json()) as Array<{ total: string | number }>;
-  const total = totalRows.length > 0 ? Number(totalRows[0].total) : 0;
+  const total = Number(totalRows[0]?.total ?? 0);
 
   return { items, total };
 }

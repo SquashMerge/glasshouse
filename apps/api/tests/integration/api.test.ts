@@ -4,13 +4,24 @@ const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
 
-mock.module("../src/db/traces-writer", () => ({
+mock.module("../../src/db/traces-writer", () => ({
   insertTraces,
   insertObservations,
   defaultClient,
 }));
 
-const { default: apiApp } = await import("../src/index");
+mock.module("../../src/db/postgres", () => ({ pgPing: mock(async () => "up") }));
+mock.module("../../src/db/clickhouse", () => ({
+  ch: mock(() => ({})),
+  chPing: mock(async () => "up"),
+}));
+mock.module("../../src/db/valkey", () => ({
+  valkey: mock(() => ({})),
+  valkeyPing: mock(async () => "up"),
+  valkeyUrl: mock(() => "redis://localhost:6379"),
+}));
+
+const { default: apiApp } = await import("../../src/index");
 
 const USER = "astraea";
 const PASS = "secret";
@@ -32,6 +43,10 @@ describe("API integration: health + openapi", () => {
   it("GET /openapi.json returns 200 without auth", async () => {
     const res = await apiApp.fetch(new Request("http://x/openapi.json"));
     expect(res.status).toBe(200);
+    const document = (await res.json()) as {
+      components?: { securitySchemes?: { basicAuth?: { type?: string; scheme?: string } } };
+    };
+    expect(document.components?.securitySchemes?.basicAuth).toEqual({ type: "http", scheme: "basic" });
   });
 
   it("GET /reference returns 200 without auth", async () => {
@@ -183,7 +198,7 @@ describe("API integration: OTLP ingest", () => {
         }),
       );
       expect(res.status).toBe(200);
-      const traces = insertTraces.mock.calls[0]?.[0] as Array<{ input_text: string }>;
+      const traces = insertTraces.mock.calls[0]?.[1] as Array<{ input_text: string }>;
       expect(traces[0]?.input_text).toBe("[REDACTED]");
     } finally {
       delete process.env.ASTRAEA_REDACT_INPUT;

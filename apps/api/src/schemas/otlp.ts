@@ -51,6 +51,7 @@ export const Span = z.object({
   links: z.array(z.any()).optional(),
   trace_state: z.string().optional(),
 }).openapi("Span");
+export type Span = z.infer<typeof Span>;
 
 export const ScopeSpans = z.object({
   scope: z.object({

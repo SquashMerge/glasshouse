@@ -203,6 +203,19 @@ afterEach(() => {
 });
 
 describe("useEventSource — SSE transport", () => {
+  it("rejects an SSE frame larger than 1 MiB", async () => {
+    const errors: Error[] = [];
+    const { hook } = setupHook({ onError: (error) => errors.push(error as Error) });
+    await act(async () => {
+      await settle();
+      fakeStreams[0]!.enqueue(`event: oversized\ndata: ${"x".repeat(1024 * 1024)}`);
+      await settle();
+    });
+
+    expect(errors.some((error) => error.message === "SSE frame exceeds 1 MiB")).toBe(true);
+    hook.unmount();
+  });
+
   it("connects on mount; calls onMessage for each parsed frame", async () => {
     vi.useFakeTimers({
       toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date", "performance"],
@@ -362,6 +375,35 @@ describe("useEventSource — SSE transport", () => {
     // bounded coalescing. Allow some headroom for status transitions
     // ("connecting" → "open") + the single lastEventAt update on flush.
     expect(renderCount.count - rendersBefore).toBeLessThanOrEqual(4);
+  });
+
+  it("does not re-render once per frame when frames arrive in separate chunks", async () => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date", "performance"],
+    });
+
+    const { messages, renderCount } = setupHook<{ i: number }>({});
+    await act(async () => {
+      await settle();
+    });
+    const rendersBefore = renderCount.count;
+
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        fakeStreams[0]!.enqueue(frame("observation", { i }));
+        await flushMicrotasks();
+      });
+    }
+
+    expect(messages).toHaveLength(0);
+    expect(renderCount.count).toBe(rendersBefore);
+
+    await act(async () => {
+      vi.advanceTimersByTime(150);
+      await flushMicrotasks();
+    });
+    expect(messages).toHaveLength(5);
+    expect(renderCount.count - rendersBefore).toBeLessThanOrEqual(2);
   });
 
   it("visibility-aware: closes after >60s hidden, reconnects on visible", async () => {

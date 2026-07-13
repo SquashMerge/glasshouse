@@ -18,12 +18,11 @@ describe("normalizeSpan", () => {
       ],
     } as never);
     expect(trace.name).toBe("llm-call");
-    expect(trace.model).toBe("gpt-4o");
     expect(observation.model).toBe("gpt-4o");
   });
 
   it("falls back to OpenInference when gen_ai.* is absent", () => {
-    const { trace } = normalizeSpan({
+    const { trace, observation } = normalizeSpan({
       trace_id: HEX(32),
       span_id: HEX(16),
       name: "llm-call",
@@ -38,8 +37,8 @@ describe("normalizeSpan", () => {
         { key: "output.value", value: { stringValue: "Hi!" } },
       ],
     } as never);
-    expect(trace.env).toBe("anthropic");
-    expect(trace.model).toBe("claude-3-5-sonnet");
+    expect(trace.env).toBe("production");
+    expect(observation.model).toBe("claude-3-5-sonnet");
     expect(trace.scores_summary).toBe("input_tokens:100,output_tokens:50");
     expect(trace.input_text).toBe("Hello world");
     expect(trace.output_text).toBe("Hi!");
@@ -47,7 +46,7 @@ describe("normalizeSpan", () => {
   });
 
   it("prefers gen_ai.* over OpenInference when both are present (R2)", () => {
-    const { trace } = normalizeSpan({
+    const { trace, observation } = normalizeSpan({
       trace_id: HEX(32),
       span_id: HEX(16),
       name: "llm-call",
@@ -59,8 +58,8 @@ describe("normalizeSpan", () => {
         { key: "llm.token_count.prompt", value: { intValue: 999 } },
       ],
     } as never);
-    expect(trace.model).toBe("gpt-4o");                                  // gen_ai.* wins
-    expect(trace.scores_summary).toBe("input_tokens:100,output_tokens:"); // gen_ai.* wins
+    expect(observation.model).toBe("gpt-4o");
+    expect(trace.scores_summary).toBe("input_tokens:100");
   });
 
   it("sets status to 'error' when OTLP status.code is 2", () => {

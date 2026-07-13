@@ -108,9 +108,14 @@ const realResetForTests = realBusModule._resetForTests;
 // Spy that records calls (for "subscribe before snapshot" assertions) and
 // delegates to the real subscribe so the SSE handler still receives events.
 const subscribeCallLog: Array<{ event: string; at: number }> = [];
+const unsubscribeCallLog: string[] = [];
 const subscribeSpy = mock((event: string, handler: Parameters<typeof realSubscribe>[1]) => {
   subscribeCallLog.push({ event, at: Date.now() });
-  return realSubscribe(event as never, handler as never);
+  const unsubscribe = realSubscribe(event as never, handler as never);
+  return () => {
+    unsubscribeCallLog.push(event);
+    unsubscribe();
+  };
 });
 
 mock.module("../../src/lib/event-bus", () => {
@@ -223,6 +228,7 @@ async function readRawForMs(
 
 beforeEach(() => {
   subscribeCallLog.length = 0;
+  unsubscribeCallLog.length = 0;
   getTraceMock.mockClear();
   defaultClientMock.mockClear();
   subscribeSpy.mockClear();
@@ -230,7 +236,11 @@ beforeEach(() => {
   // Re-attach the spy implementation after _resetForTests clears handlers.
   subscribeSpy.mockImplementation((event: unknown, handler: unknown) => {
     subscribeCallLog.push({ event: String(event), at: Date.now() });
-    return realSubscribe(event as never, handler as never);
+    const unsubscribe = realSubscribe(event as never, handler as never);
+    return () => {
+      unsubscribeCallLog.push(String(event));
+      unsubscribe();
+    };
   });
   // Re-establish default behavior: a "valid" trace exists with two observations.
   getTraceMock.mockImplementation(async (_client: unknown, traceId: string) => {
@@ -464,9 +474,11 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
     expect(res.headers.get("content-type")).toMatch(/application\/json/);
     const body = (await res.json()) as { code: string; message: string };
     expect(body.code).toBe("NOT_FOUND");
-    // The 404 path must NOT have subscribed to the bus.
+    // The handler subscribes before querying to close the snapshot race, then
+    // unsubscribes before returning the non-SSE 404 response.
     const observationSubs = subscribeCallLog.filter((c) => c.event === "observation.created");
-    expect(observationSubs).toHaveLength(0);
+    expect(observationSubs).toHaveLength(1);
+    expect(unsubscribeCallLog.filter((event) => event === "observation.created")).toHaveLength(1);
   });
 
   it("returns 400 for non-hex id (TraceIdParam regex)", async () => {
@@ -502,7 +514,17 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
     await reader.cancel();
   });
 
-  it("subscribes to observation.created BEFORE writing the snapshot frame", async () => {
+  it("buffers observations published during the snapshot query", async () => {
+    const duringQuery: ObservationRow = {
+      ...fakeObservation,
+      observation_id: "obs-during-query",
+      name: "during-query",
+    };
+    getTraceMock.mockImplementationOnce(async () => {
+      realPublishSync("observation.created", { observation: duringQuery });
+      return { trace: fakeTrace, observations: [fakeObservation] };
+    });
+
     const res = await apiApp.fetch(
       new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
         method: "GET",
@@ -510,24 +532,18 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
       }),
     );
     const reader = res.body!.getReader();
-    // Read :ok.
     await reader.read();
-    // Snapshot frame arrives shortly after.
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
+    const frames = await readFramesUntil(
+      reader,
+      (items) => items.some((frame) => frame.event === "observation"),
+    );
 
-    // The handler must have called bus subscribe("observation.created", ...)
-    // BEFORE queryGetTrace returns (otherwise an observation created during
-    // the snapshot query would be lost). We assert via two signals:
-    //   (a) the spy recorded an observation.created subscribe call
-    //   (b) getTrace was called
-    //   (c) the subscribe call timestamp is <= the moment we received the
-    //       snapshot frame (it happened before the snapshot write reached
-    //       the wire, which is the same instant in practice — both run on
-    //       the same event-loop tick).
     const observationSubs = subscribeCallLog.filter((c) => c.event === "observation.created");
     expect(observationSubs.length).toBeGreaterThanOrEqual(1);
     expect(getTraceMock).toHaveBeenCalledTimes(1);
-    expect(frames.find((f) => f.event === "snapshot")).toBeDefined();
+    expect(frames[0]?.event).toBe("snapshot");
+    const live = frames.find((frame) => frame.event === "observation");
+    expect(JSON.parse(live!.data).observation.observation_id).toBe("obs-during-query");
     await reader.cancel();
   });
 

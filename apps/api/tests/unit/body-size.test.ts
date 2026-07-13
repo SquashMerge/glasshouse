@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { Hono } from "hono";
-import { bodySizeLimit } from "../src/middleware/body-size";
+import { bodySizeLimit } from "../../src/middleware/body-size";
 
 describe("bodySizeLimit", () => {
   const SMALL_LIMIT = 100; // bytes

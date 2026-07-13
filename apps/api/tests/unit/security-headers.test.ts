@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { Hono } from "hono";
-import { securityHeaders } from "../src/middleware/security-headers";
+import { securityHeaders } from "../../src/middleware/security-headers";
 
 describe("securityHeaders", () => {
   it("sets all expected headers on a 200 response", async () => {
@@ -29,7 +29,7 @@ describe("securityHeaders", () => {
     expect(res.headers.get("X-Frame-Options")).toBe("DENY");
   });
 
-  it("does not override headers explicitly set by the handler", async () => {
+  it("enforces security headers even when a handler sets a weaker value", async () => {
     const app = new Hono();
     app.use(securityHeaders());
     app.get("/x", (c) => {
@@ -37,6 +37,6 @@ describe("securityHeaders", () => {
       return c.json({ ok: true });
     });
     const res = await app.request("/x");
-    expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    expect(res.headers.get("X-Frame-Options")).toBe("DENY");
   });
 });

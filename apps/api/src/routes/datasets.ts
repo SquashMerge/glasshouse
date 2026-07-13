@@ -60,7 +60,12 @@ export const deleteDatasetItem = createRoute({
   path: "/v1/datasets/{id}/items/{itemId}",
   tags: [tag],
   summary: "Delete a dataset item",
-  request: { params: z.object({ id: IdParam.shape.id, itemId: IdParam.shape.id }) },
+  request: {
+    params: z.object({
+      id: IdParam.shape.id,
+      itemId: z.string().uuid().openapi({ param: { name: "itemId", in: "path" } }),
+    }),
+  },
   responses: { 204: { description: "No content" }, ...DatasetStubResponses },
 });
 export const handleDeleteDatasetItem = (_id: string, _itemId: string) => notImplemented();

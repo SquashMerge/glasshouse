@@ -2,6 +2,7 @@ import { createRoute } from "@hono/zod-openapi";
 import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "../schemas/common.js";
 import { basicAuthMiddleware } from "../middleware/auth.js";
+import type { Context } from "hono";
 
 const tag = "auth";
 
@@ -25,7 +26,7 @@ export const loginRoute = createRoute({
   },
 });
 
-export const handleLogin = async (c: { req: { header: (k: string) => string | undefined } }): Promise<Response> => {
+export const handleLogin = async (c: Context): Promise<Response> => {
   // basicAuthMiddleware on /v1 has already validated the credentials before reaching here.
   return c.json({ ok: true }, 200);
 };

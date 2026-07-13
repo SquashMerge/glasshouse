@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { basicAuthMiddleware } from "../src/middleware/auth";
+import { basicAuthMiddleware } from "../../src/middleware/auth";
 
 describe("basicAuthMiddleware", () => {
   beforeAll(() => {
@@ -36,6 +36,14 @@ describe("basicAuthMiddleware", () => {
     const app = buildApp();
     const res = await app.request("/v1/protected", {
       headers: { authorization: "Basic not-base64!!!" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects oversized Authorization headers before decoding", async () => {
+    const app = buildApp();
+    const res = await app.request("/v1/protected", {
+      headers: { authorization: `Basic ${"A".repeat(8192)}` },
     });
     expect(res.status).toBe(401);
   });

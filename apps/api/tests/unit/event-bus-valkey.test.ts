@@ -87,11 +87,9 @@ describe("event-bus + Valkey pub/sub (mocked)", () => {
     expect(valkeyPubsubMock.subscribeToChannel).toHaveBeenCalledTimes(1);
     expect(valkeyPubsubMock.publishOnChannel).toHaveBeenCalledTimes(1);
     expect(publishedCalls[0]?.channel).toBe("astraea:trace.created");
-    // In-process dispatch + Valkey echo both fire on the same handler in a
-    // single-process test. In production multi-instance, instance A's
-    // in-process handler fires once and instance B's fires once (via the
-    // Valkey-delivered path).
-    expect(got).toHaveLength(2);
+    // The local in-process dispatch fires once; the instance ignores its own
+    // Valkey echo. Other instances accept the message because their origin differs.
+    expect(got).toHaveLength(1);
   });
 
   it("toggle behavior: with VALKEY_PUBSUB_URL set to an unreachable host, the bus does not crash", async () => {
@@ -112,18 +110,15 @@ describe("event-bus + Valkey pub/sub (mocked)", () => {
     process.env.VALKEY_PUBSUB_URL = "redis://mock:6379";
     const traceCalls: unknown[] = [];
     const obsCalls: unknown[] = [];
-    subscribe("trace.created", (m) => traceCalls.push(m));
-    subscribe("observation.created", (m) => obsCalls.push(m));
+    const unsubscribeTrace = subscribe("trace.created", (m) => traceCalls.push(m));
+    const unsubscribeObservation = subscribe("observation.created", (m) => obsCalls.push(m));
 
     publishSync("trace.created", { trace: { trace_id: "t1" } as never });
     publishSync("observation.created", { observation: { observation_id: "o1" } as never });
     await new Promise((r) => setTimeout(r, 10));
 
-    // Each subscriber fires exactly twice (in-process + Valkey echo on the
-    // same single-process handler); the isolation we care about is that
-    // trace.created doesn't bleed into observation.created and vice versa.
-    expect(traceCalls).toHaveLength(2);
-    expect(obsCalls).toHaveLength(2);
+    expect(traceCalls).toHaveLength(1);
+    expect(obsCalls).toHaveLength(1);
     // Each subscriber registered on its own Valkey channel.
     expect(channels.has("astraea:trace.created")).toBe(true);
     expect(channels.has("astraea:observation.created")).toBe(true);
@@ -131,6 +126,12 @@ describe("event-bus + Valkey pub/sub (mocked)", () => {
     const usedChannels = publishedCalls.map((c) => c.channel);
     expect(usedChannels).toContain("astraea:trace.created");
     expect(usedChannels).toContain("astraea:observation.created");
+
+    unsubscribeTrace();
+    expect(channels.has("astraea:trace.created")).toBe(false);
+    expect(channels.has("astraea:observation.created")).toBe(true);
+    unsubscribeObservation();
+    expect(channels.has("astraea:observation.created")).toBe(false);
   });
 
   it("Valkey-down fallback: publishOnChannel throws, in-process still fires", async () => {

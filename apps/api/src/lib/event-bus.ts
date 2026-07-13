@@ -1,15 +1,4 @@
-// In-process pub/sub with optional Valkey (Redis-compatible) fan-out.
-// Single-node MVP: in-process `Map<event, Set<Handler>>` always runs.
-// When VALKEY_PUBSUB_URL is set, publishes ALSO fan out to a per-event
-// channel and subscribers ALSO listen on that channel — so two apiApp
-// instances sharing a Valkey see each other's writes. Wire format:
-//   { "event": "trace.created", "payload": { ... } }
-//
-// Failure isolation:
-//   - Valkey down at startup or runtime: log once, keep in-process only.
-//   - A throwing handler is logged and removed; siblings still fire.
-//   - publish() itself never throws to its caller.
-
+import { randomUUID } from "node:crypto";
 import type { TraceRow, ObservationRow } from "../db/traces-query.js";
 import { ensureConnected, publishOnChannel, subscribeToChannel, valkeyPubSubHealthy } from "../db/valkey-pubsub.js";
 
@@ -18,19 +7,18 @@ export type BusEvent = "trace.created" | "observation.created";
 export interface BusMessage {
   event: BusEvent;
   payload: { trace?: TraceRow; observation?: ObservationRow };
+  origin?: string;
 }
 
 export type BusHandler = (msg: BusMessage) => void;
 
 const CHANNEL_PREFIX = "astraea:";
+const INSTANCE_ID = randomUUID();
 
 const handlers: Map<BusEvent, Set<BusHandler>> = new Map();
 
-// One Valkey subscription per channel, shared by all in-process subscribers.
-// Refcount lets us add/remove the wire-level listener as subscribers come and
-// go. Internal only — `subscribe()` is the public API.
-let valkeyChannelRefcount = 0;
 const valkeyUnsubs: Map<BusEvent, () => void> = new Map();
+const valkeyRefcounts: Map<BusEvent, number> = new Map();
 
 function channelFor(event: BusEvent): string {
   return `${CHANNEL_PREFIX}${event}`;
@@ -46,7 +34,7 @@ function isValkeyEnabled(): boolean {
  * care can await it; not required for the in-process leg.
  */
 export async function publish(event: BusEvent, payload: BusMessage["payload"]): Promise<void> {
-  const msg: BusMessage = { event, payload };
+  const msg: BusMessage = { event, payload, origin: INSTANCE_ID };
   dispatchInProcess(msg);
   fanOutToValkey(event, msg);
 }
@@ -56,7 +44,7 @@ export async function publish(event: BusEvent, payload: BusMessage["payload"]): 
  * `publish()` with the return value discarded.
  */
 export function publishSync(event: BusEvent, payload: BusMessage["payload"]): void {
-  const msg: BusMessage = { event, payload };
+  const msg: BusMessage = { event, payload, origin: INSTANCE_ID };
   dispatchInProcess(msg);
   fanOutToValkey(event, msg);
 }
@@ -118,6 +106,7 @@ export function subscribe(event: BusEvent, handler: BusHandler): () => void {
         console.error(`[event-bus] failed to parse ${event} from valkey:`, (err as Error).message);
         return;
       }
+      if (parsed.origin === INSTANCE_ID) return;
       // Same isolation rule as the in-process leg.
       const s = handlers.get(event);
       if (!s || s.size === 0) return;
@@ -131,10 +120,8 @@ export function subscribe(event: BusEvent, handler: BusHandler): () => void {
       }
     });
     valkeyUnsubs.set(event, unsub);
-    valkeyChannelRefcount++;
-  } else if (isValkeyEnabled()) {
-    valkeyChannelRefcount++;
   }
+  if (isValkeyEnabled()) valkeyRefcounts.set(event, (valkeyRefcounts.get(event) ?? 0) + 1);
 
   let unsubscribed = false;
   return () => {
@@ -146,8 +133,8 @@ export function subscribe(event: BusEvent, handler: BusHandler): () => void {
       if (s.size === 0) handlers.delete(event);
     }
     if (!isValkeyEnabled()) return;
-    valkeyChannelRefcount--;
-    if (valkeyChannelRefcount <= 0) {
+    const remaining = (valkeyRefcounts.get(event) ?? 1) - 1;
+    if (remaining <= 0) {
       const unsub = valkeyUnsubs.get(event);
       if (unsub) {
         try {
@@ -157,7 +144,9 @@ export function subscribe(event: BusEvent, handler: BusHandler): () => void {
         }
         valkeyUnsubs.delete(event);
       }
-      valkeyChannelRefcount = 0;
+      valkeyRefcounts.delete(event);
+    } else {
+      valkeyRefcounts.set(event, remaining);
     }
   };
 }
@@ -174,7 +163,7 @@ export function _resetForTests(): void {
     }
   }
   valkeyUnsubs.clear();
-  valkeyChannelRefcount = 0;
+  valkeyRefcounts.clear();
 }
 
 /** Test helper: re-evaluate Valkey availability based on current env. */

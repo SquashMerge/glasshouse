@@ -24,6 +24,7 @@ function attrNumber(attrs: Attribute[], key: string): number | undefined {
 
 export interface NormalizedTrace {
   trace_id: string;
+  project_id: string;
   name: string;
   start_time: string;       // ISO datetime
   end_time: string | null;  // ISO datetime or null for in-flight spans
@@ -43,6 +44,7 @@ export interface NormalizedTrace {
 export interface NormalizedObservation {
   observation_id: string;
   trace_id: string;
+  project_id: string;
   parent_observation_id: string | null;
   type: "span" | "event" | "generation" | "tool";
   name: string;
@@ -68,7 +70,7 @@ function isoFromUnixNano(nano: number): string {
 
 function durationMs(startNano: number | undefined, endNano: number | undefined): number | null {
   if (startNano === undefined || endNano === undefined) return null;
-  return Math.max(0, Math.floor((endNano - startNano) / 1_000_000));
+  return Math.max(0, Math.round((endNano - startNano) / 1_000_000));
 }
 
 function scorePairsAsCsv(pairs: Array<[string, number]>): string {
@@ -148,6 +150,7 @@ export function normalizeSpan(span: Span): { trace: NormalizedTrace; observation
 
   const trace: NormalizedTrace = {
     trace_id: span.trace_id,
+    project_id: "",
     name: span.name,
     start_time: isoFromUnixNano(span.start_time_unix_nano as unknown as number),
     end_time: span.end_time_unix_nano !== undefined ? isoFromUnixNano(span.end_time_unix_nano as unknown as number) : null,
@@ -167,6 +170,7 @@ export function normalizeSpan(span: Span): { trace: NormalizedTrace; observation
   const observation: NormalizedObservation = {
     observation_id: span.span_id,
     trace_id: span.trace_id,
+    project_id: "",
     parent_observation_id: span.parent_span_id ?? null,
     type: classifySpanType(attrs),
     name: span.name,

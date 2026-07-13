@@ -59,12 +59,27 @@ export interface UseEventSourceResult {
    *  - no args (legacy) — equivalent to `{ pause: false }`.
    */
   reconnect: (opts?: { pause?: boolean }) => void;
+  /**
+   * Diagnostic counters used by the dev-only `SseDebugOverlay`. Stable read
+   * primitives — values may be observed in real time.
+   */
+  debug: {
+    /** Total SSE frames successfully delivered to `onMessage` since mount. */
+    framesReceived: number;
+    /** Current RAF coalesce buffer depth (frames waiting to flush). */
+    bufferDepth: number;
+    /** Number of reconnects attempted since mount (resets to 0 on success). */
+    reconnectAttempts: number;
+    /** Last JSON.parse failure from a streamed frame, if any. */
+    lastError: string | null;
+  };
 }
 
 const BACKOFF_INITIAL_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
 const HIDDEN_CLOSE_THRESHOLD_MS = 60_000;
 const COALESCE_WINDOW_MS = 100;
+const MAX_SSE_FRAME_BYTES = 1024 * 1024;
 
 export function useEventSource<T = unknown>(
   url: string,
@@ -75,6 +90,25 @@ export function useEventSource<T = unknown>(
   const [status, setStatus] = React.useState<EventSourceStatus>("connecting");
   const [paused, setPaused] = React.useState<boolean>(false);
   const [lastEventAt, setLastEventAt] = React.useState<number | null>(null);
+  // Diagnostic counters (consumed by the dev-only debug overlay). Updated
+  // through refs so that the per-frame `connect()` loop and the RAF flusher
+  // can mutate them without triggering React re-renders of the host.
+  const framesReceivedRef = React.useRef<number>(0);
+  const bufferDepthRef = React.useRef<number>(0);
+  const pendingEventAtRef = React.useRef<number | null>(null);
+  const [reconnectAttempts, setReconnectAttempts] = React.useState<number>(0);
+  const lastErrorRef = React.useRef<string | null>(null);
+
+  // Live getter for `debug` — exposes the latest values to consumers
+  // (StreamToggle / SseDebugOverlay) on every read.
+  function getDebug(): UseEventSourceResult["debug"] {
+    return {
+      framesReceived: framesReceivedRef.current,
+      bufferDepth: bufferDepthRef.current,
+      reconnectAttempts,
+      lastError: lastErrorRef.current,
+    };
+  }
 
   // Refs to keep the latest callbacks accessible inside async stream loops
   // without re-running the connection effect every render.
@@ -93,27 +127,23 @@ export function useEventSource<T = unknown>(
   // next `visible` event. Tracks `paused` in returned state to `false`.
   const autoHiddenClosedRef = React.useRef<boolean>(false);
   // Tracks the most recent reconnect attempt count for exponential backoff.
+  // Mirrored into the `reconnectAttempts` React state for the debug overlay.
   const reconnectAttemptsRef = React.useRef<number>(0);
-  // Holds the in-flight AbortController for the active fetch, if any.
+  // In-flight AbortController for the active fetch, if any.
   const abortRef = React.useRef<AbortController | null>(null);
-  // Pending reconnect timer.
   const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   // Visibility-close timer (fires HIDDEN_CLOSE_THRESHOLD_MS after hide).
   const hiddenCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   // Timestamp the document became hidden (null if currently visible).
   const hiddenSinceAtRef = React.useRef<number | null>(null);
-  // RAF id for the pending coalesce flush.
   const rafIdRef = React.useRef<number | null>(null);
   // Last successful flush timestamp (ms via `performance.now()`).
   const lastFlushAtRef = React.useRef<number>(0);
-  // Buffered messages awaiting the next coalesce flush.
   const bufferRef = React.useRef<EventSourceFrame<T>[]>([]);
 
   // Flag so the connect loop knows whether to keep running. Set to false on
   // unmount / enabled→false / explicit cleanup.
   const disposedRef = React.useRef<boolean>(false);
-
-  // ---- helpers -------------------------------------------------------------
 
   const clearReconnectTimer = React.useCallback(() => {
     if (reconnectTimerRef.current !== null) {
@@ -154,6 +184,8 @@ export function useEventSource<T = unknown>(
     cancelRaf();
     abortStream();
     bufferRef.current = [];
+    bufferDepthRef.current = 0;
+    pendingEventAtRef.current = null;
   }, [abortStream, cancelRaf, clearHiddenCloseTimer, clearReconnectTimer]);
 
   const flushBuffer = React.useCallback(() => {
@@ -162,9 +194,15 @@ export function useEventSource<T = unknown>(
       typeof performance !== "undefined" ? performance.now() : Date.now();
     const batch = bufferRef.current;
     bufferRef.current = [];
+    bufferDepthRef.current = 0;
     if (batch.length === 0) return;
     const cb = onMessageRef.current;
     for (const msg of batch) cb(msg);
+    framesReceivedRef.current += batch.length;
+    if (pendingEventAtRef.current !== null) {
+      setLastEventAt(pendingEventAtRef.current);
+      pendingEventAtRef.current = null;
+    }
   }, []);
 
   const scheduleFlush = React.useCallback(() => {
@@ -190,6 +228,7 @@ export function useEventSource<T = unknown>(
     const attempt = reconnectAttemptsRef.current;
     const delay = Math.min(BACKOFF_INITIAL_MS * 2 ** attempt, BACKOFF_CAP_MS);
     reconnectAttemptsRef.current = attempt + 1;
+    setReconnectAttempts(attempt + 1);
     reconnectTimerRef.current = setTimeout(() => {
       reconnectTimerRef.current = null;
       void connect();
@@ -219,6 +258,7 @@ export function useEventSource<T = unknown>(
 
       setStatus("open");
       reconnectAttemptsRef.current = 0;
+      setReconnectAttempts(0);
       onOpenRef.current?.();
 
       const reader = res.body.getReader();
@@ -234,10 +274,12 @@ export function useEventSource<T = unknown>(
         // the next chunk.
         let splitIdx: number;
         while ((splitIdx = carry.indexOf("\n\n")) !== -1) {
+          if (splitIdx > MAX_SSE_FRAME_BYTES) throw new Error("SSE frame exceeds 1 MiB");
           const rawFrame = carry.slice(0, splitIdx);
           carry = carry.slice(splitIdx + 2);
           parseAndDispatchFrame(rawFrame);
         }
+        if (carry.length > MAX_SSE_FRAME_BYTES) throw new Error("SSE frame exceeds 1 MiB");
       }
 
       // Stream ended naturally.
@@ -247,6 +289,7 @@ export function useEventSource<T = unknown>(
       }
     } catch (err) {
       if (ac.signal.aborted || disposedRef.current) return;
+      lastErrorRef.current = (err as Error).message;
       onErrorRef.current?.(err);
       setStatus("closed");
       scheduleReconnect();
@@ -272,9 +315,11 @@ export function useEventSource<T = unknown>(
       try {
         const data = JSON.parse(dataJoined) as T;
         bufferRef.current.push({ event: eventName, data });
-        setLastEventAt(Date.now());
+        bufferDepthRef.current = bufferRef.current.length;
+        pendingEventAtRef.current = Date.now();
         scheduleFlush();
       } catch (e) {
+        lastErrorRef.current = (e as Error).message;
         onErrorRef.current?.(e);
       }
     }
@@ -298,13 +343,12 @@ export function useEventSource<T = unknown>(
       autoHiddenClosedRef.current = false;
       setPaused(false);
       reconnectAttemptsRef.current = 0;
+      setReconnectAttempts(0);
       teardown();
       void connect();
     },
     [connect, teardown],
   );
-
-  // ---- primary connection effect -------------------------------------------
 
   React.useEffect(() => {
     if (!enabled) {
@@ -317,6 +361,11 @@ export function useEventSource<T = unknown>(
     userPausedRef.current = false;
     autoHiddenClosedRef.current = false;
     reconnectAttemptsRef.current = 0;
+    setReconnectAttempts(0);
+    framesReceivedRef.current = 0;
+    bufferDepthRef.current = 0;
+    lastErrorRef.current = null;
+    pendingEventAtRef.current = null;
     lastFlushAtRef.current = 0;
     void connect();
     return () => {
@@ -327,8 +376,6 @@ export function useEventSource<T = unknown>(
   // for the lifetime of the hook and reads latest refs at call time.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, url, teardown]);
-
-  // ---- visibility-aware reconnect ------------------------------------------
 
   React.useEffect(() => {
     if (typeof document === "undefined") return;
@@ -364,6 +411,7 @@ export function useEventSource<T = unknown>(
       if (autoHiddenClosedRef.current) {
         autoHiddenClosedRef.current = false;
         reconnectAttemptsRef.current = 0;
+        setReconnectAttempts(0);
         void connect();
       }
     };
@@ -375,5 +423,19 @@ export function useEventSource<T = unknown>(
     };
   }, [clearHiddenCloseTimer, connect, teardown]);
 
-  return { status, paused, lastEventAt, reconnect };
+  return {
+    get status() {
+      return status;
+    },
+    get paused() {
+      return paused;
+    },
+    get lastEventAt() {
+      return lastEventAt;
+    },
+    reconnect,
+    get debug() {
+      return getDebug();
+    },
+  };
 }

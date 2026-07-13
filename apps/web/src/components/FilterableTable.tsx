@@ -69,6 +69,7 @@ export interface FilterableTableProps<TRow> {
    * FilterableTable will clear entries from this set after 1.5s on its own.
    */
   highlightedKeys?: Set<string>;
+  highlightedVersions?: ReadonlyMap<string, number>;
   /** Disable the highlight effect (e.g. in tests). */
   disableHighlightTimeout?: boolean;
 }
@@ -93,6 +94,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
     onRowClick,
     onFiltersChange,
     highlightedKeys,
+    highlightedVersions,
     headerActions,
     disableHighlightTimeout = false,
   } = props;
@@ -210,16 +212,17 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
             ) : (
               items.map((row) => {
                 const key = rowKey(row);
+                const highlightVersion = highlightedVersions?.get(key) ?? (highlightedKeys?.has(key) ? 1 : 0);
                 return (
                   <HighlightedRow
                     key={key}
-                    highlighted={highlightedKeys?.has(key) ?? false}
+                    highlightVersion={highlightVersion}
                     disableTimeout={disableHighlightTimeout}
                     onClick={() => onRowClick(row)}
                   >
                     {columns.map((c) => (
                       <TableCell key={c.header} className={cn(c.className)}>
-                        {c.cell(row, { isNew: highlightedKeys?.has(key) ?? false })}
+                        {c.cell(row, { isNew: highlightVersion > 0 })}
                       </TableCell>
                     ))}
                   </HighlightedRow>
@@ -286,19 +289,19 @@ function FilterRow({
  * not need to manage a timer per row.
  */
 function HighlightedRow({
-  highlighted,
+  highlightVersion,
   disableTimeout,
   onClick,
   children,
 }: {
-  highlighted: boolean;
+  highlightVersion: number;
   disableTimeout: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
-  const [active, setActive] = React.useState(highlighted);
+  const [active, setActive] = React.useState(highlightVersion > 0);
   React.useEffect(() => {
-    if (highlighted) {
+    if (highlightVersion > 0) {
       setActive(true);
       if (disableTimeout) return;
       const t = window.setTimeout(() => setActive(false), HIGHLIGHT_MS);
@@ -306,7 +309,7 @@ function HighlightedRow({
     }
     setActive(false);
     return;
-  }, [highlighted, disableTimeout]);
+  }, [highlightVersion, disableTimeout]);
 
   return (
     <TableRow

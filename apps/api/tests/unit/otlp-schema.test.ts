@@ -92,10 +92,7 @@ describe("ExportTraceServiceRequest Zod validation", () => {
   });
 
   it("accepts missing end_time_unix_nano (in-flight spans)", () => {
-    const { end_time_unix_nano: _ignored, ...span } = validPayload();
-    const result = ExportTraceServiceRequest.safeParse({ resource_spans: [
-      { resource: { attributes: [] }, scope_spans: [{ spans: [span] }] }
-    ] });
+    const result = ExportTraceServiceRequest.safeParse(validPayload({ end_time_unix_nano: undefined }));
     expect(result.success).toBe(true);
   });
 

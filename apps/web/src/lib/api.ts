@@ -46,11 +46,6 @@ export interface TraceListResponse {
   total: number;
 }
 
-export interface TraceDetailResponse {
-  trace: TraceRow;
-  observations: ObservationRow[];
-}
-
 function buildQs(params: Record<string, string | number | undefined | null>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -134,10 +129,51 @@ export async function listObservations(params: ListObservationsParams = {}): Pro
   return res.json();
 }
 
-export async function getTrace(traceId: string): Promise<TraceDetailResponse> {
-  const res = await authedFetch(`/v1/traces/${encodeURIComponent(traceId)}`);
-  if (res.status === 404) throw new Error("not_found");
-  if (!res.ok) throw new Error(`getTrace ${res.status}`);
-  return res.json();
-}
+export async function seedRandomTrace(): Promise<{ traceId: string; spanCount: number }> {
+  const traceId = crypto.randomUUID().replaceAll("-", "");
+  const rootSpanId = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+  const spanCount = Math.floor(Math.random() * 10) + 1;
+  const startNano = BigInt(Date.now()) * 1_000_000n;
+  const endNano = startNano + BigInt(spanCount * 25 + 100) * 1_000_000n;
 
+  const childSpans = Array.from({ length: spanCount - 1 }, (_, index) => {
+    const childStart = startNano + BigInt((index + 1) * 25) * 1_000_000n;
+    return {
+      trace_id: traceId,
+      span_id: crypto.randomUUID().replaceAll("-", "").slice(0, 16),
+      parent_span_id: rootSpanId,
+      name: `debug-span-${index + 1}`,
+      kind: 1,
+      start_time_unix_nano: childStart.toString(),
+      end_time_unix_nano: (childStart + 15_000_000n).toString(),
+      attributes: [{ key: "deployment.environment", value: { stringValue: "development" } }],
+      status: { code: 1 },
+    };
+  });
+
+  const rootSpan = {
+    trace_id: traceId,
+    span_id: rootSpanId,
+    name: `debug-trace-${traceId.slice(0, 8)}`,
+    kind: 1,
+    start_time_unix_nano: startNano.toString(),
+    end_time_unix_nano: endNano.toString(),
+    attributes: [{ key: "deployment.environment", value: { stringValue: "development" } }],
+    status: { code: 1 },
+  };
+  const spans = [...childSpans, rootSpan];
+
+  const res = await authedFetch("/v1/otel/v1/traces", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      resource_spans: [{
+        resource: { attributes: [] },
+        scope_spans: [{ scope: { name: "astraea.sse-debug" }, spans }],
+      }],
+    }),
+  });
+  if (!res.ok) throw new Error(`seedRandomTrace ${res.status}`);
+
+  return { traceId, spanCount };
+}
