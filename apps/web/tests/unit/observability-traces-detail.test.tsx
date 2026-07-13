@@ -424,8 +424,21 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 });
 
 describe("TraceDetailPage — Stream toggle", () => {
-	it("starts On/Streaming on a connected snapshot", async () => {
-		renderAt(VALID_ID);
+  it("preserves a complete stream status as Recorded", async () => {
+    renderAt(VALID_ID);
+
+    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+    const handle = handleByTraceId.get(VALID_ID)!;
+    await act(async () => {
+      handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
+      handle.callbacks!.onStatus("complete");
+    });
+
+    expect(screen.getByTestId("trace-recording-status")).toHaveTextContent("Recorded");
+  });
+
+  it("starts On/Streaming on a connected snapshot", async () => {
+    renderAt(VALID_ID);
 
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
 		const handle = handleByTraceId.get(VALID_ID)!;

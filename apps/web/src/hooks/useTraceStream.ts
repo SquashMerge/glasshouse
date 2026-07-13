@@ -1,9 +1,5 @@
 import * as React from "react";
-import {
-	EventSourceHttpError,
-	useEventSource,
-	type EventSourceStatus,
-} from "./useEventSource";
+import { EventSourceHttpError, useEventSource, type EventSourceStatus, type UseEventSourceResult } from "./useEventSource";
 import type { TraceRow } from "../lib/api";
 
 /**
@@ -65,24 +61,25 @@ export interface UseTraceStreamOptions {
 }
 
 export interface UseTraceStreamResult {
-	status: EventSourceStatus;
-	paused: boolean;
-	/**
-	 * Direct passthrough to the underlying `useEventSource.reconnect`. Pass
-	 * `{ pause: true }` to enter user-paused state (no reconnects until called
-	 * again with `pause: false`); no args (or `{ pause: false }`) to leave
-	 * user-paused state and reconnect immediately. The `pause` / `resume`
-	 * helpers below are retained for callers that prefer the explicit API.
-	 */
-	reconnect: (opts?: { pause?: boolean }) => void;
-	pause: () => void;
-	resume: () => void;
-	lastEventAt: number | null;
-	/**
-	 * Diagnostic counters exposed by `useEventSource.debug`. Same shape, so the
-	 * `SseDebugOverlay` component can consume either hook's result directly.
-	 */
-	debug: import("./useEventSource").UseEventSourceResult["debug"];
+  status: EventSourceStatus;
+  paused: boolean;
+  completed: boolean;
+  /**
+   * Direct passthrough to the underlying `useEventSource.reconnect`. Pass
+   * `{ pause: true }` to enter user-paused state (no reconnects until called
+   * again with `pause: false`); no args (or `{ pause: false }`) to leave
+   * user-paused state and reconnect immediately. The `pause` / `resume`
+   * helpers below are retained for callers that prefer the explicit API.
+   */
+  reconnect: (opts?: { pause?: boolean }) => void;
+  pause: () => void;
+  resume: () => void;
+  lastEventAt: number | null;
+  /**
+   * Diagnostic counters exposed by `useEventSource.debug`. Same shape, so the
+   * `SseDebugOverlay` component can consume either hook's result directly.
+   */
+  debug: import("./useEventSource").UseEventSourceResult["debug"];
 }
 
 interface EnvelopeMsg {
@@ -96,38 +93,45 @@ export function useTraceStream(
 ): UseTraceStreamResult {
 	const { onSnapshot, onObservation, onStatus } = options;
 
-	// Keep latest callbacks accessible without retriggering the stream effect.
-	const onSnapshotRef = React.useRef(onSnapshot);
-	const onObservationRef = React.useRef(onObservation);
-	const onStatusRef = React.useRef(onStatus);
-	React.useEffect(() => {
-		onSnapshotRef.current = onSnapshot;
-		onObservationRef.current = onObservation;
-		onStatusRef.current = onStatus;
-	});
+  // Keep latest callbacks accessible without retriggering the stream effect.
+  const onSnapshotRef = React.useRef(onSnapshot);
+  const onObservationRef = React.useRef(onObservation);
+  const onStatusRef = React.useRef(onStatus);
+  const streamRef = React.useRef<UseEventSourceResult | null>(null);
+  const [completed, setCompleted] = React.useState(false);
+  React.useEffect(() => {
+    onSnapshotRef.current = onSnapshot;
+    onObservationRef.current = onObservation;
+    onStatusRef.current = onStatus;
+  });
 
 	const validTraceId = TRACE_ID_REGEX.test(traceId);
 
-	const onMessage = React.useCallback((msg: EnvelopeMsg) => {
-		switch (msg.event) {
-			case "snapshot":
-				onSnapshotRef.current(msg.data as TraceStreamSnapshot);
-				return;
-			case "observation":
-				onObservationRef.current(msg.data as TraceStreamObservation);
-				return;
-			case "status": {
-				const data = msg.data as { status?: string } | null;
-				if (data && data.status === "complete") {
-					onStatusRef.current("complete");
-				}
-				return;
-			}
-			default:
-				// Ignore unknown event names (heartbeats etc.).
-				return;
-		}
-	}, []);
+  const onMessage = React.useCallback((msg: EnvelopeMsg) => {
+    switch (msg.event) {
+      case "snapshot":
+        onSnapshotRef.current(msg.data as TraceStreamSnapshot);
+        return;
+      case "observation":
+        onObservationRef.current(msg.data as TraceStreamObservation);
+        return;
+      case "status": {
+        const data = msg.data as { status?: string } | null;
+        if (data && data.status === "complete") {
+          setCompleted(true);
+          onStatusRef.current("complete");
+          // The server closes after its final status frame. Treat that close as
+          // terminal rather than a network failure so the generic SSE hook does
+          // not reopen a completed trace on its reconnect backoff.
+          streamRef.current?.reconnect({ pause: true });
+        }
+        return;
+      }
+      default:
+        // Ignore unknown event names (heartbeats etc.).
+        return;
+    }
+  }, []);
 
 	const onError = React.useCallback((err: unknown) => {
 		if (err instanceof EventSourceHttpError && err.status === 404) {
@@ -152,37 +156,47 @@ export function useTraceStream(
 		? `/v1/traces/${encodeURIComponent(traceId)}/events`
 		: null;
 
-	const es = useEventSource<EnvelopeMsg>(url ?? "about:blank", {
-		enabled: validTraceId,
-		onMessage,
-		onError,
-	});
+  const es = useEventSource<EnvelopeMsg>(url ?? "about:blank", {
+    enabled: validTraceId,
+    onMessage,
+    onError,
+  });
+  streamRef.current = es;
 
 	const pause = React.useCallback(() => {
 		es.reconnect({ pause: true });
 	}, [es]);
 
-	const resume = React.useCallback(() => {
-		es.reconnect({ pause: false });
-	}, [es]);
+  const resume = React.useCallback(() => {
+    setCompleted(false);
+    es.reconnect({ pause: false });
+  }, [es]);
 
-	// Live getters — read through to `es` so consumers (and tests) observe the
-	// current underlying state without requiring a host re-render.
-	return {
-		get status() {
-			return es.status;
-		},
-		get paused() {
-			return es.paused;
-		},
-		get lastEventAt() {
-			return es.lastEventAt;
-		},
-		reconnect: es.reconnect,
-		get debug() {
-			return es.debug;
-		},
-		pause,
-		resume,
-	};
+  const reconnect = React.useCallback((opts?: { pause?: boolean }) => {
+    if (!opts?.pause) setCompleted(false);
+    es.reconnect(opts);
+  }, [es]);
+
+  // Live getters — read through to `es` so consumers (and tests) observe the
+  // current underlying state without requiring a host re-render.
+  return {
+    get status() {
+      return es.status;
+    },
+    get paused() {
+      return es.paused;
+    },
+    get completed() {
+      return completed;
+    },
+    get lastEventAt() {
+      return es.lastEventAt;
+    },
+    reconnect,
+    get debug() {
+      return es.debug;
+    },
+    pause,
+    resume,
+  };
 }

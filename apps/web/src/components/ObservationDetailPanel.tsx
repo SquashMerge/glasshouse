@@ -236,8 +236,8 @@ export function ObservationDetailPanel({ observation, traceId, onClose }: Observ
             onCopyValue={copyAttributeValue}
           />
         </TabsContent>
-        <TabsContent value="events" data-testid="detail-events"><MetadataList values={detailEntries(events, "Event")} emptyLabel="No events supplied." /></TabsContent>
-        <TabsContent value="links" data-testid="detail-links"><MetadataList values={detailEntries(links, "Link")} emptyLabel="No links supplied." /></TabsContent>
+        <TabsContent value="events" data-testid="detail-events"><MetadataList values={detailEntries(events, "Event")} emptyLabel="No events supplied." onCopyValue={copyAttributeValue} /></TabsContent>
+        <TabsContent value="links" data-testid="detail-links"><MetadataList values={detailEntries(links, "Link")} emptyLabel="No links supplied." onCopyValue={copyAttributeValue} /></TabsContent>
         <TabsContent value="resource"><MetadataList values={objectEntries(resource)} emptyLabel="No resource attributes supplied." /></TabsContent>
         <TabsContent value="metadata"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs" data-testid="detail-metadata">{formattedMetadata ?? metadataFallback(metadata)}</pre></TabsContent>
       </Tabs>

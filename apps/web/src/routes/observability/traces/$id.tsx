@@ -59,6 +59,7 @@ export function TraceDetailPage() {
     createTraceModel<TraceRow>({ observations: [] }),
   );
   const [notFound, setNotFound] = React.useState(false);
+  const [recordingStatus, setRecordingStatus] = React.useState<"recording" | "complete">("recording");
   const [highlightVersions, setHighlightVersions] = React.useState<Map<string, number>>(new Map());
   const [selectedObservationId, setSelectedObservationId] = React.useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = React.useState(true);
@@ -95,12 +96,14 @@ export function TraceDetailPage() {
     () => ({
       onSnapshot: (snapshot: { trace?: TraceRow; observations: ObservationRowLike[] }) => {
         setNotFound(false);
+        setRecordingStatus("recording");
         setModel(createTraceModel(snapshot));
         clearHighlightTimers();
         highlightVersionsRef.current = new Map();
         setHighlightVersions(highlightVersionsRef.current);
       },
       onObservation: ({ observation }: { observation: ObservationRowLike }) => {
+        setRecordingStatus("recording");
         const observationId = canonicalObservationId(observation.observation_id);
         setModel((current) => upsertLiveObservation(current, observation));
         if (!observationId) return;
@@ -126,6 +129,7 @@ export function TraceDetailPage() {
       },
       onStatus: (status: "complete" | "not_found") => {
         if (status === "not_found") setNotFound(true);
+        if (status === "complete") setRecordingStatus("complete");
       },
     }),
     [clearHighlightTimers],
@@ -172,8 +176,12 @@ export function TraceDetailPage() {
         traceId={id}
         observations={observations}
         trace={model.trace}
+        recordingStatus={recordingStatus}
         streamControl={<StreamToggle sse={stream} />}
-        onRefresh={() => stream.reconnect()}
+        onRefresh={() => {
+          setRecordingStatus("recording");
+          stream.reconnect();
+        }}
       />
       <div
         ref={splitContainerRef}

@@ -85,8 +85,10 @@ describe("ObservationDetailPanel", () => {
     expect(screen.getByText("service.name")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Events" }));
     expect(screen.getByTestId("detail-events")).toHaveTextContent("exception");
+    expect(screen.getByRole("button", { name: "Copy Event 1 value" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Links" }));
     expect(screen.getByTestId("detail-links")).toHaveTextContent("linked-trace");
+    expect(screen.getByRole("button", { name: "Copy Link 1 value" })).toBeInTheDocument();
 
     rerender(<ObservationDetailPanel traceId={TRACE_ID} observation={observation({ metadata: "not json" })} />);
     fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));

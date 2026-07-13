@@ -238,6 +238,12 @@ export function TraceWorkspace({
         </div>
       </div>
 
+      {observations.length >= 2_000 && (
+        <div className="border-b bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="large-trace-warning">
+          <span className="font-medium">Large trace:</span> this trace has 2,000 or more observations, so rendering and filtering may be slower.
+        </div>
+      )}
+
       {viewMode === "waterfall" && (
         <div className="flex items-center justify-end gap-1 border-b px-3 py-1.5" role="group" aria-label="Timeline zoom">
           <Button type="button" size="sm" variant="ghost" onClick={() => setTimelineZoom((zoom) => Math.max(1, zoom / 1.25))} disabled={timelineZoom <= 1} aria-label="Zoom out">

@@ -10,6 +10,7 @@ export interface TraceHeaderProps {
   traceId: string;
   observations: readonly CanonicalObservation[];
   trace?: unknown;
+  recordingStatus?: "recording" | "complete";
   streamControl?: React.ReactNode;
   onRefresh?: () => void;
 }
@@ -69,7 +70,7 @@ function observationField(observation: CanonicalObservation | undefined, key: st
   return typeof value === "string" && value ? value : null;
 }
 
-export function TraceHeader({ traceId, observations, trace, streamControl, onRefresh }: TraceHeaderProps) {
+export function TraceHeader({ traceId, observations, trace, recordingStatus = "recording", streamControl, onRefresh }: TraceHeaderProps) {
   const [rawOpen, setRawOpen] = React.useState(false);
   const [copyState, setCopyState] = React.useState<"idle" | "copied" | "failed" | "copied raw JSON" | "failed to copy raw JSON">("idle");
   const timeline = React.useMemo(() => createTraceTimeline(observations), [observations]);
@@ -166,6 +167,7 @@ export function TraceHeader({ traceId, observations, trace, streamControl, onRef
           <dt className="text-xs text-muted-foreground">Status</dt>
           <dd className="mt-1 flex items-center gap-1.5" data-testid="trace-summary-status">
             <Badge variant={status === "error" ? "destructive" : "secondary"}>{status === "error" ? "Error" : "OK"}</Badge>
+            <Badge variant="outline" data-testid="trace-recording-status">{recordingStatus === "complete" ? "Recorded" : "Recording"}</Badge>
             {errorCount > 0 && <span className="text-xs">{errorCount} error{errorCount === 1 ? "" : "s"}</span>}
           </dd>
         </div>
