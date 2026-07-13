@@ -19,6 +19,7 @@ import {
 	useTraceStream,
 	type ObservationRowLike,
 } from "../../../hooks/useTraceStream";
+import type { TraceRow } from "../../../lib/api";
 import { cn } from "../../../lib/utils";
 
 /**
@@ -67,6 +68,7 @@ export function TraceDetailPage() {
 	}, [location.searchStr]);
 
 	const validId = TRACE_ID_REGEX.test(id);
+	const [trace, setTrace] = React.useState<TraceRow | undefined>();
 	const [observations, setObservations] = React.useState<
 		DetailObservationLike[]
 	>([]);
@@ -84,9 +86,13 @@ export function TraceDetailPage() {
 	// `DetailObservationLike` (which extends it with display-only fields).
 	const handlers = React.useMemo(
 		() => ({
-			onSnapshot: (msg: { observations: ObservationRowLike[] }) => {
+			onSnapshot: (msg: {
+				trace?: TraceRow;
+				observations: ObservationRowLike[];
+			}) => {
 				// Initial seed from the server snapshot. We render the snapshot
 				// directly; subsequent `event: observation` frames merge by id.
+				setTrace(msg.trace);
 				setObservations(msg.observations as unknown as DetailObservationLike[]);
 				setNewObservationIds(new Set());
 			},
@@ -132,11 +138,12 @@ export function TraceDetailPage() {
 	// Derive a stable trace name from the snapshot. We never issue an initial
 	// GET /v1/traces/{id} — the SSE snapshot is the source of truth.
 	const traceName = React.useMemo(() => {
+		if (trace?.name) return trace.name;
 		if (observations.length === 0) return "—";
 		const root =
 			observations.find((o) => !o.parent_observation_id) ?? observations[0]!;
 		return root.name || "—";
-	}, [observations]);
+	}, [trace, observations]);
 
 	// Resolve the `?span=` deep-link (preferred) or fall back to the root
 	// observation once the snapshot arrives. Kept as a single effect so the

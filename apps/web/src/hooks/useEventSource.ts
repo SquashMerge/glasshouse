@@ -75,6 +75,16 @@ export interface UseEventSourceResult {
 	};
 }
 
+export class EventSourceHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`SSE request failed with status ${status}`);
+    this.name = "EventSourceHttpError";
+    this.status = status;
+  }
+}
+
 const BACKOFF_INITIAL_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
 const HIDDEN_CLOSE_THRESHOLD_MS = 60_000;
@@ -256,6 +266,9 @@ export function useEventSource<T = unknown>(
 
 		try {
 			const res = await authedFetch(url, { signal: ac.signal });
+			if (!res.ok) {
+				throw new EventSourceHttpError(res.status);
+			}
 			if (!res.body) {
 				throw new Error("Response has no body");
 			}
@@ -299,7 +312,9 @@ export function useEventSource<T = unknown>(
 			lastErrorRef.current = (err as Error).message;
 			onErrorRef.current?.(err);
 			setStatus("closed");
-			scheduleReconnect();
+			if (!(err instanceof EventSourceHttpError) || err.status >= 500) {
+				scheduleReconnect();
+			}
 		}
 
 		function parseAndDispatchFrame(rawFrame: string): void {

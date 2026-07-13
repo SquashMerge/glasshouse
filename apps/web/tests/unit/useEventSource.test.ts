@@ -16,7 +16,7 @@
  */
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useEventSource } from "../../src/hooks/useEventSource";
+import { EventSourceHttpError, useEventSource } from "../../src/hooks/useEventSource";
 
 // ---------------------------------------------------------------------------
 // Fake stream controller — provides a real ReadableStream<Uint8Array> we can
@@ -208,6 +208,44 @@ afterEach(() => {
 });
 
 describe("useEventSource — SSE transport", () => {
+	it("reports a 404 as a terminal transport error without retrying", async () => {
+		vi.useFakeTimers({
+			toFake: [
+				"setTimeout",
+				"clearTimeout",
+				"requestAnimationFrame",
+				"cancelAnimationFrame",
+				"Date",
+				"performance",
+			],
+		});
+		const errors: unknown[] = [];
+		const authedFetchMock = (await import("../../src/lib/auth"))
+			.authedFetch as unknown as ReturnType<typeof vi.fn>;
+		authedFetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ code: "NOT_FOUND" }), { status: 404 }),
+		);
+
+		const { hook } = setupHook({ onError: (error) => errors.push(error) });
+
+		await act(async () => {
+			await settle();
+		});
+
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(EventSourceHttpError);
+		expect((errors[0] as EventSourceHttpError).status).toBe(404);
+		expect(hook.result.status).toBe("closed");
+
+		await act(async () => {
+			vi.advanceTimersByTime(60_000);
+			await flushMicrotasks();
+		});
+
+		expect(authedFetchMock).toHaveBeenCalledTimes(1);
+		hook.unmount();
+	});
+
 	it("rejects an SSE frame larger than 1 MiB", async () => {
 		const errors: Error[] = [];
 		const { hook } = setupHook({

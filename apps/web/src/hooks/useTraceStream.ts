@@ -1,11 +1,16 @@
 import * as React from "react";
-import { useEventSource, type EventSourceStatus } from "./useEventSource";
+import {
+	EventSourceHttpError,
+	useEventSource,
+	type EventSourceStatus,
+} from "./useEventSource";
+import type { TraceRow } from "../lib/api";
 
 /**
  * `useTraceStream` — thin wrapper around `useEventSource` for the detail page.
  *
  * Routes the per-trace SSE event stream:
- *   - `event: "snapshot"`     → `options.onSnapshot({observations})`
+ *   - `event: "snapshot"`     → `options.onSnapshot({trace?, observations})`
  *   - `event: "observation"`  → `options.onObservation({observation})`
  *   - `event: "status"` with `{status: "complete"}` → `options.onStatus("complete")`
  *
@@ -35,6 +40,7 @@ export interface ObservationRowLike {
 }
 
 export interface TraceStreamSnapshot {
+	trace?: TraceRow;
 	observations: ObservationRowLike[];
 }
 
@@ -123,6 +129,12 @@ export function useTraceStream(
 		}
 	}, []);
 
+	const onError = React.useCallback((err: unknown) => {
+		if (err instanceof EventSourceHttpError && err.status === 404) {
+			onStatusRef.current("not_found");
+		}
+	}, []);
+
 	// Synthetic "not_found" emit when the traceId fails the regex. We schedule
 	// it on a microtask so the caller's render path observes it after mount,
 	// not synchronously during render.
@@ -143,6 +155,7 @@ export function useTraceStream(
 	const es = useEventSource<EnvelopeMsg>(url ?? "about:blank", {
 		enabled: validTraceId,
 		onMessage,
+		onError,
 	});
 
 	const pause = React.useCallback(() => {

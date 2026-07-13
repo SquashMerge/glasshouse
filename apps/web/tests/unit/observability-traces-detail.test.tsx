@@ -23,6 +23,7 @@ import {
 	cleanup,
 } from "@testing-library/react";
 import { TraceDetailPage } from "../../src/routes/observability/traces/$id";
+import type { TraceRow } from "../../src/lib/api";
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -32,7 +33,10 @@ const VALID_ID = "0123456789abcdef0123456789abcdef";
 
 interface MockTraceStreamHandle {
 	callbacks: {
-		onSnapshot: (msg: { observations: Array<Record<string, unknown>> }) => void;
+		onSnapshot: (msg: {
+			trace?: TraceRow;
+			observations: Array<Record<string, unknown>>;
+		}) => void;
 		onObservation: (msg: { observation: Record<string, unknown> }) => void;
 		onStatus: (status: "complete" | "not_found") => void;
 	} | null;
@@ -52,6 +56,7 @@ vi.mock("../../src/hooks/useTraceStream", async () => {
 			traceId: string,
 			options: {
 				onSnapshot: (msg: {
+					trace?: TraceRow;
 					observations: Array<Record<string, unknown>>;
 				}) => void;
 				onObservation: (msg: { observation: Record<string, unknown> }) => void;
@@ -289,6 +294,25 @@ describe("TraceDetailPage — ?span= deep-link", () => {
 });
 
 describe("TraceDetailPage — snapshot + live observations", () => {
+	it("uses the optional snapshot trace name without a REST fallback", async () => {
+		renderAt(VALID_ID);
+
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const handle = handleByTraceId.get(VALID_ID)!;
+
+		await act(async () => {
+			handle.callbacks!.onSnapshot({
+				trace: { trace_id: VALID_ID, name: "trace snapshot name" } as TraceRow,
+				observations: [makeObservation({ name: "observation fallback name" })],
+			});
+		});
+
+		expect(screen.getByTestId("trace-name")).toHaveTextContent(
+			"trace snapshot name",
+		);
+		expect(handleByTraceId.size).toBe(1);
+	});
+
 	it("renders the 3 snapshot observation rows in the tree", async () => {
 		renderAt(VALID_ID);
 

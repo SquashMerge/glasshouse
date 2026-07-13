@@ -12,6 +12,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useTraceStream } from "../../src/hooks/useTraceStream";
+import { EventSourceHttpError } from "../../src/hooks/useEventSource";
 
 // ---------------------------------------------------------------------------
 // Module mocks — fake useEventSource so we can drive its callback directly.
@@ -21,6 +22,7 @@ type Frame = { event: string; data: unknown };
 
 interface FakeEventSourceHandle {
 	push: (msg: Frame) => void;
+	pushError: (error: unknown) => void;
 	setStatus: (s: "connecting" | "open" | "closed") => void;
 	setPaused: (p: boolean) => void;
 	setLastEventAt: (t: number | null) => void;
@@ -30,7 +32,11 @@ interface FakeEventSourceHandle {
 const handleByUrl = new Map<string, FakeEventSourceHandle>();
 const lastOptionsByUrl = new Map<
 	string,
-	{ enabled?: boolean; onMessage?: (msg: Frame) => void }
+	{
+		enabled?: boolean;
+		onMessage?: (msg: Frame) => void;
+		onError?: (error: unknown) => void;
+	}
 >();
 
 vi.mock("../../src/hooks/useEventSource", async () => {
@@ -41,7 +47,11 @@ vi.mock("../../src/hooks/useEventSource", async () => {
 		...actual,
 		useEventSource: (
 			url: string,
-			opts: { enabled?: boolean; onMessage?: (msg: Frame) => void } = {},
+			opts: {
+				enabled?: boolean;
+				onMessage?: (msg: Frame) => void;
+				onError?: (error: unknown) => void;
+			} = {},
 		) => {
 			const status = {
 				current: "connecting" as "connecting" | "open" | "closed",
@@ -51,6 +61,7 @@ vi.mock("../../src/hooks/useEventSource", async () => {
 			const optsRef = { current: opts };
 			const handle: FakeEventSourceHandle = {
 				push: (msg) => optsRef.current.onMessage?.(msg),
+				pushError: (error) => optsRef.current.onError?.(error),
 				setStatus: (s) => {
 					status.current = s;
 					// Trigger a re-render via a microtask the host picks up.
@@ -172,6 +183,24 @@ describe("useTraceStream — routing", () => {
 		});
 	});
 
+	it("preserves the optional trace in a snapshot", async () => {
+		const { onSnapshot } = setupHook(VALID_TRACE_ID);
+
+		await act(async () => {
+			await flushMicrotasks();
+		});
+
+		const handle = handleByUrl.get(`/v1/traces/${VALID_TRACE_ID}/events`);
+		expect(handle).toBeDefined();
+		const trace = { trace_id: VALID_TRACE_ID, name: "snapshot trace" };
+
+		act(() => {
+			handle!.push({ event: "snapshot", data: { trace, observations: [] } });
+		});
+
+		expect(onSnapshot).toHaveBeenCalledWith({ trace, observations: [] });
+	});
+
 	it("routes event: observation → onObservation", async () => {
 		const { onObservation } = setupHook(VALID_TRACE_ID);
 
@@ -236,6 +265,27 @@ describe("useTraceStream — routing", () => {
 		expect(onStatus).toHaveBeenCalledWith("not_found");
 		expect(onSnapshot).not.toHaveBeenCalled();
 		expect(onObservation).not.toHaveBeenCalled();
+	});
+
+	it("maps an SSE 404 response to not_found without a REST request", async () => {
+		const { onStatus } = setupHook(VALID_TRACE_ID);
+
+		await act(async () => {
+			await flushMicrotasks();
+		});
+
+		const handle = handleByUrl.get(`/v1/traces/${VALID_TRACE_ID}/events`);
+		expect(handle).toBeDefined();
+
+		act(() => {
+			handle!.pushError(new EventSourceHttpError(404));
+		});
+
+		expect(onStatus).toHaveBeenCalledTimes(1);
+		expect(onStatus).toHaveBeenCalledWith("not_found");
+		expect(Array.from(handleByUrl.keys())).toEqual([
+			`/v1/traces/${VALID_TRACE_ID}/events`,
+		]);
 	});
 
 	it("pause() / resume() propagate to the underlying hook; paused reflects user state", async () => {
