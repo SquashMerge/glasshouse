@@ -2,6 +2,7 @@ import * as React from "react";
 import { LuClipboard } from "react-icons/lu";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { copyJson, copyText } from "../lib/clipboard";
 import { formatMetadata, metadataAttributes, metadataFallback, parseMetadata, type MetadataAttribute } from "../lib/trace-metadata";
@@ -28,11 +29,38 @@ function objectEntries(value: unknown): MetadataAttribute[] {
   return Object.entries(value).map(([key, entry]) => ({ key, value: entry })).sort((left, right) => left.key.localeCompare(right.key));
 }
 
-function MetadataList({ values, emptyLabel }: { values: MetadataAttribute[]; emptyLabel: string }) {
+function MetadataList({
+  values,
+  emptyLabel,
+  onCopyValue,
+}: {
+  values: MetadataAttribute[];
+  emptyLabel: string;
+  onCopyValue?: (value: unknown, key: string) => void;
+}) {
   if (values.length === 0) return <p className="text-xs text-muted-foreground">{emptyLabel}</p>;
   return (
     <dl className="space-y-2 text-xs">
-      {values.map(({ key, value }) => <div key={key} className="grid gap-1 border-b pb-2 sm:grid-cols-[minmax(8rem,12rem)_1fr]"><dt className="font-mono text-muted-foreground">{key}</dt><dd className="min-w-0 whitespace-pre-wrap break-words">{printable(value)}</dd></div>)}
+      {values.map(({ key, value }) => (
+        <div key={key} className="grid gap-1 border-b pb-2 sm:grid-cols-[minmax(8rem,12rem)_1fr]">
+          <dt className="font-mono text-muted-foreground">{key}</dt>
+          <dd className="flex min-w-0 items-start gap-2">
+            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{printable(value)}</span>
+            {onCopyValue && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 shrink-0 px-2 text-[10px]"
+                onClick={() => onCopyValue(value, key)}
+                aria-label={`Copy ${key} value`}
+              >
+                Copy
+              </Button>
+            )}
+          </dd>
+        </div>
+      ))}
     </dl>
   );
 }
@@ -40,9 +68,11 @@ function MetadataList({ values, emptyLabel }: { values: MetadataAttribute[]; emp
 export function ObservationDetailPanel({ observation, traceId }: ObservationDetailPanelProps) {
   const [tab, setTab] = React.useState("overview");
   const [copyMessage, setCopyMessage] = React.useState("");
+  const [attributeQuery, setAttributeQuery] = React.useState("");
 
   React.useEffect(() => {
     setTab("overview");
+    setAttributeQuery("");
   }, [observation?.observation_id]);
 
   const metadata = React.useMemo(() => parseMetadata(observation?.metadata), [observation?.metadata]);
@@ -51,6 +81,13 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
     const arrayAttributes = metadataAttributes(metadata);
     return arrayAttributes.length > 0 ? arrayAttributes : objectEntries(metadata.value);
   }, [metadata]);
+  const visibleAttributes = React.useMemo(() => {
+    const query = attributeQuery.trim().toLocaleLowerCase();
+    if (!query) return attributes;
+    return attributes.filter(({ key, value }) => (
+      key.toLocaleLowerCase().includes(query) || printable(value).toLocaleLowerCase().includes(query)
+    ));
+  }, [attributeQuery, attributes]);
   const eventEntries = React.useMemo(() => metadata.value && typeof metadata.value === "object" && !Array.isArray(metadata.value) ? (metadata.value as { events?: unknown }).events : null, [metadata]);
   const linkEntries = React.useMemo(() => metadata.value && typeof metadata.value === "object" && !Array.isArray(metadata.value) ? (metadata.value as { links?: unknown }).links : null, [metadata]);
   const resource = React.useMemo(() => metadata.value && typeof metadata.value === "object" && !Array.isArray(metadata.value) ? (metadata.value as { resource?: unknown }).resource : null, [metadata]);
@@ -71,6 +108,10 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
   async function copyRawJson() {
     const result = await copyJson(observation);
     setCopyMessage(result.ok ? "Observation JSON copied" : "Unable to copy observation JSON");
+  }
+
+  function copyAttributeValue(value: unknown, key: string) {
+    void copy(printable(value), `${key} value`);
   }
 
   return (
@@ -114,7 +155,25 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
         </TabsContent>
         <TabsContent value="input"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs" data-testid="detail-input">{typeof observation.input_text === "string" && observation.input_text ? observation.input_text : "—"}</pre></TabsContent>
         <TabsContent value="output"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs" data-testid="detail-output">{typeof observation.output_text === "string" && observation.output_text ? observation.output_text : "—"}</pre></TabsContent>
-        <TabsContent value="attributes"><MetadataList values={attributes} emptyLabel="No attributes supplied." /></TabsContent>
+        <TabsContent value="attributes" className="space-y-3">
+          <label className="block">
+            <span className="sr-only">Search attributes</span>
+            <Input
+              type="search"
+              value={attributeQuery}
+              onChange={(event) => setAttributeQuery(event.target.value)}
+              placeholder="Search attributes…"
+              aria-label="Search attributes"
+              className="h-8 text-xs"
+              data-testid="attribute-search"
+            />
+          </label>
+          <MetadataList
+            values={visibleAttributes}
+            emptyLabel={attributeQuery.trim() ? "No matching attributes." : "No attributes supplied."}
+            onCopyValue={copyAttributeValue}
+          />
+        </TabsContent>
         <TabsContent value="events"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{Array.isArray(eventEntries) ? printable(eventEntries) : "No events supplied."}</pre></TabsContent>
         <TabsContent value="links"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{Array.isArray(linkEntries) ? printable(linkEntries) : "No links supplied."}</pre></TabsContent>
         <TabsContent value="resource"><MetadataList values={objectEntries(resource)} emptyLabel="No resource attributes supplied." /></TabsContent>

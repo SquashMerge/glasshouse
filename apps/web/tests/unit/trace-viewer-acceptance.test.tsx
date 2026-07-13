@@ -74,21 +74,27 @@ describe("trace viewer acceptance", () => {
   });
 
   it("AC8: provides navigation between search matches", () => {
+    const onSelectObservation = vi.fn();
     render(
       <TraceWorkspace
         observations={[
           observation(),
           observation({ observation_id: "matching-child", parent_observation_id: "root", name: "matching child" }),
+          observation({ observation_id: "other-matching-child", parent_observation_id: "root", name: "other matching child" }),
         ]}
         selectedObservationId="root"
-        onSelectObservation={vi.fn()}
+        onSelectObservation={onSelectObservation}
       />,
     );
 
     fireEvent.change(screen.getByTestId("trace-search"), { target: { value: "matching" } });
 
-    expect(screen.getByTestId("trace-search-count")).toHaveTextContent("1 match");
+    expect(screen.getByTestId("trace-search-count")).toHaveTextContent("2 matches");
     expect(screen.getByRole("button", { name: /next match/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /next match/i }));
+
+    expect(onSelectObservation).toHaveBeenCalledWith("matching-child");
+    expect(document.activeElement).toHaveAttribute("data-observation-id", "matching-child");
   });
 
   it("AC8: provides a zoom-to-fit control for the waterfall timing range", () => {
@@ -100,7 +106,14 @@ describe("trace viewer acceptance", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /zoom to fit/i })).toBeInTheDocument();
+    const ruler = screen.getByTestId("timeline-ruler");
+    expect(ruler).toHaveStyle({ minWidth: "42rem" });
+
+    fireEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    expect(ruler).toHaveStyle({ minWidth: "52.5rem" });
+
+    fireEvent.click(screen.getByRole("button", { name: /zoom to fit/i }));
+    expect(ruler).toHaveStyle({ minWidth: "42rem" });
   });
 
   it("AC10: lets a user search attributes before copying a supplied value", () => {
@@ -118,7 +131,12 @@ describe("trace viewer acceptance", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Attributes" }));
 
-    expect(screen.getByRole("searchbox", { name: /search attributes/i })).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: /search attributes/i });
+    fireEvent.change(search, { target: { value: "agent" } });
+
+    expect(screen.getByText("agent.id")).toBeInTheDocument();
+    expect(screen.queryByText("zebra")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy agent.id value/i })).toBeInTheDocument();
   });
 
   it("AC12: exposes a non-color failure cue and supports ArrowDown tree navigation", () => {
@@ -144,5 +162,14 @@ describe("trace viewer acceptance", () => {
     fireEvent.keyDown(rows[0]!, { key: "ArrowDown" });
 
     expect(document.activeElement).toBe(rows[1]);
+
+    fireEvent.keyDown(rows[1]!, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(rows[0]);
+
+    fireEvent.keyDown(rows[0]!, { key: "ArrowLeft" });
+    expect(rows[0]).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.keyDown(rows[0]!, { key: "ArrowRight" });
+    expect(rows[0]).toHaveAttribute("aria-expanded", "true");
   });
 });

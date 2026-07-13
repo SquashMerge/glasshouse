@@ -69,4 +69,14 @@ describe("trace tree", () => {
 
     expect(traceTreeAncestorIds(tree, "one")).toEqual(["trace-root"]);
   });
+
+  it("preserves every observation in a 5k flat fixture", () => {
+    const tree = buildTraceTree(Array.from({ length: 5_000 }, (_, index) => (
+      observation(`observation-${index.toString().padStart(4, "0")}`)
+    )));
+
+    expect(tree.nodesById).toHaveLength(5_000);
+    expect(tree.roots).toMatchObject([{ kind: "group", id: "trace-root" }]);
+    expect(visibleTraceRows(tree, new Set(["trace-root"]))).toHaveLength(5_001);
+  });
 });
