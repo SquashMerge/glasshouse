@@ -1,7 +1,7 @@
 // AC11 walkthrough — Playwright E2E.
 //
 // Honest split:
-// - Coverage in unit tests (apps/web/tests/unit/observability-traces-detail.test.tsx): Pause/Resume, Recording/Recorded pill, ?span= deep-link, snapshot→stream merge, invalid-id gate.
+// - Coverage in unit tests (apps/web/tests/unit/observability-traces-detail.test.tsx): Stream toggle, ?span= deep-link, snapshot→stream merge, invalid-id gate.
 // - Coverage here (e2e): the live ingestion path requires a running apps/api + matched UI_USERNAME/UI_PASSWORD + a seeded dataset. Each case gates on envReady(); see slice brief §Test plan for the manual walkthrough when envReady is false.
 //
 // When envReady() returns false the test skips with a clear reason rather than passing on a swallowed assertion.
@@ -292,40 +292,26 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		).toBeVisible();
 	});
 
-	test("Pause closes the SSE; Resume reopens it (detail page indicator)", async ({
-		page,
-	}) => {
-		if (!(await envReady())) {
-			test.skip(
-				true,
-				"Requires running API + seeder; see slice brief for manual walkthrough",
-			);
-			return;
-		}
-		await login(page);
+  test("Stream toggle pauses and resumes the detail SSE", async ({ page }) => {
+    if (!(await envReady())) {
+      test.skip(true, "Requires running API + seeder; see slice brief for manual walkthrough");
+      return;
+    }
+    await login(page);
 
 		const traceId = "0123456789abcdef0123456789abcdef";
 		await page.goto(`/observability/traces/${traceId}`);
 
-		// The recording pill should render in its "Recording" state on entry.
-		await expect(page.getByTestId("recording-pill")).toBeVisible({
-			timeout: 5000,
-		});
+    const toggle = page.getByTestId("stream-toggle-button");
+    await expect(toggle).toBeVisible({ timeout: 5000 });
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
 
-		// Click Pause.
-		await page.getByTestId("pause-button").click();
-		await expect(page.getByTestId("live-indicator")).toHaveAttribute(
-			"data-state",
-			"paused",
-		);
-		await expect(page.getByTestId("resume-button")).toBeVisible();
+    await toggle.click();
+    await expect(page.getByTestId("stream-toggle")).toHaveAttribute("data-state", "off");
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
 
-		// Click Resume.
-		await page.getByTestId("resume-button").click();
-		await expect(page.getByTestId("live-indicator")).toHaveAttribute(
-			"data-state",
-			"live",
-		);
-		await expect(page.getByTestId("pause-button")).toBeVisible();
-	});
+    await toggle.click();
+    await expect(page.getByTestId("stream-toggle")).not.toHaveAttribute("data-state", "off");
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
 });

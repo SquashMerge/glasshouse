@@ -34,6 +34,11 @@ export function TraceHeader({ traceId, observations, trace, streamControl, onRef
   const [copyState, setCopyState] = React.useState<"idle" | "copied" | "failed">("idle");
   const timeline = React.useMemo(() => createTraceTimeline(observations), [observations]);
   const root = observations.find((observation) => !observation.parent_observation_id) ?? observations[0];
+  const traceName = trace && typeof trace === "object" && "name" in trace && typeof trace.name === "string" && trace.name
+    ? trace.name
+    : typeof root?.name === "string" && root.name
+      ? root.name
+      : "Unnamed trace";
   const errorCount = observations.filter((observation) => observation.status === "error").length;
   const status = errorCount > 0 ? "error" : "ok";
   const start = formatStart(timeline.startMs);
@@ -53,7 +58,7 @@ export function TraceHeader({ traceId, observations, trace, streamControl, onRef
         <div className="min-w-0 space-y-1">
           <div className="text-xs font-medium text-muted-foreground">Trace</div>
           <h1 className="truncate text-lg font-semibold" data-testid="trace-name">
-            {typeof root?.name === "string" && root.name ? root.name : "Unnamed trace"}
+            {traceName}
           </h1>
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <code className="truncate font-mono" title={traceId} data-testid="trace-id">{traceId}</code>

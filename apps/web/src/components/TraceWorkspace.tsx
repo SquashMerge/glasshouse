@@ -56,6 +56,11 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
     expansionInitialized.current = true;
   }, [observationKey]);
 
+  React.useEffect(() => {
+    if (!tree.roots.some((root) => root.id === "trace-root")) return;
+    setExpandedIds((previous) => previous.has("trace-root") ? previous : new Set(previous).add("trace-root"));
+  }, [tree]);
+
   const search = React.useMemo(() => searchTraceObservations(observations, query), [observations, query]);
   const matchingIds = React.useMemo(() => new Set(search.matchIds), [search.matchIds]);
 

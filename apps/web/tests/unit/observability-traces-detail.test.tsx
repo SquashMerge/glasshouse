@@ -260,13 +260,12 @@ describe("TraceDetailPage — ?span= deep-link", () => {
 			});
 		});
 
-		// 1. The detail panel renders the deep-link target (not the root), proving
-		//    the `?span=` selector won the default-selection race.
-		const detail = await screen.findByTestId("observation-detail");
-		expect(detail).toHaveAttribute("data-observation-id", SPAN_TARGET_ID);
-		expect(screen.getByTestId("detail-input")).toHaveTextContent(
-			/TARGET_INPUT/,
-		);
+    // 1. The detail panel renders the deep-link target (not the root), proving
+    //    the `?span=` selector won the default-selection race.
+    const detail = await screen.findByTestId("observation-detail");
+    expect(detail).toHaveAttribute("data-observation-id", SPAN_TARGET_ID);
+    fireEvent.click(screen.getByRole("tab", { name: /Input/i }));
+    expect(screen.getByTestId("detail-input")).toHaveTextContent(/TARGET_INPUT/);
 
 		// 2. The matching span row carries the deterministic `data-selected`
 		//    attribute; the other rows do not. Three snapshot rows ⇒ use the
@@ -294,8 +293,8 @@ describe("TraceDetailPage — ?span= deep-link", () => {
 });
 
 describe("TraceDetailPage — snapshot + live observations", () => {
-	it("uses the optional snapshot trace name without a REST fallback", async () => {
-		renderAt(VALID_ID);
+  it("uses the snapshot observations without a REST fallback", async () => {
+    renderAt(VALID_ID);
 
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
 		const handle = handleByTraceId.get(VALID_ID)!;
@@ -307,11 +306,9 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 			});
 		});
 
-		expect(screen.getByTestId("trace-name")).toHaveTextContent(
-			"trace snapshot name",
-		);
-		expect(handleByTraceId.size).toBe(1);
-	});
+    expect(screen.getByTestId("trace-name")).toHaveTextContent("trace snapshot name");
+    expect(handleByTraceId.size).toBe(1);
+  });
 
 	it("renders the 3 snapshot observation rows in the tree", async () => {
 		renderAt(VALID_ID);
@@ -340,13 +337,16 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 			});
 		});
 
-		const rows = await screen.findAllByTestId("span-row");
-		expect(rows).toHaveLength(3);
-		const tree = screen.getByTestId("span-tree");
-		expect(tree).toHaveTextContent("root-span");
-		expect(tree).toHaveTextContent("child-1");
-		expect(tree).toHaveTextContent("child-2");
-	});
+    const rows = await screen.findAllByTestId("span-row");
+    expect(rows).toHaveLength(3);
+    expect(screen.getByTestId("trace-header")).toBeInTheDocument();
+    expect(screen.getByTestId("trace-workspace")).toBeInTheDocument();
+    expect(screen.getByTestId("sse-debug-overlay")).toBeInTheDocument();
+    const tree = screen.getByTestId("span-tree");
+    expect(tree).toHaveTextContent("root-span");
+    expect(tree).toHaveTextContent("child-1");
+    expect(tree).toHaveTextContent("child-2");
+  });
 
 	it("appends a new observation via onObservation and applies the 1.5s highlight class", async () => {
 		renderAt(VALID_ID);
@@ -473,12 +473,11 @@ describe("TraceDetailPage — span detail tabs", () => {
 		const row = await screen.findByTestId("span-row");
 		fireEvent.click(row);
 
-		// The detail panel reads from `observations[0]` via the selectedId state.
-		const detail = await screen.findByTestId("observation-detail");
-		expect(detail).toBeInTheDocument();
-		expect(screen.getByTestId("detail-input")).toHaveTextContent(
-			/INPUT_TEXT_HERE/,
-		);
+    // The detail panel reads from the selected workspace observation.
+    const detail = await screen.findByTestId("observation-detail");
+    expect(detail).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Input/i }));
+    expect(screen.getByTestId("detail-input")).toHaveTextContent(/INPUT_TEXT_HERE/);
 
 		// Switch to the Output tab and check the rendered text.
 		fireEvent.click(screen.getByRole("tab", { name: /Output/i }));
