@@ -214,7 +214,7 @@ export function TraceWorkspace({
   }
 
   return (
-    <section className="overflow-hidden rounded-lg border bg-card" data-testid="trace-workspace">
+    <section className="overflow-hidden rounded-lg border bg-card" data-testid="trace-workspace" data-row-count={observations.length}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
         <div className="flex items-center gap-1" role="group" aria-label="Trace view">
           <Button type="button" size="sm" variant={viewMode === "waterfall" ? "secondary" : "ghost"} onClick={() => setViewMode("waterfall")} aria-pressed={viewMode === "waterfall"}>Waterfall</Button>

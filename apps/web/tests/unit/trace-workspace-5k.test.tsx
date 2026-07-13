@@ -36,6 +36,7 @@ describe("trace workspace 5k release gate", () => {
     const rows = screen.getAllByTestId("span-row");
     expect(rows).toHaveLength(5_000);
     expect(screen.getByTestId("span-tree")).toHaveAttribute("role", "tree");
+    expect(screen.getByTestId("trace-workspace")).toHaveAttribute("data-row-count", "5000");
     expect(screen.getByTestId("large-trace-warning")).toHaveTextContent("2,000 or more observations");
     expect(rows[0]).toHaveAttribute("data-observation-id", "observation-0000");
   });
