@@ -34,6 +34,19 @@ describe("trace viewer acceptance", () => {
     expect(screen.getByText("payments-api")).toBeInTheDocument();
   });
 
+  it("AC3: prefers the trace name and reads an OTLP root-service attribute", () => {
+    render(
+      <TraceHeader
+        traceId={TRACE_ID}
+        trace={{ name: "checkout request" }}
+        observations={[observation({ metadata: JSON.stringify([{ key: "service.name", value: { stringValue: "checkout-api" } }]) })]}
+      />,
+    );
+
+    expect(screen.getByTestId("trace-name")).toHaveTextContent("checkout request");
+    expect(screen.getByTestId("trace-root-service")).toHaveTextContent("checkout-api");
+  });
+
   it("AC3: lets a user copy the disclosed trace payload as raw JSON", () => {
     render(
       <TraceHeader
@@ -158,6 +171,8 @@ describe("trace viewer acceptance", () => {
 
     expect(screen.getByLabelText("Error")).toBeInTheDocument();
     const rows = screen.getAllByTestId("span-row");
+    expect(rows[0]).toHaveAttribute("tabindex", "0");
+    expect(rows[1]).toHaveAttribute("tabindex", "-1");
     rows[0]!.focus();
     fireEvent.keyDown(rows[0]!, { key: "ArrowDown" });
 

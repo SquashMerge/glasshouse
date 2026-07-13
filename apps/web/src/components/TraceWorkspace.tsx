@@ -15,6 +15,10 @@ export interface TraceWorkspaceProps {
   selectedObservationId: string | null;
   onSelectObservation: (observationId: string) => void;
   newObservationIds?: ReadonlySet<string>;
+  highlightVersions?: ReadonlyMap<string, number>;
+  malformedObservationCount?: number;
+  onCloseInspector?: () => void;
+  focusRequestVersion?: number;
 }
 
 type ViewMode = "waterfall" | "tree";
@@ -41,12 +45,22 @@ function isGroup(node: ObservationTreeNode | TraceTreeGroup): node is TraceTreeG
   return node.kind === "group";
 }
 
-export function TraceWorkspace({ observations, selectedObservationId, onSelectObservation, newObservationIds = new Set() }: TraceWorkspaceProps) {
+export function TraceWorkspace({
+  observations,
+  selectedObservationId,
+  onSelectObservation,
+  newObservationIds = new Set(),
+  highlightVersions,
+  malformedObservationCount = 0,
+  onCloseInspector,
+  focusRequestVersion = 0,
+}: TraceWorkspaceProps) {
   const [viewMode, setViewMode] = React.useState<ViewMode>("waterfall");
   const [query, setQuery] = React.useState("");
   const [activeMatchIndex, setActiveMatchIndex] = React.useState<number | null>(null);
   const [timelineZoom, setTimelineZoom] = React.useState(1);
   const [focusTargetId, setFocusTargetId] = React.useState<string | null>(null);
+  const [activeTreeItemId, setActiveTreeItemId] = React.useState<string | null>(selectedObservationId);
   const rowRefs = React.useRef(new Map<string, HTMLDivElement>());
   const tree = React.useMemo(() => buildTraceTree(observations), [observations]);
   const timeline = React.useMemo(() => createTraceTimeline(observations), [observations]);
@@ -96,6 +110,18 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
     setFocusTargetId(null);
   }, [focusTargetId, rows]);
 
+  React.useEffect(() => {
+    setActiveTreeItemId((current) => {
+      if (current && rows.some((row) => row.id === current)) return current;
+      if (selectedObservationId && rows.some((row) => row.id === selectedObservationId)) return selectedObservationId;
+      return rows[0]?.id ?? null;
+    });
+  }, [rows, selectedObservationId]);
+
+  React.useEffect(() => {
+    if (focusRequestVersion > 0) focusRow(selectedObservationId ?? rows[0]?.id);
+  }, [focusRequestVersion]);
+
   function toggle(id: string) {
     setExpandedIds((previous) => {
       const next = new Set(previous);
@@ -115,6 +141,7 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
 
   function focusRow(id: string | undefined) {
     if (!id) return;
+    setActiveTreeItemId(id);
     setFocusTargetId(id);
   }
 
@@ -174,6 +201,11 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
       event.preventDefault();
       if (hasChildren && expanded) toggle(id);
       else focusRow(parentRowId(id, node));
+      return;
+    }
+    if (event.key === "Escape" && onCloseInspector) {
+      event.preventDefault();
+      onCloseInspector();
     }
   }
 
@@ -218,6 +250,17 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
         </div>
       )}
 
+      {(malformedObservationCount > 0 || tree.orphanIds.length > 0 || tree.cycleRootIds.length > 0) && (
+        <div className="border-b bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="trace-diagnostics">
+          <span className="font-medium">Trace data diagnostics:</span>{" "}
+          {[
+            malformedObservationCount > 0 ? `${malformedObservationCount} malformed observation${malformedObservationCount === 1 ? " was" : "s were"} ignored` : null,
+            tree.orphanIds.length > 0 ? `${tree.orphanIds.length} observation${tree.orphanIds.length === 1 ? " has" : "s have"} a missing parent` : null,
+            tree.cycleRootIds.length > 0 ? `${tree.cycleRootIds.length} parent cycle${tree.cycleRootIds.length === 1 ? " was" : "s were"} repaired` : null,
+          ].filter(Boolean).join("; ")}.
+        </div>
+      )}
+
       {viewMode === "waterfall" && (
         <div className="grid min-w-[42rem] grid-cols-[minmax(18rem,1fr)_minmax(16rem,1fr)] border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground" style={{ minWidth: timelineMinWidth }} data-testid="timeline-ruler">
           <span>Observation</span>
@@ -238,12 +281,13 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
                 style={{ paddingLeft: `${0.75 + depth * 1.25}rem` }}
                 role="treeitem"
                 aria-expanded={hasChildren ? expanded : undefined}
-                tabIndex={0}
+                tabIndex={id === activeTreeItemId ? 0 : -1}
                 ref={(element) => {
                   if (element) rowRefs.current.set(id, element);
                   else rowRefs.current.delete(id);
                 }}
                 onKeyDown={(event) => handleTreeKeyDown(event, id, node)}
+                onFocus={() => setActiveTreeItemId(id)}
               >
                 {hasChildren && <TreeToggle expanded={expanded} onClick={() => toggle(id)} label={`${expanded ? "Collapse" : "Expand"} ${node.label}`} />}
                 <span className="ml-1">{node.label}</span>
@@ -259,6 +303,7 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
           const selected = selectedObservationId === observation.observation_id;
           const matched = matchingIds.has(observation.observation_id);
           const containsError = node.hasDescendantError && observation.status !== "error";
+          const highlightVersion = highlightVersions?.get(id) ?? (newObservationIds.has(id) ? 1 : 0);
           return (
             <div
               key={id}
@@ -266,14 +311,15 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
               aria-level={depth + 1}
               aria-expanded={hasChildren ? expanded : undefined}
               aria-selected={selected}
-              tabIndex={0}
+              tabIndex={id === activeTreeItemId ? 0 : -1}
               ref={(element) => {
                 if (element) rowRefs.current.set(id, element);
                 else rowRefs.current.delete(id);
               }}
-              className={cn("grid cursor-pointer items-center border-b text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", viewMode === "waterfall" ? "min-w-[42rem] grid-cols-[minmax(18rem,1fr)_minmax(16rem,1fr)]" : "grid-cols-1", newObservationIds.has(id) && "bg-accent/40", selected && "bg-accent/60", matched && "ring-1 ring-inset ring-primary/50")}
+              className={cn("grid cursor-pointer items-center border-b text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", viewMode === "waterfall" ? "min-w-[42rem] grid-cols-[minmax(18rem,1fr)_minmax(16rem,1fr)]" : "grid-cols-1", highlightVersion > 0 && "bg-accent/40", selected && "bg-accent/60", matched && "ring-1 ring-inset ring-primary/50")}
               style={viewMode === "waterfall" ? { minWidth: timelineMinWidth } : undefined}
               onClick={() => onSelectObservation(observation.observation_id)}
+              onFocus={() => setActiveTreeItemId(id)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
@@ -285,6 +331,7 @@ export function TraceWorkspace({ observations, selectedObservationId, onSelectOb
               data-testid="span-row"
               data-observation-id={observation.observation_id}
               data-selected={selected ? "true" : "false"}
+               data-highlighted={highlightVersion > 0 ? "true" : "false"}
             >
               <div className="flex min-w-0 items-center gap-2 px-3 py-2 text-left text-sm" style={{ paddingLeft: `${0.75 + depth * 1.25}rem` }}>
                 {hasChildren ? <TreeToggle expanded={expanded} onClick={(event) => { event.stopPropagation(); toggle(id); }} label={`${expanded ? "Collapse" : "Expand"} ${observationName(observation)}`} /> : <span className="w-5" aria-hidden="true" />}

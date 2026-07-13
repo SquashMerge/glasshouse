@@ -6,6 +6,7 @@ import { StreamToggle } from "../../../components/StreamToggle";
 import { TraceHeader } from "../../../components/TraceHeader";
 import { TraceWorkspace } from "../../../components/TraceWorkspace";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
+import { Button } from "../../../components/ui/button";
 import { useTraceStream, type ObservationRowLike } from "../../../hooks/useTraceStream";
 import type { TraceRow } from "../../../lib/api";
 import {
@@ -18,6 +19,23 @@ import {
 
 const TRACE_ID_REGEX = /^[0-9a-f]{32}$/;
 const HIGHLIGHT_MS = 1_500;
+const SPLIT_STORAGE_KEY = "astraea.trace-detail.workspace-width";
+const MIN_WORKSPACE_WIDTH = 35;
+const MAX_WORKSPACE_WIDTH = 70;
+
+function clampWorkspaceWidth(value: number): number {
+  return Math.min(MAX_WORKSPACE_WIDTH, Math.max(MIN_WORKSPACE_WIDTH, Math.round(value)));
+}
+
+function initialWorkspaceWidth(): number {
+  try {
+    const saved = window.localStorage.getItem(SPLIT_STORAGE_KEY);
+    const width = saved === null ? Number.NaN : Number(saved);
+    return Number.isFinite(width) ? clampWorkspaceWidth(width) : 60;
+  } catch {
+    return 60;
+  }
+}
 
 function NotFound({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
@@ -41,36 +59,76 @@ export function TraceDetailPage() {
     createTraceModel<TraceRow>({ observations: [] }),
   );
   const [notFound, setNotFound] = React.useState(false);
-  const [newObservationIds, setNewObservationIds] = React.useState<Set<string>>(new Set());
+  const [highlightVersions, setHighlightVersions] = React.useState<Map<string, number>>(new Map());
   const [selectedObservationId, setSelectedObservationId] = React.useState<string | null>(null);
+  const [inspectorOpen, setInspectorOpen] = React.useState(true);
+  const [workspaceWidth, setWorkspaceWidth] = React.useState(initialWorkspaceWidth);
+  const [focusWorkspaceVersion, setFocusWorkspaceVersion] = React.useState(0);
+  const splitContainerRef = React.useRef<HTMLDivElement>(null);
+  const highlightTimersRef = React.useRef(new Map<string, number>());
+  const highlightVersionsRef = React.useRef(new Map<string, number>());
+
+  const clearHighlightTimers = React.useCallback(() => {
+    for (const timer of highlightTimersRef.current.values()) window.clearTimeout(timer);
+    highlightTimersRef.current.clear();
+  }, []);
+
+  React.useEffect(() => clearHighlightTimers, [clearHighlightTimers]);
+
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(SPLIT_STORAGE_KEY, String(workspaceWidth));
+    } catch {}
+  }, [workspaceWidth]);
+
+  const closeInspector = React.useCallback(() => {
+    setInspectorOpen(false);
+    setFocusWorkspaceVersion((version) => version + 1);
+  }, []);
+
+  const selectObservation = React.useCallback((observationId: string) => {
+    setSelectedObservationId(observationId);
+    setInspectorOpen(true);
+  }, []);
 
   const handlers = React.useMemo(
     () => ({
       onSnapshot: (snapshot: { trace?: TraceRow; observations: ObservationRowLike[] }) => {
         setNotFound(false);
         setModel(createTraceModel(snapshot));
-        setNewObservationIds(new Set());
+        clearHighlightTimers();
+        highlightVersionsRef.current = new Map();
+        setHighlightVersions(highlightVersionsRef.current);
       },
       onObservation: ({ observation }: { observation: ObservationRowLike }) => {
         const observationId = canonicalObservationId(observation.observation_id);
         setModel((current) => upsertLiveObservation(current, observation));
         if (!observationId) return;
 
-        setNewObservationIds((current) => new Set(current).add(observationId));
-        window.setTimeout(() => {
-          setNewObservationIds((current) => {
-            if (!current.has(observationId)) return current;
-            const next = new Set(current);
-            next.delete(observationId);
-            return next;
-          });
+        const next = new Map(highlightVersionsRef.current);
+        const version = (next.get(observationId) ?? 0) + 1;
+        const previousTimer = highlightTimersRef.current.get(observationId);
+        if (previousTimer !== undefined) window.clearTimeout(previousTimer);
+        next.set(observationId, version);
+        highlightVersionsRef.current = next;
+        setHighlightVersions(next);
+        const timer = window.setTimeout(() => {
+          if (highlightVersionsRef.current.get(observationId) !== version) return;
+          const cleared = new Map(highlightVersionsRef.current);
+          cleared.delete(observationId);
+          highlightVersionsRef.current = cleared;
+          setHighlightVersions(cleared);
+          if (highlightTimersRef.current.get(observationId) === timer) {
+            highlightTimersRef.current.delete(observationId);
+          }
         }, HIGHLIGHT_MS);
+        highlightTimersRef.current.set(observationId, timer);
       },
       onStatus: (status: "complete" | "not_found") => {
         if (status === "not_found") setNotFound(true);
       },
     }),
-    [],
+    [clearHighlightTimers],
   );
   const stream = useTraceStream(id, handlers);
   const observations = React.useMemo(() => traceModelObservations(model), [model]);
@@ -94,6 +152,12 @@ export function TraceDetailPage() {
     [observations, selectedObservationId],
   );
 
+  function resizeWorkspace(clientX: number) {
+    const bounds = splitContainerRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width === 0) return;
+    setWorkspaceWidth(clampWorkspaceWidth(((clientX - bounds.left) / bounds.width) * 100));
+  }
+
   if (!validId) {
     return <NotFound>The id <span className="font-mono">{id}</span> is not a valid 32-character lowercase hex trace id.</NotFound>;
   }
@@ -111,14 +175,67 @@ export function TraceDetailPage() {
         streamControl={<StreamToggle sse={stream} />}
         onRefresh={() => stream.reconnect()}
       />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
+      <div
+        ref={splitContainerRef}
+        className="grid gap-4 xl:gap-0 xl:grid-cols-[minmax(0,var(--trace-workspace-width))_0.5rem_minmax(22rem,1fr)]"
+        style={inspectorOpen ? { "--trace-workspace-width": `${workspaceWidth}%` } as React.CSSProperties : undefined}
+      >
         <TraceWorkspace
           observations={observations}
           selectedObservationId={selectedObservationId}
-          onSelectObservation={setSelectedObservationId}
-          newObservationIds={newObservationIds}
+          onSelectObservation={selectObservation}
+          highlightVersions={highlightVersions}
+          malformedObservationCount={model.malformedObservationCount}
+          onCloseInspector={closeInspector}
+          focusRequestVersion={focusWorkspaceVersion}
         />
-        <ObservationDetailPanel traceId={id} observation={selectedObservation} />
+        {inspectorOpen && (
+          <div
+            className="relative hidden cursor-col-resize touch-none xl:block"
+            role="separator"
+            tabIndex={0}
+            aria-label="Resize trace workspace and inspector"
+            aria-orientation="vertical"
+            aria-valuemin={MIN_WORKSPACE_WIDTH}
+            aria-valuemax={MAX_WORKSPACE_WIDTH}
+            aria-valuenow={workspaceWidth}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              resizeWorkspace(event.clientX);
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeWorkspace(event.clientX);
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                setWorkspaceWidth((width) => clampWorkspaceWidth(width - 2));
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                setWorkspaceWidth((width) => clampWorkspaceWidth(width + 2));
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                setWorkspaceWidth(MIN_WORKSPACE_WIDTH);
+              } else if (event.key === "End") {
+                event.preventDefault();
+                setWorkspaceWidth(MAX_WORKSPACE_WIDTH);
+              }
+            }}
+            data-testid="trace-detail-splitter"
+          >
+            <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border" aria-hidden="true" />
+          </div>
+        )}
+        {inspectorOpen ? (
+          <ObservationDetailPanel traceId={id} observation={selectedObservation} onClose={closeInspector} />
+        ) : (
+          <div className="mt-4 xl:col-span-2 xl:mt-0">
+            <Button type="button" variant="outline" onClick={() => setInspectorOpen(true)} data-testid="show-inspector">Show inspector</Button>
+          </div>
+        )}
       </div>
       <SseDebugOverlay sse={stream} label={`trace/${id.slice(0, 8)}…`} />
     </div>

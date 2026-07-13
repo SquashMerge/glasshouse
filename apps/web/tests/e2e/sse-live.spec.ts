@@ -314,4 +314,23 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
     await expect(page.getByTestId("stream-toggle")).not.toHaveAttribute("data-state", "off");
     await expect(toggle).toHaveAttribute("aria-checked", "true");
   });
+
+  test("release gate: browser renders a 5k-observation trace with stable row selectors", async ({ page, request }) => {
+    test.slow();
+    if (!(await envReady())) {
+      test.skip(true, "Requires live API + seeded browser auth for the 5k trace-detail release gate.");
+      return;
+    }
+
+    const traceId = hex(16);
+    const rootSpanId = hex(8);
+    await postTrace(request, buildTracePayload(traceId, rootSpanId, 5_000, `release-gate-5k-${Date.now()}`));
+    await login(page);
+    await page.goto(`/observability/traces/${traceId}`);
+
+    const rows = page.getByTestId("span-row");
+    await expect(rows).toHaveCount(5_000, { timeout: 30_000 });
+    await expect(rows.first()).toHaveAttribute("data-observation-id", rootSpanId);
+    await expect(page.getByTestId("span-tree")).toHaveAttribute("role", "tree");
+  });
 });

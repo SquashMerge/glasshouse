@@ -377,14 +377,50 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 		const rows = await screen.findAllByTestId("span-row");
 		expect(rows).toHaveLength(2);
 
-		// The new row carries the `bg-accent/40` highlight class — same as the
-		// 1.5s pattern used on the list pages.
-		const newRow = rows.find(
-			(r) => r.getAttribute("data-observation-id") === "d".repeat(32),
-		);
-		expect(newRow).toBeDefined();
-		expect(newRow!.className).toContain("bg-accent/40");
-	});
+    // The new row carries the `bg-accent/40` highlight class — same as the
+    // 1.5s pattern used on the list pages.
+    const newRow = rows.find((r) => r.getAttribute("data-observation-id") === "d".repeat(32));
+    expect(newRow).toBeDefined();
+    expect(newRow!.className).toContain("bg-accent/40");
+  });
+
+  it("keeps a repeated live observation highlighted until its latest version expires", async () => {
+    renderAt(VALID_ID);
+    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+    const handle = handleByTraceId.get(VALID_ID)!;
+    vi.useFakeTimers();
+
+    await act(async () => {
+      handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
+      handle.callbacks!.onObservation({ observation: makeObservation({ name: "first update" }) });
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    await act(async () => {
+      handle.callbacks!.onObservation({ observation: makeObservation({ name: "second update" }) });
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    const row = screen.getByTestId("span-row");
+    expect(row).toHaveAttribute("data-highlighted", "true");
+    expect(row).toHaveTextContent("second update");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(row).toHaveAttribute("data-highlighted", "false");
+  });
+
+  it("shows malformed-data diagnostics rather than silently dropping it", async () => {
+    renderAt(VALID_ID);
+    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+    const handle = handleByTraceId.get(VALID_ID)!;
+
+    await act(async () => {
+      handle.callbacks!.onSnapshot({
+        observations: [makeObservation(), { name: "missing id" }],
+      });
+    });
+
+    expect(screen.getByTestId("trace-diagnostics")).toHaveTextContent("1 malformed observation was ignored");
+  });
 });
 
 describe("TraceDetailPage — Stream toggle", () => {
@@ -485,11 +521,34 @@ describe("TraceDetailPage — span detail tabs", () => {
 			/OUTPUT_TEXT_HERE/,
 		);
 
-		// Switch to the Metadata tab and check pretty-printed JSON.
-		fireEvent.click(screen.getByRole("tab", { name: /Metadata/i }));
-		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"tool"/);
-		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"x"/);
-	});
+    // Switch to the Metadata tab and check pretty-printed JSON.
+    fireEvent.click(screen.getByRole("tab", { name: /Metadata/i }));
+    expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"tool"/);
+    expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"x"/);
+  });
+
+  it("persists the keyboard-accessible split and closes the inspector with Escape", async () => {
+    window.localStorage.setItem("astraea.trace-detail.workspace-width", "44");
+    renderAt(VALID_ID);
+    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+    const handle = handleByTraceId.get(VALID_ID)!;
+
+    await act(async () => {
+      handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
+    });
+
+    const splitter = screen.getByTestId("trace-detail-splitter");
+    expect(splitter).toHaveAttribute("role", "separator");
+    expect(splitter).toHaveAttribute("aria-valuenow", "44");
+    fireEvent.keyDown(splitter, { key: "ArrowRight" });
+    expect(splitter).toHaveAttribute("aria-valuenow", "46");
+    expect(window.localStorage.getItem("astraea.trace-detail.workspace-width")).toBe("46");
+
+    fireEvent.keyDown(screen.getByTestId("observation-detail"), { key: "Escape" });
+    expect(screen.queryByTestId("observation-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("show-inspector")).toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement).toHaveAttribute("data-observation-id", "obs-1"));
+  });
 });
 
 describe("TraceDetailPage — not_found synthetic status", () => {

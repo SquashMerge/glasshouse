@@ -1,5 +1,5 @@
 import * as React from "react";
-import { LuClipboard } from "react-icons/lu";
+import { LuClipboard, LuX } from "react-icons/lu";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -13,6 +13,7 @@ import { observationTiming } from "../lib/trace-timeline";
 export interface ObservationDetailPanelProps {
   observation: CanonicalObservation | null;
   traceId: string;
+  onClose?: () => void;
 }
 
 function printable(value: unknown): string {
@@ -27,6 +28,47 @@ function printable(value: unknown): string {
 function objectEntries(value: unknown): MetadataAttribute[] {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
   return Object.entries(value).map(([key, entry]) => ({ key, value: entry })).sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function objectValue(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+function telemetryValue(value: unknown): string | null {
+  if (typeof value === "string" && value) return value;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  for (const key of ["stringValue", "value", "name", "version"]) {
+    const candidate = objectValue(value, key);
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  return null;
+}
+
+function metadataValue(metadata: unknown, key: string): unknown {
+  const attributes = Array.isArray(metadata) ? metadata : objectValue(metadata, "attributes");
+  if (Array.isArray(attributes)) {
+    const attribute = attributes.find((item) => objectValue(item, "key") === key);
+    if (attribute) return objectValue(attribute, "value");
+  }
+  const direct = objectValue(metadata, key);
+  if (direct !== undefined) return direct;
+  return key.split(".").reduce<unknown>((value, segment) => objectValue(value, segment), metadata);
+}
+
+function detailValue(observation: CanonicalObservation, metadata: unknown, keys: string[]): string | null {
+  for (const key of keys) {
+    const direct = telemetryValue(objectValue(observation, key));
+    if (direct) return direct;
+    const fromMetadata = telemetryValue(metadataValue(metadata, key));
+    if (fromMetadata) return fromMetadata;
+  }
+  return null;
+}
+
+function detailEntries(value: unknown, label: string): MetadataAttribute[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry, index) => ({ key: `${label} ${index + 1}`, value: entry }));
 }
 
 function MetadataList({
@@ -65,7 +107,7 @@ function MetadataList({
   );
 }
 
-export function ObservationDetailPanel({ observation, traceId }: ObservationDetailPanelProps) {
+export function ObservationDetailPanel({ observation, traceId, onClose }: ObservationDetailPanelProps) {
   const [tab, setTab] = React.useState("overview");
   const [copyMessage, setCopyMessage] = React.useState("");
   const [attributeQuery, setAttributeQuery] = React.useState("");
@@ -99,6 +141,11 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
   const kind = observationKind(observation.type);
   const timing = observationTiming(observation);
   const statusError = observation.status === "error";
+  const service = detailValue(observation, metadata.value, ["service_name", "service.name"]);
+  const scopeName = detailValue(observation, metadata.value, ["scope_name", "scope.name", "instrumentation_scope_name"]);
+  const scopeVersion = detailValue(observation, metadata.value, ["scope_version", "scope.version", "instrumentation_scope_version"]);
+  const events = Array.isArray(eventEntries) ? eventEntries : Array.isArray(objectValue(observation, "events")) ? objectValue(observation, "events") : [];
+  const links = Array.isArray(linkEntries) ? linkEntries : Array.isArray(objectValue(observation, "links")) ? objectValue(observation, "links") : [];
 
   async function copy(value: string, label: string) {
     const result = await copyText(value);
@@ -115,7 +162,17 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
   }
 
   return (
-    <aside className="rounded-lg border bg-card" data-testid="observation-detail" data-observation-id={observation.observation_id}>
+    <aside
+      className="rounded-lg border bg-card"
+      data-testid="observation-detail"
+      data-observation-id={observation.observation_id}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && onClose) {
+          event.preventDefault();
+          onClose();
+        }
+      }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3 border-b p-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -125,7 +182,10 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
           </div>
           <p className="mt-1 font-mono text-xs text-muted-foreground">{observation.observation_id}</p>
         </div>
-        <Button type="button" size="sm" variant="outline" onClick={copyRawJson} data-testid="copy-observation-json"><LuClipboard className="h-3.5 w-3.5" aria-hidden="true" />Copy JSON</Button>
+        <div className="flex items-center gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={copyRawJson} data-testid="copy-observation-json"><LuClipboard className="h-3.5 w-3.5" aria-hidden="true" />Copy JSON</Button>
+          {onClose && <Button type="button" size="icon" variant="ghost" aria-label="Close inspector" onClick={onClose}><LuX className="h-4 w-4" aria-hidden="true" /></Button>}
+        </div>
       </div>
       <span className="sr-only" aria-live="polite">{copyMessage}</span>
 
@@ -150,6 +210,8 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
             { key: "End", value: observation.end_time ?? "—" },
             { key: "Duration", value: timing.durationMs === null ? "—" : `${timing.durationMs}ms` },
             { key: "Model", value: observation.model ?? "—" },
+            { key: "Service", value: service ?? "—" },
+            { key: "Instrumentation scope", value: [scopeName, scopeVersion].filter(Boolean).join(" @ ") || "—" },
           ]} emptyLabel="No overview data." />
           <div className="flex gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => copy(observation.observation_id, "Observation ID")}>Copy observation ID</Button><Button type="button" size="sm" variant="ghost" onClick={() => copy(traceId, "Trace ID")}>Copy trace ID</Button></div>
         </TabsContent>
@@ -174,8 +236,8 @@ export function ObservationDetailPanel({ observation, traceId }: ObservationDeta
             onCopyValue={copyAttributeValue}
           />
         </TabsContent>
-        <TabsContent value="events"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{Array.isArray(eventEntries) ? printable(eventEntries) : "No events supplied."}</pre></TabsContent>
-        <TabsContent value="links"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{Array.isArray(linkEntries) ? printable(linkEntries) : "No links supplied."}</pre></TabsContent>
+        <TabsContent value="events" data-testid="detail-events"><MetadataList values={detailEntries(events, "Event")} emptyLabel="No events supplied." /></TabsContent>
+        <TabsContent value="links" data-testid="detail-links"><MetadataList values={detailEntries(links, "Link")} emptyLabel="No links supplied." /></TabsContent>
         <TabsContent value="resource"><MetadataList values={objectEntries(resource)} emptyLabel="No resource attributes supplied." /></TabsContent>
         <TabsContent value="metadata"><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs" data-testid="detail-metadata">{formattedMetadata ?? metadataFallback(metadata)}</pre></TabsContent>
       </Tabs>

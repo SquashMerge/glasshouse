@@ -73,14 +73,20 @@ describe("TraceWorkspace", () => {
 });
 
 describe("ObservationDetailPanel", () => {
-  it("renders persisted kind, input/output, structured attributes, and malformed metadata safely", () => {
-    const { rerender } = render(<ObservationDetailPanel traceId={TRACE_ID} observation={observation({ type: "generation", metadata: JSON.stringify({ resource: { "service.name": "agent" }, events: [{ name: "exception" }] }) })} />);
+  it("renders persisted kind, service/scope/events/links, input/output, structured attributes, and malformed metadata safely", () => {
+    const { rerender } = render(<ObservationDetailPanel traceId={TRACE_ID} observation={observation({ type: "generation", metadata: JSON.stringify({ resource: { "service.name": "agent" }, "service.name": "agent", scope: { name: "otel.sdk", version: "1.2.3" }, events: [{ name: "exception", time_unix_nano: "1" }], links: [{ trace_id: "linked-trace", span_id: "linked-span" }] }) })} />);
 
     expect(screen.getByTestId("detail-overview")).toHaveTextContent("Generation");
+    expect(screen.getByTestId("detail-overview")).toHaveTextContent("agent");
+    expect(screen.getByTestId("detail-overview")).toHaveTextContent("otel.sdk @ 1.2.3");
     fireEvent.click(screen.getByRole("tab", { name: "Input" }));
     expect(screen.getByTestId("detail-input")).toHaveTextContent("input text");
     fireEvent.click(screen.getByRole("tab", { name: "Resource" }));
     expect(screen.getByText("service.name")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Events" }));
+    expect(screen.getByTestId("detail-events")).toHaveTextContent("exception");
+    fireEvent.click(screen.getByRole("tab", { name: "Links" }));
+    expect(screen.getByTestId("detail-links")).toHaveTextContent("linked-trace");
 
     rerender(<ObservationDetailPanel traceId={TRACE_ID} observation={observation({ metadata: "not json" })} />);
     fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));

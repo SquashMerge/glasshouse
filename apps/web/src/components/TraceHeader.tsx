@@ -29,6 +29,46 @@ function formatStart(milliseconds: number | null): { local: string; utc: string 
   };
 }
 
+function objectValue(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+function telemetryValue(value: unknown): string | null {
+  if (typeof value === "string" && value) return value;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  for (const key of ["stringValue", "value", "name"]) {
+    const candidate = objectValue(value, key);
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  return null;
+}
+
+function metadataAttribute(observation: CanonicalObservation | undefined, key: string): string | null {
+  if (!observation || typeof observation.metadata !== "string") return null;
+  try {
+    const metadata: unknown = JSON.parse(observation.metadata);
+    const attributes = Array.isArray(metadata)
+      ? metadata
+      : objectValue(metadata, "attributes") ?? objectValue(objectValue(metadata, "resource"), "attributes");
+    if (!Array.isArray(attributes)) return null;
+    const attribute = attributes.find((item) => objectValue(item, "key") === key);
+    return telemetryValue(objectValue(attribute, "value"));
+  } catch {
+    return null;
+  }
+}
+
+function traceField(trace: unknown, key: string): string | null {
+  const value = objectValue(trace, key);
+  return typeof value === "string" && value ? value : null;
+}
+
+function observationField(observation: CanonicalObservation | undefined, key: string): string | null {
+  const value = objectValue(observation, key);
+  return typeof value === "string" && value ? value : null;
+}
+
 export function TraceHeader({ traceId, observations, trace, streamControl, onRefresh }: TraceHeaderProps) {
   const [rawOpen, setRawOpen] = React.useState(false);
   const [copyState, setCopyState] = React.useState<"idle" | "copied" | "failed" | "copied raw JSON" | "failed to copy raw JSON">("idle");
@@ -46,11 +86,13 @@ export function TraceHeader({ traceId, observations, trace, streamControl, onRef
     ? timeline.endMs - timeline.startMs
     : null;
   const rawPayload = React.useMemo(() => ({ trace, observations }), [trace, observations]);
-  const rootService = typeof root?.service_name === "string" && root.service_name
-    ? root.service_name
-    : typeof root?.service === "string" && root.service
-      ? root.service
-      : "—";
+  const traceName = traceField(trace, "name") ?? (typeof root?.name === "string" && root.name ? root.name : "Unnamed trace");
+  const rootService = traceField(trace, "root_service")
+    ?? traceField(trace, "service_name")
+    ?? observationField(root, "service_name")
+    ?? observationField(root, "service")
+    ?? metadataAttribute(root, "service.name")
+    ?? "—";
 
   async function copyTraceId() {
     const result = await copyText(traceId);
