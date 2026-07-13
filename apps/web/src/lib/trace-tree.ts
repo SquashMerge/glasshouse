@@ -148,12 +148,14 @@ export function traceTreeAncestorIds(tree: TraceTree, observationId: string): st
   const ancestors: string[] = [];
   let node = tree.nodesById.get(observationId);
   while (node?.parentId) {
-    ancestors.push(node.parentId);
-    node = tree.nodesById.get(node.parentId);
+    const parent = tree.nodesById.get(node.parentId);
+    if (!parent) break;
+    ancestors.push(parent.id);
+    node = parent;
   }
   if (node) {
     const containingGroup = tree.roots.find((root): root is TraceTreeGroup => (
-      root.kind === "group" && root.children.some((child) => child.id === node!.id)
+      root.kind === "group" && root.children.some((child) => child.id === node.id)
     ));
     if (containingGroup) ancestors.push(containingGroup.id);
   }

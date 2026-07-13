@@ -28,6 +28,7 @@ describe("trace tree", () => {
 
     expect(tree.orphanIds).toEqual(["orphan"]);
     expect(tree.roots.at(-1)).toMatchObject({ kind: "group", id: "orphaned-observations" });
+    expect(traceTreeAncestorIds(tree, "orphan")).toEqual(["orphaned-observations"]);
   });
 
   it("detaches the lexicographically greatest member of a parent cycle", () => {
@@ -40,6 +41,14 @@ describe("trace tree", () => {
     expect(tree.cycleRootIds).toEqual(["c"]);
     expect(tree.nodesById.get("c")?.parentId).toBeNull();
     expect(tree.nodesById.get("a")?.parentId).toBe("b");
+  });
+
+  it("detaches a self-parented observation as a marked root", () => {
+    const tree = buildTraceTree([observation("self", "self")]);
+
+    expect(tree.cycleRootIds).toEqual(["self"]);
+    expect(tree.nodesById.get("self")?.parentId).toBeNull();
+    expect(tree.roots).toMatchObject([{ kind: "observation", id: "self" }]);
   });
 
   it("derives descendant error state and visible rows from expansion", () => {
