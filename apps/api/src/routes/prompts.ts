@@ -1,4 +1,4 @@
-import { createRoute, z } from "@hono/zod-openapi";
+import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
   createPrompt as createPromptRecord,
@@ -55,7 +55,7 @@ export const listPrompts = createRoute({
   responses: { 200: { description: "OK", content: { "application/json": { schema: PromptList } } }, ...PromptErrorResponses },
 });
 
-export async function handleListPrompts(c: Context): Promise<Response> {
+export async function handleListPrompts(c: Parameters<RouteHandler<typeof listPrompts>>[0]): Promise<Response> {
   try {
     const query = c.req.valid("query") as { project_id: string };
     return c.json(await listPromptsRecord(pgPool(), query.project_id));
@@ -74,7 +74,7 @@ export const createPrompt = createRoute({
   responses: { 201: { description: "Prompt created", content: { "application/json": { schema: Prompt } } }, ...PromptErrorResponses },
 });
 
-export async function handleCreatePrompt(c: Context): Promise<Response> {
+export async function handleCreatePrompt(c: Parameters<RouteHandler<typeof createPrompt>>[0]): Promise<Response> {
   try {
     const body = c.req.valid("json") as Omit<Parameters<typeof createPromptRecord>[1], "actor">;
     return c.json(await createPromptRecord(pgPool(), { ...body, actor: actor(c) }), 201);
@@ -93,7 +93,7 @@ export const getPrompt = createRoute({
   responses: { 200: { description: "OK", content: { "application/json": { schema: Prompt } } }, ...PromptErrorResponses },
 });
 
-export async function handleGetPrompt(c: Context): Promise<Response> {
+export async function handleGetPrompt(c: Parameters<RouteHandler<typeof getPrompt>>[0]): Promise<Response> {
   try {
     const params = c.req.valid("param") as { id: string };
     const query = c.req.valid("query") as { project_id: string; version?: number };
@@ -113,7 +113,7 @@ export const listPromptVersions = createRoute({
   responses: { 200: { description: "OK", content: { "application/json": { schema: PromptVersionList } } }, ...PromptErrorResponses },
 });
 
-export async function handleListPromptVersions(c: Context): Promise<Response> {
+export async function handleListPromptVersions(c: Parameters<RouteHandler<typeof listPromptVersions>>[0]): Promise<Response> {
   try {
     const params = c.req.valid("param") as { id: string };
     const query = c.req.valid("query") as { project_id: string };
@@ -133,7 +133,7 @@ export const createPromptVersion = createRoute({
   responses: { 201: { description: "Version created", content: { "application/json": { schema: PromptVersion } } }, ...PromptErrorResponses },
 });
 
-export async function handleCreatePromptVersion(c: Context): Promise<Response> {
+export async function handleCreatePromptVersion(c: Parameters<RouteHandler<typeof createPromptVersion>>[0]): Promise<Response> {
   try {
     const params = c.req.valid("param") as { id: string };
     const query = c.req.valid("query") as { project_id: string };
@@ -154,7 +154,7 @@ export const renderPrompt = createRoute({
   responses: { 200: { description: "Rendered", content: { "application/json": { schema: PromptRenderResponse } } }, ...PromptErrorResponses },
 });
 
-export async function handleRenderPrompt(c: Context): Promise<Response> {
+export async function handleRenderPrompt(c: Parameters<RouteHandler<typeof renderPrompt>>[0]): Promise<Response> {
   try {
     const params = c.req.valid("param") as { id: string };
     const query = c.req.valid("query") as { project_id: string; version?: number };
@@ -175,7 +175,7 @@ export const deletePrompt = createRoute({
   responses: { 204: { description: "Deleted" }, ...PromptErrorResponses },
 });
 
-export async function handleDeletePrompt(c: Context): Promise<Response> {
+export async function handleDeletePrompt(c: Parameters<RouteHandler<typeof deletePrompt>>[0]): Promise<Response> {
   try {
     const params = c.req.valid("param") as { id: string };
     const query = c.req.valid("query") as { project_id: string };
