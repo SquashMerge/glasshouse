@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { createRequire } from "node:module";
 import {
   PromptTemplateError,
   renderPromptTemplate,
+  renderPromptTemplateWithWarnings,
   validatePromptTemplate,
   validatePromptTemplates,
 } from "../../src/lib/prompt-templates";
@@ -50,12 +52,30 @@ describe("prompt templates", () => {
     expectBadTemplate(() => validatePromptTemplate("{{#prototype}}unsafe{{/prototype}}"));
   });
 
-  it("HTML-escapes ordinary variables", () => {
-    expect(renderPromptTemplate("{{value}}", { value: "<&>" })).toBe("&lt;&amp;&gt;");
+  it("renders ordinary and raw variables as plain LLM text", () => {
+    expect(renderPromptTemplate("{{value}}", { value: "<&>" })).toBe("<&>");
   });
 
   it("renders triple-mustache and ampersand variables as explicit raw forms", () => {
     expect(renderPromptTemplate("{{{value}}}|{{& value}}", { value: "<&>" })).toBe("<&>|<&>");
+  });
+
+  it("reports each missing root variable once and does not persist its identity escape override", () => {
+    const rendered = renderPromptTemplate("{{value}}", { value: "<&>" });
+    const warnings = renderPromptTemplateWithWarnings("{{missing}} {{missing}} {{user.name}}", { user: {} });
+    const mustache = createRequire(import.meta.url)("mustache") as {
+      render(template: string, view: Record<string, string>): string;
+    };
+
+    expect(rendered).toBe("<&>");
+    expect(warnings).toEqual({
+      output: "  ",
+      warnings: [
+        { code: "MISSING_VARIABLE", path: "missing" },
+        { code: "MISSING_VARIABLE", path: "user.name" },
+      ],
+    });
+    expect(mustache.render("{{value}}", { value: "<&>" })).toBe("&lt;&amp;&gt;");
   });
 
   it("renders sections and repeated array data", () => {

@@ -18,6 +18,10 @@ apiApp.use(bodySizeLimit(MAX_BODY_BYTES));
 apiApp.get("/health", (c) => handleHealth());
 apiApp.get("/v1/health", (c) => handleHealth());
 
+apiApp.use("/v1/prompts/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
 apiApp.use("/v1/*", basicAuthMiddleware());
 
 // OTLP is mounted as a raw handler (not via openapiApp) because it consumes

@@ -64,9 +64,13 @@ import {
 	handleListPromptVersions,
 	createPromptVersion,
 	handleCreatePromptVersion,
-	patchPromptLabels,
-	handlePatchPromptLabels,
+	renderPrompt,
+	handleRenderPrompt,
+	deletePrompt,
+	handleDeletePrompt,
 } from "./routes/prompts.js";
+import { listProjects, handleListProjects } from "./routes/projects.js";
+import { getPromptProvenance, handleGetPromptProvenance } from "./routes/prompt-provenance.js";
 import {
 	listDatasets,
 	handleListDatasets,
@@ -88,7 +92,13 @@ import {
 	handleGetScore,
 } from "./routes/scores.js";
 
-export const openapiApp = new OpenAPIHono();
+export const openapiApp = new OpenAPIHono({
+  defaultHook: (result, c) => {
+    if (!result.success) {
+      return c.json({ code: "BAD_REQUEST", message: "Request validation failed" }, 400);
+    }
+  },
+});
 openapiApp.openAPIRegistry.registerComponent("securitySchemes", "basicAuth", {
 	type: "http",
 	scheme: "basic",
@@ -96,6 +106,11 @@ openapiApp.openAPIRegistry.registerComponent("securitySchemes", "basicAuth", {
 const register = (route: unknown, handler: unknown): void => {
 	openapiApp.openapi(route as never, handler as never);
 };
+
+openapiApp.use("/v1/prompts/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
 
 // Health (also mounted at /health by the bare handler in index.ts).
 register(healthRoute, handleHealth);
@@ -142,18 +157,15 @@ register(listObservations, handleListObservations);
 register(streamObservationEvents, handleStreamObservationEvents);
 register(streamTraceDetailEvents, handleStreamTraceDetailEvents);
 
+register(listProjects, handleListProjects);
 register(listPrompts, handleListPrompts);
 register(createPrompt, handleCreatePrompt);
-register(getPrompt, (c: Context) => handleGetPrompt(c.req.param("id")!));
-register(listPromptVersions, (c: Context) =>
-	handleListPromptVersions(c.req.param("id")!),
-);
-register(createPromptVersion, (c: Context) =>
-	handleCreatePromptVersion(c.req.param("id")!),
-);
-register(patchPromptLabels, (c: Context) =>
-	handlePatchPromptLabels(c.req.param("id")!),
-);
+register(listPromptVersions, handleListPromptVersions);
+register(createPromptVersion, handleCreatePromptVersion);
+register(renderPrompt, handleRenderPrompt);
+register(deletePrompt, handleDeletePrompt);
+register(getPrompt, handleGetPrompt);
+register(getPromptProvenance, handleGetPromptProvenance);
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);

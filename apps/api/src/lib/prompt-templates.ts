@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 
 type MustacheRuntime = {
   parse(template: string): unknown;
-  render(template: string, view: unknown, partials: undefined): string;
+  render(template: string, view: unknown, partials: undefined, config?: { escape(value: string): string }): string;
 };
 
 const Mustache = createRequire(import.meta.url)("mustache") as MustacheRuntime;
@@ -160,8 +160,71 @@ function cloneJsonValue(value: unknown, ancestors: WeakSet<object>): unknown {
   }
 }
 
-export function renderPromptTemplate(template: string, data: unknown): string {
+function missingVariablePaths(template: string, view: unknown): string[] {
+  const missing = new Set<string>();
+  let open = "{{";
+  let close = "}}";
+  let cursor = 0;
+  let sectionDepth = 0;
+
+  while (cursor < template.length) {
+    const start = template.indexOf(open, cursor);
+    if (start === -1) break;
+    const tagStart = start + open.length;
+    const triple = open === "{{" && template.startsWith("{", tagStart);
+    const end = template.indexOf(triple ? "}}}" : close, tagStart + (triple ? 1 : 0));
+    if (end === -1) break;
+    const raw = template.slice(tagStart + (triple ? 1 : 0), end).trim();
+    cursor = end + (triple ? 3 : close.length);
+    if (!raw || raw.startsWith("!")) continue;
+    if (raw.startsWith("=") && raw.endsWith("=")) {
+      const delimiters = raw.slice(1, -1).trim().split(/\s+/);
+      if (delimiters.length === 2 && delimiters[0] && delimiters[1]) {
+        open = delimiters[0];
+        close = delimiters[1];
+      }
+      continue;
+    }
+    if (raw.startsWith("#") || raw.startsWith("^")) {
+      sectionDepth += 1;
+      continue;
+    }
+    if (raw.startsWith("/")) {
+      sectionDepth = Math.max(sectionDepth - 1, 0);
+      continue;
+    }
+    const path = raw.replace(/^&\s*/, "");
+    if (sectionDepth > 0 || path === ".") continue;
+    let current = view;
+    let found = true;
+    for (const segment of path.split(".")) {
+      if (
+        typeof current !== "object"
+        || current === null
+        || !Object.prototype.hasOwnProperty.call(current, segment)
+      ) {
+        found = false;
+        break;
+      }
+      current = (current as Record<string, unknown>)[segment];
+    }
+    if (!found) missing.add(path);
+  }
+  return [...missing];
+}
+
+export function renderPromptTemplateWithWarnings(
+  template: string,
+  data: unknown,
+): { output: string; warnings: { code: "MISSING_VARIABLE"; path: string }[] } {
   validatePromptTemplate(template);
   const safeView = cloneJsonValue(data, new WeakSet<object>());
-  return Mustache.render(template, safeView, undefined);
+  return {
+    output: Mustache.render(template, safeView, undefined, { escape: (value) => value }),
+    warnings: missingVariablePaths(template, safeView).map((path) => ({ code: "MISSING_VARIABLE", path })),
+  };
+}
+
+export function renderPromptTemplate(template: string, data: unknown): string {
+  return renderPromptTemplateWithWarnings(template, data).output;
 }
