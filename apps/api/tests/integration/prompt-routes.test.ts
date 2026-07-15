@@ -42,7 +42,45 @@ const listProjectsRecord = mock(async () => ({
   items: [{ id: "11111111-1111-4111-8111-111111111111", name: "Project One", slug: "project-one", created_at: "2026-07-15T10:00:00.000Z" }],
   total: 1,
 }));
-const promptProvenanceStatus = mock(async () => "active" as const);
+const PROMPT_VERSION = {
+  id: "support-agent",
+  version: 2,
+  role: "system" as const,
+  source: "Follow up for {{customer}}",
+  model: null,
+  settings: {},
+  change_summary: "Add follow-up",
+  created_by: "context-admin",
+  created_at: "2026-07-15T10:00:00.000Z",
+  content_hash: "b".repeat(64),
+  diff: "--- previous\n+++ current\n+Follow up for {{customer}}",
+};
+const PROMPT = {
+  ...PROMPT_VERSION,
+  version: 1,
+  source: "Help {{customer}}",
+  content_hash: "a".repeat(64),
+  diff: null,
+  project_id: "11111111-1111-4111-8111-111111111111",
+  name: "Support Agent",
+  description: null,
+};
+const listPromptsRecord = mock(async (_pool: unknown, projectId: string) => {
+  if (projectId === OTHER_PROJECT) throw new TestPromptRepositoryError("NOT_FOUND", "Project not found");
+  return { items: [PROMPT], total: 1 };
+});
+const listPromptVersionsRecord = mock(async (_pool: unknown, input: { project_id: string }) => {
+  if (input.project_id === OTHER_PROJECT) throw new TestPromptRepositoryError("NOT_FOUND", "Prompt not found");
+  return { items: [PROMPT_VERSION] };
+});
+const createPromptVersionRecord = mock(async (_pool: unknown, input: { base_version: number }) => {
+  if (input.base_version !== 1) throw new TestPromptRepositoryError("CONFLICT", "Prompt base version is stale");
+  return PROMPT_VERSION;
+});
+const promptProvenanceStatus = mock(async (_pool: unknown, input: { project_id: string }) => {
+  if (input.project_id === OTHER_PROJECT) throw new TestPromptRepositoryError("NOT_FOUND", "Project not found");
+  return "active" as const;
+});
 const renderPromptRecord = mock(async () => ({
   id: "support-agent",
   version: 1,
@@ -56,11 +94,11 @@ mock.module("../../src/db/postgres", () => ({ pgPool: () => ({}) }));
 mock.module("../../src/db/prompts", () => ({
   PromptRepositoryError: TestPromptRepositoryError,
   createPrompt: createPromptRecord,
-  createPromptVersion: mock(async () => ({})),
+  createPromptVersion: createPromptVersionRecord,
   deletePrompt: deletePromptRecord,
   getPrompt: getPromptRecord,
-  listPromptVersions: mock(async () => ({ items: [] })),
-  listPrompts: mock(async () => ({ items: [], total: 0 })),
+  listPromptVersions: listPromptVersionsRecord,
+  listPrompts: listPromptsRecord,
   listProjects: listProjectsRecord,
   promptProvenanceStatus,
   renderPrompt: renderPromptRecord,
@@ -73,13 +111,20 @@ const {
   handleCreatePrompt,
   handleDeletePrompt,
   handleGetPrompt,
+  handleListPromptVersions,
+  handleListPrompts,
   handleRenderPrompt,
+  handleCreatePromptVersion,
+  listPromptVersions,
+  listPrompts,
   renderPrompt,
+  createPromptVersion,
 } = await import("../../src/routes/prompts");
 const { listProjects, handleListProjects } = await import("../../src/routes/projects");
 const { getPromptProvenance, handleGetPromptProvenance } = await import("../../src/routes/prompt-provenance");
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 
 function app() {
   const api = new OpenAPIHono({
@@ -100,6 +145,9 @@ function app() {
   api.openapi(createPrompt, handleCreatePrompt);
   api.openapi(deletePrompt, handleDeletePrompt);
   api.openapi(getPrompt, handleGetPrompt);
+  api.openapi(listPrompts, handleListPrompts);
+  api.openapi(listPromptVersions, handleListPromptVersions);
+  api.openapi(createPromptVersion, handleCreatePromptVersion);
   api.openapi(renderPrompt, handleRenderPrompt);
   api.openapi(listProjects, handleListProjects);
   api.openapi(getPromptProvenance, handleGetPromptProvenance);
@@ -189,6 +237,44 @@ describe("prompt route contracts", () => {
     expect(createPromptRecord).not.toHaveBeenCalled();
   });
 
+  it("lists, histories, and versions prompts with project-scoped route errors", async () => {
+    listPromptsRecord.mockClear();
+    listPromptVersionsRecord.mockClear();
+    createPromptVersionRecord.mockClear();
+    const listed = await app().request(`/v1/prompts?project_id=${PROJECT}`);
+    const missingProject = await app().request("/v1/prompts");
+    const crossProject = await app().request(`/v1/prompts?project_id=${OTHER_PROJECT}`);
+    const history = await app().request(`/v1/prompts/support-agent/versions?project_id=${PROJECT}`);
+    const crossProjectHistory = await app().request(`/v1/prompts/support-agent/versions?project_id=${OTHER_PROJECT}`);
+    const created = await app().request(`/v1/prompts/support-agent/versions?project_id=${PROJECT}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ base_version: 1, source: "Follow up for {{customer}}", settings: {}, change_summary: "Add follow-up" }),
+    });
+    const stale = await app().request(`/v1/prompts/support-agent/versions?project_id=${PROJECT}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ base_version: 2, source: "Follow up for {{customer}}", change_summary: "Stale" }),
+    });
+
+    expect(await listed.json()).toEqual({ items: [PROMPT], total: 1 });
+    expect(missingProject.status).toBe(400);
+    expect(await missingProject.json()).toEqual({ code: "BAD_REQUEST", message: "Request validation failed" });
+    expect(crossProject.status).toBe(404);
+    expect(await crossProject.json()).toEqual({ code: "NOT_FOUND", message: "Project not found" });
+    expect(await history.json()).toEqual({ items: [PROMPT_VERSION] });
+    expect(crossProjectHistory.status).toBe(404);
+    expect(await crossProjectHistory.json()).toEqual({ code: "NOT_FOUND", message: "Prompt not found" });
+    expect(created.status).toBe(201);
+    expect(created.headers.get("Cache-Control")).toBe("no-store");
+    expect(await created.json()).toEqual(PROMPT_VERSION);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ code: "CONFLICT", message: "Prompt base version is stale" });
+    expect(listPromptsRecord.mock.calls[0]?.[1]).toBe(PROJECT);
+    expect(listPromptVersionsRecord.mock.calls[0]?.[1]).toEqual({ project_id: PROJECT, slug: "support-agent" });
+    expect(createPromptVersionRecord.mock.calls[0]?.[1]).toMatchObject({ project_id: PROJECT, slug: "support-agent", actor: "context-admin" });
+  });
+
   it("rejects oversized render data before the render handler and preserves normal rendering", async () => {
     renderPromptRecord.mockClear();
     const oversized = await app().request(`/v1/prompts/support-agent/render?project_id=${PROJECT}`, {
@@ -223,6 +309,10 @@ describe("prompt route contracts", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({ status: "active" });
     expect(promptProvenanceStatus).toHaveBeenCalledTimes(1);
+    const missingProject = await app().request(`/v1/prompt-provenance/support-agent?project_id=${OTHER_PROJECT}&version=1&content_hash=${"a".repeat(64)}`);
+    expect(missingProject.status).toBe(404);
+    expect(missingProject.headers.get("Cache-Control")).toBe("no-store");
+    expect(await missingProject.json()).toEqual({ code: "NOT_FOUND", message: "Project not found" });
   });
 
   it("returns a project-scoped 404 envelope for an absent or cross-project prompt", async () => {
