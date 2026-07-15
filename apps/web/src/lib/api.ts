@@ -223,11 +223,90 @@ export interface TraceRow {
   scores_summary: string;
 }
 
-/**
- * Canonical row shape returned by `GET /v1/observations` and the
- * `GET /v1/observations/events` SSE stream. `metadata` is a JSON-encoded
- * string (parsed lazily by the UI when the user expands a row).
- */
+export interface OtlpAttribute {
+  key: string;
+  value?: Record<string, unknown> | unknown[];
+}
+
+export interface PromptProvenance {
+  id: string;
+  version: number;
+  content_hash: string;
+}
+
+export interface ObservationMetadata {
+  schema_version: 1;
+  attributes: OtlpAttribute[];
+  prompt_provenance: PromptProvenance | null;
+}
+
+export type ObservationMetadataInput = ObservationMetadata | string | null | undefined;
+
+const PROMPT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const CONTENT_HASH_PATTERN = /^[0-9a-f]{64}$/;
+
+export function emptyObservationMetadata(): ObservationMetadata {
+  return { schema_version: 1, attributes: [], prompt_provenance: null };
+}
+
+export function normalizeObservationMetadata(
+  raw: ObservationMetadataInput,
+  isGeneration = true,
+): ObservationMetadata {
+  const parsed = typeof raw === "string" ? parseMetadataString(raw) : raw;
+  if (Array.isArray(parsed)) {
+    return isAttributeArray(parsed)
+      ? { schema_version: 1, attributes: sanitizeMetadataAttributes(parsed), prompt_provenance: null }
+      : emptyObservationMetadata();
+  }
+  if (!isMetadataEnvelope(parsed)) return emptyObservationMetadata();
+  return {
+    schema_version: 1,
+    attributes: sanitizeMetadataAttributes(parsed.attributes),
+    prompt_provenance: isGeneration && isPromptProvenance(parsed.prompt_provenance)
+      ? parsed.prompt_provenance
+      : null,
+  };
+}
+
+function parseMetadataString(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOtlpAttribute(value: unknown): value is OtlpAttribute {
+  return isRecord(value) && typeof value.key === "string" &&
+    (value.value === undefined || isRecord(value.value) || Array.isArray(value.value));
+}
+
+function isAttributeArray(value: unknown): value is OtlpAttribute[] {
+  return Array.isArray(value) && value.every(isOtlpAttribute);
+}
+
+function isPromptProvenance(value: unknown): value is PromptProvenance {
+  return isRecord(value) &&
+    typeof value.id === "string" && PROMPT_ID_PATTERN.test(value.id) &&
+    typeof value.version === "number" && Number.isSafeInteger(value.version) && value.version > 0 &&
+    typeof value.content_hash === "string" && CONTENT_HASH_PATTERN.test(value.content_hash);
+}
+
+function isMetadataEnvelope(value: unknown): value is ObservationMetadata {
+  return isRecord(value) && value.schema_version === 1 && isAttributeArray(value.attributes) &&
+    (value.prompt_provenance === undefined || value.prompt_provenance === null || isPromptProvenance(value.prompt_provenance));
+}
+
+function sanitizeMetadataAttributes(attributes: OtlpAttribute[]): OtlpAttribute[] {
+  return attributes.filter((attribute) => !attribute.key.startsWith("astraea.prompt."));
+}
+
+/** Canonical observation row from REST and SSE endpoints. */
 export interface ObservationRow {
   observation_id: string;
   trace_id: string;
@@ -242,7 +321,7 @@ export interface ObservationRow {
   model: string | null;
   input_text: string;
   output_text: string;
-  metadata: string;
+  metadata: ObservationMetadata;
 }
 
 export interface TraceListResponse {
@@ -330,7 +409,14 @@ export async function listObservations(params: ListObservationsParams = {}): Pro
   });
   const res = await authedFetch(`/v1/observations${qs}`);
   if (!res.ok) throw new Error(`listObservations ${res.status}`);
-  return res.json();
+  const response = await res.json() as ObservationListResponse;
+  return {
+    ...response,
+    items: response.items.map((observation) => ({
+      ...observation,
+      metadata: normalizeObservationMetadata(observation.metadata, observation.type === "generation"),
+    })),
+  };
 }
 
 export async function seedRandomTrace(): Promise<{ traceId: string; spanCount: number }> {

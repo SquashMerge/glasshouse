@@ -8,6 +8,12 @@ import { SseDebugOverlay } from "../../../components/SseDebugOverlay";
 import { useTraceStream, type ObservationRowLike } from "../../../hooks/useTraceStream";
 import { cn } from "../../../lib/utils";
 import { PromptProvenanceCard } from "../../../components/PromptProvenanceCard";
+import {
+  emptyObservationMetadata,
+  normalizeObservationMetadata,
+  type ObservationMetadata,
+  type ObservationMetadataInput,
+} from "../../../lib/api";
 
 /**
  * TraceDetailPage — live-updating detail view served at
@@ -41,7 +47,7 @@ interface DetailObservationLike {
   model: string | null;
   input_text: string;
   output_text: string;
-  metadata?: string;
+  metadata: ObservationMetadata;
   project_id?: string;
   type?: "span" | "event" | "generation" | "tool";
 }
@@ -69,11 +75,11 @@ export function TraceDetailPage() {
       onSnapshot: (msg: { observations: ObservationRowLike[] }) => {
         // Initial seed from the server snapshot. We render the snapshot
         // directly; subsequent `event: observation` frames merge by id.
-        setObservations(msg.observations as unknown as DetailObservationLike[]);
+        setObservations(msg.observations.map(normalizeDetailObservation));
         setNewObservationIds(new Set());
       },
       onObservation: (msg: { observation: ObservationRowLike }) => {
-        const observation = msg.observation as unknown as DetailObservationLike;
+        const observation = normalizeDetailObservation(msg.observation);
         setObservations((prev) => {
           const next = prev.filter((o) => o.observation_id !== observation.observation_id);
           next.push(observation);
@@ -308,14 +314,7 @@ function ObservationDetail({ observation }: { observation: DetailObservationLike
     setTab("input");
   }, [observation.observation_id]);
 
-  const metadataPretty = React.useMemo(() => {
-    if (!observation.metadata) return null;
-    try {
-      return JSON.stringify(JSON.parse(observation.metadata), null, 2);
-    } catch {
-      return observation.metadata;
-    }
-  }, [observation.metadata]);
+  const metadataPretty = React.useMemo(() => formatObservationMetadata(observation.metadata), [observation.metadata]);
 
   return (
     <div className="space-y-3" data-testid="observation-detail" data-observation-id={observation.observation_id}>
@@ -353,13 +352,29 @@ function ObservationDetail({ observation }: { observation: DetailObservationLike
         </TabsContent>
         <TabsContent value="metadata">
           <pre className="whitespace-pre-wrap text-xs" data-testid="detail-metadata">
-            {metadataPretty ?? "—"}
+            {metadataPretty}
           </pre>
         </TabsContent>
       </Tabs>
-      {observation.type === "generation" && <PromptProvenanceCard metadata={observation.metadata} />}
+      {observation.type === "generation" && <PromptProvenanceCard provenance={observation.metadata.prompt_provenance} />}
     </div>
   );
+}
+
+function normalizeDetailObservation(observation: ObservationRowLike): DetailObservationLike {
+  const detail = observation as unknown as Omit<DetailObservationLike, "metadata"> & { metadata?: ObservationMetadataInput };
+  return {
+    ...detail,
+    metadata: normalizeObservationMetadata(detail.metadata, detail.type === "generation"),
+  };
+}
+
+function formatObservationMetadata(metadata: ObservationMetadata): string {
+  try {
+    return JSON.stringify(metadata, null, 2);
+  } catch {
+    return JSON.stringify(emptyObservationMetadata(), null, 2);
+  }
 }
 
 /**

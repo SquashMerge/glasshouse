@@ -11,11 +11,16 @@
 // to keep wall-clock time bounded.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import type { TraceRow, ObservationRow } from "../../src/db/traces-query";
-
-// ---------------------------------------------------------------------------
-// Module mocks — ClickHouse only. The event bus is the real in-process bus.
-// ---------------------------------------------------------------------------
+import { _resetForTests, publishSync, subscribe } from "../../src/lib/event-bus";
+import { basicAuthMiddleware } from "../../src/middleware/auth";
+import {
+  createTraceEventHandlers,
+  streamObservationEvents,
+  streamTraceDetailEvents,
+  streamTraceEvents,
+} from "../../src/routes/trace-events";
 
 const VALID_TRACE_ID = "0123456789abcdef0123456789abcdef";
 
@@ -64,13 +69,6 @@ const getTraceMock = mock(async () => ({
 }));
 const defaultClientMock = mock(() => ({}));
 
-mock.module("../../src/db/traces-query", () => ({
-  defaultClient: defaultClientMock,
-  getTrace: getTraceMock,
-  listTraces: mock(async () => ({ items: [], total: 0 })),
-  listObservations: mock(async () => ({ items: [], total: 0 })),
-}));
-
 // Env + auth: route modules read SSE_HEARTBEAT_MS / TRACE_COMPLETE_GRACE_MS
 // once at import time — set BEFORE importing the app.
 process.env.SSE_HEARTBEAT_MS = "50";
@@ -82,9 +80,20 @@ const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
-// Import the app + bus AFTER mocks.
-const { default: apiApp } = await import("../../src/index");
-const { _resetForTests, publishSync } = await import("../../src/lib/event-bus");
+const traceEventHandlers = createTraceEventHandlers({
+  defaultClient: defaultClientMock,
+  getTrace: getTraceMock,
+  graceMs: 200,
+  heartbeatMs: 50,
+  subscribe,
+});
+const apiApp = new OpenAPIHono({
+  defaultHook: (result, c) => result.success ? undefined : c.json({ code: "BAD_REQUEST", message: "Request validation failed" }, 400),
+});
+apiApp.use("/v1/*", basicAuthMiddleware());
+apiApp.openapi(streamTraceEvents, traceEventHandlers.handleStreamTraceEvents);
+apiApp.openapi(streamObservationEvents, traceEventHandlers.handleStreamObservationEvents);
+apiApp.openapi(streamTraceDetailEvents, traceEventHandlers.handleStreamTraceDetailEvents);
 
 // ---------------------------------------------------------------------------
 // SSE stream helpers — reads frames incrementally from a ReadableStream.

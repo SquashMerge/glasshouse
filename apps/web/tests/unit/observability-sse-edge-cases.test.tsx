@@ -12,7 +12,7 @@ import { render, screen, waitFor, act, cleanup, fireEvent } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 import { TracesTab, SpansTab, type TraceEvent, type ObservationEvent } from "../../src/routes/observability";
-import { listTraces, listObservations } from "../../src/lib/api";
+import { emptyObservationMetadata, listTraces, listObservations } from "../../src/lib/api";
 
 vi.mocked(listTraces);
 vi.mocked(listObservations);
@@ -159,7 +159,7 @@ describe("SpansTab — high-rate out-of-view SSE events", () => {
         start_time: `2026-01-01 00:00:${String(i).padStart(2, "0")}`,
         end_time: `2026-01-01 00:00:${String(i + 1).padStart(2, "0")}`,
         duration_ms: 1000, status: "ok" as const,
-        model: null, input_text: "", output_text: "", metadata: "",
+        model: null, input_text: "", output_text: "", metadata: emptyObservationMetadata(),
       })),
       total: 10,
     });
@@ -207,7 +207,7 @@ describe("SpansTab — SseDebugOverlay integration", () => {
         start_time: `2026-01-01 00:00:0${i}`,
         end_time: `2026-01-01 00:00:0${i + 1}`,
         duration_ms: 1000, status: "ok" as const,
-        model: null, input_text: "", output_text: "", metadata: "",
+        model: null, input_text: "", output_text: "", metadata: emptyObservationMetadata(),
       })),
       total: 3,
     });
@@ -234,7 +234,7 @@ describe("SpansTab — SseDebugOverlay integration", () => {
         start_time: `2026-01-01 00:00:0${i}`,
         end_time: `2026-01-01 00:00:0${i + 1}`,
         duration_ms: 1000, status: "ok" as const,
-        model: null, input_text: "", output_text: "", metadata: "",
+        model: null, input_text: "", output_text: "", metadata: emptyObservationMetadata(),
       })),
       total: 3,
     });

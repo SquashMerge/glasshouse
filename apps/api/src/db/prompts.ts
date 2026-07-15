@@ -687,8 +687,9 @@ export async function deletePrompt(
     await query(
       client,
       `DELETE FROM prompt_label_quarantine
-       WHERE original_prompt_id = $1
-         AND EXISTS (SELECT 1 FROM prompts WHERE id = $1 AND project_id = $2)`,
+        WHERE original_prompt_id = $1
+          AND original_project_id = $2
+          AND EXISTS (SELECT 1 FROM prompts WHERE id = $1 AND project_id = $2)`,
       [promptId, input.project_id],
     );
     await query(

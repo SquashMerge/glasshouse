@@ -18,22 +18,40 @@ export const getPromptProvenance = createRoute({
   responses: { 200: { description: "Status", content: { "application/json": { schema: PromptProvenanceStatus } } }, ...PromptErrorResponses },
 });
 
-export async function handleGetPromptProvenance(c: Parameters<RouteHandler<typeof getPromptProvenance>>[0]): Promise<Response> {
-  try {
-    const params = c.req.valid("param") as { id: string };
-    const query = c.req.valid("query") as { project_id: string; version: number; content_hash: string };
-    return c.json({
-      status: await promptProvenanceStatus(pgPool(), {
-        project_id: query.project_id,
-        slug: params.id,
-        version: query.version,
-        content_hash: query.content_hash,
-      }),
-    });
-  } catch (cause) {
-    const known = cause instanceof PromptRepositoryError
-      ? cause
-      : new PromptRepositoryError("INTERNAL", "Prompt provenance operation failed", cause);
-    return c.json({ code: known.code, message: known.code === "INTERNAL" ? "Prompt provenance operation failed" : known.message }, known.status);
-  }
+export type PromptProvenanceRouteDependencies = {
+  pool: typeof pgPool;
+  promptProvenanceStatus: typeof promptProvenanceStatus;
+};
+
+const productionPromptProvenanceRouteDependencies: PromptProvenanceRouteDependencies = {
+  pool: pgPool,
+  promptProvenanceStatus,
+};
+
+export function createPromptProvenanceRouteHandlers(
+  dependencies: PromptProvenanceRouteDependencies = productionPromptProvenanceRouteDependencies,
+) {
+  return {
+    handleGetPromptProvenance: async (c: Parameters<RouteHandler<typeof getPromptProvenance>>[0]): Promise<Response> => {
+      try {
+        const params = c.req.valid("param") as { id: string };
+        const query = c.req.valid("query") as { project_id: string; version: number; content_hash: string };
+        return c.json({
+          status: await dependencies.promptProvenanceStatus(dependencies.pool(), {
+            project_id: query.project_id,
+            slug: params.id,
+            version: query.version,
+            content_hash: query.content_hash,
+          }),
+        });
+      } catch (cause) {
+        const known = cause instanceof PromptRepositoryError
+          ? cause
+          : new PromptRepositoryError("INTERNAL", "Prompt provenance operation failed", cause);
+        return c.json({ code: known.code, message: known.code === "INTERNAL" ? "Prompt provenance operation failed" : known.message }, known.status);
+      }
+    },
+  };
 }
+
+export const { handleGetPromptProvenance } = createPromptProvenanceRouteHandlers();

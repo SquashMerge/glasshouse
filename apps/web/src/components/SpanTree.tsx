@@ -2,6 +2,7 @@ import * as React from "react";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
+import type { ObservationMetadata } from "../lib/api";
 
 export interface ObservationLike {
   observation_id: string;
@@ -13,7 +14,7 @@ export interface ObservationLike {
   model: string | null;
   input_text: string;
   output_text: string;
-  metadata?: string;
+  metadata?: ObservationMetadata;
 }
 
 interface TreeNode {

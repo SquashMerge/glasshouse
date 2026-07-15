@@ -392,7 +392,10 @@ describe("TraceDetailPage — span detail tabs", () => {
             name: "click-me",
             input_text: "INPUT_TEXT_HERE",
             output_text: "OUTPUT_TEXT_HERE",
-            metadata: JSON.stringify({ tool: "x", value: 42 }),
+            metadata: JSON.stringify({
+              schema_version: 1,
+              attributes: [{ key: "tool", value: { stringValue: "x" } }, { key: "value", value: { intValue: 42 } }],
+            }),
           }),
         ],
       });

@@ -13,13 +13,29 @@ export const listProjects = createRoute({
   responses: { 200: { description: "OK", content: { "application/json": { schema: ProjectList } } }, ...ProjectErrorResponses },
 });
 
-export async function handleListProjects(c: Context): Promise<Response> {
-  try {
-    return c.json(await listProjectsRecord(pgPool()));
-  } catch (cause) {
-    const known = cause instanceof PromptRepositoryError
-      ? cause
-      : new PromptRepositoryError("INTERNAL", "Project operation failed", cause);
-    return c.json({ code: known.code, message: known.code === "INTERNAL" ? "Project operation failed" : known.message }, known.status);
-  }
+export type ProjectRouteDependencies = {
+  pool: typeof pgPool;
+  listProjects: typeof listProjectsRecord;
+};
+
+const productionProjectRouteDependencies: ProjectRouteDependencies = {
+  pool: pgPool,
+  listProjects: listProjectsRecord,
+};
+
+export function createProjectRouteHandlers(dependencies: ProjectRouteDependencies = productionProjectRouteDependencies) {
+  return {
+    handleListProjects: async (c: Context): Promise<Response> => {
+      try {
+        return c.json(await dependencies.listProjects(dependencies.pool()));
+      } catch (cause) {
+        const known = cause instanceof PromptRepositoryError
+          ? cause
+          : new PromptRepositoryError("INTERNAL", "Project operation failed", cause);
+        return c.json({ code: known.code, message: known.code === "INTERNAL" ? "Project operation failed" : known.message }, known.status);
+      }
+    },
+  };
 }
+
+export const { handleListProjects } = createProjectRouteHandlers();
