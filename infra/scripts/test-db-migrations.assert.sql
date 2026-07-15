@@ -132,7 +132,7 @@ BEGIN
         FROM prompt_versions
         WHERE prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
             AND version = 3
-            AND content_hash = 'd94a7ccb5ecb9f8bb2ddac243bb4c31f6a33a2651e0d4573250701c450fcddf4'
+            AND content_hash = 'd94a92f352fb85ecf3a80de8c0ae3caad24fb8a30fb9eda9480f8ec3b3bf7e53'
             AND content_hash = prompt_version_content_hash(messages, model, settings)
     ) THEN
         RAISE EXCEPTION 'insert trigger did not store the authoritative content hash';
