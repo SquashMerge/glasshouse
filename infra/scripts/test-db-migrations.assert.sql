@@ -266,5 +266,39 @@ BEGIN
     EXCEPTION WHEN check_violation THEN
         NULL;
     END;
+    BEGIN
+        INSERT INTO prompt_versions (
+            prompt_id, version, content, metadata, messages, settings, content_hash, created_by
+        ) VALUES (
+            'aaaaaaaa-0000-0000-0000-000000000001',
+            6,
+            'Missing role',
+            '{}',
+            '[{"content":"Missing role"}]',
+            '{}',
+            'not-a-hash',
+            'migration-test'
+        );
+        RAISE EXCEPTION 'prompt version check accepted a missing role';
+    EXCEPTION WHEN check_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO prompt_versions (
+            prompt_id, version, content, metadata, messages, settings, content_hash, created_by
+        ) VALUES (
+            'aaaaaaaa-0000-0000-0000-000000000001',
+            7,
+            'Missing content',
+            '{}',
+            '[{"role":"user"}]',
+            '{}',
+            'not-a-hash',
+            'migration-test'
+        );
+        RAISE EXCEPTION 'prompt version check accepted missing content';
+    EXCEPTION WHEN check_violation THEN
+        NULL;
+    END;
 END
 $$;
