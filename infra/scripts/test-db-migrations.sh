@@ -58,3 +58,26 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations.assert.sql"
+
+FAILURE_DB="${POSTGRES_DB}_fail_closed"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$FAILURE_DB"
+for migration in "$ROOT"/infra/db/migrations/000[1-8]_*.sql; do
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$FAILURE_DB" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$FAILURE_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-fail-closed.sql"
+if migration_error="$(docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$FAILURE_DB" \
+  < "$ROOT/infra/db/migrations/0009_prompt_management_canonical.sql" 2>&1)"; then
+  echo "0009 migration accepted malformed canonical messages" >&2
+  exit 1
+fi
+if [[ "$migration_error" != *"eeeeeeee-0000-0000-0000-000000000001, ffffffff-0000-0000-0000-000000000001"* ]]; then
+  echo "0009 migration preflight did not name every invalid prompt UUID" >&2
+  exit 1
+fi
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$FAILURE_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-fail-closed.assert.sql"
