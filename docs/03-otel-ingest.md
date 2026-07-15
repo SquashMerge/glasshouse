@@ -82,9 +82,23 @@ sdk.start();
 
 Where `parseOtlpHeaders` is a small helper that splits the `k=v,k2=v2` string into a `Record<string, string>`.
 
+## Prompt provenance and sensitive data
+
+Generation spans may identify the exact managed prompt version that produced the call. Set all three attributes exactly once on the span:
+
+| Attribute | Value |
+|---|---|
+| `astraea.prompt.id` | Canonical public prompt slug (for example `support-agent`) |
+| `astraea.prompt.version` | Positive safe integer (`intValue`; a string form must be canonical decimal such as `"7"`) |
+| `astraea.prompt.content_hash` | 64-character lowercase hexadecimal content hash |
+
+The tuple is atomic: a missing, duplicate, or malformed member means no provenance is recorded. Astraea accepts it only for observations classified as `generation`.
+
+Astraea removes every incoming `astraea.prompt.*` attribute before it stores metadata or publishes events, including invalid and unknown keys. Do not send template source, rendered prompts or outputs, variables, or settings under that namespace: they are intentionally unavailable after ingest. Stored observation metadata is a versioned envelope containing sanitized attributes and, when valid, the typed provenance tuple.
+
 ## Redacting sensitive data
 
-Astraea stores `input_text`, `output_text`, and a `metadata` JSON column of raw OTLP attributes. If your agents send PII or other sensitive data through the trace pipeline, configure redaction on the server side (set in the api container's env / compose env / .env):
+Astraea stores `input_text`, `output_text`, and sanitized OTLP attributes in a `metadata` JSON column. If your agents send PII or other sensitive data through the trace pipeline, configure redaction on the server side (set in the api container's env / compose env / .env):
 
 ```sh
 # Replace input_text + output_text with "[REDACTED]" before persistence
