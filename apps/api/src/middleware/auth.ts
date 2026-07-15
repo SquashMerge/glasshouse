@@ -1,6 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 
+export const TRUSTED_ACTOR_CONTEXT_KEY = "trustedActor";
+
 function constantTimeEqual(a: string, b: string): boolean {
   const A = new TextEncoder().encode(a);
   const B = new TextEncoder().encode(b);
@@ -45,6 +47,7 @@ export function basicAuthMiddleware(): MiddlewareHandler {
         401,
       );
     }
+    c.set(TRUSTED_ACTOR_CONTEXT_KEY, got.user);
     await next();
   };
 }
