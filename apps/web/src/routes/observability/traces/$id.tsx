@@ -7,6 +7,7 @@ import { StreamToggle } from "../../../components/StreamToggle";
 import { SseDebugOverlay } from "../../../components/SseDebugOverlay";
 import { useTraceStream, type ObservationRowLike } from "../../../hooks/useTraceStream";
 import { cn } from "../../../lib/utils";
+import { PromptProvenanceCard } from "../../../components/PromptProvenanceCard";
 
 /**
  * TraceDetailPage — live-updating detail view served at
@@ -356,6 +357,7 @@ function ObservationDetail({ observation }: { observation: DetailObservationLike
           </pre>
         </TabsContent>
       </Tabs>
+      {observation.type === "generation" && <PromptProvenanceCard metadata={observation.metadata} />}
     </div>
   );
 }

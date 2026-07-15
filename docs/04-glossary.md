@@ -28,6 +28,10 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - `/observability` — Traces tab + Spans tab. The "Spans" tab is really the observations table (all four types mixed); the label is a legacy holdover.
 - `/observability/traces/$id` — Trace detail: tree of observations + detail panel.
 
+## Prompt UI
+
+- `/prompts` — project-scoped prompt list; `/prompts/new` creates the first immutable version; `/prompts/$slug` selects an immutable version; `/prompts/$slug/edit?from=N` starts the next version from version `N`. See `apps/web/src/routes/prompts*.tsx`.
+
 ## SSE endpoints (all in `apps/api/src/routes/trace-events.ts`)
 
 - `GET /v1/traces/events` → `streamTraceEvents` — broadcasts new traces. Stays open.

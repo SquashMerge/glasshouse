@@ -1,5 +1,207 @@
 import { authedFetch } from "./auth";
 
+export type JsonObject = Record<string, unknown>;
+
+export interface ApiErrorEnvelope {
+  code: string;
+  message: string;
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function responseJson<T>(response: Response, operation: string): Promise<T> {
+  if (response.ok) return response.json() as Promise<T>;
+
+  let envelope: ApiErrorEnvelope | null = null;
+  try {
+    envelope = await response.json() as ApiErrorEnvelope;
+  } catch {
+    envelope = null;
+  }
+  throw new ApiError(
+    response.status,
+    envelope?.code ?? "REQUEST_FAILED",
+    envelope?.message ?? `${operation} ${response.status}`,
+  );
+}
+
+function jsonRequest(body: unknown): RequestInit {
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  };
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
+
+export interface ProjectListResponse {
+  items: Project[];
+  total: number;
+}
+
+export async function listProjects(): Promise<ProjectListResponse> {
+  return responseJson<ProjectListResponse>(await authedFetch("/v1/projects"), "listProjects");
+}
+
+export type PromptRole = "system" | "user";
+
+export interface PromptVersion {
+  id: string;
+  version: number;
+  role: PromptRole;
+  source: string;
+  model: string | null;
+  settings: JsonObject;
+  change_summary: string;
+  created_by: string;
+  created_at: string;
+  content_hash: string;
+  diff: string | null;
+}
+
+export interface Prompt extends PromptVersion {
+  project_id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface PromptListResponse {
+  items: Prompt[];
+  total: number;
+}
+
+export interface PromptVersionListResponse {
+  items: PromptVersion[];
+}
+
+export interface CreatePromptInput {
+  project_id: string;
+  name: string;
+  description?: string | null;
+  role: PromptRole;
+  source: string;
+  model?: string | null;
+  settings?: JsonObject;
+}
+
+export interface CreatePromptVersionInput {
+  project_id: string;
+  slug: string;
+  base_version: number;
+  source: string;
+  model?: string | null;
+  settings?: JsonObject;
+  change_summary: string;
+}
+
+export interface RenderPromptInput {
+  project_id: string;
+  slug: string;
+  version?: number;
+  data: JsonObject;
+}
+
+export interface PromptRenderResponse {
+  id: string;
+  version: number;
+  role: PromptRole;
+  content_hash: string;
+  output: string;
+  warnings: Array<{ code: "MISSING_VARIABLE"; path: string }>;
+}
+
+export interface PromptProvenanceStatusResponse {
+  status: "active" | "deleted" | "unknown";
+}
+
+export async function listPrompts(projectId: string): Promise<PromptListResponse> {
+  return responseJson<PromptListResponse>(
+    await authedFetch(`/v1/prompts${buildQs({ project_id: projectId })}`),
+    "listPrompts",
+  );
+}
+
+export async function createPrompt(input: CreatePromptInput): Promise<Prompt> {
+  return responseJson<Prompt>(await authedFetch("/v1/prompts", jsonRequest(input)), "createPrompt");
+}
+
+export async function getPrompt(input: { project_id: string; slug: string; version?: number }): Promise<Prompt> {
+  return responseJson<Prompt>(
+    await authedFetch(`/v1/prompts/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id, version: input.version })}`),
+    "getPrompt",
+  );
+}
+
+export async function listPromptVersions(input: { project_id: string; slug: string }): Promise<PromptVersionListResponse> {
+  return responseJson<PromptVersionListResponse>(
+    await authedFetch(`/v1/prompts/${encodeURIComponent(input.slug)}/versions${buildQs({ project_id: input.project_id })}`),
+    "listPromptVersions",
+  );
+}
+
+export async function createPromptVersion(input: CreatePromptVersionInput): Promise<PromptVersion> {
+  const { project_id, slug, ...body } = input;
+  return responseJson<PromptVersion>(
+    await authedFetch(
+      `/v1/prompts/${encodeURIComponent(slug)}/versions${buildQs({ project_id })}`,
+      jsonRequest(body),
+    ),
+    "createPromptVersion",
+  );
+}
+
+export async function renderPrompt(input: RenderPromptInput): Promise<PromptRenderResponse> {
+  const { project_id, slug, version, data } = input;
+  return responseJson<PromptRenderResponse>(
+    await authedFetch(
+      `/v1/prompts/${encodeURIComponent(slug)}/render${buildQs({ project_id, version })}`,
+      jsonRequest({ data }),
+    ),
+    "renderPrompt",
+  );
+}
+
+export async function deletePrompt(input: { project_id: string; slug: string; confirmation: string }): Promise<void> {
+  const { project_id, slug, confirmation } = input;
+  const response = await authedFetch(
+    `/v1/prompts/${encodeURIComponent(slug)}${buildQs({ project_id })}`,
+    {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmation }),
+    },
+  );
+  if (!response.ok) await responseJson<never>(response, "deletePrompt");
+}
+
+export async function getPromptProvenance(input: {
+  project_id: string;
+  id: string;
+  version: number;
+  content_hash: string;
+}): Promise<PromptProvenanceStatusResponse> {
+  const { id, ...query } = input;
+  return responseJson<PromptProvenanceStatusResponse>(
+    await authedFetch(`/v1/prompt-provenance/${encodeURIComponent(id)}${buildQs(query)}`),
+    "getPromptProvenance",
+  );
+}
+
 export interface TraceRow {
   trace_id: string;
   project_id: string;
