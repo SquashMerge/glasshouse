@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { basicAuthMiddleware } from "../../src/middleware/auth";
+import { basicAuthMiddleware, TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
 
 describe("basicAuthMiddleware", () => {
   beforeAll(() => {
@@ -11,7 +11,7 @@ describe("basicAuthMiddleware", () => {
   function buildApp() {
     const app = new Hono();
     app.use("/v1/*", basicAuthMiddleware());
-    app.get("/v1/protected", (c) => c.json({ ok: true }));
+    app.get("/v1/protected", (c) => c.json({ ok: true, actor: c.get(TRUSTED_ACTOR_CONTEXT_KEY) }));
     return app;
   }
 
@@ -93,6 +93,17 @@ describe("basicAuthMiddleware", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
+  });
+
+  it("stores the verified username as the trusted actor", async () => {
+    const app = buildApp();
+    const correct = Buffer.from("astraea:secret123").toString("base64");
+    const res = await app.request("/v1/protected", {
+      headers: { authorization: `Basic ${correct}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { actor: string };
+    expect(body.actor).toBe("astraea");
   });
 
   it("throws at construction if UI_USERNAME is unset", () => {
