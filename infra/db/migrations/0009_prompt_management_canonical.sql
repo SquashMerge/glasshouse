@@ -11,15 +11,15 @@ BEGIN
         FROM prompts AS p
         LEFT JOIN prompt_versions AS v ON v.prompt_id = p.id
         WHERE v.id IS NULL
-            OR jsonb_typeof(v.messages) <> 'array'
+            OR jsonb_typeof(v.messages) IS DISTINCT FROM 'array'
             OR CASE
-                WHEN jsonb_typeof(v.messages) = 'array' THEN jsonb_array_length(v.messages) <> 1
+                WHEN jsonb_typeof(v.messages) IS NOT DISTINCT FROM 'array' THEN jsonb_array_length(v.messages) <> 1
                 ELSE false
             END
-            OR jsonb_typeof(v.messages->0) <> 'object'
-            OR jsonb_typeof(v.messages->0->'role') <> 'string'
-            OR v.messages->0->>'role' NOT IN ('system', 'user')
-            OR jsonb_typeof(v.messages->0->'content') <> 'string'
+            OR jsonb_typeof(v.messages->0) IS DISTINCT FROM 'object'
+            OR jsonb_typeof(v.messages->0->'role') IS DISTINCT FROM 'string'
+            OR COALESCE(v.messages->0->>'role' NOT IN ('system', 'user'), true)
+            OR jsonb_typeof(v.messages->0->'content') IS DISTINCT FROM 'string'
             OR EXISTS (
                 SELECT 1
                 FROM prompt_versions AS other_version
@@ -145,12 +145,15 @@ LANGUAGE SQL
 IMMUTABLE
 AS $$
     SELECT CASE
-        WHEN jsonb_typeof(value) <> 'array' THEN false
-        ELSE jsonb_array_length(value) = 1
-            AND jsonb_typeof(value->0) = 'object'
-            AND jsonb_typeof(value->0->'role') = 'string'
+        WHEN jsonb_typeof(value) IS DISTINCT FROM 'array' THEN false
+        ELSE COALESCE(
+            jsonb_array_length(value) = 1
+            AND jsonb_typeof(value->0) IS NOT DISTINCT FROM 'object'
+            AND jsonb_typeof(value->0->'role') IS NOT DISTINCT FROM 'string'
             AND value->0->>'role' IN ('system', 'user')
-            AND jsonb_typeof(value->0->'content') = 'string'
+            AND jsonb_typeof(value->0->'content') IS NOT DISTINCT FROM 'string',
+            false
+        )
     END
 $$;
 
@@ -159,6 +162,9 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF NOT prompt_version_messages_valid(NEW.messages) THEN
+        RETURN NEW;
+    END IF;
     IF NOT EXISTS (
         SELECT 1
         FROM prompts
