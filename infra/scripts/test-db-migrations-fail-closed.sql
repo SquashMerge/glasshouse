@@ -1,9 +1,9 @@
 INSERT INTO projects (id, name, slug) VALUES
     ('33333333-3333-3333-3333-333333333333', 'Failure Project', 'failure-project');
 
-INSERT INTO prompts (id, project_id, name, description) VALUES
-    ('eeeeeeee-0000-0000-0000-000000000001', '33333333-3333-3333-3333-333333333333', 'Failure Prompt', NULL),
-    ('ffffffff-0000-0000-0000-000000000001', '33333333-3333-3333-3333-333333333333', 'Role Failure Prompt', NULL);
+INSERT INTO prompts (id, project_id, name, description, slug) VALUES
+    ('eeeeeeee-0000-0000-0000-000000000001', '33333333-3333-3333-3333-333333333333', 'Failure Prompt', NULL, 'failure-prompt'),
+    ('ffffffff-0000-0000-0000-000000000001', '33333333-3333-3333-3333-333333333333', 'Role Failure Prompt', NULL, 'role-failure-prompt');
 
 INSERT INTO prompt_versions (id, prompt_id, version, content, messages, settings, content_hash, created_by) VALUES
     (
