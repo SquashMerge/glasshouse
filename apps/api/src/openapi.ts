@@ -75,6 +75,10 @@ openapiApp.use("/v1/prompts/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   await next();
 });
+openapiApp.use("/v1/prompt-provenance/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
 
 // Health (also mounted at /health by the bare handler in index.ts).
 register(healthRoute, handleHealth);

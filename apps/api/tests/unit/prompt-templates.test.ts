@@ -1,6 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import { createRequire } from "node:module";
 import {
+  MAX_PROMPT_SOURCE_CHARS,
+  MAX_PROMPT_SOURCE_LINES,
+  MAX_RENDER_ARRAY_LENGTH,
+  MAX_RENDER_DATA_NODES,
+  MAX_RENDER_DATA_STRING_BYTES,
+  MAX_RENDER_DATA_DEPTH,
+  MAX_TEMPLATE_SECTION_NESTING,
+} from "../../src/lib/prompt-limits";
+import {
   PromptTemplateError,
   renderPromptTemplate,
   renderPromptTemplateWithWarnings,
@@ -111,5 +120,23 @@ describe("prompt templates", () => {
 
     expectBadTemplate(() => renderPromptTemplate("{{self}}", cycle));
     expectBadTemplate(() => renderPromptTemplate("{{value}}", { constructor: "unsafe" }));
+  });
+
+  it("enforces compact source, nesting, and render-data execution budgets", () => {
+    expectBadTemplate(() => validatePromptTemplate("x".repeat(MAX_PROMPT_SOURCE_CHARS + 1)));
+    expectBadTemplate(() => validatePromptTemplate(`${"x\n".repeat(MAX_PROMPT_SOURCE_LINES)}x`));
+    expectBadTemplate(() => validatePromptTemplate(`${"{{#a}}".repeat(MAX_TEMPLATE_SECTION_NESTING + 1)}x${"{{/a}}".repeat(MAX_TEMPLATE_SECTION_NESTING + 1)}`));
+    expectBadTemplate(() => renderPromptTemplate("{{items}}", { items: Array(MAX_RENDER_ARRAY_LENGTH + 1).fill("x") }));
+    expectBadTemplate(() => renderPromptTemplate("{{value}}", { value: "x".repeat(MAX_RENDER_DATA_STRING_BYTES + 1) }));
+
+    const tooManyNodes = Object.fromEntries(Array.from({ length: MAX_RENDER_DATA_NODES }, (_, index) => [`k${index}`, index]));
+    expectBadTemplate(() => renderPromptTemplate("{{k0}}", tooManyNodes));
+    const tooDeep: { next?: unknown } = {};
+    let cursor = tooDeep;
+    for (let index = 0; index <= MAX_RENDER_DATA_DEPTH; index += 1) {
+      cursor.next = {};
+      cursor = cursor.next as { next?: unknown };
+    }
+    expectBadTemplate(() => renderPromptTemplate("{{next}}", tooDeep));
   });
 });

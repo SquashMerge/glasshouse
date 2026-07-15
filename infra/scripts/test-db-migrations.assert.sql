@@ -12,6 +12,12 @@ BEGIN
     IF (SELECT slug FROM prompts WHERE id = 'dddddddd-0000-0000-0000-000000000001') <> 'prompt' THEN
         RAISE EXCEPTION 'empty slug base did not use prompt fallback';
     END IF;
+    IF (SELECT slug FROM prompts WHERE id = 'eeeeeeee-0000-0000-0000-000000000001') <> repeat('a', 63) THEN
+        RAISE EXCEPTION 'slug truncation left a boundary separator';
+    END IF;
+    IF EXISTS (SELECT 1 FROM prompts WHERE slug !~ '^[a-z0-9]+(-[a-z0-9]+)*$' OR char_length(slug) > 64) THEN
+        RAISE EXCEPTION 'a migrated slug is not canonical';
+    END IF;
 
     IF NOT EXISTS (
         SELECT 1
@@ -166,6 +172,29 @@ BEGIN
         );
         RAISE EXCEPTION 'blank prompt version author was accepted';
     EXCEPTION WHEN check_violation THEN
+        NULL;
+    END;
+
+    INSERT INTO prompt_tombstones (project_id, slug)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'reserved-prompt');
+    BEGIN
+        UPDATE prompt_tombstones SET slug = 'changed-prompt';
+        RAISE EXCEPTION 'prompt tombstone accepted an update';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    BEGIN
+        DELETE FROM prompt_tombstones WHERE project_id = '11111111-1111-1111-1111-111111111111' AND slug = 'reserved-prompt';
+        RAISE EXCEPTION 'prompt tombstone accepted a delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    INSERT INTO prompt_tombstones (project_id, slug)
+    VALUES ('22222222-2222-2222-2222-222222222222', 'project-reservation');
+    BEGIN
+        DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';
+        RAISE EXCEPTION 'project deletion removed a prompt tombstone';
+    EXCEPTION WHEN foreign_key_violation THEN
         NULL;
     END;
     BEGIN

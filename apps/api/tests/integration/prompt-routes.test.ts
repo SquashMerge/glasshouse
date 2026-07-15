@@ -42,6 +42,7 @@ const listProjectsRecord = mock(async () => ({
   items: [{ id: "11111111-1111-4111-8111-111111111111", name: "Project One", slug: "project-one", created_at: "2026-07-15T10:00:00.000Z" }],
   total: 1,
 }));
+const promptProvenanceStatus = mock(async () => "active" as const);
 
 mock.module("../../src/db/postgres", () => ({ pgPool: () => ({}) }));
 mock.module("../../src/db/prompts", () => ({
@@ -53,6 +54,7 @@ mock.module("../../src/db/prompts", () => ({
   listPromptVersions: mock(async () => ({ items: [] })),
   listPrompts: mock(async () => ({ items: [], total: 0 })),
   listProjects: listProjectsRecord,
+  promptProvenanceStatus,
   renderPrompt: mock(async () => ({})),
 }));
 
@@ -65,6 +67,7 @@ const {
   handleGetPrompt,
 } = await import("../../src/routes/prompts");
 const { listProjects, handleListProjects } = await import("../../src/routes/projects");
+const { getPromptProvenance, handleGetPromptProvenance } = await import("../../src/routes/prompt-provenance");
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 
@@ -80,10 +83,15 @@ function app() {
     c.header("Cache-Control", "no-store");
     await next();
   });
+  api.use("/v1/prompt-provenance/*", async (c, next) => {
+    c.header("Cache-Control", "no-store");
+    await next();
+  });
   api.openapi(createPrompt, handleCreatePrompt);
   api.openapi(deletePrompt, handleDeletePrompt);
   api.openapi(getPrompt, handleGetPrompt);
   api.openapi(listProjects, handleListProjects);
+  api.openapi(getPromptProvenance, handleGetPromptProvenance);
   return api;
 }
 
@@ -150,6 +158,34 @@ describe("prompt route contracts", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ code: "BAD_REQUEST", message: "Request validation failed" });
+  });
+
+  it("rejects source character and line budgets at the strict API boundary", async () => {
+    createPromptRecord.mockClear();
+    const longSource = await app().request("/v1/prompts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT, name: "Support Agent", role: "system", source: "x".repeat(32_769) }),
+    });
+    const manyLines = await app().request("/v1/prompts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT, name: "Support Agent", role: "system", source: `${"x\n".repeat(512)}x` }),
+    });
+
+    expect(longSource.status).toBe(400);
+    expect(manyLines.status).toBe(400);
+    expect(createPromptRecord).not.toHaveBeenCalled();
+  });
+
+  it("marks prompt provenance responses no-store", async () => {
+    promptProvenanceStatus.mockClear();
+    const response = await app().request(`/v1/prompt-provenance/support-agent?project_id=${PROJECT}&version=1&content_hash=${"a".repeat(64)}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({ status: "active" });
+    expect(promptProvenanceStatus).toHaveBeenCalledTimes(1);
   });
 
   it("returns a project-scoped 404 envelope for an absent or cross-project prompt", async () => {

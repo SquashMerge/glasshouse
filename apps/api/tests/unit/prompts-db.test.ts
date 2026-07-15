@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
+import { MAX_DIFF_INPUT_CHARS, MAX_PROMPT_SOURCE_CHARS } from "../../src/lib/prompt-limits";
 import {
   createPrompt,
   createPromptVersion,
@@ -122,6 +123,33 @@ describe("prompt repository", () => {
     expect(normalizePromptSlug(" !!! ")).toBe("prompt");
     expect(normalizePromptSlug("a".repeat(80))).toBe("a".repeat(64));
     expect(textualVersionDiff("one\ntwo", "one\nthree")).toBe("--- previous\n+++ current\n one\n+three\n-two");
+    try {
+      textualVersionDiff("x".repeat(MAX_DIFF_INPUT_CHARS + 1), "changed");
+      throw new Error("Expected PromptRepositoryError");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(PromptRepositoryError);
+      expect((cause as PromptRepositoryError).code).toBe("BAD_REQUEST");
+      expect((cause as PromptRepositoryError).message).toContain("Prompt diff previous source exceeds");
+    }
+    try {
+      textualVersionDiff(`${"x\n".repeat(512)}x`, "changed");
+      throw new Error("Expected PromptRepositoryError");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(PromptRepositoryError);
+      expect((cause as PromptRepositoryError).message).toContain("Prompt diff previous source exceeds 512 lines");
+    }
+  });
+
+  it("rejects oversized new source before opening a transaction while keeping legacy retrieval independent", async () => {
+    const pool = new MockPool();
+    await expectError(createPrompt(transactionPool(pool), {
+      project_id: PROJECT,
+      name: "Support Agent",
+      role: "system",
+      source: "x".repeat(MAX_PROMPT_SOURCE_CHARS + 1),
+      actor: "trusted-admin",
+    }), "BAD_REQUEST");
+    expect(pool.client.calls).toHaveLength(0);
   });
 
   it("creates a role-matched canonical source snapshot with context actor and no public UUID", async () => {
@@ -345,6 +373,14 @@ describe("prompt repository", () => {
     const malformed = await getPrompt(readPool(malformedPool), { project_id: PROJECT, slug: "support-agent", version: 1 });
     expect(malformed.source).toBe("Malformed {{template");
 
+    const oversizedLegacyPool = new MockPool([
+      { rows: [{ id: PROJECT }] },
+      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, source: "current legacy source", previous_source: "x".repeat(MAX_DIFF_INPUT_CHARS + 1) }] },
+    ]);
+    const oversizedLegacy = await getPrompt(readPool(oversizedLegacyPool), { project_id: PROJECT, slug: "support-agent", version: 2 });
+    expect(oversizedLegacy.source).toBe("current legacy source");
+    expect(oversizedLegacy.diff).toBeNull();
+
     const historyPool = new MockPool([
       { rows: [{ id: PROJECT }] },
       { rows: [versionRow, { ...versionRow, version: 1, source: "Previous {{customer}}", previous_source: null }] },
@@ -392,6 +428,16 @@ describe("prompt repository", () => {
       output: "Hello <&> ",
       warnings: [{ code: "MISSING_VARIABLE", path: "missing" }],
     });
+
+    const oversizedSourcePool = new MockPool([
+      { rows: [{ id: PROJECT }] },
+      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, source: "x".repeat(MAX_PROMPT_SOURCE_CHARS + 1), previous_source: null }] },
+    ]);
+    await expectError(renderPrompt(readPool(oversizedSourcePool), {
+      project_id: PROJECT,
+      slug: "support-agent",
+      data: {},
+    }), "BAD_REQUEST");
   });
 
   it("requires raw slug confirmation and deletes labels, quarantine data, versions, and content-free audit records together", async () => {
@@ -454,7 +500,7 @@ describe("prompt repository", () => {
     }), "CONFLICT");
     expect(deletePool.client.calls[4]?.text).toBe("ROLLBACK");
 
-    const statusPool = new MockPool([{ rows: [{ slug: "support-agent" }] }]);
+    const statusPool = new MockPool([{ rows: [{ status: "deleted" }] }]);
     expect(await promptProvenanceStatus(readPool(statusPool), {
       project_id: PROJECT,
       slug: "support-agent",
@@ -463,7 +509,11 @@ describe("prompt repository", () => {
     })).toBe("deleted");
     expect(statusPool.calls).toHaveLength(1);
 
-    const activePool = new MockPool([{ rows: [] }, { rows: [{ slug: "support-agent" }] }]);
+    expect(statusPool.calls[0]?.text).toContain("SELECT CASE");
+    expect(statusPool.calls[0]?.text).toContain("prompt_tombstones");
+    expect(statusPool.calls[0]?.text).toContain("INNER JOIN prompt_versions");
+
+    const activePool = new MockPool([{ rows: [{ status: "active" }] }]);
     expect(await promptProvenanceStatus(readPool(activePool), {
       project_id: PROJECT,
       slug: "support-agent",
@@ -471,12 +521,14 @@ describe("prompt repository", () => {
       content_hash: HASH,
     })).toBe("active");
 
-    const unknownPool = new MockPool([{ rows: [] }, { rows: [] }]);
+    const unknownPool = new MockPool([{ rows: [{ status: "unknown" }] }]);
     expect(await promptProvenanceStatus(readPool(unknownPool), {
       project_id: PROJECT,
       slug: "support-agent",
       version: 2,
       content_hash: HASH,
     })).toBe("unknown");
+    expect(activePool.calls).toHaveLength(1);
+    expect(unknownPool.calls).toHaveLength(1);
   });
 });

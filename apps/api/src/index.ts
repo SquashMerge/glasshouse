@@ -22,6 +22,10 @@ apiApp.use("/v1/prompts/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   await next();
 });
+apiApp.use("/v1/prompt-provenance/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
 apiApp.use("/v1/*", basicAuthMiddleware());
 
 // OTLP is mounted as a raw handler (not via openapiApp) because it consumes

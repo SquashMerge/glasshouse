@@ -5,6 +5,7 @@ import {
   renderPromptTemplateWithWarnings,
   validatePromptTemplate,
 } from "../lib/prompt-templates.js";
+import { MAX_DIFF_INPUT_CHARS, MAX_DIFF_INPUT_LINES, hasAtMostLines } from "../lib/prompt-limits.js";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -258,7 +259,7 @@ function mapVersion(row: Row): PromptVersion {
     created_by: stringValue(row, "created_by"),
     created_at: timestampValue(row, "created_at"),
     content_hash: stringValue(row, "content_hash"),
-    diff: previousSource === null ? null : textualVersionDiff(previousSource, source),
+    diff: previousSource === null ? null : boundedTextualVersionDiff(previousSource, source),
   };
 }
 
@@ -290,6 +291,8 @@ const previousVersionJoin = `
     AND previous_version.version = v.version - 1`;
 
 export function textualVersionDiff(previous: string, current: string): string {
+  assertDiffBudget(previous, "previous");
+  assertDiffBudget(current, "current");
   if (previous === current) return "";
   const before = previous.split("\n");
   const after = current.split("\n");
@@ -318,6 +321,24 @@ export function textualVersionDiff(previous: string, current: string): string {
     }
   }
   return lines.join("\n");
+}
+
+function assertDiffBudget(value: string, name: string): void {
+  if (value.length > MAX_DIFF_INPUT_CHARS) {
+    throw error("BAD_REQUEST", `Prompt diff ${name} source exceeds ${MAX_DIFF_INPUT_CHARS} characters`);
+  }
+  if (!hasAtMostLines(value, MAX_DIFF_INPUT_LINES)) {
+    throw error("BAD_REQUEST", `Prompt diff ${name} source exceeds ${MAX_DIFF_INPUT_LINES} lines`);
+  }
+}
+
+function boundedTextualVersionDiff(previous: string, current: string): string | null {
+  try {
+    return textualVersionDiff(previous, current);
+  } catch (cause) {
+    if (cause instanceof PromptRepositoryError && cause.code === "BAD_REQUEST") return null;
+    throw cause;
+  }
 }
 
 export async function listProjects(pool: Pick<Pool, "query">): Promise<{ items: Project[]; total: number }> {
@@ -658,20 +679,26 @@ export async function promptProvenanceStatus(
   input: { project_id: string; slug: string; version: number; content_hash: string },
 ): Promise<"active" | "deleted" | "unknown"> {
   return read(async () => {
-    const tombstones = await query<Row>(
+    const rows = await query<Row>(
       pool,
-      "SELECT slug FROM prompt_tombstones WHERE project_id = $1 AND slug = $2",
-      [input.project_id, input.slug],
-    );
-    if (tombstones.length > 0) return "deleted";
-    const active = await query<Row>(
-      pool,
-      `SELECT p.slug
-       FROM prompts AS p
-       INNER JOIN prompt_versions AS v ON v.prompt_id = p.id
-       WHERE p.project_id = $1 AND p.slug = $2 AND v.version = $3 AND v.content_hash = $4`,
+      `SELECT CASE
+         WHEN EXISTS (
+           SELECT 1
+           FROM prompt_tombstones AS t
+           WHERE t.project_id = $1 AND t.slug = $2
+         ) THEN 'deleted'
+         WHEN EXISTS (
+           SELECT 1
+           FROM prompts AS p
+           INNER JOIN prompt_versions AS v ON v.prompt_id = p.id
+           WHERE p.project_id = $1 AND p.slug = $2 AND v.version = $3 AND v.content_hash = $4
+         ) THEN 'active'
+         ELSE 'unknown'
+       END AS status`,
       [input.project_id, input.slug, input.version, input.content_hash],
     );
-    return active.length > 0 ? "active" : "unknown";
+    const status = rows[0]?.status;
+    if (status === "active" || status === "deleted" || status === "unknown") return status;
+    throw error("INTERNAL", "Prompt provenance status is invalid");
   });
 }
