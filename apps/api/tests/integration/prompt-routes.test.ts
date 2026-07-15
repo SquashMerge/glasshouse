@@ -20,8 +20,7 @@ const createPromptRecord = mock(async (_pool: unknown, input: Record<string, unk
   name: input.name,
   description: null,
   version: 1,
-  role: input.role,
-  source: input.source,
+  messages: input.messages,
   model: null,
   settings: {},
   change_summary: "Initial version",
@@ -45,8 +44,7 @@ const listProjectsRecord = mock(async () => ({
 const PROMPT_VERSION = {
   id: "support-agent",
   version: 2,
-  role: "system" as const,
-  source: "Follow up for {{customer}}",
+  messages: [{ role: "system" as const, content: "Follow up for {{customer}}" }, { role: "user" as const, content: "How can I help {{customer}}?" }],
   model: null,
   settings: {},
   change_summary: "Add follow-up",
@@ -58,7 +56,7 @@ const PROMPT_VERSION = {
 const PROMPT = {
   ...PROMPT_VERSION,
   version: 1,
-  source: "Help {{customer}}",
+  messages: [{ role: "system" as const, content: "Help {{customer}}" }, { role: "user" as const, content: "How can I help {{customer}}?" }],
   content_hash: "a".repeat(64),
   diff: null,
   project_id: "11111111-1111-4111-8111-111111111111",
@@ -84,9 +82,8 @@ const promptProvenanceStatus = mock(async (_pool: unknown, input: { project_id: 
 const renderPromptRecord = mock(async () => ({
   id: "support-agent",
   version: 1,
-  role: "system" as const,
   content_hash: "a".repeat(64),
-  output: "Hello Ada",
+  messages: [{ role: "user" as const, content: "Hello Ada" }],
   warnings: [],
 }));
 
@@ -175,8 +172,7 @@ describe("prompt route contracts", () => {
       body: JSON.stringify({
         project_id: PROJECT,
         name: "Support Agent",
-        role: "system",
-        source: "Help {{customer}}",
+        messages: [{ role: "system", content: "Help {{customer}}" }, { role: "user", content: "How can I help {{customer}}?" }],
       }),
     });
 
@@ -188,8 +184,7 @@ describe("prompt route contracts", () => {
       name: "Support Agent",
       description: null,
       version: 1,
-      role: "system",
-      source: "Help {{customer}}",
+      messages: [{ role: "system", content: "Help {{customer}}" }, { role: "user", content: "How can I help {{customer}}?" }],
       model: null,
       settings: {},
       change_summary: "Initial version",
@@ -209,8 +204,7 @@ describe("prompt route contracts", () => {
       body: JSON.stringify({
         project_id: PROJECT,
         name: "Support Agent",
-        role: "system",
-        source: "source",
+        messages: [{ role: "system", content: "source" }],
         actor: "spoofed",
       }),
     });
@@ -224,12 +218,12 @@ describe("prompt route contracts", () => {
     const longSource = await app().request("/v1/prompts", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT, name: "Support Agent", role: "system", source: "x".repeat(32_769) }),
+      body: JSON.stringify({ project_id: PROJECT, name: "Support Agent", messages: [{ role: "system", content: "x".repeat(32_769) }] }),
     });
     const manyLines = await app().request("/v1/prompts", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project_id: PROJECT, name: "Support Agent", role: "system", source: `${"x\n".repeat(512)}x` }),
+      body: JSON.stringify({ project_id: PROJECT, name: "Support Agent", messages: [{ role: "system", content: `${"x\n".repeat(512)}x` }] }),
     });
 
     expect(longSource.status).toBe(400);
@@ -249,12 +243,12 @@ describe("prompt route contracts", () => {
     const created = await app().request(`/v1/prompts/support-agent/versions?project_id=${PROJECT}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ base_version: 1, source: "Follow up for {{customer}}", settings: {}, change_summary: "Add follow-up" }),
+      body: JSON.stringify({ base_version: 1, messages: [{ role: "system", content: "Follow up for {{customer}}" }, { role: "user", content: "How can I help {{customer}}?" }], settings: {}, change_summary: "Add follow-up" }),
     });
     const stale = await app().request(`/v1/prompts/support-agent/versions?project_id=${PROJECT}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ base_version: 2, source: "Follow up for {{customer}}", change_summary: "Stale" }),
+      body: JSON.stringify({ base_version: 2, messages: [{ role: "system", content: "Follow up for {{customer}}" }], change_summary: "Stale" }),
     });
 
     expect(await listed.json()).toEqual({ items: [PROMPT], total: 1 });
@@ -293,9 +287,8 @@ describe("prompt route contracts", () => {
     expect(await normal.json()).toEqual({
       id: "support-agent",
       version: 1,
-      role: "system",
       content_hash: "a".repeat(64),
-      output: "Hello Ada",
+      messages: [{ role: "user", content: "Hello Ada" }],
       warnings: [],
     });
     expect(renderPromptRecord).toHaveBeenCalledTimes(1);

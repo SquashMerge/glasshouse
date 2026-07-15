@@ -14,8 +14,8 @@ import {
   renderPrompt,
   type JsonObject,
   type Prompt,
+  type PromptMessage,
   type PromptRenderResponse,
-  type PromptRole,
 } from "../lib/api";
 
 const TEXTAREA_CLASS = "min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
@@ -31,8 +31,8 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
   const isVersion = Boolean(existing && current);
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
-  const [role, setRole] = React.useState<PromptRole>("system");
-  const [source, setSource] = React.useState("");
+  const [systemSource, setSystemSource] = React.useState("");
+  const [userSource, setUserSource] = React.useState("");
   const [model, setModel] = React.useState("");
   const [settingsText, setSettingsText] = React.useState("{}");
   const [changeSummary, setChangeSummary] = React.useState("");
@@ -45,8 +45,8 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
     if (!existing) return;
     setName(existing.name);
     setDescription(existing.description ?? "");
-    setRole(existing.role);
-    setSource(existing.source);
+    setSystemSource(messageContent(existing.messages, "system"));
+    setUserSource(messageContent(existing.messages, "user"));
     setModel(existing.model ?? "");
     setSettingsText(prettyJson(existing.settings));
   }, [existingKey]);
@@ -55,6 +55,7 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
     mutationFn: async () => {
       if (!projectId) throw new Error("Select a project before saving a prompt.");
       const settings = parseObject(settingsText, "Settings");
+      const messages = promptMessages(systemSource, userSource);
       if (isVersion) {
         if (!existing || !current) throw new Error("The selected prompt version is unavailable.");
         const summary = changeSummary.trim();
@@ -63,7 +64,7 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
           project_id: projectId,
           slug: existing.id,
           base_version: current.version,
-          source,
+          messages,
           model: model || null,
           settings,
           change_summary: summary,
@@ -74,8 +75,7 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
         project_id: projectId,
         name: name.trim(),
         description: description.trim() || null,
-        role,
-        source,
+        messages,
         model: model || null,
         settings,
       });
@@ -119,28 +119,19 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
                 <Label htmlFor="prompt-name">Name</Label>
                 <Input id="prompt-name" value={name} onChange={(event) => setName(event.target.value)} disabled={isVersion || saveMutation.isPending} required={!isVersion} />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="prompt-role">Role</Label>
-                <select
-                  id="prompt-role"
-                  value={role}
-                  onChange={(event) => setRole(event.target.value as PromptRole)}
-                  disabled={isVersion || saveMutation.isPending}
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <option value="system">system</option>
-                  <option value="user">user</option>
-                </select>
-              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="prompt-description">Description <span className="text-muted-foreground">(optional)</span></Label>
               <Input id="prompt-description" value={description} onChange={(event) => setDescription(event.target.value)} disabled={isVersion || saveMutation.isPending} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="prompt-source">Source</Label>
-              <textarea id="prompt-source" className={TEXTAREA_CLASS} value={source} onChange={(event) => setSource(event.target.value)} disabled={saveMutation.isPending} aria-describedby="prompt-source-hint" />
-              <p id="prompt-source-hint" className="text-xs text-muted-foreground">Mustache variables are rendered only by the server preview.</p>
+              <Label htmlFor="prompt-system-source">System prompt <span className="text-muted-foreground">(optional)</span></Label>
+              <textarea id="prompt-system-source" className={TEXTAREA_CLASS} value={systemSource} onChange={(event) => setSystemSource(event.target.value)} disabled={saveMutation.isPending} aria-describedby="prompt-source-hint" />
+              <p id="prompt-source-hint" className="text-xs text-muted-foreground">System and user messages are versioned together. Mustache variables are rendered only by the server preview.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="prompt-user-source">User prompt <span className="text-muted-foreground">(optional)</span></Label>
+              <textarea id="prompt-user-source" className={TEXTAREA_CLASS} value={userSource} onChange={(event) => setUserSource(event.target.value)} disabled={saveMutation.isPending} />
             </div>
           </CardContent>
         </Card>
@@ -172,7 +163,11 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
           <ServerPreview
             enabled={Boolean(projectId && existing)}
             variablesText={variablesText}
-            onVariablesChange={setVariablesText}
+            onVariablesChange={(value) => {
+              setVariablesText(value);
+              previewMutation.reset();
+              setPreviewError(null);
+            }}
             onPreview={() => previewMutation.mutate()}
             isPending={previewMutation.isPending}
             error={previewError}
@@ -225,10 +220,15 @@ function ServerPreview({
           <div className="space-y-3" aria-live="polite">
             {preview.warnings.length > 0 && (
               <ul className="rounded-md border border-destructive/50 p-3 text-sm text-destructive" data-testid="preview-warnings">
-                {preview.warnings.map((warning) => <li key={warning.path}>Missing variable: {warning.path}</li>)}
+                {preview.warnings.map((warning) => <li key={`${warning.role}:${warning.path}`}>{warning.role}: missing variable {warning.path}</li>)}
               </ul>
             )}
-            <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm" data-testid="preview-output">{preview.output}</pre>
+            {preview.messages.map((message) => (
+              <div key={message.role} className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{message.role}</p>
+                <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm" data-testid={`preview-output-${message.role}`}>{message.content}</pre>
+              </div>
+            ))}
           </div>
         )}
       </CardContent>
@@ -269,4 +269,16 @@ function parseObject(value: string, label: string): JsonObject {
 
 function prettyJson(value: JsonObject): string {
   return JSON.stringify(value, null, 2);
+}
+
+function promptMessages(system: string, user: string): PromptMessage[] {
+  const messages: PromptMessage[] = [];
+  if (system) messages.push({ role: "system", content: system });
+  if (user) messages.push({ role: "user", content: user });
+  if (messages.length === 0) throw new Error("Enter a system or user prompt.");
+  return messages;
+}
+
+function messageContent(messages: PromptMessage[], role: PromptMessage["role"]): string {
+  return messages.find((message) => message.role === role)?.content ?? "";
 }

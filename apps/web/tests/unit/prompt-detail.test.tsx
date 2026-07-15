@@ -40,8 +40,7 @@ function prompt(version = 3) {
     name: "Support Agent",
     description: null,
     version,
-    role: "system" as const,
-    source: "Current {{customer}}",
+    messages: [{ role: "system" as const, content: "Current {{customer}}" }, { role: "user" as const, content: "How can I help {{customer}}?" }],
     model: "gpt-4o",
     settings: { temperature: 0.2 },
     change_summary: "Current version",
@@ -67,7 +66,7 @@ describe("PromptDetailPage", () => {
     listPromptVersions.mockReset();
     deletePrompt.mockReset();
     getPrompt.mockResolvedValue(prompt());
-    listPromptVersions.mockResolvedValue({ items: [prompt(), { ...prompt(2), source: "Previous {{customer}}", change_summary: "Previous version", diff: "--- v1\n+++ v2" }] });
+    listPromptVersions.mockResolvedValue({ items: [prompt(), { ...prompt(2), messages: [{ role: "system", content: "Previous {{customer}}" }], change_summary: "Previous version", diff: "--- v1\n+++ v2" }] });
   });
 
   afterEach(cleanup);
@@ -75,8 +74,8 @@ describe("PromptDetailPage", () => {
   it("shows immutable version details and drives history selection through the version query", async () => {
     renderDetail();
 
-    await screen.findByTestId("prompt-source");
-    expect(screen.getByTestId("prompt-source")).toHaveTextContent("Current {{customer}}");
+    await screen.findByTestId("prompt-message-system");
+    expect(screen.getByTestId("prompt-message-system")).toHaveTextContent("Current {{customer}}");
     expect(screen.getByTestId("prompt-diff")).toHaveTextContent("+++ v3");
     expect(screen.getByText(HASH)).toBeInTheDocument();
     fireEvent.click(screen.getAllByTestId("prompt-version")[1]!);
@@ -86,7 +85,7 @@ describe("PromptDetailPage", () => {
 
   it("requires the exact canonical slug, reports delete errors, then invalidates the prompt list and navigates", async () => {
     const client = renderDetail();
-    await screen.findByTestId("prompt-source");
+    await screen.findByTestId("prompt-message-system");
     deletePrompt.mockRejectedValueOnce(new Error("Prompt has active references"));
     deletePrompt.mockResolvedValueOnce(undefined);
 

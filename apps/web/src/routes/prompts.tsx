@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { LuPlus } from "react-icons/lu";
 import { Button, buttonVariants } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { listPrompts } from "../lib/api";
@@ -60,8 +59,8 @@ export function PromptsPage() {
       {promptsQuery.data && promptsQuery.data.items.length > 0 && (
         <Card>
           <CardContent className="p-0">
-            <div className="hidden grid-cols-[minmax(0,1fr)_120px_130px_180px] gap-4 border-b px-4 py-3 text-xs font-medium text-muted-foreground md:grid">
-              <span>Prompt</span><span>Role</span><span>Latest version</span><span>Updated</span>
+            <div className="hidden grid-cols-[minmax(0,1fr)_130px_180px] gap-4 border-b px-4 py-3 text-xs font-medium text-muted-foreground md:grid">
+              <span>Prompt</span><span>Latest version</span><span>Updated</span>
             </div>
             <ul className="divide-y divide-border" aria-label="Project prompts">
               {promptsQuery.data.items.map((prompt) => (
@@ -69,14 +68,13 @@ export function PromptsPage() {
                   <Link
                     to="/prompts/$slug"
                     params={{ slug: prompt.id }}
-                    className="grid gap-2 px-4 py-4 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(0,1fr)_120px_130px_180px] md:items-center md:gap-4"
+                    className="grid gap-2 px-4 py-4 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(0,1fr)_130px_180px] md:items-center md:gap-4"
                     data-testid="prompt-row"
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{prompt.name}</span>
                       <span className="block truncate font-mono text-xs text-muted-foreground">{prompt.id}</span>
                     </span>
-                    <span><Badge variant="secondary">{prompt.role}</Badge></span>
                     <span className="text-sm">v{prompt.version}</span>
                     <time dateTime={prompt.created_at} className="text-sm text-muted-foreground">{formatDate(prompt.created_at)}</time>
                   </Link>

@@ -16,8 +16,7 @@ function prompt(version: number, source: string) {
     name: "Support Agent",
     description: "Greets customers",
     version,
-    role: "system" as const,
-    source,
+    messages: [{ role: "system" as const, content: source }],
     model: "gpt-4o",
     settings: { temperature: 0.2 },
     change_summary: version === 1 ? "Initial version" : "Current version",
@@ -58,12 +57,12 @@ describe("PromptComposer", () => {
     renderComposer(<PromptComposer projectId={PROJECT_ID} onSaved={onSaved} />);
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Support Agent" } });
-    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "Hello {{name}}" } });
+    fireEvent.change(screen.getByLabelText("System prompt (optional)"), { target: { value: "Hello {{name}}" } });
     fireEvent.change(screen.getByLabelText("Settings JSON"), { target: { value: "[]" } });
     fireEvent.click(screen.getByTestId("save-prompt"));
 
     await screen.findByText("Settings must be a JSON object.");
-    expect(screen.getByLabelText("Source")).toHaveValue("Hello {{name}}");
+    expect(screen.getByLabelText("System prompt (optional)")).toHaveValue("Hello {{name}}");
     expect(fetchMock).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText("Settings JSON"), { target: { value: "{\"temperature\":0.2}" } });
@@ -71,7 +70,7 @@ describe("PromptComposer", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/prompts");
-    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ project_id: PROJECT_ID, name: "Support Agent", description: null, role: "system", source: "Hello {{name}}", model: null, settings: { temperature: 0.2 } });
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ project_id: PROJECT_ID, name: "Support Agent", description: null, messages: [{ role: "system", content: "Hello {{name}}" }], model: null, settings: { temperature: 0.2 } });
     expect(onSaved).toHaveBeenCalledWith({ id: "support-agent", version: 1 });
   });
 
@@ -80,28 +79,58 @@ describe("PromptComposer", () => {
     const current = prompt(3, "Current {{customer}}");
     const onSaved = vi.fn();
     fetchMock
-      .mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 1, role: "system", content_hash: HASH, output: "Selected ", warnings: [{ code: "MISSING_VARIABLE", path: "customer" }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 1, content_hash: HASH, messages: [{ role: "system", content: "Selected " }], warnings: [{ code: "MISSING_VARIABLE", role: "system", path: "customer" }] }))
       .mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 4 }));
     renderComposer(<PromptComposer projectId={PROJECT_ID} existing={selected} current={current} onSaved={onSaved} />);
 
-    await waitFor(() => expect(screen.getByLabelText("Source")).toHaveValue("Selected {{customer}}"));
-    expect(screen.getByLabelText("Role")).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "Draft {{customer}}" } });
+    await waitFor(() => expect(screen.getByLabelText("System prompt (optional)")).toHaveValue("Selected {{customer}}"));
+    fireEvent.change(screen.getByLabelText("System prompt (optional)"), { target: { value: "Draft {{customer}}" } });
     fireEvent.change(screen.getByLabelText("Change summary"), { target: { value: "Use a shorter greeting" } });
     fireEvent.change(screen.getByLabelText("Variables JSON"), { target: { value: "{}" } });
     fireEvent.click(screen.getByTestId("preview-prompt"));
 
-    await screen.findByTestId("preview-output");
+    await screen.findByTestId("preview-output-system");
     expect(fetchMock.mock.calls[0]?.[0]).toBe(`/v1/prompts/support-agent/render?project_id=${PROJECT_ID}&version=1`);
     expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ data: {} });
-    expect(screen.getByTestId("preview-warnings")).toHaveTextContent("Missing variable: customer");
-    expect(screen.getByTestId("preview-output")).toHaveTextContent("Selected");
-    expect(screen.getByLabelText("Source")).toHaveValue("Draft {{customer}}");
+    expect(screen.getByTestId("preview-warnings")).toHaveTextContent("system: missing variable customer");
+    expect(screen.getByTestId("preview-output-system")).toHaveTextContent("Selected");
+    expect(screen.getByLabelText("System prompt (optional)")).toHaveValue("Draft {{customer}}");
 
     fireEvent.click(screen.getByTestId("save-prompt"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1]?.[0]).toBe(`/v1/prompts/support-agent/versions?project_id=${PROJECT_ID}`);
-    expect(JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string)).toEqual({ base_version: 3, source: "Draft {{customer}}", model: "gpt-4o", settings: { temperature: 0.2 }, change_summary: "Use a shorter greeting" });
+    expect(JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string)).toEqual({ base_version: 3, messages: [{ role: "system", content: "Draft {{customer}}" }], model: "gpt-4o", settings: { temperature: 0.2 }, change_summary: "Use a shorter greeting" });
     expect(onSaved).toHaveBeenCalledWith({ id: "support-agent", version: 4 });
+  });
+
+  it("renders system and user messages from valid nested variables JSON", async () => {
+    const selected = {
+      ...prompt(1, "Hello {{customer.name}}"),
+      messages: [
+        { role: "system" as const, content: "Hello {{customer.name}}" },
+        { role: "user" as const, content: "Please help {{customer.name}}" },
+      ],
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      id: "support-agent",
+      version: 1,
+      content_hash: HASH,
+      messages: [
+        { role: "system", content: "Hello Ada" },
+        { role: "user", content: "Please help Ada" },
+      ],
+      warnings: [],
+    }));
+
+    renderComposer(<PromptComposer projectId={PROJECT_ID} existing={selected} current={selected} onSaved={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByLabelText("User prompt (optional)")).toHaveValue("Please help {{customer.name}}"));
+    fireEvent.change(screen.getByLabelText("Variables JSON"), { target: { value: '{"customer":{"name":"Ada"}}' } });
+    fireEvent.click(screen.getByTestId("preview-prompt"));
+
+    await screen.findByTestId("preview-output-user");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ data: { customer: { name: "Ada" } } });
+    expect(screen.getByTestId("preview-output-system")).toHaveTextContent("Hello Ada");
+    expect(screen.getByTestId("preview-output-user")).toHaveTextContent("Please help Ada");
   });
 });

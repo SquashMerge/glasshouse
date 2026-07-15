@@ -60,11 +60,15 @@ export async function listProjects(): Promise<ProjectListResponse> {
 
 export type PromptRole = "system" | "user";
 
+export interface PromptMessage {
+  role: PromptRole;
+  content: string;
+}
+
 export interface PromptVersion {
   id: string;
   version: number;
-  role: PromptRole;
-  source: string;
+  messages: PromptMessage[];
   model: string | null;
   settings: JsonObject;
   change_summary: string;
@@ -93,8 +97,7 @@ export interface CreatePromptInput {
   project_id: string;
   name: string;
   description?: string | null;
-  role: PromptRole;
-  source: string;
+  messages: PromptMessage[];
   model?: string | null;
   settings?: JsonObject;
 }
@@ -103,7 +106,7 @@ export interface CreatePromptVersionInput {
   project_id: string;
   slug: string;
   base_version: number;
-  source: string;
+  messages: PromptMessage[];
   model?: string | null;
   settings?: JsonObject;
   change_summary: string;
@@ -119,10 +122,9 @@ export interface RenderPromptInput {
 export interface PromptRenderResponse {
   id: string;
   version: number;
-  role: PromptRole;
   content_hash: string;
-  output: string;
-  warnings: Array<{ code: "MISSING_VARIABLE"; path: string }>;
+  messages: PromptMessage[];
+  warnings: Array<{ code: "MISSING_VARIABLE"; role: PromptRole; path: string }>;
 }
 
 export interface PromptProvenanceStatusResponse {

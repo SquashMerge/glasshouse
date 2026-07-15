@@ -28,11 +28,21 @@ export const PromptSource = z.string()
   .max(MAX_PROMPT_SOURCE_CHARS)
   .refine((value) => hasAtMostLines(value, MAX_PROMPT_SOURCE_LINES), `Must contain at most ${MAX_PROMPT_SOURCE_LINES} lines`);
 
+export const PromptMessage = z.object({
+  role: z.enum(["system", "user"]),
+  content: PromptSource,
+}).strict().openapi("PromptMessage");
+
+export const PromptMessages = z.array(PromptMessage).min(1).max(2).superRefine((messages, context) => {
+  if (new Set(messages.map((message) => message.role)).size !== messages.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Each prompt may contain at most one system and one user message" });
+  }
+});
+
 export const PromptVersion = z.object({
   id: PromptId,
   version: z.number().int().positive(),
-  role: z.enum(["system", "user"]),
-  source: z.string(),
+  messages: PromptMessages,
   model: z.string().nullable(),
   settings: JsonObject,
   change_summary: z.string().min(1),
@@ -52,8 +62,7 @@ export const PromptCreate = z.object({
   project_id: z.string().uuid(),
   name: z.string().min(1).max(255),
   description: z.string().nullable().optional(),
-  role: z.enum(["system", "user"]),
-  source: PromptSource,
+  messages: PromptMessages,
   model: z.string().nullable().optional(),
   settings: JsonObject.optional(),
   change_summary: z.string().trim().min(1).optional(),
@@ -61,7 +70,7 @@ export const PromptCreate = z.object({
 
 export const PromptVersionCreate = z.object({
   base_version: z.number().int().positive(),
-  source: PromptSource,
+  messages: PromptMessages,
   model: z.string().nullable().optional(),
   settings: JsonObject.optional(),
   change_summary: z.string().trim().min(1),
@@ -77,11 +86,11 @@ export const PromptRender = z.object({
 export const PromptRenderResponse = z.object({
   id: PromptId,
   version: z.number().int().positive(),
-  role: z.enum(["system", "user"]),
   content_hash: z.string().regex(/^[0-9a-f]{64}$/),
-  output: z.string(),
+  messages: PromptMessages,
   warnings: z.array(z.object({
     code: z.literal("MISSING_VARIABLE"),
+    role: z.enum(["system", "user"]),
     path: z.string().min(1),
   }).strict()),
 }).strict().openapi("PromptRenderResponse");
