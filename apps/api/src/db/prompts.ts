@@ -566,6 +566,7 @@ export async function createPromptVersion(pool: Pick<Pool, "connect">, input: Cr
   const changeSummary = normalizedSummary(input.change_summary);
   const actor = normalizedActor(input.actor);
   if (!Number.isSafeInteger(input.base_version) || input.base_version < 1) throw error("BAD_REQUEST", "base_version must be a positive integer");
+  const providedSettings = Object.prototype.hasOwnProperty.call(input, "settings") ? serializedSettings(input.settings) : undefined;
 
   return transaction(pool, async (client) => {
     await requireProject(client, input.project_id, true);
@@ -592,9 +593,7 @@ export async function createPromptVersion(pool: Pick<Pool, "connect">, input: Cr
     const latestVersion = positiveInteger(latest.version, "version");
     if (latestVersion !== input.base_version) throw error("CONFLICT", "Prompt base version is stale");
     const model = Object.prototype.hasOwnProperty.call(input, "model") ? modelValue(input.model) : nullableStringValue(latest, "model");
-    const settings = Object.prototype.hasOwnProperty.call(input, "settings")
-      ? serializedSettings(input.settings)
-      : serializedSettings(jsonObjectValue(latest, "settings"));
+    const settings = providedSettings ?? serializedSettings(jsonObjectValue(latest, "settings"));
     return insertVersion(client, {
       promptId: stringValue(prompt, "id"),
       slug: stringValue(prompt, "slug"),
