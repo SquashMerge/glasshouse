@@ -1,4 +1,12 @@
 import { createRequire } from "node:module";
+import {
+  MAX_RENDER_ARRAY_LENGTH,
+  MAX_RENDER_DATA_DEPTH,
+  MAX_RENDER_DATA_NODES,
+  MAX_RENDER_DATA_STRING_BYTES,
+  MAX_TEMPLATE_SECTION_NESTING,
+  promptSourceBudgetError,
+} from "./prompt-limits.js";
 
 type MustacheRuntime = {
   parse(template: string): unknown;
@@ -39,6 +47,7 @@ function assertSafeTemplateTags(template: string): void {
   let open = "{{";
   let close = "}}";
   let cursor = 0;
+  let sectionDepth = 0;
 
   while (cursor < template.length) {
     const start = template.indexOf(open, cursor);
@@ -66,6 +75,15 @@ function assertSafeTemplateTags(template: string): void {
       continue;
     }
 
+    if (raw.startsWith("#") || raw.startsWith("^")) {
+      sectionDepth += 1;
+      if (sectionDepth > MAX_TEMPLATE_SECTION_NESTING) {
+        throw templateError(`Prompt templates may nest at most ${MAX_TEMPLATE_SECTION_NESTING} sections`);
+      }
+    } else if (raw.startsWith("/")) {
+      sectionDepth = Math.max(sectionDepth - 1, 0);
+    }
+
     const path = raw.replace(/^[#^/&]/, "");
     if (path) assertSafePath(path);
   }
@@ -75,6 +93,8 @@ export function validatePromptTemplate(template: string): void {
   if (typeof template !== "string") {
     throw templateError("Prompt template content must be a string");
   }
+  const budgetError = promptSourceBudgetError(template);
+  if (budgetError) throw templateError(budgetError);
 
   assertSafeTemplateTags(template);
   try {
@@ -90,8 +110,31 @@ export function validatePromptTemplates(messages: readonly PromptTemplateMessage
   }
 }
 
-function cloneJsonValue(value: unknown, ancestors: WeakSet<object>): unknown {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+type JsonCloneBudget = {
+  nodes: number;
+  stringBytes: number;
+};
+
+function consumeStringBudget(value: string, budget: JsonCloneBudget): void {
+  budget.stringBytes += new TextEncoder().encode(value).byteLength;
+  if (budget.stringBytes > MAX_RENDER_DATA_STRING_BYTES) {
+    throw templateError(`Prompt template data exceeds ${MAX_RENDER_DATA_STRING_BYTES} UTF-8 string bytes`);
+  }
+}
+
+function cloneJsonValue(value: unknown, ancestors: WeakSet<object>, budget: JsonCloneBudget, depth: number): unknown {
+  if (depth > MAX_RENDER_DATA_DEPTH) {
+    throw templateError(`Prompt template data exceeds depth ${MAX_RENDER_DATA_DEPTH}`);
+  }
+  budget.nodes += 1;
+  if (budget.nodes > MAX_RENDER_DATA_NODES) {
+    throw templateError(`Prompt template data exceeds ${MAX_RENDER_DATA_NODES} JSON nodes`);
+  }
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    consumeStringBudget(value, budget);
+    return value;
+  }
   if (typeof value === "number") {
     if (Number.isFinite(value)) return value;
     throw templateError("Prompt template data must contain only finite JSON numbers");
@@ -115,6 +158,9 @@ function cloneJsonValue(value: unknown, ancestors: WeakSet<object>): unknown {
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
+      if (value.length > MAX_RENDER_ARRAY_LENGTH) {
+        throw templateError(`Prompt template data arrays may contain at most ${MAX_RENDER_ARRAY_LENGTH} entries`);
+      }
       if (Object.getOwnPropertySymbols(value).length > 0) {
         throw templateError("Prompt template data must contain only JSON values");
       }
@@ -129,7 +175,7 @@ function cloneJsonValue(value: unknown, ancestors: WeakSet<object>): unknown {
         if (!descriptor || descriptor.get || descriptor.set) {
           throw templateError("Prompt template data must contain only JSON values");
         }
-        copy.push(cloneJsonValue(descriptor.value, ancestors));
+        copy.push(cloneJsonValue(descriptor.value, ancestors, budget, depth + 1));
       }
       Object.setPrototypeOf(copy, null);
       return copy;
@@ -144,7 +190,12 @@ function cloneJsonValue(value: unknown, ancestors: WeakSet<object>): unknown {
     }
 
     const copy = Object.create(null) as Record<string, unknown>;
-    for (const key of Object.getOwnPropertyNames(value)) {
+    const names = Object.getOwnPropertyNames(value);
+    if (names.length > MAX_RENDER_DATA_NODES - budget.nodes) {
+      throw templateError(`Prompt template data exceeds ${MAX_RENDER_DATA_NODES} JSON nodes`);
+    }
+    for (const key of names) {
+      consumeStringBudget(key, budget);
       if (dangerousPathSegments.has(key)) {
         throw templateError("Prompt template data cannot contain dangerous keys");
       }
@@ -152,7 +203,7 @@ function cloneJsonValue(value: unknown, ancestors: WeakSet<object>): unknown {
       if (!descriptor || descriptor.get || descriptor.set || !descriptor.enumerable) {
         throw templateError("Prompt template data must contain only JSON values");
       }
-      copy[key] = cloneJsonValue(descriptor.value, ancestors);
+      copy[key] = cloneJsonValue(descriptor.value, ancestors, budget, depth + 1);
     }
     return copy;
   } finally {
@@ -218,7 +269,7 @@ export function renderPromptTemplateWithWarnings(
   data: unknown,
 ): { output: string; warnings: { code: "MISSING_VARIABLE"; path: string }[] } {
   validatePromptTemplate(template);
-  const safeView = cloneJsonValue(data, new WeakSet<object>());
+  const safeView = cloneJsonValue(data, new WeakSet<object>(), { nodes: 0, stringBytes: 0 }, 0);
   return {
     output: Mustache.render(template, safeView, undefined, { escape: (value) => value }),
     warnings: missingVariablePaths(template, safeView).map((path) => ({ code: "MISSING_VARIABLE", path })),

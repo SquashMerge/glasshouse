@@ -39,7 +39,10 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Project** — tenancy boundary (`project_id` on everything). Postgres, UUID-keyed.
 - **Agent** — versioned, typed entity. Multi-tenant, versioned, has a version history.
 - **Manifest** — serialized form of an Agent (prompts + tools + routing + guardrails + knowledge + deps as one atomic unit). Pinned to eval runs for bisectable regressions and atomic rollback.
-- **Prompt** — versioned template, scoped to a Project.
+- **Prompt** — immutable single-role Mustache template, scoped to a Project; its canonical public ID is the Project-local slug, while `slug@version` is display-only. See `apps/api/src/db/prompts.ts`.
+- **Prompt provenance** — `GET /v1/prompt-provenance/{id}` reports whether the scoped `(slug, version, content_hash)` tuple is `active`, `deleted`, or `unknown`; it does not expose source or render data. See `apps/api/src/routes/prompt-provenance.ts`.
+- **Prompt tombstone** — immutable `(project_id, slug)` reservation left by a hard deletion; prevents canonical prompt ID reuse. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
+- **Prompt deletion audit** — immutable, content-free deletion record: project ID, internal prompt ID, slug, deleting actor, timestamp, and deleted version count. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Dataset** — collection of `dataset_item`s, scoped to a Project.
 - **Experiment** — Agent run over a Dataset, produces scores per item.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.

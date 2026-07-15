@@ -11,5 +11,15 @@ BEGIN
         <> '[{"role":"user","content":"user source"}]'::jsonb THEN
         RAISE EXCEPTION 'preflight failure modified role-inconsistent messages';
     END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'prompts' AND column_name = 'role'
+    ) THEN
+        RAISE EXCEPTION 'preflight failure added the prompts role column';
+    END IF;
+    IF to_regclass('public.prompt_tombstones') IS NOT NULL THEN
+        RAISE EXCEPTION 'preflight failure mutated the prompt schema';
+    END IF;
 END
 $$;

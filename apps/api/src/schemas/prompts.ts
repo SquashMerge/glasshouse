@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { MAX_PROMPT_SOURCE_CHARS, MAX_PROMPT_SOURCE_LINES, hasAtMostLines } from "../lib/prompt-limits.js";
 import { ErrorEnvelope } from "./common.js";
 
 export const PromptId = z.string().max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).openapi({
@@ -18,6 +19,9 @@ export const PromptVersionQuery = ProjectIdQuery.extend({
 }).strict();
 
 export const JsonObject = z.record(z.unknown()).openapi({ example: { temperature: 0.2 } });
+export const PromptSource = z.string()
+  .max(MAX_PROMPT_SOURCE_CHARS)
+  .refine((value) => hasAtMostLines(value, MAX_PROMPT_SOURCE_LINES), `Must contain at most ${MAX_PROMPT_SOURCE_LINES} lines`);
 
 export const PromptVersion = z.object({
   id: PromptId,
@@ -44,7 +48,7 @@ export const PromptCreate = z.object({
   name: z.string().min(1).max(255),
   description: z.string().nullable().optional(),
   role: z.enum(["system", "user"]),
-  source: z.string(),
+  source: PromptSource,
   model: z.string().nullable().optional(),
   settings: JsonObject.optional(),
   change_summary: z.string().trim().min(1).optional(),
@@ -52,7 +56,7 @@ export const PromptCreate = z.object({
 
 export const PromptVersionCreate = z.object({
   base_version: z.number().int().positive(),
-  source: z.string(),
+  source: PromptSource,
   model: z.string().nullable().optional(),
   settings: JsonObject.optional(),
   change_summary: z.string().trim().min(1),

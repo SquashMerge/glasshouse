@@ -1,7 +1,5 @@
 -- Astraea Postgres migrations: 0009_prompt_management_canonical
 
-ALTER TABLE prompts ADD COLUMN IF NOT EXISTS role TEXT;
-
 DO $$
 DECLARE
     invalid_prompt_ids TEXT;
@@ -22,7 +20,6 @@ BEGIN
             OR jsonb_typeof(v.messages->0->'role') <> 'string'
             OR v.messages->0->>'role' NOT IN ('system', 'user')
             OR jsonb_typeof(v.messages->0->'content') <> 'string'
-            OR (p.role IS NOT NULL AND p.role <> v.messages->0->>'role')
             OR EXISTS (
                 SELECT 1
                 FROM prompt_versions AS other_version
@@ -37,6 +34,8 @@ BEGIN
     END IF;
 END
 $$;
+
+ALTER TABLE prompts ADD COLUMN IF NOT EXISTS role TEXT;
 
 DROP INDEX IF EXISTS prompts_project_slug_key;
 ALTER TABLE prompts ALTER COLUMN slug DROP NOT NULL;
@@ -56,7 +55,8 @@ BEGIN
         ORDER BY project_id, id
     LOOP
         base_slug := trim(BOTH '-' FROM regexp_replace(lower(prompt_row.name), '[^a-z0-9]+', '-', 'g'));
-        base_slug := left(COALESCE(NULLIF(base_slug, ''), 'prompt'), 64);
+        base_slug := trim(BOTH '-' FROM left(COALESCE(NULLIF(base_slug, ''), 'prompt'), 64));
+        base_slug := COALESCE(NULLIF(base_slug, ''), 'prompt');
         candidate_slug := base_slug;
 
         IF EXISTS (
@@ -65,7 +65,7 @@ BEGIN
             WHERE project_id = prompt_row.project_id AND slug = candidate_slug
         ) THEN
             id_suffix := substring(replace(prompt_row.id::text, '-', '') FROM 1 FOR 12);
-            candidate_slug := left(base_slug, 64 - length(id_suffix) - 1) || '-' || id_suffix;
+            candidate_slug := trim(BOTH '-' FROM left(base_slug, 64 - length(id_suffix) - 1)) || '-' || id_suffix;
             collision_number := 1;
 
             WHILE EXISTS (
@@ -73,10 +73,10 @@ BEGIN
                 FROM prompts
                 WHERE project_id = prompt_row.project_id AND slug = candidate_slug
             ) LOOP
-                candidate_slug := left(
+                candidate_slug := trim(BOTH '-' FROM left(
                     base_slug,
                     64 - length(id_suffix) - length(collision_number::text) - 2
-                ) || '-' || id_suffix || '-' || collision_number::text;
+                )) || '-' || id_suffix || '-' || collision_number::text;
                 collision_number := collision_number + 1;
             END LOOP;
         END IF;
@@ -196,10 +196,25 @@ FOR EACH ROW
 EXECUTE FUNCTION prevent_prompt_role_update();
 
 CREATE TABLE IF NOT EXISTS prompt_tombstones (
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     slug TEXT NOT NULL,
     PRIMARY KEY (project_id, slug)
 );
+
+CREATE OR REPLACE FUNCTION prevent_prompt_tombstone_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'prompt tombstones are immutable' USING ERRCODE = '55000';
+END
+$$;
+
+DROP TRIGGER IF EXISTS prompt_tombstones_immutable ON prompt_tombstones;
+CREATE TRIGGER prompt_tombstones_immutable
+BEFORE UPDATE OR DELETE ON prompt_tombstones
+FOR EACH ROW
+EXECUTE FUNCTION prevent_prompt_tombstone_mutation();
 
 CREATE TABLE IF NOT EXISTS prompt_deletion_audit (
     project_id UUID NOT NULL,
