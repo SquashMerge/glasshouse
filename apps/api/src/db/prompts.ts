@@ -10,12 +10,12 @@ import { MAX_DIFF_INPUT_CHARS, MAX_DIFF_INPUT_LINES, hasAtMostLines } from "../l
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 export type PromptRole = "system" | "user";
+export type PromptMessage = { role: PromptRole; content: string };
 
 export type PromptVersion = {
   id: string;
   version: number;
-  role: PromptRole;
-  source: string;
+  messages: PromptMessage[];
   model: string | null;
   settings: JsonObject;
   change_summary: string;
@@ -118,10 +118,29 @@ function jsonObjectValue(row: Row, key: string): JsonObject {
   return value;
 }
 
-function promptRole(row: Row): PromptRole {
-  const value = stringValue(row, "role");
-  if (value !== "system" && value !== "user") throw error("INTERNAL", "Persisted prompt role is invalid");
-  return value;
+function promptMessages(row: Row, key: string): PromptMessage[] {
+  const raw = row[key];
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw) as unknown;
+    } catch (cause) {
+      throw error("INTERNAL", `Persisted prompt ${key} is invalid JSON`, cause);
+    }
+  }
+  if (!Array.isArray(value) || value.length === 0 || value.length > 2) {
+    throw error("INTERNAL", `Persisted prompt ${key} is invalid`);
+  }
+  const messages = value.map((message) => {
+    if (!isObject(message) || typeof message.content !== "string" || (message.role !== "system" && message.role !== "user")) {
+      throw error("INTERNAL", `Persisted prompt ${key} is invalid`);
+    }
+    return { role: message.role as PromptRole, content: message.content };
+  });
+  if (new Set(messages.map((message) => message.role)).size !== messages.length) {
+    throw error("INTERNAL", `Persisted prompt ${key} is invalid`);
+  }
+  return messages;
 }
 
 function query<RowType extends Row>(client: Queryable, text: string, values: unknown[] = []): Promise<RowType[]> {
@@ -222,9 +241,20 @@ function sourceValue(value: unknown): string {
   return value;
 }
 
-function roleValue(value: unknown): PromptRole {
-  if (value === "system" || value === "user") return value;
-  throw error("BAD_REQUEST", "role must be system or user");
+function messagesValue(value: unknown): PromptMessage[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 2) {
+    throw error("BAD_REQUEST", "messages must contain one or two prompt messages");
+  }
+  const messages = value.map((message) => {
+    if (!isObject(message) || (message.role !== "system" && message.role !== "user")) {
+      throw error("BAD_REQUEST", "Each prompt message must have a system or user role");
+    }
+    return { role: message.role as PromptRole, content: sourceValue(message.content) };
+  });
+  if (new Set(messages.map((message) => message.role)).size !== messages.length) {
+    throw error("BAD_REQUEST", "Each prompt may contain at most one system and one user message");
+  }
+  return messages;
 }
 
 export function normalizePromptSlug(name: string): string {
@@ -245,20 +275,21 @@ async function advisoryLock(client: PoolClient, projectId: string, slug: string)
 }
 
 function mapVersion(row: Row): PromptVersion {
-  const previousSource = nullableStringValue(row, "previous_source");
-  const source = stringValue(row, "source");
+  const previousMessages = row.previous_messages === null || typeof row.previous_messages === "undefined"
+    ? null
+    : promptMessages(row, "previous_messages");
+  const messages = promptMessages(row, "messages");
   return {
     id: stringValue(row, "slug"),
     version: positiveInteger(row.version, "version"),
-    role: promptRole(row),
-    source,
+    messages,
     model: nullableStringValue(row, "model"),
     settings: jsonObjectValue(row, "settings"),
     change_summary: stringValue(row, "change_summary"),
     created_by: stringValue(row, "created_by"),
     created_at: timestampValue(row, "created_at"),
     content_hash: stringValue(row, "content_hash"),
-    diff: previousSource === null ? null : boundedTextualVersionDiff(previousSource, source),
+    diff: previousMessages === null ? null : boundedTextualVersionDiff(messagesText(previousMessages), messagesText(messages)),
   };
 }
 
@@ -273,16 +304,15 @@ function mapPrompt(row: Row): Prompt {
 
 const versionColumns = `
   p.slug,
-  p.role,
   v.version,
-  v.messages->0->>'content' AS source,
+  v.messages,
   v.model,
   v.settings,
   v.change_message AS change_summary,
   v.created_by,
   v.created_at,
   v.content_hash,
-  previous_version.messages->0->>'content' AS previous_source`;
+  previous_version.messages AS previous_messages`;
 
 const previousVersionJoin = `
   LEFT JOIN prompt_versions AS previous_version
@@ -340,6 +370,10 @@ function boundedTextualVersionDiff(previous: string, current: string): string | 
   }
 }
 
+function messagesText(messages: readonly PromptMessage[]): string {
+  return messages.map((message) => `${message.role}:\n${message.content}`).join("\n\n");
+}
+
 export async function listProjects(pool: Pick<Pool, "query">): Promise<{ items: Project[]; total: number }> {
   return read(async () => {
     const countRows = await query<Row>(pool, "SELECT count(*) AS total FROM projects");
@@ -387,8 +421,7 @@ export type CreatePromptInput = {
   project_id: string;
   name: string;
   description?: string | null;
-  role: PromptRole;
-  source: string;
+  messages: PromptMessage[];
   model?: string | null;
   settings?: JsonObject;
   change_summary?: string;
@@ -424,16 +457,16 @@ async function insertVersion(
   input: {
     promptId: string;
     slug: string;
-    role: PromptRole;
     version: number;
-    source: string;
+    messages: PromptMessage[];
     model: string | null;
     settings: string;
     changeSummary: string;
     actor: string;
   },
 ): Promise<PromptVersion> {
-  const messages = JSON.stringify([{ role: input.role, content: input.source }]);
+  const messages = JSON.stringify(input.messages);
+  const content = input.messages.find((message) => message.role === "user")?.content ?? input.messages[0]!.content;
   const rows = await query<Row>(
     client,
     `INSERT INTO prompt_versions (
@@ -441,27 +474,25 @@ async function insertVersion(
      ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $5::jsonb, $7, $8)
      RETURNING
        $9::text AS slug,
-       $10::text AS role,
        version,
-       messages->0->>'content' AS source,
+       messages,
        model,
        settings,
        change_message AS change_summary,
        created_by,
        created_at,
        content_hash,
-       NULL::text AS previous_source`,
+       NULL::jsonb AS previous_messages`,
     [
       input.promptId,
-      input.version,
-      input.source,
+       input.version,
+       content,
       input.model,
       input.settings,
       messages,
       input.changeSummary,
       input.actor,
       input.slug,
-      input.role,
     ],
   );
   const row = rows[0];
@@ -471,8 +502,7 @@ async function insertVersion(
 
 export async function createPrompt(pool: Pick<Pool, "connect">, input: CreatePromptInput): Promise<Prompt> {
   const name = normalizedName(input.name);
-  const role = roleValue(input.role);
-  const source = sourceValue(input.source);
+  const messages = messagesValue(input.messages);
   const description = input.description === undefined ? null : input.description;
   if (description !== null && typeof description !== "string") throw error("BAD_REQUEST", "description must be a string or null");
   const model = modelValue(input.model);
@@ -488,19 +518,18 @@ export async function createPrompt(pool: Pick<Pool, "connect">, input: CreatePro
     const slug = await selectAvailableSlug(client, input.project_id, baseSlug);
     const promptRows = await query<Row>(
       client,
-      `INSERT INTO prompts (id, project_id, name, slug, description, role)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO prompts (id, project_id, name, slug, description)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING project_id, name, slug, description`,
-      [promptId, input.project_id, name, slug, description, role],
+      [promptId, input.project_id, name, slug, description],
     );
     const promptRow = promptRows[0];
     if (!promptRow) throw error("INTERNAL", "Prompt insert returned no row");
     const version = await insertVersion(client, {
       promptId,
       slug,
-      role,
       version: 1,
-      source,
+      messages,
       model,
       settings,
       changeSummary,
@@ -554,7 +583,7 @@ export type CreatePromptVersionInput = {
   project_id: string;
   slug: string;
   base_version: number;
-  source: string;
+  messages: PromptMessage[];
   model?: string | null;
   settings?: JsonObject;
   change_summary: string;
@@ -562,7 +591,7 @@ export type CreatePromptVersionInput = {
 };
 
 export async function createPromptVersion(pool: Pick<Pool, "connect">, input: CreatePromptVersionInput): Promise<PromptVersion> {
-  const source = sourceValue(input.source);
+  const messages = messagesValue(input.messages);
   const changeSummary = normalizedSummary(input.change_summary);
   const actor = normalizedActor(input.actor);
   if (!Number.isSafeInteger(input.base_version) || input.base_version < 1) throw error("BAD_REQUEST", "base_version must be a positive integer");
@@ -572,7 +601,7 @@ export async function createPromptVersion(pool: Pick<Pool, "connect">, input: Cr
     await requireProject(client, input.project_id, true);
     const promptRows = await query<Row>(
       client,
-      `SELECT id, slug, role FROM prompts
+      `SELECT id, slug FROM prompts
        WHERE project_id = $1 AND slug = $2
        FOR UPDATE`,
       [input.project_id, input.slug],
@@ -597,9 +626,8 @@ export async function createPromptVersion(pool: Pick<Pool, "connect">, input: Cr
     return insertVersion(client, {
       promptId: stringValue(prompt, "id"),
       slug: stringValue(prompt, "slug"),
-      role: promptRole(prompt),
       version: latestVersion + 1,
-      source,
+      messages,
       model,
       settings,
       changeSummary,
@@ -611,17 +639,19 @@ export async function createPromptVersion(pool: Pick<Pool, "connect">, input: Cr
 export async function renderPrompt(
   pool: Pick<Pool, "query">,
   input: { project_id: string; slug: string; version?: number; data: JsonObject },
-): Promise<{ id: string; version: number; role: PromptRole; content_hash: string; output: string; warnings: { code: "MISSING_VARIABLE"; path: string }[] }> {
+): Promise<{ id: string; version: number; content_hash: string; messages: PromptMessage[]; warnings: { code: "MISSING_VARIABLE"; role: PromptRole; path: string }[] }> {
   return read(async () => {
     const prompt = await getPrompt(pool, { project_id: input.project_id, slug: input.slug, version: input.version });
-    const rendered = renderPromptTemplateWithWarnings(prompt.source, input.data);
+    const messages = prompt.messages.map((message) => {
+      const rendered = renderPromptTemplateWithWarnings(message.content, input.data);
+      return { message: { role: message.role, content: rendered.output }, warnings: rendered.warnings };
+    });
     return {
       id: prompt.id,
       version: prompt.version,
-      role: prompt.role,
       content_hash: prompt.content_hash,
-      output: rendered.output,
-      warnings: rendered.warnings,
+      messages: messages.map(({ message }) => message),
+      warnings: messages.flatMap(({ message, warnings }) => warnings.map((warning) => ({ ...warning, role: message.role }))),
     };
   });
 }

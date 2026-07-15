@@ -2,7 +2,6 @@ import * as React from "react";
 import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
-import { Badge } from "../components/ui/badge";
 import { Button, buttonVariants } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -139,7 +138,6 @@ function PromptVersionDetails({ prompt }: { prompt: Prompt }) {
       <CardHeader><CardTitle>Version v{prompt.version}</CardTitle></CardHeader>
       <CardContent className="space-y-5">
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
-          <div><dt className="text-muted-foreground">Role</dt><dd><Badge variant="secondary">{prompt.role}</Badge></dd></div>
           <div><dt className="text-muted-foreground">Content hash</dt><dd className="break-all font-mono text-xs">{prompt.content_hash}</dd></div>
           <div><dt className="text-muted-foreground">Created by</dt><dd>{prompt.created_by}</dd></div>
           <div><dt className="text-muted-foreground">Created</dt><dd><time dateTime={prompt.created_at}>{formatDate(prompt.created_at)}</time></dd></div>
@@ -147,7 +145,15 @@ function PromptVersionDetails({ prompt }: { prompt: Prompt }) {
           <div><dt className="text-muted-foreground">Change summary</dt><dd>{prompt.change_summary}</dd></div>
         </dl>
         <div className="space-y-2"><h2 className="text-sm font-medium">Settings</h2><pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify(prompt.settings, null, 2)}</pre></div>
-        <div className="space-y-2"><h2 className="text-sm font-medium">Source</h2><pre className="overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-sm" data-testid="prompt-source">{prompt.source}</pre></div>
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium">Messages</h2>
+          {prompt.messages.map((message) => (
+            <div key={message.role} className="space-y-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{message.role}</p>
+              <pre className="overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-sm" data-testid={`prompt-message-${message.role}`}>{message.content}</pre>
+            </div>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );

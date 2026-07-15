@@ -43,7 +43,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Project** — tenancy boundary (`project_id` on everything). Postgres, UUID-keyed.
 - **Agent** — versioned, typed entity. Multi-tenant, versioned, has a version history.
 - **Manifest** — serialized form of an Agent (prompts + tools + routing + guardrails + knowledge + deps as one atomic unit). Pinned to eval runs for bisectable regressions and atomic rollback.
-- **Prompt** — immutable single-role Mustache template, scoped to a Project; its canonical public ID is the Project-local slug, while `slug@version` is display-only. See `apps/api/src/db/prompts.ts`.
+- **Prompt** — immutable collection of up to one system and one user Mustache message, scoped to a Project; its canonical public ID is the Project-local slug, while `slug@version` is display-only. See `apps/api/src/db/prompts.ts`.
 - **Prompt provenance** — typed `(id, version, content_hash)` from a generation observation's atomic `astraea.prompt.*` OTLP tuple; `GET /v1/prompt-provenance/{id}` reports whether that scoped tuple is `active`, `deleted`, or `unknown`, without source or render data. All `astraea.prompt.*` input attributes are stripped before metadata storage or events. See `apps/api/src/db/observation-metadata.ts` and `apps/api/src/routes/prompt-provenance.ts`.
 - **Prompt tombstone** — immutable `(project_id, slug)` reservation left by a hard deletion; prevents canonical prompt ID reuse. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Prompt deletion audit** — immutable, content-free deletion record: project ID, internal prompt ID, slug, deleting actor, timestamp, and deleted version count. See `infra/db/migrations/0009_prompt_management_canonical.sql`.

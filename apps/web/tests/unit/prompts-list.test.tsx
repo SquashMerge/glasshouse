@@ -26,7 +26,7 @@ describe("PromptsPage", () => {
   beforeEach(() => listPrompts.mockReset());
   afterEach(cleanup);
 
-  it("lists the selected project's name, canonical ID, role, latest version, and time", async () => {
+  it("lists the selected project's name, canonical ID, latest version, and time", async () => {
     listPrompts.mockResolvedValue({
       items: [{
         id: "support-agent",
@@ -52,7 +52,6 @@ describe("PromptsPage", () => {
     const row = await screen.findByTestId("prompt-row");
     expect(row).toHaveTextContent("Support Agent");
     expect(row).toHaveTextContent("support-agent");
-    expect(row).toHaveTextContent("system");
     expect(row).toHaveTextContent("v4");
     expect(row).toHaveTextContent("2026");
     expect(listPrompts).toHaveBeenCalledWith(PROJECT_ID);

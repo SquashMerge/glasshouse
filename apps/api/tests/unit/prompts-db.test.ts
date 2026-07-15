@@ -68,16 +68,15 @@ const HASH = "a".repeat(64);
 
 const versionRow = {
   slug: "support-agent",
-  role: "system",
   version: 2,
-  source: "Current {{customer}}",
+  messages: [{ role: "system", content: "Current {{customer}}" }],
   model: "gpt-test",
   settings: { temperature: 0.4 },
   change_summary: "Clarify customer context",
   created_by: "trusted-admin",
   created_at: CREATED_AT,
   content_hash: HASH,
-  previous_source: "Previous {{customer}}",
+  previous_messages: [{ role: "system", content: "Previous {{customer}}" }],
 };
 
 function transactionPool(pool: MockPool): Pick<Pool, "connect"> {
@@ -140,19 +139,18 @@ describe("prompt repository", () => {
     }
   });
 
-  it("rejects oversized new source before opening a transaction while keeping legacy retrieval independent", async () => {
+  it("rejects oversized prompt messages before opening a transaction", async () => {
     const pool = new MockPool();
     await expectError(createPrompt(transactionPool(pool), {
       project_id: PROJECT,
       name: "Support Agent",
-      role: "system",
-      source: "x".repeat(MAX_PROMPT_SOURCE_CHARS + 1),
+      messages: [{ role: "system", content: "x".repeat(MAX_PROMPT_SOURCE_CHARS + 1) }],
       actor: "trusted-admin",
     }), "BAD_REQUEST");
     expect(pool.client.calls).toHaveLength(0);
   });
 
-  it("creates a role-matched canonical source snapshot with context actor and no public UUID", async () => {
+  it("creates a combined message snapshot with context actor and no public UUID", async () => {
     const pool = new MockPool([], [
       { rows: [] },
       { rows: [{ id: PROJECT }] },
@@ -160,15 +158,14 @@ describe("prompt repository", () => {
       { rows: [] },
       { rows: [] },
       { rows: [{ project_id: PROJECT, name: "Support Agent", slug: "support-agent", description: null }] },
-      { rows: [{ ...versionRow, slug: "support-agent", version: 1, source: "Help {{customer}}", previous_source: null, model: null, settings: {}, change_summary: "Initial version" }] },
+      { rows: [{ ...versionRow, slug: "support-agent", version: 1, messages: [{ role: "system", content: "Help {{customer}}" }, { role: "user", content: "How can I help {{customer}}?" }], previous_messages: null, model: null, settings: {}, change_summary: "Initial version" }] },
       { rows: [] },
     ]);
 
     const result = await createPrompt(transactionPool(pool), {
       project_id: PROJECT,
       name: "Support Agent",
-      role: "system",
-      source: "Help {{customer}}",
+      messages: [{ role: "system", content: "Help {{customer}}" }, { role: "user", content: "How can I help {{customer}}?" }],
       actor: "trusted-admin",
     });
 
@@ -178,8 +175,7 @@ describe("prompt repository", () => {
       name: "Support Agent",
       description: null,
       version: 1,
-      role: "system",
-      source: "Help {{customer}}",
+      messages: [{ role: "system", content: "Help {{customer}}" }, { role: "user", content: "How can I help {{customer}}?" }],
       model: null,
       settings: {},
       change_summary: "Initial version",
@@ -193,10 +189,10 @@ describe("prompt repository", () => {
     expect(pool.client.calls[2]?.values).toEqual([`prompt:${PROJECT}:support-agent`]);
     expect(pool.client.calls[6]?.values?.slice(1, 8)).toEqual([
       1,
-      "Help {{customer}}",
+      "How can I help {{customer}}?",
       null,
       "{}",
-      '[{"role":"system","content":"Help {{customer}}"}]',
+       '[{"role":"system","content":"Help {{customer}}"},{"role":"user","content":"How can I help {{customer}}?"}]',
       "Initial version",
       "trusted-admin",
     ]);
@@ -224,15 +220,14 @@ describe("prompt repository", () => {
       { rows: [] },
       { rows: [] },
       { rows: [{ project_id: PROJECT, name: "Support Agent", slug: "support-agent-3", description: null }] },
-      { rows: [{ ...versionRow, slug: "support-agent-3", version: 1, source: "source", previous_source: null, model: null, settings: {}, change_summary: "Initial version" }] },
+      { rows: [{ ...versionRow, slug: "support-agent-3", version: 1, messages: [{ role: "system", content: "source" }], previous_messages: null, model: null, settings: {}, change_summary: "Initial version" }] },
       { rows: [] },
     ]);
 
     const result = await createPrompt(transactionPool(pool), {
       project_id: PROJECT,
       name: "Support Agent",
-      role: "system",
-      source: "source",
+      messages: [{ role: "system", content: "source" }],
       actor: "trusted-admin",
     });
 
@@ -253,14 +248,13 @@ describe("prompt repository", () => {
       { rows: [] },
       { rows: [] },
       { rows: [{ project_id: PROJECT, name: longName, slug: `${"a".repeat(62)}-2`, description: null }] },
-      { rows: [{ ...versionRow, slug: `${"a".repeat(62)}-2`, version: 1, source: "source", previous_source: null, model: null, settings: {}, change_summary: "Initial version" }] },
+      { rows: [{ ...versionRow, slug: `${"a".repeat(62)}-2`, version: 1, messages: [{ role: "system", content: "source" }], previous_messages: null, model: null, settings: {}, change_summary: "Initial version" }] },
       { rows: [] },
     ]);
     const longResult = await createPrompt(transactionPool(longPool), {
       project_id: PROJECT,
       name: longName,
-      role: "system",
-      source: "source",
+      messages: [{ role: "system", content: "source" }],
       actor: "trusted-admin",
     });
     expect(longResult.id).toBe(`${"a".repeat(62)}-2`);
@@ -279,8 +273,7 @@ describe("prompt repository", () => {
     await expectError(createPrompt(transactionPool(pool), {
       project_id: PROJECT,
       name: "Support Agent",
-      role: "system",
-      source: "source",
+      messages: [{ role: "system", content: "source" }],
       actor: "trusted-admin",
     }), "CONFLICT");
     expect(pool.client.calls.map((call) => call.text)).toEqual([
@@ -296,9 +289,9 @@ describe("prompt repository", () => {
     const inheritancePool = new MockPool([], [
       { rows: [] },
       { rows: [{ id: PROJECT }] },
-      { rows: [{ id: "internal-prompt-id", slug: "support-agent", role: "system" }] },
+      { rows: [{ id: "internal-prompt-id", slug: "support-agent" }] },
       { rows: [{ version: 2, model: "gpt-test", settings: { temperature: 0.4 } }] },
-      { rows: [{ ...versionRow, version: 3, source: "new source", previous_source: null }] },
+      { rows: [{ ...versionRow, version: 3, messages: [{ role: "user", content: "new source" }], previous_messages: null }] },
       { rows: [] },
     ]);
 
@@ -306,7 +299,7 @@ describe("prompt repository", () => {
       project_id: PROJECT,
       slug: "support-agent",
       base_version: 2,
-      source: "new source",
+      messages: [{ role: "user", content: "new source" }],
       change_summary: "Add detail",
       actor: "trusted-admin",
     });
@@ -317,13 +310,13 @@ describe("prompt repository", () => {
       "new source",
       "gpt-test",
       '{"temperature":0.4}',
-      '[{"role":"system","content":"new source"}]',
+       '[{"role":"user","content":"new source"}]',
     ]);
 
     const stalePool = new MockPool([], [
       { rows: [] },
       { rows: [{ id: PROJECT }] },
-      { rows: [{ id: "internal-prompt-id", slug: "support-agent", role: "system" }] },
+      { rows: [{ id: "internal-prompt-id", slug: "support-agent" }] },
       { rows: [{ version: 3, model: null, settings: {} }] },
       { rows: [] },
     ]);
@@ -331,7 +324,7 @@ describe("prompt repository", () => {
       project_id: PROJECT,
       slug: "support-agent",
       base_version: 2,
-      source: "new source",
+      messages: [{ role: "user", content: "new source" }],
       model: null,
       settings: {},
       change_summary: "Reset model and settings",
@@ -348,16 +341,16 @@ describe("prompt repository", () => {
     const replacementPool = new MockPool([], [
       { rows: [] },
       { rows: [{ id: PROJECT }] },
-      { rows: [{ id: "internal-prompt-id", slug: "support-agent", role: "system" }] },
+      { rows: [{ id: "internal-prompt-id", slug: "support-agent" }] },
       { rows: [{ version: 2, model: "gpt-test", settings: { temperature: 0.4 } }] },
-      { rows: [{ ...versionRow, version: 3, source: "cleared source", model: null, settings: {}, previous_source: null }] },
+      { rows: [{ ...versionRow, version: 3, messages: [{ role: "user", content: "cleared source" }], model: null, settings: {}, previous_messages: null }] },
       { rows: [] },
     ]);
     const cleared = await createPromptVersion(transactionPool(replacementPool), {
       project_id: PROJECT,
       slug: "support-agent",
       base_version: 2,
-      source: "cleared source",
+      messages: [{ role: "user", content: "cleared source" }],
       model: null,
       settings: {},
       change_summary: "Clear model and settings",
@@ -372,7 +365,7 @@ describe("prompt repository", () => {
       project_id: PROJECT,
       slug: "support-agent",
       base_version: 2,
-      source: "source",
+      messages: [{ role: "user", content: "source" }],
       settings: null as never,
       change_summary: "Reject null settings",
       actor: "trusted-admin",
@@ -380,41 +373,41 @@ describe("prompt repository", () => {
     expect(invalidSettingsPool.client.calls).toHaveLength(0);
   });
 
-  it("returns exact canonical source and version history only through project-scoped queries", async () => {
+  it("returns exact message collections and version history only through project-scoped queries", async () => {
     const getPool = new MockPool([
       { rows: [{ id: PROJECT }] },
       { rows: [{ ...versionRow, project_id: PROJECT, name: "Support Agent", description: "Helpful" }] },
     ]);
     const prompt = await getPrompt(readPool(getPool), { project_id: PROJECT, slug: "support-agent", version: 2 });
 
-    expect(prompt.source).toBe("Current {{customer}}");
-    expect(prompt.diff).toBe("--- previous\n+++ current\n+Current {{customer}}\n-Previous {{customer}}");
+    expect(prompt.messages).toEqual([{ role: "system", content: "Current {{customer}}" }]);
+    expect(prompt.diff).toContain("Current {{customer}}");
     expect(getPool.calls[1]?.values).toEqual([PROJECT, "support-agent", 2]);
     expect(getPool.calls[1]?.text).toContain("p.project_id = $1 AND p.slug = $2");
     expect(JSON.stringify(prompt)).not.toContain("internal-prompt-id");
 
     const malformedPool = new MockPool([
       { rows: [{ id: PROJECT }] },
-      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, version: 1, source: "Malformed {{template", previous_source: null }] },
+      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, version: 1, messages: [{ role: "system", content: "Malformed {{template" }], previous_messages: null }] },
     ]);
     const malformed = await getPrompt(readPool(malformedPool), { project_id: PROJECT, slug: "support-agent", version: 1 });
-    expect(malformed.source).toBe("Malformed {{template");
+    expect(malformed.messages).toEqual([{ role: "system", content: "Malformed {{template" }]);
 
     const oversizedLegacyPool = new MockPool([
       { rows: [{ id: PROJECT }] },
-      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, source: "current legacy source", previous_source: "x".repeat(MAX_DIFF_INPUT_CHARS + 1) }] },
+      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, messages: [{ role: "system", content: "current legacy source" }], previous_messages: [{ role: "system", content: "x".repeat(MAX_DIFF_INPUT_CHARS + 1) }] }] },
     ]);
     const oversizedLegacy = await getPrompt(readPool(oversizedLegacyPool), { project_id: PROJECT, slug: "support-agent", version: 2 });
-    expect(oversizedLegacy.source).toBe("current legacy source");
+    expect(oversizedLegacy.messages).toEqual([{ role: "system", content: "current legacy source" }]);
     expect(oversizedLegacy.diff).toBeNull();
 
     const historyPool = new MockPool([
       { rows: [{ id: PROJECT }] },
-      { rows: [versionRow, { ...versionRow, version: 1, source: "Previous {{customer}}", previous_source: null }] },
+      { rows: [versionRow, { ...versionRow, version: 1, messages: [{ role: "system", content: "Previous {{customer}}" }], previous_messages: null }] },
     ]);
     const history = await listPromptVersions(readPool(historyPool), { project_id: PROJECT, slug: "support-agent" });
     expect(history.items.map((item) => item.version)).toEqual([2, 1]);
-    expect(history.items[0]?.source).toBe("Current {{customer}}");
+    expect(history.items[0]?.messages).toEqual([{ role: "system", content: "Current {{customer}}" }]);
     expect(historyPool.calls[1]?.values).toEqual([PROJECT, "support-agent"]);
   });
 
@@ -428,7 +421,7 @@ describe("prompt repository", () => {
     expect(pool.calls[1]?.values).toEqual([OTHER_PROJECT, "support-agent"]);
   });
 
-  it("renders stored source as plain LLM text with deterministic missing-variable warnings", async () => {
+  it("renders each stored prompt message from valid nested JSON with deterministic missing-variable warnings", async () => {
     const pool = new MockPool([
       { rows: [{ id: PROJECT }] },
       { rows: [{
@@ -437,28 +430,30 @@ describe("prompt repository", () => {
         name: "Support Agent",
         description: null,
         version: 1,
-        source: "Hello {{customer}} {{missing}}",
-        previous_source: null,
+        messages: [
+          { role: "system", content: "Hello {{customer.name}} {{missing}}" },
+          { role: "user", content: "Help {{customer.name}}" },
+        ],
+        previous_messages: null,
       }] },
     ]);
     const rendered = await renderPrompt(readPool(pool), {
       project_id: PROJECT,
       slug: "support-agent",
-      data: { customer: "<&>" },
+      data: { customer: { name: "Ada" } },
     });
 
     expect(rendered).toEqual({
       id: "support-agent",
       version: 1,
-      role: "system",
       content_hash: HASH,
-      output: "Hello <&> ",
-      warnings: [{ code: "MISSING_VARIABLE", path: "missing" }],
+      messages: [{ role: "system", content: "Hello Ada " }, { role: "user", content: "Help Ada" }],
+      warnings: [{ code: "MISSING_VARIABLE", role: "system", path: "missing" }],
     });
 
     const oversizedSourcePool = new MockPool([
       { rows: [{ id: PROJECT }] },
-      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, source: "x".repeat(MAX_PROMPT_SOURCE_CHARS + 1), previous_source: null }] },
+      { rows: [{ ...versionRow, project_id: PROJECT, name: "Legacy Prompt", description: null, messages: [{ role: "system", content: "x".repeat(MAX_PROMPT_SOURCE_CHARS + 1) }], previous_messages: null }] },
     ]);
     await expectError(renderPrompt(readPool(oversizedSourcePool), {
       project_id: PROJECT,
