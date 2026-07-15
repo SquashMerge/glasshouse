@@ -2,40 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useProjectSelection } from "./ProjectProvider";
 import { Badge } from "./ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { getPromptProvenance } from "../lib/api";
+import { getPromptProvenance, type PromptProvenance } from "../lib/api";
 
-export interface PromptProvenance {
-  id: string;
-  version: number;
-  content_hash: string;
-}
-
-const PROMPT_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const CONTENT_HASH = /^[0-9a-f]{64}$/;
-
-export function parsePromptProvenance(metadata: string | undefined): PromptProvenance | null {
-  if (!metadata) return null;
-  try {
-    const parsed: unknown = JSON.parse(metadata);
-    if (!isRecord(parsed) || parsed.schema_version !== 1 || !Array.isArray(parsed.attributes) || !isRecord(parsed.prompt_provenance)) return null;
-    const provenance = parsed.prompt_provenance;
-    if (
-      typeof provenance.id !== "string" ||
-      !PROMPT_ID.test(provenance.id) ||
-      typeof provenance.version !== "number" ||
-      !Number.isSafeInteger(provenance.version) ||
-      provenance.version < 1 ||
-      typeof provenance.content_hash !== "string" ||
-      !CONTENT_HASH.test(provenance.content_hash)
-    ) return null;
-    return { id: provenance.id, version: provenance.version, content_hash: provenance.content_hash };
-  } catch {
-    return null;
-  }
-}
-
-export function PromptProvenanceCard({ metadata }: { metadata: string | undefined }) {
-  const provenance = parsePromptProvenance(metadata);
+export function PromptProvenanceCard({ provenance }: { provenance: PromptProvenance | null }) {
   const { selectedProjectId } = useProjectSelection();
   const statusQuery = useQuery({
     queryKey: ["prompt-provenance", selectedProjectId, provenance?.id, provenance?.version, provenance?.content_hash],
@@ -72,8 +41,4 @@ export function PromptProvenanceCard({ metadata }: { metadata: string | undefine
       </CardContent>
     </Card>
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

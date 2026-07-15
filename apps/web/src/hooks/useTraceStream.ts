@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useEventSource, type EventSourceStatus } from "./useEventSource";
+import type { ObservationMetadataInput } from "../lib/api";
 
 /**
  * `useTraceStream` — thin wrapper around `useEventSource` for the detail page.
@@ -31,6 +32,8 @@ const TRACE_ID_REGEX = /^[0-9a-f]{32}$/;
 export interface ObservationRowLike {
   observation_id: string;
   trace_id: string;
+  type?: "span" | "event" | "generation" | "tool";
+  metadata?: ObservationMetadataInput;
   [k: string]: unknown;
 }
 

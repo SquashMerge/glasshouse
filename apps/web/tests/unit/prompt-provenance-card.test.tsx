@@ -10,19 +10,16 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 }));
 vi.mock("../../src/lib/api", () => ({ getPromptProvenance }));
 
-import { parsePromptProvenance, PromptProvenanceCard } from "../../src/components/PromptProvenanceCard";
+import { PromptProvenanceCard } from "../../src/components/PromptProvenanceCard";
+import type { PromptProvenance } from "../../src/lib/api";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const HASH = "a".repeat(64);
-const metadata = JSON.stringify({
-  schema_version: 1,
-  attributes: [{ key: "gen_ai.request.model", value: { stringValue: "gpt-4o" } }],
-  prompt_provenance: { id: "support-agent", version: 7, content_hash: HASH },
-});
+const provenance = { id: "support-agent", version: 7, content_hash: HASH };
 
-function renderCard() {
+function renderCard(value: PromptProvenance | null = provenance) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><PromptProvenanceCard metadata={metadata} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><PromptProvenanceCard provenance={value} /></QueryClientProvider>);
 }
 
 describe("PromptProvenanceCard", () => {
@@ -51,17 +48,10 @@ describe("PromptProvenanceCard", () => {
     expect(getPromptProvenance).toHaveBeenCalledWith({ project_id: PROJECT_ID, id: "support-agent", version: 7, content_hash: HASH });
   });
 
-  it("accepts only the typed metadata tuple and never exposes arbitrary prompt attributes", () => {
-    expect(parsePromptProvenance(JSON.stringify({
-      schema_version: 1,
-      attributes: [{ key: "astraea.prompt.id", value: { stringValue: "other" } }],
-    }))).toBeNull();
-    expect(parsePromptProvenance(JSON.stringify({
-      schema_version: 1,
-      attributes: [],
-      prompt_provenance: { id: "support-agent", version: 7, content_hash: HASH.toUpperCase(), source: "secret source" },
-    }))).toBeNull();
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><PromptProvenanceCard metadata={JSON.stringify({ schema_version: 1, attributes: [], prompt_provenance: { id: "support-agent", version: 7, content_hash: HASH, source: "secret source" } })} /></QueryClientProvider>);
-    expect(screen.queryByText("secret source")).not.toBeInTheDocument();
+  it("renders an explanatory state when the typed provenance tuple is null", () => {
+    renderCard(null);
+
+    expect(screen.getByText("No prompt provenance was recorded for this generation.")).toBeInTheDocument();
+    expect(getPromptProvenance).not.toHaveBeenCalled();
   });
 });

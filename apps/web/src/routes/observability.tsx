@@ -18,6 +18,9 @@ import {
   type ListObservationsParams,
   type TraceRow,
   type ObservationRow,
+  normalizeObservationMetadata,
+  type ObservationMetadata,
+  type ObservationMetadataInput,
 } from "../lib/api";
 import { defaultRange, toApiParams, type TimeRange } from "../components/TimeRangePicker";
 import { useEventSource } from "../hooks/useEventSource";
@@ -243,7 +246,7 @@ function matchesObservationEvent(
     includesFolded(event.name, params.name) &&
     includesFolded(event.model, params.model) &&
     includesFolded(event.input_text, params.input_text) &&
-    includesFolded(event.metadata, params.agent_id) &&
+    includesFolded(metadataSearchText(event.metadata), params.agent_id) &&
     matchesDuration(event.duration_ms, params.duration) &&
     matchesTimeRange(event.start_time, range, params)
   );
@@ -549,17 +552,8 @@ export interface ObservationEvent {
   model?: string | null;
   input_text?: string;
   output_text?: string;
-  /**
-   * Optional pre-parsed metadata from the SSE payload. When present, the UI
-   * reads tool/model/type from it without a second fetch.
-   */
-  metadataParsed?: {
-    tool?: { name?: string };
-    model?: string;
-    type?: string;
-    [k: string]: unknown;
-  } | null;
-  metadata?: string;
+  metadataParsed?: ObservationMetadata | null;
+  metadata?: ObservationMetadataInput;
 }
 
 function useSpansData() {
@@ -649,7 +643,7 @@ function useSpansData() {
         model: event.model ?? null,
         input_text: event.input_text ?? "",
         output_text: event.output_text ?? "",
-        metadata: event.metadata ?? "",
+        metadata: normalizeObservationMetadata(event.metadata, event.type === "generation"),
       };
       setLiveRows((previous) => {
         const current = previous.scope === streamScope ? previous : emptyLiveRows<ObservationRow>(streamScope);
@@ -708,6 +702,16 @@ function useSpansData() {
     onFiltersChange,
     sse,
   };
+}
+
+function metadataSearchText(metadata: ObservationMetadataInput): string {
+  if (typeof metadata === "string") return metadata;
+  if (!metadata) return "";
+  try {
+    return JSON.stringify(metadata);
+  } catch {
+    return "";
+  }
 }
 
 /** SpansTab — page-owned query + SSE merge, rendered via FilterableTable. */
