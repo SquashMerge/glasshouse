@@ -1,7 +1,7 @@
 import type { ClickHouseClient } from "@clickhouse/client";
 import { ch } from "./clickhouse.js";
 import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
-import { serializeObservationMetadata } from "./observation-metadata.js";
+import { observationToInsertRow } from "./observation-row.js";
 
 interface ClickHouseRow {
   [key: string]: string | number | null | string[];
@@ -29,25 +29,6 @@ function traceToRow(t: NormalizedTrace): ClickHouseRow {
   };
 }
 
-function observationToRow(o: NormalizedObservation): ClickHouseRow {
-  return {
-    observation_id: o.observation_id,
-    trace_id: o.trace_id,
-    project_id: "",
-    parent_observation_id: o.parent_observation_id,
-    type: o.type,
-    name: o.name,
-    start_time: o.start_time,
-    end_time: o.end_time,
-    duration_ms: o.duration_ms,
-    status: o.status,
-    model: o.model,
-    input_text: o.input_text,
-    output_text: o.output_text,
-    metadata: serializeObservationMetadata(o.metadata),
-  };
-}
-
 export async function insertTraces(client: ClickHouseClient, traces: NormalizedTrace[]): Promise<void> {
   if (traces.length === 0) return;
   await client.insert({
@@ -61,7 +42,7 @@ export async function insertObservations(client: ClickHouseClient, observations:
   if (observations.length === 0) return;
   await client.insert({
     table: "observations",
-    values: observations.map(observationToRow),
+    values: observations.map(observationToInsertRow),
     format: "JSONEachRow",
   });
 }
