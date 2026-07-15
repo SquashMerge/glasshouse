@@ -124,225 +124,206 @@ function notFoundResponse(traceId: string): Response {
  * `GET /v1/traces/events` — one `event: trace\ndata: {trace: <TraceRow>}\n\n`
  * frame per `trace.created` bus event. Stays open until the client aborts.
  */
-export async function handleStreamTraceEvents(c: Context): Promise<Response> {
-  return streamSSE(c, async (stream) => {
-    let heartbeat: ReturnType<typeof setInterval> | null = null;
-    let unsubscribe: (() => void) | null = null;
-    let resolveWait: () => void = () => undefined;
-    const waitForAbort = new Promise<void>((resolve) => {
-      resolveWait = resolve;
-    });
-    const cleanup = () => {
-      if (heartbeat !== null) clearInterval(heartbeat);
-      heartbeat = null;
-      unsubscribe?.();
-      unsubscribe = null;
-      resolveWait();
-    };
-    stream.onAbort(cleanup);
-    if (stream.aborted) {
-      cleanup();
-      return;
-    }
+export type TraceEventRouteDependencies = {
+  defaultClient: typeof defaultClient;
+  getTrace: typeof queryGetTrace;
+  graceMs: number;
+  heartbeatMs: number;
+  subscribe: typeof subscribe;
+};
 
-    unsubscribe = subscribe("trace.created", (msg) => {
-      const trace = msg.payload.trace;
-      if (!trace) return;
-      void stream.writeSSE({
-        event: "trace",
-        data: JSON.stringify({ trace }),
+const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
+  defaultClient,
+  getTrace: queryGetTrace,
+  graceMs: GRACE_MS,
+  heartbeatMs: HEARTBEAT_MS,
+  subscribe,
+};
+
+export function createTraceEventHandlers(
+  dependencies: TraceEventRouteDependencies = productionTraceEventRouteDependencies,
+) {
+  const streamTraceEventsHandler = async (c: Context): Promise<Response> => {
+    return streamSSE(c, async (stream) => {
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let unsubscribe: (() => void) | null = null;
+      let resolveWait: () => void = () => undefined;
+      const waitForAbort = new Promise<void>((resolve) => {
+        resolveWait = resolve;
       });
+      const cleanup = () => {
+        if (heartbeat !== null) clearInterval(heartbeat);
+        heartbeat = null;
+        unsubscribe?.();
+        unsubscribe = null;
+        resolveWait();
+      };
+      stream.onAbort(cleanup);
+      if (stream.aborted) {
+        cleanup();
+        return;
+      }
+
+      unsubscribe = dependencies.subscribe("trace.created", (msg) => {
+        const trace = msg.payload.trace;
+        if (!trace) return;
+        void stream.writeSSE({ event: "trace", data: JSON.stringify({ trace }) });
+      });
+      heartbeat = setInterval(() => {
+        void stream.write(":heartbeat\n\n");
+      }, dependencies.heartbeatMs);
+
+      await stream.write(":ok\n\n");
+      if (stream.aborted) cleanup();
+      await waitForAbort;
     });
-    heartbeat = setInterval(() => {
-      void stream.write(":heartbeat\n\n");
-    }, HEARTBEAT_MS);
+  };
 
-    await stream.write(":ok\n\n");
-    if (stream.aborted) cleanup();
-    await waitForAbort;
-  });
-}
+  const streamObservationEventsHandler = async (c: Context): Promise<Response> => {
+    return streamSSE(c, async (stream) => {
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let unsubscribe: (() => void) | null = null;
+      let resolveWait: () => void = () => undefined;
+      const waitForAbort = new Promise<void>((resolve) => {
+        resolveWait = resolve;
+      });
+      const cleanup = () => {
+        if (heartbeat !== null) clearInterval(heartbeat);
+        heartbeat = null;
+        unsubscribe?.();
+        unsubscribe = null;
+        resolveWait();
+      };
+      stream.onAbort(cleanup);
+      if (stream.aborted) {
+        cleanup();
+        return;
+      }
 
-/**
- * `GET /v1/observations/events` — one
- * `event: observation\ndata: {observation, metadataParsed}\n\n` frame per
- * `observation.created` bus event. Both metadata fields use the typed
- * metadata envelope without a DB round-trip.
- */
-export async function handleStreamObservationEvents(c: Context): Promise<Response> {
-  return streamSSE(c, async (stream) => {
-    let heartbeat: ReturnType<typeof setInterval> | null = null;
-    let unsubscribe: (() => void) | null = null;
-    let resolveWait: () => void = () => undefined;
-    const waitForAbort = new Promise<void>((resolve) => {
-      resolveWait = resolve;
+      unsubscribe = dependencies.subscribe("observation.created", (msg) => {
+        const observation = msg.payload.observation;
+        if (!observation) return;
+        const presented = presentObservation(observation);
+        void stream.writeSSE({
+          event: "observation",
+          data: JSON.stringify({ observation: presented, metadataParsed: presented.metadata }),
+        });
+      });
+      heartbeat = setInterval(() => {
+        void stream.write(":heartbeat\n\n");
+      }, dependencies.heartbeatMs);
+
+      await stream.write(":ok\n\n");
+      if (stream.aborted) cleanup();
+      await waitForAbort;
     });
-    const cleanup = () => {
-      if (heartbeat !== null) clearInterval(heartbeat);
-      heartbeat = null;
-      unsubscribe?.();
-      unsubscribe = null;
-      resolveWait();
-    };
-    stream.onAbort(cleanup);
-    if (stream.aborted) {
-      cleanup();
-      return;
-    }
+  };
 
-    unsubscribe = subscribe("observation.created", (msg) => {
+  const streamTraceDetailEventsHandler = async (c: Context): Promise<Response> => {
+    const traceId = c.req.param("id")!;
+    const bufferedObservations: NormalizedObservation[] = [];
+    let forwardObservation: ((observation: NormalizedObservation) => void) | null = null;
+    const unsubscribe = dependencies.subscribe("observation.created", (msg) => {
       const observation = msg.payload.observation;
-      if (!observation) return;
-      const presented = presentObservation(observation);
-      void stream.writeSSE({
-        event: "observation",
-        data: JSON.stringify({ observation: presented, metadataParsed: presented.metadata }),
-      });
-    });
-    heartbeat = setInterval(() => {
-      void stream.write(":heartbeat\n\n");
-    }, HEARTBEAT_MS);
-
-    await stream.write(":ok\n\n");
-    if (stream.aborted) cleanup();
-    await waitForAbort;
-  });
-}
-
-/**
- * `GET /v1/traces/{id}/events` — snapshot + filtered live observations +
- * `event: status` complete after `TRACE_COMPLETE_GRACE_MS` of inactivity.
- *
- * Order of operations (pinned by the brief, see "Implementation plan /
- * Backend changes" §5):
- *   1. Validate params, then subscribe to `"observation.created"` before the
- *      snapshot query. Matching events are buffered until the snapshot is
- *      written, so the query gap cannot lose observations.
- *   2. Query the trace. A missing trace unsubscribes and returns 404 before
- *      `streamSSE` upgrades the response.
- *   3. Capture the snapshot observations.
- *   4. Write the snapshot frame.
- *   5. On each matching observation (filter by `trace_id === id`), write
- *      an observation frame AND reset the grace timer. On the timer firing
- *      (no new matching observations for `GRACE_MS`), write a status
- *      frame and close the stream.
- *   6. On client abort: clear the grace timer, clear the heartbeat, and
- *      unsubscribe.
- */
-export async function handleStreamTraceDetailEvents(c: Context): Promise<Response> {
-  const traceId = c.req.param("id")!;
-
-  const bufferedObservations: NormalizedObservation[] = [];
-  let forwardObservation: ((observation: NormalizedObservation) => void) | null = null;
-  const unsubscribe = subscribe("observation.created", (msg) => {
-    const observation = msg.payload.observation;
-    if (!observation || observation.trace_id !== traceId) return;
-    if (forwardObservation) forwardObservation(observation);
-    else bufferedObservations.push(observation);
-  });
-
-  let traceExists: Awaited<ReturnType<typeof queryGetTrace>>;
-  try {
-    traceExists = await queryGetTrace(defaultClient(), traceId);
-  } catch (err) {
-    unsubscribe();
-    console.error(`GET /v1/traces/{id}/events snapshot query failed:`, (err as Error).message);
-    return new Response(
-      JSON.stringify({ code: "INTERNAL", message: "Query failed; check server logs" }),
-      { status: 500, headers: { "content-type": "application/json" } },
-    );
-  }
-  if (!traceExists.trace) {
-    unsubscribe();
-    return notFoundResponse(traceId);
-  }
-  const snapshotTrace = traceExists.trace;
-
-  const snapshotObservations = traceExists.observations.map(presentObservation);
-
-  return streamSSE(c, async (stream) => {
-    let heartbeat: ReturnType<typeof setInterval> | null = null;
-    let graceTimer: ReturnType<typeof setTimeout> | null = null;
-    let closed = false;
-    let cleaned = false;
-    let resolveWait: () => void = () => undefined;
-    const waitForClose = new Promise<void>((resolve) => {
-      resolveWait = resolve;
+      if (!observation || observation.trace_id !== traceId) return;
+      if (forwardObservation) forwardObservation(observation);
+      else bufferedObservations.push(observation);
     });
 
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      closed = true;
-      if (graceTimer !== null) clearTimeout(graceTimer);
-      graceTimer = null;
-      if (heartbeat !== null) clearInterval(heartbeat);
-      heartbeat = null;
-      forwardObservation = null;
+    let traceExists: Awaited<ReturnType<typeof queryGetTrace>>;
+    try {
+      traceExists = await dependencies.getTrace(dependencies.defaultClient(), traceId);
+    } catch (err) {
       unsubscribe();
-      resolveWait();
-    };
-    stream.onAbort(cleanup);
-    if (stream.aborted) {
-      cleanup();
-      return;
+      console.error(`GET /v1/traces/{id}/events snapshot query failed:`, (err as Error).message);
+      return new Response(
+        JSON.stringify({ code: "INTERNAL", message: "Query failed; check server logs" }),
+        { status: 500, headers: { "content-type": "application/json" } },
+      );
     }
-
-    heartbeat = setInterval(() => {
-      void stream.write(":heartbeat\n\n");
-    }, HEARTBEAT_MS);
-    await stream.write(":ok\n\n");
-    if (stream.aborted) {
-      cleanup();
-      return;
+    if (!traceExists.trace) {
+      unsubscribe();
+      return notFoundResponse(traceId);
     }
+    const snapshotTrace = traceExists.trace;
 
-    const armGraceTimer = () => {
-      if (graceTimer !== null) clearTimeout(graceTimer);
-      graceTimer = setTimeout(() => {
-        if (closed) return;
+    const snapshotObservations = traceExists.observations.map(presentObservation);
+    return streamSSE(c, async (stream) => {
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let graceTimer: ReturnType<typeof setTimeout> | null = null;
+      let closed = false;
+      let cleaned = false;
+      let resolveWait: () => void = () => undefined;
+      const waitForClose = new Promise<void>((resolve) => {
+        resolveWait = resolve;
+      });
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         closed = true;
-        // Fire the final status frame, then close. Cleanup runs after we
-        // resolve the outer promise below.
-        void stream
-          .writeSSE({
+        if (graceTimer !== null) clearTimeout(graceTimer);
+        graceTimer = null;
+        if (heartbeat !== null) clearInterval(heartbeat);
+        heartbeat = null;
+        forwardObservation = null;
+        unsubscribe();
+        resolveWait();
+      };
+      stream.onAbort(cleanup);
+      if (stream.aborted) {
+        cleanup();
+        return;
+      }
+
+      heartbeat = setInterval(() => {
+        void stream.write(":heartbeat\n\n");
+      }, dependencies.heartbeatMs);
+      await stream.write(":ok\n\n");
+      if (stream.aborted) {
+        cleanup();
+        return;
+      }
+
+      const armGraceTimer = () => {
+        if (graceTimer !== null) clearTimeout(graceTimer);
+        graceTimer = setTimeout(() => {
+          if (closed) return;
+          closed = true;
+          void stream.writeSSE({
             event: "status",
             data: JSON.stringify({ status: "complete" }),
-          })
-          .finally(cleanup);
-      }, GRACE_MS);
-    };
+          }).finally(cleanup);
+        }, dependencies.graceMs);
+      };
+      const sendObservation = (observation: NormalizedObservation) => {
+        if (closed) return;
+        armGraceTimer();
+        void stream.writeSSE({
+          event: "observation",
+          data: JSON.stringify({ observation: presentObservation(observation) }),
+        });
+      };
 
-    const sendObservation = (observation: NormalizedObservation) => {
-      if (closed) return;
-      armGraceTimer();
-      void stream.writeSSE({
-        event: "observation",
-        data: JSON.stringify({ observation: presentObservation(observation) }),
+      await stream.writeSSE({
+        event: "snapshot",
+        data: JSON.stringify({ trace: snapshotTrace, observations: snapshotObservations }),
       });
-    };
-
-    // (4) Snapshot frame. We wrote the snapshot AFTER subscribing, so any
-    // observation that arrived during the snapshot query may also appear
-    // here (or as a live event — the client dedupes by `observation_id`).
-    await stream.writeSSE({
-      event: "snapshot",
-      data: JSON.stringify({ trace: snapshotTrace, observations: snapshotObservations }),
+      forwardObservation = sendObservation;
+      for (const observation of bufferedObservations.splice(0)) sendObservation(observation);
+      armGraceTimer();
+      await waitForClose;
     });
+  };
 
-    forwardObservation = sendObservation;
-    for (const observation of bufferedObservations.splice(0)) sendObservation(observation);
-
-    // Arm the grace timer right after the snapshot so that a trace with NO
-    // further matching observations still flips to "complete" — the brief
-    // (§"Implementation plan / Backend changes" item 5) defines the grace
-    // as "no new events for `graceMs`". The first matching observation
-    // (above) clears + re-arms it.
-    armGraceTimer();
-
-    // Keep the stream alive until either:
-    //   - the client disconnects (onAbort → resolveWait)
-    //   - the grace timer fires after no matching observation for GRACE_MS
-    await waitForClose;
-  });
+  return {
+    handleStreamObservationEvents: streamObservationEventsHandler,
+    handleStreamTraceDetailEvents: streamTraceDetailEventsHandler,
+    handleStreamTraceEvents: streamTraceEventsHandler,
+  };
 }
+
+export const {
+  handleStreamObservationEvents,
+  handleStreamTraceDetailEvents,
+  handleStreamTraceEvents,
+} = createTraceEventHandlers();

@@ -3,20 +3,18 @@
 // We mock the ClickHouse writer so no DB is required and we can count calls.
 
 import { describe, it, expect, beforeAll, beforeEach, mock } from "bun:test";
+import { _resetForTests, publishSync, subscribe } from "../../src/lib/event-bus";
+import { createOtlpIngestHandler } from "../../src/routes/otlp";
 
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
-
-mock.module("../../src/db/traces-writer", () => ({
-  insertTraces,
-  insertObservations,
+const handleOtlpIngest = createOtlpIngestHandler({
   defaultClient,
-}));
-
-// Import the bus AFTER the module mock so any bus Valkey wiring is captured.
-const { _resetForTests, subscribe } = await import("../../src/lib/event-bus");
-const { handleOtlpIngest } = await import("../../src/routes/otlp");
+  insertObservations,
+  insertTraces,
+  publishSync,
+});
 
 const USER = "astraea";
 const PASS = "secret";

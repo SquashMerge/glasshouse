@@ -9,30 +9,42 @@ import { handleOtlpIngest } from "./routes/otlp.js";
 const PORT = Number(process.env.API_PORT ?? 3000);
 const MAX_BODY_BYTES = Number(process.env.API_MAX_BODY_BYTES ?? 1_048_576);
 
-const apiApp = new Hono();
+export type ApiDependencies = {
+  handleHealth: typeof handleHealth;
+  handleOtlpIngest: typeof handleOtlpIngest;
+};
 
-apiApp.use(securityHeaders());
-// Body size limit applied before auth so unauth'd large payloads don't waste auth work.
-apiApp.use(bodySizeLimit(MAX_BODY_BYTES));
+const productionApiDependencies: ApiDependencies = { handleHealth, handleOtlpIngest };
 
-apiApp.get("/health", (c) => handleHealth());
-apiApp.get("/v1/health", (c) => handleHealth());
+export function createApiApp(dependencies: ApiDependencies = productionApiDependencies): Hono {
+  const apiApp = new Hono();
 
-apiApp.use("/v1/prompts/*", async (c, next) => {
-  c.header("Cache-Control", "no-store");
-  await next();
-});
-apiApp.use("/v1/prompt-provenance/*", async (c, next) => {
-  c.header("Cache-Control", "no-store");
-  await next();
-});
-apiApp.use("/v1/*", basicAuthMiddleware());
+  apiApp.use(securityHeaders());
+  // Body size limit applied before auth so unauth'd large payloads don't waste auth work.
+  apiApp.use(bodySizeLimit(MAX_BODY_BYTES));
 
-// OTLP is mounted as a raw handler (not via openapiApp) because it consumes
-// the raw JSON body and returns a non-typed OTLP response shape.
-apiApp.post("/v1/otel/v1/traces", (c) => handleOtlpIngest(c.req.raw));
+  apiApp.get("/health", () => dependencies.handleHealth());
+  apiApp.get("/v1/health", () => dependencies.handleHealth());
 
-apiApp.route("/", openapiApp);
+  apiApp.use("/v1/prompts/*", async (c, next) => {
+    c.header("Cache-Control", "no-store");
+    await next();
+  });
+  apiApp.use("/v1/prompt-provenance/*", async (c, next) => {
+    c.header("Cache-Control", "no-store");
+    await next();
+  });
+  apiApp.use("/v1/*", basicAuthMiddleware());
+
+  // OTLP is mounted as a raw handler (not via openapiApp) because it consumes
+  // the raw JSON body and returns a non-typed OTLP response shape.
+  apiApp.post("/v1/otel/v1/traces", (c) => dependencies.handleOtlpIngest(c.req.raw));
+
+  apiApp.route("/", openapiApp);
+  return apiApp;
+}
+
+const apiApp = createApiApp();
 
 console.log(`✓ Astraea API listening on :${PORT}`);
 console.log(`  OpenAPI JSON: http://localhost:${PORT}/openapi.json`);

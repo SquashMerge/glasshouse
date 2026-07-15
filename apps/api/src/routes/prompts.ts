@@ -45,6 +45,28 @@ function failure(c: Context, cause: unknown): Response {
   return c.json({ code: known.code, message: known.code === "INTERNAL" ? "Prompt operation failed" : known.message }, known.status);
 }
 
+export type PromptRouteDependencies = {
+  pool: typeof pgPool;
+  createPrompt: typeof createPromptRecord;
+  createPromptVersion: typeof createPromptVersionRecord;
+  deletePrompt: typeof deletePromptRecord;
+  getPrompt: typeof getPromptRecord;
+  listPromptVersions: typeof listPromptVersionsRecord;
+  listPrompts: typeof listPromptsRecord;
+  renderPrompt: typeof renderPromptRecord;
+};
+
+const productionPromptRouteDependencies: PromptRouteDependencies = {
+  pool: pgPool,
+  createPrompt: createPromptRecord,
+  createPromptVersion: createPromptVersionRecord,
+  deletePrompt: deletePromptRecord,
+  getPrompt: getPromptRecord,
+  listPromptVersions: listPromptVersionsRecord,
+  listPrompts: listPromptsRecord,
+  renderPrompt: renderPromptRecord,
+};
+
 export const listPrompts = createRoute({
   method: "get",
   path: "/v1/prompts",
@@ -54,15 +76,6 @@ export const listPrompts = createRoute({
   request: { query: ProjectIdQuery },
   responses: { 200: { description: "OK", content: { "application/json": { schema: PromptList } } }, ...PromptErrorResponses },
 });
-
-export async function handleListPrompts(c: Parameters<RouteHandler<typeof listPrompts>>[0]): Promise<Response> {
-  try {
-    const query = c.req.valid("query") as { project_id: string };
-    return c.json(await listPromptsRecord(pgPool(), query.project_id));
-  } catch (cause) {
-    return failure(c, cause);
-  }
-}
 
 export const createPrompt = createRoute({
   method: "post",
@@ -74,15 +87,6 @@ export const createPrompt = createRoute({
   responses: { 201: { description: "Prompt created", content: { "application/json": { schema: Prompt } } }, ...PromptErrorResponses },
 });
 
-export async function handleCreatePrompt(c: Parameters<RouteHandler<typeof createPrompt>>[0]): Promise<Response> {
-  try {
-    const body = c.req.valid("json") as Omit<Parameters<typeof createPromptRecord>[1], "actor">;
-    return c.json(await createPromptRecord(pgPool(), { ...body, actor: actor(c) }), 201);
-  } catch (cause) {
-    return failure(c, cause);
-  }
-}
-
 export const getPrompt = createRoute({
   method: "get",
   path: "/v1/prompts/{id}",
@@ -92,16 +96,6 @@ export const getPrompt = createRoute({
   request: { params: PromptIdParam, query: PromptVersionQuery },
   responses: { 200: { description: "OK", content: { "application/json": { schema: Prompt } } }, ...PromptErrorResponses },
 });
-
-export async function handleGetPrompt(c: Parameters<RouteHandler<typeof getPrompt>>[0]): Promise<Response> {
-  try {
-    const params = c.req.valid("param") as { id: string };
-    const query = c.req.valid("query") as { project_id: string; version?: number };
-    return c.json(await getPromptRecord(pgPool(), { project_id: query.project_id, slug: params.id, version: query.version }));
-  } catch (cause) {
-    return failure(c, cause);
-  }
-}
 
 export const listPromptVersions = createRoute({
   method: "get",
@@ -113,16 +107,6 @@ export const listPromptVersions = createRoute({
   responses: { 200: { description: "OK", content: { "application/json": { schema: PromptVersionList } } }, ...PromptErrorResponses },
 });
 
-export async function handleListPromptVersions(c: Parameters<RouteHandler<typeof listPromptVersions>>[0]): Promise<Response> {
-  try {
-    const params = c.req.valid("param") as { id: string };
-    const query = c.req.valid("query") as { project_id: string };
-    return c.json(await listPromptVersionsRecord(pgPool(), { project_id: query.project_id, slug: params.id }));
-  } catch (cause) {
-    return failure(c, cause);
-  }
-}
-
 export const createPromptVersion = createRoute({
   method: "post",
   path: "/v1/prompts/{id}/versions",
@@ -132,17 +116,6 @@ export const createPromptVersion = createRoute({
   request: { params: PromptIdParam, query: ProjectIdQuery, body: { content: { "application/json": { schema: PromptVersionCreate } } } },
   responses: { 201: { description: "Version created", content: { "application/json": { schema: PromptVersion } } }, ...PromptErrorResponses },
 });
-
-export async function handleCreatePromptVersion(c: Parameters<RouteHandler<typeof createPromptVersion>>[0]): Promise<Response> {
-  try {
-    const params = c.req.valid("param") as { id: string };
-    const query = c.req.valid("query") as { project_id: string };
-    const body = c.req.valid("json") as Omit<Parameters<typeof createPromptVersionRecord>[1], "project_id" | "slug" | "actor">;
-    return c.json(await createPromptVersionRecord(pgPool(), { ...body, project_id: query.project_id, slug: params.id, actor: actor(c) }), 201);
-  } catch (cause) {
-    return failure(c, cause);
-  }
-}
 
 export const renderPrompt = createRoute({
   method: "post",
@@ -154,17 +127,6 @@ export const renderPrompt = createRoute({
   responses: { 200: { description: "Rendered", content: { "application/json": { schema: PromptRenderResponse } } }, ...PromptErrorResponses },
 });
 
-export async function handleRenderPrompt(c: Parameters<RouteHandler<typeof renderPrompt>>[0]): Promise<Response> {
-  try {
-    const params = c.req.valid("param") as { id: string };
-    const query = c.req.valid("query") as { project_id: string; version?: number };
-    const body = c.req.valid("json") as { data: JsonObject };
-    return c.json(await renderPromptRecord(pgPool(), { project_id: query.project_id, slug: params.id, version: query.version, data: body.data }));
-  } catch (cause) {
-    return failure(c, cause);
-  }
-}
-
 export const deletePrompt = createRoute({
   method: "delete",
   path: "/v1/prompts/{id}",
@@ -175,14 +137,82 @@ export const deletePrompt = createRoute({
   responses: { 204: { description: "Deleted" }, ...PromptErrorResponses },
 });
 
-export async function handleDeletePrompt(c: Parameters<RouteHandler<typeof deletePrompt>>[0]): Promise<Response> {
-  try {
-    const params = c.req.valid("param") as { id: string };
-    const query = c.req.valid("query") as { project_id: string };
-    const body = c.req.valid("json") as { confirmation: string };
-    await deletePromptRecord(pgPool(), { project_id: query.project_id, slug: params.id, confirmation: body.confirmation, actor: actor(c) });
-    return c.body(null, 204);
-  } catch (cause) {
-    return failure(c, cause);
-  }
+export function createPromptRouteHandlers(dependencies: PromptRouteDependencies = productionPromptRouteDependencies) {
+  return {
+    handleListPrompts: async (c: Parameters<RouteHandler<typeof listPrompts>>[0]): Promise<Response> => {
+      try {
+        const query = c.req.valid("query") as { project_id: string };
+        return c.json(await dependencies.listPrompts(dependencies.pool(), query.project_id));
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
+    handleCreatePrompt: async (c: Parameters<RouteHandler<typeof createPrompt>>[0]): Promise<Response> => {
+      try {
+        const body = c.req.valid("json") as Omit<Parameters<typeof createPromptRecord>[1], "actor">;
+        return c.json(await dependencies.createPrompt(dependencies.pool(), { ...body, actor: actor(c) }), 201);
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
+    handleGetPrompt: async (c: Parameters<RouteHandler<typeof getPrompt>>[0]): Promise<Response> => {
+      try {
+        const params = c.req.valid("param") as { id: string };
+        const query = c.req.valid("query") as { project_id: string; version?: number };
+        return c.json(await dependencies.getPrompt(dependencies.pool(), { project_id: query.project_id, slug: params.id, version: query.version }));
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
+    handleListPromptVersions: async (c: Parameters<RouteHandler<typeof listPromptVersions>>[0]): Promise<Response> => {
+      try {
+        const params = c.req.valid("param") as { id: string };
+        const query = c.req.valid("query") as { project_id: string };
+        return c.json(await dependencies.listPromptVersions(dependencies.pool(), { project_id: query.project_id, slug: params.id }));
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
+    handleCreatePromptVersion: async (c: Parameters<RouteHandler<typeof createPromptVersion>>[0]): Promise<Response> => {
+      try {
+        const params = c.req.valid("param") as { id: string };
+        const query = c.req.valid("query") as { project_id: string };
+        const body = c.req.valid("json") as Omit<Parameters<typeof createPromptVersionRecord>[1], "project_id" | "slug" | "actor">;
+        return c.json(await dependencies.createPromptVersion(dependencies.pool(), { ...body, project_id: query.project_id, slug: params.id, actor: actor(c) }), 201);
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
+    handleRenderPrompt: async (c: Parameters<RouteHandler<typeof renderPrompt>>[0]): Promise<Response> => {
+      try {
+        const params = c.req.valid("param") as { id: string };
+        const query = c.req.valid("query") as { project_id: string; version?: number };
+        const body = c.req.valid("json") as { data: JsonObject };
+        return c.json(await dependencies.renderPrompt(dependencies.pool(), { project_id: query.project_id, slug: params.id, version: query.version, data: body.data }));
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
+    handleDeletePrompt: async (c: Parameters<RouteHandler<typeof deletePrompt>>[0]): Promise<Response> => {
+      try {
+        const params = c.req.valid("param") as { id: string };
+        const query = c.req.valid("query") as { project_id: string };
+        const body = c.req.valid("json") as { confirmation: string };
+        await dependencies.deletePrompt(dependencies.pool(), { project_id: query.project_id, slug: params.id, confirmation: body.confirmation, actor: actor(c) });
+        return c.body(null, 204);
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
+  };
 }
+
+export const {
+  handleCreatePrompt,
+  handleCreatePromptVersion,
+  handleDeletePrompt,
+  handleGetPrompt,
+  handleListPromptVersions,
+  handleListPrompts,
+  handleRenderPrompt,
+} = createPromptRouteHandlers();
