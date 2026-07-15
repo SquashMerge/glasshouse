@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { loadRedactionOptions, redactAttributesJson, redactTraceText } from "../../src/db/redact";
+import { loadRedactionOptions, redactAttributesJson, redactMetadata, redactTraceText } from "../../src/db/redact";
 
 describe("redactTraceText", () => {
   it("returns text unchanged when redaction is off", () => {
@@ -19,22 +19,47 @@ describe("redactTraceText", () => {
 });
 
 describe("redactAttributesJson", () => {
-  it("returns the JSON unchanged when redactKeys is empty", () => {
-    const json = JSON.stringify([{ key: "user.email", value: { stringValue: "a@b.c" } }]);
-    expect(redactAttributesJson(json, { redactInput: false, redactKeys: [] })).toBe(json);
+  it("keeps non-redacted envelope attributes and omits null provenance from storage", () => {
+    const json = JSON.stringify({
+      schema_version: 1,
+      attributes: [{ key: "user.email", value: { stringValue: "a@b.c" } }],
+    });
+    expect(JSON.parse(redactAttributesJson(json, { redactInput: false, redactKeys: [] }))).toEqual({
+      schema_version: 1,
+      attributes: [{ key: "user.email", value: { stringValue: "a@b.c" } }],
+    });
   });
 
-  it("replaces values of redacted keys with [REDACTED]", () => {
-    const json = JSON.stringify([
-      { key: "user.email", value: { stringValue: "a@b.c" } },
-      { key: "gen_ai.system", value: { stringValue: "openai" } },
-    ]);
+  it("replaces values of redacted envelope attributes with [REDACTED]", () => {
+    const json = JSON.stringify({
+      schema_version: 1,
+      attributes: [
+        { key: "user.email", value: { stringValue: "a@b.c" } },
+        { key: "gen_ai.system", value: { stringValue: "openai" } },
+      ],
+    });
     const out = JSON.parse(
       redactAttributesJson(json, { redactInput: false, redactKeys: ["user.email"] }),
     );
-    expect(out[0].key).toBe("user.email");
-    expect(out[0].value.stringValue).toBe("[REDACTED]");
-    expect(out[1]).toEqual({ key: "gen_ai.system", value: { stringValue: "openai" } });
+    expect(out.attributes[0].value.stringValue).toBe("[REDACTED]");
+    expect(out.attributes[1]).toEqual({ key: "gen_ai.system", value: { stringValue: "openai" } });
+  });
+
+  it("strips all prompt namespace attributes before envelope redaction", () => {
+    const out = redactMetadata({
+      schema_version: 1,
+      attributes: [
+        { key: "astraea.prompt.template", value: { stringValue: "secret" } },
+        { key: "astraea.prompt.unknown", value: { stringValue: "also secret" } },
+        { key: "user.email", value: { stringValue: "a@b.c" } },
+      ],
+      prompt_provenance: null,
+    }, { redactInput: false, redactKeys: ["user.email"] });
+    expect(out).toEqual({
+      schema_version: 1,
+      attributes: [{ key: "user.email", value: { stringValue: "[REDACTED]" } }],
+      prompt_provenance: null,
+    });
   });
 
   it("returns malformed JSON unchanged", () => {

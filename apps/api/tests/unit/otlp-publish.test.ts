@@ -27,6 +27,7 @@ const HEX32_B = "00112233445566778899aabbccddeefe";
 const HEX16_A = "0011223344556677";
 const HEX16_B = "0011223344556678";
 const NOW_NS = 1_700_000_000_000_000_000;
+const HASH = "a".repeat(64);
 
 beforeAll(() => {
   process.env.UI_USERNAME = USER;
@@ -173,6 +174,35 @@ describe("OTLP ingest publishes events", () => {
 
     expect(traces).toHaveLength(1);
     expect(observations).toHaveLength(2);
+  });
+
+  it("sends a typed, prompt-safe metadata envelope to the observation writer", async () => {
+    const res = await handleOtlpIngest(
+      new Request("http://x/v1/otel/v1/traces", {
+        method: "POST",
+        headers: { authorization: AUTH, "content-type": "application/json" },
+        body: JSON.stringify(validOtlp([{
+          trace_id: HEX32_A,
+          span_id: HEX16_A,
+          name: "generation",
+          start_time_unix_nano: String(NOW_NS),
+          attributes: [
+            { key: "gen_ai.request.model", value: { stringValue: "gpt-4o" } },
+            { key: "astraea.prompt.id", value: { stringValue: "support-agent" } },
+            { key: "astraea.prompt.version", value: { intValue: 7 } },
+            { key: "astraea.prompt.content_hash", value: { stringValue: HASH } },
+            { key: "astraea.prompt.source", value: { stringValue: "never persisted" } },
+          ],
+        }])),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const inserted = insertObservations.mock.calls[0]?.[1] as Array<{ metadata: unknown }>;
+    expect(inserted[0]?.metadata).toEqual({
+      schema_version: 1,
+      attributes: [{ key: "gen_ai.request.model", value: { stringValue: "gpt-4o" } }],
+      prompt_provenance: { id: "support-agent", version: 7, content_hash: HASH },
+    });
   });
 
   it("a throwing subscriber does NOT change the HTTP response", async () => {

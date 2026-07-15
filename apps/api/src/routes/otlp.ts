@@ -5,7 +5,7 @@ import {
   ExportTraceServiceResponse,
 } from "../schemas/otlp.js";
 import { normalizeSpan } from "../db/gen-ai-attrs.js";
-import { loadRedactionOptions, redactAttributesJson, redactTraceText } from "../db/redact.js";
+import { loadRedactionOptions, redactMetadata, redactTraceText } from "../db/redact.js";
 import { insertObservations, insertTraces, defaultClient } from "../db/traces-writer.js";
 import { publishSync } from "../lib/event-bus.js";
 
@@ -67,7 +67,7 @@ export async function handleOtlpIngest(req: Request): Promise<Response> {
         trace.output_text = redactTraceText(trace.output_text, redaction);
         observation.input_text = trace.input_text;
         observation.output_text = trace.output_text;
-        observation.metadata = redactAttributesJson(observation.metadata, redaction);
+        observation.metadata = redactMetadata(observation.metadata, redaction);
         traces.set(trace.trace_id, trace);
         observations.push(observation);
       }

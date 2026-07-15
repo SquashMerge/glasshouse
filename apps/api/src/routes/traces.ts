@@ -9,6 +9,17 @@ import {
   listTraces as queryListTraces,
   listObservations as queryListObservations,
 } from "../db/traces-query.js";
+import {
+  presentObservationMetadata,
+  type ObservationMetadata,
+} from "../db/observation-metadata.js";
+
+function presentObservation<T extends { type: string; metadata: string | ObservationMetadata }>(observation: T) {
+  return {
+    ...observation,
+    metadata: presentObservationMetadata(observation.metadata, observation.type === "generation"),
+  };
+}
 
 export const listTraces = createRoute({
   method: "get",
@@ -48,17 +59,13 @@ export async function handleListTraces(c: Context): Promise<Response> {
   }
 }
 
-const GetTraceObservationWithMetadata = Observation.extend({
-  metadata: z.union([z.string(), z.record(z.unknown()), z.null()]),
-});
-
 export const getTrace = createRoute({
   method: "get",
   path: "/v1/traces/{id}",
   tags: ["traces"],
   summary: "Get a trace",
   description:
-    "Fetch a trace and its observations. Pass `?expand=metadata` to parse each observation's `metadata` JSON column into an object (or `null` on parse failure).",
+    "Fetch a trace and its observations with versioned metadata envelopes. Legacy metadata arrays are exposed as attributes with null prompt provenance; invalid persisted metadata fails closed.",
   security: [{ basicAuth: [] }],
   request: {
     params: TraceIdParam,
@@ -73,7 +80,7 @@ export const getTrace = createRoute({
         "application/json": {
           schema: z.object({
             trace: Trace,
-            observations: z.array(GetTraceObservationWithMetadata),
+            observations: z.array(Observation),
           }),
         },
       },
@@ -87,26 +94,12 @@ export const getTrace = createRoute({
 
 export async function handleGetTrace(c: Context): Promise<Response> {
   const traceId = c.req.param("id");
-  const expandMetadata = c.req.query("expand") === "metadata";
   try {
     const { trace, observations } = await queryGetTrace(defaultClient(), traceId);
     if (!trace) {
       return c.json({ code: "NOT_FOUND", message: `Trace ${traceId} not found` }, 404);
     }
-    const out = expandMetadata
-      ? observations.map((o) => {
-          let parsed: unknown = null;
-          if (o.metadata && o.metadata.length > 0) {
-            try {
-              parsed = JSON.parse(o.metadata);
-            } catch {
-              parsed = null;
-            }
-          }
-          return { ...o, metadata: parsed };
-        })
-      : observations;
-    return c.json({ trace, observations: out });
+    return c.json({ trace, observations: observations.map(presentObservation) });
   } catch (err) {
     console.error("GET /v1/traces/{id} failed:", (err as Error).message);
     return c.json({ code: "INTERNAL", message: "Query failed; check server logs" }, 500);
@@ -144,7 +137,7 @@ export async function handleListObservations(c: Context): Promise<Response> {
   };
   try {
     const { items, total } = await queryListObservations(defaultClient(), filters, limit, offset);
-    return c.json({ items, total });
+    return c.json({ items: items.map(presentObservation), total });
   } catch (err) {
     console.error("GET /v1/observations failed:", (err as Error).message);
     return c.json({ code: "INTERNAL", message: "Query failed; check server logs" }, 500);

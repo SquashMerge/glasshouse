@@ -1,6 +1,7 @@
 import type { ClickHouseClient } from "@clickhouse/client";
 import { ch } from "./clickhouse.js";
 import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
+import { serializeObservationMetadata } from "./observation-metadata.js";
 
 interface ClickHouseRow {
   [key: string]: string | number | null | string[];
@@ -43,7 +44,7 @@ function observationToRow(o: NormalizedObservation): ClickHouseRow {
     model: o.model,
     input_text: o.input_text,
     output_text: o.output_text,
-    metadata: o.metadata,
+    metadata: serializeObservationMetadata(o.metadata),
   };
 }
 

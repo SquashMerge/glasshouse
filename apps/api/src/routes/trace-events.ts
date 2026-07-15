@@ -6,7 +6,11 @@ import { TraceIdParam } from "../schemas/common.js";
 import { ErrorEnvelope } from "../schemas/common.js";
 import { subscribe } from "../lib/event-bus.js";
 import { defaultClient, getTrace as queryGetTrace } from "../db/traces-query.js";
-import type { ObservationRow } from "../db/traces-query.js";
+import type { NormalizedObservation } from "../db/gen-ai-attrs.js";
+import {
+  presentObservationMetadata,
+  type ObservationMetadata,
+} from "../db/observation-metadata.js";
 
 // Read tunables once at module load so per-event work is allocation-free.
 const HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS ?? 15_000);
@@ -53,8 +57,7 @@ export const streamObservationEvents = createRoute({
   description:
     "Subscribes to the `observation.created` bus event and emits one " +
     "`event: observation` SSE frame per published observation, with " +
-    "`metadataParsed` computed from the in-memory observation's metadata " +
-    "JSON column at write time (null on parse failure or empty string). " +
+    "a typed versioned metadata envelope and nullable prompt provenance. " +
     "Sends an `:ok` comment immediately on connect and a `:heartbeat` " +
     "comment every `SSE_HEARTBEAT_MS` (default 15s).",
   security: [{ basicAuth: [] }],
@@ -93,18 +96,14 @@ export const streamTraceDetailEvents = createRoute({
 // ---------------------------------------------------------------------------
 
 /**
- * Parse `metadata` (a JSON-encoded string column on `ObservationRow`) into
- * an object at write time, returning `null` on parse failure or empty input.
- * Never throws — a malformed metadata string on one observation must not
- * close the stream for siblings (research risk #11).
+ * Normalize storage and live observations to the same external metadata
+ * envelope. Invalid persisted metadata intentionally fails closed.
  */
-function parseMetadata(raw: string | undefined | null): unknown {
-  if (!raw || raw.length === 0) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+function presentObservation<T extends { type: string; metadata: string | ObservationMetadata }>(observation: T) {
+  return {
+    ...observation,
+    metadata: presentObservationMetadata(observation.metadata, observation.type === "generation"),
+  };
 }
 
 function notFoundResponse(traceId: string): Response {
@@ -167,9 +166,8 @@ export async function handleStreamTraceEvents(c: Context): Promise<Response> {
 /**
  * `GET /v1/observations/events` — one
  * `event: observation\ndata: {observation, metadataParsed}\n\n` frame per
- * `observation.created` bus event. `metadataParsed` is computed from the
- * in-memory observation's `metadata` string at write time; null on parse
- * failure or empty input. No DB round-trip.
+ * `observation.created` bus event. Both metadata fields use the typed
+ * metadata envelope without a DB round-trip.
  */
 export async function handleStreamObservationEvents(c: Context): Promise<Response> {
   return streamSSE(c, async (stream) => {
@@ -195,10 +193,10 @@ export async function handleStreamObservationEvents(c: Context): Promise<Respons
     unsubscribe = subscribe("observation.created", (msg) => {
       const observation = msg.payload.observation;
       if (!observation) return;
-      const metadataParsed = parseMetadata(observation.metadata);
+      const presented = presentObservation(observation);
       void stream.writeSSE({
         event: "observation",
-        data: JSON.stringify({ observation, metadataParsed }),
+        data: JSON.stringify({ observation: presented, metadataParsed: presented.metadata }),
       });
     });
     heartbeat = setInterval(() => {
@@ -234,8 +232,8 @@ export async function handleStreamObservationEvents(c: Context): Promise<Respons
 export async function handleStreamTraceDetailEvents(c: Context): Promise<Response> {
   const traceId = c.req.param("id");
 
-  const bufferedObservations: ObservationRow[] = [];
-  let forwardObservation: ((observation: ObservationRow) => void) | null = null;
+  const bufferedObservations: NormalizedObservation[] = [];
+  let forwardObservation: ((observation: NormalizedObservation) => void) | null = null;
   const unsubscribe = subscribe("observation.created", (msg) => {
     const observation = msg.payload.observation;
     if (!observation || observation.trace_id !== traceId) return;
@@ -243,7 +241,7 @@ export async function handleStreamTraceDetailEvents(c: Context): Promise<Respons
     else bufferedObservations.push(observation);
   });
 
-  let traceExists: { trace: unknown; observations: unknown[] };
+  let traceExists: Awaited<ReturnType<typeof queryGetTrace>>;
   try {
     traceExists = await queryGetTrace(defaultClient(), traceId);
   } catch (err) {
@@ -259,7 +257,7 @@ export async function handleStreamTraceDetailEvents(c: Context): Promise<Respons
     return notFoundResponse(traceId);
   }
 
-  const snapshotObservations = traceExists.observations;
+  const snapshotObservations = traceExists.observations.map(presentObservation);
 
   return streamSSE(c, async (stream) => {
     let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -314,12 +312,12 @@ export async function handleStreamTraceDetailEvents(c: Context): Promise<Respons
       }, GRACE_MS);
     };
 
-    const sendObservation = (observation: ObservationRow) => {
+    const sendObservation = (observation: NormalizedObservation) => {
       if (closed) return;
       armGraceTimer();
       void stream.writeSSE({
         event: "observation",
-        data: JSON.stringify({ observation }),
+        data: JSON.stringify({ observation: presentObservation(observation) }),
       });
     };
 

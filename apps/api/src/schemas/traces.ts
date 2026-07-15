@@ -27,6 +27,21 @@ export const TraceList = z.object({
   total: z.number().int(),
 }).openapi("TraceList");
 
+export const PromptProvenance = z.object({
+  id: z.string().max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  version: z.number().int().positive().refine(Number.isSafeInteger),
+  content_hash: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict().openapi("PromptProvenance");
+
+export const ObservationMetadata = z.object({
+  schema_version: z.literal(1),
+  attributes: z.array(z.object({
+    key: z.string(),
+    value: z.union([z.record(z.unknown()), z.array(z.unknown())]).optional(),
+  })),
+  prompt_provenance: PromptProvenance.nullable(),
+}).strict().openapi("ObservationMetadata");
+
 export const Observation = z.object({
   observation_id: z.string(),
   trace_id: z.string(),
@@ -40,6 +55,7 @@ export const Observation = z.object({
   model: z.string().nullable().optional(),
   input_text: z.string().default(""),
   output_text: z.string().default(""),
+  metadata: ObservationMetadata,
 }).openapi("Observation");
 
 export const ObservationList = z.object({

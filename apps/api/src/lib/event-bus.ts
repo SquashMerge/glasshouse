@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { TraceRow, ObservationRow } from "../db/traces-query.js";
+import type { TraceRow } from "../db/traces-query.js";
+import type { NormalizedObservation } from "../db/gen-ai-attrs.js";
 import { ensureConnected, publishOnChannel, subscribeToChannel, valkeyPubSubHealthy } from "../db/valkey-pubsub.js";
 
 export type BusEvent = "trace.created" | "observation.created";
 
 export interface BusMessage {
   event: BusEvent;
-  payload: { trace?: TraceRow; observation?: ObservationRow };
+  payload: { trace?: TraceRow; observation?: NormalizedObservation };
   origin?: string;
 }
 

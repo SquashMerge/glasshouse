@@ -68,7 +68,7 @@ const LIST_COLUMNS =
   "trace_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substring(input_text, 1, 200) AS input_text, output_text, scores_summary";
 
 const OBSERVATION_COLUMNS =
-  "observation_id, trace_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substring(input_text, 1, 200) AS input_text, output_text";
+  "observation_id, trace_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substring(input_text, 1, 200) AS input_text, output_text, metadata";
 
 const OBSERVATION_FULL_COLUMNS =
   "observation_id, trace_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, metadata";

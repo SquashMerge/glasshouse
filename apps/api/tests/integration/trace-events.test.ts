@@ -52,7 +52,10 @@ const fakeObservation: ObservationRow = {
   model: "gpt-4o",
   input_text: "",
   output_text: "",
-  metadata: '{"model":"gpt-4o","tokens":7}',
+  metadata: JSON.stringify([
+    { key: "model", value: { stringValue: "gpt-4o" } },
+    { key: "tokens", value: { intValue: 7 } },
+  ]),
 };
 
 const getTraceMock = mock(async () => ({
@@ -382,11 +385,11 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. /v1/observations/events — metadataParsed
+// 4. /v1/observations/events — metadata envelope
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/observations/events (spans SSE)", () => {
-  it("published observation arrives with metadataParsed as parsed object", async () => {
+  it("published observation arrives with metadataParsed as a typed envelope", async () => {
     const res = await apiApp.fetch(
       new Request("http://x/v1/observations/events", {
         method: "GET",
@@ -410,7 +413,14 @@ describe("GET /v1/observations/events (spans SSE)", () => {
       metadataParsed: unknown;
     };
     expect(parsed.observation.observation_id).toBe("obs-it-1");
-    expect(parsed.metadataParsed).toEqual({ model: "gpt-4o", tokens: 7 });
+    expect(parsed.metadataParsed).toEqual({
+      schema_version: 1,
+      attributes: [
+        { key: "model", value: { stringValue: "gpt-4o" } },
+        { key: "tokens", value: { intValue: 7 } },
+      ],
+      prompt_provenance: null,
+    });
 
     await reader.cancel();
   });
