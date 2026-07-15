@@ -212,7 +212,7 @@ describe("prompt repository", () => {
     ]);
   });
 
-  it("uses a deterministic generated UUID suffix when a project-local slug collides", async () => {
+  it("uses stable numeric candidates when a project-local slug collides", async () => {
     const pool = new MockPool([], [
       { rows: [] },
       { rows: [{ id: PROJECT }] },
@@ -220,9 +220,11 @@ describe("prompt repository", () => {
       { rows: [] },
       { rows: [{ slug: "support-agent" }] },
       { rows: [] },
+      { rows: [{ slug: "support-agent-2" }] },
       { rows: [] },
-      { rows: [{ project_id: PROJECT, name: "Support Agent", slug: "support-agent-deadbeefcafe", description: null }] },
-      { rows: [{ ...versionRow, slug: "support-agent-deadbeefcafe", version: 1, source: "source", previous_source: null, model: null, settings: {}, change_summary: "Initial version" }] },
+      { rows: [] },
+      { rows: [{ project_id: PROJECT, name: "Support Agent", slug: "support-agent-3", description: null }] },
+      { rows: [{ ...versionRow, slug: "support-agent-3", version: 1, source: "source", previous_source: null, model: null, settings: {}, change_summary: "Initial version" }] },
       { rows: [] },
     ]);
 
@@ -234,10 +236,35 @@ describe("prompt repository", () => {
       actor: "trusted-admin",
     });
 
-    expect(result.id).toMatch(/^support-agent-[0-9a-f]{12}$/);
+    expect(result.id).toBe("support-agent-3");
     expect(result.id.length).toBeLessThanOrEqual(64);
-    expect(pool.client.calls[5]?.values?.[1]).toMatch(/^support-agent-[0-9a-f]{12}$/);
-    expect(pool.client.calls[7]?.values?.[3]).toBe(pool.client.calls[5]?.values?.[1]);
+    expect(pool.client.calls[5]?.values).toEqual([PROJECT, "support-agent-2"]);
+    expect(pool.client.calls[6]?.values).toEqual([PROJECT, "support-agent-2"]);
+    expect(pool.client.calls[7]?.values).toEqual([PROJECT, "support-agent-3"]);
+    expect(pool.client.calls[9]?.values?.[3]).toBe("support-agent-3");
+
+    const longName = "a".repeat(64);
+    const longPool = new MockPool([], [
+      { rows: [] },
+      { rows: [{ id: PROJECT }] },
+      { rows: [] },
+      { rows: [] },
+      { rows: [{ slug: longName }] },
+      { rows: [] },
+      { rows: [] },
+      { rows: [{ project_id: PROJECT, name: longName, slug: `${"a".repeat(62)}-2`, description: null }] },
+      { rows: [{ ...versionRow, slug: `${"a".repeat(62)}-2`, version: 1, source: "source", previous_source: null, model: null, settings: {}, change_summary: "Initial version" }] },
+      { rows: [] },
+    ]);
+    const longResult = await createPrompt(transactionPool(longPool), {
+      project_id: PROJECT,
+      name: longName,
+      role: "system",
+      source: "source",
+      actor: "trusted-admin",
+    });
+    expect(longResult.id).toBe(`${"a".repeat(62)}-2`);
+    expect(longResult.id).toHaveLength(64);
   });
 
   it("prohibits recreation of a tombstoned canonical slug", async () => {
@@ -500,20 +527,20 @@ describe("prompt repository", () => {
     }), "CONFLICT");
     expect(deletePool.client.calls[4]?.text).toBe("ROLLBACK");
 
-    const statusPool = new MockPool([{ rows: [{ status: "deleted" }] }]);
+    const statusPool = new MockPool([{ rows: [{ id: PROJECT }] }, { rows: [{ status: "deleted" }] }]);
     expect(await promptProvenanceStatus(readPool(statusPool), {
       project_id: PROJECT,
       slug: "support-agent",
       version: 99,
       content_hash: "b".repeat(64),
     })).toBe("deleted");
-    expect(statusPool.calls).toHaveLength(1);
+    expect(statusPool.calls).toHaveLength(2);
 
-    expect(statusPool.calls[0]?.text).toContain("SELECT CASE");
-    expect(statusPool.calls[0]?.text).toContain("prompt_tombstones");
-    expect(statusPool.calls[0]?.text).toContain("INNER JOIN prompt_versions");
+    expect(statusPool.calls[1]?.text).toContain("SELECT CASE");
+    expect(statusPool.calls[1]?.text).toContain("prompt_tombstones");
+    expect(statusPool.calls[1]?.text).toContain("INNER JOIN prompt_versions");
 
-    const activePool = new MockPool([{ rows: [{ status: "active" }] }]);
+    const activePool = new MockPool([{ rows: [{ id: PROJECT }] }, { rows: [{ status: "active" }] }]);
     expect(await promptProvenanceStatus(readPool(activePool), {
       project_id: PROJECT,
       slug: "support-agent",
@@ -521,14 +548,23 @@ describe("prompt repository", () => {
       content_hash: HASH,
     })).toBe("active");
 
-    const unknownPool = new MockPool([{ rows: [{ status: "unknown" }] }]);
+    const unknownPool = new MockPool([{ rows: [{ id: PROJECT }] }, { rows: [{ status: "unknown" }] }]);
     expect(await promptProvenanceStatus(readPool(unknownPool), {
       project_id: PROJECT,
       slug: "support-agent",
       version: 2,
       content_hash: HASH,
     })).toBe("unknown");
-    expect(activePool.calls).toHaveLength(1);
-    expect(unknownPool.calls).toHaveLength(1);
+    expect(activePool.calls).toHaveLength(2);
+    expect(unknownPool.calls).toHaveLength(2);
+
+    const missingProjectPool = new MockPool([{ rows: [] }]);
+    await expectError(promptProvenanceStatus(readPool(missingProjectPool), {
+      project_id: OTHER_PROJECT,
+      slug: "support-agent",
+      version: 2,
+      content_hash: HASH,
+    }), "NOT_FOUND");
+    expect(missingProjectPool.calls).toHaveLength(1);
   });
 });

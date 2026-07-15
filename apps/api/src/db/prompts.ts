@@ -235,9 +235,8 @@ export function normalizePromptSlug(name: string): string {
   return (normalized || "prompt").slice(0, 64).replace(/-+$/g, "") || "prompt";
 }
 
-function collisionSlug(base: string, promptId: string, collision = 0): string {
-  const suffix = promptId.replace(/-/g, "").slice(0, 12);
-  const extension = collision === 0 ? `-${suffix}` : `-${suffix}-${collision}`;
+function collisionSlug(base: string, collision: number): string {
+  const extension = `-${collision}`;
   return `${base.slice(0, 64 - extension.length).replace(/-+$/g, "")}${extension}`;
 }
 
@@ -396,7 +395,7 @@ export type CreatePromptInput = {
   actor: string;
 };
 
-async function selectAvailableSlug(client: PoolClient, projectId: string, baseSlug: string, promptId: string): Promise<string> {
+async function selectAvailableSlug(client: PoolClient, projectId: string, baseSlug: string): Promise<string> {
   const baseTombstone = await query<Row>(
     client,
     "SELECT slug FROM prompt_tombstones WHERE project_id = $1 AND slug = $2",
@@ -411,8 +410,8 @@ async function selectAvailableSlug(client: PoolClient, projectId: string, baseSl
   );
   if (basePrompt.length === 0) return baseSlug;
 
-  for (let collision = 0; collision < 10_000; collision += 1) {
-    const candidate = collisionSlug(baseSlug, promptId, collision);
+  for (let collision = 2; collision < 10_000; collision += 1) {
+    const candidate = collisionSlug(baseSlug, collision);
     const active = await query<Row>(client, "SELECT slug FROM prompts WHERE project_id = $1 AND slug = $2", [projectId, candidate]);
     const tombstone = await query<Row>(client, "SELECT slug FROM prompt_tombstones WHERE project_id = $1 AND slug = $2", [projectId, candidate]);
     if (active.length === 0 && tombstone.length === 0) return candidate;
@@ -486,7 +485,7 @@ export async function createPrompt(pool: Pick<Pool, "connect">, input: CreatePro
   return transaction(pool, async (client) => {
     await requireProject(client, input.project_id, true);
     await advisoryLock(client, input.project_id, baseSlug);
-    const slug = await selectAvailableSlug(client, input.project_id, baseSlug, promptId);
+    const slug = await selectAvailableSlug(client, input.project_id, baseSlug);
     const promptRows = await query<Row>(
       client,
       `INSERT INTO prompts (id, project_id, name, slug, description, role)
@@ -679,6 +678,7 @@ export async function promptProvenanceStatus(
   input: { project_id: string; slug: string; version: number; content_hash: string },
 ): Promise<"active" | "deleted" | "unknown"> {
   return read(async () => {
+    await requireProject(pool, input.project_id);
     const rows = await query<Row>(
       pool,
       `SELECT CASE
