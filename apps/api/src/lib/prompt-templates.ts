@@ -4,6 +4,8 @@ import {
   MAX_RENDER_DATA_DEPTH,
   MAX_RENDER_DATA_NODES,
   MAX_RENDER_DATA_STRING_BYTES,
+  MAX_RENDER_OUTPUT_CHARS,
+  MAX_TEMPLATE_INTERPOLATIONS,
   MAX_TEMPLATE_SECTION_NESTING,
   promptSourceBudgetError,
 } from "./prompt-limits.js";
@@ -32,6 +34,11 @@ export class PromptTemplateError extends Error {
 
 const dangerousPathSegments = new Set(["__proto__", "prototype", "constructor"]);
 
+type TemplateMetrics = {
+  interpolations: number;
+  maxSectionDepth: number;
+};
+
 function templateError(message: string): PromptTemplateError {
   return new PromptTemplateError(message);
 }
@@ -43,20 +50,22 @@ function assertSafePath(path: string): void {
   }
 }
 
-function assertSafeTemplateTags(template: string): void {
+function assertSafeTemplateTags(template: string): TemplateMetrics {
   let open = "{{";
   let close = "}}";
   let cursor = 0;
   let sectionDepth = 0;
+  let maxSectionDepth = 0;
+  let interpolations = 0;
 
   while (cursor < template.length) {
     const start = template.indexOf(open, cursor);
-    if (start === -1) return;
+    if (start === -1) return { interpolations, maxSectionDepth };
 
     const tagStart = start + open.length;
     const triple = open === "{{" && template.startsWith("{", tagStart);
     const end = template.indexOf(triple ? "}}}" : close, tagStart + (triple ? 1 : 0));
-    if (end === -1) return;
+    if (end === -1) return { interpolations, maxSectionDepth };
 
     const raw = template.slice(tagStart + (triple ? 1 : 0), end).trim();
     cursor = end + (triple ? 3 : close.length);
@@ -77,15 +86,32 @@ function assertSafeTemplateTags(template: string): void {
 
     if (raw.startsWith("#") || raw.startsWith("^")) {
       sectionDepth += 1;
+      maxSectionDepth = Math.max(maxSectionDepth, sectionDepth);
       if (sectionDepth > MAX_TEMPLATE_SECTION_NESTING) {
         throw templateError(`Prompt templates may nest at most ${MAX_TEMPLATE_SECTION_NESTING} sections`);
       }
     } else if (raw.startsWith("/")) {
       sectionDepth = Math.max(sectionDepth - 1, 0);
+    } else {
+      interpolations += 1;
+      if (interpolations > MAX_TEMPLATE_INTERPOLATIONS) {
+        throw templateError(`Prompt templates may contain at most ${MAX_TEMPLATE_INTERPOLATIONS} interpolations`);
+      }
     }
 
     const path = raw.replace(/^[#^/&]/, "");
     if (path) assertSafePath(path);
+  }
+  return { interpolations, maxSectionDepth };
+}
+
+function assertRenderOutputBudget(template: string, metrics: TemplateMetrics): void {
+  // v1 permits one array section, so every source segment and interpolation can repeat at most this multiplier.
+  const multiplier = MAX_RENDER_ARRAY_LENGTH ** metrics.maxSectionDepth;
+  const maxInterpolationChars = MAX_RENDER_DATA_STRING_BYTES + MAX_RENDER_DATA_NODES + 24;
+  const upperBound = template.length * multiplier + metrics.interpolations * multiplier * maxInterpolationChars;
+  if (upperBound > MAX_RENDER_OUTPUT_CHARS) {
+    throw templateError(`Prompt render may exceed ${MAX_RENDER_OUTPUT_CHARS} characters`);
   }
 }
 
@@ -96,7 +122,8 @@ export function validatePromptTemplate(template: string): void {
   const budgetError = promptSourceBudgetError(template);
   if (budgetError) throw templateError(budgetError);
 
-  assertSafeTemplateTags(template);
+  const metrics = assertSafeTemplateTags(template);
+  assertRenderOutputBudget(template, metrics);
   try {
     Mustache.parse(template);
   } catch {

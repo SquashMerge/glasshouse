@@ -1,5 +1,10 @@
 import { z } from "@hono/zod-openapi";
-import { MAX_PROMPT_SOURCE_CHARS, MAX_PROMPT_SOURCE_LINES, hasAtMostLines } from "../lib/prompt-limits.js";
+import {
+  MAX_PROMPT_SOURCE_CHARS,
+  MAX_PROMPT_SOURCE_LINES,
+  hasAtMostLines,
+  renderDataBudgetError,
+} from "../lib/prompt-limits.js";
 import { ErrorEnvelope } from "./common.js";
 
 export const PromptId = z.string().max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).openapi({
@@ -63,7 +68,10 @@ export const PromptVersionCreate = z.object({
 }).strict().openapi("PromptVersionCreate");
 
 export const PromptRender = z.object({
-  data: JsonObject,
+  data: JsonObject.superRefine((value, context) => {
+    const budgetError = renderDataBudgetError(value);
+    if (budgetError) context.addIssue({ code: z.ZodIssueCode.custom, message: budgetError });
+  }),
 }).strict().openapi("PromptRender");
 
 export const PromptRenderResponse = z.object({

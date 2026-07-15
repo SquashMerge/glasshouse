@@ -43,6 +43,14 @@ const listProjectsRecord = mock(async () => ({
   total: 1,
 }));
 const promptProvenanceStatus = mock(async () => "active" as const);
+const renderPromptRecord = mock(async () => ({
+  id: "support-agent",
+  version: 1,
+  role: "system" as const,
+  content_hash: "a".repeat(64),
+  output: "Hello Ada",
+  warnings: [],
+}));
 
 mock.module("../../src/db/postgres", () => ({ pgPool: () => ({}) }));
 mock.module("../../src/db/prompts", () => ({
@@ -55,7 +63,7 @@ mock.module("../../src/db/prompts", () => ({
   listPrompts: mock(async () => ({ items: [], total: 0 })),
   listProjects: listProjectsRecord,
   promptProvenanceStatus,
-  renderPrompt: mock(async () => ({})),
+  renderPrompt: renderPromptRecord,
 }));
 
 const {
@@ -65,6 +73,8 @@ const {
   handleCreatePrompt,
   handleDeletePrompt,
   handleGetPrompt,
+  handleRenderPrompt,
+  renderPrompt,
 } = await import("../../src/routes/prompts");
 const { listProjects, handleListProjects } = await import("../../src/routes/projects");
 const { getPromptProvenance, handleGetPromptProvenance } = await import("../../src/routes/prompt-provenance");
@@ -90,6 +100,7 @@ function app() {
   api.openapi(createPrompt, handleCreatePrompt);
   api.openapi(deletePrompt, handleDeletePrompt);
   api.openapi(getPrompt, handleGetPrompt);
+  api.openapi(renderPrompt, handleRenderPrompt);
   api.openapi(listProjects, handleListProjects);
   api.openapi(getPromptProvenance, handleGetPromptProvenance);
   return api;
@@ -176,6 +187,32 @@ describe("prompt route contracts", () => {
     expect(longSource.status).toBe(400);
     expect(manyLines.status).toBe(400);
     expect(createPromptRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized render data before the render handler and preserves normal rendering", async () => {
+    renderPromptRecord.mockClear();
+    const oversized = await app().request(`/v1/prompts/support-agent/render?project_id=${PROJECT}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ data: { x: "x".repeat(32_767) } }),
+    });
+    const normal = await app().request(`/v1/prompts/support-agent/render?project_id=${PROJECT}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ data: { name: "Ada" } }),
+    });
+
+    expect(oversized.status).toBe(400);
+    expect(normal.status).toBe(200);
+    expect(await normal.json()).toEqual({
+      id: "support-agent",
+      version: 1,
+      role: "system",
+      content_hash: "a".repeat(64),
+      output: "Hello Ada",
+      warnings: [],
+    });
+    expect(renderPromptRecord).toHaveBeenCalledTimes(1);
   });
 
   it("marks prompt provenance responses no-store", async () => {

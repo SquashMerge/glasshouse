@@ -7,6 +7,7 @@ import {
   MAX_RENDER_DATA_NODES,
   MAX_RENDER_DATA_STRING_BYTES,
   MAX_RENDER_DATA_DEPTH,
+  MAX_TEMPLATE_INTERPOLATIONS,
   MAX_TEMPLATE_SECTION_NESTING,
 } from "../../src/lib/prompt-limits";
 import {
@@ -124,10 +125,13 @@ describe("prompt templates", () => {
 
   it("enforces compact source, nesting, and render-data execution budgets", () => {
     expectBadTemplate(() => validatePromptTemplate("x".repeat(MAX_PROMPT_SOURCE_CHARS + 1)));
+    expectBadTemplate(() => validatePromptTemplate("{{x}}".repeat(6_553)));
     expectBadTemplate(() => validatePromptTemplate(`${"x\n".repeat(MAX_PROMPT_SOURCE_LINES)}x`));
     expectBadTemplate(() => validatePromptTemplate(`${"{{#a}}".repeat(MAX_TEMPLATE_SECTION_NESTING + 1)}x${"{{/a}}".repeat(MAX_TEMPLATE_SECTION_NESTING + 1)}`));
     expectBadTemplate(() => renderPromptTemplate("{{items}}", { items: Array(MAX_RENDER_ARRAY_LENGTH + 1).fill("x") }));
     expectBadTemplate(() => renderPromptTemplate("{{value}}", { value: "x".repeat(MAX_RENDER_DATA_STRING_BYTES + 1) }));
+    expectBadTemplate(() => renderPromptTemplate("{{x}}", { x: "x".repeat(32_767) }));
+    expectBadTemplate(() => validatePromptTemplate(`{{#items}}${"{{x}}".repeat(MAX_TEMPLATE_INTERPOLATIONS)}{{/items}}`));
 
     const tooManyNodes = Object.fromEntries(Array.from({ length: MAX_RENDER_DATA_NODES }, (_, index) => [`k${index}`, index]));
     expectBadTemplate(() => renderPromptTemplate("{{k0}}", tooManyNodes));
