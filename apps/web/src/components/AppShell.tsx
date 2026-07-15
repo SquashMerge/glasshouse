@@ -4,6 +4,7 @@ import {
 	LuHexagon,
 	LuHouse,
 	LuActivity,
+	LuFileText,
 	LuLogOut,
 	LuLogIn,
 	LuChevronLeft,
@@ -22,6 +23,7 @@ import {
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
 import { clearCredentials, getCredentials } from "../lib/auth";
+import { useProjectSelection } from "./ProjectProvider";
 
 const COLLAPSE_KEY = "astraea.nav.collapsed";
 
@@ -34,6 +36,14 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	const [creds, setCreds] = React.useState(getCredentials());
 	const [collapsed, setCollapsed] = React.useState(false);
 	const [hydrated, setHydrated] = React.useState(false);
+	const {
+		projects,
+		selectedProjectId,
+		isLoading: projectsLoading,
+		error: projectsError,
+		selectProject,
+		retry: retryProjects,
+	} = useProjectSelection();
 
 	React.useEffect(() => {
 		if (typeof window === "undefined") return;
@@ -109,6 +119,45 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 					)}
 				</div>
 
+				<div className={cn("border-b border-border p-2", collapsed && "hidden")}>
+					<label htmlFor="selected-project" className="sr-only">
+						Selected project
+					</label>
+					<select
+						id="selected-project"
+						aria-label="Selected project"
+						value={selectedProjectId ?? ""}
+						disabled={projectsLoading || projects.length === 0}
+						onChange={(event) => selectProject(event.target.value)}
+						className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+						data-testid="project-selector"
+					>
+						<option value="">
+							{projectsLoading ? "Loading projects…" : "Select a project"}
+						</option>
+						{projects.map((project) => (
+							<option key={project.id} value={project.id}>
+								{project.name}
+							</option>
+						))}
+					</select>
+					{projectsError && (
+						<div
+							className="mt-2 flex items-center justify-between gap-2 text-xs text-destructive"
+							role="alert"
+						>
+							<span>Projects could not be loaded.</span>
+							<button
+								type="button"
+								className="underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								onClick={retryProjects}
+							>
+								Retry
+							</button>
+						</div>
+					)}
+				</div>
+
 				<nav
 					className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2"
 					aria-label="Sections"
@@ -125,6 +174,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						label="Observability"
 						icon={<LuActivity className="h-4 w-4" />}
 						active={isActive("/observability") || isActive("/traces")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
+						to="/prompts"
+						label="Prompts"
+						icon={<LuFileText className="h-4 w-4" />}
+						active={isActive("/prompts")}
 						collapsed={collapsed}
 					/>
 				</nav>
@@ -221,7 +277,7 @@ function SidebarLink({
 	active,
 	collapsed,
 }: {
-	to: "/" | "/observability";
+	to: "/" | "/observability" | "/prompts";
 	label: string;
 	icon: React.ReactNode;
 	active: boolean;

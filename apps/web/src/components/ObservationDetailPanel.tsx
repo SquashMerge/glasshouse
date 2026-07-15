@@ -15,6 +15,7 @@ import {
 import type { CanonicalObservation } from "../lib/trace-model";
 import { observationKind } from "../lib/observation-kind";
 import { observationTiming } from "../lib/trace-timeline";
+import { PromptProvenanceCard } from "./PromptProvenanceCard";
 
 export interface ObservationDetailPanelProps {
 	observation: CanonicalObservation | null;
@@ -453,6 +454,11 @@ export function ObservationDetailPanel({
 					</pre>
 				</TabsContent>
 			</Tabs>
+			{observation.type === "generation" && (
+				<div className="px-4 pb-4">
+					<PromptProvenanceCard metadata={observation.metadata} />
+				</div>
+			)}
 		</aside>
 	);
 }
