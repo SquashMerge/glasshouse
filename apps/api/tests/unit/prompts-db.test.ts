@@ -467,7 +467,7 @@ describe("prompt repository", () => {
     }), "BAD_REQUEST");
   });
 
-  it("requires raw slug confirmation and deletes labels, quarantine data, versions, and content-free audit records together", async () => {
+  it("requires raw slug confirmation and only deletes same-project quarantine data with the prompt", async () => {
     const rejectedPool = new MockPool();
     await expectError(deletePrompt(transactionPool(rejectedPool), {
       project_id: PROJECT,
@@ -502,6 +502,8 @@ describe("prompt repository", () => {
     expect(pool.client.calls[2]?.values).toEqual([`prompt:${PROJECT}:support-agent`]);
     expect(pool.client.calls[6]?.text).toContain("DELETE FROM prompt_labels");
     expect(pool.client.calls[7]?.text).toContain("DELETE FROM prompt_label_quarantine");
+    expect(pool.client.calls[7]?.text).toContain("original_project_id = $2");
+    expect(pool.client.calls[7]?.values).toEqual(["internal-prompt-id", PROJECT]);
     expect(pool.client.calls[8]?.text).toContain("prompt_deletion_audit (project_id, prompt_id, slug, deleted_by, deleted_version_count)");
     expect(pool.client.calls[8]?.text).not.toContain("content");
     expect(pool.client.calls[8]?.text).not.toContain("settings");
