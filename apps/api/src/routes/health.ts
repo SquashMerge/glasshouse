@@ -24,17 +24,29 @@ const route = createRoute({
 
 export const healthRoute = route;
 
-export async function handleHealth(): Promise<Response> {
-  const [postgres, clickhouse, valkey] = await Promise.all([
-    pgPing(),
-    chPing(),
-    valkeyPing(),
-  ]);
-  const allUp = postgres === "up" && clickhouse === "up" && valkey === "up";
-  const status = allUp ? "ok" : "degraded";
-  const body = JSON.stringify({ status, checks: { postgres, clickhouse, valkey } });
-  return new Response(body, {
-    status: allUp ? 200 : 503,
-    headers: { "content-type": "application/json" },
-  });
+export type HealthDependencies = {
+  chPing: typeof chPing;
+  pgPing: typeof pgPing;
+  valkeyPing: typeof valkeyPing;
+};
+
+const productionHealthDependencies: HealthDependencies = { chPing, pgPing, valkeyPing };
+
+export function createHealthHandler(dependencies: HealthDependencies = productionHealthDependencies) {
+  return async function handleHealth(): Promise<Response> {
+    const [postgres, clickhouse, valkey] = await Promise.all([
+      dependencies.pgPing(),
+      dependencies.chPing(),
+      dependencies.valkeyPing(),
+    ]);
+    const allUp = postgres === "up" && clickhouse === "up" && valkey === "up";
+    const status = allUp ? "ok" : "degraded";
+    const body = JSON.stringify({ status, checks: { postgres, clickhouse, valkey } });
+    return new Response(body, {
+      status: allUp ? 200 : 503,
+      headers: { "content-type": "application/json" },
+    });
+  };
 }
+
+export const handleHealth = createHealthHandler();

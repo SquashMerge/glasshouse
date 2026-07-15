@@ -1,18 +1,19 @@
 import { describe, expect, it, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { PromptRepositoryError } from "../../src/db/prompts";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
-
-class TestPromptRepositoryError extends Error {
-  readonly status: 400 | 404 | 409 | 500;
-
-  constructor(
-    readonly code: "BAD_REQUEST" | "NOT_FOUND" | "CONFLICT" | "INTERNAL",
-    message: string,
-  ) {
-    super(message);
-    this.status = code === "BAD_REQUEST" ? 400 : code === "NOT_FOUND" ? 404 : code === "CONFLICT" ? 409 : 500;
-  }
-}
+import {
+  createPrompt,
+  createPromptRouteHandlers,
+  createPromptVersion,
+  deletePrompt,
+  getPrompt,
+  listPromptVersions,
+  listPrompts,
+  renderPrompt,
+} from "../../src/routes/prompts";
+import { createProjectRouteHandlers, listProjects } from "../../src/routes/projects";
+import { createPromptProvenanceRouteHandlers, getPromptProvenance } from "../../src/routes/prompt-provenance";
 
 const createPromptRecord = mock(async (_pool: unknown, input: Record<string, unknown>) => ({
   id: "support-agent",
@@ -32,11 +33,11 @@ const createPromptRecord = mock(async (_pool: unknown, input: Record<string, unk
 }));
 const deletePromptRecord = mock(async (_pool: unknown, input: { slug: string; confirmation: string }) => {
   if (input.slug !== input.confirmation) {
-    throw new TestPromptRepositoryError("BAD_REQUEST", "confirmation must equal the prompt identifier");
+    throw new PromptRepositoryError("BAD_REQUEST", "confirmation must equal the prompt identifier");
   }
 });
 const getPromptRecord = mock(async () => {
-  throw new TestPromptRepositoryError("NOT_FOUND", "Prompt or version not found");
+  throw new PromptRepositoryError("NOT_FOUND", "Prompt or version not found");
 });
 const listProjectsRecord = mock(async () => ({
   items: [{ id: "11111111-1111-4111-8111-111111111111", name: "Project One", slug: "project-one", created_at: "2026-07-15T10:00:00.000Z" }],
@@ -66,19 +67,19 @@ const PROMPT = {
   description: null,
 };
 const listPromptsRecord = mock(async (_pool: unknown, projectId: string) => {
-  if (projectId === OTHER_PROJECT) throw new TestPromptRepositoryError("NOT_FOUND", "Project not found");
+  if (projectId === OTHER_PROJECT) throw new PromptRepositoryError("NOT_FOUND", "Project not found");
   return { items: [PROMPT], total: 1 };
 });
 const listPromptVersionsRecord = mock(async (_pool: unknown, input: { project_id: string }) => {
-  if (input.project_id === OTHER_PROJECT) throw new TestPromptRepositoryError("NOT_FOUND", "Prompt not found");
+  if (input.project_id === OTHER_PROJECT) throw new PromptRepositoryError("NOT_FOUND", "Prompt not found");
   return { items: [PROMPT_VERSION] };
 });
 const createPromptVersionRecord = mock(async (_pool: unknown, input: { base_version: number }) => {
-  if (input.base_version !== 1) throw new TestPromptRepositoryError("CONFLICT", "Prompt base version is stale");
+  if (input.base_version !== 1) throw new PromptRepositoryError("CONFLICT", "Prompt base version is stale");
   return PROMPT_VERSION;
 });
 const promptProvenanceStatus = mock(async (_pool: unknown, input: { project_id: string }) => {
-  if (input.project_id === OTHER_PROJECT) throw new TestPromptRepositoryError("NOT_FOUND", "Project not found");
+  if (input.project_id === OTHER_PROJECT) throw new PromptRepositoryError("NOT_FOUND", "Project not found");
   return "active" as const;
 });
 const renderPromptRecord = mock(async () => ({
@@ -90,43 +91,23 @@ const renderPromptRecord = mock(async () => ({
   warnings: [],
 }));
 
-mock.module("../../src/db/postgres", () => ({ pgPool: () => ({}) }));
-mock.module("../../src/db/prompts", () => ({
-  PromptRepositoryError: TestPromptRepositoryError,
-  createPrompt: createPromptRecord,
-  createPromptVersion: createPromptVersionRecord,
-  deletePrompt: deletePromptRecord,
-  getPrompt: getPromptRecord,
-  listPromptVersions: listPromptVersionsRecord,
-  listPrompts: listPromptsRecord,
-  listProjects: listProjectsRecord,
-  promptProvenanceStatus,
-  renderPrompt: renderPromptRecord,
-}));
-
-const {
-  createPrompt,
-  deletePrompt,
-  getPrompt,
-  handleCreatePrompt,
-  handleDeletePrompt,
-  handleGetPrompt,
-  handleListPromptVersions,
-  handleListPrompts,
-  handleRenderPrompt,
-  handleCreatePromptVersion,
-  listPromptVersions,
-  listPrompts,
-  renderPrompt,
-  createPromptVersion,
-} = await import("../../src/routes/prompts");
-const { listProjects, handleListProjects } = await import("../../src/routes/projects");
-const { getPromptProvenance, handleGetPromptProvenance } = await import("../../src/routes/prompt-provenance");
-
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 
 function app() {
+  const pool = () => ({}) as never;
+  const promptHandlers = createPromptRouteHandlers({
+    pool,
+    createPrompt: createPromptRecord,
+    createPromptVersion: createPromptVersionRecord,
+    deletePrompt: deletePromptRecord,
+    getPrompt: getPromptRecord,
+    listPromptVersions: listPromptVersionsRecord,
+    listPrompts: listPromptsRecord,
+    renderPrompt: renderPromptRecord,
+  });
+  const projectHandlers = createProjectRouteHandlers({ pool, listProjects: listProjectsRecord });
+  const promptProvenanceHandlers = createPromptProvenanceRouteHandlers({ pool, promptProvenanceStatus });
   const api = new OpenAPIHono({
     defaultHook: (result, c) => result.success ? undefined : c.json({ code: "BAD_REQUEST", message: "Request validation failed" }, 400),
   });
@@ -142,15 +123,15 @@ function app() {
     c.header("Cache-Control", "no-store");
     await next();
   });
-  api.openapi(createPrompt, handleCreatePrompt);
-  api.openapi(deletePrompt, handleDeletePrompt);
-  api.openapi(getPrompt, handleGetPrompt);
-  api.openapi(listPrompts, handleListPrompts);
-  api.openapi(listPromptVersions, handleListPromptVersions);
-  api.openapi(createPromptVersion, handleCreatePromptVersion);
-  api.openapi(renderPrompt, handleRenderPrompt);
-  api.openapi(listProjects, handleListProjects);
-  api.openapi(getPromptProvenance, handleGetPromptProvenance);
+  api.openapi(createPrompt, promptHandlers.handleCreatePrompt);
+  api.openapi(deletePrompt, promptHandlers.handleDeletePrompt);
+  api.openapi(getPrompt, promptHandlers.handleGetPrompt);
+  api.openapi(listPrompts, promptHandlers.handleListPrompts);
+  api.openapi(listPromptVersions, promptHandlers.handleListPromptVersions);
+  api.openapi(createPromptVersion, promptHandlers.handleCreatePromptVersion);
+  api.openapi(renderPrompt, promptHandlers.handleRenderPrompt);
+  api.openapi(listProjects, projectHandlers.handleListProjects);
+  api.openapi(getPromptProvenance, promptProvenanceHandlers.handleGetPromptProvenance);
   return api;
 }
 

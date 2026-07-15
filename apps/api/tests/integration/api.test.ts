@@ -1,31 +1,31 @@
 import { describe, it, expect, beforeAll, mock } from "bun:test";
 
-const insertTraces = mock(() => Promise.resolve());
-const insertObservations = mock(() => Promise.resolve());
-const defaultClient = mock(() => ({}));
-
-mock.module("../../src/db/traces-writer", () => ({
-  insertTraces,
-  insertObservations,
-  defaultClient,
-}));
-
-mock.module("../../src/db/postgres", () => ({ pgPing: mock(async () => "up") }));
-mock.module("../../src/db/clickhouse", () => ({
-  ch: mock(() => ({})),
-  chPing: mock(async () => "up"),
-}));
-mock.module("../../src/db/valkey", () => ({
-  valkey: mock(() => ({})),
-  valkeyPing: mock(async () => "up"),
-  valkeyUrl: mock(() => "redis://localhost:6379"),
-}));
-
-const { default: apiApp } = await import("../../src/index");
-
 const USER = "astraea";
 const PASS = "secret";
 const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
+process.env.UI_USERNAME = USER;
+process.env.UI_PASSWORD = PASS;
+
+const { createApiApp } = await import("../../src/index");
+const { createHealthHandler } = await import("../../src/routes/health");
+const { createOtlpIngestHandler } = await import("../../src/routes/otlp");
+
+const insertTraces = mock(() => Promise.resolve());
+const insertObservations = mock(() => Promise.resolve());
+const defaultClient = mock(() => ({}));
+const apiApp = createApiApp({
+  handleHealth: createHealthHandler({
+    chPing: async () => "up",
+    pgPing: async () => "up",
+    valkeyPing: async () => "up",
+  }),
+  handleOtlpIngest: createOtlpIngestHandler({
+    defaultClient,
+    insertObservations,
+    insertTraces,
+    publishSync: () => undefined,
+  }),
+});
 
 beforeAll(() => {
   process.env.UI_USERNAME = USER;
