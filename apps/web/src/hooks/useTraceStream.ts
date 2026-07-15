@@ -5,7 +5,7 @@ import {
 	type EventSourceStatus,
 	type UseEventSourceResult,
 } from "./useEventSource";
-import type { TraceRow } from "../lib/api";
+import type { ObservationMetadataInput, TraceRow } from "../lib/api";
 
 /**
  * `useTraceStream` — thin wrapper around `useEventSource` for the detail page.
@@ -37,6 +37,8 @@ const TRACE_ID_REGEX = /^[0-9a-f]{32}$/;
 export interface ObservationRowLike {
 	observation_id: string;
 	trace_id: string;
+	type?: "span" | "event" | "generation" | "tool";
+	metadata?: ObservationMetadataInput;
 	[k: string]: unknown;
 }
 

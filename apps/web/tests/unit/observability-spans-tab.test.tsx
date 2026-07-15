@@ -13,7 +13,7 @@ import {
 	SpansTab,
 	type ObservationEvent,
 } from "../../src/routes/observability";
-import { listObservations } from "../../src/lib/api";
+import { emptyObservationMetadata, listObservations } from "../../src/lib/api";
 
 vi.mocked(listObservations);
 
@@ -59,7 +59,7 @@ vi.mock("../../src/lib/api", async () => {
 					model: null,
 					input_text: "",
 					output_text: "",
-					metadata: "",
+					metadata: emptyObservationMetadata(),
 				},
 			],
 			total: 1,
@@ -228,9 +228,18 @@ describe("SpansTab — SSE merge + highlight", () => {
 						name: "first-span",
 					}),
 					metadataParsed: {
-						tool: { name: "tool-from-metadata" },
-						model: "gpt-4o-from-metadata",
-						type: "tool",
+						schema_version: 1,
+						attributes: [
+							{
+								key: "tool",
+								value: { stringValue: "tool-from-metadata" },
+							},
+							{
+								key: "model",
+								value: { stringValue: "gpt-4o-from-metadata" },
+							},
+						],
+						prompt_provenance: null,
 					},
 				},
 			});

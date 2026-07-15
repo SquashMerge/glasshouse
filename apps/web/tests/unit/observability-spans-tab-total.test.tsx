@@ -20,7 +20,7 @@ import {
 	SpansTab,
 	type ObservationEvent,
 } from "../../src/routes/observability";
-import { listObservations } from "../../src/lib/api";
+import { emptyObservationMetadata, listObservations } from "../../src/lib/api";
 
 vi.mocked(listObservations);
 
@@ -61,7 +61,7 @@ vi.mock("../../src/lib/api", async () => {
 					model: null,
 					input_text: "",
 					output_text: "",
-					metadata: "",
+					metadata: emptyObservationMetadata(),
 				},
 			],
 			total: 1,

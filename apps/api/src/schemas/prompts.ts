@@ -23,7 +23,9 @@ export const PromptVersionQuery = ProjectIdQuery.extend({
   version: z.coerce.number().int().positive().optional().openapi({ param: { name: "version", in: "query" } }),
 }).strict();
 
-export const JsonObject = z.record(z.unknown()).openapi({ example: { temperature: 0.2 } });
+export const JsonObject = z
+  .record(z.string(), z.unknown())
+  .openapi({ example: { temperature: 0.2 } });
 export const PromptSource = z.string()
   .max(MAX_PROMPT_SOURCE_CHARS)
   .refine((value) => hasAtMostLines(value, MAX_PROMPT_SOURCE_LINES), `Must contain at most ${MAX_PROMPT_SOURCE_LINES} lines`);
