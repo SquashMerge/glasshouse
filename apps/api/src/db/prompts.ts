@@ -46,7 +46,7 @@ export class PromptRepositoryError extends Error {
   constructor(
     readonly code: PromptRepositoryErrorCode,
     message: string,
-    readonly cause?: unknown,
+    override readonly cause?: unknown,
   ) {
     super(message);
     this.name = "PromptRepositoryError";

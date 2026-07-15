@@ -340,7 +340,8 @@ describe("prompt route contracts", () => {
     });
     expect(deleted.status).toBe(204);
     expect(deleted.headers.get("Cache-Control")).toBe("no-store");
-    expect(deletePromptRecord.mock.calls[0]?.[1]).toEqual({
+    expect(deletePromptRecord).toHaveBeenCalledTimes(2);
+    expect(deletePromptRecord.mock.calls[1]?.[1]).toEqual({
       project_id: PROJECT,
       slug: "support-agent",
       confirmation: "support-agent",
