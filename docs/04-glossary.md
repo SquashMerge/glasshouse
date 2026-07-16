@@ -32,6 +32,8 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 
 - `/prompts` — project-scoped prompt list; `/prompts/new` creates the first immutable version; `/prompts/$slug` selects an immutable version; `/prompts/$slug/edit?from=N` starts the next version from version `N`. See `apps/web/src/routes/prompts*.tsx`.
 - `POST /v1/prompts/preview` — authenticated, non-persistent Mustache rendering of system and user draft sources with supplied JSON data. See `apps/api/src/routes/prompts.ts`.
+- `/settings` — Basic Auth user settings page for project-bound customer API credential creation and revocation. It shows the opaque secret only after creation. See `apps/web/src/routes/settings.tsx`.
+- `/v1/customer/prompts/*` — the isolated opaque-bearer customer prompt API. Its project comes from the validated credential, not a request `project_id`. See `apps/api/src/routes/customer-prompts.ts` and `docs/06-customer-api-credentials.md`.
 
 ## SSE endpoints (all in `apps/api/src/routes/trace-events.ts`)
 
@@ -48,6 +50,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Prompt provenance** — typed `(id, version, content_hash)` from a generation observation's atomic `astraea.prompt.*` OTLP tuple; `GET /v1/prompt-provenance/{id}` reports whether that scoped tuple is `active`, `deleted`, or `unknown`, without source or render data. All `astraea.prompt.*` input attributes are stripped before metadata storage or events. See `apps/api/src/db/observation-metadata.ts` and `apps/api/src/routes/prompt-provenance.ts`.
 - **Prompt tombstone** — immutable `(project_id, slug)` reservation left by a hard deletion; prevents canonical prompt ID reuse. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Prompt deletion audit** — immutable, content-free deletion record: project ID, internal prompt ID, slug, deleting actor, timestamp, and deleted version count. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
+- **Customer API credential** — user-managed, project-bound opaque bearer credential with prompt-only scopes. Only its SHA-256 hash, non-secret prefix/fingerprint, lifecycle fields, and creator are stored. See `infra/db/migrations/0011_customer_api_credentials.sql`.
 - **Dataset** — collection of `dataset_item`s, scoped to a Project.
 - **Experiment** — Agent run over a Dataset, produces scores per item.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.

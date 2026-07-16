@@ -19,6 +19,7 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 }));
 
 import { AppShell } from "../../src/components/AppShell";
+import { setCredentials } from "../../src/lib/auth";
 
 describe("AppShell project selector", () => {
   beforeEach(() => {
@@ -36,5 +37,13 @@ describe("AppShell project selector", () => {
     expect(screen.getByRole("link", { name: "Prompts" })).toHaveAttribute("href", "/prompts");
     fireEvent.change(selector, { target: { value: "11111111-1111-4111-8111-111111111111" } });
     expect(selection.selectProject).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("links Settings from the signed-in user menu", () => {
+    setCredentials("admin", "secret");
+    render(<AppShell currentPath="/prompts"><div>Page</div></AppShell>);
+
+    fireEvent.click(screen.getByRole("button", { name: /admin/i }));
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   });
 });

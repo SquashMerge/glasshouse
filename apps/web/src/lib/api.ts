@@ -58,6 +58,52 @@ export async function listProjects(): Promise<ProjectListResponse> {
   return responseJson<ProjectListResponse>(await authedFetch("/v1/projects"), "listProjects");
 }
 
+export type CustomerCredentialScope = "prompts:read" | "prompts:render" | "prompts:write";
+
+export interface CustomerCredential {
+  id: string;
+  project_id: string;
+  display_name: string;
+  prefix: string;
+  fingerprint: string;
+  scopes: CustomerCredentialScope[];
+  created_by: string;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface CustomerCredentialWithSecret extends CustomerCredential {
+  secret: string;
+}
+
+export async function listCustomerCredentials(projectId: string): Promise<{ items: CustomerCredential[] }> {
+  return responseJson<{ items: CustomerCredential[] }>(
+    await authedFetch(`/v1/customer-credentials${buildQs({ project_id: projectId })}`),
+    "listCustomerCredentials",
+  );
+}
+
+export async function createCustomerCredential(input: {
+  project_id: string;
+  display_name: string;
+  scopes: CustomerCredentialScope[];
+  expires_at?: string | null;
+}): Promise<CustomerCredentialWithSecret> {
+  return responseJson<CustomerCredentialWithSecret>(
+    await authedFetch("/v1/customer-credentials", jsonRequest(input)),
+    "createCustomerCredential",
+  );
+}
+
+export async function revokeCustomerCredential(input: { project_id: string; id: string }): Promise<CustomerCredential> {
+  return responseJson<CustomerCredential>(
+    await authedFetch(`/v1/customer-credentials/${encodeURIComponent(input.id)}/revoke${buildQs({ project_id: input.project_id })}`, { method: "POST" }),
+    "revokeCustomerCredential",
+  );
+}
+
 export type PromptRole = "system" | "user";
 
 export interface PromptMessage {

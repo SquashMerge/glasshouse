@@ -42,6 +42,19 @@ import {
   previewPrompt, handlePreviewPrompt,
   deletePrompt, handleDeletePrompt,
 } from "./routes/prompts.js";
+import {
+  createCustomerCredential, handleCreateCustomerCredential,
+  listCustomerCredentials, handleListCustomerCredentials,
+  revokeCustomerCredential, handleRevokeCustomerCredential,
+} from "./routes/customer-credentials.js";
+import {
+  customerCreatePrompt, handleCustomerCreatePrompt,
+  customerGetPrompt, handleCustomerGetPrompt,
+  customerListPromptVersions, handleCustomerListPromptVersions,
+  customerListPrompts, handleCustomerListPrompts,
+  customerCreatePromptVersion, handleCustomerCreatePromptVersion,
+  customerRenderPrompt, handleCustomerRenderPrompt,
+} from "./routes/customer-prompts.js";
 import { listProjects, handleListProjects } from "./routes/projects.js";
 import { getPromptProvenance, handleGetPromptProvenance } from "./routes/prompt-provenance.js";
 import {
@@ -68,6 +81,12 @@ openapiApp.openAPIRegistry.registerComponent("securitySchemes", "basicAuth", {
   type: "http",
   scheme: "basic",
 });
+openapiApp.openAPIRegistry.registerComponent("securitySchemes", "customerApiKey", {
+  type: "http",
+  scheme: "bearer",
+  bearerFormat: "opaque",
+  description: "A project-bound opaque customer credential created in Settings.",
+});
 const register = (route: unknown, handler: unknown): void => {
   openapiApp.openapi(route as never, handler as never);
 };
@@ -77,6 +96,10 @@ openapiApp.use("/v1/prompts/*", async (c, next) => {
   await next();
 });
 openapiApp.use("/v1/prompt-provenance/*", async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  await next();
+});
+openapiApp.use("/v1/customer/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   await next();
 });
@@ -124,6 +147,17 @@ register(renderPrompt, handleRenderPrompt);
 register(deletePrompt, handleDeletePrompt);
 register(getPrompt, handleGetPrompt);
 register(getPromptProvenance, handleGetPromptProvenance);
+
+register(listCustomerCredentials, handleListCustomerCredentials);
+register(createCustomerCredential, handleCreateCustomerCredential);
+register(revokeCustomerCredential, handleRevokeCustomerCredential);
+
+register(customerListPrompts, handleCustomerListPrompts);
+register(customerCreatePrompt, handleCustomerCreatePrompt);
+register(customerListPromptVersions, handleCustomerListPromptVersions);
+register(customerCreatePromptVersion, handleCustomerCreatePromptVersion);
+register(customerRenderPrompt, handleCustomerRenderPrompt);
+register(customerGetPrompt, handleCustomerGetPrompt);
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);

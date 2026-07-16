@@ -7,6 +7,7 @@ import { PromptsPage } from "./routes/prompts";
 import { NewPromptPage } from "./routes/prompts-new";
 import { PromptDetailPage } from "./routes/prompts-detail";
 import { EditPromptPage } from "./routes/prompts-edit";
+import { SettingsPage } from "./routes/settings";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 import { ProjectProvider } from "./components/ProjectProvider";
@@ -77,6 +78,12 @@ const promptEditRoute = createRoute({
   component: EditPromptPage,
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/settings",
+  component: SettingsPage,
+});
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     loginRoute,
@@ -88,6 +95,7 @@ const router = createRouter({
       newPromptRoute,
       promptDetailRoute,
       promptEditRoute,
+      settingsRoute,
     ]),
   ]),
   defaultPreload: false,

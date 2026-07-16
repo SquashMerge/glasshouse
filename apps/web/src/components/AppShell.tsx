@@ -153,6 +153,9 @@ export function AppShell({ children, currentPath }: AppShellProps) {
                 <DropdownMenuLabel>Signed in as</DropdownMenuLabel>
                 <div className="px-2 pb-1.5 text-xs text-muted-foreground">{creds.username}</div>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem>
+                  <Link to="/settings" className="w-full">Settings</Link>
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={logout}>
                   <LuLogOut className="h-4 w-4" />
                   Log out

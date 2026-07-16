@@ -1,10 +1,12 @@
 import { Hono } from "hono";
+import { except } from "hono/combine";
 import { openapiApp } from "./openapi.js";
 import { handleHealth } from "./routes/health.js";
 import { basicAuthMiddleware } from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest } from "./routes/otlp.js";
+import { customerCredentialAuthMiddleware } from "./middleware/customer-credential-auth.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
 const MAX_BODY_BYTES = Number(process.env.API_MAX_BODY_BYTES ?? 1_048_576);
@@ -34,7 +36,12 @@ export function createApiApp(dependencies: ApiDependencies = productionApiDepend
     c.header("Cache-Control", "no-store");
     await next();
   });
-  apiApp.use("/v1/*", basicAuthMiddleware());
+  apiApp.use("/v1/customer/*", async (c, next) => {
+    c.header("Cache-Control", "no-store");
+    await next();
+  });
+  apiApp.use("/v1/customer/*", customerCredentialAuthMiddleware());
+  apiApp.use("/v1/*", except("/v1/customer/*", basicAuthMiddleware()));
 
   // OTLP is mounted as a raw handler (not via openapiApp) because it consumes
   // the raw JSON body and returns a non-typed OTLP response shape.

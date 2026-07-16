@@ -2,14 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createPrompt,
   createPromptVersion,
+  createCustomerCredential,
   deletePrompt,
   getPrompt,
   getPromptProvenance,
   listProjects,
+  listCustomerCredentials,
   listPromptVersions,
   listPrompts,
   previewPrompt,
   renderPrompt,
+  revokeCustomerCredential,
 } from "../../src/lib/api";
 import { setCredentials } from "../../src/lib/auth";
 
@@ -78,5 +81,23 @@ describe("prompt management API client", () => {
       { url: `/v1/prompts/support-agent?project_id=${PROJECT_ID}`, method: "DELETE", body: JSON.stringify({ confirmation: "support-agent" }) },
       { url: `/v1/prompt-provenance/support-agent?project_id=${PROJECT_ID}&version=2&content_hash=${HASH}`, method: "GET", body: undefined },
     ]);
+  });
+
+  it("uses Basic Auth only for internal credential management and never places secrets in URLs", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ id: "550e8400-e29b-41d4-a716-446655440000", secret: "astraea_ck_once" }, 201))
+      .mockResolvedValueOnce(jsonResponse({ id: "550e8400-e29b-41d4-a716-446655440000", revoked_at: "2026-07-16T10:00:00.000Z" }));
+
+    await listCustomerCredentials(PROJECT_ID);
+    await createCustomerCredential({ project_id: PROJECT_ID, display_name: "Renderer", scopes: ["prompts:read"] });
+    await revokeCustomerCredential({ project_id: PROJECT_ID, id: "550e8400-e29b-41d4-a716-446655440000" });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => ({ url, method: init?.method ?? "GET", body: init?.body }))).toEqual([
+      { url: `/v1/customer-credentials?project_id=${PROJECT_ID}`, method: "GET", body: undefined },
+      { url: "/v1/customer-credentials", method: "POST", body: JSON.stringify({ project_id: PROJECT_ID, display_name: "Renderer", scopes: ["prompts:read"] }) },
+      { url: `/v1/customer-credentials/550e8400-e29b-41d4-a716-446655440000/revoke?project_id=${PROJECT_ID}`, method: "POST", body: undefined },
+    ]);
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).join(" ")).not.toContain("astraea_ck_once");
   });
 });
