@@ -67,7 +67,7 @@ export async function handleListTraces(c: Context): Promise<Response> {
 }
 
 const GetTraceObservationWithMetadata = Observation.extend({
-	metadata: z.union([z.string(), z.record(z.unknown()), z.null()]),
+	metadata: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]),
 });
 
 export const getTrace = createRoute({

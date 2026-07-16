@@ -13,7 +13,7 @@ export const Experiment = z
 		dataset_id: z.string().uuid(),
 		name: z.string().nullable().optional(),
 		status: ExperimentStatus,
-		config: z.record(z.unknown()),
+		config: z.record(z.string(), z.unknown()),
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
 	})
@@ -42,7 +42,7 @@ export const ExperimentResults = z
 				dataset_item_id: z.string().uuid(),
 				agent_version: z.string().nullable().optional(),
 				output: z.unknown().nullable().optional(),
-				scores: z.record(z.number()),
+				scores: z.record(z.string(), z.number()),
 				duration_ms: z.number().int().nullable().optional(),
 				status: ExperimentStatus,
 			}),

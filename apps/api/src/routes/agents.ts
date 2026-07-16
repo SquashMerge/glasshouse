@@ -116,7 +116,7 @@ export const runAgent = createRoute({
 		body: {
 			content: {
 				"application/json": {
-					schema: z.object({ input: z.record(z.unknown()) }),
+					schema: z.object({ input: z.record(z.string(), z.unknown()) }),
 				},
 			},
 		},

@@ -28,7 +28,7 @@ export const Agent = z
 			.optional()
 			.openapi({ example: "2.6.22" }),
 		manifest: z
-			.record(z.unknown())
+			.record(z.string(), z.unknown())
 			.openapi({ example: { model: { provider: "openai", name: "gpt-4o" } } }),
 		current_version: z
 			.string()

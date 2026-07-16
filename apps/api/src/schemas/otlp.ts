@@ -67,10 +67,10 @@ export const Span = z
 		name: z.string().min(1).max(256),
 		kind: SpanKind.optional(),
 		start_time_unix_nano: z
-			.union([z.number().int(), z.string()])
+			.union([z.number().refine(Number.isInteger), z.string()])
 			.transform((v) => Number(v)),
 		end_time_unix_nano: z
-			.union([z.number().int(), z.string()])
+			.union([z.number().refine(Number.isInteger), z.string()])
 			.optional()
 			.transform((v) => (v === undefined ? undefined : Number(v))),
 		attributes: z.array(KeyValue).optional().default([]),

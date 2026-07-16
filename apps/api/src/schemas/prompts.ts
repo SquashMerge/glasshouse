@@ -8,7 +8,7 @@ export const Prompt = z
 		name: z.string(),
 		description: z.string().nullable().optional(),
 		current_version: z.number().int().nullable().optional(),
-		labels: z.record(z.string()).openapi({
+		labels: z.record(z.string(), z.string()).openapi({
 			description:
 				"Map of label -> version_id (e.g. { 'production': 'uuid' }).",
 			example: { production: "550e8400-e29b-41d4-a716-446655440099" },
@@ -35,7 +35,7 @@ export const PromptVersion = z
 		version: z.number().int(),
 		content: z.string(),
 		model: z.string().nullable().optional(),
-		metadata: z.record(z.unknown()),
+		metadata: z.record(z.string(), z.unknown()),
 		created_at: z.string().datetime(),
 	})
 	.openapi("PromptVersion");

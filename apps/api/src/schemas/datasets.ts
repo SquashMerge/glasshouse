@@ -25,18 +25,18 @@ export const DatasetItem = z
 	.object({
 		id: z.string().uuid(),
 		dataset_id: z.string().uuid(),
-		input: z.record(z.unknown()),
-		expected_output: z.record(z.unknown()).nullable().optional(),
-		metadata: z.record(z.unknown()),
+		input: z.record(z.string(), z.unknown()),
+		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
+		metadata: z.record(z.string(), z.unknown()),
 		created_at: z.string().datetime(),
 	})
 	.openapi("DatasetItem");
 
 export const DatasetItemCreate = z
 	.object({
-		input: z.record(z.unknown()),
-		expected_output: z.record(z.unknown()).nullable().optional(),
-		metadata: z.record(z.unknown()).optional(),
+		input: z.record(z.string(), z.unknown()),
+		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
+		metadata: z.record(z.string(), z.unknown()).optional(),
 	})
 	.openapi("DatasetItemCreate");
 
