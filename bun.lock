@@ -15,7 +15,7 @@
         "@clickhouse/client": "1.7.0",
         "@hono/zod-openapi": "0.18.0",
         "@scalar/hono-api-reference": "0.5.175",
-        "hono": "4.6.14",
+        "hono": "4.12.25",
         "ioredis": "5.4.1",
         "js-yaml": "4.1.0",
         "node-pg-migrate": "7.6.1",
@@ -75,7 +75,7 @@
 
     "@asteasolutions/zod-to-openapi": ["@asteasolutions/zod-to-openapi@7.3.4", "", { "dependencies": { "openapi3-ts": "^4.1.2" }, "peerDependencies": { "zod": "^3.20.2" } }, "sha512-/2rThQ5zPi9OzVwes6U7lK1+Yvug0iXu25olp7S0XsYmOqnyMfxH7gdSQjn/+DSOHRg7wnotwGJSyL+fBKdnEA=="],
 
-    "@astraea/api": ["@astraea/api@workspace:apps/api", { "dependencies": { "@clickhouse/client": "1.7.0", "@hono/zod-openapi": "0.18.0", "@scalar/hono-api-reference": "0.5.175", "hono": "4.6.14", "ioredis": "5.4.1", "js-yaml": "4.1.0", "node-pg-migrate": "7.6.1", "openapi-fetch": "0.13.4", "pg": "8.13.1", "zod": "3.23.8" }, "devDependencies": { "@types/bun": "1.1.14", "@types/js-yaml": "4.0.9", "@types/node": "22.10.2", "@types/pg": "8.11.10", "typescript": "5.5.4" } }],
+    "@astraea/api": ["@astraea/api@workspace:apps/api", { "dependencies": { "@clickhouse/client": "1.7.0", "@hono/zod-openapi": "0.18.0", "@scalar/hono-api-reference": "0.5.175", "hono": "4.12.25", "ioredis": "5.4.1", "js-yaml": "4.1.0", "node-pg-migrate": "7.6.1", "openapi-fetch": "0.13.4", "pg": "8.13.1", "zod": "3.23.8" }, "devDependencies": { "@types/bun": "1.1.14", "@types/js-yaml": "4.0.9", "@types/node": "22.10.2", "@types/pg": "8.11.10", "typescript": "5.5.4" } }],
 
     "@astraea/web": ["@astraea/web@workspace:apps/web", { "dependencies": { "@tanstack/react-query": "5.62.7", "@tanstack/react-router": "1.91.1", "class-variance-authority": "0.7.1", "openapi-fetch": "0.13.4", "react": "19.0.0", "react-dom": "19.0.0", "react-icons": "5.7.0" }, "devDependencies": { "@playwright/test": "1.49.1", "@testing-library/jest-dom": "6.6.3", "@testing-library/react": "16.1.0", "@types/bun": "1.1.14", "@types/node": "22.10.2", "@types/react": "19.0.2", "@types/react-dom": "19.0.2", "@vitejs/plugin-react": "4.3.4", "autoprefixer": "10.4.20", "jsdom": "25.0.1", "postcss": "8.4.49", "tailwindcss": "3.4.17", "typescript": "5.5.4", "vite": "6.0.7", "vitest": "2.1.8" } }],
 
@@ -499,7 +499,7 @@
 
     "hasown": ["hasown@2.0.4", "", { "dependencies": { "function-bind": "^1.1.2" } }, "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A=="],
 
-    "hono": ["hono@4.6.14", "", {}, "sha512-j4VkyUp2xazGJ8eCCLN1Vm/bxdvm/j5ZuU9AIjLu9vapn2M44p9L3Ktr9Vnb2RN2QtcR/wVjZVMlT5k7GJQgPw=="],
+    "hono": ["hono@4.12.25", "", {}, "sha512-2NFaIyNVgJmBs/ecmtGzlmluTFs5cHEWGTdu0t1HBwYzoGXOL5nUQBRMXsXWla5i4KkG//QMzVP88m1+I3fdAQ=="],
 
     "hookable": ["hookable@5.5.3", "", {}, "sha512-Yc+BQe8SvoXH1643Qez1zqLRmbA5rCL+sSmk6TVos0LWVfNIB7PGncdlId77WzLGSIB5KaWgTaNTs2lNVEI6VQ=="],
 

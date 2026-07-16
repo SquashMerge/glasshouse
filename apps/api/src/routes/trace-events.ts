@@ -232,7 +232,7 @@ export async function handleStreamObservationEvents(c: Context): Promise<Respons
  *      unsubscribe.
  */
 export async function handleStreamTraceDetailEvents(c: Context): Promise<Response> {
-  const traceId = c.req.param("id");
+  const traceId = c.req.param("id")!;
 
   const bufferedObservations: ObservationRow[] = [];
   let forwardObservation: ((observation: ObservationRow) => void) | null = null;

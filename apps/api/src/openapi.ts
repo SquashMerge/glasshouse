@@ -70,20 +70,20 @@ register(loginRoute, handleLogin);
 
 register(createAgent, handleCreateAgent);
 register(listAgents, handleListAgents);
-register(getAgent, (c: Context) => handleGetAgent(c.req.param("id")));
-register(patchAgent, (c: Context) => handlePatchAgent(c.req.param("id")));
-register(deleteAgent, (c: Context) => handleDeleteAgent(c.req.param("id")));
-register(syncAgent, (c: Context) => handleSyncAgent(c.req.param("id")));
-register(runAgent, (c: Context) => handleRunAgent(c.req.param("id")));
-register(listAgentVersions, (c: Context) => handleListAgentVersions(c.req.param("id")));
+register(getAgent, (c: Context) => handleGetAgent(c.req.param("id")!));
+register(patchAgent, (c: Context) => handlePatchAgent(c.req.param("id")!));
+register(deleteAgent, (c: Context) => handleDeleteAgent(c.req.param("id")!));
+register(syncAgent, (c: Context) => handleSyncAgent(c.req.param("id")!));
+register(runAgent, (c: Context) => handleRunAgent(c.req.param("id")!));
+register(listAgentVersions, (c: Context) => handleListAgentVersions(c.req.param("id")!));
 
 register(createExperiment, handleCreateExperiment);
 register(listExperiments, handleListExperiments);
-register(getExperiment, (c: Context) => handleGetExperiment(c.req.param("id")));
-register(getExperimentResults, (c: Context) => handleGetExperimentResults(c.req.param("id")));
-register(getExperimentSummary, (c: Context) => handleGetExperimentSummary(c.req.param("id")));
-register(getExperimentEvents, (c: Context) => handleGetExperimentEvents(c.req.param("id")));
-register(cancelExperiment, (c: Context) => handleCancelExperiment(c.req.param("id")));
+register(getExperiment, (c: Context) => handleGetExperiment(c.req.param("id")!));
+register(getExperimentResults, (c: Context) => handleGetExperimentResults(c.req.param("id")!));
+register(getExperimentSummary, (c: Context) => handleGetExperimentSummary(c.req.param("id")!));
+register(getExperimentEvents, (c: Context) => handleGetExperimentEvents(c.req.param("id")!));
+register(cancelExperiment, (c: Context) => handleCancelExperiment(c.req.param("id")!));
 
 register(listTraces, handleListTraces);
 // Register the more specific /v1/traces/events SSE route BEFORE
@@ -97,20 +97,20 @@ register(streamTraceDetailEvents, handleStreamTraceDetailEvents);
 
 register(listPrompts, handleListPrompts);
 register(createPrompt, handleCreatePrompt);
-register(getPrompt, (c: Context) => handleGetPrompt(c.req.param("id")));
-register(listPromptVersions, (c: Context) => handleListPromptVersions(c.req.param("id")));
-register(createPromptVersion, (c: Context) => handleCreatePromptVersion(c.req.param("id")));
-register(patchPromptLabels, (c: Context) => handlePatchPromptLabels(c.req.param("id")));
+register(getPrompt, (c: Context) => handleGetPrompt(c.req.param("id")!));
+register(listPromptVersions, (c: Context) => handleListPromptVersions(c.req.param("id")!));
+register(createPromptVersion, (c: Context) => handleCreatePromptVersion(c.req.param("id")!));
+register(patchPromptLabels, (c: Context) => handlePatchPromptLabels(c.req.param("id")!));
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);
-register(getDataset, (c: Context) => handleGetDataset(c.req.param("id")));
-register(listDatasetItems, (c: Context) => handleListDatasetItems(c.req.param("id")));
-register(addDatasetItem, (c: Context) => handleAddDatasetItem(c.req.param("id")));
-register(deleteDatasetItem, (c: Context) => handleDeleteDatasetItem(c.req.param("id"), c.req.param("itemId")));
+register(getDataset, (c: Context) => handleGetDataset(c.req.param("id")!));
+register(listDatasetItems, (c: Context) => handleListDatasetItems(c.req.param("id")!));
+register(addDatasetItem, (c: Context) => handleAddDatasetItem(c.req.param("id")!));
+register(deleteDatasetItem, (c: Context) => handleDeleteDatasetItem(c.req.param("id")!, c.req.param("itemId")!));
 
 register(createScore, handleCreateScore);
-register(getScore, (c: Context) => handleGetScore(c.req.param("id")));
+register(getScore, (c: Context) => handleGetScore(c.req.param("id")!));
 
 openapiApp.doc("/openapi.json", {
   openapi: "3.1.0",

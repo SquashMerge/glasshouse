@@ -86,7 +86,7 @@ export const getTrace = createRoute({
 });
 
 export async function handleGetTrace(c: Context): Promise<Response> {
-  const traceId = c.req.param("id");
+  const traceId = c.req.param("id")!;
   const expandMetadata = c.req.query("expand") === "metadata";
   try {
     const { trace, observations } = await queryGetTrace(defaultClient(), traceId);
