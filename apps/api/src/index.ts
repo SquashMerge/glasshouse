@@ -34,7 +34,7 @@ console.log(`  OTLP ingest:  POST http://localhost:${PORT}/v1/otel/v1/traces`);
 console.log(`  Auth:          Basic (UI_USERNAME / UI_PASSWORD from env)`);
 
 export default {
-  port: PORT,
-  hostname: "0.0.0.0",
-  fetch: apiApp.fetch,
+	port: PORT,
+	hostname: "0.0.0.0",
+	fetch: apiApp.fetch,
 };

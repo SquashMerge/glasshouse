@@ -18,7 +18,8 @@
     "smoke": "make smoke",
     "doctor": "make doctor",
     "codegen": "make codegen",
-    "format": "bun --filter '*' format"
+    "format": "bun --filter '*' format",
+    "format:check": "bun --filter '*' format:check"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
