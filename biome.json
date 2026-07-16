@@ -4,7 +4,7 @@
     "ignore": ["**/dist/**", "**/node_modules/**", ".opencode/**"]
   },
   "formatter": {
-    "enabled": false
+    "enabled": true
   },
   "linter": {
     "enabled": true,

@@ -9,7 +9,8 @@
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint src tests",
-    "format": "echo 'no format configured yet'",
+    "format": "biome format --write src tests",
+    "format:check": "biome format src tests",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "PLAYWRIGHT_E2E=true playwright test --reporter=line"

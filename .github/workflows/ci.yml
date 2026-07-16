@@ -22,6 +22,8 @@ jobs:
         include:
           - check: lint
             command: bun run lint
+          - check: format
+            command: bun run format:check
           - check: typecheck
             command: bun run typecheck
           - check: test
