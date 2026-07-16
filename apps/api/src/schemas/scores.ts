@@ -9,7 +9,7 @@ export const Score = z
 		experiment_id: z.string().uuid().nullable().optional(),
 		name: z.string(),
 		value: z.number(),
-		metadata: z.record(z.unknown()),
+		metadata: z.record(z.string(), z.unknown()),
 		created_at: z.string().datetime(),
 	})
 	.openapi("Score");
@@ -21,7 +21,7 @@ export const ScoreCreate = z
 		experiment_id: z.string().uuid().optional(),
 		name: z.string().min(1).max(120),
 		value: z.number(),
-		metadata: z.record(z.unknown()).optional(),
+		metadata: z.record(z.string(), z.unknown()).optional(),
 	})
 	.openapi("ScoreCreate");
 
