@@ -306,3 +306,17 @@ export function renderPromptTemplateWithWarnings(
 export function renderPromptTemplate(template: string, data: unknown): string {
   return renderPromptTemplateWithWarnings(template, data).output;
 }
+
+export function renderPromptTemplatesWithWarnings(
+  templates: readonly PromptTemplateMessage[],
+  data: unknown,
+): { messages: PromptTemplateMessage[]; warnings: { code: "MISSING_VARIABLE"; role: PromptTemplateMessage["role"]; path: string }[] } {
+  const rendered = templates.map((message) => {
+    const result = renderPromptTemplateWithWarnings(message.content, data);
+    return { message: { role: message.role, content: result.output }, warnings: result.warnings };
+  });
+  return {
+    messages: rendered.map(({ message }) => message),
+    warnings: rendered.flatMap(({ message, warnings }) => warnings.map((warning) => ({ ...warning, role: message.role }))),
+  };
+}

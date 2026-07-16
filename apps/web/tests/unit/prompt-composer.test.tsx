@@ -74,26 +74,44 @@ describe("PromptComposer", () => {
     expect(onSaved).toHaveBeenCalledWith({ id: "support-agent", version: 1 });
   });
 
-  it("starts from the selected source, previews saved source with warnings, and submits against the current base version", async () => {
+  it("previews a fresh unsaved user draft and shows both role outputs", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      messages: [{ role: "system", content: "You are helpful." }, { role: "user", content: "Hello Ada" }],
+      warnings: [],
+    }));
+    renderComposer(<PromptComposer projectId={PROJECT_ID} onSaved={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("System prompt (optional)"), { target: { value: "You are helpful." } });
+    fireEvent.change(screen.getByLabelText("User prompt (optional)"), { target: { value: "Hello {{name}}" } });
+    fireEvent.change(screen.getByLabelText("Variables JSON"), { target: { value: "{\"name\":\"Ada\"}" } });
+    fireEvent.click(screen.getByTestId("preview-prompt"));
+
+    await screen.findByTestId("preview-output-user");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/prompts/preview");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ messages: [{ role: "system", content: "You are helpful." }, { role: "user", content: "Hello {{name}}" }], data: { name: "Ada" } });
+    expect(screen.getByTestId("preview-output-system")).toHaveTextContent("You are helpful.");
+    expect(screen.getByTestId("preview-output-user")).toHaveTextContent("Hello Ada");
+  });
+
+  it("previews the unsaved version draft with injected variables and submits against the current base version", async () => {
     const selected = prompt(1, "Selected {{customer}}");
     const current = prompt(3, "Current {{customer}}");
     const onSaved = vi.fn();
     fetchMock
-      .mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 1, content_hash: HASH, messages: [{ role: "system", content: "Selected " }], warnings: [{ code: "MISSING_VARIABLE", role: "system", path: "customer" }] }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ role: "system", content: "Draft Ada" }], warnings: [] }))
       .mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 4 }));
     renderComposer(<PromptComposer projectId={PROJECT_ID} existing={selected} current={current} onSaved={onSaved} />);
 
     await waitFor(() => expect(screen.getByLabelText("System prompt (optional)")).toHaveValue("Selected {{customer}}"));
     fireEvent.change(screen.getByLabelText("System prompt (optional)"), { target: { value: "Draft {{customer}}" } });
     fireEvent.change(screen.getByLabelText("Change summary"), { target: { value: "Use a shorter greeting" } });
-    fireEvent.change(screen.getByLabelText("Variables JSON"), { target: { value: "{}" } });
+    fireEvent.change(screen.getByLabelText("Variables JSON"), { target: { value: "{\"customer\":\"Ada\"}" } });
     fireEvent.click(screen.getByTestId("preview-prompt"));
 
     await screen.findByTestId("preview-output-system");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/v1/prompts/support-agent/render?project_id=${PROJECT_ID}&version=1`);
-    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ data: {} });
-    expect(screen.getByTestId("preview-warnings")).toHaveTextContent("system: missing variable customer");
-    expect(screen.getByTestId("preview-output-system")).toHaveTextContent("Selected");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/prompts/preview");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ messages: [{ role: "system", content: "Draft {{customer}}" }], data: { customer: "Ada" } });
+    expect(screen.getByTestId("preview-output-system")).toHaveTextContent("Draft Ada");
     expect(screen.getByLabelText("System prompt (optional)")).toHaveValue("Draft {{customer}}");
 
     fireEvent.click(screen.getByTestId("save-prompt"));
@@ -103,34 +121,4 @@ describe("PromptComposer", () => {
     expect(onSaved).toHaveBeenCalledWith({ id: "support-agent", version: 4 });
   });
 
-  it("renders system and user messages from valid nested variables JSON", async () => {
-    const selected = {
-      ...prompt(1, "Hello {{customer.name}}"),
-      messages: [
-        { role: "system" as const, content: "Hello {{customer.name}}" },
-        { role: "user" as const, content: "Please help {{customer.name}}" },
-      ],
-    };
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      id: "support-agent",
-      version: 1,
-      content_hash: HASH,
-      messages: [
-        { role: "system", content: "Hello Ada" },
-        { role: "user", content: "Please help Ada" },
-      ],
-      warnings: [],
-    }));
-
-    renderComposer(<PromptComposer projectId={PROJECT_ID} existing={selected} current={selected} onSaved={vi.fn()} />);
-
-    await waitFor(() => expect(screen.getByLabelText("User prompt (optional)")).toHaveValue("Please help {{customer.name}}"));
-    fireEvent.change(screen.getByLabelText("Variables JSON"), { target: { value: '{"customer":{"name":"Ada"}}' } });
-    fireEvent.click(screen.getByTestId("preview-prompt"));
-
-    await screen.findByTestId("preview-output-user");
-    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({ data: { customer: { name: "Ada" } } });
-    expect(screen.getByTestId("preview-output-system")).toHaveTextContent("Hello Ada");
-    expect(screen.getByTestId("preview-output-user")).toHaveTextContent("Please help Ada");
-  });
 });

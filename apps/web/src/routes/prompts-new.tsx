@@ -11,11 +11,11 @@ import { PageMessage } from "./prompts";
 import {
   createPrompt,
   createPromptVersion,
-  renderPrompt,
+  previewPrompt,
   type JsonObject,
   type Prompt,
   type PromptMessage,
-  type PromptRenderResponse,
+  type PromptPreviewResponse,
 } from "../lib/api";
 
 const TEXTAREA_CLASS = "min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
@@ -86,9 +86,11 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
 
   const previewMutation = useMutation({
     mutationFn: async () => {
-      if (!projectId || !existing) throw new Error("Save the prompt before requesting a server preview.");
       const data = parseObject(variablesText, "Variables");
-      return renderPrompt({ project_id: projectId, slug: existing.id, version: existing.version, data });
+      return previewPrompt({
+        messages: promptMessages(systemSource, userSource),
+        data,
+      });
     },
     onMutate: () => {
       setPreviewError(null);
@@ -161,7 +163,6 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
           </Card>
 
           <ServerPreview
-            enabled={Boolean(projectId && existing)}
             variablesText={variablesText}
             onVariablesChange={(value) => {
               setVariablesText(value);
@@ -172,7 +173,6 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
             isPending={previewMutation.isPending}
             error={previewError}
             preview={previewMutation.data}
-            version={existing?.version}
           />
         </div>
       </div>
@@ -181,40 +181,30 @@ export function PromptComposer({ projectId, existing, current, onSaved }: Prompt
 }
 
 function ServerPreview({
-  enabled,
   variablesText,
   onVariablesChange,
   onPreview,
   isPending,
   error,
   preview,
-  version,
 }: {
-  enabled: boolean;
   variablesText: string;
   onVariablesChange: (value: string) => void;
   onPreview: () => void;
   isPending: boolean;
   error: string | null;
-  preview: PromptRenderResponse | undefined;
-  version: number | undefined;
+  preview: PromptPreviewResponse | undefined;
 }) {
   return (
     <Card data-testid="server-preview">
       <CardHeader><CardTitle>Server preview</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        {enabled ? (
-          <>
-            <p className="text-xs text-muted-foreground">Previewing saved v{version}. Save a new draft before previewing it.</p>
-            <div className="space-y-2">
-              <Label htmlFor="prompt-variables">Variables JSON</Label>
-              <textarea id="prompt-variables" className={TEXTAREA_CLASS} value={variablesText} onChange={(event) => onVariablesChange(event.target.value)} disabled={isPending} />
-            </div>
-            <Button type="button" variant="outline" onClick={onPreview} disabled={isPending} data-testid="preview-prompt">{isPending ? "Rendering…" : "Preview"}</Button>
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">Save the prompt to request a server preview.</p>
-        )}
+        <p className="text-xs text-muted-foreground">Preview the current unsaved draft with JSON variables.</p>
+        <div className="space-y-2">
+          <Label htmlFor="prompt-variables">Variables JSON</Label>
+          <textarea id="prompt-variables" className={TEXTAREA_CLASS} value={variablesText} onChange={(event) => onVariablesChange(event.target.value)} disabled={isPending} />
+        </div>
+        <Button type="button" variant="outline" onClick={onPreview} disabled={isPending} data-testid="preview-prompt">{isPending ? "Rendering…" : "Preview"}</Button>
         {error && <p className="text-sm text-destructive" role="alert" aria-live="assertive">{error}</p>}
         {preview && (
           <div className="space-y-3" aria-live="polite">

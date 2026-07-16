@@ -85,6 +85,14 @@ export const PromptRender = z.object({
   }),
 }).strict().openapi("PromptRender");
 
+export const PromptPreview = z.object({
+  messages: PromptMessages,
+  data: JsonObject.superRefine((value, context) => {
+    const budgetError = renderDataBudgetError(value);
+    if (budgetError) context.addIssue({ code: z.ZodIssueCode.custom, message: budgetError });
+  }),
+}).strict().openapi("PromptPreview");
+
 export const PromptRenderResponse = z.object({
   id: PromptId,
   version: z.number().int().positive(),
@@ -96,6 +104,15 @@ export const PromptRenderResponse = z.object({
     path: z.string().min(1),
   }).strict()),
 }).strict().openapi("PromptRenderResponse");
+
+export const PromptPreviewResponse = z.object({
+  messages: PromptMessages,
+  warnings: z.array(z.object({
+    code: z.literal("MISSING_VARIABLE"),
+    role: z.enum(["system", "user"]),
+    path: z.string().min(1),
+  }).strict()),
+}).strict().openapi("PromptPreviewResponse");
 
 export const PromptDelete = z.object({
   confirmation: PromptId,
