@@ -10,6 +10,7 @@ import {
   getPrompt,
   listPromptVersions,
   listPrompts,
+  previewPrompt,
   renderPrompt,
 } from "../../src/routes/prompts";
 import { createProjectRouteHandlers, listProjects } from "../../src/routes/projects";
@@ -126,6 +127,7 @@ function app() {
   api.openapi(listPrompts, promptHandlers.handleListPrompts);
   api.openapi(listPromptVersions, promptHandlers.handleListPromptVersions);
   api.openapi(createPromptVersion, promptHandlers.handleCreatePromptVersion);
+  api.openapi(previewPrompt, promptHandlers.handlePreviewPrompt);
   api.openapi(renderPrompt, promptHandlers.handleRenderPrompt);
   api.openapi(listProjects, projectHandlers.handleListProjects);
   api.openapi(getPromptProvenance, promptProvenanceHandlers.handleGetPromptProvenance);
@@ -273,6 +275,31 @@ describe("prompt route contracts", () => {
       warnings: [],
     });
     expect(renderPromptRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders unsaved system and user drafts with injected variables without reading a saved prompt", async () => {
+    const renderCalls = renderPromptRecord.mock.calls.length;
+    const response = await app().request("/v1/prompts/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { role: "system", content: "You are helping {{customer.name}}." },
+          { role: "user", content: "Resolve {{ticket}} for {{customer.name}}." },
+        ],
+        data: { customer: { name: "Ada" }, ticket: "INC-42" },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      messages: [
+        { role: "system", content: "You are helping Ada." },
+        { role: "user", content: "Resolve INC-42 for Ada." },
+      ],
+      warnings: [],
+    });
+    expect(renderPromptRecord.mock.calls).toHaveLength(renderCalls);
   });
 
   it("marks prompt provenance responses no-store", async () => {

@@ -39,6 +39,7 @@ import {
   listPromptVersions, handleListPromptVersions,
   createPromptVersion, handleCreatePromptVersion,
   renderPrompt, handleRenderPrompt,
+  previewPrompt, handlePreviewPrompt,
   deletePrompt, handleDeletePrompt,
 } from "./routes/prompts.js";
 import { listProjects, handleListProjects } from "./routes/projects.js";
@@ -116,6 +117,7 @@ register(streamTraceDetailEvents, handleStreamTraceDetailEvents);
 register(listProjects, handleListProjects);
 register(listPrompts, handleListPrompts);
 register(createPrompt, handleCreatePrompt);
+register(previewPrompt, handlePreviewPrompt);
 register(listPromptVersions, handleListPromptVersions);
 register(createPromptVersion, handleCreatePromptVersion);
 register(renderPrompt, handleRenderPrompt);

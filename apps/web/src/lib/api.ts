@@ -127,6 +127,11 @@ export interface PromptRenderResponse {
   warnings: Array<{ code: "MISSING_VARIABLE"; role: PromptRole; path: string }>;
 }
 
+export interface PromptPreviewResponse {
+  messages: PromptMessage[];
+  warnings: Array<{ code: "MISSING_VARIABLE"; role: PromptRole; path: string }>;
+}
+
 export interface PromptProvenanceStatusResponse {
   status: "active" | "deleted" | "unknown";
 }
@@ -176,6 +181,10 @@ export async function renderPrompt(input: RenderPromptInput): Promise<PromptRend
     ),
     "renderPrompt",
   );
+}
+
+export async function previewPrompt(input: { messages: PromptMessage[]; data: JsonObject }): Promise<PromptPreviewResponse> {
+  return responseJson<PromptPreviewResponse>(await authedFetch("/v1/prompts/preview", jsonRequest(input)), "previewPrompt");
 }
 
 export async function deletePrompt(input: { project_id: string; slug: string; confirmation: string }): Promise<void> {

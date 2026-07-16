@@ -12,6 +12,7 @@ import {
 } from "../db/prompts.js";
 import type { JsonObject } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
+import { renderPromptTemplatesWithWarnings } from "../lib/prompt-templates.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
 import {
   Prompt,
@@ -19,6 +20,8 @@ import {
   PromptDelete,
   PromptErrorResponses,
   PromptIdParam,
+  PromptPreview,
+  PromptPreviewResponse,
   PromptRender,
   PromptRenderResponse,
   PromptVersion,
@@ -127,6 +130,16 @@ export const renderPrompt = createRoute({
   responses: { 200: { description: "Rendered", content: { "application/json": { schema: PromptRenderResponse } } }, ...PromptErrorResponses },
 });
 
+export const previewPrompt = createRoute({
+  method: "post",
+  path: "/v1/prompts/preview",
+  tags: [tag],
+  summary: "Render unsaved system and user prompt drafts as plain LLM text",
+  security: [{ basicAuth: [] }],
+  request: { body: { content: { "application/json": { schema: PromptPreview } } } },
+  responses: { 200: { description: "Rendered", content: { "application/json": { schema: PromptPreviewResponse } } }, ...PromptErrorResponses },
+});
+
 export const deletePrompt = createRoute({
   method: "delete",
   path: "/v1/prompts/{id}",
@@ -193,6 +206,14 @@ export function createPromptRouteHandlers(dependencies: PromptRouteDependencies 
         return failure(c, cause);
       }
     },
+    handlePreviewPrompt: async (c: Parameters<RouteHandler<typeof previewPrompt>>[0]): Promise<Response> => {
+      try {
+        const body = c.req.valid("json") as { messages: { role: "system" | "user"; content: string }[]; data: JsonObject };
+        return c.json(renderPromptTemplatesWithWarnings(body.messages, body.data));
+      } catch (cause) {
+        return failure(c, cause);
+      }
+    },
     handleDeletePrompt: async (c: Parameters<RouteHandler<typeof deletePrompt>>[0]): Promise<Response> => {
       try {
         const params = c.req.valid("param") as { id: string };
@@ -214,5 +235,6 @@ export const {
   handleGetPrompt,
   handleListPromptVersions,
   handleListPrompts,
+  handlePreviewPrompt,
   handleRenderPrompt,
 } = createPromptRouteHandlers();

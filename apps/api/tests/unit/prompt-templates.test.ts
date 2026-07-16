@@ -14,6 +14,7 @@ import {
   PromptTemplateError,
   renderPromptTemplate,
   renderPromptTemplateWithWarnings,
+  renderPromptTemplatesWithWarnings,
   validatePromptTemplate,
   validatePromptTemplates,
 } from "../../src/lib/prompt-templates";
@@ -97,6 +98,19 @@ describe("prompt templates", () => {
     });
 
     expect(output).toBe("first=1;second=2;");
+  });
+
+  it("renders system and user templates separately with the same JSON data", () => {
+    expect(renderPromptTemplatesWithWarnings([
+      { role: "system", content: "You are helping {{customer.name}}." },
+      { role: "user", content: "Resolve {{ticket}} for {{customer.name}}." },
+    ], { customer: { name: "Ada" }, ticket: "INC-42" })).toEqual({
+      messages: [
+        { role: "system", content: "You are helping Ada." },
+        { role: "user", content: "Resolve INC-42 for Ada." },
+      ],
+      warnings: [],
+    });
   });
 
   it("rejects executable values, getters, class instances, and non-JSON primitives", () => {

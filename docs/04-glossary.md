@@ -31,6 +31,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 ## Prompt UI
 
 - `/prompts` — project-scoped prompt list; `/prompts/new` creates the first immutable version; `/prompts/$slug` selects an immutable version; `/prompts/$slug/edit?from=N` starts the next version from version `N`. See `apps/web/src/routes/prompts*.tsx`.
+- `POST /v1/prompts/preview` — authenticated, non-persistent Mustache rendering of system and user draft sources with supplied JSON data. See `apps/api/src/routes/prompts.ts`.
 
 ## SSE endpoints (all in `apps/api/src/routes/trace-events.ts`)
 
