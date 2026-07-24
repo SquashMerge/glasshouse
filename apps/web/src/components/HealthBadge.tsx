@@ -20,7 +20,10 @@ async function fetchHealth(): Promise<HealthResponse> {
 function Pill({
 	label,
 	state,
-}: { label: string; state: "up" | "down" | "loading" }) {
+}: {
+	label: string;
+	state: "up" | "down" | "loading";
+}) {
 	const color =
 		state === "loading"
 			? "bg-muted text-muted-foreground"

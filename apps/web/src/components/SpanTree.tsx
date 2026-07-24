@@ -107,7 +107,9 @@ function NodeView({ node, depth }: { node: TreeNode; depth: number }) {
 
 export function SpanTree({
 	observations,
-}: { observations: ObservationLike[] }) {
+}: {
+	observations: ObservationLike[];
+}) {
 	const tree = React.useMemo(() => buildTree(observations), [observations]);
 	if (tree.length === 0) {
 		return (

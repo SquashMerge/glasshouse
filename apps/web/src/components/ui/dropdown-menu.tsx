@@ -195,7 +195,10 @@ function DropdownMenuSeparator({ className }: { className?: string }) {
 function DropdownMenuLabel({
 	children,
 	className,
-}: { children: React.ReactNode; className?: string }) {
+}: {
+	children: React.ReactNode;
+	className?: string;
+}) {
 	return (
 		<div
 			className={cn(
