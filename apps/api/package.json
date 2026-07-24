@@ -23,13 +23,13 @@
     "codegen:py": "cd ../.. && openapi-python-client generate --path openapi.yaml --config-path infra/codegen/openapi-python-client.config.yaml"
   },
   "dependencies": {
-    "@clickhouse/client": "1.7.0",
-    "@hono/zod-openapi": "0.18.0",
-    "@scalar/hono-api-reference": "0.5.175",
-    "hono": "4.12.25",
-    "ioredis": "5.4.1",
-    "js-yaml": "4.1.0",
-    "node-pg-migrate": "7.6.1",
+    "@clickhouse/client": "1.23.1",
+    "@hono/zod-openapi": "1.5.1",
+    "@scalar/hono-api-reference": "0.11.11",
+    "hono": "4.12.31",
+    "ioredis": "5.11.1",
+    "js-yaml": "5.2.1",
+    "node-pg-migrate": "9.0.0",
     "openapi-fetch": "0.17.0",
     "pg": "8.22.0",
     "zod": "4.4.3"
