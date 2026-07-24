@@ -101,7 +101,7 @@ test-web: ## Run frontend unit tests (vitest)
 	cd apps/web && bun run test
 
 test-e2e: ## Run frontend E2E tests (Playwright; requires deps-up + dev-backend + dev-frontend)
-	cd apps/web && bun run test:e2e
+	bash infra/scripts/with-local-env.sh bash -c 'cd apps/web && bun run test:e2e'
 
 format: ## Auto-format
 	bun --filter "*" format
