@@ -5,6 +5,10 @@ import { TraceHeader } from "../../src/components/TraceHeader";
 import { TraceWorkspace } from "../../src/components/TraceWorkspace";
 import type { CanonicalObservation } from "../../src/lib/trace-model";
 
+vi.mock("../../src/components/PromptProvenanceCard", () => ({
+	PromptProvenanceCard: () => null,
+}));
+
 const TRACE_ID = "a".repeat(32);
 
 function observation(

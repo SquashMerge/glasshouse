@@ -32,7 +32,11 @@ import {
 	type TraceEvent,
 	type ObservationEvent,
 } from "../../src/routes/observability";
-import { listTraces, listObservations } from "../../src/lib/api";
+import {
+	emptyObservationMetadata,
+	listTraces,
+	listObservations,
+} from "../../src/lib/api";
 
 vi.mocked(listTraces);
 vi.mocked(listObservations);
@@ -269,7 +273,7 @@ describe("SpansTab — high-rate out-of-view SSE events", () => {
 				model: null,
 				input_text: "",
 				output_text: "",
-				metadata: "",
+				metadata: emptyObservationMetadata(),
 			})),
 			total: 10,
 		});
@@ -323,7 +327,7 @@ describe("SpansTab — SseDebugOverlay integration", () => {
 				model: null,
 				input_text: "",
 				output_text: "",
-				metadata: "",
+				metadata: emptyObservationMetadata(),
 			})),
 			total: 3,
 		});
@@ -358,7 +362,7 @@ describe("SpansTab — SseDebugOverlay integration", () => {
 				model: null,
 				input_text: "",
 				output_text: "",
-				metadata: "",
+				metadata: emptyObservationMetadata(),
 			})),
 			total: 3,
 		});

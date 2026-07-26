@@ -2,10 +2,15 @@
 // gen_ai.* (OTel GenAI semantic conventions) wins; OpenInference is the fallback.
 
 import type { Span } from "../schemas/otlp.js";
+import {
+	observationMetadata,
+	promptProvenanceFromAttributes,
+	type ObservationMetadata,
+	type OtlpAttribute,
+} from "./observation-metadata.js";
 
-type Attribute = {
-	key: string;
-	value: {
+type Attribute = OtlpAttribute & {
+	value?: {
 		stringValue?: string;
 		intValue?: number | string;
 		boolValue?: boolean;
@@ -63,7 +68,7 @@ export interface NormalizedObservation {
 	model: string | null;
 	input_text: string;
 	output_text: string;
-	metadata: string; // JSON-serialized
+	metadata: ObservationMetadata;
 }
 
 function isoFromUnixNano(nano: number): string {
@@ -196,12 +201,13 @@ export function normalizeSpan(span: Span): {
 		scores_summary: scoresCsv,
 	};
 
+	const type = classifySpanType(attrs);
 	const observation: NormalizedObservation = {
 		observation_id: span.span_id,
 		trace_id: span.trace_id,
 		project_id: "",
 		parent_observation_id: span.parent_span_id ?? null,
-		type: classifySpanType(attrs),
+		type,
 		name: span.name,
 		start_time: trace.start_time,
 		end_time: trace.end_time,
@@ -210,7 +216,10 @@ export function normalizeSpan(span: Span): {
 		model: model || null,
 		input_text: inputText,
 		output_text: outputText,
-		metadata: JSON.stringify(span.attributes ?? []),
+		metadata: observationMetadata(
+			attrs,
+			promptProvenanceFromAttributes(attrs, type === "generation"),
+		),
 	};
 
 	return { trace, observation };

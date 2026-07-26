@@ -3,7 +3,7 @@ COMPOSE := docker compose --project-directory . --env-file infra/.env -f infra/c
 COMPOSE_DEPS := docker compose --project-directory . --env-file infra/.env -f infra/compose.deps.yaml
 COMPOSE_DEV := docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml -f infra/compose.override.yaml
 
-.PHONY: help dev build down logs ps db-migrate ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-web test-e2e test lint typecheck format install seed-traces seed-traces-reset
+.PHONY: help dev build down logs ps db-migrate test-db-migrations ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-web test-e2e test lint typecheck format install seed-traces seed-traces-reset
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -61,6 +61,9 @@ ps: ## List running services
 
 db-migrate: ## Apply Postgres migrations (idempotent)
 	$(COMPOSE) run --rm api bun run db:migrate
+
+test-db-migrations: ## Verify SQL migrations against legacy prompt data in PostgreSQL 16
+	bash infra/scripts/test-db-migrations.sh
 
 ch-schema: ## Apply ClickHouse schema (idempotent)
 	@for f in infra/db/clickhouse/*.sql; do \

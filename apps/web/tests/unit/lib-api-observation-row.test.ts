@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
-import type { ObservationRow } from "../../src/lib/api";
+import {
+	emptyObservationMetadata,
+	type ObservationRow,
+} from "../../src/lib/api";
 
 /**
  * Sanity test that the deduplicated `ObservationRow` interface compiles and
  * survives a JSON round-trip. After the `fe-filterable-refactor` slice, the
  * interface declares a single canonical shape including `project_id` and a
- * JSON-encoded `metadata` string. This file catches future regressions where
+ * typed `metadata` envelope. This file catches future regressions where
  * someone re-declares the interface (the original duplication silently
  * merged via TS declaration merging).
  */
@@ -25,7 +28,7 @@ describe("ObservationRow shape", () => {
 			model: null,
 			input_text: "",
 			output_text: "",
-			metadata: "{}",
+			metadata: emptyObservationMetadata(),
 			...overrides,
 		};
 	}
@@ -33,7 +36,7 @@ describe("ObservationRow shape", () => {
 	it("canonical fields are present and required", () => {
 		const row = makeRow();
 		expect(row.project_id).toBe("proj-1");
-		expect(row.metadata).toBe("{}");
+		expect(row.metadata).toEqual(emptyObservationMetadata());
 		expect(typeof row.observation_id).toBe("string");
 		expect(typeof row.trace_id).toBe("string");
 		expect(["span", "event", "generation", "tool"]).toContain(row.type);
@@ -41,7 +44,14 @@ describe("ObservationRow shape", () => {
 
 	it("round-trips through JSON.parse(JSON.stringify(o))", () => {
 		const original = makeRow({
-			metadata: JSON.stringify({ tool: { name: "search" }, tokens: 42 }),
+			metadata: {
+				schema_version: 1,
+				attributes: [
+					{ key: "tool", value: { name: "search" } },
+					{ key: "tokens", value: { intValue: 42 } },
+				],
+				prompt_provenance: null,
+			},
 			type: "tool",
 			name: "search",
 			model: "gpt-4o",
@@ -49,25 +59,24 @@ describe("ObservationRow shape", () => {
 		});
 		const round = JSON.parse(JSON.stringify(original)) as ObservationRow;
 		expect(round).toEqual(original);
-		expect(JSON.parse(round.metadata)).toEqual({
-			tool: { name: "search" },
-			tokens: 42,
-		});
+		expect(round.metadata.attributes).toEqual([
+			{ key: "tool", value: { name: "search" } },
+			{ key: "tokens", value: { intValue: 42 } },
+		]);
 	});
 
-	it("allows metadataParsed-style objects to be JSON-encoded into metadata", () => {
+	it("preserves the typed metadata envelope through a JSON round-trip", () => {
 		const parsed = {
-			tool: { name: "search_db" },
-			model: "gpt-4o",
-			type: "tool",
+			schema_version: 1 as const,
+			attributes: [{ key: "tool", value: { name: "search_db" } }],
+			prompt_provenance: null,
 		};
 		const row = makeRow({
 			type: "tool",
-			name: parsed.tool.name,
-			model: parsed.model,
-			metadata: JSON.stringify(parsed),
+			name: "search_db",
+			model: "gpt-4o",
+			metadata: parsed,
 		});
-		const back = JSON.parse(row.metadata) as typeof parsed;
-		expect(back).toEqual(parsed);
+		expect(row.metadata).toEqual(parsed);
 	});
 });

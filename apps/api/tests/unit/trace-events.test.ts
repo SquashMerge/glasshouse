@@ -9,16 +9,22 @@
 // (both read once at module load in trace-events.ts) to fire timers in a few
 // tens of milliseconds instead of waiting 15s/30s.
 
-import {
-	describe,
-	it,
-	expect,
-	beforeAll,
-	beforeEach,
-	afterEach,
-	mock,
-} from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import type { TraceRow, ObservationRow } from "../../src/db/traces-query";
+import type { NormalizedObservation } from "../../src/db/gen-ai-attrs";
+import {
+	_resetForTests,
+	publishSync,
+	subscribe,
+} from "../../src/lib/event-bus";
+import { basicAuthMiddleware } from "../../src/middleware/auth";
+import {
+	createTraceEventHandlers,
+	streamObservationEvents,
+	streamTraceDetailEvents,
+	streamTraceEvents,
+} from "../../src/routes/trace-events";
 
 // ---------------------------------------------------------------------------
 // Mocked ClickHouse + an env-tunable SSE setup BEFORE importing the app.
@@ -29,6 +35,16 @@ const OTHER_TRACE_ID = "ffffffffffffffffffffffffffffffff";
 const OBS_ID = "obs-0001";
 const OBS_ID_2 = "obs-0002";
 const OBS_ID_OTHER = "obs-OTHER";
+const HASH = "a".repeat(64);
+const LEGACY_METADATA = JSON.stringify([
+	{ key: "model", value: { stringValue: "gpt-4o" } },
+	{ key: "tokens", value: { intValue: 42 } },
+]);
+const PROVENANCE_METADATA = {
+	schema_version: 1 as const,
+	attributes: [{ key: "model", value: { stringValue: "gpt-4o" } }],
+	prompt_provenance: { id: "support-agent", version: 7, content_hash: HASH },
+};
 
 const fakeTrace: TraceRow = {
 	trace_id: VALID_TRACE_ID,
@@ -63,7 +79,7 @@ const fakeObservation: ObservationRow = {
 	model: "gpt-4o",
 	input_text: "",
 	output_text: "",
-	metadata: '{"model":"gpt-4o","tokens":42}',
+	metadata: LEGACY_METADATA,
 };
 
 const fakeObservationNoMeta: ObservationRow = {
@@ -87,6 +103,11 @@ const fakeObservationOtherTrace: ObservationRow = {
 	name: "other-trace-obs",
 };
 
+const provenanceObservation = {
+	...fakeObservation,
+	metadata: PROVENANCE_METADATA,
+} as unknown as NormalizedObservation;
+
 // Default: trace exists. Individual tests can override per-case with
 // mockResolvedValueOnce(...) / mockImplementationOnce(...).
 const getTraceMock = mock(async (_client: unknown, traceId: string) => {
@@ -101,29 +122,14 @@ const getTraceMock = mock(async (_client: unknown, traceId: string) => {
 
 const defaultClientMock = mock(() => ({}));
 
-mock.module("../../src/db/traces-query", () => ({
-	defaultClient: defaultClientMock,
-	getTrace: getTraceMock,
-	listTraces: mock(async () => ({ items: [], total: 0 })),
-	listObservations: mock(async () => ({ items: [], total: 0 })),
-}));
-
-// Capture the REAL subscribe before we replace it with a spy. The bus is
-// already imported transitively via `traces-query` consumers, but we need a
-// stable reference for the spy implementation below.
-const realBusModule = await import("../../src/lib/event-bus");
-const realSubscribe = realBusModule.subscribe;
-const realPublishSync = realBusModule.publishSync;
-const realResetForTests = realBusModule._resetForTests;
-
 // Spy that records calls (for "subscribe before snapshot" assertions) and
 // delegates to the real subscribe so the SSE handler still receives events.
 const subscribeCallLog: Array<{ event: string; at: number }> = [];
 const unsubscribeCallLog: string[] = [];
 const subscribeSpy = mock(
-	(event: string, handler: Parameters<typeof realSubscribe>[1]) => {
+	(event: string, handler: Parameters<typeof subscribe>[1]) => {
 		subscribeCallLog.push({ event, at: Date.now() });
-		const unsubscribe = realSubscribe(event as never, handler as never);
+		const unsubscribe = subscribe(event as never, handler as never);
 		return () => {
 			unsubscribeCallLog.push(event);
 			unsubscribe();
@@ -131,39 +137,38 @@ const subscribeSpy = mock(
 	},
 );
 
-mock.module("../../src/lib/event-bus", () => {
-	const realExports = {
-		BusEvent: realBusModule.BusEvent,
-		BusMessage: realBusModule.BusMessage,
-		BusHandler: realBusModule.BusHandler,
-		publish: realBusModule.publish,
-		publishSync: realPublishSync,
-		subscribe: subscribeSpy,
-		_resetForTests: realResetForTests,
-		_isValkeyEnabled: realBusModule._isValkeyEnabled,
-		valkeyPubSubHealthy: realBusModule.valkeyPubSubHealthy,
-	};
-	return realExports;
-});
-
-// Env + auth: set before the app modules read process.env. The route file
-// reads SSE_HEARTBEAT_MS / TRACE_COMPLETE_GRACE_MS once at import time, so
-// we have to set them BEFORE the first `await import(...)` of the app.
-process.env.SSE_HEARTBEAT_MS = "60";
-process.env.TRACE_COMPLETE_GRACE_MS = "150";
-
 const USER = "astraea";
 const PASS = "secret";
 const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
-// Import app AFTER all the mocks above so the SSE handlers pick up the env
-// vars and the bus mock is wired in.
-const { default: apiApp } = await import("../../src/index");
-// Use the real publishSync / reset to ensure no mock indirection issues.
-const publishSync = realPublishSync;
-const _resetForTests = realResetForTests;
+const traceEventHandlers = createTraceEventHandlers({
+	defaultClient: defaultClientMock,
+	getTrace: getTraceMock,
+	graceMs: 150,
+	heartbeatMs: 60,
+	subscribe: subscribeSpy,
+});
+const apiApp = new OpenAPIHono({
+	defaultHook: (result, c) =>
+		result.success
+			? undefined
+			: c.json(
+					{ code: "BAD_REQUEST", message: "Request validation failed" },
+					400,
+				),
+});
+apiApp.use("/v1/*", basicAuthMiddleware());
+apiApp.openapi(streamTraceEvents, traceEventHandlers.handleStreamTraceEvents);
+apiApp.openapi(
+	streamObservationEvents,
+	traceEventHandlers.handleStreamObservationEvents,
+);
+apiApp.openapi(
+	streamTraceDetailEvents,
+	traceEventHandlers.handleStreamTraceDetailEvents,
+);
 
 // ---------------------------------------------------------------------------
 // SSE stream helper: reads frames from the response body incrementally.
@@ -256,7 +261,7 @@ beforeEach(() => {
 	// Re-attach the spy implementation after _resetForTests clears handlers.
 	subscribeSpy.mockImplementation((event: unknown, handler: unknown) => {
 		subscribeCallLog.push({ event: String(event), at: Date.now() });
-		const unsubscribe = realSubscribe(event as never, handler as never);
+		const unsubscribe = subscribe(event as never, handler as never);
 		return () => {
 			unsubscribeCallLog.push(String(event));
 			unsubscribe();
@@ -428,7 +433,7 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 		);
 	});
 
-	it("metadataParsed is computed correctly: valid JSON → object", async () => {
+	it("metadataParsed reads legacy attributes into a metadata envelope", async () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/observations/events", {
 				method: "GET",
@@ -450,11 +455,18 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 			metadataParsed: unknown;
 		};
 		expect(parsed.observation.observation_id).toBe(OBS_ID);
-		expect(parsed.metadataParsed).toEqual({ model: "gpt-4o", tokens: 42 });
+		expect(parsed.metadataParsed).toEqual({
+			schema_version: 1,
+			attributes: [
+				{ key: "model", value: { stringValue: "gpt-4o" } },
+				{ key: "tokens", value: { intValue: 42 } },
+			],
+			prompt_provenance: null,
+		});
 		await reader.cancel();
 	});
 
-	it("metadataParsed: invalid JSON → null", async () => {
+	it("metadataParsed: invalid JSON fails closed", async () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/observations/events", {
 				method: "GET",
@@ -472,11 +484,15 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 		const obsFrame = frames.find((f) => f.event === "observation");
 		expect(obsFrame).toBeDefined();
 		const parsed = JSON.parse(obsFrame!.data) as { metadataParsed: unknown };
-		expect(parsed.metadataParsed).toBeNull();
+		expect(parsed.metadataParsed).toEqual({
+			schema_version: 1,
+			attributes: [],
+			prompt_provenance: null,
+		});
 		await reader.cancel();
 	});
 
-	it("metadataParsed: empty string → null", async () => {
+	it("metadataParsed: empty string fails closed", async () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/observations/events", {
 				method: "GET",
@@ -493,7 +509,36 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 		);
 		const obsFrame = frames.find((f) => f.event === "observation");
 		const parsed = JSON.parse(obsFrame!.data) as { metadataParsed: unknown };
-		expect(parsed.metadataParsed).toBeNull();
+		expect(parsed.metadataParsed).toEqual({
+			schema_version: 1,
+			attributes: [],
+			prompt_provenance: null,
+		});
+		await reader.cancel();
+	});
+
+	it("propagates typed prompt provenance on the global observation SSE stream", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		publishSync("observation.created", { observation: provenanceObservation });
+
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "observation"),
+		);
+		const parsed = JSON.parse(
+			frames.find((frame) => frame.event === "observation")!.data,
+		) as {
+			observation: { metadata: unknown };
+			metadataParsed: unknown;
+		};
+		expect(parsed.observation.metadata).toEqual(PROVENANCE_METADATA);
+		expect(parsed.metadataParsed).toEqual(PROVENANCE_METADATA);
 		await reader.cancel();
 	});
 });
@@ -568,7 +613,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			name: "during-query",
 		};
 		getTraceMock.mockImplementationOnce(async () => {
-			realPublishSync("observation.created", { observation: duringQuery });
+			publishSync("observation.created", { observation: duringQuery });
 			return { trace: fakeTrace, observations: [fakeObservation] };
 		});
 
@@ -652,6 +697,51 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		};
 		expect(parsed.observation.observation_id).toBe("live-obs-1");
 		expect(parsed.observation.trace_id).toBe(VALID_TRACE_ID);
+		await reader.cancel();
+	});
+
+	it("propagates typed prompt provenance in detail snapshots and live observations", async () => {
+		getTraceMock.mockResolvedValueOnce({
+			trace: fakeTrace,
+			observations: [
+				{
+					...fakeObservation,
+					metadata: JSON.stringify({
+						schema_version: 1,
+						attributes: PROVENANCE_METADATA.attributes,
+						prompt_provenance: PROVENANCE_METADATA.prompt_provenance,
+					}),
+				},
+			],
+		});
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		const snapshotFrames = await readFramesUntil(reader, (frames) =>
+			frames.some((frame) => frame.event === "snapshot"),
+		);
+		const snapshot = JSON.parse(
+			snapshotFrames.find((frame) => frame.event === "snapshot")!.data,
+		) as {
+			observations: Array<{ metadata: unknown }>;
+		};
+		expect(snapshot.observations[0]?.metadata).toEqual(PROVENANCE_METADATA);
+
+		publishSync("observation.created", { observation: provenanceObservation });
+		const liveFrames = await readFramesUntil(reader, (frames) =>
+			frames.some((frame) => frame.event === "observation"),
+		);
+		const live = JSON.parse(
+			liveFrames.find((frame) => frame.event === "observation")!.data,
+		) as {
+			observation: { metadata: unknown };
+		};
+		expect(live.observation.metadata).toEqual(PROVENANCE_METADATA);
 		await reader.cancel();
 	});
 
@@ -790,13 +880,6 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		const { subscribe: realBusSubscribe } = await import(
 			"../../src/lib/event-bus"
 		);
-		// Pre-open probe to count subscribers in the bus.
-		let probeFired = 0;
-		const probeUnsub = realBusSubscribe("trace.created", () => {
-			probeFired++;
-		});
-		probeUnsub();
-
 		const res = await apiApp.fetch(
 			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
 				method: "GET",

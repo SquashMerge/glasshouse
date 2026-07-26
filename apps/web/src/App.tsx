@@ -9,8 +9,13 @@ import { DashboardPage } from "./routes/index";
 import { LoginPage } from "./routes/login";
 import { ObservabilityPage } from "./routes/observability";
 import { TraceDetailPage } from "./routes/observability/traces/$id";
+import { PromptsPage } from "./routes/prompts";
+import { NewPromptPage } from "./routes/prompts-new";
+import { PromptDetailPage } from "./routes/prompts-detail";
+import { EditPromptPage } from "./routes/prompts-edit";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
+import { ProjectProvider } from "./components/ProjectProvider";
 
 const rootRoute = createRootRoute({
 	component: () => <Outlet />,
@@ -27,9 +32,11 @@ const protectedRoute = createRoute({
 	id: "protected",
 	component: () => (
 		<AuthGate>
-			<AppShell>
-				<Outlet />
-			</AppShell>
+			<ProjectProvider>
+				<AppShell>
+					<Outlet />
+				</AppShell>
+			</ProjectProvider>
 		</AuthGate>
 	),
 });
@@ -52,6 +59,30 @@ const observabilityTraceDetailRoute = createRoute({
 	component: TraceDetailPage,
 });
 
+const promptsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/prompts",
+	component: PromptsPage,
+});
+
+const newPromptRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/prompts/new",
+	component: NewPromptPage,
+});
+
+const promptDetailRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/prompts/$slug",
+	component: PromptDetailPage,
+});
+
+const promptEditRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/prompts/$slug/edit",
+	component: EditPromptPage,
+});
+
 const router = createRouter({
 	routeTree: rootRoute.addChildren([
 		loginRoute,
@@ -59,6 +90,10 @@ const router = createRouter({
 			indexRoute,
 			observabilityRoute,
 			observabilityTraceDetailRoute,
+			promptsRoute,
+			newPromptRoute,
+			promptDetailRoute,
+			promptEditRoute,
 		]),
 	]),
 	defaultPreload: false,

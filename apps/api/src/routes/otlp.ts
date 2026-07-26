@@ -7,7 +7,7 @@ import {
 import { normalizeSpan } from "../db/gen-ai-attrs.js";
 import {
 	loadRedactionOptions,
-	redactAttributesJson,
+	redactMetadata,
 	redactTraceText,
 } from "../db/redact.js";
 import {
@@ -47,80 +47,98 @@ export const otlpIngestRoute = createRoute({
 	},
 });
 
-export async function handleOtlpIngest(req: Request): Promise<Response> {
-	let bodyJson: unknown;
-	try {
-		bodyJson = await req.json();
-	} catch (err) {
-		console.error("OTLP body parse failed:", (err as Error).message);
-		return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
-	}
+export type OtlpIngestDependencies = {
+	defaultClient: typeof defaultClient;
+	insertObservations: typeof insertObservations;
+	insertTraces: typeof insertTraces;
+	publishSync: typeof publishSync;
+};
 
-	const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
-	if (!parsed.success) {
-		return jsonError(
-			400,
-			"BAD_REQUEST",
-			`Invalid ExportTraceServiceRequest: ${parsed.error.message}`,
-		);
-	}
+const productionOtlpIngestDependencies: OtlpIngestDependencies = {
+	defaultClient,
+	insertObservations,
+	insertTraces,
+	publishSync,
+};
 
-	const request = parsed.data;
-	const redaction = loadRedactionOptions();
+export function createOtlpIngestHandler(
+	dependencies: OtlpIngestDependencies = productionOtlpIngestDependencies,
+) {
+	return async function handleOtlpIngest(req: Request): Promise<Response> {
+		let bodyJson: unknown;
+		try {
+			bodyJson = await req.json();
+		} catch (err) {
+			console.error("OTLP body parse failed:", (err as Error).message);
+			return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
+		}
 
-	const traces = new Map<string, ReturnType<typeof normalizeSpan>["trace"]>();
-	const observations: ReturnType<typeof normalizeSpan>["observation"][] = [];
+		const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
+		if (!parsed.success) {
+			return jsonError(
+				400,
+				"BAD_REQUEST",
+				`Invalid ExportTraceServiceRequest: ${parsed.error.message}`,
+			);
+		}
 
-	for (const rs of request.resource_spans) {
-		for (const ss of rs.scope_spans) {
-			for (const span of ss.spans) {
-				const { trace, observation } = normalizeSpan(span);
-				trace.input_text = redactTraceText(trace.input_text, redaction);
-				trace.output_text = redactTraceText(trace.output_text, redaction);
-				observation.input_text = trace.input_text;
-				observation.output_text = trace.output_text;
-				observation.metadata = redactAttributesJson(
-					observation.metadata,
-					redaction,
-				);
-				traces.set(trace.trace_id, trace);
-				observations.push(observation);
+		const request = parsed.data;
+		const redaction = loadRedactionOptions();
+
+		const traces = new Map<string, ReturnType<typeof normalizeSpan>["trace"]>();
+		const observations: ReturnType<typeof normalizeSpan>["observation"][] = [];
+
+		for (const rs of request.resource_spans) {
+			for (const ss of rs.scope_spans) {
+				for (const span of ss.spans) {
+					const { trace, observation } = normalizeSpan(span);
+					trace.input_text = redactTraceText(trace.input_text, redaction);
+					trace.output_text = redactTraceText(trace.output_text, redaction);
+					observation.input_text = trace.input_text;
+					observation.output_text = trace.output_text;
+					observation.metadata = redactMetadata(
+						observation.metadata,
+						redaction,
+					);
+					traces.set(trace.trace_id, trace);
+					observations.push(observation);
+				}
 			}
 		}
-	}
 
-	const client = defaultClient();
-	try {
-		await insertTraces(client, [...traces.values()]);
-		await insertObservations(client, observations);
-	} catch (err) {
-		console.error("OTLP insert failed:", (err as Error).message);
-		return jsonError(
-			500,
-			"INTERNAL",
-			"Failed to persist traces; check server logs",
-		);
-	}
+		const client = dependencies.defaultClient();
+		try {
+			await dependencies.insertTraces(client, [...traces.values()]);
+			await dependencies.insertObservations(client, observations);
+		} catch (err) {
+			console.error("OTLP insert failed:", (err as Error).message);
+			return jsonError(
+				500,
+				"INTERNAL",
+				"Failed to persist traces; check server logs",
+			);
+		}
 
-	// Fan out to the in-process bus (and Valkey if configured). publishSync
-	// catches its own errors so a subscriber crash can't 500 the ingest path.
-	try {
-		for (const t of [...traces.values()])
-			publishSync("trace.created", { trace: t });
-		for (const o of observations)
-			publishSync("observation.created", { observation: o });
-	} catch (err) {
-		console.error(
-			"OTLP event publish failed (non-fatal):",
-			(err as Error).message,
-		);
-	}
+		try {
+			for (const t of [...traces.values()])
+				dependencies.publishSync("trace.created", { trace: t });
+			for (const o of observations)
+				dependencies.publishSync("observation.created", { observation: o });
+		} catch (err) {
+			console.error(
+				"OTLP event publish failed (non-fatal):",
+				(err as Error).message,
+			);
+		}
 
-	return new Response(JSON.stringify({ partial_success: {} }), {
-		status: 200,
-		headers: { "content-type": "application/json" },
-	});
+		return new Response(JSON.stringify({ partial_success: {} }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	};
 }
+
+export const handleOtlpIngest = createOtlpIngestHandler();
 
 function jsonError(code: number, errorCode: string, message: string): Response {
 	return new Response(JSON.stringify({ code: errorCode, message }), {

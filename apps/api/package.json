@@ -17,7 +17,7 @@
     "test:integration": "bun test tests/integration",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
-    "db:migrate": "node-pg-migrate up",
+    "db:migrate": "node-pg-migrate up --migrations-dir ../../infra/db/migrations --migration-file-language sql",
     "openapi:snapshot": "bun run ../../infra/codegen/snapshot.ts",
     "codegen:ts": "openapi-typescript ../../openapi.yaml --output ../../clients/ts/api.d.ts --enum --immutable --empty-objects false",
     "codegen:py": "cd ../.. && openapi-python-client generate --path openapi.yaml --config-path infra/codegen/openapi-python-client.config.yaml"
@@ -29,6 +29,7 @@
     "hono": "4.12.31",
     "ioredis": "5.11.1",
     "js-yaml": "5.2.2",
+    "mustache": "4.2.0",
     "node-pg-migrate": "9.0.0",
     "openapi-fetch": "0.17.0",
     "pg": "8.22.0",

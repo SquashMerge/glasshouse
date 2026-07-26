@@ -10,20 +10,21 @@
 // Uses the same env tunables as the unit test (SSE_HEARTBEAT_MS, TRACE_COMPLETE_GRACE_MS)
 // to keep wall-clock time bounded.
 
-import {
-	describe,
-	it,
-	expect,
-	beforeAll,
-	beforeEach,
-	afterEach,
-	mock,
-} from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import type { TraceRow, ObservationRow } from "../../src/db/traces-query";
-
-// ---------------------------------------------------------------------------
-// Module mocks — ClickHouse only. The event bus is the real in-process bus.
-// ---------------------------------------------------------------------------
+import {
+	_resetForTests,
+	publishSync,
+	subscribe,
+} from "../../src/lib/event-bus";
+import { basicAuthMiddleware } from "../../src/middleware/auth";
+import {
+	createTraceEventHandlers,
+	streamObservationEvents,
+	streamTraceDetailEvents,
+	streamTraceEvents,
+} from "../../src/routes/trace-events";
 
 const VALID_TRACE_ID = "0123456789abcdef0123456789abcdef";
 
@@ -60,7 +61,10 @@ const fakeObservation: ObservationRow = {
 	model: "gpt-4o",
 	input_text: "",
 	output_text: "",
-	metadata: '{"model":"gpt-4o","tokens":7}',
+	metadata: JSON.stringify([
+		{ key: "model", value: { stringValue: "gpt-4o" } },
+		{ key: "tokens", value: { intValue: 7 } },
+	]),
 };
 
 const getTraceMock = mock(async () => ({
@@ -68,13 +72,6 @@ const getTraceMock = mock(async () => ({
 	observations: [fakeObservation],
 }));
 const defaultClientMock = mock(() => ({}));
-
-mock.module("../../src/db/traces-query", () => ({
-	defaultClient: defaultClientMock,
-	getTrace: getTraceMock,
-	listTraces: mock(async () => ({ items: [], total: 0 })),
-	listObservations: mock(async () => ({ items: [], total: 0 })),
-}));
 
 // Env + auth: route modules read SSE_HEARTBEAT_MS / TRACE_COMPLETE_GRACE_MS
 // once at import time — set BEFORE importing the app.
@@ -87,9 +84,32 @@ const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
-// Import the app + bus AFTER mocks.
-const { default: apiApp } = await import("../../src/index");
-const { _resetForTests, publishSync } = await import("../../src/lib/event-bus");
+const traceEventHandlers = createTraceEventHandlers({
+	defaultClient: defaultClientMock,
+	getTrace: getTraceMock,
+	graceMs: 200,
+	heartbeatMs: 50,
+	subscribe,
+});
+const apiApp = new OpenAPIHono({
+	defaultHook: (result, c) =>
+		result.success
+			? undefined
+			: c.json(
+					{ code: "BAD_REQUEST", message: "Request validation failed" },
+					400,
+				),
+});
+apiApp.use("/v1/*", basicAuthMiddleware());
+apiApp.openapi(streamTraceEvents, traceEventHandlers.handleStreamTraceEvents);
+apiApp.openapi(
+	streamObservationEvents,
+	traceEventHandlers.handleStreamObservationEvents,
+);
+apiApp.openapi(
+	streamTraceDetailEvents,
+	traceEventHandlers.handleStreamTraceDetailEvents,
+);
 
 // ---------------------------------------------------------------------------
 // SSE stream helpers — reads frames incrementally from a ReadableStream.
@@ -444,11 +464,11 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. /v1/observations/events — metadataParsed
+// 4. /v1/observations/events — metadata envelope
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/observations/events (spans SSE)", () => {
-	it("published observation arrives with metadataParsed as parsed object", async () => {
+	it("published observation arrives with metadataParsed as a typed envelope", async () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/observations/events", {
 				method: "GET",
@@ -472,7 +492,14 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 			metadataParsed: unknown;
 		};
 		expect(parsed.observation.observation_id).toBe("obs-it-1");
-		expect(parsed.metadataParsed).toEqual({ model: "gpt-4o", tokens: 7 });
+		expect(parsed.metadataParsed).toEqual({
+			schema_version: 1,
+			attributes: [
+				{ key: "model", value: { stringValue: "gpt-4o" } },
+				{ key: "tokens", value: { intValue: 7 } },
+			],
+			prompt_provenance: null,
+		});
 
 		await reader.cancel();
 	});

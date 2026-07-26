@@ -1,3 +1,9 @@
+import {
+	redactObservationMetadata,
+	redactSerializedObservationMetadata,
+	type ObservationMetadata,
+} from "./observation-metadata.js";
+
 const REDACTED = "[REDACTED]";
 
 function shouldRedactInput(): boolean {
@@ -36,20 +42,16 @@ export function redactAttributesJson(
 	attrsJson: string,
 	opts: RedactionOptions,
 ): string {
-	if (opts.redactKeys.length === 0) return attrsJson;
-	try {
-		const arr = JSON.parse(attrsJson) as Array<{
-			key: string;
-			value?: { stringValue?: string };
-		}>;
-		// Keep the key but replace the value so downstream consumers can still see the key existed.
-		const redacted = arr.map((a) => {
-			if (!opts.redactKeys.includes(a.key)) return a;
-			if (!a.value) return { key: a.key };
-			return { key: a.key, value: { stringValue: REDACTED } };
-		});
-		return JSON.stringify(redacted);
-	} catch {
-		return attrsJson;
-	}
+	return redactSerializedObservationMetadata(
+		attrsJson,
+		opts.redactKeys,
+		REDACTED,
+	);
+}
+
+export function redactMetadata(
+	metadata: ObservationMetadata,
+	opts: RedactionOptions,
+): ObservationMetadata {
+	return redactObservationMetadata(metadata, opts.redactKeys, REDACTED);
 }

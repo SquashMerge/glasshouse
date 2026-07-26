@@ -15,6 +15,8 @@ import {
 import type { CanonicalObservation } from "../lib/trace-model";
 import { observationKind } from "../lib/observation-kind";
 import { observationTiming } from "../lib/trace-timeline";
+import { normalizeObservationMetadata } from "../lib/api";
+import { PromptProvenanceCard } from "./PromptProvenanceCard";
 
 export interface ObservationDetailPanelProps {
 	observation: CanonicalObservation | null;
@@ -154,6 +156,14 @@ export function ObservationDetailPanel({
 	const metadata = React.useMemo(
 		() => parseMetadata(observation?.metadata),
 		[observation?.metadata],
+	);
+	const promptProvenance = React.useMemo(
+		() =>
+			normalizeObservationMetadata(
+				observation?.metadata,
+				observation?.type === "generation",
+			).prompt_provenance,
+		[observation?.metadata, observation?.type],
 	);
 	const formattedMetadata = React.useMemo(
 		() => formatMetadata(metadata),
@@ -453,6 +463,11 @@ export function ObservationDetailPanel({
 					</pre>
 				</TabsContent>
 			</Tabs>
+			{observation.type === "generation" && (
+				<div className="px-4 pb-4">
+					<PromptProvenanceCard provenance={promptProvenance} />
+				</div>
+			)}
 		</aside>
 	);
 }

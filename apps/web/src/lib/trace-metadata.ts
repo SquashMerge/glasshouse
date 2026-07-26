@@ -16,6 +16,9 @@ export function parseMetadata(raw: unknown): MetadataParseResult {
 		return { state: "absent", raw: null, value: null };
 	}
 	if (typeof raw !== "string") {
+		if (typeof raw === "object") {
+			return { state: "valid", raw: null, value: raw };
+		}
 		return { state: "malformed", raw: null, value: null };
 	}
 

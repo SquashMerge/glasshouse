@@ -16,7 +16,7 @@ import {
 	useTraceStream,
 	type ObservationRowLike,
 } from "../../../hooks/useTraceStream";
-import type { TraceRow } from "../../../lib/api";
+import { normalizeObservationMetadata, type TraceRow } from "../../../lib/api";
 import {
 	canonicalObservationId,
 	createTraceModel,
@@ -63,6 +63,16 @@ function NotFound({
 			</CardContent>
 		</Card>
 	);
+}
+
+function normalizeStreamObservation(observation: ObservationRowLike) {
+	return {
+		...observation,
+		metadata: normalizeObservationMetadata(
+			observation.metadata,
+			observation.type === "generation",
+		),
+	};
 }
 
 export function TraceDetailPage() {
@@ -127,17 +137,25 @@ export function TraceDetailPage() {
 			}) => {
 				setNotFound(false);
 				setRecordingStatus("recording");
-				setModel(createTraceModel(snapshot));
+				setModel(
+					createTraceModel({
+						...snapshot,
+						observations: snapshot.observations.map(normalizeStreamObservation),
+					}),
+				);
 				clearHighlightTimers();
 				highlightVersionsRef.current = new Map();
 				setHighlightVersions(highlightVersionsRef.current);
 			},
 			onObservation: ({ observation }: { observation: ObservationRowLike }) => {
 				setRecordingStatus("recording");
+				const normalizedObservation = normalizeStreamObservation(observation);
 				const observationId = canonicalObservationId(
-					observation.observation_id,
+					normalizedObservation.observation_id,
 				);
-				setModel((current) => upsertLiveObservation(current, observation));
+				setModel((current) =>
+					upsertLiveObservation(current, normalizedObservation),
+				);
 				if (!observationId) return;
 
 				const next = new Map(highlightVersionsRef.current);
