@@ -22,7 +22,7 @@ const PASS = process.env.UI_PASSWORD ?? "testpassword";
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:3000";
 
 function basicAuthHeader(): string {
-  return `Basic ${Buffer.from(`${USER}:${PASS}`).toString("base64")}`;
+	return `Basic ${Buffer.from(`${USER}:${PASS}`).toString("base64")}`;
 }
 
 async function gotoFresh(page: Page, path: string) {
@@ -49,26 +49,26 @@ async function login(page: Page) {
  * an auth error that pollutes the run.
  */
 async function envReady(): Promise<boolean> {
-  try {
-    const res = await fetch(`${API_BASE}/health`);
-    if (!res.ok) return false;
-  } catch {
-    return false;
-  }
-  // Login probe — POST to /v1/auth/login and verify a 200.
-  try {
-    const res = await fetch(`${API_BASE}/v1/auth/login`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: basicAuthHeader(),
-      },
-      body: "{}",
-    });
-    return res.status === 200;
-  } catch {
-    return false;
-  }
+	try {
+		const res = await fetch(`${API_BASE}/health`);
+		if (!res.ok) return false;
+	} catch {
+		return false;
+	}
+	// Login probe — POST to /v1/auth/login and verify a 200.
+	try {
+		const res = await fetch(`${API_BASE}/v1/auth/login`, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				authorization: basicAuthHeader(),
+			},
+			body: "{}",
+		});
+		return res.status === 200;
+	} catch {
+		return false;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -104,44 +104,44 @@ function nowNanos(offsetMs = 0): number {
  * (no parent_span_id) and child spans reference `rootSpanId`.
  */
 function buildTracePayload(
-  traceId: string,
-  rootSpanId: string,
-  spanCount: number,
-  traceName: string,
-  startIndex = 0,
+	traceId: string,
+	rootSpanId: string,
+	spanCount: number,
+	traceName: string,
+	startIndex = 0,
 ): Record<string, unknown> {
-  const spans: Array<Record<string, unknown>> = [];
-  for (let i = 0; i < spanCount; i += 1) {
-    const index = startIndex + i;
-    spans.push({
-      trace_id: traceId,
-      span_id: index === 0 ? rootSpanId : hex(8),
-      parent_span_id: index === 0 ? null : rootSpanId,
-      name: index === 0 ? traceName : `${traceName}.child.${index}`,
-      kind: 1,
-      start_time_unix_nano: nowNanos(index * 50),
-      end_time_unix_nano: nowNanos(index * 50 + 100),
-      status: { code: 1 },
-      attributes: [],
-    });
-  }
-  return {
-    resource_spans: [
-      {
-        resource: {
-          attributes: [
-            { key: "service.name", value: { stringValue: "astraea-e2e" } },
-          ],
-        },
-        scope_spans: [
-          {
-            scope: { name: "astraea-e2e", version: "1.0.0" },
-            spans,
-          },
-        ],
-      },
-    ],
-  };
+	const spans: Array<Record<string, unknown>> = [];
+	for (let i = 0; i < spanCount; i += 1) {
+		const index = startIndex + i;
+		spans.push({
+			trace_id: traceId,
+			span_id: index === 0 ? rootSpanId : hex(8),
+			parent_span_id: index === 0 ? null : rootSpanId,
+			name: index === 0 ? traceName : `${traceName}.child.${index}`,
+			kind: 1,
+			start_time_unix_nano: nowNanos(index * 50),
+			end_time_unix_nano: nowNanos(index * 50 + 100),
+			status: { code: 1 },
+			attributes: [],
+		});
+	}
+	return {
+		resource_spans: [
+			{
+				resource: {
+					attributes: [
+						{ key: "service.name", value: { stringValue: "astraea-e2e" } },
+					],
+				},
+				scope_spans: [
+					{
+						scope: { name: "astraea-e2e", version: "1.0.0" },
+						spans,
+					},
+				],
+			},
+		],
+	};
 }
 
 /** POST one trace payload and assert the API accepted it. */
@@ -149,11 +149,17 @@ async function postTrace(
 	request: APIRequestContext,
 	payload: Record<string, unknown>,
 ): Promise<void> {
-  const res = await request.post(`${API_BASE}/v1/otel/v1/traces`, {
-    data: payload,
-    headers: { "content-type": "application/json", authorization: basicAuthHeader() },
-  });
-  expect(res.status(), `OTLP ingest should accept payload, got ${res.status()}`).toBeLessThan(300);
+	const res = await request.post(`${API_BASE}/v1/otel/v1/traces`, {
+		data: payload,
+		headers: {
+			"content-type": "application/json",
+			authorization: basicAuthHeader(),
+		},
+	});
+	expect(
+		res.status(),
+		`OTLP ingest should accept payload, got ${res.status()}`,
+	).toBeLessThan(300);
 }
 
 /**
@@ -294,69 +300,106 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		).toBeVisible();
 	});
 
-  test("Stream toggle pauses and resumes the detail SSE", async ({ page }) => {
-    if (!(await envReady())) {
-      test.skip(true, "Requires running API + seeder; see slice brief for manual walkthrough");
-      return;
-    }
-    await login(page);
+	test("Stream toggle pauses and resumes the detail SSE", async ({ page }) => {
+		if (!(await envReady())) {
+			test.skip(
+				true,
+				"Requires running API + seeder; see slice brief for manual walkthrough",
+			);
+			return;
+		}
+		await login(page);
 
 		const traceId = "0123456789abcdef0123456789abcdef";
 		await page.goto(`/observability/traces/${traceId}`);
 
-    const toggle = page.getByTestId("stream-toggle-button");
-    await expect(toggle).toBeVisible({ timeout: 5000 });
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
+		const toggle = page.getByTestId("stream-toggle-button");
+		await expect(toggle).toBeVisible({ timeout: 5000 });
+		await expect(toggle).toHaveAttribute("aria-checked", "true");
 
-    await toggle.click();
-    await expect(page.getByTestId("stream-toggle")).toHaveAttribute("data-state", "off");
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+		await toggle.click();
+		await expect(page.getByTestId("stream-toggle")).toHaveAttribute(
+			"data-state",
+			"off",
+		);
+		await expect(toggle).toHaveAttribute("aria-checked", "false");
 
-    await toggle.click();
-    await expect(page.getByTestId("stream-toggle")).not.toHaveAttribute("data-state", "off");
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
-  });
+		await toggle.click();
+		await expect(page.getByTestId("stream-toggle")).not.toHaveAttribute(
+			"data-state",
+			"off",
+		);
+		await expect(toggle).toHaveAttribute("aria-checked", "true");
+	});
 
-  test("release gate: browser renders a 5k-observation trace with stable row selectors", async ({ page, request }) => {
-    test.slow();
-    if (!(await envReady())) {
-      test.skip(true, "Requires live API + seeded browser auth for the 5k trace-detail release gate.");
-      return;
-    }
+	test("release gate: browser renders a 5k-observation trace with stable row selectors", async ({
+		page,
+		request,
+	}) => {
+		test.slow();
+		if (!(await envReady())) {
+			test.skip(
+				true,
+				"Requires live API + seeded browser auth for the 5k trace-detail release gate.",
+			);
+			return;
+		}
 
-    const consoleErrors: string[] = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") consoleErrors.push(message.text());
-    });
+		const consoleErrors: string[] = [];
+		page.on("console", (message) => {
+			if (message.type() === "error") consoleErrors.push(message.text());
+		});
 
-    const traceId = hex(16);
-    const rootSpanId = hex(8);
-    const traceName = `release-gate-5k-${Date.now()}`;
-    // Keep the snapshot below the 1 MiB SSE-frame limit: open the detail page
-    // after the root span exists, then deliver the other rows as the endpoint's
-    // normal incremental `observation` events.
-    await postTrace(request, buildTracePayload(traceId, rootSpanId, 1, traceName));
-    await login(page);
-    await page.goto(`/observability/traces/${traceId}`);
+		const traceId = hex(16);
+		const rootSpanId = hex(8);
+		const traceName = `release-gate-5k-${Date.now()}`;
+		// Keep the snapshot below the 1 MiB SSE-frame limit: open the detail page
+		// after the root span exists, then deliver the other rows as the endpoint's
+		// normal incremental `observation` events.
+		await postTrace(
+			request,
+			buildTracePayload(traceId, rootSpanId, 1, traceName),
+		);
+		await login(page);
+		await page.goto(`/observability/traces/${traceId}`);
 
-    const rows = page.getByTestId("span-row");
-    const workspace = page.getByTestId("trace-workspace");
-    await expect(rows).toHaveCount(1, { timeout: 10_000 });
-    for (let startIndex = 1; startIndex < 5_000; startIndex += 100) {
-      await postTrace(request, buildTracePayload(traceId, rootSpanId, Math.min(100, 5_000 - startIndex), traceName, startIndex));
-    }
-    await expect(workspace).toHaveAttribute("data-row-count", "5000", { timeout: 2_000 });
+		const rows = page.getByTestId("span-row");
+		const workspace = page.getByTestId("trace-workspace");
+		await expect(rows).toHaveCount(1, { timeout: 10_000 });
+		for (let startIndex = 1; startIndex < 5_000; startIndex += 100) {
+			await postTrace(
+				request,
+				buildTracePayload(
+					traceId,
+					rootSpanId,
+					Math.min(100, 5_000 - startIndex),
+					traceName,
+					startIndex,
+				),
+			);
+		}
+		await expect(workspace).toHaveAttribute("data-row-count", "5000", {
+			timeout: 2_000,
+		});
 
-    const root = page.locator(`[data-testid="span-row"][data-observation-id="${rootSpanId}"]`);
-    const leaf = rows.nth(1);
-    await leaf.click({ timeout: 250 });
-    await expect(leaf).toHaveAttribute("data-selected", "true", { timeout: 250 });
+		const root = page.locator(
+			`[data-testid="span-row"][data-observation-id="${rootSpanId}"]`,
+		);
+		const leaf = rows.nth(1);
+		await leaf.click({ timeout: 250 });
+		await expect(leaf).toHaveAttribute("data-selected", "true", {
+			timeout: 250,
+		});
 
-    await root.getByRole("button", { name: `Collapse ${traceName}` }).click({ timeout: 250 });
-    await expect(root).toHaveAttribute("aria-expanded", "false", { timeout: 250 });
+		await root
+			.getByRole("button", { name: `Collapse ${traceName}` })
+			.click({ timeout: 250 });
+		await expect(root).toHaveAttribute("aria-expanded", "false", {
+			timeout: 250,
+		});
 
-    await expect(root).toHaveAttribute("data-observation-id", rootSpanId);
-    await expect(page.getByTestId("span-tree")).toHaveAttribute("role", "tree");
-    expect(consoleErrors).toEqual([]);
-  });
+		await expect(root).toHaveAttribute("data-observation-id", rootSpanId);
+		await expect(page.getByTestId("span-tree")).toHaveAttribute("role", "tree");
+		expect(consoleErrors).toEqual([]);
+	});
 });

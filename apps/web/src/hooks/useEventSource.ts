@@ -76,13 +76,13 @@ export interface UseEventSourceResult {
 }
 
 export class EventSourceHttpError extends Error {
-  readonly status: number;
+	readonly status: number;
 
-  constructor(status: number) {
-    super(`SSE request failed with status ${status}`);
-    this.name = "EventSourceHttpError";
-    this.status = status;
-  }
+	constructor(status: number) {
+		super(`SSE request failed with status ${status}`);
+		this.name = "EventSourceHttpError";
+		this.status = status;
+	}
 }
 
 const BACKOFF_INITIAL_MS = 1_000;

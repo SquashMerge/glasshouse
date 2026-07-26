@@ -260,12 +260,14 @@ describe("TraceDetailPage — ?span= deep-link", () => {
 			});
 		});
 
-    // 1. The detail panel renders the deep-link target (not the root), proving
-    //    the `?span=` selector won the default-selection race.
-    const detail = await screen.findByTestId("observation-detail");
-    expect(detail).toHaveAttribute("data-observation-id", SPAN_TARGET_ID);
-    fireEvent.click(screen.getByRole("tab", { name: /Input/i }));
-    expect(screen.getByTestId("detail-input")).toHaveTextContent(/TARGET_INPUT/);
+		// 1. The detail panel renders the deep-link target (not the root), proving
+		//    the `?span=` selector won the default-selection race.
+		const detail = await screen.findByTestId("observation-detail");
+		expect(detail).toHaveAttribute("data-observation-id", SPAN_TARGET_ID);
+		fireEvent.click(screen.getByRole("tab", { name: /Input/i }));
+		expect(screen.getByTestId("detail-input")).toHaveTextContent(
+			/TARGET_INPUT/,
+		);
 
 		// 2. The matching span row carries the deterministic `data-selected`
 		//    attribute; the other rows do not. Three snapshot rows ⇒ use the
@@ -293,8 +295,8 @@ describe("TraceDetailPage — ?span= deep-link", () => {
 });
 
 describe("TraceDetailPage — snapshot + live observations", () => {
-  it("uses the snapshot observations without a REST fallback", async () => {
-    renderAt(VALID_ID);
+	it("uses the snapshot observations without a REST fallback", async () => {
+		renderAt(VALID_ID);
 
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
 		const handle = handleByTraceId.get(VALID_ID)!;
@@ -306,9 +308,11 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 			});
 		});
 
-    expect(screen.getByTestId("trace-name")).toHaveTextContent("trace snapshot name");
-    expect(handleByTraceId.size).toBe(1);
-  });
+		expect(screen.getByTestId("trace-name")).toHaveTextContent(
+			"trace snapshot name",
+		);
+		expect(handleByTraceId.size).toBe(1);
+	});
 
 	it("renders the 3 snapshot observation rows in the tree", async () => {
 		renderAt(VALID_ID);
@@ -337,16 +341,16 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 			});
 		});
 
-    const rows = await screen.findAllByTestId("span-row");
-    expect(rows).toHaveLength(3);
-    expect(screen.getByTestId("trace-header")).toBeInTheDocument();
-    expect(screen.getByTestId("trace-workspace")).toBeInTheDocument();
-    expect(screen.getByTestId("sse-debug-overlay")).toBeInTheDocument();
-    const tree = screen.getByTestId("span-tree");
-    expect(tree).toHaveTextContent("root-span");
-    expect(tree).toHaveTextContent("child-1");
-    expect(tree).toHaveTextContent("child-2");
-  });
+		const rows = await screen.findAllByTestId("span-row");
+		expect(rows).toHaveLength(3);
+		expect(screen.getByTestId("trace-header")).toBeInTheDocument();
+		expect(screen.getByTestId("trace-workspace")).toBeInTheDocument();
+		expect(screen.getByTestId("sse-debug-overlay")).toBeInTheDocument();
+		const tree = screen.getByTestId("span-tree");
+		expect(tree).toHaveTextContent("root-span");
+		expect(tree).toHaveTextContent("child-1");
+		expect(tree).toHaveTextContent("child-2");
+	});
 
 	it("appends a new observation via onObservation and applies the 1.5s highlight class", async () => {
 		renderAt(VALID_ID);
@@ -377,68 +381,84 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 		const rows = await screen.findAllByTestId("span-row");
 		expect(rows).toHaveLength(2);
 
-    // The new row carries the `bg-accent/40` highlight class — same as the
-    // 1.5s pattern used on the list pages.
-    const newRow = rows.find((r) => r.getAttribute("data-observation-id") === "d".repeat(32));
-    expect(newRow).toBeDefined();
-    expect(newRow!.className).toContain("bg-accent/40");
-  });
+		// The new row carries the `bg-accent/40` highlight class — same as the
+		// 1.5s pattern used on the list pages.
+		const newRow = rows.find(
+			(r) => r.getAttribute("data-observation-id") === "d".repeat(32),
+		);
+		expect(newRow).toBeDefined();
+		expect(newRow!.className).toContain("bg-accent/40");
+	});
 
-  it("keeps a repeated live observation highlighted until its latest version expires", async () => {
-    renderAt(VALID_ID);
-    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
-    const handle = handleByTraceId.get(VALID_ID)!;
-    vi.useFakeTimers();
+	it("keeps a repeated live observation highlighted until its latest version expires", async () => {
+		renderAt(VALID_ID);
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const handle = handleByTraceId.get(VALID_ID)!;
+		vi.useFakeTimers();
 
-    await act(async () => {
-      handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
-      handle.callbacks!.onObservation({ observation: makeObservation({ name: "first update" }) });
-    });
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-    await act(async () => {
-      handle.callbacks!.onObservation({ observation: makeObservation({ name: "second update" }) });
-    });
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+		await act(async () => {
+			handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
+			handle.callbacks!.onObservation({
+				observation: makeObservation({ name: "first update" }),
+			});
+		});
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1_000);
+		});
+		await act(async () => {
+			handle.callbacks!.onObservation({
+				observation: makeObservation({ name: "second update" }),
+			});
+		});
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(500);
+		});
 
-    const row = screen.getByTestId("span-row");
-    expect(row).toHaveAttribute("data-highlighted", "true");
-    expect(row).toHaveTextContent("second update");
+		const row = screen.getByTestId("span-row");
+		expect(row).toHaveAttribute("data-highlighted", "true");
+		expect(row).toHaveTextContent("second update");
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-    expect(row).toHaveAttribute("data-highlighted", "false");
-  });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1_000);
+		});
+		expect(row).toHaveAttribute("data-highlighted", "false");
+	});
 
-  it("shows malformed-data diagnostics rather than silently dropping it", async () => {
-    renderAt(VALID_ID);
-    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
-    const handle = handleByTraceId.get(VALID_ID)!;
+	it("shows malformed-data diagnostics rather than silently dropping it", async () => {
+		renderAt(VALID_ID);
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const handle = handleByTraceId.get(VALID_ID)!;
 
-    await act(async () => {
-      handle.callbacks!.onSnapshot({
-        observations: [makeObservation(), { name: "missing id" }],
-      });
-    });
+		await act(async () => {
+			handle.callbacks!.onSnapshot({
+				observations: [makeObservation(), { name: "missing id" }],
+			});
+		});
 
-    expect(screen.getByTestId("trace-diagnostics")).toHaveTextContent("1 malformed observation was ignored");
-  });
+		expect(screen.getByTestId("trace-diagnostics")).toHaveTextContent(
+			"1 malformed observation was ignored",
+		);
+	});
 });
 
 describe("TraceDetailPage — Stream toggle", () => {
-  it("preserves a complete stream status as Recorded", async () => {
-    renderAt(VALID_ID);
+	it("preserves a complete stream status as Recorded", async () => {
+		renderAt(VALID_ID);
 
-    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
-    const handle = handleByTraceId.get(VALID_ID)!;
-    await act(async () => {
-      handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
-      handle.callbacks!.onStatus("complete");
-    });
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const handle = handleByTraceId.get(VALID_ID)!;
+		await act(async () => {
+			handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
+			handle.callbacks!.onStatus("complete");
+		});
 
-    expect(screen.getByTestId("trace-recording-status")).toHaveTextContent("Recorded");
-  });
+		expect(screen.getByTestId("trace-recording-status")).toHaveTextContent(
+			"Recorded",
+		);
+	});
 
-  it("starts On/Streaming on a connected snapshot", async () => {
-    renderAt(VALID_ID);
+	it("starts On/Streaming on a connected snapshot", async () => {
+		renderAt(VALID_ID);
 
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
 		const handle = handleByTraceId.get(VALID_ID)!;
@@ -522,11 +542,13 @@ describe("TraceDetailPage — span detail tabs", () => {
 		const row = await screen.findByTestId("span-row");
 		fireEvent.click(row);
 
-    // The detail panel reads from the selected workspace observation.
-    const detail = await screen.findByTestId("observation-detail");
-    expect(detail).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /Input/i }));
-    expect(screen.getByTestId("detail-input")).toHaveTextContent(/INPUT_TEXT_HERE/);
+		// The detail panel reads from the selected workspace observation.
+		const detail = await screen.findByTestId("observation-detail");
+		expect(detail).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("tab", { name: /Input/i }));
+		expect(screen.getByTestId("detail-input")).toHaveTextContent(
+			/INPUT_TEXT_HERE/,
+		);
 
 		// Switch to the Output tab and check the rendered text.
 		fireEvent.click(screen.getByRole("tab", { name: /Output/i }));
@@ -534,34 +556,43 @@ describe("TraceDetailPage — span detail tabs", () => {
 			/OUTPUT_TEXT_HERE/,
 		);
 
-    // Switch to the Metadata tab and check pretty-printed JSON.
-    fireEvent.click(screen.getByRole("tab", { name: /Metadata/i }));
-    expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"tool"/);
-    expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"x"/);
-  });
+		// Switch to the Metadata tab and check pretty-printed JSON.
+		fireEvent.click(screen.getByRole("tab", { name: /Metadata/i }));
+		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"tool"/);
+		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"x"/);
+	});
 
-  it("persists the keyboard-accessible split and closes the inspector with Escape", async () => {
-    window.localStorage.setItem("astraea.trace-detail.workspace-width", "44");
-    renderAt(VALID_ID);
-    await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
-    const handle = handleByTraceId.get(VALID_ID)!;
+	it("persists the keyboard-accessible split and closes the inspector with Escape", async () => {
+		window.localStorage.setItem("astraea.trace-detail.workspace-width", "44");
+		renderAt(VALID_ID);
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const handle = handleByTraceId.get(VALID_ID)!;
 
-    await act(async () => {
-      handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
-    });
+		await act(async () => {
+			handle.callbacks!.onSnapshot({ observations: [makeObservation()] });
+		});
 
-    const splitter = screen.getByTestId("trace-detail-splitter");
-    expect(splitter).toHaveAttribute("role", "separator");
-    expect(splitter).toHaveAttribute("aria-valuenow", "44");
-    fireEvent.keyDown(splitter, { key: "ArrowRight" });
-    expect(splitter).toHaveAttribute("aria-valuenow", "46");
-    expect(window.localStorage.getItem("astraea.trace-detail.workspace-width")).toBe("46");
+		const splitter = screen.getByTestId("trace-detail-splitter");
+		expect(splitter).toHaveAttribute("role", "separator");
+		expect(splitter).toHaveAttribute("aria-valuenow", "44");
+		fireEvent.keyDown(splitter, { key: "ArrowRight" });
+		expect(splitter).toHaveAttribute("aria-valuenow", "46");
+		expect(
+			window.localStorage.getItem("astraea.trace-detail.workspace-width"),
+		).toBe("46");
 
-    fireEvent.keyDown(screen.getByTestId("observation-detail"), { key: "Escape" });
-    expect(screen.queryByTestId("observation-detail")).not.toBeInTheDocument();
-    expect(screen.getByTestId("show-inspector")).toBeInTheDocument();
-    await waitFor(() => expect(document.activeElement).toHaveAttribute("data-observation-id", "obs-1"));
-  });
+		fireEvent.keyDown(screen.getByTestId("observation-detail"), {
+			key: "Escape",
+		});
+		expect(screen.queryByTestId("observation-detail")).not.toBeInTheDocument();
+		expect(screen.getByTestId("show-inspector")).toBeInTheDocument();
+		await waitFor(() =>
+			expect(document.activeElement).toHaveAttribute(
+				"data-observation-id",
+				"obs-1",
+			),
+		);
+	});
 });
 
 describe("TraceDetailPage — not_found synthetic status", () => {

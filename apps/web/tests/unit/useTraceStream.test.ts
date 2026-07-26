@@ -21,13 +21,13 @@ import { EventSourceHttpError } from "../../src/hooks/useEventSource";
 type Frame = { event: string; data: unknown };
 
 interface FakeEventSourceHandle {
-  push: (msg: Frame) => void;
-  pushError: (error: unknown) => void;
-  setStatus: (s: "connecting" | "open" | "closed") => void;
-  setPaused: (p: boolean) => void;
-  setLastEventAt: (t: number | null) => void;
-  triggerReconnect: (opts?: { pause?: boolean }) => void;
-  reconnectCalls: Array<{ pause?: boolean } | undefined>;
+	push: (msg: Frame) => void;
+	pushError: (error: unknown) => void;
+	setStatus: (s: "connecting" | "open" | "closed") => void;
+	setPaused: (p: boolean) => void;
+	setLastEventAt: (t: number | null) => void;
+	triggerReconnect: (opts?: { pause?: boolean }) => void;
+	reconnectCalls: Array<{ pause?: boolean } | undefined>;
 }
 
 const handleByUrl = new Map<string, FakeEventSourceHandle>();
@@ -41,52 +41,54 @@ const lastOptionsByUrl = new Map<
 >();
 
 vi.mock("../../src/hooks/useEventSource", async () => {
-  const actual = await vi.importActual<typeof import("../../src/hooks/useEventSource")>(
-    "../../src/hooks/useEventSource",
-  );
-  return {
-    ...actual,
-    useEventSource: (
-      url: string,
-      opts: {
-        enabled?: boolean;
-        onMessage?: (msg: Frame) => void;
-        onError?: (error: unknown) => void;
-      } = {},
-    ) => {
-      const status = { current: "connecting" as "connecting" | "open" | "closed" };
-      const paused = { current: false };
-      const lastEventAt = { current: null as number | null };
-      const optsRef = { current: opts };
-      const handle: FakeEventSourceHandle = {
-        push: (msg) => optsRef.current.onMessage?.(msg),
-        pushError: (error) => optsRef.current.onError?.(error),
-        setStatus: (s) => {
-          status.current = s;
-          // Trigger a re-render via a microtask the host picks up.
-        },
-        setPaused: (p) => {
-          paused.current = p;
-        },
-        setLastEventAt: (t) => {
-          lastEventAt.current = t;
-        },
-        triggerReconnect: (opts2) => {
-          handle.reconnectCalls.push(opts2);
-          if (opts2?.pause) {
-            paused.current = true;
-            status.current = "closed";
-          } else {
-            paused.current = false;
-            status.current = "connecting";
-          }
-        },
-        reconnectCalls: [],
-      };
-      handleByUrl.set(url, handle);
-      lastOptionsByUrl.set(url, opts);
-      // Capture opts ref
-      optsRef.current = opts;
+	const actual = await vi.importActual<
+		typeof import("../../src/hooks/useEventSource")
+	>("../../src/hooks/useEventSource");
+	return {
+		...actual,
+		useEventSource: (
+			url: string,
+			opts: {
+				enabled?: boolean;
+				onMessage?: (msg: Frame) => void;
+				onError?: (error: unknown) => void;
+			} = {},
+		) => {
+			const status = {
+				current: "connecting" as "connecting" | "open" | "closed",
+			};
+			const paused = { current: false };
+			const lastEventAt = { current: null as number | null };
+			const optsRef = { current: opts };
+			const handle: FakeEventSourceHandle = {
+				push: (msg) => optsRef.current.onMessage?.(msg),
+				pushError: (error) => optsRef.current.onError?.(error),
+				setStatus: (s) => {
+					status.current = s;
+					// Trigger a re-render via a microtask the host picks up.
+				},
+				setPaused: (p) => {
+					paused.current = p;
+				},
+				setLastEventAt: (t) => {
+					lastEventAt.current = t;
+				},
+				triggerReconnect: (opts2) => {
+					handle.reconnectCalls.push(opts2);
+					if (opts2?.pause) {
+						paused.current = true;
+						status.current = "closed";
+					} else {
+						paused.current = false;
+						status.current = "connecting";
+					}
+				},
+				reconnectCalls: [],
+			};
+			handleByUrl.set(url, handle);
+			lastOptionsByUrl.set(url, opts);
+			// Capture opts ref
+			optsRef.current = opts;
 
 			return {
 				get status() {
@@ -225,8 +227,8 @@ describe("useTraceStream — routing", () => {
 		});
 	});
 
-  it("routes event: status with {status:'complete'} → onStatus('complete')", async () => {
-    const { onStatus, result } = setupHook(VALID_TRACE_ID);
+	it("routes event: status with {status:'complete'} → onStatus('complete')", async () => {
+		const { onStatus, result } = setupHook(VALID_TRACE_ID);
 
 		await act(async () => {
 			await flushMicrotasks();
@@ -239,11 +241,11 @@ describe("useTraceStream — routing", () => {
 			handle!.push({ event: "status", data: { status: "complete" } });
 		});
 
-    expect(onStatus).toHaveBeenCalledTimes(1);
-    expect(onStatus).toHaveBeenCalledWith("complete");
-    expect(result.result.current.completed).toBe(true);
-    expect(handle!.reconnectCalls).toContainEqual({ pause: true });
-  });
+		expect(onStatus).toHaveBeenCalledTimes(1);
+		expect(onStatus).toHaveBeenCalledWith("complete");
+		expect(result.result.current.completed).toBe(true);
+		expect(handle!.reconnectCalls).toContainEqual({ pause: true });
+	});
 
 	it("invalid traceId (regex miss): no stream opens, onStatus('not_found') fires", async () => {
 		const { onStatus, onSnapshot, onObservation } = setupHook(

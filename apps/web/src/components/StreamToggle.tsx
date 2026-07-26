@@ -10,10 +10,10 @@ import type { EventSourceStatus } from "../hooks/useEventSource";
  * `useEventSource` handle, so `reconnect` / `paused` / `status` are visible).
  */
 export interface StreamController {
-  paused: boolean;
-  status: EventSourceStatus;
-  completed?: boolean;
-  reconnect: (opts?: { pause?: boolean }) => void;
+	paused: boolean;
+	status: EventSourceStatus;
+	completed?: boolean;
+	reconnect: (opts?: { pause?: boolean }) => void;
 }
 
 export interface StreamToggleProps {
@@ -24,11 +24,11 @@ export interface StreamToggleProps {
 }
 
 type State =
-  | "off"
-  | "complete"
-  | "on-connecting"
-  | "on-open"
-  | "on-reconnecting";
+	| "off"
+	| "complete"
+	| "on-connecting"
+	| "on-open"
+	| "on-reconnecting";
 
 /**
  * The "Stream" toggle. Replaces the older Live/Pause/Reconnecting pill +
@@ -41,34 +41,40 @@ type State =
  *   on-open          — green pipeline, lastEventAt monospace below.
  *   on-reconnecting  — amber pipeline, exponential backoff in progress.
  */
-export function StreamToggle({ sse, label = "Stream", className }: StreamToggleProps): React.ReactElement {
-  const state: State = sse.completed
-    ? "complete"
-    : sse.paused
-    ? "off"
-    : sse.status === "open"
-      ? "on-open"
-      : sse.status === "connecting"
-        ? "on-connecting"
-        : "on-reconnecting";
+export function StreamToggle({
+	sse,
+	label = "Stream",
+	className,
+}: StreamToggleProps): React.ReactElement {
+	const state: State = sse.completed
+		? "complete"
+		: sse.paused
+			? "off"
+			: sse.status === "open"
+				? "on-open"
+				: sse.status === "connecting"
+					? "on-connecting"
+					: "on-reconnecting";
 
-  const on = state !== "off" && state !== "complete";
-  const statusWord =
-    state === "complete"
-      ? "Complete"
-      : state === "off"
-      ? "Paused"
-      : state === "on-connecting"
-        ? "Connecting…"
-        : state === "on-reconnecting"
-          ? "Reconnecting…"
-          : "Streaming";
+	const on = state !== "off" && state !== "complete";
+	const statusWord =
+		state === "complete"
+			? "Complete"
+			: state === "off"
+				? "Paused"
+				: state === "on-connecting"
+					? "Connecting…"
+					: state === "on-reconnecting"
+						? "Reconnecting…"
+						: "Streaming";
 
-  const trackClass = (() => {
-    if (state === "off" || state === "complete") return "bg-muted-foreground/40";
-    if (state === "on-reconnecting" || state === "on-connecting") return "bg-amber-500";
-    return "bg-green-500";
-  })();
+	const trackClass = (() => {
+		if (state === "off" || state === "complete")
+			return "bg-muted-foreground/40";
+		if (state === "on-reconnecting" || state === "on-connecting")
+			return "bg-amber-500";
+		return "bg-green-500";
+	})();
 
 	function toggle() {
 		sse.reconnect({ pause: on });

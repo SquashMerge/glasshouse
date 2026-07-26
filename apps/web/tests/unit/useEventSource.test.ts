@@ -16,7 +16,10 @@
  */
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { EventSourceHttpError, useEventSource } from "../../src/hooks/useEventSource";
+import {
+	EventSourceHttpError,
+	useEventSource,
+} from "../../src/hooks/useEventSource";
 
 // ---------------------------------------------------------------------------
 // Fake stream controller — provides a real ReadableStream<Uint8Array> we can
