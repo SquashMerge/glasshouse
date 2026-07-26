@@ -220,7 +220,10 @@ export function SseDebugOverlay({
 function Stat({
 	label,
 	children,
-}: { label: string; children: React.ReactNode }): React.ReactElement {
+}: {
+	label: string;
+	children: React.ReactNode;
+}): React.ReactElement {
 	return (
 		<>
 			<dt className="text-muted-foreground">{label}</dt>

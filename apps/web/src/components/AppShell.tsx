@@ -250,7 +250,10 @@ function SidebarLink({
 function UserAvatar({
 	username,
 	className,
-}: { username: string; className?: string }) {
+}: {
+	username: string;
+	className?: string;
+}) {
 	const initial = (username?.[0] ?? "?").toUpperCase();
 	return (
 		<span

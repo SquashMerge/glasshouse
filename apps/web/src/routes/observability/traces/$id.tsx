@@ -342,7 +342,9 @@ function ClickableSpanTree(props: ClickableSpanTreeProps) {
 
 function ObservationDetail({
 	observation,
-}: { observation: DetailObservationLike }) {
+}: {
+	observation: DetailObservationLike;
+}) {
 	const [tab, setTab] = React.useState<string>("input");
 
 	// Reset to the "input" tab whenever the selection changes.
@@ -435,7 +437,10 @@ const SPLIT_KEY = "astraea.trace-detail.split";
 function ResizableSplit({
 	left,
 	right,
-}: { left: React.ReactNode; right: React.ReactNode }) {
+}: {
+	left: React.ReactNode;
+	right: React.ReactNode;
+}) {
 	const [ratio, setRatio] = React.useState<number>(0.55);
 	const [hydrated, setHydrated] = React.useState(false);
 
