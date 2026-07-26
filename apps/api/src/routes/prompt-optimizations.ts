@@ -9,6 +9,7 @@ import {
 	listOptimizationEvents,
 	optimizationSourceMessages,
 	publishOptimizationResult,
+	renewOptimizationJobLease,
 	stopOptimizationJob,
 	transitionOptimizationJob,
 	type OptimizationJob,
@@ -22,6 +23,12 @@ import {
 	type GepaWorker,
 } from "../lib/gepa-worker.js";
 import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
+import {
+	GepaConfigurationError,
+	MAX_GEPA_METRIC_CALLS,
+	validateGepaConfiguration,
+} from "../lib/gepa-config.js";
+import { validatePromptTemplate } from "../lib/prompt-templates.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
 import {
 	PromptErrorResponses,
@@ -52,7 +59,9 @@ const ModelConfig = z
 	.object({ task_lm: z.string().min(1), reflection_lm: z.string().min(1) })
 	.strict();
 const Budget = z
-	.object({ max_metric_calls: z.number().int().positive() })
+	.object({
+		max_metric_calls: z.number().int().positive().max(MAX_GEPA_METRIC_CALLS),
+	})
 	.strict();
 const Job = z
 	.object({
@@ -175,7 +184,9 @@ function error(
 	const known =
 		cause instanceof PromptRepositoryError
 			? cause
-			: new PromptRepositoryError("INTERNAL", "Optimization failed");
+			: cause instanceof GepaConfigurationError
+				? new PromptRepositoryError("BAD_REQUEST", cause.message)
+				: new PromptRepositoryError("INTERNAL", "Optimization failed");
 	return c.json(
 		{
 			code: known.code,
@@ -198,6 +209,7 @@ export type OptimizationDependencies = {
 	get: typeof getOptimizationJob;
 	getActive: typeof getActiveOptimizationJob;
 	claim: typeof claimOptimizationJob;
+	renew: typeof renewOptimizationJobLease;
 	sourceMessages: typeof optimizationSourceMessages;
 	events: typeof listOptimizationEvents;
 	stop: typeof stopOptimizationJob;
@@ -237,6 +249,33 @@ export function nextOptimizationEvents(
 	};
 }
 
+export function validateGepaCandidate(
+	original: string,
+	candidate: string,
+): void {
+	if (
+		new TextEncoder().encode(candidate).byteLength >
+		MAX_OPTIMIZATION_CANDIDATE_BYTES
+	)
+		throw new PromptRepositoryError(
+			"BAD_REQUEST",
+			"GEPA candidate exceeded size limit",
+		);
+	try {
+		validatePromptTemplate(candidate);
+	} catch (cause) {
+		throw new PromptRepositoryError(
+			"BAD_REQUEST",
+			cause instanceof Error ? cause.message : "GEPA candidate is invalid",
+		);
+	}
+	if (!hasMatchingMustacheTokenSignature(original, candidate))
+		throw new PromptRepositoryError(
+			"BAD_REQUEST",
+			"GEPA candidate changed Mustache tokens",
+		);
+}
+
 const production: OptimizationDependencies = {
 	pool: pgPool,
 	worker: runGepaWorker,
@@ -244,6 +283,7 @@ const production: OptimizationDependencies = {
 	get: getOptimizationJob,
 	getActive: getActiveOptimizationJob,
 	claim: claimOptimizationJob,
+	renew: renewOptimizationJobLease,
 	sourceMessages: optimizationSourceMessages,
 	events: listOptimizationEvents,
 	stop: stopOptimizationJob,
@@ -259,8 +299,19 @@ async function run(
 	if (!(await d.claim(d.pool(), { id: job.id, worker_id: workerId }))) return;
 	const controller = new AbortController();
 	activeWorkers.set(job.id, controller);
+	const leaseRenewal = setInterval(() => {
+		void d
+			.renew(d.pool(), { id: job.id, worker_id: workerId })
+			.then((owned) => {
+				if (!owned) controller.abort();
+			});
+	}, 60_000);
 	try {
-		await d.transition(d.pool(), { id: job.id, status: "preparing" });
+		await d.transition(d.pool(), {
+			id: job.id,
+			worker_id: workerId,
+			status: "preparing",
+		});
 		const sourceMessages = await d.sourceMessages(d.pool(), {
 			project_id: job.project_id,
 			id: job.id,
@@ -271,7 +322,11 @@ async function run(
 				"BAD_REQUEST",
 				`Source prompt has no ${job.target} message`,
 			);
-		await d.transition(d.pool(), { id: job.id, status: "optimizing" });
+		await d.transition(d.pool(), {
+			id: job.id,
+			worker_id: workerId,
+			status: "optimizing",
+		});
 		const result = await d.worker(
 			{
 				target: job.target,
@@ -283,22 +338,15 @@ async function run(
 			},
 			controller.signal,
 		);
-		await d.transition(d.pool(), { id: job.id, status: "evaluating" });
-		if (
-			new TextEncoder().encode(result.candidate).byteLength >
-			MAX_OPTIMIZATION_CANDIDATE_BYTES
-		)
-			throw new PromptRepositoryError(
-				"BAD_REQUEST",
-				"GEPA candidate exceeded size limit",
-			);
-		if (!hasMatchingMustacheTokenSignature(original.content, result.candidate))
-			throw new PromptRepositoryError(
-				"BAD_REQUEST",
-				"GEPA candidate changed Mustache tokens",
-			);
+		await d.transition(d.pool(), {
+			id: job.id,
+			worker_id: workerId,
+			status: "evaluating",
+		});
+		validateGepaCandidate(original.content, result.candidate);
 		await d.publish(d.pool(), {
 			id: job.id,
+			worker_id: workerId,
 			messages: sourceMessages.map((item) =>
 				item.role === job.target
 					? { ...item, content: result.candidate }
@@ -309,6 +357,7 @@ async function run(
 		try {
 			await d.transition(d.pool(), {
 				id: job.id,
+				worker_id: workerId,
 				status: "failed",
 				error_message:
 					cause instanceof Error
@@ -319,6 +368,7 @@ async function run(
 			// A stopped job is terminal and wins every worker failure race.
 		}
 	} finally {
+		clearInterval(leaseRenewal);
 		if (activeWorkers.get(job.id) === controller) activeWorkers.delete(job.id);
 	}
 }
@@ -340,6 +390,13 @@ export function createOptimizationHandlers(
 					model_config: JsonObject;
 					budget: JsonObject;
 				};
+				validateGepaConfiguration({
+					model_config: body.model_config as {
+						task_lm: string;
+						reflection_lm: string;
+					},
+					budget: body.budget as { max_metric_calls: number },
+				});
 				const job = await d.create(d.pool(), { ...body, actor: actor(c) });
 				void run(job, d);
 				return c.json(job, 202);

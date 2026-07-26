@@ -7,12 +7,15 @@ import {
 
 describe("GEPA worker adapter", () => {
 	const prior = process.env.GEPA_WORKER_MODE;
+	const priorModels = process.env.GEPA_ALLOWED_MODELS;
 	afterEach(() => {
 		process.env.GEPA_WORKER_MODE = prior;
+		process.env.GEPA_ALLOWED_MODELS = priorModels;
 	});
 
 	it("uses the deterministic credential-free worker mode", async () => {
 		process.env.GEPA_WORKER_MODE = "fake";
+		process.env.GEPA_ALLOWED_MODELS = "openai/gpt-4.1-mini";
 		const result = await runGepaWorker(
 			{
 				target: "system",

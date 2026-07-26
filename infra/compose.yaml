@@ -81,6 +81,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
       VALKEY_URL: redis://:${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}@valkey:6379
+      GEPA_ALLOWED_MODELS: ${GEPA_ALLOWED_MODELS:?GEPA_ALLOWED_MODELS must list permitted GEPA models}
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:
@@ -91,7 +92,7 @@ services:
       valkey:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3000/health"]
+      test: ["CMD-SHELL", "$$GEPA_PYTHON /app/worker/gepa_worker.py --smoke >/dev/null && wget --spider --quiet http://localhost:3000/health"]
       interval: 5s
       timeout: 3s
       retries: 10

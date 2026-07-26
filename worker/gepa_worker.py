@@ -4,6 +4,15 @@ import json
 import os
 import sys
 
+MAX_METRIC_CALLS = 100
+
+
+def allowed_models():
+    models = [model.strip() for model in os.environ.get("GEPA_ALLOWED_MODELS", "").split(",") if model.strip()]
+    if not models:
+        raise ValueError("GEPA_ALLOWED_MODELS must configure at least one model")
+    return set(models)
+
 def request_value(request, name, expected_type):
     value = request.get(name)
     if not isinstance(value, expected_type):
@@ -29,10 +38,12 @@ def validate_request(request):
     reflection_lm = model_config.get("reflection_lm")
     if not isinstance(task_lm, str) or not isinstance(reflection_lm, str):
         raise ValueError("model_config requires task_lm and reflection_lm")
+    if task_lm not in allowed_models() or reflection_lm not in allowed_models():
+        raise ValueError("model_config contains an unconfigured model")
     budget = request_value(request, "budget", dict)
     max_metric_calls = budget.get("max_metric_calls")
-    if not isinstance(max_metric_calls, int) or isinstance(max_metric_calls, bool) or max_metric_calls < 1:
-        raise ValueError("budget.max_metric_calls must be a positive integer")
+    if not isinstance(max_metric_calls, int) or isinstance(max_metric_calls, bool) or not 1 <= max_metric_calls <= MAX_METRIC_CALLS:
+        raise ValueError(f"budget.max_metric_calls must be between 1 and {MAX_METRIC_CALLS}")
     trainset = [
         {
             "input": example["input"],
@@ -47,6 +58,14 @@ def validate_request(request):
 def fake_optimize(source):
     return {"candidate": source + "\n\nOptimize for clear, accurate answers."}
 
+
+if sys.argv[1:] == ["--smoke"]:
+    try:
+        import gepa  # type: ignore
+    except ImportError:
+        sys.exit(2)
+    print(json.dumps({"ready": True}))
+    sys.exit(0)
 
 try:
     request = json.loads(sys.stdin.readline())

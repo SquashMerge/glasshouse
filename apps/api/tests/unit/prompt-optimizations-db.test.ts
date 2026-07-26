@@ -4,6 +4,7 @@ import {
 	claimOptimizationJob,
 	createOptimizationJob,
 	publishOptimizationResult,
+	renewOptimizationJobLease,
 	stopOptimizationJob,
 } from "../../src/db/prompt-optimizations";
 import { PromptRepositoryError } from "../../src/db/prompts";
@@ -59,8 +60,27 @@ class ClaimPool {
 	}
 }
 
+class ReclaimPool {
+	readonly calls: string[] = [];
+	private attempt = 0;
+
+	async connect() {
+		return {
+			query: async (text: string) => {
+				this.calls.push(text);
+				if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK")
+					return { rows: [] };
+				this.attempt += 1;
+				return { rows: this.attempt === 1 ? [] : [{ id: JOB }] };
+			},
+			release() {},
+		};
+	}
+}
+
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const JOB = "22222222-2222-4222-8222-222222222222";
+const WORKER = "11111111-1111-4111-8111-111111111111";
 const PROMPT = "33333333-3333-4333-8333-333333333333";
 const CREATED = "2026-07-15T10:00:00.000Z";
 
@@ -119,6 +139,7 @@ describe("prompt optimization repository", () => {
 		expect(
 			await publishOptimizationResult(transactionPool(pool), {
 				id: JOB,
+				worker_id: WORKER,
 				messages,
 			}),
 		).toBe(4);
@@ -155,6 +176,7 @@ describe("prompt optimization repository", () => {
 		expect(
 			await publishOptimizationResult(transactionPool(pool), {
 				id: JOB,
+				worker_id: WORKER,
 				messages: snapshot,
 			}),
 		).toBe(5);
@@ -178,9 +200,58 @@ describe("prompt optimization repository", () => {
 		expect([first, second].filter(Boolean)).toHaveLength(1);
 		expect(
 			pool.calls.some((call) =>
-				call.includes("status='queued' AND worker_claim_id IS NULL"),
+				call.includes("worker_lease_expires_at < now()"),
 			),
 		).toBe(true);
+	});
+
+	it("renews only the current worker lease", async () => {
+		const calls: Call[] = [];
+		const pool = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				return { rows: [{ id: JOB }] };
+			},
+		};
+
+		expect(
+			await renewOptimizationJobLease(pool, { id: JOB, worker_id: WORKER }),
+		).toBe(true);
+		expect(calls[0]?.text).toContain("worker_claim_id=$2");
+		expect(calls[0]?.text).toContain("worker_lease_expires_at >= now()");
+	});
+
+	it("reclaims an expired lease while preserving one owner per claim attempt", async () => {
+		const pool = new ReclaimPool();
+		expect(
+			await claimOptimizationJob(pool as unknown as Pick<Pool, "connect">, {
+				id: JOB,
+				worker_id: WORKER,
+			}),
+		).toBe(false);
+		expect(
+			await claimOptimizationJob(pool as unknown as Pick<Pool, "connect">, {
+				id: JOB,
+				worker_id: "22222222-2222-4222-8222-222222222222",
+			}),
+		).toBe(true);
+		expect(pool.calls.find((call) => call.startsWith("UPDATE"))).toContain(
+			"worker_lease_expires_at < now()",
+		);
+	});
+
+	it("rejects publication by a worker whose lease was reclaimed", async () => {
+		const pool = new MockPool([{ rows: [] }, { rows: [] }, { rows: [] }]);
+		await expect(
+			publishOptimizationResult(transactionPool(pool), {
+				id: JOB,
+				worker_id: WORKER,
+				messages: [{ role: "system", content: "Improved" }],
+			}),
+		).rejects.toMatchObject({ code: "CONFLICT" });
+		expect(pool.client.calls[1]?.text).toContain(
+			"worker_lease_expires_at >= now()",
+		);
 	});
 
 	it("reuses the active start row without recording a second queued event", async () => {

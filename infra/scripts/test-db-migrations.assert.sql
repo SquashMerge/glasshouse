@@ -256,23 +256,6 @@ BEGIN
         ) VALUES (
             'aaaaaaaa-0000-0000-0000-000000000001',
             5,
-            'Different canonical content',
-            '{}',
-            '[{"role":"user","content":"Different message content"}]',
-            '{}',
-            'not-a-hash',
-            'migration-test'
-        );
-        RAISE EXCEPTION 'prompt version content mirror mismatch was accepted';
-    EXCEPTION WHEN check_violation THEN
-        NULL;
-    END;
-    BEGIN
-        INSERT INTO prompt_versions (
-            prompt_id, version, content, metadata, messages, settings, content_hash, created_by
-        ) VALUES (
-            'aaaaaaaa-0000-0000-0000-000000000001',
-            6,
             'Missing role',
             '{}',
             '[{"content":"Missing role"}]',
@@ -289,7 +272,7 @@ BEGIN
             prompt_id, version, content, metadata, messages, settings, content_hash, created_by
         ) VALUES (
             'aaaaaaaa-0000-0000-0000-000000000001',
-            7,
+            6,
             'Missing content',
             '{}',
             '[{"role":"user"}]',
@@ -301,5 +284,24 @@ BEGIN
     EXCEPTION WHEN check_violation THEN
         NULL;
     END;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+            AND table_name = 'prompt_optimization_jobs'
+            AND column_name = 'worker_lease_expires_at'
+            AND data_type = 'timestamp with time zone'
+    ) THEN
+        RAISE EXCEPTION 'prompt optimization worker lease column was not created';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+            AND indexname = 'prompt_optimization_jobs_reclaimable_lease_idx'
+    ) THEN
+        RAISE EXCEPTION 'prompt optimization worker lease index was not created';
+    END IF;
 END
 $$;

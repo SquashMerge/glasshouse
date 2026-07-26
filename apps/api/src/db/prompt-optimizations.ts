@@ -235,11 +235,22 @@ export async function claimOptimizationJob(
 	return tx(pool, async (client) => {
 		const claimed = await rows(
 			client,
-			"UPDATE prompt_optimization_jobs SET worker_claim_id=$2,worker_claimed_at=now(),updated_at=now() WHERE id=$1 AND status='queued' AND worker_claim_id IS NULL RETURNING id",
+			"UPDATE prompt_optimization_jobs SET worker_claim_id=$2,worker_claimed_at=now(),worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() WHERE id=$1 AND status IN ('queued','preparing','optimizing','evaluating') AND (worker_claim_id IS NULL OR worker_lease_expires_at IS NULL OR worker_lease_expires_at < now()) RETURNING id",
 			[input.id, input.worker_id],
 		);
 		return claimed.length === 1;
 	});
+}
+export async function renewOptimizationJobLease(
+	pool: Pick<Pool, "query">,
+	input: { id: string; worker_id: string },
+): Promise<boolean> {
+	const renewed = await rows(
+		pool,
+		"UPDATE prompt_optimization_jobs SET worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() AND status IN ('queued','preparing','optimizing','evaluating') RETURNING id",
+		[input.id, input.worker_id],
+	);
+	return renewed.length === 1;
 }
 export async function optimizationSourceMessages(
 	pool: Pick<Pool, "query">,
@@ -277,6 +288,7 @@ export async function transitionOptimizationJob(
 	pool: Pick<Pool, "connect">,
 	input: {
 		id: string;
+		worker_id: string;
 		status: OptimizationStatus;
 		detail?: JsonObject;
 		error_message?: string;
@@ -286,8 +298,8 @@ export async function transitionOptimizationJob(
 		const row = (
 			await rows(
 				client,
-				"UPDATE prompt_optimization_jobs SET status=$2, error_message=COALESCE($3,error_message), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE completed_at END WHERE id=$1 AND status NOT IN ('completed','stopped','failed') RETURNING *",
-				[input.id, input.status, input.error_message ?? null],
+				"UPDATE prompt_optimization_jobs SET status=$2, error_message=COALESCE($3,error_message), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE completed_at END WHERE id=$1 AND worker_claim_id=$4 AND worker_lease_expires_at >= now() AND status NOT IN ('completed','stopped','failed') RETURNING *",
+				[input.id, input.status, input.error_message ?? null, input.worker_id],
 			)
 		)[0];
 		if (!row) throw fail("CONFLICT", "Optimization job is no longer active");
@@ -334,17 +346,17 @@ export async function stopOptimizationJob(
 }
 export async function publishOptimizationResult(
 	pool: Pick<Pool, "connect">,
-	input: { id: string; messages: PromptMessage[] },
+	input: { id: string; worker_id: string; messages: PromptMessage[] },
 ): Promise<number> {
 	return tx(pool, async (client) => {
 		const jobRow = (
 			await rows(
 				client,
-				"SELECT * FROM prompt_optimization_jobs WHERE id=$1 FOR UPDATE",
-				[input.id],
+				"SELECT * FROM prompt_optimization_jobs WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() FOR UPDATE",
+				[input.id, input.worker_id],
 			)
 		)[0];
-		if (!jobRow) throw fail("NOT_FOUND", "Optimization job not found");
+		if (!jobRow) throw fail("CONFLICT", "Optimization worker claim was lost");
 		const job = mapJob(jobRow);
 		if (job.result_version !== null) return job.result_version;
 		if (job.status === "stopped" || jobRow.cancel_requested_at)
