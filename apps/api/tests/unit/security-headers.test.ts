@@ -14,6 +14,11 @@ describe("securityHeaders", () => {
 		expect(res.headers.get("X-Frame-Options")).toBe("DENY");
 		expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
 		expect(res.headers.get("X-DNS-Prefetch-Control")).toBe("off");
+		expect(res.headers.get("Content-Security-Policy")).toContain(
+			"default-src 'none'",
+		);
+		expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
+		expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-origin");
 		expect(res.headers.get("Permissions-Policy")).toContain("camera=()");
 		expect(res.headers.get("Permissions-Policy")).toContain("microphone=()");
 		expect(res.headers.get("Permissions-Policy")).toContain("geolocation=()");
@@ -27,6 +32,20 @@ describe("securityHeaders", () => {
 		expect(res.status).toBe(500);
 		expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
 		expect(res.headers.get("X-Frame-Options")).toBe("DENY");
+	});
+
+	it("uses a compatible CSP for the API reference", async () => {
+		const app = new Hono();
+		app.use(securityHeaders());
+		app.get("/reference", (c) => c.html("<html></html>"));
+
+		const res = await app.request("/reference");
+		expect(res.headers.get("Content-Security-Policy")).toContain(
+			"object-src 'none'",
+		);
+		expect(res.headers.get("Content-Security-Policy")).not.toContain(
+			"default-src 'none'",
+		);
 	});
 
 	it("enforces security headers even when a handler sets a weaker value", async () => {

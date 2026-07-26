@@ -22,15 +22,17 @@ export const TraceIdParam = z.object({
 		}),
 });
 
+const PageNumber = z
+	.string()
+	.trim()
+	.min(1)
+	.transform((value) => Number(value))
+	.pipe(z.number().finite().int().nonnegative());
+const PageOffset = PageNumber.pipe(z.number().max(2_147_483_647));
+
 export const PageQuery = z.object({
-	limit: z.coerce
-		.number()
-		.int()
-		.min(1)
-		.max(200)
-		.optional()
-		.openapi({ example: 50 }),
-	offset: z.coerce.number().int().min(0).optional().openapi({ example: 0 }),
+	limit: PageNumber.optional().openapi({ example: 50 }),
+	offset: PageOffset.optional().openapi({ example: 0 }),
 });
 
 export const ErrorCode = z.enum([

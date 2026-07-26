@@ -11,31 +11,45 @@ import {
 describe("credentials helpers", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
+		window.sessionStorage.clear();
+		clearCredentials();
 	});
 	afterEach(() => {
 		window.localStorage.clear();
+		window.sessionStorage.clear();
+		clearCredentials();
 	});
 
-	it("setCredentials + getCredentials round-trips", () => {
+	it("keeps credentials in memory and removes legacy persisted credentials", () => {
+		window.localStorage.setItem("astraea.auth.username", "previous-user");
+		window.localStorage.setItem("astraea.auth.password", "previous-password");
 		setCredentials("alice", "hunter2");
 		expect(getCredentials()).toEqual({
 			username: "alice",
 			password: "hunter2",
 		});
+		expect(window.localStorage.getItem("astraea.auth.username")).toBeNull();
+		expect(window.localStorage.getItem("astraea.auth.password")).toBeNull();
+		expect(window.sessionStorage.getItem("astraea.auth.username")).toBeNull();
+		expect(window.sessionStorage.getItem("astraea.auth.password")).toBeNull();
 	});
 
-	it("clearCredentials removes both keys", () => {
+	it("clearCredentials removes in-memory and legacy persisted credentials", () => {
 		setCredentials("alice", "hunter2");
+		window.localStorage.setItem("astraea.auth.username", "alice");
+		window.localStorage.setItem("astraea.auth.password", "hunter2");
 		clearCredentials();
 		expect(getCredentials()).toBeNull();
+		expect(window.localStorage.getItem("astraea.auth.username")).toBeNull();
+		expect(window.localStorage.getItem("astraea.auth.password")).toBeNull();
 	});
 
-	it("getCredentials returns null if either key is missing", () => {
+	it("does not restore credentials from legacy storage", () => {
 		window.localStorage.setItem("astraea.auth.username", "alice");
-		expect(getCredentials()).toBeNull();
-		clearCredentials();
 		window.localStorage.setItem("astraea.auth.password", "hunter2");
 		expect(getCredentials()).toBeNull();
+		expect(window.localStorage.getItem("astraea.auth.username")).toBeNull();
+		expect(window.localStorage.getItem("astraea.auth.password")).toBeNull();
 	});
 });
 
@@ -130,7 +144,7 @@ describe("authedFetch 401 handling", () => {
 		off();
 	});
 
-	it("attaches Basic Auth header from localStorage", async () => {
+	it("attaches Basic Auth header from in-memory credentials", async () => {
 		setCredentials("alice", "hunter2");
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response("{}", {
