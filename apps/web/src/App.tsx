@@ -60,27 +60,27 @@ const observabilityTraceDetailRoute = createRoute({
 });
 
 const promptsRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: "/prompts",
-  component: PromptsPage,
+	getParentRoute: () => protectedRoute,
+	path: "/prompts",
+	component: PromptsPage,
 });
 
 const newPromptRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: "/prompts/new",
-  component: NewPromptPage,
+	getParentRoute: () => protectedRoute,
+	path: "/prompts/new",
+	component: NewPromptPage,
 });
 
 const promptDetailRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: "/prompts/$slug",
-  component: PromptDetailPage,
+	getParentRoute: () => protectedRoute,
+	path: "/prompts/$slug",
+	component: PromptDetailPage,
 });
 
 const promptEditRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: "/prompts/$slug/edit",
-  component: EditPromptPage,
+	getParentRoute: () => protectedRoute,
+	path: "/prompts/$slug/edit",
+	component: EditPromptPage,
 });
 
 const router = createRouter({

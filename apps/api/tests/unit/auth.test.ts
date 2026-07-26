@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { basicAuthMiddleware, TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
+import {
+	basicAuthMiddleware,
+	TRUSTED_ACTOR_CONTEXT_KEY,
+} from "../../src/middleware/auth";
 
 describe("basicAuthMiddleware", () => {
 	beforeAll(() => {

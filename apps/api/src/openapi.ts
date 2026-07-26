@@ -72,7 +72,10 @@ import {
 	handleDeletePrompt,
 } from "./routes/prompts.js";
 import { listProjects, handleListProjects } from "./routes/projects.js";
-import { getPromptProvenance, handleGetPromptProvenance } from "./routes/prompt-provenance.js";
+import {
+	getPromptProvenance,
+	handleGetPromptProvenance,
+} from "./routes/prompt-provenance.js";
 import {
 	listDatasets,
 	handleListDatasets,
@@ -95,11 +98,14 @@ import {
 } from "./routes/scores.js";
 
 export const openapiApp = new OpenAPIHono({
-  defaultHook: (result, c) => {
-    if (!result.success) {
-      return c.json({ code: "BAD_REQUEST", message: "Request validation failed" }, 400);
-    }
-  },
+	defaultHook: (result, c) => {
+		if (!result.success) {
+			return c.json(
+				{ code: "BAD_REQUEST", message: "Request validation failed" },
+				400,
+			);
+		}
+	},
 });
 openapiApp.openAPIRegistry.registerComponent("securitySchemes", "basicAuth", {
 	type: "http",
@@ -110,12 +116,12 @@ const register = (route: unknown, handler: unknown): void => {
 };
 
 openapiApp.use("/v1/prompts/*", async (c, next) => {
-  c.header("Cache-Control", "no-store");
-  await next();
+	c.header("Cache-Control", "no-store");
+	await next();
 });
 openapiApp.use("/v1/prompt-provenance/*", async (c, next) => {
-  c.header("Cache-Control", "no-store");
-  await next();
+	c.header("Cache-Control", "no-store");
+	await next();
 });
 
 // Health (also mounted at /health by the bare handler in index.ts).

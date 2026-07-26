@@ -3,214 +3,252 @@ import { authedFetch } from "./auth";
 export type JsonObject = Record<string, unknown>;
 
 export interface ApiErrorEnvelope {
-  code: string;
-  message: string;
+	code: string;
+	message: string;
 }
 
 export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
+	constructor(
+		readonly status: number,
+		readonly code: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "ApiError";
+	}
 }
 
-async function responseJson<T>(response: Response, operation: string): Promise<T> {
-  if (response.ok) return response.json() as Promise<T>;
+async function responseJson<T>(
+	response: Response,
+	operation: string,
+): Promise<T> {
+	if (response.ok) return response.json() as Promise<T>;
 
-  let envelope: ApiErrorEnvelope | null = null;
-  try {
-    envelope = await response.json() as ApiErrorEnvelope;
-  } catch {
-    envelope = null;
-  }
-  throw new ApiError(
-    response.status,
-    envelope?.code ?? "REQUEST_FAILED",
-    envelope?.message ?? `${operation} ${response.status}`,
-  );
+	let envelope: ApiErrorEnvelope | null = null;
+	try {
+		envelope = (await response.json()) as ApiErrorEnvelope;
+	} catch {
+		envelope = null;
+	}
+	throw new ApiError(
+		response.status,
+		envelope?.code ?? "REQUEST_FAILED",
+		envelope?.message ?? `${operation} ${response.status}`,
+	);
 }
 
 function jsonRequest(body: unknown): RequestInit {
-  return {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  };
+	return {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+	};
 }
 
 export interface Project {
-  id: string;
-  name: string;
-  slug: string;
-  created_at: string;
+	id: string;
+	name: string;
+	slug: string;
+	created_at: string;
 }
 
 export interface ProjectListResponse {
-  items: Project[];
-  total: number;
+	items: Project[];
+	total: number;
 }
 
 export async function listProjects(): Promise<ProjectListResponse> {
-  return responseJson<ProjectListResponse>(await authedFetch("/v1/projects"), "listProjects");
+	return responseJson<ProjectListResponse>(
+		await authedFetch("/v1/projects"),
+		"listProjects",
+	);
 }
 
 export type PromptRole = "system" | "user";
 
 export interface PromptMessage {
-  role: PromptRole;
-  content: string;
+	role: PromptRole;
+	content: string;
 }
 
 export interface PromptVersion {
-  id: string;
-  version: number;
-  messages: PromptMessage[];
-  model: string | null;
-  settings: JsonObject;
-  change_summary: string;
-  created_by: string;
-  created_at: string;
-  content_hash: string;
-  diff: string | null;
+	id: string;
+	version: number;
+	messages: PromptMessage[];
+	model: string | null;
+	settings: JsonObject;
+	change_summary: string;
+	created_by: string;
+	created_at: string;
+	content_hash: string;
+	diff: string | null;
 }
 
 export interface Prompt extends PromptVersion {
-  project_id: string;
-  name: string;
-  description: string | null;
+	project_id: string;
+	name: string;
+	description: string | null;
 }
 
 export interface PromptListResponse {
-  items: Prompt[];
-  total: number;
+	items: Prompt[];
+	total: number;
 }
 
 export interface PromptVersionListResponse {
-  items: PromptVersion[];
+	items: PromptVersion[];
 }
 
 export interface CreatePromptInput {
-  project_id: string;
-  name: string;
-  description?: string | null;
-  messages: PromptMessage[];
-  model?: string | null;
-  settings?: JsonObject;
+	project_id: string;
+	name: string;
+	description?: string | null;
+	messages: PromptMessage[];
+	model?: string | null;
+	settings?: JsonObject;
 }
 
 export interface CreatePromptVersionInput {
-  project_id: string;
-  slug: string;
-  base_version: number;
-  messages: PromptMessage[];
-  model?: string | null;
-  settings?: JsonObject;
-  change_summary: string;
+	project_id: string;
+	slug: string;
+	base_version: number;
+	messages: PromptMessage[];
+	model?: string | null;
+	settings?: JsonObject;
+	change_summary: string;
 }
 
 export interface RenderPromptInput {
-  project_id: string;
-  slug: string;
-  version?: number;
-  data: JsonObject;
+	project_id: string;
+	slug: string;
+	version?: number;
+	data: JsonObject;
 }
 
 export interface PromptRenderResponse {
-  id: string;
-  version: number;
-  content_hash: string;
-  messages: PromptMessage[];
-  warnings: Array<{ code: "MISSING_VARIABLE"; role: PromptRole; path: string }>;
+	id: string;
+	version: number;
+	content_hash: string;
+	messages: PromptMessage[];
+	warnings: Array<{ code: "MISSING_VARIABLE"; role: PromptRole; path: string }>;
 }
 
 export interface PromptPreviewResponse {
-  messages: PromptMessage[];
-  warnings: Array<{ code: "MISSING_VARIABLE"; role: PromptRole; path: string }>;
+	messages: PromptMessage[];
+	warnings: Array<{ code: "MISSING_VARIABLE"; role: PromptRole; path: string }>;
 }
 
 export interface PromptProvenanceStatusResponse {
-  status: "active" | "deleted" | "unknown";
+	status: "active" | "deleted" | "unknown";
 }
 
-export async function listPrompts(projectId: string): Promise<PromptListResponse> {
-  return responseJson<PromptListResponse>(
-    await authedFetch(`/v1/prompts${buildQs({ project_id: projectId })}`),
-    "listPrompts",
-  );
+export async function listPrompts(
+	projectId: string,
+): Promise<PromptListResponse> {
+	return responseJson<PromptListResponse>(
+		await authedFetch(`/v1/prompts${buildQs({ project_id: projectId })}`),
+		"listPrompts",
+	);
 }
 
 export async function createPrompt(input: CreatePromptInput): Promise<Prompt> {
-  return responseJson<Prompt>(await authedFetch("/v1/prompts", jsonRequest(input)), "createPrompt");
+	return responseJson<Prompt>(
+		await authedFetch("/v1/prompts", jsonRequest(input)),
+		"createPrompt",
+	);
 }
 
-export async function getPrompt(input: { project_id: string; slug: string; version?: number }): Promise<Prompt> {
-  return responseJson<Prompt>(
-    await authedFetch(`/v1/prompts/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id, version: input.version })}`),
-    "getPrompt",
-  );
+export async function getPrompt(input: {
+	project_id: string;
+	slug: string;
+	version?: number;
+}): Promise<Prompt> {
+	return responseJson<Prompt>(
+		await authedFetch(
+			`/v1/prompts/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id, version: input.version })}`,
+		),
+		"getPrompt",
+	);
 }
 
-export async function listPromptVersions(input: { project_id: string; slug: string }): Promise<PromptVersionListResponse> {
-  return responseJson<PromptVersionListResponse>(
-    await authedFetch(`/v1/prompts/${encodeURIComponent(input.slug)}/versions${buildQs({ project_id: input.project_id })}`),
-    "listPromptVersions",
-  );
+export async function listPromptVersions(input: {
+	project_id: string;
+	slug: string;
+}): Promise<PromptVersionListResponse> {
+	return responseJson<PromptVersionListResponse>(
+		await authedFetch(
+			`/v1/prompts/${encodeURIComponent(input.slug)}/versions${buildQs({ project_id: input.project_id })}`,
+		),
+		"listPromptVersions",
+	);
 }
 
-export async function createPromptVersion(input: CreatePromptVersionInput): Promise<PromptVersion> {
-  const { project_id, slug, ...body } = input;
-  return responseJson<PromptVersion>(
-    await authedFetch(
-      `/v1/prompts/${encodeURIComponent(slug)}/versions${buildQs({ project_id })}`,
-      jsonRequest(body),
-    ),
-    "createPromptVersion",
-  );
+export async function createPromptVersion(
+	input: CreatePromptVersionInput,
+): Promise<PromptVersion> {
+	const { project_id, slug, ...body } = input;
+	return responseJson<PromptVersion>(
+		await authedFetch(
+			`/v1/prompts/${encodeURIComponent(slug)}/versions${buildQs({ project_id })}`,
+			jsonRequest(body),
+		),
+		"createPromptVersion",
+	);
 }
 
-export async function renderPrompt(input: RenderPromptInput): Promise<PromptRenderResponse> {
-  const { project_id, slug, version, data } = input;
-  return responseJson<PromptRenderResponse>(
-    await authedFetch(
-      `/v1/prompts/${encodeURIComponent(slug)}/render${buildQs({ project_id, version })}`,
-      jsonRequest({ data }),
-    ),
-    "renderPrompt",
-  );
+export async function renderPrompt(
+	input: RenderPromptInput,
+): Promise<PromptRenderResponse> {
+	const { project_id, slug, version, data } = input;
+	return responseJson<PromptRenderResponse>(
+		await authedFetch(
+			`/v1/prompts/${encodeURIComponent(slug)}/render${buildQs({ project_id, version })}`,
+			jsonRequest({ data }),
+		),
+		"renderPrompt",
+	);
 }
 
-export async function previewPrompt(input: { messages: PromptMessage[]; data: JsonObject }): Promise<PromptPreviewResponse> {
-  return responseJson<PromptPreviewResponse>(await authedFetch("/v1/prompts/preview", jsonRequest(input)), "previewPrompt");
+export async function previewPrompt(input: {
+	messages: PromptMessage[];
+	data: JsonObject;
+}): Promise<PromptPreviewResponse> {
+	return responseJson<PromptPreviewResponse>(
+		await authedFetch("/v1/prompts/preview", jsonRequest(input)),
+		"previewPrompt",
+	);
 }
 
-export async function deletePrompt(input: { project_id: string; slug: string; confirmation: string }): Promise<void> {
-  const { project_id, slug, confirmation } = input;
-  const response = await authedFetch(
-    `/v1/prompts/${encodeURIComponent(slug)}${buildQs({ project_id })}`,
-    {
-      method: "DELETE",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ confirmation }),
-    },
-  );
-  if (!response.ok) await responseJson<never>(response, "deletePrompt");
+export async function deletePrompt(input: {
+	project_id: string;
+	slug: string;
+	confirmation: string;
+}): Promise<void> {
+	const { project_id, slug, confirmation } = input;
+	const response = await authedFetch(
+		`/v1/prompts/${encodeURIComponent(slug)}${buildQs({ project_id })}`,
+		{
+			method: "DELETE",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ confirmation }),
+		},
+	);
+	if (!response.ok) await responseJson<never>(response, "deletePrompt");
 }
 
 export async function getPromptProvenance(input: {
-  project_id: string;
-  id: string;
-  version: number;
-  content_hash: string;
+	project_id: string;
+	id: string;
+	version: number;
+	content_hash: string;
 }): Promise<PromptProvenanceStatusResponse> {
-  const { id, ...query } = input;
-  return responseJson<PromptProvenanceStatusResponse>(
-    await authedFetch(`/v1/prompt-provenance/${encodeURIComponent(id)}${buildQs(query)}`),
-    "getPromptProvenance",
-  );
+	const { id, ...query } = input;
+	return responseJson<PromptProvenanceStatusResponse>(
+		await authedFetch(
+			`/v1/prompt-provenance/${encodeURIComponent(id)}${buildQs(query)}`,
+		),
+		"getPromptProvenance",
+	);
 }
 
 export interface TraceRow {
@@ -249,7 +287,11 @@ export interface ObservationMetadata {
 	prompt_provenance: PromptProvenance | null;
 }
 
-export type ObservationMetadataInput = ObservationMetadata | string | null | undefined;
+export type ObservationMetadataInput =
+	| ObservationMetadata
+	| string
+	| null
+	| undefined;
 
 const PROMPT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CONTENT_HASH_PATTERN = /^[0-9a-f]{64}$/;
@@ -259,7 +301,7 @@ export function emptyObservationMetadata(): ObservationMetadata {
 }
 
 export function normalizeObservationMetadata(
-	raw: ObservationMetadataInput,
+	raw: unknown,
 	isGeneration = true,
 ): ObservationMetadata {
 	const parsed = typeof raw === "string" ? parseMetadataString(raw) : raw;
@@ -299,7 +341,9 @@ function isOtlpAttribute(value: unknown): value is OtlpAttribute {
 	return (
 		isRecord(value) &&
 		typeof value.key === "string" &&
-		(value.value === undefined || isRecord(value.value) || Array.isArray(value.value))
+		(value.value === undefined ||
+			isRecord(value.value) ||
+			Array.isArray(value.value))
 	);
 }
 
@@ -331,7 +375,9 @@ function isMetadataEnvelope(value: unknown): value is ObservationMetadata {
 	);
 }
 
-function sanitizeMetadataAttributes(attributes: OtlpAttribute[]): OtlpAttribute[] {
+function sanitizeMetadataAttributes(
+	attributes: OtlpAttribute[],
+): OtlpAttribute[] {
 	return attributes.filter(
 		(attribute) => !attribute.key.startsWith("astraea.prompt."),
 	);

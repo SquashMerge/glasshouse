@@ -4,49 +4,55 @@ import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
 import { observationToInsertRow } from "./observation-row.js";
 
 interface ClickHouseRow {
-  [key: string]: string | number | null | string[];
+	[key: string]: string | number | null | string[];
 }
 
 function traceToRow(t: NormalizedTrace): ClickHouseRow {
-  return {
-    trace_id: t.trace_id,
-    project_id: "",                // populated from auth context (single-tenant for now)
-    name: t.name,
-    start_time: t.start_time,
-    end_time: t.end_time,
-    duration_ms: t.duration_ms,
-    status: t.status,
-    user_id: t.user_id,
-    session_id: t.session_id,
-    agent_id: t.agent_id,
-    agent_version: t.agent_version,
-    env: t.env,
-    tags: t.tags,
-    input_text: t.input_text,
-    output_text: t.output_text,
-    scores_summary: t.scores_summary,
-    metadata: "",
-  };
+	return {
+		trace_id: t.trace_id,
+		project_id: "", // populated from auth context (single-tenant for now)
+		name: t.name,
+		start_time: t.start_time,
+		end_time: t.end_time,
+		duration_ms: t.duration_ms,
+		status: t.status,
+		user_id: t.user_id,
+		session_id: t.session_id,
+		agent_id: t.agent_id,
+		agent_version: t.agent_version,
+		env: t.env,
+		tags: t.tags,
+		input_text: t.input_text,
+		output_text: t.output_text,
+		scores_summary: t.scores_summary,
+		metadata: "",
+	};
 }
 
-export async function insertTraces(client: ClickHouseClient, traces: NormalizedTrace[]): Promise<void> {
-  if (traces.length === 0) return;
-  await client.insert({
-    table: "traces",
-    values: traces.map(traceToRow),
-    format: "JSONEachRow",
-  });
+export async function insertTraces(
+	client: ClickHouseClient,
+	traces: NormalizedTrace[],
+): Promise<void> {
+	if (traces.length === 0) return;
+	await client.insert({
+		table: "traces",
+		values: traces.map(traceToRow),
+		format: "JSONEachRow",
+	});
 }
 
-export async function insertObservations(client: ClickHouseClient, observations: NormalizedObservation[]): Promise<void> {
-  if (observations.length === 0) return;
-  await client.insert({
-    table: "observations",
-    values: observations.map(observationToInsertRow),
-    format: "JSONEachRow",
-  });
+export async function insertObservations(
+	client: ClickHouseClient,
+	observations: NormalizedObservation[],
+): Promise<void> {
+	if (observations.length === 0) return;
+	await client.insert({
+		table: "observations",
+		values: observations.map(observationToInsertRow),
+		format: "JSONEachRow",
+	});
 }
 
 export function defaultClient(): ClickHouseClient {
-  return ch();
+	return ch();
 }

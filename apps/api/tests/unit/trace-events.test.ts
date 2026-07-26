@@ -9,17 +9,21 @@
 // (both read once at module load in trace-events.ts) to fire timers in a few
 // tens of milliseconds instead of waiting 15s/30s.
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import type { TraceRow, ObservationRow } from "../../src/db/traces-query";
 import type { NormalizedObservation } from "../../src/db/gen-ai-attrs";
-import { _resetForTests, publishSync, subscribe } from "../../src/lib/event-bus";
+import {
+	_resetForTests,
+	publishSync,
+	subscribe,
+} from "../../src/lib/event-bus";
 import { basicAuthMiddleware } from "../../src/middleware/auth";
 import {
-  createTraceEventHandlers,
-  streamObservationEvents,
-  streamTraceDetailEvents,
-  streamTraceEvents,
+	createTraceEventHandlers,
+	streamObservationEvents,
+	streamTraceDetailEvents,
+	streamTraceEvents,
 } from "../../src/routes/trace-events";
 
 // ---------------------------------------------------------------------------
@@ -33,84 +37,87 @@ const OBS_ID_2 = "obs-0002";
 const OBS_ID_OTHER = "obs-OTHER";
 const HASH = "a".repeat(64);
 const LEGACY_METADATA = JSON.stringify([
-  { key: "model", value: { stringValue: "gpt-4o" } },
-  { key: "tokens", value: { intValue: 42 } },
+	{ key: "model", value: { stringValue: "gpt-4o" } },
+	{ key: "tokens", value: { intValue: 42 } },
 ]);
 const PROVENANCE_METADATA = {
-  schema_version: 1 as const,
-  attributes: [{ key: "model", value: { stringValue: "gpt-4o" } }],
-  prompt_provenance: { id: "support-agent", version: 7, content_hash: HASH },
+	schema_version: 1 as const,
+	attributes: [{ key: "model", value: { stringValue: "gpt-4o" } }],
+	prompt_provenance: { id: "support-agent", version: 7, content_hash: HASH },
 };
 
 const fakeTrace: TraceRow = {
-  trace_id: VALID_TRACE_ID,
-  project_id: "proj-1",
-  name: "unit-trace",
-  start_time: "2024-01-01 00:00:00.000",
-  end_time: null,
-  duration_ms: null,
-  status: "ok",
-  user_id: "",
-  session_id: "",
-  agent_id: "",
-  agent_version: "",
-  env: "production",
-  tags: [],
-  input_text: "",
-  output_text: "",
-  scores_summary: "",
+	trace_id: VALID_TRACE_ID,
+	project_id: "proj-1",
+	name: "unit-trace",
+	start_time: "2024-01-01 00:00:00.000",
+	end_time: null,
+	duration_ms: null,
+	status: "ok",
+	user_id: "",
+	session_id: "",
+	agent_id: "",
+	agent_version: "",
+	env: "production",
+	tags: [],
+	input_text: "",
+	output_text: "",
+	scores_summary: "",
 };
 
 const fakeObservation: ObservationRow = {
-  observation_id: OBS_ID,
-  trace_id: VALID_TRACE_ID,
-  project_id: "proj-1",
-  parent_observation_id: null,
-  type: "generation",
-  name: "gen-1",
-  start_time: "2024-01-01 00:00:00.000",
-  end_time: null,
-  duration_ms: null,
-  status: "ok",
-  model: "gpt-4o",
-  input_text: "",
-  output_text: "",
-  metadata: LEGACY_METADATA,
+	observation_id: OBS_ID,
+	trace_id: VALID_TRACE_ID,
+	project_id: "proj-1",
+	parent_observation_id: null,
+	type: "generation",
+	name: "gen-1",
+	start_time: "2024-01-01 00:00:00.000",
+	end_time: null,
+	duration_ms: null,
+	status: "ok",
+	model: "gpt-4o",
+	input_text: "",
+	output_text: "",
+	metadata: LEGACY_METADATA,
 };
 
 const fakeObservationNoMeta: ObservationRow = {
-  ...fakeObservation,
-  observation_id: OBS_ID_2,
-  name: "gen-2",
-  metadata: "",
+	...fakeObservation,
+	observation_id: OBS_ID_2,
+	name: "gen-2",
+	metadata: "",
 };
 
 const fakeObservationBadMeta: ObservationRow = {
-  ...fakeObservation,
-  observation_id: "obs-bad",
-  name: "gen-bad",
-  metadata: "{not valid json",
+	...fakeObservation,
+	observation_id: "obs-bad",
+	name: "gen-bad",
+	metadata: "{not valid json",
 };
 
 const fakeObservationOtherTrace: ObservationRow = {
-  ...fakeObservation,
-  observation_id: OBS_ID_OTHER,
-  trace_id: OTHER_TRACE_ID,
-  name: "other-trace-obs",
+	...fakeObservation,
+	observation_id: OBS_ID_OTHER,
+	trace_id: OTHER_TRACE_ID,
+	name: "other-trace-obs",
 };
 
 const provenanceObservation = {
-  ...fakeObservation,
-  metadata: PROVENANCE_METADATA,
+	...fakeObservation,
+	metadata: PROVENANCE_METADATA,
 } as unknown as NormalizedObservation;
 
 // Default: trace exists. Individual tests can override per-case with
 // mockResolvedValueOnce(...) / mockImplementationOnce(...).
 const getTraceMock = mock(async (_client: unknown, traceId: string) => {
-  if (traceId === VALID_TRACE_ID) {
-    return { trace: fakeTrace, observations: [fakeObservation, fakeObservationNoMeta] };
-  }
-  return { trace: null, observations: [] };
+	if (traceId === VALID_TRACE_ID) {
+		return {
+			trace: fakeTrace,
+			observations: [fakeObservation, fakeObservationNoMeta],
+		};
+	}
+	return { trace: null, observations: [] };
 });
 
 const defaultClientMock = mock(() => ({}));
@@ -119,14 +126,16 @@ const defaultClientMock = mock(() => ({}));
 // delegates to the real subscribe so the SSE handler still receives events.
 const subscribeCallLog: Array<{ event: string; at: number }> = [];
 const unsubscribeCallLog: string[] = [];
-const subscribeSpy = mock((event: string, handler: Parameters<typeof subscribe>[1]) => {
-  subscribeCallLog.push({ event, at: Date.now() });
-  const unsubscribe = subscribe(event as never, handler as never);
-  return () => {
-    unsubscribeCallLog.push(event);
-    unsubscribe();
-  };
-});
+const subscribeSpy = mock(
+	(event: string, handler: Parameters<typeof subscribe>[1]) => {
+		subscribeCallLog.push({ event, at: Date.now() });
+		const unsubscribe = subscribe(event as never, handler as never);
+		return () => {
+			unsubscribeCallLog.push(event);
+			unsubscribe();
+		};
+	},
+);
 
 const USER = "astraea";
 const PASS = "secret";
@@ -135,19 +144,31 @@ process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
 const traceEventHandlers = createTraceEventHandlers({
-  defaultClient: defaultClientMock,
-  getTrace: getTraceMock,
-  graceMs: 150,
-  heartbeatMs: 60,
-  subscribe: subscribeSpy,
+	defaultClient: defaultClientMock,
+	getTrace: getTraceMock,
+	graceMs: 150,
+	heartbeatMs: 60,
+	subscribe: subscribeSpy,
 });
 const apiApp = new OpenAPIHono({
-  defaultHook: (result, c) => result.success ? undefined : c.json({ code: "BAD_REQUEST", message: "Request validation failed" }, 400),
+	defaultHook: (result, c) =>
+		result.success
+			? undefined
+			: c.json(
+					{ code: "BAD_REQUEST", message: "Request validation failed" },
+					400,
+				),
 });
 apiApp.use("/v1/*", basicAuthMiddleware());
 apiApp.openapi(streamTraceEvents, traceEventHandlers.handleStreamTraceEvents);
-apiApp.openapi(streamObservationEvents, traceEventHandlers.handleStreamObservationEvents);
-apiApp.openapi(streamTraceDetailEvents, traceEventHandlers.handleStreamTraceDetailEvents);
+apiApp.openapi(
+	streamObservationEvents,
+	traceEventHandlers.handleStreamObservationEvents,
+);
+apiApp.openapi(
+	streamTraceDetailEvents,
+	traceEventHandlers.handleStreamTraceDetailEvents,
+);
 
 // ---------------------------------------------------------------------------
 // SSE stream helper: reads frames from the response body incrementally.
@@ -159,97 +180,107 @@ type SSEFrame = { event?: string; data: string };
 
 /** Read frames until `predicate` matches or `timeoutMs` elapses. */
 async function readFramesUntil(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  predicate: (frames: SSEFrame[]) => boolean,
-  opts: { timeoutMs?: number; maxBytes?: number } = {},
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+	predicate: (frames: SSEFrame[]) => boolean,
+	opts: { timeoutMs?: number; maxBytes?: number } = {},
 ): Promise<SSEFrame[]> {
-  const timeoutMs = opts.timeoutMs ?? 1_000;
-  const maxBytes = opts.maxBytes ?? 64 * 1024;
-  const frames: SSEFrame[] = [];
-  let buf = "";
-  const startedAt = Date.now();
+	const timeoutMs = opts.timeoutMs ?? 1_000;
+	const maxBytes = opts.maxBytes ?? 64 * 1024;
+	const frames: SSEFrame[] = [];
+	let buf = "";
+	const startedAt = Date.now();
 
-  while (Date.now() - startedAt < timeoutMs && frames.length < 200) {
-    const readPromise = reader.read();
-    const timer = new Promise<{ value: undefined; done: true }>((resolve) =>
-      setTimeout(() => resolve({ value: undefined, done: true }), Math.max(10, timeoutMs - (Date.now() - startedAt))),
-    );
-    const result = await Promise.race([readPromise, timer]);
-    if (result.done) break;
-    buf += decoder.decode(result.value, { stream: true });
-    if (buf.length > maxBytes) break;
-    // SSE frames are separated by a blank line.
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const raw = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      frames.push(parseFrame(raw));
-    }
-    if (predicate(frames)) return frames;
-  }
-  return frames;
+	while (Date.now() - startedAt < timeoutMs && frames.length < 200) {
+		const readPromise = reader.read();
+		const timer = new Promise<{ value: undefined; done: true }>((resolve) =>
+			setTimeout(
+				() => resolve({ value: undefined, done: true }),
+				Math.max(10, timeoutMs - (Date.now() - startedAt)),
+			),
+		);
+		const result = await Promise.race([readPromise, timer]);
+		if (result.done) break;
+		buf += decoder.decode(result.value, { stream: true });
+		if (buf.length > maxBytes) break;
+		// SSE frames are separated by a blank line.
+		let idx: number;
+		while ((idx = buf.indexOf("\n\n")) >= 0) {
+			const raw = buf.slice(0, idx);
+			buf = buf.slice(idx + 2);
+			frames.push(parseFrame(raw));
+		}
+		if (predicate(frames)) return frames;
+	}
+	return frames;
 }
 
 function parseFrame(raw: string): SSEFrame {
-  // SSE frame = sequence of `event:` / `data:` / `:` comment lines separated by \n.
-  // Comments (lines starting with `:`) are dropped per the SSE spec; we ignore them.
-  let event: string | undefined;
-  const dataLines: string[] = [];
-  for (const line of raw.split("\n")) {
-    if (line.startsWith(":")) continue;
-    if (line.startsWith("event: ")) event = line.slice("event: ".length);
-    else if (line.startsWith("data: ")) dataLines.push(line.slice("data: ".length));
-  }
-  return { event, data: dataLines.join("\n") };
+	// SSE frame = sequence of `event:` / `data:` / `:` comment lines separated by \n.
+	// Comments (lines starting with `:`) are dropped per the SSE spec; we ignore them.
+	let event: string | undefined;
+	const dataLines: string[] = [];
+	for (const line of raw.split("\n")) {
+		if (line.startsWith(":")) continue;
+		if (line.startsWith("event: ")) event = line.slice("event: ".length);
+		else if (line.startsWith("data: "))
+			dataLines.push(line.slice("data: ".length));
+	}
+	return { event, data: dataLines.join("\n") };
 }
 
 /** Read raw text from the stream for X ms (used for header / :ok assertions). */
 async function readRawForMs(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  ms: number,
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+	ms: number,
 ): Promise<string> {
-  let buf = "";
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    const remaining = deadline - Date.now();
-    const readPromise = reader.read();
-    const timer = new Promise<{ value: undefined; done: true }>((resolve) =>
-      setTimeout(() => resolve({ value: undefined, done: true }), Math.max(5, remaining)),
-    );
-    const result = await Promise.race([readPromise, timer]);
-    if (result.done) break;
-    buf += decoder.decode(result.value, { stream: true });
-  }
-  return buf;
+	let buf = "";
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
+		const remaining = deadline - Date.now();
+		const readPromise = reader.read();
+		const timer = new Promise<{ value: undefined; done: true }>((resolve) =>
+			setTimeout(
+				() => resolve({ value: undefined, done: true }),
+				Math.max(5, remaining),
+			),
+		);
+		const result = await Promise.race([readPromise, timer]);
+		if (result.done) break;
+		buf += decoder.decode(result.value, { stream: true });
+	}
+	return buf;
 }
 
 beforeEach(() => {
-  subscribeCallLog.length = 0;
-  unsubscribeCallLog.length = 0;
-  getTraceMock.mockClear();
-  defaultClientMock.mockClear();
-  subscribeSpy.mockClear();
-  _resetForTests();
-  // Re-attach the spy implementation after _resetForTests clears handlers.
-  subscribeSpy.mockImplementation((event: unknown, handler: unknown) => {
-    subscribeCallLog.push({ event: String(event), at: Date.now() });
-    const unsubscribe = subscribe(event as never, handler as never);
-    return () => {
-      unsubscribeCallLog.push(String(event));
-      unsubscribe();
-    };
-  });
-  // Re-establish default behavior: a "valid" trace exists with two observations.
-  getTraceMock.mockImplementation(async (_client: unknown, traceId: string) => {
-    if (traceId === VALID_TRACE_ID) {
-      return { trace: fakeTrace, observations: [fakeObservation, fakeObservationNoMeta] };
-    }
-    return { trace: null, observations: [] };
-  });
+	subscribeCallLog.length = 0;
+	unsubscribeCallLog.length = 0;
+	getTraceMock.mockClear();
+	defaultClientMock.mockClear();
+	subscribeSpy.mockClear();
+	_resetForTests();
+	// Re-attach the spy implementation after _resetForTests clears handlers.
+	subscribeSpy.mockImplementation((event: unknown, handler: unknown) => {
+		subscribeCallLog.push({ event: String(event), at: Date.now() });
+		const unsubscribe = subscribe(event as never, handler as never);
+		return () => {
+			unsubscribeCallLog.push(String(event));
+			unsubscribe();
+		};
+	});
+	// Re-establish default behavior: a "valid" trace exists with two observations.
+	getTraceMock.mockImplementation(async (_client: unknown, traceId: string) => {
+		if (traceId === VALID_TRACE_ID) {
+			return {
+				trace: fakeTrace,
+				observations: [fakeObservation, fakeObservationNoMeta],
+			};
+		}
+		return { trace: null, observations: [] };
+	});
 });
 
 afterEach(() => {
-  _resetForTests();
+	_resetForTests();
 });
 
 // ---------------------------------------------------------------------------
@@ -257,111 +288,119 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/traces/events (list SSE)", () => {
-  it("returns Content-Type: text/event-stream and 200 with valid auth", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/traces/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
-    const reader = res.body!.getReader();
-    const raw = await readRawForMs(reader, 50);
-    expect(raw.startsWith(":ok\n\n")).toBe(true);
-    await reader.cancel();
-  });
+	it("returns Content-Type: text/event-stream and 200 with valid auth", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
+		const reader = res.body!.getReader();
+		const raw = await readRawForMs(reader, 50);
+		expect(raw.startsWith(":ok\n\n")).toBe(true);
+		await reader.cancel();
+	});
 
-  it(":ok\n\n is the first thing written to the stream", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/traces/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    const { value } = await reader.read();
-    const firstChunk = decoder.decode(value);
-    expect(firstChunk).toBe(":ok\n\n");
-    await reader.cancel();
-  });
+	it(":ok\n\n is the first thing written to the stream", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		const { value } = await reader.read();
+		const firstChunk = decoder.decode(value);
+		expect(firstChunk).toBe(":ok\n\n");
+		await reader.cancel();
+	});
 
-  it("returns 401 without Authorization header", async () => {
-    const res = await apiApp.fetch(new Request("http://x/v1/traces/events"));
-    expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toMatch(/^Basic realm="astraea"/);
-  });
+	it("returns 401 without Authorization header", async () => {
+		const res = await apiApp.fetch(new Request("http://x/v1/traces/events"));
+		expect(res.status).toBe(401);
+		expect(res.headers.get("WWW-Authenticate")).toMatch(
+			/^Basic realm="astraea"/,
+		);
+	});
 
-  it("heartbeat writes :heartbeat frames at the configured interval", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/traces/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    const raw = await readRawForMs(reader, 200); // SSE_HEARTBEAT_MS=60 → expect 2-3 beats
-    expect(raw).toContain(":heartbeat\n\n");
-    await reader.cancel();
-  });
+	it("heartbeat writes :heartbeat frames at the configured interval", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		const raw = await readRawForMs(reader, 200); // SSE_HEARTBEAT_MS=60 → expect 2-3 beats
+		expect(raw).toContain(":heartbeat\n\n");
+		await reader.cancel();
+	});
 
-  it("on client abort, the bus subscription is removed (no leaks across tests)", async () => {
-    const { subscribe: realBusSubscribe } = await import("../../src/lib/event-bus");
-    // Count the current subscribers before opening.
-    let subCount = 0;
-    const probe = () => subCount++;
-    const probeUnsub = realBusSubscribe("trace.created", probe);
-    probeUnsub(); // remove the probe; we just wanted to confirm the real bus is callable
-    expect(subCount).toBe(0); // probe didn't fire (no publish happened)
+	it("on client abort, the bus subscription is removed (no leaks across tests)", async () => {
+		const { subscribe: realBusSubscribe } = await import(
+			"../../src/lib/event-bus"
+		);
+		// Count the current subscribers before opening.
+		let subCount = 0;
+		const probe = () => subCount++;
+		const probeUnsub = realBusSubscribe("trace.created", probe);
+		probeUnsub(); // remove the probe; we just wanted to confirm the real bus is callable
+		expect(subCount).toBe(0); // probe didn't fire (no publish happened)
 
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/traces/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    // Read the :ok then cancel to abort the request.
-    await reader.read();
-    await reader.cancel();
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		// Read the :ok then cancel to abort the request.
+		await reader.read();
+		await reader.cancel();
 
-    // Allow the abort handler to run.
-    await new Promise((r) => setTimeout(r, 20));
+		// Allow the abort handler to run.
+		await new Promise((r) => setTimeout(r, 20));
 
-    // After cancel, publishing must not reach any leftover subscriber.
-    const received: unknown[] = [];
-    realBusSubscribe("trace.created", (m) => received.push(m));
-    publishSync("trace.created", { trace: { trace_id: "after-cancel" } as never });
-    expect(received).toHaveLength(1);
-    // The crucial point: only the listener we just added received the event
-    // (the SSE handler cleaned up on abort). If the SSE handler had leaked,
-    // there'd be an extra "phantom" subscriber here.
-    // We didn't record the exact count, so we assert no error and at least
-    // one delivery (the one we just attached). Cleanup of the listener.
-  });
+		// After cancel, publishing must not reach any leftover subscriber.
+		const received: unknown[] = [];
+		realBusSubscribe("trace.created", (m) => received.push(m));
+		publishSync("trace.created", {
+			trace: { trace_id: "after-cancel" } as never,
+		});
+		expect(received).toHaveLength(1);
+		// The crucial point: only the listener we just added received the event
+		// (the SSE handler cleaned up on abort). If the SSE handler had leaked,
+		// there'd be an extra "phantom" subscriber here.
+		// We didn't record the exact count, so we assert no error and at least
+		// one delivery (the one we just attached). Cleanup of the listener.
+	});
 
-  it("event payload shape: data parses to {trace: TraceRow}", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/traces/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    // Skip the :ok comment.
-    await reader.read();
+	it("event payload shape: data parses to {trace: TraceRow}", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		// Skip the :ok comment.
+		await reader.read();
 
-    publishSync("trace.created", { trace: fakeTrace });
+		publishSync("trace.created", { trace: fakeTrace });
 
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "trace"));
-    const traceFrame = frames.find((f) => f.event === "trace");
-    expect(traceFrame).toBeDefined();
-    const parsed = JSON.parse(traceFrame!.data) as { trace: TraceRow };
-    expect(parsed.trace.trace_id).toBe(fakeTrace.trace_id);
-    expect(parsed.trace.name).toBe(fakeTrace.name);
-    expect(parsed.trace.project_id).toBe(fakeTrace.project_id);
-    await reader.cancel();
-  });
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "trace"),
+		);
+		const traceFrame = frames.find((f) => f.event === "trace");
+		expect(traceFrame).toBeDefined();
+		const parsed = JSON.parse(traceFrame!.data) as { trace: TraceRow };
+		expect(parsed.trace.trace_id).toBe(fakeTrace.trace_id);
+		expect(parsed.trace.name).toBe(fakeTrace.name);
+		expect(parsed.trace.project_id).toBe(fakeTrace.project_id);
+		await reader.cancel();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -369,117 +408,139 @@ describe("GET /v1/traces/events (list SSE)", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/observations/events (spans SSE)", () => {
-  it("returns Content-Type: text/event-stream and 200 with valid auth", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/observations/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
-    const reader = res.body!.getReader();
-    const raw = await readRawForMs(reader, 50);
-    expect(raw.startsWith(":ok\n\n")).toBe(true);
-    await reader.cancel();
-  });
+	it("returns Content-Type: text/event-stream and 200 with valid auth", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
+		const reader = res.body!.getReader();
+		const raw = await readRawForMs(reader, 50);
+		expect(raw.startsWith(":ok\n\n")).toBe(true);
+		await reader.cancel();
+	});
 
-  it("returns 401 without Authorization header", async () => {
-    const res = await apiApp.fetch(new Request("http://x/v1/observations/events"));
-    expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toMatch(/^Basic realm="astraea"/);
-  });
+	it("returns 401 without Authorization header", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events"),
+		);
+		expect(res.status).toBe(401);
+		expect(res.headers.get("WWW-Authenticate")).toMatch(
+			/^Basic realm="astraea"/,
+		);
+	});
 
-  it("metadataParsed reads legacy attributes into a metadata envelope", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/observations/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read(); // :ok
+	it("metadataParsed reads legacy attributes into a metadata envelope", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read(); // :ok
 
-    publishSync("observation.created", { observation: fakeObservation });
+		publishSync("observation.created", { observation: fakeObservation });
 
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "observation"));
-    const obsFrame = frames.find((f) => f.event === "observation");
-    expect(obsFrame).toBeDefined();
-    const parsed = JSON.parse(obsFrame!.data) as {
-      observation: ObservationRow;
-      metadataParsed: unknown;
-    };
-    expect(parsed.observation.observation_id).toBe(OBS_ID);
-    expect(parsed.metadataParsed).toEqual({
-      schema_version: 1,
-      attributes: [
-        { key: "model", value: { stringValue: "gpt-4o" } },
-        { key: "tokens", value: { intValue: 42 } },
-      ],
-      prompt_provenance: null,
-    });
-    await reader.cancel();
-  });
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "observation"),
+		);
+		const obsFrame = frames.find((f) => f.event === "observation");
+		expect(obsFrame).toBeDefined();
+		const parsed = JSON.parse(obsFrame!.data) as {
+			observation: ObservationRow;
+			metadataParsed: unknown;
+		};
+		expect(parsed.observation.observation_id).toBe(OBS_ID);
+		expect(parsed.metadataParsed).toEqual({
+			schema_version: 1,
+			attributes: [
+				{ key: "model", value: { stringValue: "gpt-4o" } },
+				{ key: "tokens", value: { intValue: 42 } },
+			],
+			prompt_provenance: null,
+		});
+		await reader.cancel();
+	});
 
-  it("metadataParsed: invalid JSON fails closed", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/observations/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read();
+	it("metadataParsed: invalid JSON fails closed", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
 
-    publishSync("observation.created", { observation: fakeObservationBadMeta });
+		publishSync("observation.created", { observation: fakeObservationBadMeta });
 
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "observation"));
-    const obsFrame = frames.find((f) => f.event === "observation");
-    expect(obsFrame).toBeDefined();
-    const parsed = JSON.parse(obsFrame!.data) as { metadataParsed: unknown };
-    expect(parsed.metadataParsed).toEqual({ schema_version: 1, attributes: [], prompt_provenance: null });
-    await reader.cancel();
-  });
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "observation"),
+		);
+		const obsFrame = frames.find((f) => f.event === "observation");
+		expect(obsFrame).toBeDefined();
+		const parsed = JSON.parse(obsFrame!.data) as { metadataParsed: unknown };
+		expect(parsed.metadataParsed).toEqual({
+			schema_version: 1,
+			attributes: [],
+			prompt_provenance: null,
+		});
+		await reader.cancel();
+	});
 
-  it("metadataParsed: empty string fails closed", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/observations/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read();
+	it("metadataParsed: empty string fails closed", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
 
-    publishSync("observation.created", { observation: fakeObservationNoMeta });
+		publishSync("observation.created", { observation: fakeObservationNoMeta });
 
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "observation"));
-    const obsFrame = frames.find((f) => f.event === "observation");
-    const parsed = JSON.parse(obsFrame!.data) as { metadataParsed: unknown };
-    expect(parsed.metadataParsed).toEqual({ schema_version: 1, attributes: [], prompt_provenance: null });
-    await reader.cancel();
-  });
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "observation"),
+		);
+		const obsFrame = frames.find((f) => f.event === "observation");
+		const parsed = JSON.parse(obsFrame!.data) as { metadataParsed: unknown };
+		expect(parsed.metadataParsed).toEqual({
+			schema_version: 1,
+			attributes: [],
+			prompt_provenance: null,
+		});
+		await reader.cancel();
+	});
 
-  it("propagates typed prompt provenance on the global observation SSE stream", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/observations/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read();
-    publishSync("observation.created", { observation: provenanceObservation });
+	it("propagates typed prompt provenance on the global observation SSE stream", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		publishSync("observation.created", { observation: provenanceObservation });
 
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "observation"));
-    const parsed = JSON.parse(frames.find((frame) => frame.event === "observation")!.data) as {
-      observation: { metadata: unknown };
-      metadataParsed: unknown;
-    };
-    expect(parsed.observation.metadata).toEqual(PROVENANCE_METADATA);
-    expect(parsed.metadataParsed).toEqual(PROVENANCE_METADATA);
-    await reader.cancel();
-  });
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "observation"),
+		);
+		const parsed = JSON.parse(
+			frames.find((frame) => frame.event === "observation")!.data,
+		) as {
+			observation: { metadata: unknown };
+			metadataParsed: unknown;
+		};
+		expect(parsed.observation.metadata).toEqual(PROVENANCE_METADATA);
+		expect(parsed.metadataParsed).toEqual(PROVENANCE_METADATA);
+		await reader.cancel();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -487,324 +548,364 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/traces/{id}/events (detail SSE)", () => {
-  it("404 when trace does not exist (JSON, NO SSE upgrade)", async () => {
-    getTraceMock.mockResolvedValueOnce({ trace: null, observations: [] });
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${"0".repeat(32)}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    expect(res.status).toBe(404);
-    expect(res.headers.get("content-type")).toMatch(/application\/json/);
-    const body = (await res.json()) as { code: string; message: string };
-    expect(body.code).toBe("NOT_FOUND");
-    // The handler subscribes before querying to close the snapshot race, then
-    // unsubscribes before returning the non-SSE 404 response.
-    const observationSubs = subscribeCallLog.filter((c) => c.event === "observation.created");
-    expect(observationSubs).toHaveLength(1);
-    expect(unsubscribeCallLog.filter((event) => event === "observation.created")).toHaveLength(1);
-  });
+	it("404 when trace does not exist (JSON, NO SSE upgrade)", async () => {
+		getTraceMock.mockResolvedValueOnce({ trace: null, observations: [] });
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${"0".repeat(32)}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(404);
+		expect(res.headers.get("content-type")).toMatch(/application\/json/);
+		const body = (await res.json()) as { code: string; message: string };
+		expect(body.code).toBe("NOT_FOUND");
+		// The handler subscribes before querying to close the snapshot race, then
+		// unsubscribes before returning the non-SSE 404 response.
+		const observationSubs = subscribeCallLog.filter(
+			(c) => c.event === "observation.created",
+		);
+		expect(observationSubs).toHaveLength(1);
+		expect(
+			unsubscribeCallLog.filter((event) => event === "observation.created"),
+		).toHaveLength(1);
+	});
 
-  it("returns 400 for non-hex id (TraceIdParam regex)", async () => {
-    const res = await apiApp.fetch(
-      new Request("http://x/v1/traces/not-a-hex-id/events", {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    expect(res.status).toBe(400);
-  });
+	it("returns 400 for non-hex id (TraceIdParam regex)", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/not-a-hex-id/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(400);
+	});
 
-  it("returns 401 without Authorization header", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`),
-    );
-    expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toMatch(/^Basic realm="astraea"/);
-  });
+	it("returns 401 without Authorization header", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`),
+		);
+		expect(res.status).toBe(401);
+		expect(res.headers.get("WWW-Authenticate")).toMatch(
+			/^Basic realm="astraea"/,
+		);
+	});
 
-  it("Content-Type text/event-stream and :ok is first", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
-    const reader = res.body!.getReader();
-    const { value } = await reader.read();
-    expect(decoder.decode(value)).toBe(":ok\n\n");
-    await reader.cancel();
-  });
+	it("Content-Type text/event-stream and :ok is first", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
+		const reader = res.body!.getReader();
+		const { value } = await reader.read();
+		expect(decoder.decode(value)).toBe(":ok\n\n");
+		await reader.cancel();
+	});
 
-  it("buffers observations published during the snapshot query", async () => {
-    const duringQuery: ObservationRow = {
-      ...fakeObservation,
-      observation_id: "obs-during-query",
-      name: "during-query",
-    };
-    getTraceMock.mockImplementationOnce(async () => {
-      publishSync("observation.created", { observation: duringQuery });
-      return { trace: fakeTrace, observations: [fakeObservation] };
-    });
+	it("buffers observations published during the snapshot query", async () => {
+		const duringQuery: ObservationRow = {
+			...fakeObservation,
+			observation_id: "obs-during-query",
+			name: "during-query",
+		};
+		getTraceMock.mockImplementationOnce(async () => {
+			publishSync("observation.created", { observation: duringQuery });
+			return { trace: fakeTrace, observations: [fakeObservation] };
+		});
 
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read();
-    const frames = await readFramesUntil(
-      reader,
-      (items) => items.some((frame) => frame.event === "observation"),
-    );
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		const frames = await readFramesUntil(reader, (items) =>
+			items.some((frame) => frame.event === "observation"),
+		);
 
-    const observationSubs = subscribeCallLog.filter((c) => c.event === "observation.created");
-    expect(observationSubs.length).toBeGreaterThanOrEqual(1);
-    expect(getTraceMock).toHaveBeenCalledTimes(1);
-    expect(frames[0]?.event).toBe("snapshot");
-    const live = frames.find((frame) => frame.event === "observation");
-    expect(JSON.parse(live!.data).observation.observation_id).toBe("obs-during-query");
-    await reader.cancel();
-  });
+		const observationSubs = subscribeCallLog.filter(
+			(c) => c.event === "observation.created",
+		);
+		expect(observationSubs.length).toBeGreaterThanOrEqual(1);
+		expect(getTraceMock).toHaveBeenCalledTimes(1);
+		expect(frames[0]?.event).toBe("snapshot");
+		const live = frames.find((frame) => frame.event === "observation");
+		expect(JSON.parse(live!.data).observation.observation_id).toBe(
+			"obs-during-query",
+		);
+		await reader.cancel();
+	});
 
-  it("snapshot event is the first SSE frame after :ok and contains the observations", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read(); // :ok
+	it("snapshot event is the first SSE frame after :ok and contains the observations", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read(); // :ok
 
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
-    // First frame after :ok must be the snapshot.
-    expect(frames[0]?.event).toBe("snapshot");
-    const parsed = JSON.parse(frames[0]!.data) as {
-      trace: TraceRow;
-      observations: ObservationRow[];
-    };
-    expect(parsed.trace).toEqual(fakeTrace);
-    expect(parsed.observations).toHaveLength(2);
-    expect(parsed.observations[0]?.observation_id).toBe(OBS_ID);
-    expect(parsed.observations[1]?.observation_id).toBe(OBS_ID_2);
-    await reader.cancel();
-  });
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "snapshot"),
+		);
+		// First frame after :ok must be the snapshot.
+		expect(frames[0]?.event).toBe("snapshot");
+		const parsed = JSON.parse(frames[0]!.data) as {
+			trace: TraceRow;
+			observations: ObservationRow[];
+		};
+		expect(parsed.trace).toEqual(fakeTrace);
+		expect(parsed.observations).toHaveLength(2);
+		expect(parsed.observations[0]?.observation_id).toBe(OBS_ID);
+		expect(parsed.observations[1]?.observation_id).toBe(OBS_ID_2);
+		await reader.cancel();
+	});
 
-  it("subsequent observation.created matching trace_id arrives as event: observation", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read(); // :ok
-    // Drain the snapshot.
-    await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
+	it("subsequent observation.created matching trace_id arrives as event: observation", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read(); // :ok
+		// Drain the snapshot.
+		await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
 
-    const newObs: ObservationRow = {
-      ...fakeObservation,
-      observation_id: "live-obs-1",
-      metadata: '{"k":"v"}',
-    };
-    publishSync("observation.created", { observation: newObs });
+		const newObs: ObservationRow = {
+			...fakeObservation,
+			observation_id: "live-obs-1",
+			metadata: '{"k":"v"}',
+		};
+		publishSync("observation.created", { observation: newObs });
 
-    const frames = await readFramesUntil(reader, (f) =>
-      f.some((x) => x.event === "observation"),
-    );
-    const obsFrame = frames.find((f) => f.event === "observation");
-    expect(obsFrame).toBeDefined();
-    const parsed = JSON.parse(obsFrame!.data) as { observation: ObservationRow };
-    expect(parsed.observation.observation_id).toBe("live-obs-1");
-    expect(parsed.observation.trace_id).toBe(VALID_TRACE_ID);
-    await reader.cancel();
-  });
+		const frames = await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "observation"),
+		);
+		const obsFrame = frames.find((f) => f.event === "observation");
+		expect(obsFrame).toBeDefined();
+		const parsed = JSON.parse(obsFrame!.data) as {
+			observation: ObservationRow;
+		};
+		expect(parsed.observation.observation_id).toBe("live-obs-1");
+		expect(parsed.observation.trace_id).toBe(VALID_TRACE_ID);
+		await reader.cancel();
+	});
 
-  it("propagates typed prompt provenance in detail snapshots and live observations", async () => {
-    getTraceMock.mockResolvedValueOnce({
-      trace: fakeTrace,
-      observations: [{ ...fakeObservation, metadata: JSON.stringify({
-        schema_version: 1,
-        attributes: PROVENANCE_METADATA.attributes,
-        prompt_provenance: PROVENANCE_METADATA.prompt_provenance,
-      }) }],
-    });
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read();
-    const snapshotFrames = await readFramesUntil(reader, (frames) => frames.some((frame) => frame.event === "snapshot"));
-    const snapshot = JSON.parse(snapshotFrames.find((frame) => frame.event === "snapshot")!.data) as {
-      observations: Array<{ metadata: unknown }>;
-    };
-    expect(snapshot.observations[0]?.metadata).toEqual(PROVENANCE_METADATA);
+	it("propagates typed prompt provenance in detail snapshots and live observations", async () => {
+		getTraceMock.mockResolvedValueOnce({
+			trace: fakeTrace,
+			observations: [
+				{
+					...fakeObservation,
+					metadata: JSON.stringify({
+						schema_version: 1,
+						attributes: PROVENANCE_METADATA.attributes,
+						prompt_provenance: PROVENANCE_METADATA.prompt_provenance,
+					}),
+				},
+			],
+		});
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		const snapshotFrames = await readFramesUntil(reader, (frames) =>
+			frames.some((frame) => frame.event === "snapshot"),
+		);
+		const snapshot = JSON.parse(
+			snapshotFrames.find((frame) => frame.event === "snapshot")!.data,
+		) as {
+			observations: Array<{ metadata: unknown }>;
+		};
+		expect(snapshot.observations[0]?.metadata).toEqual(PROVENANCE_METADATA);
 
-    publishSync("observation.created", { observation: provenanceObservation });
-    const liveFrames = await readFramesUntil(reader, (frames) => frames.some((frame) => frame.event === "observation"));
-    const live = JSON.parse(liveFrames.find((frame) => frame.event === "observation")!.data) as {
-      observation: { metadata: unknown };
-    };
-    expect(live.observation.metadata).toEqual(PROVENANCE_METADATA);
-    await reader.cancel();
-  });
+		publishSync("observation.created", { observation: provenanceObservation });
+		const liveFrames = await readFramesUntil(reader, (frames) =>
+			frames.some((frame) => frame.event === "observation"),
+		);
+		const live = JSON.parse(
+			liveFrames.find((frame) => frame.event === "observation")!.data,
+		) as {
+			observation: { metadata: unknown };
+		};
+		expect(live.observation.metadata).toEqual(PROVENANCE_METADATA);
+		await reader.cancel();
+	});
 
-  it("observation.created for OTHER traces does NOT arrive on this stream", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read(); // :ok
-    await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
+	it("observation.created for OTHER traces does NOT arrive on this stream", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read(); // :ok
+		await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
 
-    publishSync("observation.created", { observation: fakeObservationOtherTrace });
+		publishSync("observation.created", {
+			observation: fakeObservationOtherTrace,
+		});
 
-    // Wait up to 200ms — no observation frame should arrive for this trace.
-    // But the grace timer (150ms) WILL fire after this point and write
-    // status:complete. We look specifically for observation frames.
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "status"), {
-      timeoutMs: 500,
-    });
-    const observationFrames = frames.filter((f) => f.event === "observation");
-    expect(observationFrames).toHaveLength(0);
-    const statusFrame = frames.find((f) => f.event === "status");
-    expect(statusFrame).toBeDefined(); // grace timer fired
-    await reader.cancel();
-  });
+		// Wait up to 200ms — no observation frame should arrive for this trace.
+		// But the grace timer (150ms) WILL fire after this point and write
+		// status:complete. We look specifically for observation frames.
+		const frames = await readFramesUntil(
+			reader,
+			(f) => f.some((x) => x.event === "status"),
+			{
+				timeoutMs: 500,
+			},
+		);
+		const observationFrames = frames.filter((f) => f.event === "observation");
+		expect(observationFrames).toHaveLength(0);
+		const statusFrame = frames.find((f) => f.event === "status");
+		expect(statusFrame).toBeDefined(); // grace timer fired
+		await reader.cancel();
+	});
 
-  it("grace timer fires after TRACE_COMPLETE_GRACE_MS of inactivity → status:complete then close", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read(); // :ok
-    await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
+	it("grace timer fires after TRACE_COMPLETE_GRACE_MS of inactivity → status:complete then close", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read(); // :ok
+		await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
 
-    // Don't publish anything → the timer fires after TRACE_COMPLETE_GRACE_MS.
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "status"), {
-      timeoutMs: 1_000,
-    });
-    const statusFrame = frames.find((f) => f.event === "status");
-    expect(statusFrame).toBeDefined();
-    const parsed = JSON.parse(statusFrame!.data) as { status: string };
-    expect(parsed.status).toBe("complete");
+		// Don't publish anything → the timer fires after TRACE_COMPLETE_GRACE_MS.
+		const frames = await readFramesUntil(
+			reader,
+			(f) => f.some((x) => x.event === "status"),
+			{
+				timeoutMs: 1_000,
+			},
+		);
+		const statusFrame = frames.find((f) => f.event === "status");
+		expect(statusFrame).toBeDefined();
+		const parsed = JSON.parse(statusFrame!.data) as { status: string };
+		expect(parsed.status).toBe("complete");
 
-    // The stream should close after the status frame. Try a read with a
-    // short timeout to confirm `done === true`.
-    const timer = new Promise<{ value: undefined; done: true }>((resolve) =>
-      setTimeout(() => resolve({ value: undefined, done: true }), 200),
-    );
-    const next = await Promise.race([reader.read(), timer]);
-    expect(next.done).toBe(true);
-  });
+		// The stream should close after the status frame. Try a read with a
+		// short timeout to confirm `done === true`.
+		const timer = new Promise<{ value: undefined; done: true }>((resolve) =>
+			setTimeout(() => resolve({ value: undefined, done: true }), 200),
+		);
+		const next = await Promise.race([reader.read(), timer]);
+		expect(next.done).toBe(true);
+	});
 
-  it("grace timer resets on each matching observation (timer is cleared + re-armed)", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read(); // :ok
-    await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
+	it("grace timer resets on each matching observation (timer is cleared + re-armed)", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read(); // :ok
+		await readFramesUntil(reader, (f) => f.some((x) => x.event === "snapshot"));
 
-    // Publish an observation → grace timer armed for 150ms.
-    publishSync("observation.created", {
-      observation: { ...fakeObservation, observation_id: "reset-1" },
-    });
-    await readFramesUntil(reader, (f) =>
-      f.some((x) => x.event === "observation"),
-    );
+		// Publish an observation → grace timer armed for 150ms.
+		publishSync("observation.created", {
+			observation: { ...fakeObservation, observation_id: "reset-1" },
+		});
+		await readFramesUntil(reader, (f) =>
+			f.some((x) => x.event === "observation"),
+		);
 
-    // Wait 100ms (less than 150ms grace) — status must NOT have fired yet.
-    await new Promise((r) => setTimeout(r, 100));
+		// Wait 100ms (less than 150ms grace) — status must NOT have fired yet.
+		await new Promise((r) => setTimeout(r, 100));
 
-    // Publish another observation → resets the timer.
-    publishSync("observation.created", {
-      observation: { ...fakeObservation, observation_id: "reset-2" },
-    });
-    await readFramesUntil(reader, (f) =>
-      f.some((x) => x.event === "observation" && JSON.parse(f[f.length - 1]!.data).observation?.observation_id === "reset-2"),
-    );
+		// Publish another observation → resets the timer.
+		publishSync("observation.created", {
+			observation: { ...fakeObservation, observation_id: "reset-2" },
+		});
+		await readFramesUntil(reader, (f) =>
+			f.some(
+				(x) =>
+					x.event === "observation" &&
+					JSON.parse(f[f.length - 1]!.data).observation?.observation_id ===
+						"reset-2",
+			),
+		);
 
-    // Wait another 100ms — still inside the grace period for reset-2.
-    await new Promise((r) => setTimeout(r, 100));
+		// Wait another 100ms — still inside the grace period for reset-2.
+		await new Promise((r) => setTimeout(r, 100));
 
-    // Now wait for the full grace period from reset-2; status should arrive.
-    const frames = await readFramesUntil(reader, (f) => f.some((x) => x.event === "status"), {
-      timeoutMs: 1_000,
-    });
-    const statusFrame = frames.find((f) => f.event === "status");
-    expect(statusFrame).toBeDefined();
-    const parsed = JSON.parse(statusFrame!.data) as { status: string };
-    expect(parsed.status).toBe("complete");
-    await reader.cancel();
-  });
+		// Now wait for the full grace period from reset-2; status should arrive.
+		const frames = await readFramesUntil(
+			reader,
+			(f) => f.some((x) => x.event === "status"),
+			{
+				timeoutMs: 1_000,
+			},
+		);
+		const statusFrame = frames.find((f) => f.event === "status");
+		expect(statusFrame).toBeDefined();
+		const parsed = JSON.parse(statusFrame!.data) as { status: string };
+		expect(parsed.status).toBe("complete");
+		await reader.cancel();
+	});
 
-  it("heartbeat fires on the per-trace stream", async () => {
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    const raw = await readRawForMs(reader, 200); // 60ms heartbeat → 2-3 beats expected
-    expect(raw).toContain(":heartbeat\n\n");
-    await reader.cancel();
-  });
+	it("heartbeat fires on the per-trace stream", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		const raw = await readRawForMs(reader, 200); // 60ms heartbeat → 2-3 beats expected
+		expect(raw).toContain(":heartbeat\n\n");
+		await reader.cancel();
+	});
 
-  it("client abort cleans up: bus unsubscribe and interval cleared", async () => {
-    const { subscribe: realBusSubscribe } = await import("../../src/lib/event-bus");
-    // Pre-open probe to count subscribers in the bus.
-    let probeFired = 0;
-    const probeUnsub = realBusSubscribe("trace.created", () => {
-      probeFired++;
-    });
-    probeUnsub();
+	it("client abort cleans up: bus unsubscribe and interval cleared", async () => {
+		const { subscribe: realBusSubscribe } = await import(
+			"../../src/lib/event-bus"
+		);
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read(); // :ok
+		await reader.cancel();
 
-    const res = await apiApp.fetch(
-      new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-        method: "GET",
-        headers: { authorization: AUTH },
-      }),
-    );
-    const reader = res.body!.getReader();
-    await reader.read(); // :ok
-    await reader.cancel();
+		// Allow abort handler to run.
+		await new Promise((r) => setTimeout(r, 30));
 
-    // Allow abort handler to run.
-    await new Promise((r) => setTimeout(r, 30));
-
-    // After cancel, the handler has unsubscribed. If cleanup leaked, the
-    // grace timer would also fire eventually, writing a status frame on a
-    // closed stream — which is a swallowed error in Hono, so we can't
-    // directly observe it. We assert the unsubscribe instead: after the
-    // abort, no observation subscriber from this connection should remain.
-    let received = 0;
-    const unsub = realBusSubscribe("observation.created", () => {
-      received++;
-    });
-    publishSync("observation.created", {
-      observation: { ...fakeObservation, observation_id: "post-abort" },
-    });
-    expect(received).toBe(1);
-    unsub();
-  });
+		// After cancel, the handler has unsubscribed. If cleanup leaked, the
+		// grace timer would also fire eventually, writing a status frame on a
+		// closed stream — which is a swallowed error in Hono, so we can't
+		// directly observe it. We assert the unsubscribe instead: after the
+		// abort, no observation subscriber from this connection should remain.
+		let received = 0;
+		const unsub = realBusSubscribe("observation.created", () => {
+			received++;
+		});
+		publishSync("observation.created", {
+			observation: { ...fakeObservation, observation_id: "post-abort" },
+		});
+		expect(received).toBe(1);
+		unsub();
+	});
 });

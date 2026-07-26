@@ -119,7 +119,9 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 					)}
 				</div>
 
-				<div className={cn("border-b border-border p-2", collapsed && "hidden")}>
+				<div
+					className={cn("border-b border-border p-2", collapsed && "hidden")}
+				>
 					<label htmlFor="selected-project" className="sr-only">
 						Selected project
 					</label>

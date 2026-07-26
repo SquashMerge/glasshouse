@@ -16,10 +16,7 @@ import {
 	useTraceStream,
 	type ObservationRowLike,
 } from "../../../hooks/useTraceStream";
-import {
-	normalizeObservationMetadata,
-	type TraceRow,
-} from "../../../lib/api";
+import { normalizeObservationMetadata, type TraceRow } from "../../../lib/api";
 import {
 	canonicalObservationId,
 	createTraceModel,
