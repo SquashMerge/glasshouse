@@ -204,6 +204,31 @@ const terminalStatuses = new Set<OptimizationJob["status"]>([
 	"failed",
 ]);
 
+export function nextOptimizationEvents(
+	events: Awaited<ReturnType<typeof listOptimizationEvents>>,
+	lastId: number,
+): {
+	events: Awaited<ReturnType<typeof listOptimizationEvents>>;
+	lastId: number;
+	terminal: boolean;
+} {
+	const unseen = [] as Awaited<ReturnType<typeof listOptimizationEvents>>;
+	let terminal = false;
+	for (const event of events) {
+		if (event.id <= lastId) continue;
+		unseen.push(event);
+		if (terminalStatuses.has(event.status)) {
+			terminal = true;
+			break;
+		}
+	}
+	return {
+		events: unseen,
+		lastId: unseen.at(-1)?.id ?? lastId,
+		terminal,
+	};
+}
+
 const production: OptimizationDependencies = {
 	pool: pgPool,
 	worker: runGepaWorker,
@@ -362,17 +387,19 @@ export function createOptimizationHandlers(
 					let last = 0;
 					try {
 						while (!stream.aborted) {
-							const events = await d.events(d.pool(), input);
-							for (const event of events) {
-								if (event.id <= last) continue;
-								last = event.id;
+							const next = nextOptimizationEvents(
+								await d.events(d.pool(), input),
+								last,
+							);
+							last = next.lastId;
+							for (const event of next.events) {
 								await stream.writeSSE({
 									event: "status",
 									id: String(event.id),
 									data: JSON.stringify(event),
 								});
-								if (terminalStatuses.has(event.status)) return;
 							}
+							if (next.terminal) return;
 							await new Promise((resolve) => setTimeout(resolve, 500));
 						}
 					} catch {

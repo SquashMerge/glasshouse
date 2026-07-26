@@ -19,12 +19,14 @@ const {
 	deletePrompt,
 	getActivePromptOptimization,
 	startPromptOptimization,
+	stopPromptOptimization,
 } = vi.hoisted(() => ({
 	getPrompt: vi.fn(),
 	listPromptVersions: vi.fn(),
 	deletePrompt: vi.fn(),
 	getActivePromptOptimization: vi.fn(),
 	startPromptOptimization: vi.fn(),
+	stopPromptOptimization: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async () => {
@@ -54,6 +56,7 @@ vi.mock("../../src/lib/api", () => ({
 	deletePrompt,
 	getActivePromptOptimization,
 	startPromptOptimization,
+	stopPromptOptimization,
 }));
 
 import { PromptDetailPage } from "../../src/routes/prompts-detail";
@@ -104,6 +107,7 @@ describe("PromptDetailPage", () => {
 		deletePrompt.mockReset();
 		getActivePromptOptimization.mockReset();
 		startPromptOptimization.mockReset();
+		stopPromptOptimization.mockReset();
 		getPrompt.mockResolvedValue(prompt());
 		getActivePromptOptimization.mockResolvedValue(null);
 		startPromptOptimization.mockResolvedValue({
@@ -195,6 +199,63 @@ describe("PromptDetailPage", () => {
 			await screen.findByText("Stop optimization before editing?"),
 		).toBeInTheDocument();
 		expect(router.navigate).not.toHaveBeenCalled();
+	});
+
+	it("keeps the stop dialog open and visible when stopping optimization is rejected", async () => {
+		getActivePromptOptimization.mockResolvedValue({
+			id: "11111111-1111-4111-8111-111111111111",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+		});
+		stopPromptOptimization.mockRejectedValueOnce(new Error("Stop failed"));
+		renderDetail();
+
+		fireEvent.click(await screen.findByRole("button", { name: "New version" }));
+		fireEvent.click(screen.getByRole("button", { name: "Stop and continue" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Stop failed");
+		expect(router.navigate).not.toHaveBeenCalled();
+	});
+
+	it("submits stop once and navigates only after the stopped response", async () => {
+		getActivePromptOptimization.mockResolvedValue({
+			id: "11111111-1111-4111-8111-111111111111",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+		});
+		let resolveStop: (value: unknown) => void = () => {};
+		stopPromptOptimization.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveStop = resolve;
+			}),
+		);
+		renderDetail();
+
+		fireEvent.click(await screen.findByRole("button", { name: "New version" }));
+		const confirm = screen.getByRole("button", { name: "Stop and continue" });
+		fireEvent.click(confirm);
+		fireEvent.click(confirm);
+		await waitFor(() =>
+			expect(stopPromptOptimization).toHaveBeenCalledTimes(1),
+		);
+		expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+		expect(router.navigate).not.toHaveBeenCalled();
+
+		resolveStop({
+			id: "11111111-1111-4111-8111-111111111111",
+			status: "stopped",
+			result_version: null,
+			error_message: null,
+		});
+		await waitFor(() =>
+			expect(router.navigate).toHaveBeenCalledWith({
+				to: "/prompts/$slug/edit",
+				params: { slug: "support-agent" },
+				search: { from: 3 },
+			}),
+		);
 	});
 
 	it("optimizes from the selected historical version", async () => {

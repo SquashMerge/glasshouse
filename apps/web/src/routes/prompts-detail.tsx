@@ -37,6 +37,7 @@ export function PromptDetailPage() {
 	const [optimization, setOptimization] =
 		React.useState<OptimizationJob | null>(null);
 	const [stopToEdit, setStopToEdit] = React.useState(false);
+	const stopToEditInFlight = React.useRef(false);
 	const deleteTriggerRef = React.useRef<HTMLButtonElement>(null);
 	const selectedVersion = queryVersion(location.searchStr, "version");
 
@@ -109,6 +110,31 @@ export function PromptDetailPage() {
 				budget: { max_metric_calls: input.maxMetricCalls },
 			}),
 		onSuccess: (job) => setOptimization(job),
+	});
+	const stopToEditMutation = useMutation({
+		mutationFn: async ({ job }: { job: OptimizationJob; prompt: Prompt }) => {
+			if (!selectedProjectId)
+				throw new Error("Select a project before stopping optimization.");
+			const stopped = await stopPromptOptimization({
+				project_id: selectedProjectId,
+				id: job.id,
+			});
+			if (stopped.status !== "stopped")
+				throw new Error("Optimization could not be stopped.");
+			return stopped;
+		},
+		onSuccess: (job, { prompt }: { job: OptimizationJob; prompt: Prompt }) => {
+			setOptimization(job);
+			setStopToEdit(false);
+			void navigate({
+				to: "/prompts/$slug/edit",
+				params: { slug: prompt.id },
+				search: { from: prompt.version },
+			});
+		},
+		onSettled: () => {
+			stopToEditInFlight.current = false;
+		},
 	});
 	const activeOptimization =
 		optimization ?? activeOptimizationQuery.data ?? null;
@@ -193,8 +219,10 @@ export function PromptDetailPage() {
 					<Button
 						variant="outline"
 						onClick={() => {
-							if (optimizationActive) setStopToEdit(true);
-							else
+							if (optimizationActive) {
+								stopToEditMutation.reset();
+								setStopToEdit(true);
+							} else
 								void navigate({
 									to: "/prompts/$slug/edit",
 									params: { slug: prompt.id },
@@ -349,22 +377,18 @@ export function PromptDetailPage() {
 			)}
 			{stopToEdit && activeOptimization && (
 				<StopToEditDialog
-					pending={false}
-					onClose={() => setStopToEdit(false)}
-					onConfirm={() =>
-						stopPromptOptimization({
-							project_id: selectedProjectId,
-							id: activeOptimization.id,
-						}).then((job) => {
-							setOptimization(job);
-							setStopToEdit(false);
-							void navigate({
-								to: "/prompts/$slug/edit",
-								params: { slug: prompt.id },
-								search: { from: prompt.version },
-							});
-						})
+					pending={stopToEditMutation.isPending}
+					error={
+						stopToEditMutation.error instanceof Error
+							? stopToEditMutation.error.message
+							: null
 					}
+					onClose={() => setStopToEdit(false)}
+					onConfirm={() => {
+						if (stopToEditInFlight.current) return;
+						stopToEditInFlight.current = true;
+						stopToEditMutation.mutate({ job: activeOptimization, prompt });
+					}}
 				/>
 			)}
 		</div>
@@ -491,10 +515,12 @@ function OptimizationConfirmDialog({
 
 function StopToEditDialog({
 	pending,
+	error,
 	onClose,
 	onConfirm,
 }: {
 	pending: boolean;
+	error: string | null;
 	onClose: () => void;
 	onConfirm: () => void;
 }) {
@@ -513,12 +539,17 @@ function StopToEditDialog({
 					Stopping is final. The current optimization will not publish a
 					version, then you can create a new one.
 				</p>
+				{error && (
+					<p className="mt-3 text-sm text-destructive" role="alert">
+						{error}
+					</p>
+				)}
 				<div className="mt-6 flex justify-end gap-2">
 					<Button variant="outline" onClick={onClose} disabled={pending}>
 						Cancel
 					</Button>
 					<Button variant="destructive" onClick={onConfirm} disabled={pending}>
-						Stop and continue
+						{pending ? "Stopping…" : "Stop and continue"}
 					</Button>
 				</div>
 			</div>
