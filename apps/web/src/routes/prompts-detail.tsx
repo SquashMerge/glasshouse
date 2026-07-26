@@ -1,13 +1,8 @@
 import * as React from "react";
-import {
-	Link,
-	useLocation,
-	useNavigate,
-	useParams,
-} from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
-import { Button, buttonVariants } from "../components/ui/button";
+import { Button } from "../components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -18,6 +13,7 @@ import { Input } from "../components/ui/input";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	deletePrompt,
+	getActivePromptOptimization,
 	getPrompt,
 	getPromptOptimization,
 	listPromptVersions,
@@ -40,6 +36,7 @@ export function PromptDetailPage() {
 	>(null);
 	const [optimization, setOptimization] =
 		React.useState<OptimizationJob | null>(null);
+	const [stopToEdit, setStopToEdit] = React.useState(false);
 	const deleteTriggerRef = React.useRef<HTMLButtonElement>(null);
 	const selectedVersion = queryVersion(location.searchStr, "version");
 
@@ -63,6 +60,12 @@ export function PromptDetailPage() {
 		queryFn: () => listPromptVersions({ project_id: selectedProjectId!, slug }),
 		enabled: Boolean(selectedProjectId),
 	});
+	const activeOptimizationQuery = useQuery({
+		queryKey: ["prompt-optimization", selectedProjectId, slug],
+		queryFn: () =>
+			getActivePromptOptimization({ project_id: selectedProjectId!, slug }),
+		enabled: Boolean(selectedProjectId),
+	});
 
 	const deleteMutation = useMutation({
 		mutationFn: (confirmation: string) => {
@@ -82,30 +85,45 @@ export function PromptDetailPage() {
 		},
 	});
 	const optimizeMutation = useMutation({
-		mutationFn: (target: "system" | "user") =>
+		mutationFn: (input: {
+			target: "system" | "user";
+			exampleInput: string;
+			exampleAnswer: string;
+			taskModel: string;
+			reflectionModel: string;
+			maxMetricCalls: number;
+		}) =>
 			startPromptOptimization({
 				project_id: selectedProjectId!,
 				slug,
 				source_version: currentQuery.data!.version,
-				target,
-				evaluator: { type: "examples" },
-				examples: [{ input: "Representative example" }],
-				model_config: { provider: "configured-worker" },
-				budget: { max_candidates: 8 },
+				target: input.target,
+				evaluator: { type: "default_adapter" },
+				examples: [{ input: input.exampleInput, answer: input.exampleAnswer }],
+				model_config: {
+					task_lm: input.taskModel,
+					reflection_lm: input.reflectionModel,
+				},
+				budget: { max_metric_calls: input.maxMetricCalls },
 			}),
 		onSuccess: (job) => setOptimization(job),
 	});
+	const activeOptimization =
+		optimization ?? activeOptimizationQuery.data ?? null;
+	const optimizationActive =
+		activeOptimization !== null &&
+		!["completed", "stopped", "failed"].includes(activeOptimization.status);
 	React.useEffect(() => {
 		if (
-			!optimization ||
-			["completed", "stopped", "failed"].includes(optimization.status) ||
+			!activeOptimization ||
+			["completed", "stopped", "failed"].includes(activeOptimization.status) ||
 			!selectedProjectId
 		)
 			return;
 		const timer = window.setInterval(() => {
 			void getPromptOptimization({
 				project_id: selectedProjectId,
-				id: optimization.id,
+				id: activeOptimization.id,
 			}).then((job) => {
 				setOptimization(job);
 				if (job.status === "completed")
@@ -115,7 +133,12 @@ export function PromptDetailPage() {
 			});
 		}, 750);
 		return () => window.clearInterval(timer);
-	}, [optimization?.id, optimization?.status, selectedProjectId, slug]);
+	}, [
+		activeOptimization?.id,
+		activeOptimization?.status,
+		selectedProjectId,
+		slug,
+	]);
 
 	if (!selectedProjectId || !selectedProject) {
 		return (
@@ -165,24 +188,35 @@ export function PromptDetailPage() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
-					<Link
-						to="/prompts/$slug/edit"
-						params={{ slug: prompt.id }}
-						search={{ from: prompt.version }}
-						className={buttonVariants({ variant: "outline" })}
+					<Button
+						variant="outline"
+						onClick={() => {
+							if (optimizationActive) setStopToEdit(true);
+							else
+								void navigate({
+									to: "/prompts/$slug/edit",
+									params: { slug: prompt.id },
+									search: { from: prompt.version },
+								});
+						}}
 					>
 						New version
-					</Link>
+					</Button>
 					{prompt.messages.some((message) => message.role === "system") && (
 						<Button
 							variant="outline"
 							onClick={() => setOptimizeTarget("system")}
+							disabled={optimizationActive}
 						>
 							Optimize system
 						</Button>
 					)}
 					{prompt.messages.some((message) => message.role === "user") && (
-						<Button variant="outline" onClick={() => setOptimizeTarget("user")}>
+						<Button
+							variant="outline"
+							onClick={() => setOptimizeTarget("user")}
+							disabled={optimizationActive}
+						>
 							Optimize user
 						</Button>
 					)}
@@ -289,22 +323,45 @@ export function PromptDetailPage() {
 							: null
 					}
 					onClose={() => setOptimizeTarget(null)}
-					onConfirm={() =>
-						optimizeMutation.mutate(optimizeTarget, {
-							onSuccess: () => setOptimizeTarget(null),
-						})
+					onConfirm={(input) =>
+						optimizeMutation.mutate(
+							{ ...input, target: optimizeTarget },
+							{
+								onSuccess: () => setOptimizeTarget(null),
+							},
+						)
 					}
 				/>
 			)}
-			{optimization && (
+			{activeOptimization && (
 				<OptimizationStatus
-					job={optimization}
+					job={activeOptimization}
 					onStop={() =>
 						selectedProjectId &&
 						stopPromptOptimization({
 							project_id: selectedProjectId,
-							id: optimization.id,
+							id: activeOptimization.id,
 						}).then(setOptimization)
+					}
+				/>
+			)}
+			{stopToEdit && activeOptimization && (
+				<StopToEditDialog
+					pending={false}
+					onClose={() => setStopToEdit(false)}
+					onConfirm={() =>
+						stopPromptOptimization({
+							project_id: selectedProjectId,
+							id: activeOptimization.id,
+						}).then((job) => {
+							setOptimization(job);
+							setStopToEdit(false);
+							void navigate({
+								to: "/prompts/$slug/edit",
+								params: { slug: prompt.id },
+								search: { from: prompt.version },
+							});
+						})
 					}
 				/>
 			)}
@@ -323,8 +380,27 @@ function OptimizationConfirmDialog({
 	pending: boolean;
 	error: string | null;
 	onClose: () => void;
-	onConfirm: () => void;
+	onConfirm: (input: {
+		exampleInput: string;
+		exampleAnswer: string;
+		taskModel: string;
+		reflectionModel: string;
+		maxMetricCalls: number;
+	}) => void;
 }) {
+	const [exampleInput, setExampleInput] = React.useState("");
+	const [exampleAnswer, setExampleAnswer] = React.useState("");
+	const [taskModel, setTaskModel] = React.useState("");
+	const [reflectionModel, setReflectionModel] = React.useState("");
+	const [maxMetricCalls, setMaxMetricCalls] = React.useState("20");
+	const valid = Boolean(
+		exampleInput.trim() &&
+			exampleAnswer.trim() &&
+			taskModel.trim() &&
+			reflectionModel.trim() &&
+			Number.isSafeInteger(Number(maxMetricCalls)) &&
+			Number(maxMetricCalls) > 0,
+	);
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4">
 			<div
@@ -337,9 +413,51 @@ function OptimizationConfirmDialog({
 					Start optimization?
 				</h2>
 				<p className="mt-3 text-sm text-muted-foreground">
-					GEPA will optimize only the {target} text from the pinned current
-					version. Mustache tokens and prompt versions remain immutable.
+					Use GEPA's explicit default evaluator with a representative input and
+					expected answer. The {target} text and evaluation configuration are
+					pinned.
 				</p>
+				<div className="mt-4 space-y-3">
+					<label className="block text-sm font-medium">
+						Representative input
+						<textarea
+							className="mt-1 min-h-20 w-full rounded-md border p-2"
+							value={exampleInput}
+							onChange={(event) => setExampleInput(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Expected answer
+						<textarea
+							className="mt-1 min-h-20 w-full rounded-md border p-2"
+							value={exampleAnswer}
+							onChange={(event) => setExampleAnswer(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Task model
+						<Input
+							value={taskModel}
+							onChange={(event) => setTaskModel(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Reflection model
+						<Input
+							value={reflectionModel}
+							onChange={(event) => setReflectionModel(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Metric-call budget
+						<Input
+							type="number"
+							min="1"
+							value={maxMetricCalls}
+							onChange={(event) => setMaxMetricCalls(event.target.value)}
+						/>
+					</label>
+				</div>
 				{error && (
 					<p className="mt-3 text-sm text-destructive" role="alert">
 						{error}
@@ -349,8 +467,56 @@ function OptimizationConfirmDialog({
 					<Button variant="outline" onClick={onClose} disabled={pending}>
 						Cancel
 					</Button>
-					<Button onClick={onConfirm} disabled={pending}>
+					<Button
+						onClick={() =>
+							onConfirm({
+								exampleInput: exampleInput.trim(),
+								exampleAnswer: exampleAnswer.trim(),
+								taskModel: taskModel.trim(),
+								reflectionModel: reflectionModel.trim(),
+								maxMetricCalls: Number(maxMetricCalls),
+							})
+						}
+						disabled={pending || !valid}
+					>
 						{pending ? "Starting…" : "Start optimization"}
+					</Button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function StopToEditDialog({
+	pending,
+	onClose,
+	onConfirm,
+}: {
+	pending: boolean;
+	onClose: () => void;
+	onConfirm: () => void;
+}) {
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4">
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="stop-edit-title"
+				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+			>
+				<h2 id="stop-edit-title" className="text-lg font-semibold">
+					Stop optimization before editing?
+				</h2>
+				<p className="mt-3 text-sm text-muted-foreground">
+					Stopping is final. The current optimization will not publish a
+					version, then you can create a new one.
+				</p>
+				<div className="mt-6 flex justify-end gap-2">
+					<Button variant="outline" onClick={onClose} disabled={pending}>
+						Cancel
+					</Button>
+					<Button variant="destructive" onClick={onConfirm} disabled={pending}>
+						Stop and continue
 					</Button>
 				</div>
 			</div>

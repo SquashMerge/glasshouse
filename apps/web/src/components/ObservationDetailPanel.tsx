@@ -15,7 +15,10 @@ import {
 import type { CanonicalObservation } from "../lib/trace-model";
 import { observationKind } from "../lib/observation-kind";
 import { observationTiming } from "../lib/trace-timeline";
-import { normalizeObservationMetadata } from "../lib/api";
+import {
+	normalizeObservationMetadata,
+	type ObservationMetadataInput,
+} from "../lib/api";
 import { PromptProvenanceCard } from "./PromptProvenanceCard";
 
 export interface ObservationDetailPanelProps {
@@ -160,7 +163,7 @@ export function ObservationDetailPanel({
 	const promptProvenance = React.useMemo(
 		() =>
 			normalizeObservationMetadata(
-				observation?.metadata,
+				observation?.metadata as ObservationMetadataInput,
 				observation?.type === "generation",
 			).prompt_provenance,
 		[observation?.metadata, observation?.type],

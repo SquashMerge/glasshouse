@@ -814,6 +814,19 @@ export async function createPromptVersion(
 		);
 		const prompt = promptRows[0];
 		if (!prompt) throw error("NOT_FOUND", "Prompt not found");
+		const activeOptimization = await query<Row>(
+			client,
+			`SELECT id FROM prompt_optimization_jobs
+        WHERE prompt_id = $1
+          AND status IN ('queued', 'preparing', 'optimizing', 'evaluating')
+        LIMIT 1`,
+			[stringValue(prompt, "id")],
+		);
+		if (activeOptimization.length > 0)
+			throw error(
+				"CONFLICT",
+				"Stop the active optimization before creating a version",
+			);
 		const latestRows = await query<Row>(
 			client,
 			`SELECT version, model, settings

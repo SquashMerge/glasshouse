@@ -13,10 +13,16 @@ const router = vi.hoisted(() => ({
 	navigate: vi.fn(),
 	location: { searchStr: "" },
 }));
-const { getPrompt, listPromptVersions, deletePrompt } = vi.hoisted(() => ({
+const {
+	getPrompt,
+	listPromptVersions,
+	deletePrompt,
+	getActivePromptOptimization,
+} = vi.hoisted(() => ({
 	getPrompt: vi.fn(),
 	listPromptVersions: vi.fn(),
 	deletePrompt: vi.fn(),
+	getActivePromptOptimization: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async () => {
@@ -44,6 +50,7 @@ vi.mock("../../src/lib/api", () => ({
 	getPrompt,
 	listPromptVersions,
 	deletePrompt,
+	getActivePromptOptimization,
 }));
 
 import { PromptDetailPage } from "../../src/routes/prompts-detail";
@@ -92,7 +99,9 @@ describe("PromptDetailPage", () => {
 		getPrompt.mockReset();
 		listPromptVersions.mockReset();
 		deletePrompt.mockReset();
+		getActivePromptOptimization.mockReset();
 		getPrompt.mockResolvedValue(prompt());
+		getActivePromptOptimization.mockResolvedValue(null);
 		listPromptVersions.mockResolvedValue({
 			items: [
 				prompt(),
@@ -160,5 +169,21 @@ describe("PromptDetailPage", () => {
 		expect(client.getQueryState(["prompts", PROJECT_ID])?.isInvalidated).toBe(
 			true,
 		);
+	});
+
+	it("requires an explicit stop confirmation before entering the editor while optimization is active", async () => {
+		getActivePromptOptimization.mockResolvedValue({
+			id: "11111111-1111-4111-8111-111111111111",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+		});
+		renderDetail();
+
+		fireEvent.click(await screen.findByRole("button", { name: "New version" }));
+		expect(
+			await screen.findByText("Stop optimization before editing?"),
+		).toBeInTheDocument();
+		expect(router.navigate).not.toHaveBeenCalled();
 	});
 });

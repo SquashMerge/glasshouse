@@ -184,6 +184,16 @@ export async function getPromptOptimization(input: {
 	);
 }
 
+export async function getActivePromptOptimization(input: {
+	project_id: string;
+	slug: string;
+}): Promise<OptimizationJob | null> {
+	return responseJson<OptimizationJob | null>(
+		await authedFetch(`/v1/prompt-optimizations/active${buildQs(input)}`),
+		"getActivePromptOptimization",
+	);
+}
+
 export async function stopPromptOptimization(input: {
 	project_id: string;
 	id: string;
