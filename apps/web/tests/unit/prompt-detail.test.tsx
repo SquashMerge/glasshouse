@@ -18,11 +18,13 @@ const {
 	listPromptVersions,
 	deletePrompt,
 	getActivePromptOptimization,
+	startPromptOptimization,
 } = vi.hoisted(() => ({
 	getPrompt: vi.fn(),
 	listPromptVersions: vi.fn(),
 	deletePrompt: vi.fn(),
 	getActivePromptOptimization: vi.fn(),
+	startPromptOptimization: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async () => {
@@ -51,6 +53,7 @@ vi.mock("../../src/lib/api", () => ({
 	listPromptVersions,
 	deletePrompt,
 	getActivePromptOptimization,
+	startPromptOptimization,
 }));
 
 import { PromptDetailPage } from "../../src/routes/prompts-detail";
@@ -100,8 +103,15 @@ describe("PromptDetailPage", () => {
 		listPromptVersions.mockReset();
 		deletePrompt.mockReset();
 		getActivePromptOptimization.mockReset();
+		startPromptOptimization.mockReset();
 		getPrompt.mockResolvedValue(prompt());
 		getActivePromptOptimization.mockResolvedValue(null);
+		startPromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "pending",
+			result_version: null,
+			error_message: null,
+		});
 		listPromptVersions.mockResolvedValue({
 			items: [
 				prompt(),
@@ -185,5 +195,36 @@ describe("PromptDetailPage", () => {
 			await screen.findByText("Stop optimization before editing?"),
 		).toBeInTheDocument();
 		expect(router.navigate).not.toHaveBeenCalled();
+	});
+
+	it("optimizes from the selected historical version", async () => {
+		router.location.searchStr = "?version=2";
+		getPrompt.mockImplementation(({ version }: { version?: number }) =>
+			Promise.resolve(version === 2 ? prompt(2) : prompt()),
+		);
+		renderDetail();
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize system" }),
+		);
+		fireEvent.change(screen.getByLabelText("Representative input"), {
+			target: { value: "Question" },
+		});
+		fireEvent.change(screen.getByLabelText("Expected answer"), {
+			target: { value: "Answer" },
+		});
+		fireEvent.change(screen.getByLabelText("Task model"), {
+			target: { value: "gpt-4o" },
+		});
+		fireEvent.change(screen.getByLabelText("Reflection model"), {
+			target: { value: "gpt-4o-mini" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Start optimization" }));
+
+		await waitFor(() =>
+			expect(startPromptOptimization).toHaveBeenCalledWith(
+				expect.objectContaining({ source_version: 2 }),
+			),
+		);
 	});
 });

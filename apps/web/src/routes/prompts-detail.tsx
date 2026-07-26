@@ -96,7 +96,9 @@ export function PromptDetailPage() {
 			startPromptOptimization({
 				project_id: selectedProjectId!,
 				slug,
-				source_version: currentQuery.data!.version,
+				source_version: selectedVersion
+					? selectedQuery.data!.version
+					: currentQuery.data!.version,
 				target: input.target,
 				evaluator: { type: "default_adapter" },
 				examples: [{ input: input.exampleInput, answer: input.exampleAnswer }],
