@@ -38,4 +38,19 @@ describe("GEPA Mustache token guard", () => {
 			),
 		).toBe(false);
 	});
+
+	it("fails closed when either prompt uses a delimiter switch", () => {
+		expect(
+			hasMatchingMustacheTokenSignature(
+				"Hello {{name}}",
+				"Hello {{name}} {{=<% %>=}} <%runtime_only%>",
+			),
+		).toBe(false);
+		expect(
+			hasMatchingMustacheTokenSignature(
+				"Hello {{=<% %>=}} <%name%>",
+				"Hello {{=<% %>=}} <%name%>",
+			),
+		).toBe(false);
+	});
 });

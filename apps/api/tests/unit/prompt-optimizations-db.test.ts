@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 import {
+	claimOptimizationJob,
 	createOptimizationJob,
 	publishOptimizationResult,
 	stopOptimizationJob,
@@ -34,6 +35,27 @@ class MockPool {
 
 	async connect() {
 		return this.client;
+	}
+}
+
+class ClaimPool {
+	private claimed = false;
+	readonly calls: string[] = [];
+
+	async connect() {
+		return {
+			query: async (text: string) => {
+				this.calls.push(text);
+				if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK")
+					return { rows: [] };
+				if (!this.claimed) {
+					this.claimed = true;
+					return { rows: [{ id: JOB }] };
+				}
+				return { rows: [] };
+			},
+			release() {},
+		};
 	}
 }
 
@@ -103,6 +125,62 @@ describe("prompt optimization repository", () => {
 		const insert = pool.client.calls[3];
 		expect(insert?.values[2]).toBe("Original user {{name}}");
 		expect(JSON.parse(insert?.values[5] as string)).toEqual(messages);
+	});
+
+	it("publishes a historical snapshot as the next version", async () => {
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [job({ source_version: 2 })] },
+			{
+				rows: [
+					{
+						id: PROMPT,
+						slug: "support-agent",
+						version: 4,
+						model: "gpt-test",
+						settings: { temperature: 0.2 },
+					},
+				],
+			},
+			{ rows: [] },
+			{ rows: [] },
+			{ rows: [] },
+			{ rows: [] },
+		]);
+		const snapshot = [
+			{ role: "system" as const, content: "Improved historical system" },
+			{ role: "user" as const, content: "Historical user" },
+		];
+
+		expect(
+			await publishOptimizationResult(transactionPool(pool), {
+				id: JOB,
+				messages: snapshot,
+			}),
+		).toBe(5);
+		const insert = pool.client.calls[3];
+		expect(insert?.values[1]).toBe(5);
+		expect(JSON.parse(insert?.values[5] as string)).toEqual(snapshot);
+	});
+
+	it("allows exactly one concurrent worker claim", async () => {
+		const pool = new ClaimPool();
+		const [first, second] = await Promise.all([
+			claimOptimizationJob(pool as unknown as Pick<Pool, "connect">, {
+				id: JOB,
+				worker_id: "11111111-1111-4111-8111-111111111111",
+			}),
+			claimOptimizationJob(pool as unknown as Pick<Pool, "connect">, {
+				id: JOB,
+				worker_id: "22222222-2222-4222-8222-222222222222",
+			}),
+		]);
+		expect([first, second].filter(Boolean)).toHaveLength(1);
+		expect(
+			pool.calls.some((call) =>
+				call.includes("status='queued' AND worker_claim_id IS NULL"),
+			),
+		).toBe(true);
 	});
 
 	it("reuses the active start row without recording a second queued event", async () => {

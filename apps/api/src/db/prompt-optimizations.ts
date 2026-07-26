@@ -228,6 +228,19 @@ export async function getActiveOptimizationJob(
 	)[0];
 	return row ? mapJob(row) : null;
 }
+export async function claimOptimizationJob(
+	pool: Pick<Pool, "connect">,
+	input: { id: string; worker_id: string },
+): Promise<boolean> {
+	return tx(pool, async (client) => {
+		const claimed = await rows(
+			client,
+			"UPDATE prompt_optimization_jobs SET worker_claim_id=$2,worker_claimed_at=now(),updated_at=now() WHERE id=$1 AND status='queued' AND worker_claim_id IS NULL RETURNING id",
+			[input.id, input.worker_id],
+		);
+		return claimed.length === 1;
+	});
+}
 export async function optimizationSourceMessages(
 	pool: Pick<Pool, "query">,
 	input: { project_id: string; id: string },
@@ -344,9 +357,7 @@ export async function publishOptimizationResult(
 			)
 		)[0];
 		if (!latest) throw fail("NOT_FOUND", "Prompt not found");
-		if (number(latest.version, "version") !== job.source_version)
-			throw fail("CONFLICT", "Prompt changed while optimization was running");
-		const version = job.source_version + 1;
+		const version = number(latest.version, "version") + 1;
 		const optimized = input.messages.find(
 			(message) => message.role === job.target,
 		)?.content;

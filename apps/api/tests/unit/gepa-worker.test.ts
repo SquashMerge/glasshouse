@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { runGepaWorker } from "../../src/lib/gepa-worker";
+import {
+	MAX_OPTIMIZATION_CANDIDATE_BYTES,
+	readWorkerOutput,
+	runGepaWorker,
+} from "../../src/lib/gepa-worker";
 
 describe("GEPA worker adapter", () => {
 	const prior = process.env.GEPA_WORKER_MODE;
@@ -24,5 +28,19 @@ describe("GEPA worker adapter", () => {
 			new AbortController().signal,
 		);
 		expect(result.candidate).toContain("Hello {{name}}");
+	});
+
+	it("rejects oversized worker output before buffering it", async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					new TextEncoder().encode(
+						"x".repeat(MAX_OPTIMIZATION_CANDIDATE_BYTES + 1025),
+					),
+				);
+				controller.close();
+			},
+		});
+		await expect(readWorkerOutput(stream)).rejects.toThrow("size limit");
 	});
 });

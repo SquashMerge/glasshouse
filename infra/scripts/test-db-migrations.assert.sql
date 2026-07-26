@@ -206,8 +206,9 @@ BEGIN
         NULL;
     END;
 
-    IF (SELECT role FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'user' THEN
-        RAISE EXCEPTION 'prompt role was not derived from canonical message role';
+    IF (SELECT messages->0->>'role' FROM prompt_versions
+        WHERE prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001' AND version = 1) <> 'user' THEN
+        RAISE EXCEPTION 'canonical prompt message role was not preserved';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -255,14 +256,14 @@ BEGIN
         ) VALUES (
             'aaaaaaaa-0000-0000-0000-000000000001',
             5,
-            'Mismatched role',
+            'Different canonical content',
             '{}',
-            '[{"role":"system","content":"Mismatched role"}]',
+            '[{"role":"user","content":"Different message content"}]',
             '{}',
             'not-a-hash',
             'migration-test'
         );
-        RAISE EXCEPTION 'prompt version role mismatch was accepted';
+        RAISE EXCEPTION 'prompt version content mirror mismatch was accepted';
     EXCEPTION WHEN check_violation THEN
         NULL;
     END;

@@ -10,6 +10,7 @@ import {
 	listPrompts,
 	previewPrompt,
 	renderPrompt,
+	startPromptOptimization,
 } from "../../src/lib/api";
 import { setCredentials } from "../../src/lib/auth";
 
@@ -187,5 +188,33 @@ describe("prompt management API client", () => {
 				body: undefined,
 			},
 		]);
+	});
+
+	it("submits the selected historical version for optimization", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				id: "22222222-2222-4222-8222-222222222222",
+				status: "queued",
+				result_version: null,
+				error_message: null,
+			}),
+		);
+		await startPromptOptimization({
+			project_id: PROJECT_ID,
+			slug: "support-agent",
+			source_version: 2,
+			target: "system",
+			evaluator: { type: "default_adapter" },
+			examples: [{ input: "Question", answer: "Answer" }],
+			model_config: { task_lm: "task", reflection_lm: "reflection" },
+			budget: { max_metric_calls: 1 },
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/v1/prompt-optimizations",
+			expect.objectContaining({
+				method: "POST",
+				body: expect.stringContaining('"source_version":2'),
+			}),
+		);
 	});
 });

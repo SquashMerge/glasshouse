@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import { streamSSE } from "hono/streaming";
 import {
+	claimOptimizationJob,
 	getActiveOptimizationJob,
 	getOptimizationJob,
 	createOptimizationJob,
@@ -14,7 +16,11 @@ import {
 import { pgPool } from "../db/postgres.js";
 import { PromptRepositoryError } from "../db/prompts.js";
 import type { JsonObject } from "../db/prompts.js";
-import { runGepaWorker, type GepaWorker } from "../lib/gepa-worker.js";
+import {
+	MAX_OPTIMIZATION_CANDIDATE_BYTES,
+	runGepaWorker,
+	type GepaWorker,
+} from "../lib/gepa-worker.js";
 import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
 import {
@@ -191,6 +197,7 @@ export type OptimizationDependencies = {
 	create: typeof createOptimizationJob;
 	get: typeof getOptimizationJob;
 	getActive: typeof getActiveOptimizationJob;
+	claim: typeof claimOptimizationJob;
 	sourceMessages: typeof optimizationSourceMessages;
 	events: typeof listOptimizationEvents;
 	stop: typeof stopOptimizationJob;
@@ -198,6 +205,7 @@ export type OptimizationDependencies = {
 	publish: typeof publishOptimizationResult;
 };
 const activeWorkers = new Map<string, AbortController>();
+const workerId = randomUUID();
 const terminalStatuses = new Set<OptimizationJob["status"]>([
 	"completed",
 	"stopped",
@@ -235,6 +243,7 @@ const production: OptimizationDependencies = {
 	create: createOptimizationJob,
 	get: getOptimizationJob,
 	getActive: getActiveOptimizationJob,
+	claim: claimOptimizationJob,
 	sourceMessages: optimizationSourceMessages,
 	events: listOptimizationEvents,
 	stop: stopOptimizationJob,
@@ -247,6 +256,7 @@ async function run(
 	d: OptimizationDependencies,
 ): Promise<void> {
 	if (activeWorkers.has(job.id)) return;
+	if (!(await d.claim(d.pool(), { id: job.id, worker_id: workerId }))) return;
 	const controller = new AbortController();
 	activeWorkers.set(job.id, controller);
 	try {
@@ -274,6 +284,14 @@ async function run(
 			controller.signal,
 		);
 		await d.transition(d.pool(), { id: job.id, status: "evaluating" });
+		if (
+			new TextEncoder().encode(result.candidate).byteLength >
+			MAX_OPTIMIZATION_CANDIDATE_BYTES
+		)
+			throw new PromptRepositoryError(
+				"BAD_REQUEST",
+				"GEPA candidate exceeded size limit",
+			);
 		if (!hasMatchingMustacheTokenSignature(original.content, result.candidate))
 			throw new PromptRepositoryError(
 				"BAD_REQUEST",
