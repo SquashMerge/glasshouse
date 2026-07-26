@@ -12,6 +12,7 @@ import type { EventSourceStatus } from "../hooks/useEventSource";
 export interface StreamController {
 	paused: boolean;
 	status: EventSourceStatus;
+	completed?: boolean;
 	reconnect: (opts?: { pause?: boolean }) => void;
 }
 
@@ -22,7 +23,12 @@ export interface StreamToggleProps {
 	className?: string;
 }
 
-type State = "off" | "on-connecting" | "on-open" | "on-reconnecting";
+type State =
+	| "off"
+	| "complete"
+	| "on-connecting"
+	| "on-open"
+	| "on-reconnecting";
 
 /**
  * The "Stream" toggle. Replaces the older Live/Pause/Reconnecting pill +
@@ -40,26 +46,31 @@ export function StreamToggle({
 	label = "Stream",
 	className,
 }: StreamToggleProps): React.ReactElement {
-	const state: State = sse.paused
-		? "off"
-		: sse.status === "open"
-			? "on-open"
-			: sse.status === "connecting"
-				? "on-connecting"
-				: "on-reconnecting";
+	const state: State = sse.completed
+		? "complete"
+		: sse.paused
+			? "off"
+			: sse.status === "open"
+				? "on-open"
+				: sse.status === "connecting"
+					? "on-connecting"
+					: "on-reconnecting";
 
-	const on = state !== "off";
+	const on = state !== "off" && state !== "complete";
 	const statusWord =
-		state === "off"
-			? "Paused"
-			: state === "on-connecting"
-				? "Connecting…"
-				: state === "on-reconnecting"
-					? "Reconnecting…"
-					: "Streaming";
+		state === "complete"
+			? "Complete"
+			: state === "off"
+				? "Paused"
+				: state === "on-connecting"
+					? "Connecting…"
+					: state === "on-reconnecting"
+						? "Reconnecting…"
+						: "Streaming";
 
 	const trackClass = (() => {
-		if (state === "off") return "bg-muted-foreground/40";
+		if (state === "off" || state === "complete")
+			return "bg-muted-foreground/40";
 		if (state === "on-reconnecting" || state === "on-connecting")
 			return "bg-amber-500";
 		return "bg-green-500";

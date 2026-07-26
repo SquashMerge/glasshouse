@@ -9,7 +9,7 @@ import {
 	defaultClient,
 	getTrace as queryGetTrace,
 } from "../db/traces-query.js";
-import type { ObservationRow } from "../db/traces-query.js";
+import type { ObservationRow, TraceRow } from "../db/traces-query.js";
 
 // Read tunables once at module load so per-event work is allocation-free.
 const HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS ?? 15_000);
@@ -251,7 +251,10 @@ export async function handleStreamTraceDetailEvents(
 		else bufferedObservations.push(observation);
 	});
 
-	let traceExists: { trace: unknown; observations: unknown[] };
+	let traceExists: {
+		trace: TraceRow | null;
+		observations: ObservationRow[];
+	};
 	try {
 		traceExists = await queryGetTrace(defaultClient(), traceId);
 	} catch (err) {
@@ -268,7 +271,8 @@ export async function handleStreamTraceDetailEvents(
 			{ status: 500, headers: { "content-type": "application/json" } },
 		);
 	}
-	if (!traceExists.trace) {
+	const snapshotTrace = traceExists.trace;
+	if (!snapshotTrace) {
 		unsubscribe();
 		return notFoundResponse(traceId);
 	}
@@ -342,7 +346,10 @@ export async function handleStreamTraceDetailEvents(
 		// here (or as a live event — the client dedupes by `observation_id`).
 		await stream.writeSSE({
 			event: "snapshot",
-			data: JSON.stringify({ observations: snapshotObservations }),
+			data: JSON.stringify({
+				trace: snapshotTrace,
+				observations: snapshotObservations,
+			}),
 		});
 
 		forwardObservation = sendObservation;

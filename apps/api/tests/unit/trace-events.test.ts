@@ -613,8 +613,10 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		// First frame after :ok must be the snapshot.
 		expect(frames[0]?.event).toBe("snapshot");
 		const parsed = JSON.parse(frames[0]!.data) as {
+			trace: TraceRow;
 			observations: ObservationRow[];
 		};
+		expect(parsed.trace).toEqual(fakeTrace);
 		expect(parsed.observations).toHaveLength(2);
 		expect(parsed.observations[0]?.observation_id).toBe(OBS_ID);
 		expect(parsed.observations[1]?.observation_id).toBe(OBS_ID_2);

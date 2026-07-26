@@ -1,11 +1,17 @@
 import * as React from "react";
-import { useEventSource, type EventSourceStatus } from "./useEventSource";
+import {
+	EventSourceHttpError,
+	useEventSource,
+	type EventSourceStatus,
+	type UseEventSourceResult,
+} from "./useEventSource";
+import type { TraceRow } from "../lib/api";
 
 /**
  * `useTraceStream` — thin wrapper around `useEventSource` for the detail page.
  *
  * Routes the per-trace SSE event stream:
- *   - `event: "snapshot"`     → `options.onSnapshot({observations})`
+ *   - `event: "snapshot"`     → `options.onSnapshot({trace?, observations})`
  *   - `event: "observation"`  → `options.onObservation({observation})`
  *   - `event: "status"` with `{status: "complete"}` → `options.onStatus("complete")`
  *
@@ -35,6 +41,7 @@ export interface ObservationRowLike {
 }
 
 export interface TraceStreamSnapshot {
+	trace?: TraceRow;
 	observations: ObservationRowLike[];
 }
 
@@ -61,6 +68,7 @@ export interface UseTraceStreamOptions {
 export interface UseTraceStreamResult {
 	status: EventSourceStatus;
 	paused: boolean;
+	completed: boolean;
 	/**
 	 * Direct passthrough to the underlying `useEventSource.reconnect`. Pass
 	 * `{ pause: true }` to enter user-paused state (no reconnects until called
@@ -94,6 +102,8 @@ export function useTraceStream(
 	const onSnapshotRef = React.useRef(onSnapshot);
 	const onObservationRef = React.useRef(onObservation);
 	const onStatusRef = React.useRef(onStatus);
+	const streamRef = React.useRef<UseEventSourceResult | null>(null);
+	const [completed, setCompleted] = React.useState(false);
 	React.useEffect(() => {
 		onSnapshotRef.current = onSnapshot;
 		onObservationRef.current = onObservation;
@@ -113,13 +123,24 @@ export function useTraceStream(
 			case "status": {
 				const data = msg.data as { status?: string } | null;
 				if (data && data.status === "complete") {
+					setCompleted(true);
 					onStatusRef.current("complete");
+					// The server closes after its final status frame. Treat that close as
+					// terminal rather than a network failure so the generic SSE hook does
+					// not reopen a completed trace on its reconnect backoff.
+					streamRef.current?.reconnect({ pause: true });
 				}
 				return;
 			}
 			default:
 				// Ignore unknown event names (heartbeats etc.).
 				return;
+		}
+	}, []);
+
+	const onError = React.useCallback((err: unknown) => {
+		if (err instanceof EventSourceHttpError && err.status === 404) {
+			onStatusRef.current("not_found");
 		}
 	}, []);
 
@@ -143,15 +164,26 @@ export function useTraceStream(
 	const es = useEventSource<EnvelopeMsg>(url ?? "about:blank", {
 		enabled: validTraceId,
 		onMessage,
+		onError,
 	});
+	streamRef.current = es;
 
 	const pause = React.useCallback(() => {
 		es.reconnect({ pause: true });
 	}, [es]);
 
 	const resume = React.useCallback(() => {
+		setCompleted(false);
 		es.reconnect({ pause: false });
 	}, [es]);
+
+	const reconnect = React.useCallback(
+		(opts?: { pause?: boolean }) => {
+			if (!opts?.pause) setCompleted(false);
+			es.reconnect(opts);
+		},
+		[es],
+	);
 
 	// Live getters — read through to `es` so consumers (and tests) observe the
 	// current underlying state without requiring a host re-render.
@@ -162,10 +194,13 @@ export function useTraceStream(
 		get paused() {
 			return es.paused;
 		},
+		get completed() {
+			return completed;
+		},
 		get lastEventAt() {
 			return es.lastEventAt;
 		},
-		reconnect: es.reconnect,
+		reconnect,
 		get debug() {
 			return es.debug;
 		},

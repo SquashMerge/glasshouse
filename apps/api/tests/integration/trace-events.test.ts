@@ -350,8 +350,10 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		);
 		expect(frames[0]?.event).toBe("snapshot");
 		const snapshot = JSON.parse(frames[0]!.data) as {
+			trace: TraceRow;
 			observations: ObservationRow[];
 		};
+		expect(snapshot.trace).toEqual(fakeTrace);
 		expect(snapshot.observations).toHaveLength(1);
 		expect(snapshot.observations[0]?.observation_id).toBe("obs-it-1");
 
