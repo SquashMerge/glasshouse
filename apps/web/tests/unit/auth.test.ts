@@ -21,7 +21,7 @@ describe("credentials helpers", () => {
 		clearCredentials();
 	});
 
-	it("keeps credentials in memory and removes legacy persisted credentials", () => {
+	it("keeps credentials in session storage and removes legacy local storage", () => {
 		window.localStorage.setItem("astraea.auth.username", "previous-user");
 		window.localStorage.setItem("astraea.auth.password", "previous-password");
 		setCredentials("alice", "hunter2");
@@ -31,8 +31,12 @@ describe("credentials helpers", () => {
 		});
 		expect(window.localStorage.getItem("astraea.auth.username")).toBeNull();
 		expect(window.localStorage.getItem("astraea.auth.password")).toBeNull();
-		expect(window.sessionStorage.getItem("astraea.auth.username")).toBeNull();
-		expect(window.sessionStorage.getItem("astraea.auth.password")).toBeNull();
+		expect(window.sessionStorage.getItem("astraea.auth.username")).toBe(
+			"alice",
+		);
+		expect(window.sessionStorage.getItem("astraea.auth.password")).toBe(
+			"hunter2",
+		);
 	});
 
 	it("clearCredentials removes in-memory and legacy persisted credentials", () => {
