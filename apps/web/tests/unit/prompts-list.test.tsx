@@ -33,6 +33,22 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 vi.mock("../../src/lib/api", () => ({
 	getActivePromptOptimization,
 	listPrompts,
+	promptOptimizationEventsUrl: ({ project_id, id }: { project_id: string; id: string }) =>
+		`/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
+}));
+vi.mock("../../src/hooks/useEventSource", () => ({
+	useEventSource: () => ({
+		status: "closed",
+		paused: false,
+		lastEventAt: null,
+		reconnect: vi.fn(),
+		debug: {
+			framesReceived: 0,
+			bufferDepth: 0,
+			reconnectAttempts: 0,
+			lastError: null,
+		},
+	}),
 }));
 
 import { PromptsPage } from "../../src/routes/prompts";

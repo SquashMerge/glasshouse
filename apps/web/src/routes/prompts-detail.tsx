@@ -11,15 +11,17 @@ import {
 	CardTitle,
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { useEventSource } from "../hooks/useEventSource";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	deletePrompt,
 	getActivePromptOptimization,
 	getPrompt,
-	getPromptOptimization,
 	listPromptVersions,
+	promptOptimizationEventsUrl,
 	startPromptOptimization,
 	stopPromptOptimization,
+	type OptimizationEvent,
 	type OptimizationJob,
 	type Prompt,
 } from "../lib/api";
@@ -142,20 +144,21 @@ export function PromptDetailPage() {
 	const optimizationActive =
 		activeOptimization !== null &&
 		!["completed", "stopped", "failed"].includes(activeOptimization.status);
-	React.useEffect(() => {
-		if (
-			!activeOptimization ||
-			["completed", "stopped", "failed"].includes(activeOptimization.status) ||
-			!selectedProjectId
-		)
-			return;
-		const timer = window.setInterval(() => {
-			void getPromptOptimization({
-				project_id: selectedProjectId,
-				id: activeOptimization.id,
-			}).then((job) => {
-				setOptimization(job);
-				if (job.status === "completed")
+	useEventSource<OptimizationEvent>(
+		activeOptimization && selectedProjectId
+			? promptOptimizationEventsUrl({
+					project_id: selectedProjectId,
+					id: activeOptimization.id,
+				})
+			: "/v1/prompt-optimizations/disabled/events",
+		{
+			enabled: optimizationActive,
+			onMessage: ({ event, data }) => {
+				if (event !== "status") return;
+				setOptimization((current) =>
+					current ? { ...current, status: data.status } : current,
+				);
+				if (data.status === "completed")
 					void Promise.all([
 						queryClient.invalidateQueries({
 							queryKey: ["prompt", selectedProjectId, slug, "current"],
@@ -164,15 +167,9 @@ export function PromptDetailPage() {
 							queryKey: ["prompt-versions", selectedProjectId, slug],
 						}),
 					]);
-			});
-		}, 750);
-		return () => window.clearInterval(timer);
-	}, [
-		activeOptimization?.id,
-		activeOptimization?.status,
-		selectedProjectId,
-		slug,
-	]);
+			},
+		},
+	);
 
 	if (!selectedProjectId || !selectedProject) {
 		return (

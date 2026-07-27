@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import * as React from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { LuLoaderCircle, LuPlus } from "react-icons/lu";
@@ -11,9 +12,13 @@ import {
 } from "../components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { useProjectSelection } from "../components/ProjectProvider";
+import { useEventSource } from "../hooks/useEventSource";
 import {
 	getActivePromptOptimization,
 	listPrompts,
+	promptOptimizationEventsUrl,
+	type OptimizationEvent,
+	type OptimizationJob,
 } from "../lib/api";
 
 export function PromptsPage() {
@@ -36,9 +41,8 @@ export function PromptsPage() {
 					project_id: selectedProjectId!,
 					slug: prompt.id,
 				}),
-			enabled: Boolean(selectedProjectId),
-			refetchInterval: 5000,
-		})),
+				enabled: Boolean(selectedProjectId),
+			})),
 	});
 
 	if (projectsLoading) {
@@ -113,13 +117,7 @@ export function PromptsPage() {
 						<ul className="divide-y divide-border" aria-label="Project prompts">
 							{promptsQuery.data.items.map((prompt, index) => {
 								const activeOptimization =
-									activeOptimizationQueries[index]?.data;
-								const optimizationActive =
-									activeOptimization !== null &&
-									activeOptimization !== undefined &&
-									!["completed", "stopped", "failed"].includes(
-										activeOptimization.status,
-									);
+									activeOptimizationQueries[index]?.data ?? null;
 								return (
 									<li key={prompt.id}>
 									<Link
@@ -135,16 +133,10 @@ export function PromptsPage() {
 											<span className="block truncate font-mono text-xs text-muted-foreground">
 												{prompt.id}
 											</span>
-											{optimizationActive && (
-												<span className="mt-1 flex items-center gap-1 text-xs text-primary">
-													<LuLoaderCircle
-														className="h-3 w-3 animate-spin"
-														data-testid="optimization-spinner"
-														aria-hidden="true"
-													/>
-													Optimizing…
-												</span>
-											)}
+											<PromptOptimizationActivity
+												projectId={selectedProjectId!}
+												job={activeOptimization}
+											/>
 										</span>
 										<span className="text-sm">v{prompt.version}</span>
 										<time
@@ -162,6 +154,46 @@ export function PromptsPage() {
 				</Card>
 			)}
 		</div>
+	);
+}
+
+function PromptOptimizationActivity({
+	projectId,
+	job: initialJob,
+}: {
+	projectId: string;
+	job: OptimizationJob | null;
+}) {
+	const [job, setJob] = React.useState<OptimizationJob | null>(initialJob);
+	React.useEffect(() => {
+		setJob(initialJob);
+	}, [initialJob?.id, initialJob?.status]);
+
+	const active =
+		job !== null && !["completed", "stopped", "failed"].includes(job.status);
+	useEventSource<OptimizationEvent>(
+		job
+			? promptOptimizationEventsUrl({ project_id: projectId, id: job.id })
+			: "/v1/prompt-optimizations/disabled/events",
+		{
+			enabled: active,
+			onMessage: ({ event, data }) => {
+				if (event !== "status") return;
+				setJob((current) => (current ? { ...current, status: data.status } : current));
+			},
+		},
+	);
+
+	if (!active) return null;
+	return (
+		<span className="mt-1 flex items-center gap-1 text-xs text-primary">
+			<LuLoaderCircle
+				className="h-3 w-3 animate-spin"
+				data-testid="optimization-spinner"
+				aria-hidden="true"
+			/>
+			Optimizing…
+		</span>
 	);
 }
 

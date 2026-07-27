@@ -156,6 +156,20 @@ export interface OptimizationJob {
 	error_message: string | null;
 }
 
+export interface OptimizationEvent {
+	id: number;
+	status: OptimizationJob["status"];
+	detail: JsonObject;
+	created_at: string;
+}
+
+export function promptOptimizationEventsUrl(input: {
+	project_id: string;
+	id: string;
+}): string {
+	return `/v1/prompt-optimizations/${encodeURIComponent(input.id)}/events${buildQs({ project_id: input.project_id })}`;
+}
+
 export async function startPromptOptimization(input: {
 	project_id: string;
 	slug: string;

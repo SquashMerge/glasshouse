@@ -13,6 +13,7 @@ const router = vi.hoisted(() => ({
 	navigate: vi.fn(),
 	location: { searchStr: "" },
 }));
+const sse = vi.hoisted(() => ({ onMessage: vi.fn() }));
 const {
 	getPrompt,
 	listPromptVersions,
@@ -58,8 +59,30 @@ vi.mock("../../src/lib/api", () => ({
 	deletePrompt,
 	getActivePromptOptimization,
 	getPromptOptimization,
+	promptOptimizationEventsUrl: ({ project_id, id }: { project_id: string; id: string }) =>
+		`/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
 	startPromptOptimization,
 	stopPromptOptimization,
+}));
+vi.mock("../../src/hooks/useEventSource", () => ({
+	useEventSource: (
+		_url: string,
+		options: { onMessage: (message: unknown) => void },
+	) => {
+		sse.onMessage.mockImplementation(options.onMessage);
+		return {
+			status: "closed",
+			paused: false,
+			lastEventAt: null,
+			reconnect: vi.fn(),
+			debug: {
+				framesReceived: 0,
+				bufferDepth: 0,
+				reconnectAttempts: 0,
+				lastError: null,
+			},
+		};
+	},
 }));
 
 import { PromptDetailPage } from "../../src/routes/prompts-detail";
@@ -110,6 +133,7 @@ describe("PromptDetailPage", () => {
 		deletePrompt.mockReset();
 		getActivePromptOptimization.mockReset();
 		getPromptOptimization.mockReset();
+		sse.onMessage.mockReset();
 		startPromptOptimization.mockReset();
 		stopPromptOptimization.mockReset();
 		getPrompt.mockResolvedValue(prompt());
@@ -315,15 +339,13 @@ describe("PromptDetailPage", () => {
 			result_version: null,
 			error_message: null,
 		});
-		getPromptOptimization.mockResolvedValue({
-			id: "22222222-2222-4222-8222-222222222222",
-			status: "completed",
-			result_version: 3,
-			error_message: null,
-		});
 		renderDetail();
-		await waitFor(() => expect(getPromptOptimization).toHaveBeenCalled(), {
-			timeout: 2_000,
+		await waitFor(() =>
+			expect(getActivePromptOptimization).toHaveBeenCalled(),
+		);
+		sse.onMessage({
+			event: "status",
+			data: { status: "completed" },
 		});
 
 		await waitFor(() => {
