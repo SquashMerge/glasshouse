@@ -78,7 +78,7 @@ If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins the as
 
 ```
 bun 1.3.14
-nodejs 22.11.0
+nodejs 22.12.0
 ```
 
 The Postgres, ClickHouse, and Valkey **servers** run in Docker (Compose brings them up). Their CLI clients (`psql`, `clickhouse-client`, `valkey-cli`) are best installed via your OS package manager — see Option B.
