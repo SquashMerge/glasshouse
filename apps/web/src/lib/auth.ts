@@ -6,20 +6,23 @@ type Credentials = { username: string; password: string };
 let credentials: Credentials | null = null;
 
 function removePersistedCredentials(): void {
-	window.localStorage.removeItem(KEY_USERNAME);
-	window.localStorage.removeItem(KEY_PASSWORD);
+	if (typeof window === "undefined") return;
+	try {
+		window.localStorage.removeItem(KEY_USERNAME);
+		window.localStorage.removeItem(KEY_PASSWORD);
+	} catch {
+		// Ignore storage access errors and rely on the in-memory session.
+	}
 }
 
 if (typeof window !== "undefined") removePersistedCredentials();
 
 export function setCredentials(username: string, password: string): void {
-	if (typeof window === "undefined") return;
 	credentials = { username, password };
 	removePersistedCredentials();
 }
 
 export function clearCredentials(): void {
-	if (typeof window === "undefined") return;
 	credentials = null;
 	removePersistedCredentials();
 }

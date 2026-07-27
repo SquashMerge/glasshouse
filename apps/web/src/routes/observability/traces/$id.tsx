@@ -30,6 +30,7 @@ const HIGHLIGHT_MS = 1_500;
 const SPLIT_STORAGE_KEY = "astraea.trace-detail.workspace-width";
 const MIN_WORKSPACE_WIDTH = 35;
 const MAX_WORKSPACE_WIDTH = 70;
+const SNAPSHOT_TIMEOUT_MS = 10_000;
 
 function clampWorkspaceWidth(value: number): number {
 	return Math.min(
@@ -101,6 +102,8 @@ export function TraceDetailPage() {
 		initialWorkspaceWidth,
 	);
 	const [focusWorkspaceVersion, setFocusWorkspaceVersion] = React.useState(0);
+	const [receivedSnapshot, setReceivedSnapshot] = React.useState(false);
+	const [snapshotTimedOut, setSnapshotTimedOut] = React.useState(false);
 	const splitContainerRef = React.useRef<HTMLDivElement>(null);
 	const highlightTimersRef = React.useRef(new Map<string, number>());
 	const highlightVersionsRef = React.useRef(new Map<string, number>());
@@ -135,6 +138,8 @@ export function TraceDetailPage() {
 				trace?: TraceRow;
 				observations: ObservationRowLike[];
 			}) => {
+				setReceivedSnapshot(true);
+				setSnapshotTimedOut(false);
 				setNotFound(false);
 				setRecordingStatus("recording");
 				setModel(
@@ -186,6 +191,14 @@ export function TraceDetailPage() {
 		[clearHighlightTimers],
 	);
 	const stream = useTraceStream(id, handlers);
+	React.useEffect(() => {
+		if (!validId || receivedSnapshot || notFound) return;
+		const timeout = window.setTimeout(
+			() => setSnapshotTimedOut(true),
+			SNAPSHOT_TIMEOUT_MS,
+		);
+		return () => window.clearTimeout(timeout);
+	}, [notFound, receivedSnapshot, validId]);
 	const observations = React.useMemo(
 		() => traceModelObservations(model),
 		[model],
@@ -264,6 +277,28 @@ export function TraceDetailPage() {
 					stream.reconnect();
 				}}
 			/>
+			{(snapshotTimedOut || stream.debug.lastError) && !receivedSnapshot && (
+				<div
+					className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+					role="alert"
+				>
+					<span>
+						{stream.debug.lastError
+							? `Live trace connection failed: ${stream.debug.lastError}`
+							: "The trace snapshot is taking longer than expected."}
+					</span>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={() => {
+							setSnapshotTimedOut(false);
+							stream.reconnect();
+						}}
+					>
+						Retry connection
+					</Button>
+				</div>
+			)}
 			<div
 				ref={splitContainerRef}
 				className="grid gap-4 xl:gap-0 xl:grid-cols-[minmax(0,var(--trace-workspace-width))_0.5rem_minmax(22rem,1fr)]"

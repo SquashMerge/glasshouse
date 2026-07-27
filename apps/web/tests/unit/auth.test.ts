@@ -1,3 +1,4 @@
+import "./setup";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
 	setCredentials,
@@ -51,6 +52,21 @@ describe("credentials helpers", () => {
 		expect(window.localStorage.getItem("astraea.auth.username")).toBeNull();
 		expect(window.localStorage.getItem("astraea.auth.password")).toBeNull();
 	});
+
+	it("keeps credentials in memory when storage access throws", () => {
+		const removeItemSpy = vi
+			.spyOn(Storage.prototype, "removeItem")
+			.mockImplementation(() => {
+				throw new Error("storage is unavailable");
+			});
+
+		expect(() => setCredentials("alice", "hunter2")).not.toThrow();
+		expect(getCredentials()).toEqual({
+			username: "alice",
+			password: "hunter2",
+		});
+		removeItemSpy.mockRestore();
+	});
 });
 
 describe("authHeader", () => {
@@ -83,17 +99,21 @@ describe("authedFetch 401 handling", () => {
 				headers: { "content-type": "application/json" },
 			}),
 		);
-		vi.stubGlobal("fetch", fetchMock);
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = fetchMock as typeof fetch;
 
 		const handler = vi.fn();
 		const off = onAuthInvalid(handler);
 
-		const res = await authedFetch("http://x/v1/traces");
-		expect(res.status).toBe(401);
-		expect(getCredentials()).toBeNull();
-		expect(handler).toHaveBeenCalledTimes(1);
-
-		off();
+		try {
+			const res = await authedFetch("http://x/v1/traces");
+			expect(res.status).toBe(401);
+			expect(getCredentials()).toBeNull();
+			expect(handler).toHaveBeenCalledTimes(1);
+		} finally {
+			globalThis.fetch = originalFetch;
+			off();
+		}
 	});
 
 	it("does not clear credentials on 200", async () => {
@@ -104,20 +124,24 @@ describe("authedFetch 401 handling", () => {
 				headers: { "content-type": "application/json" },
 			}),
 		);
-		vi.stubGlobal("fetch", fetchMock);
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = fetchMock as typeof fetch;
 
 		const handler = vi.fn();
 		const off = onAuthInvalid(handler);
 
-		const res = await authedFetch("http://x/v1/traces");
-		expect(res.status).toBe(200);
-		expect(getCredentials()).toEqual({
-			username: "alice",
-			password: "hunter2",
-		});
-		expect(handler).not.toHaveBeenCalled();
-
-		off();
+		try {
+			const res = await authedFetch("http://x/v1/traces");
+			expect(res.status).toBe(200);
+			expect(getCredentials()).toEqual({
+				username: "alice",
+				password: "hunter2",
+			});
+			expect(handler).not.toHaveBeenCalled();
+		} finally {
+			globalThis.fetch = originalFetch;
+			off();
+		}
 	});
 
 	it("does not clear credentials on 500 (only 401 triggers re-auth)", async () => {
@@ -128,20 +152,24 @@ describe("authedFetch 401 handling", () => {
 				headers: { "content-type": "application/json" },
 			}),
 		);
-		vi.stubGlobal("fetch", fetchMock);
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = fetchMock as typeof fetch;
 
 		const handler = vi.fn();
 		const off = onAuthInvalid(handler);
 
-		const res = await authedFetch("http://x/v1/traces");
-		expect(res.status).toBe(500);
-		expect(getCredentials()).toEqual({
-			username: "alice",
-			password: "hunter2",
-		});
-		expect(handler).not.toHaveBeenCalled();
-
-		off();
+		try {
+			const res = await authedFetch("http://x/v1/traces");
+			expect(res.status).toBe(500);
+			expect(getCredentials()).toEqual({
+				username: "alice",
+				password: "hunter2",
+			});
+			expect(handler).not.toHaveBeenCalled();
+		} finally {
+			globalThis.fetch = originalFetch;
+			off();
+		}
 	});
 
 	it("attaches Basic Auth header from in-memory credentials", async () => {
@@ -152,16 +180,21 @@ describe("authedFetch 401 handling", () => {
 				headers: { "content-type": "application/json" },
 			}),
 		);
-		vi.stubGlobal("fetch", fetchMock);
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = fetchMock as typeof fetch;
 
-		await authedFetch("http://x/v1/traces");
-		const calledWith = fetchMock.mock.calls[0] as
-			| Parameters<typeof fetch>
-			| undefined;
-		const init = (calledWith?.[1] ?? {}) as RequestInit;
-		const headers = init.headers as Headers;
-		expect(headers.get("authorization")).toBe(
-			"Basic " + Buffer.from("alice:hunter2").toString("base64"),
-		);
+		try {
+			await authedFetch("http://x/v1/traces");
+			const calledWith = fetchMock.mock.calls[0] as
+				| Parameters<typeof fetch>
+				| undefined;
+			const init = (calledWith?.[1] ?? {}) as RequestInit;
+			const headers = init.headers as Headers;
+			expect(headers.get("authorization")).toBe(
+				"Basic " + Buffer.from("alice:hunter2").toString("base64"),
+			);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 });

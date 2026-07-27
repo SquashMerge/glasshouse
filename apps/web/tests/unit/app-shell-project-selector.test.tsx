@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 const selection = vi.hoisted(() => ({ selectProject: vi.fn() }));
 
 vi.mock("@tanstack/react-router", () => ({
+	useLocation: () => ({ pathname: "/", searchStr: "" }),
 	Link: ({
 		children,
 		to,

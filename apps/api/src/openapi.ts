@@ -3,6 +3,7 @@ import { apiReference } from "@scalar/hono-api-reference";
 import type { Context } from "hono";
 import { healthRoute, handleHealth } from "./routes/health.js";
 import { loginRoute, handleLogin } from "./routes/auth.js";
+import { otlpIngestRoute, handleOtlpIngest } from "./routes/otlp.js";
 import {
 	createAgent,
 	handleCreateAgent,
@@ -70,12 +71,26 @@ import {
 	handlePreviewPrompt,
 	deletePrompt,
 	handleDeletePrompt,
+	rollbackLatestPromptVersion,
+	handleRollbackLatestPromptVersion,
 } from "./routes/prompts.js";
 import { listProjects, handleListProjects } from "./routes/projects.js";
 import {
 	getPromptProvenance,
 	handleGetPromptProvenance,
 } from "./routes/prompt-provenance.js";
+import {
+	startOptimization,
+	getActiveOptimization,
+	getOptimization,
+	stopOptimization,
+	optimizationEvents,
+	handleStart,
+	handleGetActive,
+	handleGet,
+	handleStop,
+	handleEvents,
+} from "./routes/prompt-optimizations.js";
 import {
 	listDatasets,
 	handleListDatasets,
@@ -123,12 +138,17 @@ openapiApp.use("/v1/prompt-provenance/*", async (c, next) => {
 	c.header("Cache-Control", "no-store");
 	await next();
 });
+openapiApp.use("/v1/prompt-optimizations/*", async (c, next) => {
+	c.header("Cache-Control", "no-store");
+	await next();
+});
 
 // Health (also mounted at /health by the bare handler in index.ts).
 register(healthRoute, handleHealth);
 
 // Login: gated by basicAuthMiddleware in index.ts via the parent /v1/* mount.
 register(loginRoute, handleLogin);
+register(otlpIngestRoute, (c: Context) => handleOtlpIngest(c.req.raw));
 
 register(createAgent, handleCreateAgent);
 register(listAgents, handleListAgents);
@@ -175,10 +195,16 @@ register(createPrompt, handleCreatePrompt);
 register(previewPrompt, handlePreviewPrompt);
 register(listPromptVersions, handleListPromptVersions);
 register(createPromptVersion, handleCreatePromptVersion);
+register(rollbackLatestPromptVersion, handleRollbackLatestPromptVersion);
 register(renderPrompt, handleRenderPrompt);
 register(deletePrompt, handleDeletePrompt);
 register(getPrompt, handleGetPrompt);
 register(getPromptProvenance, handleGetPromptProvenance);
+register(startOptimization, handleStart);
+register(getActiveOptimization, handleGetActive);
+register(optimizationEvents, handleEvents);
+register(stopOptimization, handleStop);
+register(getOptimization, handleGet);
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);

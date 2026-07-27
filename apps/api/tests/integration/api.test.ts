@@ -47,11 +47,13 @@ describe("API integration: health + openapi", () => {
 			components?: {
 				securitySchemes?: { basicAuth?: { type?: string; scheme?: string } };
 			};
+			paths?: Record<string, { post?: unknown }>;
 		};
 		expect(document.components?.securitySchemes?.basicAuth).toEqual({
 			type: "http",
 			scheme: "basic",
 		});
+		expect(document.paths?.["/v1/otel/v1/traces"]?.post).toBeDefined();
 	});
 
 	it("GET /reference returns 200 without auth", async () => {

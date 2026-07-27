@@ -126,6 +126,15 @@ export function PromptComposer({
 		saveMutation.mutate();
 	}
 
+	function changeSource(
+		setSource: React.Dispatch<React.SetStateAction<string>>,
+		value: string,
+	) {
+		setSource(value);
+		previewMutation.reset();
+		setPreviewError(null);
+	}
+
 	return (
 		<form className="space-y-6" onSubmit={submit} data-testid="prompt-composer">
 			{formError && (
@@ -175,7 +184,9 @@ export function PromptComposer({
 								id="prompt-system-source"
 								className={TEXTAREA_CLASS}
 								value={systemSource}
-								onChange={(event) => setSystemSource(event.target.value)}
+								onChange={(event) =>
+									changeSource(setSystemSource, event.target.value)
+								}
 								disabled={saveMutation.isPending}
 								aria-describedby="prompt-source-hint"
 							/>
@@ -196,7 +207,9 @@ export function PromptComposer({
 								id="prompt-user-source"
 								className={TEXTAREA_CLASS}
 								value={userSource}
-								onChange={(event) => setUserSource(event.target.value)}
+								onChange={(event) =>
+									changeSource(setUserSource, event.target.value)
+								}
 								disabled={saveMutation.isPending}
 							/>
 						</div>

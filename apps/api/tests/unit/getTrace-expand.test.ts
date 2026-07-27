@@ -138,6 +138,16 @@ function fakeContext(traceId = VALID_TRACE_ID): Context {
 }
 
 describe("handleGetTrace metadata envelopes", () => {
+	it("normalizes ClickHouse timestamps to the documented RFC3339 contract", async () => {
+		const res = await handleGetTrace(fakeContext());
+		const body = (await res.json()) as {
+			trace: { start_time: string };
+			observations: Array<{ start_time: string }>;
+		};
+		expect(body.trace.start_time).toBe("2024-01-01T00:00:00.000Z");
+		expect(body.observations[0]?.start_time).toBe("2024-01-01T00:00:00.000Z");
+	});
+
 	it("reads legacy arrays as typed attributes with null prompt provenance", async () => {
 		const res = await handleGetTrace(fakeContext());
 		const body = (await res.json()) as {

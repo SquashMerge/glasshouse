@@ -380,3 +380,5 @@ infra/.env
 clients/
 openapi.yaml
 openapi.json
+
+.venv-gepa/*

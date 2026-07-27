@@ -22,14 +22,16 @@ function Pill({
 	state,
 }: {
 	label: string;
-	state: "up" | "down" | "loading";
+	state: "up" | "down" | "loading" | "unknown";
 }) {
 	const color =
 		state === "loading"
 			? "bg-muted text-muted-foreground"
 			: state === "up"
 				? "bg-success/20 text-success"
-				: "bg-destructive/20 text-destructive";
+				: state === "down"
+					? "bg-destructive/20 text-destructive"
+					: "bg-muted text-muted-foreground";
 	return (
 		<span
 			className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm ${color}`}
@@ -60,9 +62,9 @@ export function HealthBadge() {
 	if (isError || !data) {
 		return (
 			<div className="flex flex-wrap gap-2">
-				<Pill label="postgres" state="down" />
-				<Pill label="clickhouse" state="down" />
-				<Pill label="valkey" state="down" />
+				<Pill label="postgres" state="unknown" />
+				<Pill label="clickhouse" state="unknown" />
+				<Pill label="valkey" state="unknown" />
 			</div>
 		);
 	}

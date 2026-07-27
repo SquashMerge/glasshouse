@@ -142,6 +142,89 @@ export interface PromptProvenanceStatusResponse {
 	status: "active" | "deleted" | "unknown";
 }
 
+export interface OptimizationJob {
+	id: string;
+	status:
+		| "queued"
+		| "preparing"
+		| "optimizing"
+		| "evaluating"
+		| "completed"
+		| "stopped"
+		| "failed";
+	result_version: number | null;
+	error_message: string | null;
+	source_version?: number;
+	target?: PromptRole;
+	budget?: { max_metric_calls?: number };
+	created_at?: string;
+}
+
+export interface OptimizationEvent {
+	id: number;
+	status: OptimizationJob["status"];
+	detail: JsonObject;
+	created_at: string;
+}
+
+export function promptOptimizationEventsUrl(input: {
+	project_id: string;
+	id: string;
+}): string {
+	return `/v1/prompt-optimizations/${encodeURIComponent(input.id)}/events${buildQs({ project_id: input.project_id })}`;
+}
+
+export async function startPromptOptimization(input: {
+	project_id: string;
+	slug: string;
+	source_version: number;
+	target: PromptRole;
+	evaluator: JsonObject;
+	examples: unknown[];
+	model_config: JsonObject;
+	budget: JsonObject;
+}): Promise<OptimizationJob> {
+	return responseJson<OptimizationJob>(
+		await authedFetch("/v1/prompt-optimizations", jsonRequest(input)),
+		"startPromptOptimization",
+	);
+}
+
+export async function getPromptOptimization(input: {
+	project_id: string;
+	id: string;
+}): Promise<OptimizationJob> {
+	return responseJson<OptimizationJob>(
+		await authedFetch(
+			`/v1/prompt-optimizations/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getPromptOptimization",
+	);
+}
+
+export async function getActivePromptOptimization(input: {
+	project_id: string;
+	slug: string;
+}): Promise<OptimizationJob | null> {
+	return responseJson<OptimizationJob | null>(
+		await authedFetch(`/v1/prompt-optimizations/active${buildQs(input)}`),
+		"getActivePromptOptimization",
+	);
+}
+
+export async function stopPromptOptimization(input: {
+	project_id: string;
+	id: string;
+}): Promise<OptimizationJob> {
+	return responseJson<OptimizationJob>(
+		await authedFetch(
+			`/v1/prompt-optimizations/${encodeURIComponent(input.id)}/stop${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"stopPromptOptimization",
+	);
+}
+
 export async function listPrompts(
 	projectId: string,
 ): Promise<PromptListResponse> {
@@ -193,6 +276,19 @@ export async function createPromptVersion(
 			jsonRequest(body),
 		),
 		"createPromptVersion",
+	);
+}
+
+export async function rollbackLatestPromptVersion(input: {
+	project_id: string;
+	slug: string;
+}): Promise<Prompt> {
+	return responseJson<Prompt>(
+		await authedFetch(
+			`/v1/prompts/${encodeURIComponent(input.slug)}/versions/rollback${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"rollbackLatestPromptVersion",
 	);
 }
 
@@ -301,7 +397,7 @@ export function emptyObservationMetadata(): ObservationMetadata {
 }
 
 export function normalizeObservationMetadata(
-	raw: unknown,
+	raw: ObservationMetadataInput,
 	isGeneration = true,
 ): ObservationMetadata {
 	const parsed = typeof raw === "string" ? parseMetadataString(raw) : raw;

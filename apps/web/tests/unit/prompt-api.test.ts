@@ -10,6 +10,8 @@ import {
 	listPrompts,
 	previewPrompt,
 	renderPrompt,
+	rollbackLatestPromptVersion,
+	startPromptOptimization,
 } from "../../src/lib/api";
 import { setCredentials } from "../../src/lib/auth";
 
@@ -61,7 +63,7 @@ describe("prompt management API client", () => {
 		expect(headers.get("authorization")).toBe("Basic YWRtaW46c2VjcmV0");
 	});
 
-	it("sends exact create, version, render, draft preview, delete, and provenance payloads", async () => {
+	it("sends exact create, version, rollback, render, draft preview, delete, and provenance payloads", async () => {
 		fetchMock
 			.mockResolvedValueOnce(
 				jsonResponse({
@@ -71,6 +73,7 @@ describe("prompt management API client", () => {
 				}),
 			)
 			.mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 2 }))
+			.mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 1 }))
 			.mockResolvedValueOnce(
 				jsonResponse({
 					id: "support-agent",
@@ -106,6 +109,10 @@ describe("prompt management API client", () => {
 			model: null,
 			settings: { temperature: 0.3 },
 			change_summary: "Improve greeting",
+		});
+		await rollbackLatestPromptVersion({
+			project_id: PROJECT_ID,
+			slug: "support-agent",
 		});
 		await renderPrompt({
 			project_id: PROJECT_ID,
@@ -161,6 +168,11 @@ describe("prompt management API client", () => {
 				}),
 			},
 			{
+				url: `/v1/prompts/support-agent/versions/rollback?project_id=${PROJECT_ID}`,
+				method: "POST",
+				body: undefined,
+			},
+			{
 				url: `/v1/prompts/support-agent/render?project_id=${PROJECT_ID}&version=2`,
 				method: "POST",
 				body: JSON.stringify({ data: { name: "Ada" } }),
@@ -187,5 +199,33 @@ describe("prompt management API client", () => {
 				body: undefined,
 			},
 		]);
+	});
+
+	it("submits the selected historical version for optimization", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				id: "22222222-2222-4222-8222-222222222222",
+				status: "queued",
+				result_version: null,
+				error_message: null,
+			}),
+		);
+		await startPromptOptimization({
+			project_id: PROJECT_ID,
+			slug: "support-agent",
+			source_version: 2,
+			target: "system",
+			evaluator: { type: "default_adapter" },
+			examples: [{ input: "Question", answer: "Answer" }],
+			model_config: { task_lm: "task", reflection_lm: "reflection" },
+			budget: { max_metric_calls: 1 },
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/v1/prompt-optimizations",
+			expect.objectContaining({
+				method: "POST",
+				body: expect.stringContaining('"source_version":2'),
+			}),
+		);
 	});
 });
