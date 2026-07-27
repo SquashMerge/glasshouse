@@ -156,9 +156,14 @@ export function PromptDetailPage() {
 			}).then((job) => {
 				setOptimization(job);
 				if (job.status === "completed")
-					void queryClient.invalidateQueries({
-						queryKey: ["prompt", selectedProjectId, slug],
-					});
+					void Promise.all([
+						queryClient.invalidateQueries({
+							queryKey: ["prompt", selectedProjectId, slug, "current"],
+						}),
+						queryClient.invalidateQueries({
+							queryKey: ["prompt-versions", selectedProjectId, slug],
+						}),
+					]);
 			});
 		}, 750);
 		return () => window.clearInterval(timer);
@@ -346,7 +351,9 @@ export function PromptDetailPage() {
 			{optimizeTarget && (
 				<OptimizationConfirmDialog
 					target={optimizeTarget}
-					hasSystem={prompt.messages.some((message) => message.role === "system")}
+					hasSystem={prompt.messages.some(
+						(message) => message.role === "system",
+					)}
 					hasUser={prompt.messages.some((message) => message.role === "user")}
 					onTargetChange={setOptimizeTarget}
 					pending={optimizeMutation.isPending}
@@ -429,6 +436,20 @@ function OptimizationConfirmDialog({
 	const [taskModel, setTaskModel] = React.useState("");
 	const [reflectionModel, setReflectionModel] = React.useState("");
 	const [maxMetricCalls, setMaxMetricCalls] = React.useState("20");
+	const showDevExample =
+		import.meta.env.DEV &&
+		import.meta.env.VITE_SHOW_DEV_OPTIMIZATION_EXAMPLE === "true";
+	const fillDevExample = () => {
+		setExampleInput(
+			"Here is my task list for today:\n\n- Finish the quarterly status report and send it to the team by 2:00 PM.\n- Pick up groceries after work.\n- Review and approve the open pull request for the API changes.\n- Call the dentist to schedule a cleaning.\n- Take the dog for a 30-minute walk in the evening.",
+		);
+		setExampleAnswer(
+			"**Today’s priorities:** Finish and send the quarterly status report by 2:00 PM, then review and approve the API pull request.  \n**After work:** Pick up groceries, schedule a dental cleaning, and take the dog for a 30-minute walk.",
+		);
+		setTaskModel("gpt-5.6-terra");
+		setReflectionModel("gpt-5.6-terra");
+		setMaxMetricCalls("5");
+	};
 	const valid = Boolean(
 		exampleInput.trim() &&
 			exampleAnswer.trim() &&
@@ -452,6 +473,16 @@ function OptimizationConfirmDialog({
 					GEPA optimizes one prompt role per run. Choose the role to optimize,
 					then provide a representative input and expected answer.
 				</p>
+				{showDevExample && (
+					<Button
+						className="mt-3"
+						variant="secondary"
+						onClick={fillDevExample}
+						disabled={pending}
+					>
+						Fill development example
+					</Button>
+				)}
 				<div className="mt-4 space-y-3">
 					<fieldset>
 						<legend className="text-sm font-medium">Prompt role</legend>

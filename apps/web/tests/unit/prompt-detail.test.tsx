@@ -18,6 +18,7 @@ const {
 	listPromptVersions,
 	deletePrompt,
 	getActivePromptOptimization,
+	getPromptOptimization,
 	startPromptOptimization,
 	stopPromptOptimization,
 } = vi.hoisted(() => ({
@@ -25,6 +26,7 @@ const {
 	listPromptVersions: vi.fn(),
 	deletePrompt: vi.fn(),
 	getActivePromptOptimization: vi.fn(),
+	getPromptOptimization: vi.fn(),
 	startPromptOptimization: vi.fn(),
 	stopPromptOptimization: vi.fn(),
 }));
@@ -55,6 +57,7 @@ vi.mock("../../src/lib/api", () => ({
 	listPromptVersions,
 	deletePrompt,
 	getActivePromptOptimization,
+	getPromptOptimization,
 	startPromptOptimization,
 	stopPromptOptimization,
 }));
@@ -106,6 +109,7 @@ describe("PromptDetailPage", () => {
 		listPromptVersions.mockReset();
 		deletePrompt.mockReset();
 		getActivePromptOptimization.mockReset();
+		getPromptOptimization.mockReset();
 		startPromptOptimization.mockReset();
 		stopPromptOptimization.mockReset();
 		getPrompt.mockResolvedValue(prompt());
@@ -129,7 +133,11 @@ describe("PromptDetailPage", () => {
 		});
 	});
 
-	afterEach(cleanup);
+	afterEach(() => {
+		cleanup();
+		vi.useRealTimers();
+		vi.unstubAllEnvs();
+	});
 
 	it("shows immutable version details and drives history selection through the version query", async () => {
 		renderDetail();
@@ -261,10 +269,18 @@ describe("PromptDetailPage", () => {
 	it("opens one optimization dialog with a single target radio group and useful input placeholders", async () => {
 		renderDetail();
 
-		fireEvent.click(await screen.findByRole("button", { name: "Optimize prompt" }));
-		expect(screen.queryByRole("button", { name: "Optimize system" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Optimize user" })).not.toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Start optimization" })).toBeInTheDocument();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+		expect(
+			screen.queryByRole("button", { name: "Optimize system" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Optimize user" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: "Start optimization" }),
+		).toBeInTheDocument();
 
 		const systemRadio = screen.getByRole("radio", { name: "System prompt" });
 		const userRadio = screen.getByRole("radio", { name: "User prompt" });
@@ -292,6 +308,65 @@ describe("PromptDetailPage", () => {
 		);
 	});
 
+	it("refreshes the current prompt and version history after optimization completes", async () => {
+		getActivePromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+		});
+		getPromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "completed",
+			result_version: 3,
+			error_message: null,
+		});
+		renderDetail();
+		await waitFor(() => expect(getPromptOptimization).toHaveBeenCalled(), {
+			timeout: 2_000,
+		});
+
+		await waitFor(() => {
+			expect(getPrompt).toHaveBeenCalledTimes(2);
+			expect(listPromptVersions).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	it("fills the development example when explicitly enabled", async () => {
+		vi.stubEnv("VITE_SHOW_DEV_OPTIMIZATION_EXAMPLE", "true");
+		renderDetail();
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Fill development example" }),
+		);
+
+		expect(screen.getByLabelText("Representative input")).toHaveValue(
+			"Here is my task list for today:\n\n- Finish the quarterly status report and send it to the team by 2:00 PM.\n- Pick up groceries after work.\n- Review and approve the open pull request for the API changes.\n- Call the dentist to schedule a cleaning.\n- Take the dog for a 30-minute walk in the evening.",
+		);
+		expect(screen.getByLabelText("Expected answer")).toHaveValue(
+			"**Today’s priorities:** Finish and send the quarterly status report by 2:00 PM, then review and approve the API pull request.  \n**After work:** Pick up groceries, schedule a dental cleaning, and take the dog for a 30-minute walk.",
+		);
+		expect(screen.getByLabelText("Task model")).toHaveValue("gpt-5.6-terra");
+		expect(screen.getByLabelText("Reflection model")).toHaveValue(
+			"gpt-5.6-terra",
+		);
+		expect(screen.getByLabelText("Metric-call budget")).toHaveValue(5);
+	});
+
+	it("does not show the development example without the opt-in", async () => {
+		renderDetail();
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+		expect(
+			screen.queryByRole("button", { name: "Fill development example" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("submits the selected historical version and target role", async () => {
 		router.location.searchStr = "?version=2";
 		getPrompt.mockImplementation(({ version }: { version?: number }) =>
@@ -299,7 +374,9 @@ describe("PromptDetailPage", () => {
 		);
 		renderDetail();
 
-		fireEvent.click(await screen.findByRole("button", { name: "Optimize prompt" }));
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
 		fireEvent.click(screen.getByRole("radio", { name: "User prompt" }));
 		fireEvent.change(screen.getByLabelText("Representative input"), {
 			target: { value: "Question" },
