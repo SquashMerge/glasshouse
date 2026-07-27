@@ -1,24 +1,31 @@
 import * as React from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { getCredentials, onAuthInvalid } from "../lib/auth";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
 	const navigate = useNavigate();
+	const location = useLocation();
 	const [ready, setReady] = React.useState(false);
 
 	React.useEffect(() => {
 		const creds = getCredentials();
 		if (!creds) {
-			navigate({ to: "/login" });
+			navigate({
+				to: "/login",
+				search: { redirect: `${location.pathname}${location.searchStr}` },
+			});
 		} else {
 			setReady(true);
 		}
 
 		const off = onAuthInvalid(() => {
-			navigate({ to: "/login" });
+			navigate({
+				to: "/login",
+				search: { redirect: `${location.pathname}${location.searchStr}` },
+			});
 		});
 		return off;
-	}, [navigate]);
+	}, [location.pathname, location.searchStr, navigate]);
 
 	if (!ready) {
 		return (

@@ -50,10 +50,26 @@ export function toApiParams(range: TimeRange): {
 			time_to: toClickhouseDatetime(now),
 		};
 	}
-	const out: { time_from?: string; time_to?: string } = {};
-	if (range.from) out.time_from = fromDatetimeLocal(range.from);
-	if (range.to) out.time_to = fromDatetimeLocal(range.to);
-	return out;
+	if (!isTimeRangeValid(range)) return {};
+	return {
+		time_from: fromDatetimeLocal(range.from),
+		time_to: fromDatetimeLocal(range.to),
+	};
+}
+
+export function timeRangeError(range: TimeRange): string | null {
+	if (range.kind !== "custom") return null;
+	if (!range.from || !range.to) return "Enter both a start and end time.";
+	const from = new Date(range.from);
+	const to = new Date(range.to);
+	if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+		return "Enter valid local date and time values.";
+	if (from > to) return "The start time must be before the end time.";
+	return null;
+}
+
+export function isTimeRangeValid(range: TimeRange): boolean {
+	return timeRangeError(range) === null;
 }
 
 function fromDatetimeLocal(v: string): string {
@@ -93,6 +109,7 @@ export function TimeRangePicker({
 }) {
 	const selectedLabel = matchPreset(value);
 	const isCustom = value.kind === "custom";
+	const error = timeRangeError(value);
 
 	return (
 		<div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
@@ -150,8 +167,12 @@ export function TimeRangePicker({
 
 			{value.kind === "last" && (
 				<span className="text-xs text-muted-foreground">
-					(now → {Math.round(value.minutes / 60)}h
-					{Math.round(value.minutes % 60)}m ago)
+					from {labelFor(value).toLowerCase().replace("last ", "")} ago to now
+				</span>
+			)}
+			{error && (
+				<span className="w-full text-xs text-destructive" role="alert">
+					{error}
 				</span>
 			)}
 		</div>

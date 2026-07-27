@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import {
 	LuHexagon,
 	LuHouse,
@@ -33,6 +33,8 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, currentPath }: AppShellProps) {
+	const location = useLocation();
+	const activePath = currentPath ?? location.pathname;
 	const [creds, setCreds] = React.useState(getCredentials());
 	const [collapsed, setCollapsed] = React.useState(false);
 	const [hydrated, setHydrated] = React.useState(false);
@@ -70,12 +72,10 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	}
 
 	function isActive(path: string) {
-		return (
-			currentPath === path || (path !== "/" && !!currentPath?.startsWith(path))
-		);
+		return activePath === path || (path !== "/" && activePath.startsWith(path));
 	}
 
-	const width = collapsed ? "w-[3.5rem]" : "w-56";
+	const width = collapsed ? "w-14" : "w-14 sm:w-56";
 
 	return (
 		<div className="flex bg-background text-foreground">
@@ -100,7 +100,12 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						)}
 					>
 						<LuHexagon className="h-5 w-5 shrink-0" aria-hidden="true" />
-						<span className={cn("text-base", collapsed && "hidden")}>
+						<span
+							className={cn(
+								"hidden text-base sm:inline",
+								collapsed && "sm:hidden",
+							)}
+						>
 							Astraea
 						</span>
 					</Link>
@@ -120,7 +125,10 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 				</div>
 
 				<div
-					className={cn("border-b border-border p-2", collapsed && "hidden")}
+					className={cn(
+						"hidden border-b border-border p-2 sm:block",
+						collapsed && "sm:hidden",
+					)}
 				>
 					<label htmlFor="selected-project" className="sr-only">
 						Selected project
@@ -262,7 +270,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 
 			<main className="flex-1 min-w-0">
 				<div
-					className="mx-auto w-full max-w-6xl px-6 py-8"
+					className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 sm:py-8"
 					data-hydrated={hydrated ? "1" : "0"}
 				>
 					{children}
@@ -288,6 +296,8 @@ function SidebarLink({
 	return (
 		<Link
 			to={to}
+			aria-label={label}
+			aria-current={active ? "page" : undefined}
 			className={cn(
 				"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
 				active
@@ -300,7 +310,11 @@ function SidebarLink({
 			<span className="flex h-4 w-4 shrink-0 items-center justify-center">
 				{icon}
 			</span>
-			<span className={cn("truncate", collapsed && "hidden")}>{label}</span>
+			<span
+				className={cn("hidden truncate sm:inline", collapsed && "sm:hidden")}
+			>
+				{label}
+			</span>
 		</Link>
 	);
 }

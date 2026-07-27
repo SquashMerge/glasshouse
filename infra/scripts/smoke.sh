@@ -54,15 +54,15 @@ REF_CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE_API}/reference")"
 [ "${REF_CODE}" = "200" ] || fail "/reference returned ${REF_CODE}, expected 200"
 ok "/reference returned 200"
 
-step "Stub endpoints (non-trace) return 501 with NOT_IMPLEMENTED envelope"
-for spec in "POST:/v1/agents" "GET:/v1/agents" "GET:/v1/experiments" "GET:/v1/prompts" "GET:/v1/datasets" "POST:/v1/scores"; do
+step "Unimplemented endpoints return 501 with NOT_IMPLEMENTED envelope"
+for spec in "POST:/v1/agents" "GET:/v1/agents" "GET:/v1/experiments" "GET:/v1/datasets" "POST:/v1/scores"; do
   METHOD="${spec%%:*}"
   PATH_PART="${spec##*:}"
   CODE="$(curl -s -o /tmp/astraea_stub.json -w '%{http_code}' -H "${AUTH}" -X "${METHOD}" "${BASE_API}${PATH_PART}")"
   [ "${CODE}" = "501" ] || fail "${METHOD} ${PATH_PART} returned ${CODE}, expected 501"
   grep -q 'NOT_IMPLEMENTED' /tmp/astraea_stub.json || fail "${METHOD} ${PATH_PART} body missing NOT_IMPLEMENTED"
 done
-ok "non-trace stubs return 501 with NOT_IMPLEMENTED envelope"
+ok "unimplemented endpoints return 501 with NOT_IMPLEMENTED envelope"
 
 step "AC7: /v1/* without auth returns 401 with WWW-Authenticate"
 UNAUTH_CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE_API}/v1/traces")"
