@@ -12,7 +12,7 @@ export const loginRoute = createRoute({
 	tags: [tag],
 	summary: "Verify Basic Auth credentials",
 	description:
-		"Used by the web dashboard login page to pre-validate creds before storing in localStorage. The endpoint requires Basic Auth itself — pass the same credentials you're trying to verify.",
+		"Used by the web dashboard login page to pre-validate credentials before retaining them in memory for the current page session. The endpoint requires Basic Auth itself — pass the same credentials you're trying to verify.",
 	security: [{ basicAuth: [] }],
 	responses: {
 		200: {

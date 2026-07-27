@@ -44,7 +44,7 @@ test.describe("Login flow", () => {
 		await expect(page).toHaveURL(/\/login$/);
 	});
 
-	test("correct credentials redirect to / and persist in localStorage", async ({
+	test("correct credentials redirect to / without persisting them in storage", async ({
 		page,
 	}) => {
 		await gotoFresh(page, "/login");
@@ -56,11 +56,13 @@ test.describe("Login flow", () => {
 			u: window.localStorage.getItem("astraea.auth.username"),
 			p: window.localStorage.getItem("astraea.auth.password"),
 		}));
-		expect(stored.u).toBe(USER);
-		expect(stored.p).toBe(PASS);
+		expect(stored.u).toBeNull();
+		expect(stored.p).toBeNull();
 	});
 
-	test("logout clears localStorage and routes to /login", async ({ page }) => {
+	test("logout clears in-memory credentials and routes to /login", async ({
+		page,
+	}) => {
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
 		await page.getByLabel(/Password/i).fill(PASS);

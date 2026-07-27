@@ -67,7 +67,7 @@ MIT core. Sealed `enterprise/` wheel under a custom EULA for premium features (S
 ### Prerequisites
 
 - Docker (with Compose v2.13+ for `depends_on condition: service_healthy`)
-- Bun 1.1+ (replaces both the package manager and the runtime; install from [bun.sh](https://bun.sh))
+- Bun 1.3.14+ (replaces both the package manager and the runtime; install from [bun.sh](https://bun.sh))
 - uv (for the Python codegen client; install from [docs.astral.sh/uv](https://docs.astral.sh/uv/))
 
 On Apple Silicon (M-series) the ClickHouse image is pinned to `platform: linux/amd64` for compatibility.
@@ -77,8 +77,8 @@ On Apple Silicon (M-series) the ClickHouse image is pinned to `platform: linux/a
 If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins the asdf-managed dev tools at the versions the project was built against:
 
 ```
-bun 1.1.42
-nodejs 22.11.0
+bun 1.3.14
+nodejs 22.12.0
 ```
 
 The Postgres, ClickHouse, and Valkey **servers** run in Docker (Compose brings them up). Their CLI clients (`psql`, `clickhouse-client`, `valkey-cli`) are best installed via your OS package manager — see Option B.
@@ -89,7 +89,7 @@ Run once after cloning:
 make setup-tools
 ```
 
-This installs asdf plugins for every tool and installs the pinned versions. Re-run anytime `.tool-versions` changes.
+This installs the asdf plugins for every tool and installs the pinned versions. It first uses asdf's plugin index, with explicit upstream fallbacks for Bun and Node.js when the index is unavailable. Re-run anytime `.tool-versions` changes.
 
 > Note: asdf-managed Postgres / Redis plugins build from source and need a C toolchain (`gcc`) plus `unzip`/`uconv` etc. That's why `.tool-versions` only lists Bun and Node.js — the dev tools the runtime actually needs.
 
@@ -270,9 +270,9 @@ The repo's `.gitattributes` enforces `eol=lf` for `*.sh`, `Makefile`, and all so
 
 **`bun` plugin install fails with `unzip: command not found`** — install unzip (`apt-get install unzip` on Debian/Ubuntu, `brew install unzip` on macOS), then `make setup-tools` again.
 
-**`docker compose ... lstat .../infra/apps: no such file or directory`** — older commits used `context: .` in `infra/compose.yaml` which resolved to the compose file's directory; pull the latest commit (≥ `2d585a0`) which uses `context: ..`. If you can't pull, patch compose.yaml manually: change `context: .` to `context: ..` under both `api` and `web` build blocks.
+**`docker compose ... lstat .../infra/apps: no such file or directory`** — the Compose files are invoked with the repository root as `--project-directory`, so build contexts must be `context: .` and Dockerfiles remain `apps/api/Dockerfile` / `apps/web/Dockerfile`. Pull the latest commit if your checkout still uses `context: ..`.
 
-**`asdf plugin add nodejs` fails with "repository does not exist"** — older commits hardcoded bogus plugin URLs. Pull the latest commit (≥ `e8c7755`) which uses `asdf plugin add <name>` (no URL) and lets asdf's plugin index resolve the repo.
+**`asdf plugin add nodejs` fails** — `make setup-tools` first tries asdf's plugin index and then falls back to the official `https://github.com/asdf-vm/asdf-nodejs.git` repository. If both fail, verify that git can reach GitHub and retry.
 
 **`/health` returns 503 with `valkey: down`** — the valkey container failed healthcheck (probably wrong password or compose started before .env was edited). Run `make doctor` first; if `.env` still has `CHANGE_ME`, edit it and `make dev` again.
 

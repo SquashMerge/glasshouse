@@ -59,8 +59,8 @@ logs: ## Tail logs
 ps: ## List running services
 	$(COMPOSE) ps
 
-db-migrate: ## Apply Postgres migrations (idempotent)
-	$(COMPOSE) run --rm api bun run db:migrate
+db-migrate: ## Apply Postgres migrations and seed the default project (idempotent)
+	$(COMPOSE) run --build --rm api sh -c 'cd apps/api && bun run db:migrate'
 
 test-db-migrations: ## Verify SQL migrations against legacy prompt data in PostgreSQL 16
 	bash infra/scripts/test-db-migrations.sh
