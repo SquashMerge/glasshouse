@@ -81,6 +81,8 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
       VALKEY_URL: redis://:${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}@valkey:6379
+      UI_USERNAME: ${UI_USERNAME:?UI_USERNAME must be set in infra/.env}
+      UI_PASSWORD: ${UI_PASSWORD:?UI_PASSWORD must be set in infra/.env}
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:

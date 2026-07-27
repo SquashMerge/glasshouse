@@ -13,7 +13,7 @@
     "format:check": "biome format src tests",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "PLAYWRIGHT_E2E=true playwright test --reporter=line"
+    "test:e2e": "PLAYWRIGHT_E2E=true playwright test"
   },
   "dependencies": {
     "@tanstack/react-query": "5.101.4",
