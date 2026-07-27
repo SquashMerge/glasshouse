@@ -18,6 +18,7 @@ FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app
 RUN apk add --no-cache libpq wget
 COPY --from=build /app /app
+RUN chown -R bun:bun /app
 ENV NODE_ENV=production
 ENV WEB_PORT=5173
 EXPOSE 5173
