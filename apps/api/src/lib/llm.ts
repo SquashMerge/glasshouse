@@ -31,6 +31,47 @@ function configuredDevCommand(model: string): string[] {
 	);
 }
 
+async function readLimited(
+	stream: ReadableStream<Uint8Array> | null,
+	limit: number,
+): Promise<string> {
+	if (!stream) return "";
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (total + value.byteLength > limit)
+				throw new Error("development CLI stream exceeded size limit");
+			chunks.push(value);
+			total += value.byteLength;
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	const output = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		output.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(output);
+}
+
+function killProcessGroup(pid: number): void {
+	try {
+		process.kill(-pid, "SIGKILL");
+	} catch {
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// The process exited before cleanup.
+		}
+	}
+}
+
 async function invokeDevelopmentCli(
 	prompt: string,
 	model: string,
@@ -48,17 +89,23 @@ async function invokeDevelopmentCli(
 		Number.isFinite(timeoutValue) && timeoutValue > 0
 			? Math.min(timeoutValue * 1000, MAX_DEV_TIMEOUT_MS)
 			: DEFAULT_DEV_TIMEOUT_MS;
-	const child = Bun.spawn(configuredDevCommand(model), {
-		stdin: new Response(prompt).body,
-		stdout: "pipe",
-		stderr: "pipe",
-		signal,
-	});
-	const timeout = setTimeout(() => child.kill(), timeoutMs);
+	const command = configuredDevCommand(model);
+	const child = Bun.spawn(
+		process.platform === "linux" ? ["setsid", ...command] : command,
+		{
+			stdin: new Response(prompt).body,
+			stdout: "pipe",
+			stderr: "pipe",
+		},
+	);
+	const abort = () => killProcessGroup(child.pid);
+	if (signal?.aborted) abort();
+	else signal?.addEventListener("abort", abort, { once: true });
+	const timeout = setTimeout(abort, timeoutMs);
 	try {
 		const [stdout, stderr, exitCode] = await Promise.all([
-			child.stdout ? new Response(child.stdout).text() : "",
-			child.stderr ? new Response(child.stderr).text() : "",
+			readLimited(child.stdout, MAX_DEV_OUTPUT_BYTES),
+			readLimited(child.stderr, 8 * 1024),
 			child.exited,
 		]);
 		if (exitCode !== 0)
@@ -71,6 +118,7 @@ async function invokeDevelopmentCli(
 		return stdout.trim();
 	} finally {
 		clearTimeout(timeout);
+		signal?.removeEventListener("abort", abort);
 	}
 }
 

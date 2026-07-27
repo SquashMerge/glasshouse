@@ -255,6 +255,8 @@ const production: ExperimentDependencies = {
 };
 
 const activeExperiments = new Map<string, AbortController>();
+const experimentKey = (projectId: string, experimentId: string) =>
+	`${projectId}:${experimentId}`;
 
 export async function executeExperiment(
 	deps: ExperimentDependencies,
@@ -398,7 +400,10 @@ export function createExperimentHandlers(
 				});
 				const row = await deps.createExperiment(db, body);
 				const controller = new AbortController();
-				activeExperiments.set(row.id, controller);
+				activeExperiments.set(
+					experimentKey(body.project_id, row.id),
+					controller,
+				);
 				void executeExperiment(
 					deps,
 					{
@@ -420,7 +425,9 @@ export function createExperimentHandlers(
 							status: controller.signal.aborted ? "cancelled" : "failed",
 						});
 					})
-					.finally(() => activeExperiments.delete(row.id));
+					.finally(() =>
+						activeExperiments.delete(experimentKey(body.project_id, row.id)),
+					);
 				return c.json(row, 201);
 			} catch (cause) {
 				return errorResponse(c, cause);
@@ -488,7 +495,8 @@ export function createExperimentHandlers(
 			try {
 				const id = c.req.valid("param").id;
 				const project_id = c.req.valid("query").project_id;
-				activeExperiments.get(id)?.abort();
+				await deps.getExperiment(deps.pool(), { id, project_id });
+				activeExperiments.get(experimentKey(project_id, id))?.abort();
 				return c.json(
 					await deps.updateExperiment(deps.pool(), {
 						id,
@@ -527,7 +535,7 @@ export function createExperimentHandlers(
 								});
 								if (closed) return;
 								controller.enqueue(
-									`event: experiment\\ndata: ${JSON.stringify(row)}\\n\\n`,
+									`event: experiment\ndata: ${JSON.stringify(row)}\n\n`,
 								);
 								if (["completed", "failed", "cancelled"].includes(row.status))
 									close();
