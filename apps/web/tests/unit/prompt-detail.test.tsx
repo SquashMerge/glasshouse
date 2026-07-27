@@ -2,6 +2,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
@@ -18,6 +19,7 @@ const {
 	getPrompt,
 	listPromptVersions,
 	deletePrompt,
+	rollbackLatestPromptVersion,
 	getActivePromptOptimization,
 	getPromptOptimization,
 	startPromptOptimization,
@@ -26,6 +28,7 @@ const {
 	getPrompt: vi.fn(),
 	listPromptVersions: vi.fn(),
 	deletePrompt: vi.fn(),
+	rollbackLatestPromptVersion: vi.fn(),
 	getActivePromptOptimization: vi.fn(),
 	getPromptOptimization: vi.fn(),
 	startPromptOptimization: vi.fn(),
@@ -57,6 +60,7 @@ vi.mock("../../src/lib/api", () => ({
 	getPrompt,
 	listPromptVersions,
 	deletePrompt,
+	rollbackLatestPromptVersion,
 	getActivePromptOptimization,
 	getPromptOptimization,
 	promptOptimizationEventsUrl: ({
@@ -136,6 +140,7 @@ describe("PromptDetailPage", () => {
 		getPrompt.mockReset();
 		listPromptVersions.mockReset();
 		deletePrompt.mockReset();
+		rollbackLatestPromptVersion.mockReset();
 		getActivePromptOptimization.mockReset();
 		getPromptOptimization.mockReset();
 		sse.onMessage.mockReset();
@@ -220,6 +225,50 @@ describe("PromptDetailPage", () => {
 		expect(client.getQueryState(["prompts", PROJECT_ID])?.isInvalidated).toBe(
 			true,
 		);
+	});
+
+	it("confirms rollback, refreshes current prompt and history, and shows rollback errors", async () => {
+		renderDetail();
+		await screen.findByTestId("prompt-message-system");
+		rollbackLatestPromptVersion.mockRejectedValueOnce(
+			new Error("Stop the active optimization before rolling back a version"),
+		);
+		rollbackLatestPromptVersion.mockResolvedValueOnce(prompt(2));
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Rollback latest version" }),
+		);
+		expect(
+			await screen.findByText(
+				"The latest version will be permanently removed and the previous version restored.",
+			),
+		).toBeInTheDocument();
+		const confirm = screen.getByRole("button", { name: "Rollback version" });
+		fireEvent.click(confirm);
+		expect(
+			await screen.findByText(
+				"Stop the active optimization before rolling back a version",
+			),
+		).toBeInTheDocument();
+		fireEvent.click(confirm);
+
+		await waitFor(() =>
+			expect(rollbackLatestPromptVersion).toHaveBeenLastCalledWith({
+				project_id: PROJECT_ID,
+				slug: "support-agent",
+			}),
+		);
+		await waitFor(() =>
+			expect(router.navigate).toHaveBeenCalledWith({
+				to: "/prompts/$slug",
+				params: { slug: "support-agent" },
+				search: {},
+			}),
+		);
+		await waitFor(() => {
+			expect(getPrompt).toHaveBeenCalledTimes(2);
+			expect(listPromptVersions).toHaveBeenCalledTimes(2);
+		});
 	});
 
 	it("requires an explicit stop confirmation before entering the editor while optimization is active", async () => {
@@ -354,15 +403,53 @@ describe("PromptDetailPage", () => {
 		});
 		renderDetail();
 		await waitFor(() => expect(getActivePromptOptimization).toHaveBeenCalled());
-		sse.onMessage({
-			event: "status",
-			data: { status: "completed" },
+		await act(async () => {
+			sse.onMessage({
+				event: "status",
+				data: {
+					id: 1,
+					status: "completed",
+					detail: { result_version: 4, score: 0.9 },
+					created_at: "2026-07-15T10:00:01.000Z",
+				},
+			});
 		});
 
 		await waitFor(() => {
 			expect(getPrompt).toHaveBeenCalledTimes(2);
 			expect(listPromptVersions).toHaveBeenCalledTimes(2);
 		});
+	});
+
+	it("renders score and configured budget from validated SSE progress", async () => {
+		getActivePromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+			target: "system",
+			source_version: 3,
+			budget: { max_metric_calls: 20 },
+			created_at: "2026-07-15T10:00:00.000Z",
+		});
+		renderDetail();
+		await screen.findByText("Support Agent optimizing…");
+
+		await act(async () => {
+			sse.onMessage({
+				event: "status",
+				data: {
+					id: 2,
+					status: "evaluating",
+					detail: { score: 0.875 },
+					created_at: "2026-07-15T10:00:01.000Z",
+				},
+			});
+		});
+
+		expect(await screen.findByText("evaluating")).toBeInTheDocument();
+		expect(screen.getByText("Not reported / 20")).toBeInTheDocument();
+		expect(screen.getByText("0.875")).toBeInTheDocument();
 	});
 
 	it("fills the development example when explicitly enabled", async () => {

@@ -146,6 +146,43 @@ describe("prompt optimization repository", () => {
 		const insert = pool.client.calls[3];
 		expect(insert?.values[2]).toBe("Improved system {{name}}");
 		expect(JSON.parse(insert?.values[5] as string)).toEqual(messages);
+		expect(JSON.parse(pool.client.calls[5]?.values[1] as string)).toEqual({
+			result_version: 4,
+		});
+	});
+
+	it("persists a finite final score without candidate content in the event", async () => {
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [job()] },
+			{
+				rows: [
+					{
+						id: PROMPT,
+						slug: "support-agent",
+						version: 3,
+						model: "gpt-test",
+						settings: { temperature: 0.2 },
+					},
+				],
+			},
+			{ rows: [] },
+			{ rows: [] },
+			{ rows: [] },
+			{ rows: [] },
+		]);
+
+		await publishOptimizationResult(transactionPool(pool), {
+			id: JOB,
+			worker_id: WORKER,
+			messages: [{ role: "system", content: "Improved system {{name}}" }],
+			score: 0.875,
+		});
+
+		expect(JSON.parse(pool.client.calls[5]?.values[1] as string)).toEqual({
+			result_version: 4,
+			score: 0.875,
+		});
 	});
 
 	it("publishes a historical snapshot as the next version", async () => {

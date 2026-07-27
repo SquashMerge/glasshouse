@@ -154,6 +154,10 @@ export interface OptimizationJob {
 		| "failed";
 	result_version: number | null;
 	error_message: string | null;
+	source_version?: number;
+	target?: PromptRole;
+	budget?: { max_metric_calls?: number };
+	created_at?: string;
 }
 
 export interface OptimizationEvent {
@@ -272,6 +276,19 @@ export async function createPromptVersion(
 			jsonRequest(body),
 		),
 		"createPromptVersion",
+	);
+}
+
+export async function rollbackLatestPromptVersion(input: {
+	project_id: string;
+	slug: string;
+}): Promise<Prompt> {
+	return responseJson<Prompt>(
+		await authedFetch(
+			`/v1/prompts/${encodeURIComponent(input.slug)}/versions/rollback${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"rollbackLatestPromptVersion",
 	);
 }
 

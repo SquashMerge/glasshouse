@@ -195,8 +195,15 @@ export async function createOptimizationJob(
 		if (inserted.created)
 			await rows(
 				client,
-				"INSERT INTO prompt_optimization_events (job_id, status) VALUES ($1, 'queued')",
-				[id],
+				"INSERT INTO prompt_optimization_events (job_id, status, detail) VALUES ($1, 'queued', $2::jsonb)",
+				[
+					id,
+					JSON.stringify({
+						target: input.target,
+						source_version: input.source_version,
+						max_metric_calls: input.budget.max_metric_calls,
+					}),
+				],
 			);
 		return mapJob(inserted);
 	});
@@ -346,7 +353,12 @@ export async function stopOptimizationJob(
 }
 export async function publishOptimizationResult(
 	pool: Pick<Pool, "connect">,
-	input: { id: string; worker_id: string; messages: PromptMessage[] },
+	input: {
+		id: string;
+		worker_id: string;
+		messages: PromptMessage[];
+		score?: number;
+	},
 ): Promise<number> {
 	return tx(pool, async (client) => {
 		const jobRow = (
@@ -397,7 +409,15 @@ export async function publishOptimizationResult(
 		await rows(
 			client,
 			"INSERT INTO prompt_optimization_events (job_id,status,detail) VALUES ($1,'completed',$2::jsonb)",
-			[job.id, JSON.stringify({ result_version: version })],
+			[
+				job.id,
+				JSON.stringify({
+					result_version: version,
+					...(typeof input.score === "number" && Number.isFinite(input.score)
+						? { score: input.score }
+						: {}),
+				}),
+			],
 		);
 		return version;
 	});

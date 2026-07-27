@@ -53,6 +53,8 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 		if (
 			!result ||
 			typeof result.candidate !== "string" ||
+			(result.score !== undefined &&
+				(typeof result.score !== "number" || !Number.isFinite(result.score))) ||
 			new TextEncoder().encode(result.candidate).byteLength >
 				MAX_OPTIMIZATION_CANDIDATE_BYTES
 		)

@@ -15,6 +15,7 @@ import {
 	promptProvenanceStatus,
 	PromptRepositoryError,
 	renderPrompt,
+	rollbackLatestPromptVersion,
 	textualVersionDiff,
 } from "../../src/db/prompts";
 
@@ -826,6 +827,145 @@ describe("prompt repository", () => {
 		);
 		expect(pool.client.calls[10]?.text).toContain("DELETE FROM prompts");
 		expect(pool.client.released).toBe(true);
+	});
+
+	it("rolls back only the locked latest version, preserving its labels on the restored version", async () => {
+		const previousRow = {
+			...versionRow,
+			version: 1,
+			previous_messages: null,
+			version_id: "previous-version-id",
+		};
+		const latestRow = {
+			...versionRow,
+			version: 2,
+			version_id: "latest-version-id",
+		};
+		const pool = new MockPool(
+			[],
+			[
+				{ rows: [] },
+				{ rows: [{ id: PROJECT }] },
+				{
+					rows: [
+						{
+							...latestRow,
+							prompt_id: "internal-prompt-id",
+							project_id: PROJECT,
+							name: "Support Agent",
+							description: null,
+						},
+						{
+							...previousRow,
+							prompt_id: "internal-prompt-id",
+							project_id: PROJECT,
+							name: "Support Agent",
+							description: null,
+						},
+					],
+				},
+				{ rows: [] },
+				{ rows: [] },
+				{ rows: [{ id: "latest-version-id" }] },
+				{ rows: [] },
+			],
+		);
+
+		expect(
+			await rollbackLatestPromptVersion(transactionPool(pool), {
+				project_id: PROJECT,
+				slug: "support-agent",
+			}),
+		).toMatchObject({ id: "support-agent", version: 1, project_id: PROJECT });
+		expect(pool.client.calls[2]?.text).toContain("FOR UPDATE OF p, v");
+		expect(pool.client.calls[3]?.text).toContain("prompt_optimization_jobs");
+		expect(pool.client.calls[4]?.text).toContain("UPDATE prompt_labels");
+		expect(pool.client.calls[4]?.values).toEqual([
+			"previous-version-id",
+			PROJECT,
+			"internal-prompt-id",
+			"latest-version-id",
+		]);
+		expect(pool.client.calls[5]?.text).toContain("DELETE FROM prompt_versions");
+
+		const firstVersionPool = new MockPool(
+			[],
+			[
+				{ rows: [] },
+				{ rows: [{ id: PROJECT }] },
+				{
+					rows: [
+						{
+							...previousRow,
+							prompt_id: "internal-prompt-id",
+							project_id: PROJECT,
+							name: "Support Agent",
+							description: null,
+						},
+					],
+				},
+				{ rows: [] },
+			],
+		);
+		await expectError(
+			rollbackLatestPromptVersion(transactionPool(firstVersionPool), {
+				project_id: PROJECT,
+				slug: "support-agent",
+			}),
+			"CONFLICT",
+		);
+
+		const activePool = new MockPool(
+			[],
+			[
+				{ rows: [] },
+				{ rows: [{ id: PROJECT }] },
+				{
+					rows: [
+						{
+							...latestRow,
+							prompt_id: "internal-prompt-id",
+							project_id: PROJECT,
+							name: "Support Agent",
+							description: null,
+						},
+						{
+							...previousRow,
+							prompt_id: "internal-prompt-id",
+							project_id: PROJECT,
+							name: "Support Agent",
+							description: null,
+						},
+					],
+				},
+				{ rows: [{ id: "active-job" }] },
+				{ rows: [] },
+			],
+		);
+		await expectError(
+			rollbackLatestPromptVersion(transactionPool(activePool), {
+				project_id: PROJECT,
+				slug: "support-agent",
+			}),
+			"CONFLICT",
+		);
+
+		const isolatedPool = new MockPool(
+			[],
+			[
+				{ rows: [] },
+				{ rows: [{ id: OTHER_PROJECT }] },
+				{ rows: [] },
+				{ rows: [] },
+			],
+		);
+		await expectError(
+			rollbackLatestPromptVersion(transactionPool(isolatedPool), {
+				project_id: OTHER_PROJECT,
+				slug: "support-agent",
+			}),
+			"NOT_FOUND",
+		);
 	});
 
 	it("returns conflicts for tombstoned deletion and resolves provenance as deleted before historical tuple checks", async () => {

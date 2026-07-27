@@ -331,6 +331,11 @@ async function run(
 			id: job.id,
 			worker_id: workerId,
 			status: "preparing",
+			detail: {
+				target: job.target,
+				source_version: job.source_version,
+				max_metric_calls: job.budget.max_metric_calls ?? null,
+			},
 		});
 		logger.info("optimization.preparing", { job_id: job.id });
 		const sourceMessages = await d.sourceMessages(d.pool(), {
@@ -375,11 +380,13 @@ async function run(
 			id: job.id,
 			worker_id: workerId,
 			status: "evaluating",
+			detail: result.score === undefined ? {} : { score: result.score },
 		});
 		validateGepaCandidate(original.content, result.candidate);
 		await d.publish(d.pool(), {
 			id: job.id,
 			worker_id: workerId,
+			score: result.score,
 			messages: sourceMessages.map((item) =>
 				item.role === job.target
 					? { ...item, content: result.candidate }

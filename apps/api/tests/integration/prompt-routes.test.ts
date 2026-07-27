@@ -12,6 +12,7 @@ import {
 	listPrompts,
 	previewPrompt,
 	renderPrompt,
+	rollbackLatestPromptVersion,
 } from "../../src/routes/prompts";
 import {
 	createProjectRouteHandlers,
@@ -113,6 +114,7 @@ const createPromptVersionRecord = mock(
 		return PROMPT_VERSION;
 	},
 );
+const rollbackLatestPromptVersionRecord = mock(async () => PROMPT);
 const promptProvenanceStatus = mock(
 	async (_pool: unknown, input: { project_id: string }) => {
 		if (input.project_id === OTHER_PROJECT)
@@ -142,6 +144,7 @@ function app() {
 		listPromptVersions: listPromptVersionsRecord,
 		listPrompts: listPromptsRecord,
 		renderPrompt: renderPromptRecord,
+		rollbackLatestPromptVersion: rollbackLatestPromptVersionRecord,
 	});
 	const projectHandlers = createProjectRouteHandlers({
 		pool,
@@ -178,6 +181,10 @@ function app() {
 	api.openapi(listPrompts, promptHandlers.handleListPrompts);
 	api.openapi(listPromptVersions, promptHandlers.handleListPromptVersions);
 	api.openapi(createPromptVersion, promptHandlers.handleCreatePromptVersion);
+	api.openapi(
+		rollbackLatestPromptVersion,
+		promptHandlers.handleRollbackLatestPromptVersion,
+	);
 	api.openapi(previewPrompt, promptHandlers.handlePreviewPrompt);
 	api.openapi(renderPrompt, promptHandlers.handleRenderPrompt);
 	api.openapi(listProjects, projectHandlers.handleListProjects);
@@ -373,6 +380,21 @@ describe("prompt route contracts", () => {
 			slug: "support-agent",
 			actor: "context-admin",
 		});
+	});
+
+	it("authenticates and returns the restored prompt from a project-scoped rollback", async () => {
+		rollbackLatestPromptVersionRecord.mockClear();
+		const response = await app().request(
+			`/v1/prompts/support-agent/versions/rollback?project_id=${PROJECT}`,
+			{ method: "POST" },
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual(PROMPT);
+		expect(rollbackLatestPromptVersionRecord).toHaveBeenCalledWith(
+			expect.anything(),
+			{ project_id: PROJECT, slug: "support-agent" },
+		);
 	});
 
 	it("rejects oversized render data before the render handler and preserves normal rendering", async () => {

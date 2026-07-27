@@ -12,6 +12,7 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { useEventSource } from "../hooks/useEventSource";
+import { RollbackLatestVersionDialog } from "./rollback-latest-version-dialog";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	deletePrompt,
@@ -19,12 +20,19 @@ import {
 	getPrompt,
 	listPromptVersions,
 	promptOptimizationEventsUrl,
+	rollbackLatestPromptVersion,
 	startPromptOptimization,
 	stopPromptOptimization,
 	type OptimizationEvent,
 	type OptimizationJob,
 	type Prompt,
+	type PromptVersion,
 } from "../lib/api";
+import {
+	optimizationDiff,
+	parseOptimizationEvent,
+	progressScore,
+} from "../lib/optimization-progress";
 import { formatDate, PageMessage } from "./prompts";
 
 const DEV_OPTIMIZATION_EXAMPLE_ENV = "true";
@@ -38,11 +46,14 @@ export function PromptDetailPage() {
 	const queryClient = useQueryClient();
 	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const [deleteOpen, setDeleteOpen] = React.useState(false);
+	const [rollbackOpen, setRollbackOpen] = React.useState(false);
 	const [optimizeTarget, setOptimizeTarget] = React.useState<
 		"system" | "user" | null
 	>(null);
 	const [optimization, setOptimization] =
 		React.useState<OptimizationJob | null>(null);
+	const [optimizationEvent, setOptimizationEvent] =
+		React.useState<OptimizationEvent | null>(null);
 	const [stopToEdit, setStopToEdit] = React.useState(false);
 	const stopToEditInFlight = React.useRef(false);
 	const deleteTriggerRef = React.useRef<HTMLButtonElement>(null);
@@ -92,6 +103,34 @@ export function PromptDetailPage() {
 			await navigate({ to: "/prompts" });
 		},
 	});
+	const rollbackMutation = useMutation({
+		mutationFn: () => {
+			if (!selectedProjectId)
+				throw new Error(
+					"Select a project before rolling back a prompt version.",
+				);
+			return rollbackLatestPromptVersion({
+				project_id: selectedProjectId,
+				slug,
+			});
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: ["prompt", selectedProjectId, slug, "current"],
+				}),
+				queryClient.invalidateQueries({
+					queryKey: ["prompt-versions", selectedProjectId, slug],
+				}),
+			]);
+			setRollbackOpen(false);
+			await navigate({
+				to: "/prompts/$slug",
+				params: { slug },
+				search: {},
+			});
+		},
+	});
 	const optimizeMutation = useMutation({
 		mutationFn: (input: {
 			target: "system" | "user";
@@ -116,7 +155,10 @@ export function PromptDetailPage() {
 				},
 				budget: { max_metric_calls: input.maxMetricCalls },
 			}),
-		onSuccess: (job) => setOptimization(job),
+		onSuccess: (job) => {
+			setOptimizationEvent(null);
+			setOptimization(job);
+		},
 	});
 	const stopToEditMutation = useMutation({
 		mutationFn: async ({ job }: { job: OptimizationJob; prompt: Prompt }) => {
@@ -159,10 +201,22 @@ export function PromptDetailPage() {
 			enabled: optimizationActive,
 			onMessage: ({ event, data }) => {
 				if (event !== "status") return;
-				setOptimization((current) =>
-					current ? { ...current, status: data.status } : current,
-				);
-				if (data.status === "completed")
+				const optimizationEvent = parseOptimizationEvent(data);
+				if (!optimizationEvent) return;
+				setOptimizationEvent(optimizationEvent);
+				setOptimization((current) => {
+					const currentJob = current ?? activeOptimization;
+					if (!currentJob) return current;
+					return {
+						...currentJob,
+						status: optimizationEvent.status,
+						result_version:
+							typeof optimizationEvent.detail.result_version === "number"
+								? optimizationEvent.detail.result_version
+								: currentJob.result_version,
+					};
+				});
+				if (optimizationEvent.status === "completed")
 					void Promise.all([
 						queryClient.invalidateQueries({
 							queryKey: ["prompt", selectedProjectId, slug, "current"],
@@ -257,6 +311,16 @@ export function PromptDetailPage() {
 						</Button>
 					)}
 					<Button
+						variant="outline"
+						onClick={() => {
+							rollbackMutation.reset();
+							setRollbackOpen(true);
+						}}
+						disabled={optimizationActive || historyQuery.data!.items.length < 2}
+					>
+						Rollback latest version
+					</Button>
+					<Button
 						ref={deleteTriggerRef}
 						variant="destructive"
 						onClick={() => {
@@ -349,6 +413,20 @@ export function PromptDetailPage() {
 					onDelete={(confirmation) => deleteMutation.mutate(confirmation)}
 				/>
 			)}
+			{rollbackOpen && (
+				<RollbackLatestVersionDialog
+					pending={rollbackMutation.isPending}
+					error={
+						rollbackMutation.error instanceof Error
+							? rollbackMutation.error.message
+							: null
+					}
+					onClose={() => {
+						if (!rollbackMutation.isPending) setRollbackOpen(false);
+					}}
+					onConfirm={() => rollbackMutation.mutate()}
+				/>
+			)}
 			{optimizeTarget && (
 				<OptimizationConfirmDialog
 					target={optimizeTarget}
@@ -377,6 +455,8 @@ export function PromptDetailPage() {
 			{activeOptimization && (
 				<OptimizationStatus
 					job={activeOptimization}
+					latestEvent={optimizationEvent}
+					versions={historyQuery.data?.items}
 					promptName={prompt.name}
 					onStop={() =>
 						selectedProjectId &&
@@ -639,17 +719,24 @@ function StopToEditDialog({
 
 function OptimizationStatus({
 	job,
+	latestEvent,
+	versions,
 	promptName,
 	onStop,
 }: {
 	job: OptimizationJob;
+	latestEvent: OptimizationEvent | null;
+	versions: PromptVersion[] | undefined;
 	promptName: string;
 	onStop: () => void;
 }) {
 	const active = !["completed", "stopped", "failed"].includes(job.status);
+	const elapsed = useElapsedTime(job.created_at, active);
+	const score = progressScore(latestEvent);
+	const diff = optimizationDiff(job, versions);
 	return (
 		<div
-			className="fixed bottom-4 right-4 z-40 w-80 rounded-lg border border-border bg-background p-4 shadow-lg"
+			className="fixed bottom-4 right-4 z-40 w-[min(28rem,calc(100vw-2rem))] rounded-lg border border-border bg-background p-4 shadow-lg"
 			role="status"
 		>
 			<p className="font-medium">
@@ -661,6 +748,45 @@ function OptimizationStatus({
 					: (job.error_message ??
 						"The source version and configuration are pinned.")}
 			</p>
+			<dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+				<ProgressField label="Phase" value={job.status} />
+				<ProgressField
+					label="Prompt role"
+					value={job.target ?? "Not reported"}
+				/>
+				<ProgressField
+					label="Source version"
+					value={job.source_version ? `v${job.source_version}` : "Not reported"}
+				/>
+				<ProgressField label="Elapsed" value={elapsed} />
+				<ProgressField
+					label="Metric calls"
+					value={
+						job.budget?.max_metric_calls
+							? `Not reported / ${job.budget.max_metric_calls}`
+							: "Not reported"
+					}
+				/>
+				<ProgressField
+					label="Latest score"
+					value={score === null ? "Not reported" : String(score)}
+				/>
+			</dl>
+			{diff && (
+				<div className="mt-4 space-y-2 border-t pt-3 text-sm">
+					<p className="font-medium">Candidate improvement</p>
+					<p className="text-muted-foreground">{diff.summary}</p>
+					<p className="font-medium">Before / after</p>
+					<div className="grid gap-2 sm:grid-cols-2">
+						<pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-xs">
+							{diff.before}
+						</pre>
+						<pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-xs">
+							{diff.after}
+						</pre>
+					</div>
+				</div>
+			)}
 			{active && (
 				<Button className="mt-3" size="sm" variant="outline" onClick={onStop}>
 					<LuLoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -669,6 +795,33 @@ function OptimizationStatus({
 			)}
 		</div>
 	);
+}
+
+function ProgressField({ label, value }: { label: string; value: string }) {
+	return (
+		<div>
+			<dt className="text-xs text-muted-foreground">{label}</dt>
+			<dd>{value}</dd>
+		</div>
+	);
+}
+
+function useElapsedTime(
+	createdAt: string | undefined,
+	active: boolean,
+): string {
+	const [now, setNow] = React.useState(() => Date.now());
+	React.useEffect(() => {
+		if (!active) return;
+		setNow(Date.now());
+		const interval = setInterval(() => setNow(Date.now()), 1_000);
+		return () => clearInterval(interval);
+	}, [active]);
+	if (!createdAt) return "Not reported";
+	const startedAt = new Date(createdAt).valueOf();
+	if (Number.isNaN(startedAt)) return "Not reported";
+	const seconds = Math.max(0, Math.floor((now - startedAt) / 1_000));
+	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function optimizationStatusLabel(status: OptimizationJob["status"]): string {
