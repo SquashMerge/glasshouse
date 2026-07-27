@@ -30,6 +30,7 @@ import {
 } from "../lib/gepa-config.js";
 import { validatePromptTemplate } from "../lib/prompt-templates.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
+import { logger } from "../lib/logger.js";
 import {
 	PromptErrorResponses,
 	ProjectIdQuery,
@@ -295,9 +296,23 @@ async function run(
 	job: OptimizationJob,
 	d: OptimizationDependencies,
 ): Promise<void> {
-	if (activeWorkers.has(job.id)) return;
-	if (!(await d.claim(d.pool(), { id: job.id, worker_id: workerId }))) return;
+	if (activeWorkers.has(job.id)) {
+		logger.debug("optimization.already_running", { job_id: job.id });
+		return;
+	}
+	if (!(await d.claim(d.pool(), { id: job.id, worker_id: workerId }))) {
+		logger.debug("optimization.claim_not_owned", { job_id: job.id });
+		return;
+	}
+	const startedAt = performance.now();
 	const controller = new AbortController();
+	logger.info("optimization.claimed", {
+		job_id: job.id,
+		project_id: job.project_id,
+		prompt_slug: job.prompt_slug,
+		target: job.target,
+		worker_id: workerId,
+	});
 	activeWorkers.set(job.id, controller);
 	const leaseRenewal = setInterval(() => {
 		void d
@@ -312,6 +327,7 @@ async function run(
 			worker_id: workerId,
 			status: "preparing",
 		});
+		logger.info("optimization.preparing", { job_id: job.id });
 		const sourceMessages = await d.sourceMessages(d.pool(), {
 			project_id: job.project_id,
 			id: job.id,
@@ -327,6 +343,12 @@ async function run(
 			worker_id: workerId,
 			status: "optimizing",
 		});
+		logger.info("optimization.worker_started", {
+			job_id: job.id,
+			target: job.target,
+			models: job.model_config,
+			max_metric_calls: job.budget,
+		});
 		const result = await d.worker(
 			{
 				target: job.target,
@@ -338,6 +360,12 @@ async function run(
 			},
 			controller.signal,
 		);
+		logger.info("optimization.worker_completed", {
+			job_id: job.id,
+			duration_ms: Math.round(performance.now() - startedAt),
+			score: result.score,
+			candidate_bytes: new TextEncoder().encode(result.candidate).byteLength,
+		});
 		await d.transition(d.pool(), {
 			id: job.id,
 			worker_id: workerId,
@@ -353,7 +381,17 @@ async function run(
 					: item,
 			),
 		});
+		logger.info("optimization.completed", {
+			job_id: job.id,
+			duration_ms: Math.round(performance.now() - startedAt),
+		});
 	} catch (cause) {
+		logger.error("optimization.failed", cause, {
+			job_id: job.id,
+			project_id: job.project_id,
+			prompt_slug: job.prompt_slug,
+			duration_ms: Math.round(performance.now() - startedAt),
+		});
 		try {
 			await d.transition(d.pool(), {
 				id: job.id,
@@ -398,6 +436,15 @@ export function createOptimizationHandlers(
 					budget: body.budget as { max_metric_calls: number },
 				});
 				const job = await d.create(d.pool(), { ...body, actor: actor(c) });
+				logger.info("optimization.accepted", {
+					job_id: job.id,
+					project_id: job.project_id,
+					prompt_slug: job.prompt_slug,
+					source_version: job.source_version,
+					target: job.target,
+					models: body.model_config,
+					budget: body.budget,
+				});
 				void run(job, d);
 				return c.json(job, 202);
 			} catch (cause) {
@@ -442,6 +489,7 @@ export function createOptimizationHandlers(
 						.project_id,
 					id: (c.req.valid("param") as { id: string }).id,
 				});
+				logger.info("optimization.stop_requested", { job_id: job.id });
 				activeWorkers.get(job.id)?.abort();
 				return c.json(job);
 			} catch (cause) {
