@@ -52,7 +52,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Prompt optimization job** — a project-scoped GEPA request that pins a source prompt version, target message role, evaluator/examples, worker model configuration, and budget. Its immutable source-message snapshot supports historical-version publication; `worker_claim_id` with `worker_lease_expires_at` gives one API replica temporary execution ownership and allows recovery after a replica crash. It publishes at most one new immutable prompt version and exposes only lifecycle metadata through its SSE stream. See `apps/api/src/routes/prompt-optimizations.ts`.
 - **Dataset** — collection of `dataset_item`s, scoped to a Project. API: `/v1/datasets`.
 - **Dataset item** — one JSON input/reference pair in a Dataset. Optional `source_trace_id` and `source_observation_id` preserve the production trace origin for regression workflows. API: `/v1/datasets/{id}/items`.
-- **Experiment** — project-scoped evaluation run over a Dataset. It invokes the configured OpenAI-compatible LLM, stores one result per Dataset item, scores with `exact_match` or `contains`, and emits one OTLP trace per item. API: `/v1/experiments`.
+- **Experiment** — project-scoped evaluation run over a Dataset. It invokes either the configured OpenAI-compatible LLM or the development Codex-compatible CLI (`provider: "codex_cli"`), stores one result per Dataset item, scores with `exact_match` or `contains`, and emits one OTLP trace per item. API: `/v1/experiments`.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 
 ## Storage roles

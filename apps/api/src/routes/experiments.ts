@@ -11,10 +11,11 @@ import {
 	listExperiments as listExperimentsRecord,
 	updateExperiment,
 } from "../db/experiments.js";
-import { listDatasetItems } from "../db/datasets.js";
+import { getDataset, listDatasetItems } from "../db/datasets.js";
 import { createOtlpIngestHandler } from "./otlp.js";
 import { invokeConfiguredLlm } from "../lib/llm.js";
 import { scoreCase } from "../lib/evaluator.js";
+import { logger } from "../lib/logger.js";
 import {
 	Experiment,
 	ExperimentCreate,
@@ -166,6 +167,7 @@ export type ExperimentDependencies = {
 	insertResult: typeof insertExperimentResult;
 	summary: typeof experimentSummaryRecord;
 	listDatasetItems: typeof listDatasetItems;
+	getDataset: typeof getDataset;
 	invokeLlm: typeof invokeConfiguredLlm;
 	trace: (input: {
 		project_id: string;
@@ -189,6 +191,7 @@ const production: ExperimentDependencies = {
 	insertResult: insertExperimentResult,
 	summary: experimentSummaryRecord,
 	listDatasetItems,
+	getDataset,
 	invokeLlm: invokeConfiguredLlm,
 	trace: async (input) => {
 		const traceId = crypto.randomUUID().replaceAll("-", "");
@@ -251,6 +254,8 @@ const production: ExperimentDependencies = {
 	},
 };
 
+const activeExperiments = new Map<string, AbortController>();
+
 export async function executeExperiment(
 	deps: ExperimentDependencies,
 	input: {
@@ -259,6 +264,7 @@ export async function executeExperiment(
 		dataset_id: string;
 		config: Record<string, unknown>;
 	},
+	signal?: AbortSignal,
 ) {
 	const db = deps.pool();
 	await deps.updateExperiment(db, {
@@ -273,9 +279,22 @@ export async function executeExperiment(
 	const evaluator =
 		input.config.evaluator === "contains" ? "contains" : "exact_match";
 	for (const item of dataset.items) {
+		if (signal?.aborted) {
+			await deps.updateExperiment(db, {
+				project_id: input.project_id,
+				id: input.experiment_id,
+				status: "cancelled",
+			});
+			return;
+		}
+		const current = await deps.getExperiment(db, {
+			project_id: input.project_id,
+			id: input.experiment_id,
+		});
+		if (current.status === "cancelled") return;
 		const started = Date.now();
 		try {
-			const llm = await deps.invokeLlm(item.input, input.config);
+			const llm = await deps.invokeLlm(item.input, input.config, signal);
 			const scores = scoreCase(evaluator, item.expected_output, llm.output);
 			const duration_ms = Date.now() - started;
 			await deps.insertResult(db, {
@@ -301,15 +320,60 @@ export async function executeExperiment(
 				// A trace sink outage must not duplicate an already-persisted result.
 			}
 		} catch {
+			if (signal?.aborted) {
+				await deps.updateExperiment(db, {
+					project_id: input.project_id,
+					id: input.experiment_id,
+					status: "cancelled",
+				});
+				return;
+			}
+			const duration_ms = Date.now() - started;
 			await deps.insertResult(db, {
 				experiment_id: input.experiment_id,
 				dataset_item_id: item.id,
 				output: null,
 				scores: { [evaluator]: 0 },
-				duration_ms: Date.now() - started,
+				duration_ms,
 				status: "failed",
 			});
+			try {
+				await deps.trace({
+					project_id: input.project_id,
+					experiment_id: input.experiment_id,
+					item_id: item.id,
+					model:
+						typeof input.config.model === "string"
+							? input.config.model
+							: "configured-model",
+					input: item.input,
+					output: "evaluation_failed",
+					duration_ms,
+				});
+			} catch (traceError) {
+				logger.warn("evaluation.trace_failed", {
+					experiment_id: input.experiment_id,
+					dataset_item_id: item.id,
+					error:
+						traceError instanceof Error
+							? traceError.message
+							: String(traceError),
+				});
+			}
 		}
+	}
+	const final = await deps.getExperiment(db, {
+		project_id: input.project_id,
+		id: input.experiment_id,
+	});
+	if (final.status === "cancelled" || signal?.aborted) {
+		if (final.status !== "cancelled")
+			await deps.updateExperiment(db, {
+				project_id: input.project_id,
+				id: input.experiment_id,
+				status: "cancelled",
+			});
+		return;
 	}
 	await deps.updateExperiment(db, {
 		project_id: input.project_id,
@@ -327,19 +391,36 @@ export function createExperimentHandlers(
 		) => {
 			try {
 				const body = c.req.valid("json");
-				const row = await deps.createExperiment(deps.pool(), body);
-				void executeExperiment(deps, {
+				const db = deps.pool();
+				await deps.getDataset(db, {
 					project_id: body.project_id,
-					experiment_id: row.id,
-					dataset_id: body.dataset_id,
-					config: body.config,
-				}).catch(async () => {
-					await deps.updateExperiment(deps.pool(), {
-						project_id: body.project_id,
-						id: row.id,
-						status: "failed",
-					});
+					id: body.dataset_id,
 				});
+				const row = await deps.createExperiment(db, body);
+				const controller = new AbortController();
+				activeExperiments.set(row.id, controller);
+				void executeExperiment(
+					deps,
+					{
+						project_id: body.project_id,
+						experiment_id: row.id,
+						dataset_id: body.dataset_id,
+						config: body.config,
+					},
+					controller.signal,
+				)
+					.catch(async (cause) => {
+						logger.error("evaluation.failed", cause, {
+							experiment_id: row.id,
+							project_id: body.project_id,
+						});
+						await deps.updateExperiment(deps.pool(), {
+							project_id: body.project_id,
+							id: row.id,
+							status: controller.signal.aborted ? "cancelled" : "failed",
+						});
+					})
+					.finally(() => activeExperiments.delete(row.id));
 				return c.json(row, 201);
 			} catch (cause) {
 				return errorResponse(c, cause);
@@ -405,10 +486,13 @@ export function createExperimentHandlers(
 			c: Parameters<RouteHandler<typeof cancelExperiment>>[0],
 		) => {
 			try {
+				const id = c.req.valid("param").id;
+				const project_id = c.req.valid("query").project_id;
+				activeExperiments.get(id)?.abort();
 				return c.json(
 					await deps.updateExperiment(deps.pool(), {
-						id: c.req.valid("param").id,
-						project_id: c.req.valid("query").project_id,
+						id,
+						project_id,
 						status: "cancelled",
 					}),
 				);
@@ -422,29 +506,40 @@ export function createExperimentHandlers(
 			try {
 				const params = c.req.valid("param");
 				const query = c.req.valid("query");
+				let cancelStream = () => {};
 				const stream = new ReadableStream({
 					start(controller) {
 						let timer: ReturnType<typeof setInterval> | undefined;
+						let closed = false;
+						const close = () => {
+							if (closed) return;
+							closed = true;
+							if (timer) clearInterval(timer);
+							controller.close();
+						};
+						cancelStream = close;
 						const tick = async () => {
+							if (closed) return;
 							try {
 								const row = await deps.getExperiment(deps.pool(), {
 									id: params.id,
 									project_id: query.project_id,
 								});
+								if (closed) return;
 								controller.enqueue(
-									`event: experiment\ndata: ${JSON.stringify(row)}\n\n`,
+									`event: experiment\\ndata: ${JSON.stringify(row)}\\n\\n`,
 								);
-								if (["completed", "failed", "cancelled"].includes(row.status)) {
-									if (timer) clearInterval(timer);
-									controller.close();
-								}
+								if (["completed", "failed", "cancelled"].includes(row.status))
+									close();
 							} catch {
-								if (timer) clearInterval(timer);
-								controller.close();
+								close();
 							}
 						};
-						void tick();
 						timer = setInterval(() => void tick(), 500);
+						void tick();
+					},
+					cancel() {
+						cancelStream();
 					},
 				});
 				return new Response(stream, {

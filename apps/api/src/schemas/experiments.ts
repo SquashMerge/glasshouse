@@ -86,4 +86,12 @@ export const ExperimentErrorResponses = {
 		description: "Experiment not found",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
+	409: {
+		description: "Experiment conflict",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	500: {
+		description: "Internal server error",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
 };

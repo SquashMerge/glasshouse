@@ -45,6 +45,8 @@ describe("evaluation MVP", () => {
 		const traces: unknown[] = [];
 		const deps = {
 			pool: () => ({}) as never,
+			getExperiment: async () => ({ status: "running" }),
+			getDataset: async () => ({ id: datasetId }),
 			updateExperiment: async (_db: unknown, input: { status: string }) => {
 				statuses.push(input.status);
 				return {} as never;
@@ -88,5 +90,96 @@ describe("evaluation MVP", () => {
 		expect((results[0] as { scores: Record<string, number> }).scores).toEqual({
 			contains: 1,
 		});
+	});
+
+	it("emits a failure trace when an LLM call fails", async () => {
+		const results: unknown[] = [];
+		const traces: unknown[] = [];
+		const deps = {
+			pool: () => ({}) as never,
+			getExperiment: async () => ({ status: "running" }),
+			getDataset: async () => ({ id: datasetId }),
+			updateExperiment: async () => ({}) as never,
+			listDatasetItems: async () => ({
+				items: [
+					{
+						id: "44444444-4444-4444-8444-444444444444",
+						input: { question: "one" },
+						expected_output: null,
+					},
+				],
+			}),
+			invokeLlm: async () => {
+				throw new Error("provider unavailable");
+			},
+			insertResult: async (_db: unknown, input: unknown) => {
+				results.push(input);
+				return {} as never;
+			},
+			trace: async (input: unknown) => {
+				traces.push(input);
+			},
+		} as unknown as ExperimentDependencies;
+		await executeExperiment(deps, {
+			project_id: projectId,
+			experiment_id: experimentId,
+			dataset_id: datasetId,
+			config: baseExperiment.config,
+		});
+		expect(results).toHaveLength(1);
+		expect(traces).toHaveLength(1);
+		expect((traces[0] as { output: string }).output).toBe("evaluation_failed");
+	});
+
+	it("stops before the first item when cancellation is already requested", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const statuses: string[] = [];
+		let invoked = false;
+		const deps = {
+			pool: () => ({}) as never,
+			getExperiment: async () => ({ status: "running" }),
+			getDataset: async () => ({
+				id: datasetId,
+				items: [
+					{
+						id: "44444444-4444-4444-8444-444444444444",
+						input: {},
+						expected_output: null,
+					},
+				],
+			}),
+			listDatasetItems: async () => ({
+				items: [
+					{
+						id: "44444444-4444-4444-8444-444444444444",
+						input: {},
+						expected_output: null,
+					},
+				],
+			}),
+			updateExperiment: async (_db: unknown, input: { status: string }) => {
+				statuses.push(input.status);
+				return {} as never;
+			},
+			invokeLlm: async () => {
+				invoked = true;
+				return { output: {}, model: "test" };
+			},
+			insertResult: async () => ({}) as never,
+			trace: async () => {},
+		} as unknown as ExperimentDependencies;
+		await executeExperiment(
+			deps,
+			{
+				project_id: projectId,
+				experiment_id: experimentId,
+				dataset_id: datasetId,
+				config: baseExperiment.config,
+			},
+			controller.signal,
+		);
+		expect(invoked).toBe(false);
+		expect(statuses).toEqual(["running", "cancelled"]);
 	});
 });
