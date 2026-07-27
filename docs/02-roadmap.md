@@ -15,7 +15,7 @@
 
 ## Current product state and next sequence
 
-The foundation, OTLP trace viewer, prompt management, and first GEPA optimization workflow are now implemented. The repository still exposes intentional `501` stubs for agents, datasets, experiments, and scores; those are product-completeness gaps, not runtime regressions.
+The foundation, OTLP trace viewer, prompt management, first GEPA optimization workflow, and project-scoped dataset persistence are now implemented. The repository still exposes intentional `501` stubs for agents, experiments, and scores; those are product-completeness gaps, not runtime regressions.
 
 The next sequence is deliberately narrower than the original calendar-based MVP plan:
 
