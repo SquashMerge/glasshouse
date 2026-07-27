@@ -11,7 +11,18 @@ function removePersistedCredentials(): void {
 		window.localStorage.removeItem(KEY_USERNAME);
 		window.localStorage.removeItem(KEY_PASSWORD);
 	} catch {
-		// Ignore storage access errors and rely on the in-memory session.
+		// Ignore storage access errors and rely on the current page session.
+	}
+}
+
+function readSessionCredentials(): Credentials | null {
+	if (typeof window === "undefined") return null;
+	try {
+		const username = window.sessionStorage.getItem(KEY_USERNAME);
+		const password = window.sessionStorage.getItem(KEY_PASSWORD);
+		return username && password ? { username, password } : null;
+	} catch {
+		return null;
 	}
 }
 
@@ -19,17 +30,30 @@ if (typeof window !== "undefined") removePersistedCredentials();
 
 export function setCredentials(username: string, password: string): void {
 	credentials = { username, password };
+	try {
+		window.sessionStorage.setItem(KEY_USERNAME, username);
+		window.sessionStorage.setItem(KEY_PASSWORD, password);
+	} catch {
+		// Keep the credentials in memory if session storage is unavailable.
+	}
 	removePersistedCredentials();
 }
 
 export function clearCredentials(): void {
 	credentials = null;
+	try {
+		window.sessionStorage.removeItem(KEY_USERNAME);
+		window.sessionStorage.removeItem(KEY_PASSWORD);
+	} catch {
+		// Ignore storage access errors and rely on the in-memory session.
+	}
 	removePersistedCredentials();
 }
 
 export function getCredentials(): Credentials | null {
 	if (typeof window === "undefined") return null;
 	removePersistedCredentials();
+	credentials ??= readSessionCredentials();
 	return credentials;
 }
 

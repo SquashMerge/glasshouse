@@ -8,21 +8,23 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 	const [ready, setReady] = React.useState(false);
 
 	React.useEffect(() => {
+		// The protected layout route is pathless and can remain mounted while
+		// navigating to the public login route. Never redirect the login page to
+		// itself when there is no active session.
+		if (location.pathname === "/login") {
+			setReady(true);
+			return;
+		}
+
 		const creds = getCredentials();
 		if (!creds) {
-			navigate({
-				to: "/login",
-				search: { redirect: `${location.pathname}${location.searchStr}` },
-			});
+			navigate({ to: "/login" });
 		} else {
 			setReady(true);
 		}
 
 		const off = onAuthInvalid(() => {
-			navigate({
-				to: "/login",
-				search: { redirect: `${location.pathname}${location.searchStr}` },
-			});
+			navigate({ to: "/login" });
 		});
 		return off;
 	}, [location.pathname, location.searchStr, navigate]);
