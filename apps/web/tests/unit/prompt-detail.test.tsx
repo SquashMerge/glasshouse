@@ -271,7 +271,7 @@ describe("PromptDetailPage", () => {
 		});
 	});
 
-	it("requires an explicit stop confirmation before entering the editor while optimization is active", async () => {
+	it("disables prompt actions while optimization is active", async () => {
 		getActivePromptOptimization.mockResolvedValue({
 			id: "11111111-1111-4111-8111-111111111111",
 			status: "optimizing",
@@ -280,68 +280,20 @@ describe("PromptDetailPage", () => {
 		});
 		renderDetail();
 
-		fireEvent.click(await screen.findByRole("button", { name: "New version" }));
 		expect(
-			await screen.findByText("Stop optimization before editing?"),
-		).toBeInTheDocument();
+			await screen.findByRole("button", { name: "New version" }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Optimize prompt" }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Rollback latest version" }),
+		).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+		for (const versionButton of screen.getAllByTestId("prompt-version")) {
+			expect(versionButton).toBeDisabled();
+		}
 		expect(router.navigate).not.toHaveBeenCalled();
-	});
-
-	it("keeps the stop dialog open and visible when stopping optimization is rejected", async () => {
-		getActivePromptOptimization.mockResolvedValue({
-			id: "11111111-1111-4111-8111-111111111111",
-			status: "optimizing",
-			result_version: null,
-			error_message: null,
-		});
-		stopPromptOptimization.mockRejectedValueOnce(new Error("Stop failed"));
-		renderDetail();
-
-		fireEvent.click(await screen.findByRole("button", { name: "New version" }));
-		fireEvent.click(screen.getByRole("button", { name: "Stop and continue" }));
-
-		expect(await screen.findByRole("alert")).toHaveTextContent("Stop failed");
-		expect(router.navigate).not.toHaveBeenCalled();
-	});
-
-	it("submits stop once and navigates only after the stopped response", async () => {
-		getActivePromptOptimization.mockResolvedValue({
-			id: "11111111-1111-4111-8111-111111111111",
-			status: "optimizing",
-			result_version: null,
-			error_message: null,
-		});
-		let resolveStop: (value: unknown) => void = () => {};
-		stopPromptOptimization.mockReturnValueOnce(
-			new Promise((resolve) => {
-				resolveStop = resolve;
-			}),
-		);
-		renderDetail();
-
-		fireEvent.click(await screen.findByRole("button", { name: "New version" }));
-		const confirm = screen.getByRole("button", { name: "Stop and continue" });
-		fireEvent.click(confirm);
-		fireEvent.click(confirm);
-		await waitFor(() =>
-			expect(stopPromptOptimization).toHaveBeenCalledTimes(1),
-		);
-		expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
-		expect(router.navigate).not.toHaveBeenCalled();
-
-		resolveStop({
-			id: "11111111-1111-4111-8111-111111111111",
-			status: "stopped",
-			result_version: null,
-			error_message: null,
-		});
-		await waitFor(() =>
-			expect(router.navigate).toHaveBeenCalledWith({
-				to: "/prompts/$slug/edit",
-				params: { slug: "support-agent" },
-				search: { from: 3 },
-			}),
-		);
 	});
 
 	it("opens one optimization dialog with a single target radio group and useful input placeholders", async () => {
