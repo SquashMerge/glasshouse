@@ -181,7 +181,7 @@ export type ExperimentDependencies = {
 };
 
 const traceResult = createOtlpIngestHandler();
-const production: ExperimentDependencies = {
+export const production: ExperimentDependencies = {
 	pool: pgPool,
 	createExperiment: createExperimentRecord,
 	listExperiments: listExperimentsRecord,
