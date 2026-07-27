@@ -39,6 +39,15 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 - Before merging a migration, verify the migration is included in the production image, `make db-migrate` reaches the same `apps/api` script used in deployment, and startup still waits for healthy PostgreSQL before applying it.
 - Keep ClickHouse schema changes separate under `infra/db/clickhouse/`; they are not PostgreSQL migrations and are applied by `make ch-schema`.
 
+## Observability and logging
+
+- Use the structured logger in `apps/api/src/lib/logger.ts` for new API logs; do not add ad hoc `console.log` calls. Logs are JSON lines with `time`, `level`, `event`, and safe structured fields.
+- `LOG_LEVEL` defaults to `info`; use `debug` temporarily for health checks and low-level coordination events. Normal request completion is `info`, rejected requests are `warn`, and server/worker failures are `error`.
+- The request middleware assigns or propagates `x-request-id` and logs method, path, status, and duration. Keep health-check logging at `debug` to avoid flooding normal logs.
+- Optimization lifecycle events must remain observable: accepted, claimed, preparing, worker_started, worker_completed, completed, failed, and stop_requested. Include job/project identifiers and timings, but never prompt content, examples, credentials, raw CLI output, or provider payloads.
+- Worker stderr must be consumed and logged in bounded form at the API boundary. Keep diagnostics out of job records and SSE responses; the user-facing error should remain sanitized.
+- When debugging a background failure, first check the API process log for the `optimization.*` event sequence and the `[gepa-worker]` diagnostic, then inspect the job status/event endpoint. Add or improve instrumentation before guessing at a fix.
+
 ## GEPA and local CLI development
 
 - GEPA optimization has two model roles (`task_lm` and `reflection_lm`), explicit examples, and a bounded `max_metric_calls` budget. The UI must collect real evaluation input/answer data; never restore fabricated placeholders.
