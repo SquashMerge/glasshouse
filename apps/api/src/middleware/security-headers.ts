@@ -1,7 +1,10 @@
-// TODO(post-MVP): add Strict-Transport-Security, Content-Security-Policy,
-// Cross-Origin-Opener-Policy, Cross-Origin-Resource-Policy at the edge proxy.
-
 import type { MiddlewareHandler } from "hono";
+
+const API_CONTENT_SECURITY_POLICY =
+	"default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// Scalar's reference page may load configurable external assets.
+const REFERENCE_CONTENT_SECURITY_POLICY =
+	"base-uri 'self'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
 
 const PERMISSIONS_POLICY = [
 	"accelerometer=()",
@@ -41,5 +44,13 @@ export function securityHeaders(): MiddlewareHandler {
 		c.header("Referrer-Policy", "no-referrer");
 		c.header("Permissions-Policy", PERMISSIONS_POLICY);
 		c.header("X-DNS-Prefetch-Control", "off");
+		c.header(
+			"Content-Security-Policy",
+			c.req.path === "/reference"
+				? REFERENCE_CONTENT_SECURITY_POLICY
+				: API_CONTENT_SECURITY_POLICY,
+		);
+		c.header("Cross-Origin-Opener-Policy", "same-origin");
+		c.header("Cross-Origin-Resource-Policy", "same-origin");
 	};
 }

@@ -206,9 +206,8 @@ BEGIN
         NULL;
     END;
 
-    IF (SELECT messages->0->>'role' FROM prompt_versions
-        WHERE prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001' AND version = 1) <> 'user' THEN
-        RAISE EXCEPTION 'canonical prompt message role was not preserved';
+    IF (SELECT role FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'user' THEN
+        RAISE EXCEPTION 'prompt role was not derived from canonical message role';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -256,6 +255,23 @@ BEGIN
         ) VALUES (
             'aaaaaaaa-0000-0000-0000-000000000001',
             5,
+            'Mismatched role',
+            '{}',
+            '[{"role":"system","content":"Mismatched role"}]',
+            '{}',
+            'not-a-hash',
+            'migration-test'
+        );
+        RAISE EXCEPTION 'prompt version role mismatch was accepted';
+    EXCEPTION WHEN check_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO prompt_versions (
+            prompt_id, version, content, metadata, messages, settings, content_hash, created_by
+        ) VALUES (
+            'aaaaaaaa-0000-0000-0000-000000000001',
+            6,
             'Missing role',
             '{}',
             '[{"content":"Missing role"}]',
@@ -272,7 +288,7 @@ BEGIN
             prompt_id, version, content, metadata, messages, settings, content_hash, created_by
         ) VALUES (
             'aaaaaaaa-0000-0000-0000-000000000001',
-            6,
+            7,
             'Missing content',
             '{}',
             '[{"role":"user"}]',
