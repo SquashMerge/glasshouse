@@ -27,6 +27,9 @@ class DevCliLlmTests(unittest.TestCase):
             "elif mode == 'timeout-child':\n"
             f"    child = subprocess.Popen([{sys.executable!r}, '-c', 'import time; time.sleep(10)'])\n"
             "    pathlib.Path(sys.argv[2]).write_text(str(child.pid)); time.sleep(10)\n"
+            "elif mode == 'orphan-child':\n"
+            f"    child = subprocess.Popen([{sys.executable!r}, '-c', 'import time; time.sleep(10)'])\n"
+            "    pathlib.Path(sys.argv[2]).write_text(str(child.pid))\n"
         )
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
         return script
@@ -50,6 +53,26 @@ class DevCliLlmTests(unittest.TestCase):
             child_pid = Path(directory) / "child.pid"
             environment = {
                 "ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "timeout-child", "{child_pid}"]',
+                "ASTRAEA_DEV_LLM_TIMEOUT_SECONDS": "1",
+            }
+            started_at = time.monotonic()
+            with patch.dict(os.environ, environment, clear=True):
+                with self.assertRaisesRegex(DevCliLlmError, "timed out"):
+                    run_dev_cli("hello", "model")
+            self.assertLess(time.monotonic() - started_at, 3)
+            pid = int(child_pid.read_text())
+            for _ in range(20):
+                if not Path(f"/proc/{pid}").exists():
+                    break
+                time.sleep(0.05)
+            self.assertFalse(Path(f"/proc/{pid}").exists())
+
+    def test_timeout_kills_child_when_cli_parent_exits_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cli = self.fake_cli(directory)
+            child_pid = Path(directory) / "child.pid"
+            environment = {
+                "ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "orphan-child", "{child_pid}"]',
                 "ASTRAEA_DEV_LLM_TIMEOUT_SECONDS": "1",
             }
             started_at = time.monotonic()

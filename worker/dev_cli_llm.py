@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 300
@@ -87,20 +88,29 @@ def run_dev_cli(prompt, model):
 
     writer = threading.Thread(target=write_stdin)
     reader = threading.Thread(target=read_stdout)
+    deadline = time.monotonic() + timeout
     writer.start()
     reader.start()
+    timed_out = False
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired as error:
+        process.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
         stop_process_group()
         process.wait()
-        raise DevCliLlmError("development CLI timed out") from error
+        timed_out = True
     finally:
-        writer.join()
-        reader.join()
+        for thread in (writer, reader):
+            thread.join(max(0, deadline - time.monotonic()))
+            if thread.is_alive():
+                stop_process_group()
+                process.wait()
+                thread.join()
+                timed_out = True
         if process.stdout:
             process.stdout.close()
 
+    if timed_out:
+        raise DevCliLlmError("development CLI timed out")
     if output_exceeded.is_set():
         raise DevCliLlmError("development CLI output exceeded size limit")
     if process.returncode:
