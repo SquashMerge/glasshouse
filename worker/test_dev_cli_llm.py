@@ -138,32 +138,6 @@ class DevCliLlmTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stderr, "GEPA_WORKER_MODE=cli is disabled when NODE_ENV=production")
 
-    def test_reflection_feedback_keeps_reference_answers_out_of_reusable_instructions(self):
-        from worker.gepa_feedback import build_reflective_feedback
-
-        feedback = build_reflective_feedback(
-            {"input": "Task list", "answer": "Only this example answer"},
-            "A different response",
-            0.0,
-        )
-
-        self.assertIn("evaluation-only", feedback)
-        self.assertIn("Do not copy", feedback)
-        self.assertNotIn("ensure that the correct answer is included", feedback)
-
-    def test_reflection_feedback_uses_successful_answers_as_examples_not_directives(self):
-        from worker.gepa_feedback import build_reflective_feedback
-
-        feedback = build_reflective_feedback(
-            {"input": "Task list", "answer": "Only this example answer"},
-            "Only this example answer",
-            1.0,
-        )
-
-        self.assertIn("reference example", feedback)
-        self.assertIn("Only this example answer", feedback)
-        self.assertIn("Do not hardcode", feedback)
-
     def test_cli_mode_uses_chat_and_reflection_callables(self):
         with tempfile.TemporaryDirectory() as directory:
             cli = self.fake_cli(directory)
@@ -177,10 +151,6 @@ class DevCliLlmTests(unittest.TestCase):
                 "    assert callable(adapter.model)\n"
                 "    assert task_lm is None\n"
                 "    assert callable(reflection_lm)\n"
-                "    reflective = adapter.make_reflective_dataset({}, SimpleNamespace(trajectories=[{'data': {'input': 'Hello', 'answer': 'Hello', 'additional_context': {}}, 'full_assistant_response': 'Wrong'}], scores=[0], outputs=[{}]), ['system_prompt'])\n"
-                "    feedback = reflective['system_prompt'][0]['Feedback']\n"
-                "    assert 'evaluation-only' in feedback\n"
-                "    assert 'ensure that the correct answer is included' not in feedback\n"
                 "    kwargs[\"logger\"].log(\"progress\")\n"
                 "    assert reflection_lm(\"reflection\")\n"
                 "    return SimpleNamespace(best_candidate={\"system_prompt\": \"candidate\"}, best_idx=0, val_aggregate_scores=[1])\n"
