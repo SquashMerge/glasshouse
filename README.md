@@ -236,7 +236,7 @@ The repo's `.gitattributes` enforces `eol=lf` for `*.sh`, `Makefile`, and all so
 
 **`bun` plugin install fails with `unzip: command not found`** — install unzip (`apt-get install unzip` on Debian/Ubuntu, `brew install unzip` on macOS), then `make setup-tools` again.
 
-**`docker compose ... lstat .../infra/apps: no such file or directory`** — older commits used `context: .` in `infra/compose.yaml` which resolved to the compose file's directory; pull the latest commit (≥ `2d585a0`) which uses `context: ..`. If you can't pull, patch compose.yaml manually: change `context: .` to `context: ..` under both `api` and `web` build blocks.
+**`docker compose ... lstat .../infra/apps: no such file or directory`** — the Compose files are invoked with the repository root as `--project-directory`, so build contexts must be `context: .` and Dockerfiles remain `apps/api/Dockerfile` / `apps/web/Dockerfile`. Pull the latest commit if your checkout still uses `context: ..`.
 
 **`asdf plugin add nodejs` fails** — `make setup-tools` first tries asdf's plugin index and then falls back to the official `https://github.com/asdf-vm/asdf-nodejs.git` repository. If both fail, verify that git can reach GitHub and retry.
 
