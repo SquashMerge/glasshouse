@@ -174,17 +174,35 @@ The current UI exposes model names and the metric-call budget, but not provider 
 
 #### Development-only local CLI authentication
 
-For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenticated LLM CLI instead of a provider API key. For example, install and authenticate the OpenAI Codex CLI on the developer machine:
+For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenticated LLM CLI instead of a provider API key. The complete Codex setup is:
 
-```sh
-npm install -g @openai/codex
-codex login
-export GEPA_WORKER_MODE=cli
-export GEPA_ALLOWED_MODELS=gpt-5.3-codex
-export ASTRAEA_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
-```
+1. Install and authenticate Codex on the **same host where the Astraea API runs**:
 
-Start the API directly in this shell (for example, `bun --filter @astraea/api dev`). The `{model}` placeholder is replaced only within argv elements; Astraea sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
+   ```sh
+   npm install -g @openai/codex
+   codex login
+   # If your CLI opens the interactive sign-in flow instead, run `codex`
+   # and choose “Sign in with ChatGPT”.
+   ```
+
+2. Add the development settings to the gitignored `infra/.env` file:
+
+   ```env
+   GEPA_WORKER_MODE=cli
+   GEPA_ALLOWED_MODELS=gpt-5.3-codex
+   ASTRAEA_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
+   ```
+
+3. Start the local data services and backend:
+
+   ```sh
+   make deps-up
+   make dev-backend
+   ```
+
+4. In the GEPA optimization dialog, enter `gpt-5.3-codex` for both the task model and reflection model. The value must be present in `GEPA_ALLOWED_MODELS`.
+
+The `{model}` placeholder is replaced only within argv elements; Astraea sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
 
 Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Astraea. This mode is development-only: it is rejected when `NODE_ENV=production` unless `ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION=true` is explicitly set. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `ASTRAEA_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 300) and `ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
 
