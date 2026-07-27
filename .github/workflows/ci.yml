@@ -82,7 +82,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Chromium
-        run: bunx playwright install --with-deps chromium
+        run: cd apps/web && bunx --no-install playwright install --with-deps chromium
 
       - name: Configure deterministic CI environment
         run: |
