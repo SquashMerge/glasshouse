@@ -64,7 +64,7 @@ DAY 0────30────60────90────120───180
 |---|---|---|---|
 | OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; remaining agent/dataset/experiment/score stubs + `/openapi.json`) |
 | Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI | ✅ Shipped (`Bun.serve()` + Scalar at `/reference`) |
-| Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (7 idempotent migrations; 10 tables) |
+| Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (15 idempotent migrations; current schema includes prompt-optimization tables) |
 | ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
 | Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis instance, persistent volume | ✅ Shipped as Valkey 8 (open-source Redis fork; wire-compatible — `ioredis` clients unchanged). AOF + named volume; BullMQ consumers deferred to a later phase. |
 | React 19 + Vite + TanStack scaffold | Frontend | `npm create vite`, Tailwind, Shadcn/UI, openapi-fetch + openapi-typescript wired | ✅ Shipped (Vite + TanStack Router + Tailwind 3.4 + Shadcn-style; typed client wired in a later slice) |
@@ -83,6 +83,8 @@ DAY 0────30────60────90────120───180
 | OTel env-var integration | DevEx | Docs: "set OTEL_EXPORTER_OTLP_ENDPOINT, you're tracing" |
 
 ### Week 3 — Agent + Experiment (Days 15–21)
+
+> **Superseded planning detail:** this original calendar slice is retained as historical context. The authoritative implementation sequence is the P0/P1/P2/P3 sequence above; the phase-demo claims below are target-state planning, not shipped functionality.
 
 | Task | Owner | Deliverable |
 |---|---|---|
