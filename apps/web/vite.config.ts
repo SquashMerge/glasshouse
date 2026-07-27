@@ -40,7 +40,19 @@ const developmentSecurityHeaders = {
  * `x-accel-buffering: no` so the same proxy config works behind a
  * production nginx reverse proxy without further changes.
  */
-function configureProxyForSSE(proxy: import("http-proxy").HttpProxy): void {
+type ProxyResponse = {
+  headers: Record<string, string | string[] | undefined>;
+  socket: {
+    setNoDelay?: (n: boolean) => void;
+    setTimeout?: (n: number) => void;
+  } | null;
+};
+
+type HttpProxyLike = {
+  on: (event: "proxyRes", listener: (proxyRes: ProxyResponse) => void) => void;
+};
+
+function configureProxyForSSE(proxy: HttpProxyLike): void {
   proxy.on("proxyRes", (proxyRes) => {
     const contentType = proxyRes.headers["content-type"] ?? "";
     if (typeof contentType === "string" && contentType.includes("text/event-stream")) {
