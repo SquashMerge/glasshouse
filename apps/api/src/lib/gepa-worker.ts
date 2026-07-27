@@ -10,6 +10,7 @@ export type GepaWorkerInput = {
 export type GepaWorkerResult = { candidate: string; score?: number };
 export const MAX_OPTIMIZATION_CANDIDATE_BYTES = 64 * 1024;
 const MAX_WORKER_OUTPUT_BYTES = MAX_OPTIMIZATION_CANDIDATE_BYTES + 1024;
+const MAX_WORKER_DIAGNOSTIC_BYTES = 16 * 1024;
 export type GepaWorker = (
 	input: GepaWorkerInput,
 	signal: AbortSignal,
@@ -34,12 +35,19 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 			},
 		},
 	);
-	const [stdout, exitCode] = await Promise.all([
+	const [stdout, stderr, exitCode] = await Promise.all([
 		readWorkerOutput(child.stdout),
+		readWorkerOutput(child.stderr, MAX_WORKER_DIAGNOSTIC_BYTES),
 		child.exited,
 	]);
-	// Worker stderr can contain provider diagnostics; never surface it through jobs or SSE.
-	if (exitCode !== 0) throw new Error("GEPA worker failed");
+	if (exitCode !== 0) {
+		const diagnostic = stderr.trim();
+		console.error(
+			`[gepa-worker] exited with code ${exitCode}${diagnostic ? `: ${diagnostic}` : ""}`,
+		);
+		// Worker diagnostics stay in server logs; never surface them through jobs or SSE.
+		throw new Error("GEPA worker failed");
+	}
 	try {
 		const result = JSON.parse(stdout) as GepaWorkerResult;
 		if (
@@ -57,6 +65,7 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 
 export async function readWorkerOutput(
 	stream: ReadableStream<Uint8Array>,
+	maxBytes = MAX_WORKER_OUTPUT_BYTES,
 ): Promise<string> {
 	const reader = stream.getReader();
 	const chunks: Uint8Array[] = [];
@@ -66,7 +75,7 @@ export async function readWorkerOutput(
 			const next = await reader.read();
 			if (next.done) break;
 			size += next.value.byteLength;
-			if (size > MAX_WORKER_OUTPUT_BYTES) {
+			if (size > maxBytes) {
 				await reader.cancel();
 				throw new Error("GEPA worker output exceeded size limit");
 			}
