@@ -102,8 +102,16 @@ export function LoginPage() {
 	);
 }
 
-function safeRedirect(value: string | null): string {
-	return value && value.startsWith("/") && !value.startsWith("//")
-		? value
-		: "/";
+export function safeRedirect(value: string | null): string {
+	if (!value || !value.startsWith("/") || value.startsWith("//")) {
+		return "/";
+	}
+
+	// A stale auth redirect can itself point at /login, which would send a
+	// successful login back into the same redirect chain forever.
+	if (new URL(value, "http://astraea.local").pathname === "/login") {
+		return "/";
+	}
+
+	return value;
 }
