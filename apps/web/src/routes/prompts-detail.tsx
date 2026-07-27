@@ -232,22 +232,21 @@ export function PromptDetailPage() {
 					>
 						New version
 					</Button>
-					{prompt.messages.some((message) => message.role === "system") && (
+					{prompt.messages.some(
+						(message) => message.role === "system" || message.role === "user",
+					) && (
 						<Button
 							variant="outline"
-							onClick={() => setOptimizeTarget("system")}
+							onClick={() =>
+								setOptimizeTarget(
+									prompt.messages.some((message) => message.role === "system")
+										? "system"
+										: "user",
+								)
+							}
 							disabled={optimizationActive}
 						>
-							Optimize system
-						</Button>
-					)}
-					{prompt.messages.some((message) => message.role === "user") && (
-						<Button
-							variant="outline"
-							onClick={() => setOptimizeTarget("user")}
-							disabled={optimizationActive}
-						>
-							Optimize user
+							Optimize prompt
 						</Button>
 					)}
 					<Button
@@ -346,6 +345,9 @@ export function PromptDetailPage() {
 			{optimizeTarget && (
 				<OptimizationConfirmDialog
 					target={optimizeTarget}
+					hasSystem={prompt.messages.some((message) => message.role === "system")}
+					hasUser={prompt.messages.some((message) => message.role === "user")}
+					onTargetChange={setOptimizeTarget}
 					pending={optimizeMutation.isPending}
 					error={
 						optimizeMutation.error instanceof Error
@@ -397,12 +399,18 @@ export function PromptDetailPage() {
 
 function OptimizationConfirmDialog({
 	target,
+	hasSystem,
+	hasUser,
+	onTargetChange,
 	pending,
 	error,
 	onClose,
 	onConfirm,
 }: {
 	target: "system" | "user";
+	hasSystem: boolean;
+	hasUser: boolean;
+	onTargetChange: (target: "system" | "user") => void;
 	pending: boolean;
 	error: string | null;
 	onClose: () => void;
@@ -436,18 +444,49 @@ function OptimizationConfirmDialog({
 				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
 			>
 				<h2 id="optimization-title" className="text-lg font-semibold">
-					Start optimization?
+					Start optimization
 				</h2>
 				<p className="mt-3 text-sm text-muted-foreground">
-					Use GEPA's explicit default evaluator with a representative input and
-					expected answer. The {target} text and evaluation configuration are
-					pinned.
+					GEPA optimizes one prompt role per run. Choose the role to optimize,
+					then provide a representative input and expected answer.
 				</p>
 				<div className="mt-4 space-y-3">
+					<fieldset>
+						<legend className="text-sm font-medium">Prompt role</legend>
+						<div className="mt-2 flex gap-4">
+							{hasSystem && (
+								<label className="flex items-center gap-2 text-sm">
+									<input
+										type="radio"
+										name="optimization-target"
+										value="system"
+										checked={target === "system"}
+										onChange={() => onTargetChange("system")}
+										disabled={pending}
+									/>
+									System prompt
+								</label>
+							)}
+							{hasUser && (
+								<label className="flex items-center gap-2 text-sm">
+									<input
+										type="radio"
+										name="optimization-target"
+										value="user"
+										checked={target === "user"}
+										onChange={() => onTargetChange("user")}
+										disabled={pending}
+									/>
+									User prompt
+								</label>
+							)}
+						</div>
+					</fieldset>
 					<label className="block text-sm font-medium">
 						Representative input
 						<textarea
 							className="mt-1 min-h-20 w-full rounded-md border p-2"
+							placeholder="e.g. A customer asks how to reset their password"
 							value={exampleInput}
 							onChange={(event) => setExampleInput(event.target.value)}
 						/>
@@ -456,6 +495,7 @@ function OptimizationConfirmDialog({
 						Expected answer
 						<textarea
 							className="mt-1 min-h-20 w-full rounded-md border p-2"
+							placeholder="e.g. Explain the steps clearly and include the support link"
 							value={exampleAnswer}
 							onChange={(event) => setExampleAnswer(event.target.value)}
 						/>
@@ -463,6 +503,7 @@ function OptimizationConfirmDialog({
 					<label className="block text-sm font-medium">
 						Task model
 						<Input
+							placeholder="e.g. openai/gpt-4o-mini"
 							value={taskModel}
 							onChange={(event) => setTaskModel(event.target.value)}
 						/>
@@ -470,6 +511,7 @@ function OptimizationConfirmDialog({
 					<label className="block text-sm font-medium">
 						Reflection model
 						<Input
+							placeholder="e.g. openai/gpt-4o-mini"
 							value={reflectionModel}
 							onChange={(event) => setReflectionModel(event.target.value)}
 						/>
@@ -479,6 +521,7 @@ function OptimizationConfirmDialog({
 						<Input
 							type="number"
 							min="1"
+							placeholder="e.g. 20"
 							value={maxMetricCalls}
 							onChange={(event) => setMaxMetricCalls(event.target.value)}
 						/>

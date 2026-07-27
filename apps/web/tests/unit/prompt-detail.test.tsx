@@ -258,16 +258,49 @@ describe("PromptDetailPage", () => {
 		);
 	});
 
-	it("optimizes from the selected historical version", async () => {
+	it("opens one optimization dialog with a single target radio group and useful input placeholders", async () => {
+		renderDetail();
+
+		fireEvent.click(await screen.findByRole("button", { name: "Optimize prompt" }));
+		expect(screen.queryByRole("button", { name: "Optimize system" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Optimize user" })).not.toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "Start optimization" })).toBeInTheDocument();
+
+		const systemRadio = screen.getByRole("radio", { name: "System prompt" });
+		const userRadio = screen.getByRole("radio", { name: "User prompt" });
+		expect(systemRadio).toBeChecked();
+		expect(userRadio).not.toBeChecked();
+		expect(screen.getByLabelText("Representative input")).toHaveAttribute(
+			"placeholder",
+			"e.g. A customer asks how to reset their password",
+		);
+		expect(screen.getByLabelText("Expected answer")).toHaveAttribute(
+			"placeholder",
+			"e.g. Explain the steps clearly and include the support link",
+		);
+		expect(screen.getByLabelText("Task model")).toHaveAttribute(
+			"placeholder",
+			"e.g. openai/gpt-4o-mini",
+		);
+		expect(screen.getByLabelText("Reflection model")).toHaveAttribute(
+			"placeholder",
+			"e.g. openai/gpt-4o-mini",
+		);
+		expect(screen.getByLabelText("Metric-call budget")).toHaveAttribute(
+			"placeholder",
+			"e.g. 20",
+		);
+	});
+
+	it("submits the selected historical version and target role", async () => {
 		router.location.searchStr = "?version=2";
 		getPrompt.mockImplementation(({ version }: { version?: number }) =>
 			Promise.resolve(version === 2 ? prompt(2) : prompt()),
 		);
 		renderDetail();
 
-		fireEvent.click(
-			await screen.findByRole("button", { name: "Optimize system" }),
-		);
+		fireEvent.click(await screen.findByRole("button", { name: "Optimize prompt" }));
+		fireEvent.click(screen.getByRole("radio", { name: "User prompt" }));
 		fireEvent.change(screen.getByLabelText("Representative input"), {
 			target: { value: "Question" },
 		});
@@ -284,7 +317,7 @@ describe("PromptDetailPage", () => {
 
 		await waitFor(() =>
 			expect(startPromptOptimization).toHaveBeenCalledWith(
-				expect.objectContaining({ source_version: 2 }),
+				expect.objectContaining({ source_version: 2, target: "user" }),
 			),
 		);
 	});
