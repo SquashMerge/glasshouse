@@ -59,8 +59,13 @@ vi.mock("../../src/lib/api", () => ({
 	deletePrompt,
 	getActivePromptOptimization,
 	getPromptOptimization,
-	promptOptimizationEventsUrl: ({ project_id, id }: { project_id: string; id: string }) =>
-		`/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
+	promptOptimizationEventsUrl: ({
+		project_id,
+		id,
+	}: {
+		project_id: string;
+		id: string;
+	}) => `/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
 	startPromptOptimization,
 	stopPromptOptimization,
 }));
@@ -348,9 +353,7 @@ describe("PromptDetailPage", () => {
 			error_message: null,
 		});
 		renderDetail();
-		await waitFor(() =>
-			expect(getActivePromptOptimization).toHaveBeenCalled(),
-		);
+		await waitFor(() => expect(getActivePromptOptimization).toHaveBeenCalled());
 		sse.onMessage({
 			event: "status",
 			data: { status: "completed" },

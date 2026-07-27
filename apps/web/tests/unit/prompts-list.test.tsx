@@ -3,10 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 
-const {
-	getActivePromptOptimization,
-	listPrompts,
-} = vi.hoisted(() => ({
+const { getActivePromptOptimization, listPrompts } = vi.hoisted(() => ({
 	getActivePromptOptimization: vi.fn(),
 	listPrompts: vi.fn(),
 }));
@@ -33,8 +30,13 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 vi.mock("../../src/lib/api", () => ({
 	getActivePromptOptimization,
 	listPrompts,
-	promptOptimizationEventsUrl: ({ project_id, id }: { project_id: string; id: string }) =>
-		`/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
+	promptOptimizationEventsUrl: ({
+		project_id,
+		id,
+	}: {
+		project_id: string;
+		id: string;
+	}) => `/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
 }));
 vi.mock("../../src/hooks/useEventSource", () => ({
 	useEventSource: () => ({
@@ -121,12 +123,17 @@ describe("PromptsPage", () => {
 			status: "optimizing",
 		});
 		render(
-			<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
 				<PromptsPage />
 			</QueryClientProvider>,
 		);
 
 		const row = await screen.findByTestId("prompt-row");
+		await screen.findByTestId("optimization-spinner");
 		expect(row).toHaveTextContent("Optimizing…");
 		expect(screen.getByTestId("optimization-spinner")).toBeInTheDocument();
 		expect(getActivePromptOptimization).toHaveBeenCalledWith({
