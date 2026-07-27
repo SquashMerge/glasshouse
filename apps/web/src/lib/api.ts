@@ -154,6 +154,10 @@ export interface OptimizationJob {
 		| "failed";
 	result_version: number | null;
 	error_message: string | null;
+	source_version?: number;
+	target?: PromptRole;
+	budget?: { max_metric_calls?: number };
+	created_at?: string;
 }
 
 export interface OptimizationEvent {

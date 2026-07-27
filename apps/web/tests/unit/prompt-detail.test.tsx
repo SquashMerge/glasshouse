@@ -59,8 +59,13 @@ vi.mock("../../src/lib/api", () => ({
 	deletePrompt,
 	getActivePromptOptimization,
 	getPromptOptimization,
-	promptOptimizationEventsUrl: ({ project_id, id }: { project_id: string; id: string }) =>
-		`/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
+	promptOptimizationEventsUrl: ({
+		project_id,
+		id,
+	}: {
+		project_id: string;
+		id: string;
+	}) => `/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
 	startPromptOptimization,
 	stopPromptOptimization,
 }));
@@ -340,18 +345,50 @@ describe("PromptDetailPage", () => {
 			error_message: null,
 		});
 		renderDetail();
-		await waitFor(() =>
-			expect(getActivePromptOptimization).toHaveBeenCalled(),
-		);
+		await waitFor(() => expect(getActivePromptOptimization).toHaveBeenCalled());
 		sse.onMessage({
 			event: "status",
-			data: { status: "completed" },
+			data: {
+				id: 1,
+				status: "completed",
+				detail: { result_version: 4, score: 0.9 },
+				created_at: "2026-07-15T10:00:01.000Z",
+			},
 		});
 
 		await waitFor(() => {
 			expect(getPrompt).toHaveBeenCalledTimes(2);
 			expect(listPromptVersions).toHaveBeenCalledTimes(2);
 		});
+	});
+
+	it("renders score and configured budget from validated SSE progress", async () => {
+		getActivePromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+			target: "system",
+			source_version: 3,
+			budget: { max_metric_calls: 20 },
+			created_at: "2026-07-15T10:00:00.000Z",
+		});
+		renderDetail();
+		await screen.findByText("Support Agent optimizing…");
+
+		sse.onMessage({
+			event: "status",
+			data: {
+				id: 2,
+				status: "evaluating",
+				detail: { score: 0.875 },
+				created_at: "2026-07-15T10:00:01.000Z",
+			},
+		});
+
+		expect(await screen.findByText("evaluating")).toBeInTheDocument();
+		expect(screen.getByText("Not reported / 20")).toBeInTheDocument();
+		expect(screen.getByText("0.875")).toBeInTheDocument();
 	});
 
 	it("fills the development example when explicitly enabled", async () => {

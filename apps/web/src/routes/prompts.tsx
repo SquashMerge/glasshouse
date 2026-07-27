@@ -41,8 +41,8 @@ export function PromptsPage() {
 					project_id: selectedProjectId!,
 					slug: prompt.id,
 				}),
-				enabled: Boolean(selectedProjectId),
-			})),
+			enabled: Boolean(selectedProjectId),
+		})),
 	});
 
 	if (projectsLoading) {
@@ -120,33 +120,33 @@ export function PromptsPage() {
 									activeOptimizationQueries[index]?.data ?? null;
 								return (
 									<li key={prompt.id}>
-									<Link
-										to="/prompts/$slug"
-										params={{ slug: prompt.id }}
-										className="grid gap-2 px-4 py-4 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(0,1fr)_130px_180px] md:items-center md:gap-4"
-										data-testid="prompt-row"
-									>
-										<span className="min-w-0">
-											<span className="block truncate font-medium">
-												{prompt.name}
-											</span>
-											<span className="block truncate font-mono text-xs text-muted-foreground">
-												{prompt.id}
-											</span>
-											<PromptOptimizationActivity
-												projectId={selectedProjectId!}
-												job={activeOptimization}
-											/>
-										</span>
-										<span className="text-sm">v{prompt.version}</span>
-										<time
-											dateTime={prompt.created_at}
-											className="text-sm text-muted-foreground"
+										<Link
+											to="/prompts/$slug"
+											params={{ slug: prompt.id }}
+											className="grid gap-2 px-4 py-4 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(0,1fr)_130px_180px] md:items-center md:gap-4"
+											data-testid="prompt-row"
 										>
-											{formatDate(prompt.created_at)}
-										</time>
-									</Link>
-								</li>
+											<span className="min-w-0">
+												<span className="block truncate font-medium">
+													{prompt.name}
+												</span>
+												<span className="block truncate font-mono text-xs text-muted-foreground">
+													{prompt.id}
+												</span>
+												<PromptOptimizationActivity
+													projectId={selectedProjectId!}
+													job={activeOptimization}
+												/>
+											</span>
+											<span className="text-sm">v{prompt.version}</span>
+											<time
+												dateTime={prompt.created_at}
+												className="text-sm text-muted-foreground"
+											>
+												{formatDate(prompt.created_at)}
+											</time>
+										</Link>
+									</li>
 								);
 							})}
 						</ul>
@@ -179,7 +179,9 @@ function PromptOptimizationActivity({
 			enabled: active,
 			onMessage: ({ event, data }) => {
 				if (event !== "status") return;
-				setJob((current) => (current ? { ...current, status: data.status } : current));
+				setJob((current) =>
+					current ? { ...current, status: data.status } : current,
+				);
 			},
 		},
 	);
