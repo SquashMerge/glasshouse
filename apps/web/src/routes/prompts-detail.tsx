@@ -12,6 +12,7 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { useEventSource } from "../hooks/useEventSource";
+import { RollbackLatestVersionDialog } from "./rollback-latest-version-dialog";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	deletePrompt,
@@ -19,6 +20,7 @@ import {
 	getPrompt,
 	listPromptVersions,
 	promptOptimizationEventsUrl,
+	rollbackLatestPromptVersion,
 	startPromptOptimization,
 	stopPromptOptimization,
 	type OptimizationEvent,
@@ -40,6 +42,7 @@ export function PromptDetailPage() {
 	const queryClient = useQueryClient();
 	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const [deleteOpen, setDeleteOpen] = React.useState(false);
+	const [rollbackOpen, setRollbackOpen] = React.useState(false);
 	const [optimizeTarget, setOptimizeTarget] = React.useState<
 		"system" | "user" | null
 	>(null);
@@ -94,6 +97,34 @@ export function PromptDetailPage() {
 				queryKey: ["prompts", selectedProjectId],
 			});
 			await navigate({ to: "/prompts" });
+		},
+	});
+	const rollbackMutation = useMutation({
+		mutationFn: () => {
+			if (!selectedProjectId)
+				throw new Error(
+					"Select a project before rolling back a prompt version.",
+				);
+			return rollbackLatestPromptVersion({
+				project_id: selectedProjectId,
+				slug,
+			});
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: ["prompt", selectedProjectId, slug, "current"],
+				}),
+				queryClient.invalidateQueries({
+					queryKey: ["prompt-versions", selectedProjectId, slug],
+				}),
+			]);
+			setRollbackOpen(false);
+			await navigate({
+				to: "/prompts/$slug",
+				params: { slug },
+				search: {},
+			});
 		},
 	});
 	const optimizeMutation = useMutation({
@@ -276,6 +307,16 @@ export function PromptDetailPage() {
 						</Button>
 					)}
 					<Button
+						variant="outline"
+						onClick={() => {
+							rollbackMutation.reset();
+							setRollbackOpen(true);
+						}}
+						disabled={optimizationActive || historyQuery.data!.items.length < 2}
+					>
+						Rollback latest version
+					</Button>
+					<Button
 						ref={deleteTriggerRef}
 						variant="destructive"
 						onClick={() => {
@@ -366,6 +407,20 @@ export function PromptDetailPage() {
 						deleteTriggerRef.current?.focus();
 					}}
 					onDelete={(confirmation) => deleteMutation.mutate(confirmation)}
+				/>
+			)}
+			{rollbackOpen && (
+				<RollbackLatestVersionDialog
+					pending={rollbackMutation.isPending}
+					error={
+						rollbackMutation.error instanceof Error
+							? rollbackMutation.error.message
+							: null
+					}
+					onClose={() => {
+						if (!rollbackMutation.isPending) setRollbackOpen(false);
+					}}
+					onConfirm={() => rollbackMutation.mutate()}
 				/>
 			)}
 			{optimizeTarget && (

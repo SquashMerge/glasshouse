@@ -10,6 +10,7 @@ import {
 	listPrompts,
 	previewPrompt,
 	renderPrompt,
+	rollbackLatestPromptVersion,
 	startPromptOptimization,
 } from "../../src/lib/api";
 import { setCredentials } from "../../src/lib/auth";
@@ -62,7 +63,7 @@ describe("prompt management API client", () => {
 		expect(headers.get("authorization")).toBe("Basic YWRtaW46c2VjcmV0");
 	});
 
-	it("sends exact create, version, render, draft preview, delete, and provenance payloads", async () => {
+	it("sends exact create, version, rollback, render, draft preview, delete, and provenance payloads", async () => {
 		fetchMock
 			.mockResolvedValueOnce(
 				jsonResponse({
@@ -72,6 +73,7 @@ describe("prompt management API client", () => {
 				}),
 			)
 			.mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 2 }))
+			.mockResolvedValueOnce(jsonResponse({ id: "support-agent", version: 1 }))
 			.mockResolvedValueOnce(
 				jsonResponse({
 					id: "support-agent",
@@ -107,6 +109,10 @@ describe("prompt management API client", () => {
 			model: null,
 			settings: { temperature: 0.3 },
 			change_summary: "Improve greeting",
+		});
+		await rollbackLatestPromptVersion({
+			project_id: PROJECT_ID,
+			slug: "support-agent",
 		});
 		await renderPrompt({
 			project_id: PROJECT_ID,
@@ -160,6 +166,11 @@ describe("prompt management API client", () => {
 					settings: { temperature: 0.3 },
 					change_summary: "Improve greeting",
 				}),
+			},
+			{
+				url: `/v1/prompts/support-agent/versions/rollback?project_id=${PROJECT_ID}`,
+				method: "POST",
+				body: undefined,
 			},
 			{
 				url: `/v1/prompts/support-agent/render?project_id=${PROJECT_ID}&version=2`,

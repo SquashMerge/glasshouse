@@ -279,6 +279,19 @@ export async function createPromptVersion(
 	);
 }
 
+export async function rollbackLatestPromptVersion(input: {
+	project_id: string;
+	slug: string;
+}): Promise<Prompt> {
+	return responseJson<Prompt>(
+		await authedFetch(
+			`/v1/prompts/${encodeURIComponent(input.slug)}/versions/rollback${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"rollbackLatestPromptVersion",
+	);
+}
+
 export async function renderPrompt(
 	input: RenderPromptInput,
 ): Promise<PromptRenderResponse> {

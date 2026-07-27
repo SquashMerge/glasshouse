@@ -70,6 +70,8 @@ import {
 	handlePreviewPrompt,
 	deletePrompt,
 	handleDeletePrompt,
+	rollbackLatestPromptVersion,
+	handleRollbackLatestPromptVersion,
 } from "./routes/prompts.js";
 import { listProjects, handleListProjects } from "./routes/projects.js";
 import {
@@ -191,6 +193,7 @@ register(createPrompt, handleCreatePrompt);
 register(previewPrompt, handlePreviewPrompt);
 register(listPromptVersions, handleListPromptVersions);
 register(createPromptVersion, handleCreatePromptVersion);
+register(rollbackLatestPromptVersion, handleRollbackLatestPromptVersion);
 register(renderPrompt, handleRenderPrompt);
 register(deletePrompt, handleDeletePrompt);
 register(getPrompt, handleGetPrompt);

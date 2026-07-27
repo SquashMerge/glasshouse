@@ -19,6 +19,7 @@ const {
 	getPrompt,
 	listPromptVersions,
 	deletePrompt,
+	rollbackLatestPromptVersion,
 	getActivePromptOptimization,
 	getPromptOptimization,
 	startPromptOptimization,
@@ -27,6 +28,7 @@ const {
 	getPrompt: vi.fn(),
 	listPromptVersions: vi.fn(),
 	deletePrompt: vi.fn(),
+	rollbackLatestPromptVersion: vi.fn(),
 	getActivePromptOptimization: vi.fn(),
 	getPromptOptimization: vi.fn(),
 	startPromptOptimization: vi.fn(),
@@ -58,6 +60,7 @@ vi.mock("../../src/lib/api", () => ({
 	getPrompt,
 	listPromptVersions,
 	deletePrompt,
+	rollbackLatestPromptVersion,
 	getActivePromptOptimization,
 	getPromptOptimization,
 	promptOptimizationEventsUrl: ({
@@ -137,6 +140,7 @@ describe("PromptDetailPage", () => {
 		getPrompt.mockReset();
 		listPromptVersions.mockReset();
 		deletePrompt.mockReset();
+		rollbackLatestPromptVersion.mockReset();
 		getActivePromptOptimization.mockReset();
 		getPromptOptimization.mockReset();
 		sse.onMessage.mockReset();
@@ -221,6 +225,50 @@ describe("PromptDetailPage", () => {
 		expect(client.getQueryState(["prompts", PROJECT_ID])?.isInvalidated).toBe(
 			true,
 		);
+	});
+
+	it("confirms rollback, refreshes current prompt and history, and shows rollback errors", async () => {
+		renderDetail();
+		await screen.findByTestId("prompt-message-system");
+		rollbackLatestPromptVersion.mockRejectedValueOnce(
+			new Error("Stop the active optimization before rolling back a version"),
+		);
+		rollbackLatestPromptVersion.mockResolvedValueOnce(prompt(2));
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Rollback latest version" }),
+		);
+		expect(
+			await screen.findByText(
+				"The latest version will be permanently removed and the previous version restored.",
+			),
+		).toBeInTheDocument();
+		const confirm = screen.getByRole("button", { name: "Rollback version" });
+		fireEvent.click(confirm);
+		expect(
+			await screen.findByText(
+				"Stop the active optimization before rolling back a version",
+			),
+		).toBeInTheDocument();
+		fireEvent.click(confirm);
+
+		await waitFor(() =>
+			expect(rollbackLatestPromptVersion).toHaveBeenLastCalledWith({
+				project_id: PROJECT_ID,
+				slug: "support-agent",
+			}),
+		);
+		await waitFor(() =>
+			expect(router.navigate).toHaveBeenCalledWith({
+				to: "/prompts/$slug",
+				params: { slug: "support-agent" },
+				search: {},
+			}),
+		);
+		await waitFor(() => {
+			expect(getPrompt).toHaveBeenCalledTimes(2);
+			expect(listPromptVersions).toHaveBeenCalledTimes(2);
+		});
 	});
 
 	it("requires an explicit stop confirmation before entering the editor while optimization is active", async () => {
