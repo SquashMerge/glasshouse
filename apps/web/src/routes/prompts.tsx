@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { LuPlus } from "react-icons/lu";
+import { LuLoaderCircle, LuPlus } from "react-icons/lu";
 import { Button, buttonVariants } from "../components/ui/button";
 import {
 	Card,
@@ -11,7 +11,10 @@ import {
 } from "../components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { useProjectSelection } from "../components/ProjectProvider";
-import { listPrompts } from "../lib/api";
+import {
+	getActivePromptOptimization,
+	listPrompts,
+} from "../lib/api";
 
 export function PromptsPage() {
 	const {
@@ -24,6 +27,17 @@ export function PromptsPage() {
 		queryKey: ["prompts", selectedProjectId],
 		queryFn: () => listPrompts(selectedProjectId!),
 		enabled: Boolean(selectedProjectId),
+	});
+	const activeOptimizationQueries = useQueries({
+		queries: (promptsQuery.data?.items ?? []).map((prompt) => ({
+			queryKey: ["prompt-optimization", selectedProjectId, prompt.id],
+			queryFn: () =>
+				getActivePromptOptimization({
+					project_id: selectedProjectId!,
+					slug: prompt.id,
+				}),
+			enabled: Boolean(selectedProjectId),
+		})),
 	});
 
 	if (projectsLoading) {
@@ -96,8 +110,17 @@ export function PromptsPage() {
 							<span>Updated</span>
 						</div>
 						<ul className="divide-y divide-border" aria-label="Project prompts">
-							{promptsQuery.data.items.map((prompt) => (
-								<li key={prompt.id}>
+							{promptsQuery.data.items.map((prompt, index) => {
+								const activeOptimization =
+									activeOptimizationQueries[index]?.data;
+								const optimizationActive =
+									activeOptimization !== null &&
+									activeOptimization !== undefined &&
+									!["completed", "stopped", "failed"].includes(
+										activeOptimization.status,
+									);
+								return (
+									<li key={prompt.id}>
 									<Link
 										to="/prompts/$slug"
 										params={{ slug: prompt.id }}
@@ -111,6 +134,16 @@ export function PromptsPage() {
 											<span className="block truncate font-mono text-xs text-muted-foreground">
 												{prompt.id}
 											</span>
+											{optimizationActive && (
+												<span className="mt-1 flex items-center gap-1 text-xs text-primary">
+													<LuLoaderCircle
+														className="h-3 w-3 animate-spin"
+														data-testid="optimization-spinner"
+														aria-hidden="true"
+													/>
+													Optimizing…
+												</span>
+											)}
 										</span>
 										<span className="text-sm">v{prompt.version}</span>
 										<time
@@ -121,7 +154,8 @@ export function PromptsPage() {
 										</time>
 									</Link>
 								</li>
-							))}
+								);
+							})}
 						</ul>
 					</CardContent>
 				</Card>

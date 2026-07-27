@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LuLoaderCircle } from "react-icons/lu";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
 import {
@@ -368,6 +369,7 @@ export function PromptDetailPage() {
 			{activeOptimization && (
 				<OptimizationStatus
 					job={activeOptimization}
+					promptName={prompt.name}
 					onStop={() =>
 						selectedProjectId &&
 						stopPromptOptimization({
@@ -602,30 +604,43 @@ function StopToEditDialog({
 
 function OptimizationStatus({
 	job,
+	promptName,
 	onStop,
 }: {
 	job: OptimizationJob;
+	promptName: string;
 	onStop: () => void;
 }) {
+	const active = !["completed", "stopped", "failed"].includes(job.status);
 	return (
 		<div
 			className="fixed bottom-4 right-4 z-40 w-80 rounded-lg border border-border bg-background p-4 shadow-lg"
 			role="status"
 		>
-			<p className="font-medium">Optimization {job.status}</p>
+			<p className="font-medium">
+				{promptName} {optimizationStatusLabel(job.status)}
+			</p>
 			<p className="mt-1 text-sm text-muted-foreground">
 				{job.result_version
 					? `Published as v${job.result_version}.`
 					: (job.error_message ??
 						"The source version and configuration are pinned.")}
 			</p>
-			{!["completed", "stopped", "failed"].includes(job.status) && (
+			{active && (
 				<Button className="mt-3" size="sm" variant="outline" onClick={onStop}>
+					<LuLoaderCircle
+						className="h-4 w-4 animate-spin"
+						aria-hidden="true"
+					/>
 					Stop
 				</Button>
 			)}
 		</div>
 	);
+}
+
+function optimizationStatusLabel(status: OptimizationJob["status"]): string {
+	return status === "optimizing" ? "optimizing…" : status;
 }
 
 function PromptVersionDetails({ prompt }: { prompt: Prompt }) {
