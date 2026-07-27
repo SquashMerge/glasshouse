@@ -37,6 +37,7 @@ export function PromptsPage() {
 					slug: prompt.id,
 				}),
 			enabled: Boolean(selectedProjectId),
+			refetchInterval: 5000,
 		})),
 	});
 
