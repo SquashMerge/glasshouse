@@ -1,9 +1,9 @@
-FROM oven/bun:1-alpine AS base
+FROM oven/bun:1.3.14-alpine AS base
 WORKDIR /app
 
 FROM base AS deps
 WORKDIR /app
-COPY package.json bun.lockb* ./
+COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 RUN bun install --frozen-lockfile --filter "@astraea/*"
@@ -14,7 +14,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bun --filter "@astraea/web" build
 
-FROM oven/bun:1-alpine AS prod
+FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app
 RUN apk add --no-cache libpq
 COPY --from=build /app /app

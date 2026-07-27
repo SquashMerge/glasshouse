@@ -67,7 +67,7 @@ MIT core. Sealed `enterprise/` wheel under a custom EULA for premium features (S
 ### Prerequisites
 
 - Docker (with Compose v2.13+ for `depends_on condition: service_healthy`)
-- Bun 1.1+ (replaces both the package manager and the runtime; install from [bun.sh](https://bun.sh))
+- Bun 1.3.14+ (replaces both the package manager and the runtime; install from [bun.sh](https://bun.sh))
 - uv (for the Python codegen client; install from [docs.astral.sh/uv](https://docs.astral.sh/uv/))
 
 On Apple Silicon (M-series) the ClickHouse image is pinned to `platform: linux/amd64` for compatibility.
@@ -77,7 +77,7 @@ On Apple Silicon (M-series) the ClickHouse image is pinned to `platform: linux/a
 If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins the asdf-managed dev tools at the versions the project was built against:
 
 ```
-bun 1.1.42
+bun 1.3.14
 nodejs 22.11.0
 ```
 

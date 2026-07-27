@@ -1,32 +1,36 @@
 const KEY_USERNAME = "astraea.auth.username";
 const KEY_PASSWORD = "astraea.auth.password";
 
-export function setCredentials(username: string, password: string): void {
-	if (typeof window === "undefined") return;
-	window.localStorage.setItem(KEY_USERNAME, username);
-	window.localStorage.setItem(KEY_PASSWORD, password);
-}
+type Credentials = { username: string; password: string };
 
-export function clearCredentials(): void {
-	if (typeof window === "undefined") return;
+let credentials: Credentials | null = null;
+
+function removePersistedCredentials(): void {
 	window.localStorage.removeItem(KEY_USERNAME);
 	window.localStorage.removeItem(KEY_PASSWORD);
 }
 
-export function getCredentials(): {
-	username: string;
-	password: string;
-} | null {
-	if (typeof window === "undefined") return null;
-	const u = window.localStorage.getItem(KEY_USERNAME);
-	const p = window.localStorage.getItem(KEY_PASSWORD);
-	if (!u || !p) return null;
-	return { username: u, password: p };
+if (typeof window !== "undefined") removePersistedCredentials();
+
+export function setCredentials(username: string, password: string): void {
+	if (typeof window === "undefined") return;
+	credentials = { username, password };
+	removePersistedCredentials();
 }
 
-export function authHeader(
-	creds: { username: string; password: string } | null,
-): Record<string, string> {
+export function clearCredentials(): void {
+	if (typeof window === "undefined") return;
+	credentials = null;
+	removePersistedCredentials();
+}
+
+export function getCredentials(): Credentials | null {
+	if (typeof window === "undefined") return null;
+	removePersistedCredentials();
+	return credentials;
+}
+
+export function authHeader(creds: Credentials | null): Record<string, string> {
 	if (!creds) return {};
 	const token = btoa(`${creds.username}:${creds.password}`);
 	return { authorization: `Basic ${token}` };

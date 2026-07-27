@@ -8,7 +8,7 @@ import {
 	Observation,
 	ObservationList,
 } from "../schemas/traces.js";
-import { TraceIdParam } from "../schemas/common.js";
+import { ErrorEnvelope, PageQuery, TraceIdParam } from "../schemas/common.js";
 import {
 	defaultClient,
 	getTrace as queryGetTrace,
@@ -32,6 +32,13 @@ function presentObservation<
 	};
 }
 
+function getPagination(c: Context): { limit: number; offset: number } {
+	const { limit: requestedLimit = 50, offset = 0 } = (
+		c.req as { valid: (target: "query") => { limit?: number; offset?: number } }
+	).valid("query");
+	return { limit: Math.min(requestedLimit, 200), offset };
+}
+
 export const listTraces = createRoute({
 	method: "get",
 	path: "/v1/traces",
@@ -40,18 +47,22 @@ export const listTraces = createRoute({
 	description:
 		"Returns up to 50 traces sorted by start_time DESC. Each row's input_text is truncated to 200 chars.",
 	security: [{ basicAuth: [] }],
+	request: { query: PageQuery },
 	responses: {
 		200: {
 			description: "OK",
 			content: { "application/json": { schema: TraceList } },
+		},
+		400: {
+			description: "Invalid pagination parameters",
+			content: { "application/json": { schema: ErrorEnvelope } },
 		},
 		...TraceStubResponses,
 	},
 });
 
 export async function handleListTraces(c: Context): Promise<Response> {
-	const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
-	const offset = Math.max(Number(c.req.query("offset") ?? "0"), 0);
+	const { limit, offset } = getPagination(c);
 	const q = c.req.query("filter[q]");
 	const filters = {
 		project_id: c.req.query("filter[project_id]") ?? undefined,
@@ -159,18 +170,22 @@ export const listObservations = createRoute({
 	description:
 		"Returns up to 50 observations per page sorted by start_time DESC. input_text is truncated to 200 chars.",
 	security: [{ basicAuth: [] }],
+	request: { query: PageQuery },
 	responses: {
 		200: {
 			description: "OK",
 			content: { "application/json": { schema: ObservationList } },
+		},
+		400: {
+			description: "Invalid pagination parameters",
+			content: { "application/json": { schema: ErrorEnvelope } },
 		},
 		...TraceStubResponses,
 	},
 });
 
 export async function handleListObservations(c: Context): Promise<Response> {
-	const limit = Math.min(Number(c.req.query("limit") ?? "50"), 200);
-	const offset = Math.max(Number(c.req.query("offset") ?? "0"), 0);
+	const { limit, offset } = getPagination(c);
 	const filters = {
 		project_id: c.req.query("filter[project_id]") ?? undefined,
 		agent_id: c.req.query("filter[agent_id]") ?? undefined,

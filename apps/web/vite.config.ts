@@ -3,6 +3,21 @@ import react from "@vitejs/plugin-react";
 
 const apiTarget = process.env.VITE_API_PROXY ?? "http://localhost:3000";
 
+const securityHeaders = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "connect-src 'self' ws: wss:",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "style-src 'self' 'unsafe-inline'",
+  ].join("; "),
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Resource-Policy": "same-origin",
+};
+
 /**
  * `configureProxyForSSE` patches http-proxy's response side so that
  * `text/event-stream` responses are NOT buffered — chunks flush as the
@@ -35,6 +50,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    headers: securityHeaders,
     proxy: {
       "/v1": {
         target: apiTarget,
@@ -49,5 +65,6 @@ export default defineConfig({
   preview: {
     host: "0.0.0.0",
     port: 5173,
+    headers: securityHeaders,
   },
 });
