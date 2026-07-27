@@ -51,6 +51,10 @@
 		border-color: hsl(var(--border));
 	}
 
+	button:not(:disabled) {
+		cursor: pointer;
+	}
+
 	body {
 		background-color: hsl(var(--background));
 		color: hsl(var(--foreground));
