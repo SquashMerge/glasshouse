@@ -4,6 +4,11 @@ import json
 import os
 import sys
 
+if __package__:
+    from .dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
+else:
+    from dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
+
 MAX_METRIC_CALLS = 100
 
 
@@ -59,6 +64,11 @@ def fake_optimize(source):
     return {"candidate": source + "\n\nOptimize for clear, accurate answers."}
 
 
+def cli_mode_is_allowed():
+    # This explicitly prevents a locally authenticated developer CLI in production.
+    return os.environ.get("NODE_ENV") != "production" or os.environ.get("ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION") == "true"
+
+
 if sys.argv[1:] == ["--smoke"]:
     try:
         import gepa  # type: ignore
@@ -79,6 +89,13 @@ if os.environ.get("GEPA_WORKER_MODE") == "fake":
     print(json.dumps(fake_optimize(source)))
     sys.exit(0)
 
+if os.environ.get("GEPA_WORKER_MODE") == "cli":
+    if not cli_mode_is_allowed():
+        sys.stderr.write("GEPA_WORKER_MODE=cli is disabled when NODE_ENV=production")
+        sys.exit(2)
+    task_lm = task_lm_for_model(task_lm)
+    reflection_lm = reflection_lm_for_model(reflection_lm)
+
 try:
     import gepa  # type: ignore # Installed only in the isolated worker image.
 except ImportError:
@@ -97,6 +114,9 @@ try:
     candidate = result.best_candidate["system_prompt"]
     score = result.val_aggregate_scores[result.best_idx]
     print(json.dumps({"candidate": candidate, "score": score}))
+except DevCliLlmError as error:
+    sys.stderr.write(f"GEPA development CLI failed: {error}")
+    sys.exit(1)
 except Exception as error:
     sys.stderr.write(f"GEPA optimization failed: {error}")
     sys.exit(1)

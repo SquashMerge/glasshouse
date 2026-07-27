@@ -172,6 +172,22 @@ OPENAI_API_KEY=your-proxy-key
 
 The current UI exposes model names and the metric-call budget, but not provider credentials, proxy administration, connection testing, or model discovery. Never commit these credentials or store them in prompt/job records. For Docker Compose, place them in the gitignored `infra/.env`; for production, use the deployment secret mechanism. `GEPA_WORKER_MODE=fake` is only for deterministic tests and does not perform LLM calls.
 
+#### Development-only local CLI authentication
+
+For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenticated LLM CLI instead of a provider API key. For example, install and authenticate the OpenAI Codex CLI on the developer machine:
+
+```sh
+npm install -g @openai/codex
+codex login
+export GEPA_WORKER_MODE=cli
+export GEPA_ALLOWED_MODELS=gpt-5.3-codex
+export ASTRAEA_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
+```
+
+Start the API directly in this shell (for example, `bun --filter @astraea/api dev`). The `{model}` placeholder is replaced only within argv elements; Astraea sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
+
+Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Astraea. This mode is development-only: it is rejected when `NODE_ENV=production` unless `ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION=true` is explicitly set. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `ASTRAEA_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 300) and `ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
+
 ### Sending traces from your agent
 
 Set these four env vars on your instrumented agent:
