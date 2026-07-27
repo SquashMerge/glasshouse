@@ -89,9 +89,11 @@ while IFS= read -r line; do
 done < .tool-versions
 
 # Fallback URLs for plugins that aren't in asdf's index. Parallel arrays keyed
-# by index (not name) so we don't need associative arrays.
-FALLBACK_TOOL=("bun")
-FALLBACK_URL=("https://github.com/axetroy/asdf-bun.git")
+# by index (not name) so we don't need associative arrays. Keep first-party
+# plugins explicit too: this works with asdf versions whose plugin index is
+# unavailable or does not include nodejs.
+FALLBACK_TOOL=("bun" "nodejs")
+FALLBACK_URL=("https://github.com/axetroy/asdf-bun.git" "https://github.com/asdf-vm/asdf-nodejs.git")
 
 # Returns the fallback URL for a given tool, or empty string.
 get_fallback_url() {

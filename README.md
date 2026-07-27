@@ -89,7 +89,7 @@ Run once after cloning:
 make setup-tools
 ```
 
-This installs asdf plugins for every tool and installs the pinned versions. Re-run anytime `.tool-versions` changes.
+This installs the asdf plugins for every tool and installs the pinned versions. It first uses asdf's plugin index, with explicit upstream fallbacks for Bun and Node.js when the index is unavailable. Re-run anytime `.tool-versions` changes.
 
 > Note: asdf-managed Postgres / Redis plugins build from source and need a C toolchain (`gcc`) plus `unzip`/`uconv` etc. That's why `.tool-versions` only lists Bun and Node.js — the dev tools the runtime actually needs.
 
@@ -238,7 +238,7 @@ The repo's `.gitattributes` enforces `eol=lf` for `*.sh`, `Makefile`, and all so
 
 **`docker compose ... lstat .../infra/apps: no such file or directory`** — older commits used `context: .` in `infra/compose.yaml` which resolved to the compose file's directory; pull the latest commit (≥ `2d585a0`) which uses `context: ..`. If you can't pull, patch compose.yaml manually: change `context: .` to `context: ..` under both `api` and `web` build blocks.
 
-**`asdf plugin add nodejs` fails with "repository does not exist"** — older commits hardcoded bogus plugin URLs. Pull the latest commit (≥ `e8c7755`) which uses `asdf plugin add <name>` (no URL) and lets asdf's plugin index resolve the repo.
+**`asdf plugin add nodejs` fails** — `make setup-tools` first tries asdf's plugin index and then falls back to the official `https://github.com/asdf-vm/asdf-nodejs.git` repository. If both fail, verify that git can reach GitHub and retry.
 
 **`/health` returns 503 with `valkey: down`** — the valkey container failed healthcheck (probably wrong password or compose started before .env was edited). Run `make doctor` first; if `.env` still has `CHANGE_ME`, edit it and `make dev` again.
 
