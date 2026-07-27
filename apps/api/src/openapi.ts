@@ -163,21 +163,11 @@ register(listAgentVersions, (c: Context) =>
 
 register(createExperiment, handleCreateExperiment);
 register(listExperiments, handleListExperiments);
-register(getExperiment, (c: Context) =>
-	handleGetExperiment(c.req.param("id")!),
-);
-register(getExperimentResults, (c: Context) =>
-	handleGetExperimentResults(c.req.param("id")!),
-);
-register(getExperimentSummary, (c: Context) =>
-	handleGetExperimentSummary(c.req.param("id")!),
-);
-register(getExperimentEvents, (c: Context) =>
-	handleGetExperimentEvents(c.req.param("id")!),
-);
-register(cancelExperiment, (c: Context) =>
-	handleCancelExperiment(c.req.param("id")!),
-);
+register(getExperiment, handleGetExperiment);
+register(getExperimentResults, handleGetExperimentResults);
+register(getExperimentSummary, handleGetExperimentSummary);
+register(getExperimentEvents, handleGetExperimentEvents);
+register(cancelExperiment, handleCancelExperiment);
 
 register(listTraces, handleListTraces);
 // Register the more specific /v1/traces/events SSE route BEFORE
