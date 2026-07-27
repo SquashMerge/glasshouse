@@ -132,9 +132,10 @@ describe("PromptsPage", () => {
 			</QueryClientProvider>,
 		);
 
-		const row = await screen.findByTestId("prompt-row");
+		const spinner = await screen.findByTestId("optimization-spinner");
+		const row = screen.getByTestId("prompt-row");
 		expect(row).toHaveTextContent("Optimizing…");
-		expect(screen.getByTestId("optimization-spinner")).toBeInTheDocument();
+		expect(spinner).toBeInTheDocument();
 		expect(getActivePromptOptimization).toHaveBeenCalledWith({
 			project_id: PROJECT_ID,
 			slug: "daily-summary",

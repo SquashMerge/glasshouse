@@ -2,6 +2,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
@@ -346,14 +347,16 @@ describe("PromptDetailPage", () => {
 		});
 		renderDetail();
 		await waitFor(() => expect(getActivePromptOptimization).toHaveBeenCalled());
-		sse.onMessage({
-			event: "status",
-			data: {
-				id: 1,
-				status: "completed",
-				detail: { result_version: 4, score: 0.9 },
-				created_at: "2026-07-15T10:00:01.000Z",
-			},
+		await act(async () => {
+			sse.onMessage({
+				event: "status",
+				data: {
+					id: 1,
+					status: "completed",
+					detail: { result_version: 4, score: 0.9 },
+					created_at: "2026-07-15T10:00:01.000Z",
+				},
+			});
 		});
 
 		await waitFor(() => {
@@ -376,14 +379,16 @@ describe("PromptDetailPage", () => {
 		renderDetail();
 		await screen.findByText("Support Agent optimizing…");
 
-		sse.onMessage({
-			event: "status",
-			data: {
-				id: 2,
-				status: "evaluating",
-				detail: { score: 0.875 },
-				created_at: "2026-07-15T10:00:01.000Z",
-			},
+		await act(async () => {
+			sse.onMessage({
+				event: "status",
+				data: {
+					id: 2,
+					status: "evaluating",
+					detail: { score: 0.875 },
+					created_at: "2026-07-15T10:00:01.000Z",
+				},
+			});
 		});
 
 		expect(await screen.findByText("evaluating")).toBeInTheDocument();
