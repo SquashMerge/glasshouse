@@ -6,8 +6,10 @@ import sys
 
 if __package__:
     from .dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
+    from .gepa_feedback import build_reflective_feedback
 else:
     from dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
+    from gepa_feedback import build_reflective_feedback
 
 MAX_METRIC_CALLS = 100
 MIN_METRIC_CALLS = 2
@@ -18,6 +20,39 @@ class StderrLogger:
 
     def log(self, message):
         print(message, file=sys.stderr, flush=True)
+
+
+class AstraeaDefaultAdapter:
+    def __init__(self, base_adapter):
+        self._base_adapter = base_adapter
+        self.model = base_adapter.model
+
+    def evaluate(self, *args, **kwargs):
+        return self._base_adapter.evaluate(*args, **kwargs)
+
+    def make_reflective_dataset(self, candidate, eval_batch, components_to_update):
+        items = []
+        for trajectory, score, _ in zip(
+            eval_batch.trajectories,
+            eval_batch.scores,
+            eval_batch.outputs,
+            strict=False,
+        ):
+            data = trajectory["data"]
+            items.append(
+                {
+                    "Inputs": data["input"],
+                    "Generated Outputs": trajectory["full_assistant_response"],
+                    "Feedback": build_reflective_feedback(
+                        data,
+                        trajectory["full_assistant_response"],
+                        score,
+                    ),
+                }
+            )
+        if not items:
+            raise ValueError("No valid predictions found for any module.")
+        return {components_to_update[0]: items}
 
 
 def allowed_models():
@@ -112,7 +147,7 @@ except ImportError:
     sys.exit(2)
 
 try:
-    adapter = DefaultAdapter(model=task_lm)
+    adapter = AstraeaDefaultAdapter(DefaultAdapter(model=task_lm))
     result = gepa.optimize(
         seed_candidate={"system_prompt": source},
         trainset=trainset,
