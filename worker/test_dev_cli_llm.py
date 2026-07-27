@@ -151,6 +151,7 @@ class DevCliLlmTests(unittest.TestCase):
                 "    assert callable(adapter.model)\n"
                 "    assert task_lm is None\n"
                 "    assert callable(reflection_lm)\n"
+                "    kwargs[\"logger\"].log(\"progress\")\n"
                 "    assert reflection_lm(\"reflection\")\n"
                 "    return SimpleNamespace(best_candidate={\"system_prompt\": \"candidate\"}, best_idx=0, val_aggregate_scores=[1])\n"
             )

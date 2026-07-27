@@ -12,6 +12,13 @@ else:
 MAX_METRIC_CALLS = 100
 
 
+class StderrLogger:
+    """Keep GEPA progress off stdout, which is the worker's JSON protocol."""
+
+    def log(self, message):
+        print(message, file=sys.stderr, flush=True)
+
+
 def allowed_models():
     models = [model.strip() for model in os.environ.get("GEPA_ALLOWED_MODELS", "").split(",") if model.strip()]
     if not models:
@@ -113,6 +120,7 @@ try:
         task_lm=None,
         reflection_lm=reflection_lm,
         max_metric_calls=max_metric_calls,
+        logger=StderrLogger(),
     )
     candidate = result.best_candidate["system_prompt"]
     score = result.val_aggregate_scores[result.best_idx]
