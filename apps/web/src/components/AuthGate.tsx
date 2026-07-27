@@ -18,19 +18,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
 		const creds = getCredentials();
 		if (!creds) {
-			navigate({
-				to: "/login",
-				search: { redirect: `${location.pathname}${location.searchStr}` },
-			});
+			navigate({ to: "/login" });
 		} else {
 			setReady(true);
 		}
 
 		const off = onAuthInvalid(() => {
-			navigate({
-				to: "/login",
-				search: { redirect: `${location.pathname}${location.searchStr}` },
-			});
+			navigate({ to: "/login" });
 		});
 		return off;
 	}, [location.pathname, location.searchStr, navigate]);
