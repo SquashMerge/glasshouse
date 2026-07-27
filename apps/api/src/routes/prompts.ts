@@ -9,6 +9,7 @@ import {
 	listPrompts as listPromptsRecord,
 	PromptRepositoryError,
 	renderPrompt as renderPromptRecord,
+	rollbackLatestPromptVersion as rollbackLatestPromptVersionRecord,
 } from "../db/prompts.js";
 import type { JsonObject } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
@@ -68,6 +69,7 @@ export type PromptRouteDependencies = {
 	listPromptVersions: typeof listPromptVersionsRecord;
 	listPrompts: typeof listPromptsRecord;
 	renderPrompt: typeof renderPromptRecord;
+	rollbackLatestPromptVersion: typeof rollbackLatestPromptVersionRecord;
 };
 
 const productionPromptRouteDependencies: PromptRouteDependencies = {
@@ -79,6 +81,7 @@ const productionPromptRouteDependencies: PromptRouteDependencies = {
 	listPromptVersions: listPromptVersionsRecord,
 	listPrompts: listPromptsRecord,
 	renderPrompt: renderPromptRecord,
+	rollbackLatestPromptVersion: rollbackLatestPromptVersionRecord,
 };
 
 export const listPrompts = createRoute({
@@ -162,6 +165,26 @@ export const createPromptVersion = createRoute({
 		201: {
 			description: "Version created",
 			content: { "application/json": { schema: PromptVersion } },
+		},
+		...PromptErrorResponses,
+	},
+});
+
+export const rollbackLatestPromptVersion = createRoute({
+	method: "post",
+	path: "/v1/prompts/{id}/versions/rollback",
+	tags: [tag],
+	summary:
+		"Permanently remove the latest prompt version and restore the previous version",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: PromptIdParam,
+		query: ProjectIdQuery,
+	},
+	responses: {
+		200: {
+			description: "Previous version restored",
+			content: { "application/json": { schema: Prompt } },
 		},
 		...PromptErrorResponses,
 	},
@@ -313,6 +336,22 @@ export function createPromptRouteHandlers(
 				return failure(c, cause);
 			}
 		},
+		handleRollbackLatestPromptVersion: async (
+			c: Parameters<RouteHandler<typeof rollbackLatestPromptVersion>>[0],
+		): Promise<Response> => {
+			try {
+				const params = c.req.valid("param") as { id: string };
+				const query = c.req.valid("query") as { project_id: string };
+				return c.json(
+					await dependencies.rollbackLatestPromptVersion(dependencies.pool(), {
+						project_id: query.project_id,
+						slug: params.id,
+					}),
+				);
+			} catch (cause) {
+				return failure(c, cause);
+			}
+		},
 		handleRenderPrompt: async (
 			c: Parameters<RouteHandler<typeof renderPrompt>>[0],
 		): Promise<Response> => {
@@ -378,6 +417,7 @@ export const {
 	handleGetPrompt,
 	handleListPromptVersions,
 	handleListPrompts,
+	handleRollbackLatestPromptVersion,
 	handlePreviewPrompt,
 	handleRenderPrompt,
 } = createPromptRouteHandlers();

@@ -78,7 +78,7 @@ If you use [asdf](https://asdf-vm.com/), the repo's `.tool-versions` pins the as
 
 ```
 bun 1.3.14
-nodejs 22.11.0
+nodejs 22.12.0
 ```
 
 The Postgres, ClickHouse, and Valkey **servers** run in Docker (Compose brings them up). Their CLI clients (`psql`, `clickhouse-client`, `valkey-cli`) are best installed via your OS package manager — see Option B.
@@ -89,7 +89,7 @@ Run once after cloning:
 make setup-tools
 ```
 
-This installs asdf plugins for every tool and installs the pinned versions. Re-run anytime `.tool-versions` changes.
+This installs the asdf plugins for every tool and installs the pinned versions. It first uses asdf's plugin index, with explicit upstream fallbacks for Bun and Node.js when the index is unavailable. Re-run anytime `.tool-versions` changes.
 
 > Note: asdf-managed Postgres / Redis plugins build from source and need a C toolchain (`gcc`) plus `unzip`/`uconv` etc. That's why `.tool-versions` only lists Bun and Node.js — the dev tools the runtime actually needs.
 
@@ -141,6 +141,70 @@ Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 | http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (public) |
 | http://localhost:3000/health | Backend health check (public; no auth) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (public) |
+
+### GEPA prompt optimization and LLM providers
+
+Prompt optimization uses the Python GEPA worker and requires access to an LLM for both candidate evaluation (`task_lm`) and reflection/proposal (`reflection_lm`). The dashboard asks for those two model identifiers when optimization starts; it does not collect or persist API keys. The identifiers are pinned into the job configuration and must be present in `GEPA_ALLOWED_MODELS`.
+
+For direct provider access, inject the provider credential into the API/worker environment and allow the exact model identifiers, for example:
+
+```sh
+GEPA_ALLOWED_MODELS=openai/gpt-4o-mini,openai/gpt-4o
+OPENAI_API_KEY=your-key-here
+```
+
+or:
+
+```sh
+GEPA_ALLOWED_MODELS=anthropic/claude-sonnet-4-20250514
+ANTHROPIC_API_KEY=your-key-here
+```
+
+GEPA accepts provider-prefixed model names through its default adapter. Common LiteLLM-compatible providers include OpenAI, Anthropic, Google/Gemini, Azure OpenAI, and AWS Bedrock; the exact model format and required environment variables are provider-specific and must be supported by the installed GEPA/LiteLLM stack. Astraea does not currently maintain a provider catalog or model discovery endpoint.
+
+An OpenAI-compatible LiteLLM proxy can be used by pointing the worker's OpenAI adapter at the proxy and supplying the proxy credential as the OpenAI key, for example:
+
+```sh
+GEPA_ALLOWED_MODELS=openai/my-proxy-model
+OPENAI_API_BASE=https://litellm.example.com/v1
+OPENAI_API_KEY=your-proxy-key
+```
+
+The current UI exposes model names and the metric-call budget, but not provider credentials, proxy administration, connection testing, or model discovery. Never commit these credentials or store them in prompt/job records. For Docker Compose, place them in the gitignored `infra/.env`; for production, use the deployment secret mechanism. `GEPA_WORKER_MODE=fake` is only for deterministic tests and does not perform LLM calls.
+
+#### Development-only local CLI authentication
+
+For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenticated LLM CLI instead of a provider API key. The complete Codex setup is:
+
+1. Install and authenticate Codex on the **same host where the Astraea API runs**:
+
+   ```sh
+   npm install -g @openai/codex
+   codex login
+   # If your CLI opens the interactive sign-in flow instead, run `codex`
+   # and choose “Sign in with ChatGPT”.
+   ```
+
+2. Add the development settings to the gitignored `infra/.env` file:
+
+   ```env
+   GEPA_WORKER_MODE=cli
+   GEPA_ALLOWED_MODELS=gpt-5.3-codex
+   ASTRAEA_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
+   ```
+
+3. Start the local data services and backend:
+
+   ```sh
+   make deps-up
+   make dev-backend
+   ```
+
+4. In the GEPA optimization dialog, enter `gpt-5.3-codex` for both the task model and reflection model. The value must be present in `GEPA_ALLOWED_MODELS`.
+
+The `{model}` placeholder is replaced only within argv elements; Astraea sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
+
+Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Astraea. This mode is development-only: it is rejected when `NODE_ENV=production` unless `ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION=true` is explicitly set. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `ASTRAEA_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 1800) and `ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
 
 ### Sending traces from your agent
 
@@ -206,9 +270,9 @@ The repo's `.gitattributes` enforces `eol=lf` for `*.sh`, `Makefile`, and all so
 
 **`bun` plugin install fails with `unzip: command not found`** — install unzip (`apt-get install unzip` on Debian/Ubuntu, `brew install unzip` on macOS), then `make setup-tools` again.
 
-**`docker compose ... lstat .../infra/apps: no such file or directory`** — older commits used `context: .` in `infra/compose.yaml` which resolved to the compose file's directory; pull the latest commit (≥ `2d585a0`) which uses `context: ..`. If you can't pull, patch compose.yaml manually: change `context: .` to `context: ..` under both `api` and `web` build blocks.
+**`docker compose ... lstat .../infra/apps: no such file or directory`** — the Compose files are invoked with the repository root as `--project-directory`, so build contexts must be `context: .` and Dockerfiles remain `apps/api/Dockerfile` / `apps/web/Dockerfile`. Pull the latest commit if your checkout still uses `context: ..`.
 
-**`asdf plugin add nodejs` fails with "repository does not exist"** — older commits hardcoded bogus plugin URLs. Pull the latest commit (≥ `e8c7755`) which uses `asdf plugin add <name>` (no URL) and lets asdf's plugin index resolve the repo.
+**`asdf plugin add nodejs` fails** — `make setup-tools` first tries asdf's plugin index and then falls back to the official `https://github.com/asdf-vm/asdf-nodejs.git` repository. If both fail, verify that git can reach GitHub and retry.
 
 **`/health` returns 503 with `valkey: down`** — the valkey container failed healthcheck (probably wrong password or compose started before .env was edited). Run `make doctor` first; if `.env` still has `CHANGE_ME`, edit it and `make dev` again.
 

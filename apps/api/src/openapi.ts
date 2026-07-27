@@ -71,12 +71,26 @@ import {
 	handlePreviewPrompt,
 	deletePrompt,
 	handleDeletePrompt,
+	rollbackLatestPromptVersion,
+	handleRollbackLatestPromptVersion,
 } from "./routes/prompts.js";
 import { listProjects, handleListProjects } from "./routes/projects.js";
 import {
 	getPromptProvenance,
 	handleGetPromptProvenance,
 } from "./routes/prompt-provenance.js";
+import {
+	startOptimization,
+	getActiveOptimization,
+	getOptimization,
+	stopOptimization,
+	optimizationEvents,
+	handleStart,
+	handleGetActive,
+	handleGet,
+	handleStop,
+	handleEvents,
+} from "./routes/prompt-optimizations.js";
 import {
 	listDatasets,
 	handleListDatasets,
@@ -121,6 +135,10 @@ openapiApp.use("/v1/prompts/*", async (c, next) => {
 	await next();
 });
 openapiApp.use("/v1/prompt-provenance/*", async (c, next) => {
+	c.header("Cache-Control", "no-store");
+	await next();
+});
+openapiApp.use("/v1/prompt-optimizations/*", async (c, next) => {
 	c.header("Cache-Control", "no-store");
 	await next();
 });
@@ -177,10 +195,16 @@ register(createPrompt, handleCreatePrompt);
 register(previewPrompt, handlePreviewPrompt);
 register(listPromptVersions, handleListPromptVersions);
 register(createPromptVersion, handleCreatePromptVersion);
+register(rollbackLatestPromptVersion, handleRollbackLatestPromptVersion);
 register(renderPrompt, handleRenderPrompt);
 register(deletePrompt, handleDeletePrompt);
 register(getPrompt, handleGetPrompt);
 register(getPromptProvenance, handleGetPromptProvenance);
+register(startOptimization, handleStart);
+register(getActiveOptimization, handleGetActive);
+register(optimizationEvents, handleEvents);
+register(stopOptimization, handleStop);
+register(getOptimization, handleGet);
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);

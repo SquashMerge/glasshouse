@@ -32,6 +32,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 
 - `/prompts` — project-scoped prompt list; `/prompts/new` creates the first immutable version; `/prompts/$slug` selects an immutable version; `/prompts/$slug/edit?from=N` starts the next version from version `N`. See `apps/web/src/routes/prompts*.tsx`.
 - `POST /v1/prompts/preview` — authenticated, non-persistent Mustache rendering of system and user draft sources with supplied JSON data. See `apps/api/src/routes/prompts.ts`.
+- `POST /v1/prompts/{id}/versions/rollback` — authenticated, project-scoped removal of only the latest version; restores the immediately previous version and migrates its labels. See `apps/api/src/routes/prompts.ts`.
 
 ## SSE endpoints (all in `apps/api/src/routes/trace-events.ts`)
 
@@ -48,6 +49,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Prompt provenance** — typed `(id, version, content_hash)` from a generation observation's atomic `astraea.prompt.*` OTLP tuple; `GET /v1/prompt-provenance/{id}` reports whether that scoped tuple is `active`, `deleted`, or `unknown`, without source or render data. All `astraea.prompt.*` input attributes are stripped before metadata storage or events. See `apps/api/src/db/observation-metadata.ts` and `apps/api/src/routes/prompt-provenance.ts`.
 - **Prompt tombstone** — immutable `(project_id, slug)` reservation left by a hard deletion; prevents canonical prompt ID reuse. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Prompt deletion audit** — immutable, content-free deletion record: project ID, internal prompt ID, slug, deleting actor, timestamp, and deleted version count. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
+- **Prompt optimization job** — a project-scoped GEPA request that pins a source prompt version, target message role, evaluator/examples, worker model configuration, and budget. Its immutable source-message snapshot supports historical-version publication; `worker_claim_id` with `worker_lease_expires_at` gives one API replica temporary execution ownership and allows recovery after a replica crash. It publishes at most one new immutable prompt version and exposes only lifecycle metadata through its SSE stream. See `apps/api/src/routes/prompt-optimizations.ts`.
 - **Dataset** — collection of `dataset_item`s, scoped to a Project.
 - **Experiment** — Agent run over a Dataset, produces scores per item.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.

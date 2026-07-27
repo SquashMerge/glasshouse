@@ -1,5 +1,10 @@
 DO $$
 BEGIN
+    IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 1
+        OR (SELECT name FROM projects WHERE slug = 'default') <> 'Default Project' THEN
+        RAISE EXCEPTION 'default project was not seeded';
+    END IF;
+
     IF (SELECT slug FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'first-prompt' THEN
         RAISE EXCEPTION 'first prompt slug was not normalized';
     END IF;
@@ -300,5 +305,24 @@ BEGIN
     EXCEPTION WHEN check_violation THEN
         NULL;
     END;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+            AND table_name = 'prompt_optimization_jobs'
+            AND column_name = 'worker_lease_expires_at'
+            AND data_type = 'timestamp with time zone'
+    ) THEN
+        RAISE EXCEPTION 'prompt optimization worker lease column was not created';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+            AND indexname = 'prompt_optimization_jobs_reclaimable_lease_idx'
+    ) THEN
+        RAISE EXCEPTION 'prompt optimization worker lease index was not created';
+    END IF;
 END
 $$;

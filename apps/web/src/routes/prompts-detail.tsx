@@ -1,13 +1,9 @@
 import * as React from "react";
-import {
-	Link,
-	useLocation,
-	useNavigate,
-	useParams,
-} from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LuLoaderCircle } from "react-icons/lu";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
-import { Button, buttonVariants } from "../components/ui/button";
+import { Button } from "../components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -15,14 +11,33 @@ import {
 	CardTitle,
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { useEventSource } from "../hooks/useEventSource";
+import { RollbackLatestVersionDialog } from "./rollback-latest-version-dialog";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	deletePrompt,
+	getActivePromptOptimization,
 	getPrompt,
 	listPromptVersions,
+	promptOptimizationEventsUrl,
+	rollbackLatestPromptVersion,
+	startPromptOptimization,
+	stopPromptOptimization,
+	type OptimizationEvent,
+	type OptimizationJob,
 	type Prompt,
+	type PromptVersion,
 } from "../lib/api";
+import {
+	optimizationDiff,
+	parseOptimizationEvent,
+	progressScore,
+} from "../lib/optimization-progress";
 import { formatDate, PageMessage } from "./prompts";
+
+const DEV_OPTIMIZATION_EXAMPLE_ENV = "true";
+const MIN_OPTIMIZATION_METRIC_CALLS = 2;
+const MAX_OPTIMIZATION_METRIC_CALLS = 20;
 
 export function PromptDetailPage() {
 	const { slug } = useParams({ from: "/protected/prompts/$slug" });
@@ -31,6 +46,16 @@ export function PromptDetailPage() {
 	const queryClient = useQueryClient();
 	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const [deleteOpen, setDeleteOpen] = React.useState(false);
+	const [rollbackOpen, setRollbackOpen] = React.useState(false);
+	const [optimizeTarget, setOptimizeTarget] = React.useState<
+		"system" | "user" | null
+	>(null);
+	const [optimization, setOptimization] =
+		React.useState<OptimizationJob | null>(null);
+	const [optimizationEvent, setOptimizationEvent] =
+		React.useState<OptimizationEvent | null>(null);
+	const [stopToEdit, setStopToEdit] = React.useState(false);
+	const stopToEditInFlight = React.useRef(false);
 	const deleteTriggerRef = React.useRef<HTMLButtonElement>(null);
 	const selectedVersion = queryVersion(location.searchStr, "version");
 
@@ -54,6 +79,12 @@ export function PromptDetailPage() {
 		queryFn: () => listPromptVersions({ project_id: selectedProjectId!, slug }),
 		enabled: Boolean(selectedProjectId),
 	});
+	const activeOptimizationQuery = useQuery({
+		queryKey: ["prompt-optimization", selectedProjectId, slug],
+		queryFn: () =>
+			getActivePromptOptimization({ project_id: selectedProjectId!, slug }),
+		enabled: Boolean(selectedProjectId),
+	});
 
 	const deleteMutation = useMutation({
 		mutationFn: (confirmation: string) => {
@@ -72,6 +103,131 @@ export function PromptDetailPage() {
 			await navigate({ to: "/prompts" });
 		},
 	});
+	const rollbackMutation = useMutation({
+		mutationFn: () => {
+			if (!selectedProjectId)
+				throw new Error(
+					"Select a project before rolling back a prompt version.",
+				);
+			return rollbackLatestPromptVersion({
+				project_id: selectedProjectId,
+				slug,
+			});
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: ["prompt", selectedProjectId, slug, "current"],
+				}),
+				queryClient.invalidateQueries({
+					queryKey: ["prompt-versions", selectedProjectId, slug],
+				}),
+			]);
+			setRollbackOpen(false);
+			await navigate({
+				to: "/prompts/$slug",
+				params: { slug },
+				search: {},
+			});
+		},
+	});
+	const optimizeMutation = useMutation({
+		mutationFn: (input: {
+			target: "system" | "user";
+			exampleInput: string;
+			exampleAnswer: string;
+			taskModel: string;
+			reflectionModel: string;
+			maxMetricCalls: number;
+		}) =>
+			startPromptOptimization({
+				project_id: selectedProjectId!,
+				slug,
+				source_version: selectedVersion
+					? selectedQuery.data!.version
+					: currentQuery.data!.version,
+				target: input.target,
+				evaluator: { type: "default_adapter" },
+				examples: [{ input: input.exampleInput, answer: input.exampleAnswer }],
+				model_config: {
+					task_lm: input.taskModel,
+					reflection_lm: input.reflectionModel,
+				},
+				budget: { max_metric_calls: input.maxMetricCalls },
+			}),
+		onSuccess: (job) => {
+			setOptimizationEvent(null);
+			setOptimization(job);
+		},
+	});
+	const stopToEditMutation = useMutation({
+		mutationFn: async ({ job }: { job: OptimizationJob; prompt: Prompt }) => {
+			if (!selectedProjectId)
+				throw new Error("Select a project before stopping optimization.");
+			const stopped = await stopPromptOptimization({
+				project_id: selectedProjectId,
+				id: job.id,
+			});
+			if (stopped.status !== "stopped")
+				throw new Error("Optimization could not be stopped.");
+			return stopped;
+		},
+		onSuccess: (job, { prompt }: { job: OptimizationJob; prompt: Prompt }) => {
+			setOptimization(job);
+			setStopToEdit(false);
+			void navigate({
+				to: "/prompts/$slug/edit",
+				params: { slug: prompt.id },
+				search: { from: prompt.version },
+			});
+		},
+		onSettled: () => {
+			stopToEditInFlight.current = false;
+		},
+	});
+	const activeOptimization =
+		optimization ?? activeOptimizationQuery.data ?? null;
+	const optimizationActive =
+		activeOptimization !== null &&
+		!["completed", "stopped", "failed"].includes(activeOptimization.status);
+	useEventSource<OptimizationEvent>(
+		activeOptimization && selectedProjectId
+			? promptOptimizationEventsUrl({
+					project_id: selectedProjectId,
+					id: activeOptimization.id,
+				})
+			: "/v1/prompt-optimizations/disabled/events",
+		{
+			enabled: optimizationActive,
+			onMessage: ({ event, data }) => {
+				if (event !== "status") return;
+				const optimizationEvent = parseOptimizationEvent(data);
+				if (!optimizationEvent) return;
+				setOptimizationEvent(optimizationEvent);
+				setOptimization((current) => {
+					const currentJob = current ?? activeOptimization;
+					if (!currentJob) return current;
+					return {
+						...currentJob,
+						status: optimizationEvent.status,
+						result_version:
+							typeof optimizationEvent.detail.result_version === "number"
+								? optimizationEvent.detail.result_version
+								: currentJob.result_version,
+					};
+				});
+				if (optimizationEvent.status === "completed")
+					void Promise.all([
+						queryClient.invalidateQueries({
+							queryKey: ["prompt", selectedProjectId, slug, "current"],
+						}),
+						queryClient.invalidateQueries({
+							queryKey: ["prompt-versions", selectedProjectId, slug],
+						}),
+					]);
+			},
+		},
+	);
 
 	if (!selectedProjectId || !selectedProject) {
 		return (
@@ -121,14 +277,49 @@ export function PromptDetailPage() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
-					<Link
-						to="/prompts/$slug/edit"
-						params={{ slug: prompt.id }}
-						search={{ from: prompt.version }}
-						className={buttonVariants({ variant: "outline" })}
+					<Button
+						variant="outline"
+						onClick={() => {
+							if (optimizationActive) {
+								stopToEditMutation.reset();
+								setStopToEdit(true);
+							} else
+								void navigate({
+									to: "/prompts/$slug/edit",
+									params: { slug: prompt.id },
+									search: { from: prompt.version },
+								});
+						}}
 					>
 						New version
-					</Link>
+					</Button>
+					{prompt.messages.some(
+						(message) => message.role === "system" || message.role === "user",
+					) && (
+						<Button
+							variant="outline"
+							onClick={() =>
+								setOptimizeTarget(
+									prompt.messages.some((message) => message.role === "system")
+										? "system"
+										: "user",
+								)
+							}
+							disabled={optimizationActive}
+						>
+							Optimize prompt
+						</Button>
+					)}
+					<Button
+						variant="outline"
+						onClick={() => {
+							rollbackMutation.reset();
+							setRollbackOpen(true);
+						}}
+						disabled={optimizationActive || historyQuery.data!.items.length < 2}
+					>
+						Rollback latest version
+					</Button>
 					<Button
 						ref={deleteTriggerRef}
 						variant="destructive"
@@ -222,8 +413,419 @@ export function PromptDetailPage() {
 					onDelete={(confirmation) => deleteMutation.mutate(confirmation)}
 				/>
 			)}
+			{rollbackOpen && (
+				<RollbackLatestVersionDialog
+					pending={rollbackMutation.isPending}
+					error={
+						rollbackMutation.error instanceof Error
+							? rollbackMutation.error.message
+							: null
+					}
+					onClose={() => {
+						if (!rollbackMutation.isPending) setRollbackOpen(false);
+					}}
+					onConfirm={() => rollbackMutation.mutate()}
+				/>
+			)}
+			{optimizeTarget && (
+				<OptimizationConfirmDialog
+					target={optimizeTarget}
+					hasSystem={prompt.messages.some(
+						(message) => message.role === "system",
+					)}
+					hasUser={prompt.messages.some((message) => message.role === "user")}
+					onTargetChange={setOptimizeTarget}
+					pending={optimizeMutation.isPending}
+					error={
+						optimizeMutation.error instanceof Error
+							? optimizeMutation.error.message
+							: null
+					}
+					onClose={() => setOptimizeTarget(null)}
+					onConfirm={(input) =>
+						optimizeMutation.mutate(
+							{ ...input, target: optimizeTarget },
+							{
+								onSuccess: () => setOptimizeTarget(null),
+							},
+						)
+					}
+				/>
+			)}
+			{activeOptimization && (
+				<OptimizationStatus
+					job={activeOptimization}
+					latestEvent={optimizationEvent}
+					versions={historyQuery.data?.items}
+					promptName={prompt.name}
+					onStop={() =>
+						selectedProjectId &&
+						stopPromptOptimization({
+							project_id: selectedProjectId,
+							id: activeOptimization.id,
+						}).then(setOptimization)
+					}
+				/>
+			)}
+			{stopToEdit && activeOptimization && (
+				<StopToEditDialog
+					pending={stopToEditMutation.isPending}
+					error={
+						stopToEditMutation.error instanceof Error
+							? stopToEditMutation.error.message
+							: null
+					}
+					onClose={() => setStopToEdit(false)}
+					onConfirm={() => {
+						if (stopToEditInFlight.current) return;
+						stopToEditInFlight.current = true;
+						stopToEditMutation.mutate({ job: activeOptimization, prompt });
+					}}
+				/>
+			)}
 		</div>
 	);
+}
+
+function OptimizationConfirmDialog({
+	target,
+	hasSystem,
+	hasUser,
+	onTargetChange,
+	pending,
+	error,
+	onClose,
+	onConfirm,
+}: {
+	target: "system" | "user";
+	hasSystem: boolean;
+	hasUser: boolean;
+	onTargetChange: (target: "system" | "user") => void;
+	pending: boolean;
+	error: string | null;
+	onClose: () => void;
+	onConfirm: (input: {
+		exampleInput: string;
+		exampleAnswer: string;
+		taskModel: string;
+		reflectionModel: string;
+		maxMetricCalls: number;
+	}) => void;
+}) {
+	const [exampleInput, setExampleInput] = React.useState("");
+	const [exampleAnswer, setExampleAnswer] = React.useState("");
+	const [taskModel, setTaskModel] = React.useState("");
+	const [reflectionModel, setReflectionModel] = React.useState("");
+	const [maxMetricCalls, setMaxMetricCalls] = React.useState("20");
+	const showDevExample =
+		import.meta.env.DEV &&
+		import.meta.env.VITE_SHOW_DEV_OPTIMIZATION_EXAMPLE ===
+			DEV_OPTIMIZATION_EXAMPLE_ENV;
+	const fillDevExample = () => {
+		setExampleInput(
+			"Here is my task list for today:\n\n- Finish the quarterly status report and send it to the team by 2:00 PM.\n- Pick up groceries after work.\n- Review and approve the open pull request for the API changes.\n- Call the dentist to schedule a cleaning.\n- Take the dog for a 30-minute walk in the evening.",
+		);
+		setExampleAnswer(
+			"**Today’s priorities:** Finish and send the quarterly status report by 2:00 PM, then review and approve the API pull request.  \n**After work:** Pick up groceries, schedule a dental cleaning, and take the dog for a 30-minute walk.",
+		);
+		setTaskModel("gpt-5.6-terra");
+		setReflectionModel("gpt-5.6-terra");
+		setMaxMetricCalls("5");
+	};
+	const valid = Boolean(
+		exampleInput.trim() &&
+			exampleAnswer.trim() &&
+			taskModel.trim() &&
+			reflectionModel.trim() &&
+			Number.isSafeInteger(Number(maxMetricCalls)) &&
+			Number(maxMetricCalls) >= MIN_OPTIMIZATION_METRIC_CALLS &&
+			Number(maxMetricCalls) <= MAX_OPTIMIZATION_METRIC_CALLS,
+	);
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4">
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="optimization-title"
+				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+			>
+				<h2 id="optimization-title" className="text-lg font-semibold">
+					Start optimization
+				</h2>
+				<p className="mt-3 text-sm text-muted-foreground">
+					GEPA optimizes one prompt role per run. Choose the role to optimize,
+					then provide a representative input and expected answer.
+				</p>
+				{showDevExample && (
+					<Button
+						className="mt-3"
+						variant="secondary"
+						onClick={fillDevExample}
+						disabled={pending}
+					>
+						Fill development example
+					</Button>
+				)}
+				<div className="mt-4 space-y-3">
+					<fieldset>
+						<legend className="text-sm font-medium">Prompt role</legend>
+						<div className="mt-2 flex gap-4">
+							{hasSystem && (
+								<label className="flex items-center gap-2 text-sm">
+									<input
+										type="radio"
+										name="optimization-target"
+										value="system"
+										checked={target === "system"}
+										onChange={() => onTargetChange("system")}
+										disabled={pending}
+									/>
+									System prompt
+								</label>
+							)}
+							{hasUser && (
+								<label className="flex items-center gap-2 text-sm">
+									<input
+										type="radio"
+										name="optimization-target"
+										value="user"
+										checked={target === "user"}
+										onChange={() => onTargetChange("user")}
+										disabled={pending}
+									/>
+									User prompt
+								</label>
+							)}
+						</div>
+					</fieldset>
+					<label className="block text-sm font-medium">
+						Representative input
+						<textarea
+							className="mt-1 min-h-20 w-full rounded-md border p-2"
+							placeholder="e.g. A customer asks how to reset their password"
+							value={exampleInput}
+							onChange={(event) => setExampleInput(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Expected answer
+						<textarea
+							className="mt-1 min-h-20 w-full rounded-md border p-2"
+							placeholder="e.g. Explain the steps clearly and include the support link"
+							value={exampleAnswer}
+							onChange={(event) => setExampleAnswer(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Task model
+						<Input
+							placeholder="e.g. openai/gpt-4o-mini"
+							value={taskModel}
+							onChange={(event) => setTaskModel(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Reflection model
+						<Input
+							placeholder="e.g. openai/gpt-4o-mini"
+							value={reflectionModel}
+							onChange={(event) => setReflectionModel(event.target.value)}
+						/>
+					</label>
+					<label className="block text-sm font-medium">
+						Metric-call budget
+						<Input
+							type="number"
+							min={MIN_OPTIMIZATION_METRIC_CALLS}
+							max={MAX_OPTIMIZATION_METRIC_CALLS}
+							placeholder="e.g. 5"
+							value={maxMetricCalls}
+							onChange={(event) => setMaxMetricCalls(event.target.value)}
+						/>
+					</label>
+				</div>
+				{error && (
+					<p className="mt-3 text-sm text-destructive" role="alert">
+						{error}
+					</p>
+				)}
+				<div className="mt-6 flex justify-end gap-2">
+					<Button variant="outline" onClick={onClose} disabled={pending}>
+						Cancel
+					</Button>
+					<Button
+						onClick={() =>
+							onConfirm({
+								exampleInput: exampleInput.trim(),
+								exampleAnswer: exampleAnswer.trim(),
+								taskModel: taskModel.trim(),
+								reflectionModel: reflectionModel.trim(),
+								maxMetricCalls: Number(maxMetricCalls),
+							})
+						}
+						disabled={pending || !valid}
+					>
+						{pending ? "Starting…" : "Start optimization"}
+					</Button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function StopToEditDialog({
+	pending,
+	error,
+	onClose,
+	onConfirm,
+}: {
+	pending: boolean;
+	error: string | null;
+	onClose: () => void;
+	onConfirm: () => void;
+}) {
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4">
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="stop-edit-title"
+				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+			>
+				<h2 id="stop-edit-title" className="text-lg font-semibold">
+					Stop optimization before editing?
+				</h2>
+				<p className="mt-3 text-sm text-muted-foreground">
+					Stopping is final. The current optimization will not publish a
+					version, then you can create a new one.
+				</p>
+				{error && (
+					<p className="mt-3 text-sm text-destructive" role="alert">
+						{error}
+					</p>
+				)}
+				<div className="mt-6 flex justify-end gap-2">
+					<Button variant="outline" onClick={onClose} disabled={pending}>
+						Cancel
+					</Button>
+					<Button variant="destructive" onClick={onConfirm} disabled={pending}>
+						{pending ? "Stopping…" : "Stop and continue"}
+					</Button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function OptimizationStatus({
+	job,
+	latestEvent,
+	versions,
+	promptName,
+	onStop,
+}: {
+	job: OptimizationJob;
+	latestEvent: OptimizationEvent | null;
+	versions: PromptVersion[] | undefined;
+	promptName: string;
+	onStop: () => void;
+}) {
+	const active = !["completed", "stopped", "failed"].includes(job.status);
+	const elapsed = useElapsedTime(job.created_at, active);
+	const score = progressScore(latestEvent);
+	const diff = optimizationDiff(job, versions);
+	return (
+		<div
+			className="fixed bottom-4 right-4 z-40 w-[min(28rem,calc(100vw-2rem))] rounded-lg border border-border bg-background p-4 shadow-lg"
+			role="status"
+		>
+			<p className="font-medium">
+				{promptName} {optimizationStatusLabel(job.status)}
+			</p>
+			<p className="mt-1 text-sm text-muted-foreground">
+				{job.result_version
+					? `Published as v${job.result_version}.`
+					: (job.error_message ??
+						"The source version and configuration are pinned.")}
+			</p>
+			<dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+				<ProgressField label="Phase" value={job.status} />
+				<ProgressField
+					label="Prompt role"
+					value={job.target ?? "Not reported"}
+				/>
+				<ProgressField
+					label="Source version"
+					value={job.source_version ? `v${job.source_version}` : "Not reported"}
+				/>
+				<ProgressField label="Elapsed" value={elapsed} />
+				<ProgressField
+					label="Metric calls"
+					value={
+						job.budget?.max_metric_calls
+							? `Not reported / ${job.budget.max_metric_calls}`
+							: "Not reported"
+					}
+				/>
+				<ProgressField
+					label="Latest score"
+					value={score === null ? "Not reported" : String(score)}
+				/>
+			</dl>
+			{diff && (
+				<div className="mt-4 space-y-2 border-t pt-3 text-sm">
+					<p className="font-medium">Candidate improvement</p>
+					<p className="text-muted-foreground">{diff.summary}</p>
+					<p className="font-medium">Before / after</p>
+					<div className="grid gap-2 sm:grid-cols-2">
+						<pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-xs">
+							{diff.before}
+						</pre>
+						<pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-2 text-xs">
+							{diff.after}
+						</pre>
+					</div>
+				</div>
+			)}
+			{active && (
+				<Button className="mt-3" size="sm" variant="outline" onClick={onStop}>
+					<LuLoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+					Stop
+				</Button>
+			)}
+		</div>
+	);
+}
+
+function ProgressField({ label, value }: { label: string; value: string }) {
+	return (
+		<div>
+			<dt className="text-xs text-muted-foreground">{label}</dt>
+			<dd>{value}</dd>
+		</div>
+	);
+}
+
+function useElapsedTime(
+	createdAt: string | undefined,
+	active: boolean,
+): string {
+	const [now, setNow] = React.useState(() => Date.now());
+	React.useEffect(() => {
+		if (!active) return;
+		setNow(Date.now());
+		const interval = setInterval(() => setNow(Date.now()), 1_000);
+		return () => clearInterval(interval);
+	}, [active]);
+	if (!createdAt) return "Not reported";
+	const startedAt = new Date(createdAt).valueOf();
+	if (Number.isNaN(startedAt)) return "Not reported";
+	const seconds = Math.max(0, Math.floor((now - startedAt) / 1_000));
+	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function optimizationStatusLabel(status: OptimizationJob["status"]): string {
+	return status === "optimizing" ? "optimizing…" : status;
 }
 
 function PromptVersionDetails({ prompt }: { prompt: Prompt }) {

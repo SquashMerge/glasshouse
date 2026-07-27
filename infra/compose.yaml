@@ -41,9 +41,10 @@ services:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8123/ping"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --timeout=2 --spider http://127.0.0.1:8123/ping || exit 1"]
       interval: 5s
       timeout: 3s
+      start_period: 30s
       retries: 10
 
   valkey:
@@ -68,7 +69,7 @@ services:
 
   api:
     build:
-      context: ..
+      context: .
       dockerfile: apps/api/Dockerfile
     container_name: astraea-api
     restart: unless-stopped
@@ -83,6 +84,12 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
       VALKEY_URL: redis://:${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}@valkey:6379
+      GEPA_ALLOWED_MODELS: ${GEPA_ALLOWED_MODELS:?GEPA_ALLOWED_MODELS must list permitted GEPA models}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:
@@ -93,14 +100,14 @@ services:
       valkey:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3000/health"]
+      test: ["CMD-SHELL", "$$GEPA_PYTHON /app/worker/gepa_worker.py --smoke >/dev/null && wget --spider --quiet http://localhost:3000/health"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   web:
     build:
-      context: ..
+      context: .
       dockerfile: apps/web/Dockerfile
     container_name: astraea-web
     restart: unless-stopped

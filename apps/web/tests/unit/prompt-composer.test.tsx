@@ -146,6 +146,56 @@ describe("PromptComposer", () => {
 		);
 	});
 
+	it("invalidates the rendered preview when either unsaved source changes", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				messages: [
+					{ role: "system", content: "System Ada" },
+					{ role: "user", content: "User Ada" },
+				],
+				warnings: [],
+			}),
+		);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				messages: [
+					{ role: "system", content: "Changed system Ada" },
+					{ role: "user", content: "User Ada" },
+				],
+				warnings: [],
+			}),
+		);
+		renderComposer(<PromptComposer projectId={PROJECT_ID} onSaved={vi.fn()} />);
+
+		fireEvent.change(screen.getByLabelText("System prompt (optional)"), {
+			target: { value: "System {{name}}" },
+		});
+		fireEvent.change(screen.getByLabelText("User prompt (optional)"), {
+			target: { value: "User {{name}}" },
+		});
+		fireEvent.change(screen.getByLabelText("Variables JSON"), {
+			target: { value: '{"name":"Ada"}' },
+		});
+		fireEvent.click(screen.getByTestId("preview-prompt"));
+		await screen.findByTestId("preview-output-system");
+
+		fireEvent.change(screen.getByLabelText("System prompt (optional)"), {
+			target: { value: "Changed system {{name}}" },
+		});
+		expect(
+			screen.queryByTestId("preview-output-system"),
+		).not.toBeInTheDocument();
+		fireEvent.click(screen.getByTestId("preview-prompt"));
+		await screen.findByTestId("preview-output-system");
+
+		fireEvent.change(screen.getByLabelText("User prompt (optional)"), {
+			target: { value: "Changed user {{name}}" },
+		});
+		expect(
+			screen.queryByTestId("preview-output-system"),
+		).not.toBeInTheDocument();
+	});
+
 	it("previews the unsaved version draft with injected variables and submits against the current base version", async () => {
 		const selected = prompt(1, "Selected {{customer}}");
 		const current = prompt(3, "Current {{customer}}");

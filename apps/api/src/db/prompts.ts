@@ -814,6 +814,19 @@ export async function createPromptVersion(
 		);
 		const prompt = promptRows[0];
 		if (!prompt) throw error("NOT_FOUND", "Prompt not found");
+		const activeOptimization = await query<Row>(
+			client,
+			`SELECT id FROM prompt_optimization_jobs
+        WHERE prompt_id = $1
+          AND status IN ('queued', 'preparing', 'optimizing', 'evaluating')
+        LIMIT 1`,
+			[stringValue(prompt, "id")],
+		);
+		if (activeOptimization.length > 0)
+			throw error(
+				"CONFLICT",
+				"Stop the active optimization before creating a version",
+			);
 		const latestRows = await query<Row>(
 			client,
 			`SELECT version, model, settings
@@ -844,6 +857,64 @@ export async function createPromptVersion(
 			changeSummary,
 			actor,
 		});
+	});
+}
+
+export async function rollbackLatestPromptVersion(
+	pool: Pick<Pool, "connect">,
+	input: { project_id: string; slug: string },
+): Promise<Prompt> {
+	return transaction(pool, async (client) => {
+		await requireProject(client, input.project_id, true);
+		const rows = await query<Row>(
+			client,
+			`SELECT p.id AS prompt_id, p.project_id, p.name, p.description, ${versionColumns}, v.id AS version_id
+        FROM prompts AS p
+        INNER JOIN prompt_versions AS v ON v.prompt_id = p.id
+        ${previousVersionJoin}
+        WHERE p.project_id = $1 AND p.slug = $2
+        ORDER BY v.version DESC
+        LIMIT 2
+        FOR UPDATE OF p, v`,
+			[input.project_id, input.slug],
+		);
+		const latest = rows[0];
+		if (!latest) throw error("NOT_FOUND", "Prompt not found");
+		const previous = rows[1];
+		if (!previous)
+			throw error("CONFLICT", "The first prompt version cannot be rolled back");
+		const promptId = stringValue(latest, "prompt_id");
+		const activeOptimization = await query<Row>(
+			client,
+			`SELECT id FROM prompt_optimization_jobs
+         WHERE prompt_id = $1
+           AND status IN ('queued', 'preparing', 'optimizing', 'evaluating')
+         LIMIT 1`,
+			[promptId],
+		);
+		if (activeOptimization.length > 0)
+			throw error(
+				"CONFLICT",
+				"Stop the active optimization before rolling back a version",
+			);
+		await query(
+			client,
+			`UPDATE prompt_labels
+         SET version_id = $1
+         WHERE project_id = $2 AND prompt_id = $3 AND version_id = $4`,
+			[
+				stringValue(previous, "version_id"),
+				input.project_id,
+				promptId,
+				stringValue(latest, "version_id"),
+			],
+		);
+		await query(
+			client,
+			"DELETE FROM prompt_versions WHERE id = $1 AND prompt_id = $2",
+			[stringValue(latest, "version_id"), promptId],
+		);
+		return mapPrompt(previous);
 	});
 }
 
