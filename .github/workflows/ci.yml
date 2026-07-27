@@ -89,7 +89,7 @@ jobs:
           sed -i 's/CHANGE_ME/astraea-ci-password/g' infra/.env
 
       - name: Start application stack
-        run: docker compose --env-file infra/.env -f infra/compose.yaml up --build --detach --wait
+        run: docker compose --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
 
       - name: Seed E2E project
         run: docker compose --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project');"
@@ -100,6 +100,12 @@ jobs:
           UI_USERNAME: astraea
           UI_PASSWORD: astraea-ci-password
         run: cd apps/web && bun run test:e2e
+
+      - name: Dump application diagnostics
+        if: failure()
+        run: |
+          docker compose --env-file infra/.env -f infra/compose.yaml ps
+          docker compose --env-file infra/.env -f infra/compose.yaml logs --no-color --tail=200
 
       - name: Upload Playwright artifacts
         if: failure()
