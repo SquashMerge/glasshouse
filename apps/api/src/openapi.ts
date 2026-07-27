@@ -208,16 +208,10 @@ register(getOptimization, handleGet);
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);
-register(getDataset, (c: Context) => handleGetDataset(c.req.param("id")!));
-register(listDatasetItems, (c: Context) =>
-	handleListDatasetItems(c.req.param("id")!),
-);
-register(addDatasetItem, (c: Context) =>
-	handleAddDatasetItem(c.req.param("id")!),
-);
-register(deleteDatasetItem, (c: Context) =>
-	handleDeleteDatasetItem(c.req.param("id")!, c.req.param("itemId")!),
-);
+register(getDataset, handleGetDataset);
+register(listDatasetItems, handleListDatasetItems);
+register(addDatasetItem, handleAddDatasetItem);
+register(deleteDatasetItem, handleDeleteDatasetItem);
 
 register(createScore, handleCreateScore);
 register(getScore, (c: Context) => handleGetScore(c.req.param("id")!));

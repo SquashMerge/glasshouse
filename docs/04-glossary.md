@@ -50,7 +50,8 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Prompt tombstone** — immutable `(project_id, slug)` reservation left by a hard deletion; prevents canonical prompt ID reuse. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Prompt deletion audit** — immutable, content-free deletion record: project ID, internal prompt ID, slug, deleting actor, timestamp, and deleted version count. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Prompt optimization job** — a project-scoped GEPA request that pins a source prompt version, target message role, evaluator/examples, worker model configuration, and budget. Its immutable source-message snapshot supports historical-version publication; `worker_claim_id` with `worker_lease_expires_at` gives one API replica temporary execution ownership and allows recovery after a replica crash. It publishes at most one new immutable prompt version and exposes only lifecycle metadata through its SSE stream. See `apps/api/src/routes/prompt-optimizations.ts`.
-- **Dataset** — collection of `dataset_item`s, scoped to a Project.
+- **Dataset** — collection of `dataset_item`s, scoped to a Project. API: `/v1/datasets`.
+- **Dataset item** — one JSON input/reference pair in a Dataset. Optional `source_trace_id` and `source_observation_id` preserve the production trace origin for regression workflows. API: `/v1/datasets/{id}/items`.
 - **Experiment** — Agent run over a Dataset, produces scores per item.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 
