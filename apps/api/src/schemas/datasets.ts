@@ -86,4 +86,8 @@ export const DatasetErrorResponses = {
 		description: "Dataset already exists",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
+	500: {
+		description: "Internal server error",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
 };
