@@ -16,7 +16,7 @@ RUN bun --filter "@astraea/web" build
 
 FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app
-RUN apk add --no-cache libpq
+RUN apk add --no-cache libpq wget
 COPY --from=build /app /app
 ENV NODE_ENV=production
 ENV WEB_PORT=5173
