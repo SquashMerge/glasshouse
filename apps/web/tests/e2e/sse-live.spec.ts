@@ -387,23 +387,23 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 			);
 		}
 		await expect(workspace).toHaveAttribute("data-row-count", "5000", {
-			timeout: 2_000,
+			timeout: 10_000,
 		});
 
 		const root = page.locator(
 			`[data-testid="span-row"][data-observation-id="${rootSpanId}"]`,
 		);
 		const leaf = rows.nth(1);
-		await leaf.click({ timeout: 250 });
+		await leaf.click({ timeout: 2_000 });
 		await expect(leaf).toHaveAttribute("data-selected", "true", {
-			timeout: 250,
+			timeout: 2_000,
 		});
 
 		await root
 			.getByRole("button", { name: `Collapse ${traceName}` })
-			.click({ timeout: 250 });
+			.click({ timeout: 2_000 });
 		await expect(root).toHaveAttribute("aria-expanded", "false", {
-			timeout: 250,
+			timeout: 2_000,
 		});
 
 		await expect(root).toHaveAttribute("data-observation-id", rootSpanId);

@@ -139,7 +139,7 @@ test.describe("Dashboard basics", () => {
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-		await expect(page.getByRole("heading", { name: /Astraea/i })).toBeVisible();
+		await expect(page.getByText("Astraea", { exact: true })).toBeVisible();
 		expect(errors, `console errors observed: ${errors.join("\n")}`).toEqual([]);
 	});
 
@@ -150,7 +150,10 @@ test.describe("Dashboard basics", () => {
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-		await page.getByRole("link", { name: /Observability/i }).click();
+		await page
+			.getByRole("link", { name: /Observability/i })
+			.first()
+			.click();
 		await expect(page).toHaveURL(/\/observability$/);
 	});
 });
