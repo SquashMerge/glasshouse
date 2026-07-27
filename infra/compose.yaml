@@ -82,6 +82,11 @@ services:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
       VALKEY_URL: redis://:${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}@valkey:6379
       GEPA_ALLOWED_MODELS: ${GEPA_ALLOWED_MODELS:?GEPA_ALLOWED_MODELS must list permitted GEPA models}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:

@@ -142,6 +142,36 @@ Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 | http://localhost:3000/health | Backend health check (public; no auth) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (public) |
 
+### GEPA prompt optimization and LLM providers
+
+Prompt optimization uses the Python GEPA worker and requires access to an LLM for both candidate evaluation (`task_lm`) and reflection/proposal (`reflection_lm`). The dashboard asks for those two model identifiers when optimization starts; it does not collect or persist API keys. The identifiers are pinned into the job configuration and must be present in `GEPA_ALLOWED_MODELS`.
+
+For direct provider access, inject the provider credential into the API/worker environment and allow the exact model identifiers, for example:
+
+```sh
+GEPA_ALLOWED_MODELS=openai/gpt-4o-mini,openai/gpt-4o
+OPENAI_API_KEY=your-key-here
+```
+
+or:
+
+```sh
+GEPA_ALLOWED_MODELS=anthropic/claude-sonnet-4-20250514
+ANTHROPIC_API_KEY=your-key-here
+```
+
+GEPA accepts provider-prefixed model names through its default adapter. Common LiteLLM-compatible providers include OpenAI, Anthropic, Google/Gemini, Azure OpenAI, and AWS Bedrock; the exact model format and required environment variables are provider-specific and must be supported by the installed GEPA/LiteLLM stack. Astraea does not currently maintain a provider catalog or model discovery endpoint.
+
+An OpenAI-compatible LiteLLM proxy can be used by pointing the worker's OpenAI adapter at the proxy and supplying the proxy credential as the OpenAI key, for example:
+
+```sh
+GEPA_ALLOWED_MODELS=openai/my-proxy-model
+OPENAI_API_BASE=https://litellm.example.com/v1
+OPENAI_API_KEY=your-proxy-key
+```
+
+The current UI exposes model names and the metric-call budget, but not provider credentials, proxy administration, connection testing, or model discovery. Never commit these credentials or store them in prompt/job records. For Docker Compose, place them in the gitignored `infra/.env`; for production, use the deployment secret mechanism. `GEPA_WORKER_MODE=fake` is only for deterministic tests and does not perform LLM calls.
+
 ### Sending traces from your agent
 
 Set these four env vars on your instrumented agent:
