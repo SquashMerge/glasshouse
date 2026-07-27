@@ -182,6 +182,49 @@ describe("OTLP ingest publishes events", () => {
 		expect(observations).toHaveLength(2);
 	});
 
+	it("uses the root identity and aggregates timing and error status across spans", async () => {
+		const res = await handleOtlpIngest(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_B,
+							parent_span_id: HEX16_A,
+							name: "child error",
+							start_time_unix_nano: String(NOW_NS + 1_000_000),
+							end_time_unix_nano: String(NOW_NS + 10_000_000),
+							status: { code: 2 },
+							attributes: [],
+						},
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "root request",
+							start_time_unix_nano: String(NOW_NS),
+							end_time_unix_nano: String(NOW_NS + 5_000_000),
+							attributes: [],
+						},
+					]),
+				),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const inserted = insertTraces.mock.calls[0]?.[1] as Array<{
+			name: string;
+			status: string;
+			duration_ms: number | null;
+		}>;
+		expect(inserted).toHaveLength(1);
+		expect(inserted[0]).toMatchObject({
+			name: "root request",
+			status: "error",
+			duration_ms: 9,
+		});
+	});
+
 	it("sends a typed, prompt-safe metadata envelope to the observation writer", async () => {
 		const res = await handleOtlpIngest(
 			new Request("http://x/v1/otel/v1/traces", {

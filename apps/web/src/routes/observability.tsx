@@ -473,6 +473,7 @@ function useTracesData() {
 			if (query.hasNextPage && !query.isFetchingNextPage)
 				void query.fetchNextPage();
 		},
+		refetch: query.refetch,
 		highlightVersions: activeLiveRows.highlightVersions,
 		filters,
 		setFilters,
@@ -509,6 +510,7 @@ export function TracesTab() {
 				isError={data.isError}
 				hasNextPage={data.hasNextPage}
 				onLoadMore={data.fetchNextPage}
+				onRetry={() => void data.refetch()}
 				highlightedVersions={data.highlightVersions}
 				rowKey={(t) => t.trace_id}
 				onFiltersChange={data.onFiltersChange}
@@ -563,12 +565,6 @@ const SPAN_COLUMNS: ColumnDef<ObservationRow>[] = [
 		cell: (o) => <span title={o.trace_id}>{o.trace_id.slice(0, 16)}…</span>,
 	},
 	{
-		header: "Agent",
-		width: "w-[160px]",
-		className: "text-xs text-muted-foreground",
-		cell: () => "—",
-	},
-	{
 		header: "Status",
 		width: "w-[100px]",
 		cell: (o) => (
@@ -604,7 +600,6 @@ const SPAN_FILTER_FIELDS: FilterFieldDef[] = [
 	},
 	{ key: "name", placeholder: "e.g. llm.call" },
 	{ key: "trace_id", placeholder: "32-char trace id", className: "font-mono" },
-	{ key: "agent_id", placeholder: "e.g. code-reviewer" },
 	{ key: "status", placeholder: "ok / error", className: "font-mono" },
 	{
 		key: "duration",
@@ -623,7 +618,6 @@ function buildSpanApiParams(
 	if (filters.type) out.type = filters.type;
 	if (filters.name) out.name = filters.name;
 	if (filters.trace_id) out.trace_id = filters.trace_id;
-	if (filters.agent_id) out.agent_id = filters.agent_id;
 	if (filters.status) out.status = filters.status;
 	if (filters.duration) out.duration = filters.duration;
 	if (filters.model) out.model = filters.model;
@@ -822,6 +816,7 @@ function useSpansData() {
 			if (query.hasNextPage && !query.isFetchingNextPage)
 				void query.fetchNextPage();
 		},
+		refetch: query.refetch,
 		highlightVersions: activeLiveRows.highlightVersions,
 		filters,
 		setFilters,
@@ -868,6 +863,7 @@ export function SpansTab() {
 				isError={data.isError}
 				hasNextPage={data.hasNextPage}
 				onLoadMore={data.fetchNextPage}
+				onRetry={() => void data.refetch()}
 				highlightedVersions={data.highlightVersions}
 				rowKey={(o) => o.observation_id}
 				onFiltersChange={data.onFiltersChange}

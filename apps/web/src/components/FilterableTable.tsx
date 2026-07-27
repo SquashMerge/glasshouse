@@ -16,6 +16,7 @@ import { cn } from "../lib/utils";
 import {
 	TimeRangePicker,
 	defaultRange,
+	isTimeRangeValid,
 	type TimeRange,
 } from "./TimeRangePicker";
 
@@ -64,6 +65,7 @@ export interface FilterableTableProps<TRow> {
 	isError: Error | null;
 	hasNextPage: boolean;
 	onLoadMore: () => void;
+	onRetry?: () => void;
 
 	rowKey: (row: TRow) => string;
 	onRowClick: (row: TRow) => void;
@@ -104,6 +106,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 		isError,
 		hasNextPage,
 		onLoadMore,
+		onRetry,
 		rowKey,
 		onRowClick,
 		onFiltersChange,
@@ -133,6 +136,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 	}, [filters, timeRange]);
 
 	React.useEffect(() => {
+		if (!isTimeRangeValid(debouncedTimeRange)) return;
 		onFiltersChange?.(debouncedFilters, debouncedTimeRange);
 	}, [debouncedFilters, debouncedTimeRange, onFiltersChange]);
 
@@ -192,8 +196,16 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 			</CardHeader>
 			<CardContent className="space-y-3">
 				{isError && (
-					<div className="text-sm text-destructive">
-						Failed to load: {isError.message}
+					<div
+						className="flex items-center justify-between gap-3 text-sm text-destructive"
+						role="alert"
+					>
+						<span>Failed to load: {isError.message}</span>
+						{onRetry && (
+							<Button variant="outline" size="sm" onClick={onRetry}>
+								Retry
+							</Button>
+						)}
 					</div>
 				)}
 
@@ -252,6 +264,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 										highlightVersion={highlightVersion}
 										disableTimeout={disableHighlightTimeout}
 										onClick={() => onRowClick(row)}
+										label={`Open ${noun.singular} ${key}`}
 									>
 										{columns.map((c) => (
 											<TableCell key={c.header} className={cn(c.className)}>
@@ -328,11 +341,13 @@ function HighlightedRow({
 	highlightVersion,
 	disableTimeout,
 	onClick,
+	label,
 	children,
 }: {
 	highlightVersion: number;
 	disableTimeout: boolean;
 	onClick: () => void;
+	label: string;
 	children: React.ReactNode;
 }) {
 	const [active, setActive] = React.useState(highlightVersion > 0);
@@ -349,9 +364,20 @@ function HighlightedRow({
 
 	return (
 		<TableRow
-			className={cn("cursor-pointer", active && "bg-accent/40")}
+			className={cn(
+				"cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+				active && "bg-accent/40",
+			)}
 			data-highlighted={active ? "true" : "false"}
 			onClick={onClick}
+			tabIndex={0}
+			aria-label={label}
+			onKeyDown={(event) => {
+				if (event.key === "Enter" || event.key === " ") {
+					event.preventDefault();
+					onClick();
+				}
+			}}
 		>
 			{children}
 		</TableRow>

@@ -54,6 +54,11 @@ export type OtlpIngestDependencies = {
 	publishSync: typeof publishSync;
 };
 
+type AggregatedTrace = {
+	trace: ReturnType<typeof normalizeSpan>["trace"];
+	isRoot: boolean;
+};
+
 const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 	defaultClient,
 	insertObservations,
@@ -85,7 +90,7 @@ export function createOtlpIngestHandler(
 		const request = parsed.data;
 		const redaction = loadRedactionOptions();
 
-		const traces = new Map<string, ReturnType<typeof normalizeSpan>["trace"]>();
+		const traces = new Map<string, AggregatedTrace>();
 		const observations: ReturnType<typeof normalizeSpan>["observation"][] = [];
 
 		for (const rs of request.resource_spans) {
@@ -100,7 +105,11 @@ export function createOtlpIngestHandler(
 						observation.metadata,
 						redaction,
 					);
-					traces.set(trace.trace_id, trace);
+					const isRoot = observation.parent_observation_id === null;
+					traces.set(
+						trace.trace_id,
+						aggregateTrace(traces.get(trace.trace_id), trace, isRoot),
+					);
 					observations.push(observation);
 				}
 			}
@@ -108,7 +117,10 @@ export function createOtlpIngestHandler(
 
 		const client = dependencies.defaultClient();
 		try {
-			await dependencies.insertTraces(client, [...traces.values()]);
+			await dependencies.insertTraces(
+				client,
+				[...traces.values()].map(({ trace }) => trace),
+			);
 			await dependencies.insertObservations(client, observations);
 		} catch (err) {
 			console.error("OTLP insert failed:", (err as Error).message);
@@ -120,8 +132,8 @@ export function createOtlpIngestHandler(
 		}
 
 		try {
-			for (const t of [...traces.values()])
-				dependencies.publishSync("trace.created", { trace: t });
+			for (const { trace } of traces.values())
+				dependencies.publishSync("trace.created", { trace });
 			for (const o of observations)
 				dependencies.publishSync("observation.created", { observation: o });
 		} catch (err) {
@@ -136,6 +148,47 @@ export function createOtlpIngestHandler(
 			headers: { "content-type": "application/json" },
 		});
 	};
+}
+
+function aggregateTrace(
+	existing: AggregatedTrace | undefined,
+	next: ReturnType<typeof normalizeSpan>["trace"],
+	nextIsRoot: boolean,
+): AggregatedTrace {
+	if (!existing) return { trace: next, isRoot: nextIsRoot };
+
+	// The root supplies the trace identity; all observations supply timing/status.
+	const identity = nextIsRoot && !existing.isRoot ? next : existing.trace;
+	const start_time =
+		existing.trace.start_time < next.start_time
+			? existing.trace.start_time
+			: next.start_time;
+	const end_time = latestTime(existing.trace.end_time, next.end_time);
+	return {
+		isRoot: existing.isRoot || nextIsRoot,
+		trace: {
+			...identity,
+			start_time,
+			end_time,
+			duration_ms:
+				end_time === null
+					? null
+					: Math.max(
+							0,
+							new Date(end_time).getTime() - new Date(start_time).getTime(),
+						),
+			status:
+				existing.trace.status === "error" || next.status === "error"
+					? "error"
+					: "ok",
+		},
+	};
+}
+
+function latestTime(left: string | null, right: string | null): string | null {
+	if (!left) return right;
+	if (!right) return left;
+	return left > right ? left : right;
 }
 
 export const handleOtlpIngest = createOtlpIngestHandler();

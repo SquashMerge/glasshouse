@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
 	Card,
 	CardContent,
@@ -15,6 +15,7 @@ import { authHeader, setCredentials } from "../lib/auth";
 
 export function LoginPage() {
 	const navigate = useNavigate();
+	const location = useLocation();
 	const [username, setUsername] = React.useState("");
 	const [password, setPassword] = React.useState("");
 	const [submitting, setSubmitting] = React.useState(false);
@@ -33,7 +34,10 @@ export function LoginPage() {
 			});
 			if (res.status === 200) {
 				setCredentials(username, password);
-				navigate({ to: "/" });
+				const redirect = new URLSearchParams(location.searchStr).get(
+					"redirect",
+				);
+				navigate({ to: safeRedirect(redirect) });
 			} else if (res.status === 401) {
 				setError("Invalid credentials");
 			} else {
@@ -96,4 +100,10 @@ export function LoginPage() {
 			</Card>
 		</div>
 	);
+}
+
+function safeRedirect(value: string | null): string {
+	return value && value.startsWith("/") && !value.startsWith("//")
+		? value
+		: "/";
 }

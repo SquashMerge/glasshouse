@@ -135,8 +135,8 @@ Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 |---|---|
 | http://localhost:5173/login | Sign in (Basic Auth) |
 | http://localhost:5173 | Dashboard (auth-gated; redirects to /login if not signed in) |
-| http://localhost:5173/traces | Trace list (auth-gated) |
-| http://localhost:5173/traces/:id | Trace detail with span tree (auth-gated) |
+| http://localhost:5173/observability | Trace and observation lists (auth-gated) |
+| http://localhost:5173/observability/traces/:id | Trace detail with observation tree (auth-gated) |
 | http://localhost:3000/v1/otel/v1/traces | OTLP HTTP/JSON trace ingest (auth-gated; OTel SDK target) |
 | http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (public) |
 | http://localhost:3000/health | Backend health check (public; no auth) |

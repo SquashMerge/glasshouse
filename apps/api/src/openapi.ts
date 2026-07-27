@@ -3,6 +3,7 @@ import { apiReference } from "@scalar/hono-api-reference";
 import type { Context } from "hono";
 import { healthRoute, handleHealth } from "./routes/health.js";
 import { loginRoute, handleLogin } from "./routes/auth.js";
+import { otlpIngestRoute, handleOtlpIngest } from "./routes/otlp.js";
 import {
 	createAgent,
 	handleCreateAgent,
@@ -129,6 +130,7 @@ register(healthRoute, handleHealth);
 
 // Login: gated by basicAuthMiddleware in index.ts via the parent /v1/* mount.
 register(loginRoute, handleLogin);
+register(otlpIngestRoute, (c: Context) => handleOtlpIngest(c.req.raw));
 
 register(createAgent, handleCreateAgent);
 register(listAgents, handleListAgents);

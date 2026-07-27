@@ -21,15 +21,42 @@ import {
 } from "../db/observation-metadata.js";
 
 function presentObservation<
-	T extends { type: string; metadata: string | ObservationMetadata },
+	T extends {
+		type: string;
+		metadata: string | ObservationMetadata;
+		start_time: string;
+		end_time: string | null;
+	},
 >(observation: T) {
 	return {
 		...observation,
+		start_time: presentTimestamp(observation.start_time),
+		end_time: observation.end_time
+			? presentTimestamp(observation.end_time)
+			: null,
 		metadata: presentObservationMetadata(
 			observation.metadata,
 			observation.type === "generation",
 		),
 	};
+}
+
+function presentTrace<
+	T extends { start_time: string; end_time: string | null },
+>(trace: T) {
+	return {
+		...trace,
+		start_time: presentTimestamp(trace.start_time),
+		end_time: trace.end_time ? presentTimestamp(trace.end_time) : null,
+	};
+}
+
+function presentTimestamp(value: string): string {
+	if (/^\d{4}-\d{2}-\d{2}T.*Z$/.test(value)) return value;
+	const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(
+		value,
+	);
+	return match ? `${match[1]}T${match[2]}Z` : value;
 }
 
 function getPagination(c: Context): { limit: number; offset: number } {
@@ -83,7 +110,7 @@ export async function handleListTraces(c: Context): Promise<Response> {
 			limit,
 			offset,
 		);
-		return c.json({ items, total });
+		return c.json({ items: items.map(presentTrace), total });
 	} catch (err) {
 		console.error("GET /v1/traces failed:", (err as Error).message);
 		return c.json(
@@ -150,7 +177,7 @@ export async function handleGetTrace(c: Context): Promise<Response> {
 			);
 		}
 		return c.json({
-			trace,
+			trace: presentTrace(trace),
 			observations: observations.map(presentObservation),
 		});
 	} catch (err) {

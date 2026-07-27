@@ -265,8 +265,11 @@ describe("TracesTab — SSE merge + highlight", () => {
 		const row = cell.closest("tr");
 		expect(row).not.toBeNull();
 		fireEvent.click(row!);
+		fireEvent.keyDown(row!, { key: "Enter" });
 
-		await waitFor(() => expect(navigate).toHaveBeenCalled());
+		await waitFor(() => expect(navigate).toHaveBeenCalledTimes(2));
+		expect(row).toHaveAttribute("tabindex", "0");
+		expect(row).toHaveAttribute("aria-label", `Open trace ${TRACE_ID}`);
 		const call = navigate.mock.calls[0]?.[0] as {
 			to: string;
 			search?: unknown;
