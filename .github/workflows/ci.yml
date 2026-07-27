@@ -92,6 +92,9 @@ jobs:
       - name: Start application stack
         run: docker compose --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
 
+      - name: Apply ClickHouse schema
+        run: make ch-schema
+
       - name: Seed E2E project
         run: docker compose --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project');"
 
