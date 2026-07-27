@@ -54,8 +54,6 @@ export function PromptDetailPage() {
 		React.useState<OptimizationJob | null>(null);
 	const [optimizationEvent, setOptimizationEvent] =
 		React.useState<OptimizationEvent | null>(null);
-	const [stopToEdit, setStopToEdit] = React.useState(false);
-	const stopToEditInFlight = React.useRef(false);
 	const deleteTriggerRef = React.useRef<HTMLButtonElement>(null);
 	const selectedVersion = queryVersion(location.searchStr, "version");
 
@@ -160,31 +158,6 @@ export function PromptDetailPage() {
 			setOptimization(job);
 		},
 	});
-	const stopToEditMutation = useMutation({
-		mutationFn: async ({ job }: { job: OptimizationJob; prompt: Prompt }) => {
-			if (!selectedProjectId)
-				throw new Error("Select a project before stopping optimization.");
-			const stopped = await stopPromptOptimization({
-				project_id: selectedProjectId,
-				id: job.id,
-			});
-			if (stopped.status !== "stopped")
-				throw new Error("Optimization could not be stopped.");
-			return stopped;
-		},
-		onSuccess: (job, { prompt }: { job: OptimizationJob; prompt: Prompt }) => {
-			setOptimization(job);
-			setStopToEdit(false);
-			void navigate({
-				to: "/prompts/$slug/edit",
-				params: { slug: prompt.id },
-				search: { from: prompt.version },
-			});
-		},
-		onSettled: () => {
-			stopToEditInFlight.current = false;
-		},
-	});
 	const activeOptimization =
 		optimization ?? activeOptimizationQuery.data ?? null;
 	const optimizationActive =
@@ -279,17 +252,14 @@ export function PromptDetailPage() {
 				<div className="flex flex-wrap gap-2">
 					<Button
 						variant="outline"
-						onClick={() => {
-							if (optimizationActive) {
-								stopToEditMutation.reset();
-								setStopToEdit(true);
-							} else
-								void navigate({
-									to: "/prompts/$slug/edit",
-									params: { slug: prompt.id },
-									search: { from: prompt.version },
-								});
-						}}
+						onClick={() =>
+							void navigate({
+								to: "/prompts/$slug/edit",
+								params: { slug: prompt.id },
+								search: { from: prompt.version },
+							})
+						}
+						disabled={optimizationActive}
 					>
 						New version
 					</Button>
@@ -327,6 +297,7 @@ export function PromptDetailPage() {
 							deleteMutation.reset();
 							setDeleteOpen(true);
 						}}
+						disabled={optimizationActive}
 					>
 						Delete
 					</Button>
@@ -355,6 +326,7 @@ export function PromptDetailPage() {
 										aria-current={
 											version.version === prompt.version ? "page" : undefined
 										}
+										disabled={optimizationActive}
 										data-testid="prompt-version"
 										data-version={version.version}
 									>
@@ -465,22 +437,6 @@ export function PromptDetailPage() {
 							id: activeOptimization.id,
 						}).then(setOptimization)
 					}
-				/>
-			)}
-			{stopToEdit && activeOptimization && (
-				<StopToEditDialog
-					pending={stopToEditMutation.isPending}
-					error={
-						stopToEditMutation.error instanceof Error
-							? stopToEditMutation.error.message
-							: null
-					}
-					onClose={() => setStopToEdit(false)}
-					onConfirm={() => {
-						if (stopToEditInFlight.current) return;
-						stopToEditInFlight.current = true;
-						stopToEditMutation.mutate({ job: activeOptimization, prompt });
-					}}
 				/>
 			)}
 		</div>
@@ -666,50 +622,6 @@ function OptimizationConfirmDialog({
 						disabled={pending || !valid}
 					>
 						{pending ? "Starting…" : "Start optimization"}
-					</Button>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function StopToEditDialog({
-	pending,
-	error,
-	onClose,
-	onConfirm,
-}: {
-	pending: boolean;
-	error: string | null;
-	onClose: () => void;
-	onConfirm: () => void;
-}) {
-	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4">
-			<div
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="stop-edit-title"
-				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
-			>
-				<h2 id="stop-edit-title" className="text-lg font-semibold">
-					Stop optimization before editing?
-				</h2>
-				<p className="mt-3 text-sm text-muted-foreground">
-					Stopping is final. The current optimization will not publish a
-					version, then you can create a new one.
-				</p>
-				{error && (
-					<p className="mt-3 text-sm text-destructive" role="alert">
-						{error}
-					</p>
-				)}
-				<div className="mt-6 flex justify-end gap-2">
-					<Button variant="outline" onClick={onClose} disabled={pending}>
-						Cancel
-					</Button>
-					<Button variant="destructive" onClick={onConfirm} disabled={pending}>
-						{pending ? "Stopping…" : "Stop and continue"}
 					</Button>
 				</div>
 			</div>
