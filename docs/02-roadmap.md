@@ -62,7 +62,7 @@ DAY 0────30────60────90────120───180
 
 | Task | Owner | Deliverable | Status |
 |---|---|---|---|
-| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; 31 stub routes + `/openapi.json`) |
+| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; remaining agent/dataset/experiment/score stubs + `/openapi.json`) |
 | Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI | ✅ Shipped (`Bun.serve()` + Scalar at `/reference`) |
 | Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (7 idempotent migrations; 10 tables) |
 | ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
@@ -76,7 +76,7 @@ DAY 0────30────60────90────120───180
 |---|---|---|
 | OTLP receiver at `/v1/otel/v1/traces` | Backend | Accepts `gen_ai.*` + OpenInference attributes; validates; writes to ClickHouse + Postgres |
 | Trace list screen | Frontend | TanStack Table; columns: time, name, agent, status, duration, score, input excerpt |
-| Trace detail screen | Frontend | Nested span tree + agent graph + per-span I/O + scores; expandable observations |
+| Trace detail screen | Frontend | Nested observation tree + agent graph + per-observation I/O + scores; expandable observations |
 | Trace search API | Backend | `GET /v1/traces/search?q=...&filter[...]` backed by ClickHouse; <50ms p95 for filtered, <100ms p95 for full-text |
 | SDK: hermes-sdk (Python) | SDK | `pip install hermes-sdk`; exports the generated typed client |
 | SDK: @hermes/sdk (TypeScript) | SDK | `npm install @hermes/sdk`; exports the generated typed client |
