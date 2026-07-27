@@ -18,6 +18,16 @@ const securityHeaders = {
   "Cross-Origin-Resource-Policy": "same-origin",
 };
 
+// @vitejs/plugin-react injects an inline preamble into the development HTML.
+// Keep this exception on the dev server only; preview serves the built bundle.
+const developmentSecurityHeaders = {
+  ...securityHeaders,
+  "Content-Security-Policy": [
+    securityHeaders["Content-Security-Policy"],
+    "script-src 'self' 'unsafe-inline'",
+  ].join("; "),
+};
+
 /**
  * `configureProxyForSSE` patches http-proxy's response side so that
  * `text/event-stream` responses are NOT buffered — chunks flush as the
@@ -50,7 +60,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
-    headers: securityHeaders,
+    headers: developmentSecurityHeaders,
     proxy: {
       "/v1": {
         target: apiTarget,
