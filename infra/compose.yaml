@@ -44,7 +44,7 @@ services:
       test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8123/ping"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 30
 
   valkey:
     image: valkey/valkey:8-alpine
