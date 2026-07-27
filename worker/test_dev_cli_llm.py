@@ -151,6 +151,19 @@ class DevCliLlmTests(unittest.TestCase):
         self.assertIn("Do not copy", feedback)
         self.assertNotIn("ensure that the correct answer is included", feedback)
 
+    def test_reflection_feedback_uses_successful_answers_as_examples_not_directives(self):
+        from worker.gepa_feedback import build_reflective_feedback
+
+        feedback = build_reflective_feedback(
+            {"input": "Task list", "answer": "Only this example answer"},
+            "Only this example answer",
+            1.0,
+        )
+
+        self.assertIn("reference example", feedback)
+        self.assertIn("Only this example answer", feedback)
+        self.assertIn("Do not hardcode", feedback)
+
     def test_cli_mode_uses_chat_and_reflection_callables(self):
         with tempfile.TemporaryDirectory() as directory:
             cli = self.fake_cli(directory)
