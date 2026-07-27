@@ -111,7 +111,7 @@ function transactionPool(pool: MockPool): Pick<Pool, "connect"> {
 }
 
 describe("prompt optimization repository", () => {
-	it("publishes a system target while preserving canonical user content and replacing only the target message", async () => {
+	it("publishes a system target with canonical system content and replaces only the target message", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
 			{ rows: [job()] },
@@ -144,7 +144,7 @@ describe("prompt optimization repository", () => {
 			}),
 		).toBe(4);
 		const insert = pool.client.calls[3];
-		expect(insert?.values[2]).toBe("Original user {{name}}");
+		expect(insert?.values[2]).toBe("Improved system {{name}}");
 		expect(JSON.parse(insert?.values[5] as string)).toEqual(messages);
 	});
 

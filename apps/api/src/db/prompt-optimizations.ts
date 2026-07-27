@@ -370,16 +370,11 @@ export async function publishOptimizationResult(
 		)[0];
 		if (!latest) throw fail("NOT_FOUND", "Prompt not found");
 		const version = number(latest.version, "version") + 1;
-		const optimized = input.messages.find(
+		const content = input.messages.find(
 			(message) => message.role === job.target,
 		)?.content;
-		if (optimized === undefined)
-			throw fail("INTERNAL", `Optimized ${job.target} message is missing`);
-		const content =
-			input.messages.find((message) => message.role === "user")?.content ??
-			input.messages[0]?.content;
 		if (content === undefined)
-			throw fail("INTERNAL", "Optimized prompt has no messages");
+			throw fail("INTERNAL", `Optimized ${job.target} message is missing`);
 		await rows(
 			client,
 			"INSERT INTO prompt_versions (prompt_id,version,content,model,metadata,messages,settings,change_message,created_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$5::jsonb,$7,$8)",
