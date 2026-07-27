@@ -27,6 +27,10 @@ import {
 } from "../lib/api";
 import { formatDate, PageMessage } from "./prompts";
 
+const DEV_OPTIMIZATION_EXAMPLE_ENV = "true";
+const MIN_OPTIMIZATION_METRIC_CALLS = 2;
+const MAX_OPTIMIZATION_METRIC_CALLS = 20;
+
 export function PromptDetailPage() {
 	const { slug } = useParams({ from: "/protected/prompts/$slug" });
 	const location = useLocation();
@@ -435,7 +439,8 @@ function OptimizationConfirmDialog({
 	const [maxMetricCalls, setMaxMetricCalls] = React.useState("20");
 	const showDevExample =
 		import.meta.env.DEV &&
-		import.meta.env.VITE_SHOW_DEV_OPTIMIZATION_EXAMPLE === "true";
+		import.meta.env.VITE_SHOW_DEV_OPTIMIZATION_EXAMPLE ===
+			DEV_OPTIMIZATION_EXAMPLE_ENV;
 	const fillDevExample = () => {
 		setExampleInput(
 			"Here is my task list for today:\n\n- Finish the quarterly status report and send it to the team by 2:00 PM.\n- Pick up groceries after work.\n- Review and approve the open pull request for the API changes.\n- Call the dentist to schedule a cleaning.\n- Take the dog for a 30-minute walk in the evening.",
@@ -453,7 +458,8 @@ function OptimizationConfirmDialog({
 			taskModel.trim() &&
 			reflectionModel.trim() &&
 			Number.isSafeInteger(Number(maxMetricCalls)) &&
-			Number(maxMetricCalls) > 0,
+			Number(maxMetricCalls) >= MIN_OPTIMIZATION_METRIC_CALLS &&
+			Number(maxMetricCalls) <= MAX_OPTIMIZATION_METRIC_CALLS,
 	);
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4">
@@ -550,8 +556,9 @@ function OptimizationConfirmDialog({
 						Metric-call budget
 						<Input
 							type="number"
-							min="1"
-							placeholder="e.g. 20"
+							min={MIN_OPTIMIZATION_METRIC_CALLS}
+							max={MAX_OPTIMIZATION_METRIC_CALLS}
+							placeholder="e.g. 5"
 							value={maxMetricCalls}
 							onChange={(event) => setMaxMetricCalls(event.target.value)}
 						/>
@@ -656,10 +663,7 @@ function OptimizationStatus({
 			</p>
 			{active && (
 				<Button className="mt-3" size="sm" variant="outline" onClick={onStop}>
-					<LuLoaderCircle
-						className="h-4 w-4 animate-spin"
-						aria-hidden="true"
-					/>
+					<LuLoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
 					Stop
 				</Button>
 			)}

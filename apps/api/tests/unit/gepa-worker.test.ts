@@ -26,7 +26,7 @@ describe("GEPA worker adapter", () => {
 					task_lm: "openai/gpt-4.1-mini",
 					reflection_lm: "openai/gpt-4.1-mini",
 				},
-				budget: { max_metric_calls: 1 },
+				budget: { max_metric_calls: 2 },
 			},
 			new AbortController().signal,
 		);

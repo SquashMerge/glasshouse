@@ -10,6 +10,7 @@ else:
     from dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
 
 MAX_METRIC_CALLS = 100
+MIN_METRIC_CALLS = 2
 
 
 class StderrLogger:
@@ -54,8 +55,8 @@ def validate_request(request):
         raise ValueError("model_config contains an unconfigured model")
     budget = request_value(request, "budget", dict)
     max_metric_calls = budget.get("max_metric_calls")
-    if not isinstance(max_metric_calls, int) or isinstance(max_metric_calls, bool) or not 1 <= max_metric_calls <= MAX_METRIC_CALLS:
-        raise ValueError(f"budget.max_metric_calls must be between 1 and {MAX_METRIC_CALLS}")
+    if not isinstance(max_metric_calls, int) or isinstance(max_metric_calls, bool) or not MIN_METRIC_CALLS <= max_metric_calls <= MAX_METRIC_CALLS:
+        raise ValueError(f"budget.max_metric_calls must be between {MIN_METRIC_CALLS} and {MAX_METRIC_CALLS}")
     trainset = [
         {
             "input": example["input"],

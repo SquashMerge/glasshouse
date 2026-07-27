@@ -119,7 +119,7 @@ class DevCliLlmTests(unittest.TestCase):
             "evaluator": {"type": "default_adapter"},
             "examples": [{"input": "Hello", "answer": "Hello"}],
             "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
-            "budget": {"max_metric_calls": 1},
+            "budget": {"max_metric_calls": 2},
         }
         environment = {
             "GEPA_WORKER_MODE": "cli",
@@ -167,7 +167,7 @@ class DevCliLlmTests(unittest.TestCase):
                 "evaluator": {"type": "default_adapter"},
                 "examples": [{"input": "Hello", "answer": "Hello"}],
                 "model_config": {"task_lm": "task-model", "reflection_lm": "reflection-model"},
-                "budget": {"max_metric_calls": 1},
+                "budget": {"max_metric_calls": 2},
             }
             environment = {
                 "GEPA_WORKER_MODE": "cli",

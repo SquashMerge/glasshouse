@@ -1,3 +1,4 @@
+export const MIN_GEPA_METRIC_CALLS = 2;
 export const MAX_GEPA_METRIC_CALLS = 100;
 
 export class GepaConfigurationError extends Error {}
@@ -19,6 +20,10 @@ export function validateGepaConfiguration(input: {
 	model_config: { task_lm: string; reflection_lm: string };
 	budget: { max_metric_calls: number };
 }): void {
+	if (input.budget.max_metric_calls < MIN_GEPA_METRIC_CALLS)
+		throw new GepaConfigurationError(
+			`budget.max_metric_calls must be at least ${MIN_GEPA_METRIC_CALLS}`,
+		);
 	if (input.budget.max_metric_calls > MAX_GEPA_METRIC_CALLS)
 		throw new GepaConfigurationError(
 			`budget.max_metric_calls must not exceed ${MAX_GEPA_METRIC_CALLS}`,
