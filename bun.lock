@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "astraea",
+      "dependencies": {
+        "dotenv": "16.6.1",
+      },
       "devDependencies": {
         "@biomejs/biome": "2.5.5",
         "@types/bun": "1.3.14",

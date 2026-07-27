@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
-RUN bun install --frozen-lockfile --filter "@astraea/*"
+RUN bun install --frozen-lockfile
 
 FROM base AS build
 WORKDIR /app
