@@ -149,8 +149,8 @@ class DevCliLlmTests(unittest.TestCase):
                 "def optimize(*, adapter, task_lm, reflection_lm, **kwargs):\n"
                 "    assert adapter is not None\n"
                 "    assert callable(adapter.model)\n"
-                "    assert callable(task_lm) and callable(reflection_lm)\n"
-                "    assert task_lm([{\"role\": \"user\", \"content\": \"task\"}])\n"
+                "    assert task_lm is None\n"
+                "    assert callable(reflection_lm)\n"
                 "    assert reflection_lm(\"reflection\")\n"
                 "    return SimpleNamespace(best_candidate={\"system_prompt\": \"candidate\"}, best_idx=0, val_aggregate_scores=[1])\n"
             )

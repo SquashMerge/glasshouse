@@ -110,7 +110,7 @@ try:
         trainset=trainset,
         valset=trainset,
         adapter=adapter,
-        task_lm=task_lm,
+        task_lm=None,
         reflection_lm=reflection_lm,
         max_metric_calls=max_metric_calls,
     )
