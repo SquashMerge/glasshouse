@@ -1,5 +1,10 @@
 DO $$
 BEGIN
+    IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 1
+        OR (SELECT name FROM projects WHERE slug = 'default') <> 'Default Project' THEN
+        RAISE EXCEPTION 'default project was not seeded';
+    END IF;
+
     IF (SELECT slug FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'first-prompt' THEN
         RAISE EXCEPTION 'first prompt slug was not normalized';
     END IF;
