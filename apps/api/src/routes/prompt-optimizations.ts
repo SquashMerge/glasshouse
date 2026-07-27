@@ -26,6 +26,7 @@ import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
 import {
 	GepaConfigurationError,
 	MAX_GEPA_METRIC_CALLS,
+	MIN_GEPA_METRIC_CALLS,
 	validateGepaConfiguration,
 } from "../lib/gepa-config.js";
 import { validatePromptTemplate } from "../lib/prompt-templates.js";
@@ -61,7 +62,11 @@ const ModelConfig = z
 	.strict();
 const Budget = z
 	.object({
-		max_metric_calls: z.number().int().positive().max(MAX_GEPA_METRIC_CALLS),
+		max_metric_calls: z
+			.number()
+			.int()
+			.min(MIN_GEPA_METRIC_CALLS)
+			.max(MAX_GEPA_METRIC_CALLS),
 	})
 	.strict();
 const Job = z

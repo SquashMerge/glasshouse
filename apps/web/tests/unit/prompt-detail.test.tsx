@@ -382,7 +382,15 @@ describe("PromptDetailPage", () => {
 		);
 		expect(screen.getByLabelText("Metric-call budget")).toHaveAttribute(
 			"placeholder",
-			"e.g. 20",
+			"e.g. 5",
+		);
+		expect(screen.getByLabelText("Metric-call budget")).toHaveAttribute(
+			"min",
+			"2",
+		);
+		expect(screen.getByLabelText("Metric-call budget")).toHaveAttribute(
+			"max",
+			"20",
 		);
 	});
 
