@@ -141,13 +141,25 @@ class DevCliLlmTests(unittest.TestCase):
     def test_cli_mode_uses_chat_and_reflection_callables(self):
         with tempfile.TemporaryDirectory() as directory:
             cli = self.fake_cli(directory)
-            Path(directory, "gepa.py").write_text(
+            gepa_directory = Path(directory) / "gepa"
+            default_adapter_directory = gepa_directory / "adapters" / "default_adapter"
+            default_adapter_directory.mkdir(parents=True)
+            (gepa_directory / "__init__.py").write_text(
                 "from types import SimpleNamespace\n"
-                "def optimize(*, task_lm, reflection_lm, **kwargs):\n"
+                "def optimize(*, adapter, task_lm, reflection_lm, **kwargs):\n"
+                "    assert adapter is not None\n"
+                "    assert callable(adapter.model)\n"
                 "    assert callable(task_lm) and callable(reflection_lm)\n"
                 "    assert task_lm([{\"role\": \"user\", \"content\": \"task\"}])\n"
                 "    assert reflection_lm(\"reflection\")\n"
                 "    return SimpleNamespace(best_candidate={\"system_prompt\": \"candidate\"}, best_idx=0, val_aggregate_scores=[1])\n"
+            )
+            (gepa_directory / "adapters" / "__init__.py").write_text("")
+            (default_adapter_directory / "__init__.py").write_text("")
+            (default_adapter_directory / "default_adapter.py").write_text(
+                "class DefaultAdapter:\n"
+                "    def __init__(self, model):\n"
+                "        self.model = model\n"
             )
             request = {
                 "source": "Hello",

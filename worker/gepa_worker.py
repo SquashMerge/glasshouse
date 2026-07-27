@@ -98,15 +98,18 @@ if os.environ.get("GEPA_WORKER_MODE") == "cli":
 
 try:
     import gepa  # type: ignore # Installed only in the isolated worker image.
+    from gepa.adapters.default_adapter.default_adapter import DefaultAdapter
 except ImportError:
     sys.stderr.write("GEPA is not installed in the worker environment")
     sys.exit(2)
 
 try:
+    adapter = DefaultAdapter(model=task_lm)
     result = gepa.optimize(
         seed_candidate={"system_prompt": source},
         trainset=trainset,
         valset=trainset,
+        adapter=adapter,
         task_lm=task_lm,
         reflection_lm=reflection_lm,
         max_metric_calls=max_metric_calls,
