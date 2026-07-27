@@ -218,6 +218,11 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		}
 		await login(page);
 
+		// Subscribe to the live list before ingesting so the SSE events cannot
+		// race ahead of the browser connection.
+		await page.goto("/observability?tab=traces");
+		await expect(page).toHaveURL(/tab=traces/);
+
 		// Ingest 5 distinct traces via OTLP HTTP/JSON. The first name is kept
 		// for a downstream text-content sanity check.
 		const firstName = `walkthrough-trace-${Date.now()}-0`;
@@ -228,10 +233,6 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 			const name = `walkthrough-trace-${Date.now()}-${i}`;
 			await postTrace(request, buildTracePayload(traceId, rootSpanId, 1, name));
 		}
-
-		// Navigate to the traces tab.
-		await page.goto("/observability?tab=traces");
-		await expect(page).toHaveURL(/tab=traces/);
 
 		// The list page merges streamed rows via SSE; rows carry
 		// `data-highlighted="true"` and the `bg-accent/40` class for ~1.5s
@@ -270,6 +271,11 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		}
 		await login(page);
 
+		// Subscribe before ingesting so all observation events are delivered to
+		// the live spans list rather than racing ahead of the SSE connection.
+		await page.goto("/observability?tab=spans");
+		await expect(page).toHaveURL(/tab=spans/);
+
 		// One OTLP payload with a single trace that has 10 spans. The first
 		// span is the root; children reference its span_id.
 		const traceId = hex(16);
@@ -279,10 +285,6 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 			request,
 			buildTracePayload(traceId, rootSpanId, 10, traceName),
 		);
-
-		// Navigate to the spans tab.
-		await page.goto("/observability?tab=spans");
-		await expect(page).toHaveURL(/tab=spans/);
 
 		// Wait for the spans to materialize via the SSE merge.
 		const count = await waitForHighlightedRows(page, 10, 1500);
@@ -300,7 +302,10 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		).toBeVisible();
 	});
 
-	test("Stream toggle pauses and resumes the detail SSE", async ({ page }) => {
+	test("Stream toggle pauses and resumes the detail SSE", async ({
+		page,
+		request,
+	}) => {
 		if (!(await envReady())) {
 			test.skip(
 				true,
@@ -308,9 +313,12 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 			);
 			return;
 		}
-		await login(page);
-
 		const traceId = "0123456789abcdef0123456789abcdef";
+		await postTrace(
+			request,
+			buildTracePayload(traceId, "0123456789abcdef", 1, "toggle-trace"),
+		);
+		await login(page);
 		await page.goto(`/observability/traces/${traceId}`);
 
 		const toggle = page.getByTestId("stream-toggle-button");
