@@ -100,7 +100,7 @@ describe("authedFetch 401 handling", () => {
 			}),
 		);
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = fetchMock as typeof fetch;
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		const handler = vi.fn();
 		const off = onAuthInvalid(handler);
@@ -125,7 +125,7 @@ describe("authedFetch 401 handling", () => {
 			}),
 		);
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = fetchMock as typeof fetch;
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		const handler = vi.fn();
 		const off = onAuthInvalid(handler);
@@ -153,7 +153,7 @@ describe("authedFetch 401 handling", () => {
 			}),
 		);
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = fetchMock as typeof fetch;
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		const handler = vi.fn();
 		const off = onAuthInvalid(handler);
@@ -181,7 +181,7 @@ describe("authedFetch 401 handling", () => {
 			}),
 		);
 		const originalFetch = globalThis.fetch;
-		globalThis.fetch = fetchMock as typeof fetch;
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 		try {
 			await authedFetch("http://x/v1/traces");
