@@ -17,7 +17,7 @@ describe("ClickHouse migrations", () => {
 
 		await applyClickHouseMigrations(client);
 
-		expect(queries).toHaveLength(6);
+		expect(queries).toHaveLength(8);
 		expect(queries.every((query) => query.length > 0)).toBe(true);
 		expect(queries[0]).toContain("CREATE TABLE IF NOT EXISTS traces");
 		expect(queries[1]).toContain("ADD INDEX IF NOT EXISTS idx_status");
@@ -25,6 +25,10 @@ describe("ClickHouse migrations", () => {
 		expect(queries[3]).toContain("ADD INDEX IF NOT EXISTS idx_obs_trace_id");
 		expect(queries[4]).toContain("ALTER TABLE traces");
 		expect(queries[5]).toContain("ALTER TABLE observations");
+		expect(queries[6]).toContain("ALTER TABLE traces");
+		expect(queries[6]).toContain("non_replicated_deduplication_window");
+		expect(queries[7]).toContain("ALTER TABLE observations");
+		expect(queries[7]).toContain("non_replicated_deduplication_window");
 		expect(closed).toBe(true);
 	});
 });

@@ -19,11 +19,21 @@ describe("insertObservations metadata", () => {
 		const inserts: unknown[] = [];
 		const client = { insert: async (input: unknown) => inserts.push(input) };
 
-		await insertTraces(client as never, [trace]);
+		await insertTraces(client as never, [trace], "test-token");
 
 		expect(
 			(inserts[0] as { values: Array<{ project_id: string }> }).values[0],
 		).toMatchObject({ project_id: trace.project_id });
+		expect(
+			(
+				inserts[0] as {
+					clickhouse_settings: Record<string, string | number>;
+				}
+			).clickhouse_settings,
+		).toEqual({
+			insert_deduplicate: 1,
+			insert_deduplication_token: "test-token",
+		});
 		expect(observationToInsertRow(observation)).toMatchObject({
 			project_id: trace.project_id,
 		});

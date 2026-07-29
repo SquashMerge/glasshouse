@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { createHash } from "node:crypto";
 import { ErrorEnvelope } from "../schemas/common.js";
 import {
 	ExportTraceServiceRequest,
@@ -104,6 +105,22 @@ const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 	publishSync,
 };
 
+function otlpDeduplicationTokens(request: unknown, tenant: TenantScope) {
+	const digest = createHash("sha256")
+		.update(
+			JSON.stringify({
+				organization_id: tenant.organizationId,
+				project_id: tenant.projectId,
+				request,
+			}),
+		)
+		.digest("hex");
+	return {
+		traces: `astraea:otlp:traces:${digest}`,
+		observations: `astraea:otlp:observations:${digest}`,
+	};
+}
+
 export function createOtlpIngestHandler(
 	dependencies: OtlpIngestDependencies = productionOtlpIngestDependencies,
 ) {
@@ -132,6 +149,7 @@ export function createOtlpIngestHandler(
 		}
 
 		const request = parsed.data;
+		const deduplicationTokens = otlpDeduplicationTokens(request, tenant);
 		const redaction = loadRedactionOptions();
 
 		const traces = new Map<string, AggregatedTrace>();
@@ -188,8 +206,13 @@ export function createOtlpIngestHandler(
 			await dependencies.insertTraces(
 				client,
 				[...traces.values()].map(({ trace }) => trace),
+				deduplicationTokens.traces,
 			);
-			await dependencies.insertObservations(client, observations);
+			await dependencies.insertObservations(
+				client,
+				observations,
+				deduplicationTokens.observations,
+			);
 		} catch (err) {
 			logger.error("otlp.persist_failed", undefined, {
 				error_type: err instanceof Error ? err.name : typeof err,

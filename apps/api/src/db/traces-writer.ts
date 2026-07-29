@@ -43,24 +43,34 @@ function traceToRow(t: TenantScopedTrace): ClickHouseRow {
 export async function insertTraces(
 	client: ClickHouseClient,
 	traces: TenantScopedTrace[],
+	deduplicationToken: string,
 ): Promise<void> {
 	if (traces.length === 0) return;
 	await client.insert({
 		table: "traces",
 		values: traces.map(traceToRow),
 		format: "JSONEachRow",
+		clickhouse_settings: {
+			insert_deduplicate: 1,
+			insert_deduplication_token: deduplicationToken,
+		},
 	});
 }
 
 export async function insertObservations(
 	client: ClickHouseClient,
 	observations: TenantScopedObservation[],
+	deduplicationToken: string,
 ): Promise<void> {
 	if (observations.length === 0) return;
 	await client.insert({
 		table: "observations",
 		values: observations.map(observationToInsertRow),
 		format: "JSONEachRow",
+		clickhouse_settings: {
+			insert_deduplicate: 1,
+			insert_deduplication_token: deduplicationToken,
+		},
 	});
 }
 
