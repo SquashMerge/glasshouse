@@ -125,10 +125,9 @@ describe("API integration: auth gate", () => {
 			);
 		});
 		const res = await apiApp.fetch(
-			new Request(
-				`http://x/v1/traces?filter%5Bproject_id%5D=${foreignProject}`,
-				{ headers: { authorization: AUTH } },
-			),
+			new Request(`http://x/v1/traces/events?project_id=${foreignProject}`, {
+				headers: { authorization: AUTH },
+			}),
 		);
 		expect(res.status).toBe(404);
 		expect(assertTenantProjectAccess.mock.calls.at(-1)?.[2]).toBe(

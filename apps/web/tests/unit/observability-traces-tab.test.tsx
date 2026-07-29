@@ -23,6 +23,14 @@ vi.mocked(listTraces);
 
 const navigate = vi.fn();
 let pushEvent: ((msg: { event: string; data: unknown }) => void) | null = null;
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+let selectedProjectId = PROJECT_ID;
+let sseUrl = "";
+
+vi.mock("../../src/components/ProjectProvider", () => ({
+	useProjectSelection: () => ({ selectedProjectId }),
+}));
 
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
@@ -51,7 +59,7 @@ vi.mock("../../src/lib/api", async () => {
 			items: [
 				{
 					trace_id: TRACE_ID,
-					project_id: "proj-1",
+					project_id: PROJECT_ID,
 					name: "first.call",
 					start_time: "2026-01-01 00:00:00",
 					end_time: "2026-01-01 00:00:01",
@@ -114,6 +122,7 @@ vi.mock("../../src/hooks/useEventSource", async () => {
 			} = {},
 		) => {
 			pushEvent = opts.onMessage ?? null;
+			sseUrl = url;
 			_lastCallUrl = url;
 			return {
 				get status(): "connecting" | "open" | "closed" {
@@ -155,7 +164,7 @@ function makeTraceEvent(
 ): TraceEvent {
 	return {
 		trace_id: overrides.trace_id ?? TRACE_ID,
-		project_id: "proj-1",
+		project_id: PROJECT_ID,
 		name: overrides.name ?? "llm.call",
 		start_time: overrides.start_time ?? "2026-01-01 00:00:00",
 		end_time: overrides.end_time ?? "2026-01-01 00:00:01",
@@ -186,6 +195,8 @@ beforeEach(() => {
 	navigate.mockReset();
 	navigate.mockResolvedValue(undefined);
 	pushEvent = null;
+	selectedProjectId = PROJECT_ID;
+	sseUrl = "";
 });
 
 afterEach(() => {
@@ -219,6 +230,10 @@ describe("TracesTab — SSE merge + highlight", () => {
 		const row = cell.closest("tr");
 		expect(row).not.toBeNull();
 		expect(row!.getAttribute("data-highlighted")).toBe("true");
+		expect(vi.mocked(listTraces)).toHaveBeenCalledWith(
+			expect.objectContaining({ project_id: PROJECT_ID }),
+		);
+		expect(sseUrl).toBe(`/v1/traces/events?project_id=${PROJECT_ID}`);
 	});
 
 	it("does not double-count when the same SSE event arrives twice (highlight Set dedup)", async () => {
@@ -404,5 +419,55 @@ describe("TracesTab — SSE merge + highlight", () => {
 			name?: string;
 		};
 		expect(lastCall?.name).toBe("specific-name");
+	});
+
+	it("isolates REST rows and SSE scope when the selected project changes", async () => {
+		vi.mocked(listTraces).mockImplementation(async (params = {}) => {
+			const projectId = params.project_id!;
+			return {
+				items: [
+					{
+						trace_id: projectId === PROJECT_ID ? TRACE_ID : "f".repeat(32),
+						project_id: projectId,
+						name:
+							projectId === PROJECT_ID ? "project-a-trace" : "project-b-trace",
+						start_time: "2026-01-01 00:00:00",
+						end_time: null,
+						duration_ms: null,
+						status: "ok" as const,
+						user_id: "",
+						session_id: "",
+						agent_id: "",
+						agent_version: "",
+						env: "",
+						tags: [],
+						input_text: "",
+						output_text: "",
+						scores_summary: "",
+					},
+				],
+				total: 1,
+			};
+		});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+		});
+		const rendered = render(
+			<QueryClientProvider client={client}>
+				<TracesTab />
+			</QueryClientProvider>,
+		);
+		await screen.findByText("project-a-trace");
+
+		selectedProjectId = OTHER_PROJECT_ID;
+		rendered.rerender(
+			<QueryClientProvider client={client}>
+				<TracesTab />
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText("project-b-trace");
+		expect(screen.queryByText("project-a-trace")).not.toBeInTheDocument();
+		expect(sseUrl).toBe(`/v1/traces/events?project_id=${OTHER_PROJECT_ID}`);
 	});
 });

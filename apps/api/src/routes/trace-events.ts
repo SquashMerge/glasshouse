@@ -4,7 +4,7 @@ import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { TraceIdParam } from "../schemas/common.js";
 import { ErrorEnvelope } from "../schemas/common.js";
-import { TraceDetailQuery } from "../schemas/traces.js";
+import { TraceDetailQuery, TraceEventsQuery } from "../schemas/traces.js";
 import { subscribe } from "../lib/event-bus.js";
 import {
 	defaultClient,
@@ -49,8 +49,10 @@ export const streamTraceEvents = createRoute({
 		"connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), " +
 		"and cleans up the bus subscription on client disconnect.",
 	security: [{ basicAuth: [] }],
+	request: { query: TraceEventsQuery },
 	responses: {
 		200: StreamResponse,
+		400: BadRequestResponse,
 	},
 });
 
@@ -66,8 +68,10 @@ export const streamObservationEvents = createRoute({
 		"Sends an `:ok` comment immediately on connect and a `:heartbeat` " +
 		"comment every `SSE_HEARTBEAT_MS` (default 15s).",
 	security: [{ basicAuth: [] }],
+	request: { query: TraceEventsQuery },
 	responses: {
 		200: StreamResponse,
+		400: BadRequestResponse,
 	},
 });
 
@@ -157,6 +161,10 @@ export function createTraceEventHandlers(
 ) {
 	const streamTraceEventsHandler = async (c: Context): Promise<Response> => {
 		const tenant = trustedTenant(c);
+		const { project_id: projectId } = (
+			c.req as { valid: (target: "query") => { project_id?: string } }
+		).valid("query");
+		const expectedProjectId = projectId ?? "";
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let unsubscribe: (() => void) | null = null;
@@ -179,7 +187,12 @@ export function createTraceEventHandlers(
 
 			unsubscribe = dependencies.subscribe("trace.created", (msg) => {
 				const trace = msg.payload.trace;
-				if (!trace || trace.organization_id !== tenant.organizationId) return;
+				if (
+					!trace ||
+					trace.organization_id !== tenant.organizationId ||
+					trace.project_id !== expectedProjectId
+				)
+					return;
 				void stream.writeSSE({
 					event: "trace",
 					data: JSON.stringify({ trace }),
@@ -199,6 +212,10 @@ export function createTraceEventHandlers(
 		c: Context,
 	): Promise<Response> => {
 		const tenant = trustedTenant(c);
+		const { project_id: projectId } = (
+			c.req as { valid: (target: "query") => { project_id?: string } }
+		).valid("query");
+		const expectedProjectId = projectId ?? "";
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let unsubscribe: (() => void) | null = null;
@@ -223,7 +240,8 @@ export function createTraceEventHandlers(
 				const observation = msg.payload.observation;
 				if (
 					!observation ||
-					observation.organization_id !== tenant.organizationId
+					observation.organization_id !== tenant.organizationId ||
+					observation.project_id !== expectedProjectId
 				)
 					return;
 				const presented = presentObservation(observation);

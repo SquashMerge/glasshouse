@@ -42,6 +42,8 @@ export const TraceDetailQuery = z
 	})
 	.strict();
 
+export const TraceEventsQuery = TraceDetailQuery.pick({ project_id: true });
+
 export const PromptProvenance = z
 	.object({
 		id: z

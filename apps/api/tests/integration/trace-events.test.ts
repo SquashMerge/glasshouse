@@ -228,7 +228,7 @@ describe("SSE endpoints: auth gate (AC8 proxy via 401)", () => {
 describe("GET /v1/traces/events (list SSE)", () => {
 	it("three published traces arrive in order on a single connection", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/traces/events", {
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -483,7 +483,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 describe("GET /v1/observations/events (spans SSE)", () => {
 	it("published observation arrives with metadataParsed as a typed envelope", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/observations/events", {
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),

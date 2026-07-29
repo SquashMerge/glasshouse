@@ -299,7 +299,7 @@ afterEach(() => {
 describe("GET /v1/traces/events (list SSE)", () => {
 	it("returns Content-Type: text/event-stream and 200 with valid auth", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/traces/events", {
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -314,7 +314,7 @@ describe("GET /v1/traces/events (list SSE)", () => {
 
 	it(":ok\n\n is the first thing written to the stream", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/traces/events", {
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -332,6 +332,15 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		expect(res.headers.get("WWW-Authenticate")).toMatch(
 			/^Basic realm="astraea"/,
 		);
+	});
+
+	it("rejects a malformed project selector", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/events?project_id=not-a-uuid", {
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(400);
 	});
 
 	it("heartbeat writes :heartbeat frames at the configured interval", async () => {
@@ -388,7 +397,7 @@ describe("GET /v1/traces/events (list SSE)", () => {
 
 	it("event payload shape: data parses to {trace: TraceRow}", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/traces/events", {
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -432,6 +441,40 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		expect(frames.some((frame) => frame.event === "trace")).toBe(false);
 		await reader.cancel();
 	});
+
+	it("forwards only traces from the selected same-organization project", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		publishSync("trace.created", { trace: fakeTrace });
+		const frames = await readFramesUntil(reader, (received) =>
+			received.some((frame) => frame.event === "trace"),
+		);
+		expect(frames.find((frame) => frame.event === "trace")).toBeDefined();
+		await reader.cancel();
+	});
+
+	it("does not forward traces from a different same-organization project", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		publishSync("trace.created", {
+			trace: { ...fakeTrace, project_id: OTHER_PROJECT_ID },
+		});
+		const frames = await readFramesUntil(reader, () => false, {
+			timeoutMs: 100,
+		});
+		expect(frames.some((frame) => frame.event === "trace")).toBe(false);
+		await reader.cancel();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -441,7 +484,7 @@ describe("GET /v1/traces/events (list SSE)", () => {
 describe("GET /v1/observations/events (spans SSE)", () => {
 	it("returns Content-Type: text/event-stream and 200 with valid auth", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/observations/events", {
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -464,9 +507,18 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 		);
 	});
 
+	it("rejects a malformed project selector", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events?project_id=not-a-uuid", {
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(400);
+	});
+
 	it("metadataParsed reads legacy attributes into a metadata envelope", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/observations/events", {
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -499,7 +551,7 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 
 	it("metadataParsed: invalid JSON fails closed", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/observations/events", {
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -525,7 +577,7 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 
 	it("metadataParsed: empty string fails closed", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/observations/events", {
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -550,7 +602,7 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 
 	it("propagates typed prompt provenance on the global observation SSE stream", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/observations/events", {
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
 				headers: { authorization: AUTH },
 			}),
@@ -570,6 +622,40 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 		};
 		expect(parsed.observation.metadata).toEqual(PROVENANCE_METADATA);
 		expect(parsed.metadataParsed).toEqual(PROVENANCE_METADATA);
+		await reader.cancel();
+	});
+
+	it("forwards only observations from the selected same-organization project", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		publishSync("observation.created", { observation: fakeObservation });
+		const frames = await readFramesUntil(reader, (received) =>
+			received.some((frame) => frame.event === "observation"),
+		);
+		expect(frames.find((frame) => frame.event === "observation")).toBeDefined();
+		await reader.cancel();
+	});
+
+	it("does not forward observations from a different same-organization project", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		publishSync("observation.created", {
+			observation: { ...fakeObservation, project_id: OTHER_PROJECT_ID },
+		});
+		const frames = await readFramesUntil(reader, () => false, {
+			timeoutMs: 100,
+		});
+		expect(frames.some((frame) => frame.event === "observation")).toBe(false);
 		await reader.cancel();
 	});
 });

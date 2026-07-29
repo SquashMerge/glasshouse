@@ -26,6 +26,10 @@ vi.mocked(listObservations);
 
 const navigate = vi.fn();
 
+vi.mock("../../src/components/ProjectProvider", () => ({
+	useProjectSelection: () => ({ selectedProjectId: "proj-1" }),
+}));
+
 // --- Fake stream controller -------------------------------------------------
 
 interface FakeStream {

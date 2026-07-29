@@ -45,6 +45,10 @@ const navigate = vi.fn();
 let pushEvent: ((msg: { event: string; data: unknown }) => void) | null = null;
 let framesReceived = 0;
 
+vi.mock("../../src/components/ProjectProvider", () => ({
+	useProjectSelection: () => ({ selectedProjectId: "proj-1" }),
+}));
+
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
 		"@tanstack/react-router",
