@@ -134,6 +134,37 @@ describe("API integration: auth gate", () => {
 			foreignProject,
 		);
 	});
+
+	it("rejects a query/body project mismatch before a body-scoped route executes", async () => {
+		const authorizedProject = "00000000-0000-4000-8000-000000000002";
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		assertTenantProjectAccess.mockClear();
+		assertTenantProjectAccess.mockImplementation(
+			async (_pool, _tenant, projectId) => {
+				if (projectId === foreignProject)
+					throw new TenantScopeError(
+						"Project is not available to this organization",
+					);
+			},
+		);
+
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/datasets?project_id=${authorizedProject}`, {
+				method: "POST",
+				headers: new Headers([
+					["authorization", AUTH],
+					["content-type", "application/json"],
+				]),
+				body: JSON.stringify({
+					project_id: foreignProject,
+					name: "must-not-write",
+				}),
+			}),
+		);
+
+		expect(res.status).toBe(404);
+		expect(assertTenantProjectAccess).not.toHaveBeenCalled();
+	});
 });
 
 describe("API integration: OTLP ingest", () => {
@@ -189,11 +220,40 @@ describe("API integration: OTLP ingest", () => {
 		expect(insertObservations).toHaveBeenCalledTimes(1);
 	});
 
+	it("uses the authorized OTLP header project when resource provenance is absent", async () => {
+		insertTraces.mockClear();
+		insertObservations.mockClear();
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: new Headers([
+					["authorization", AUTH],
+					["content-type", "application/json"],
+					["x-astraea-project-id", TEST_SCOPE.projectId],
+				]),
+				body: JSON.stringify(validOtlp()),
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(
+			(insertTraces.mock.calls[0]?.[1] as Array<{ project_id: string }>)[0]
+				?.project_id,
+		).toBe(TEST_SCOPE.projectId);
+		expect(
+			(
+				insertObservations.mock.calls[0]?.[1] as Array<{ project_id: string }>
+			)[0]?.project_id,
+		).toBe(TEST_SCOPE.projectId);
+	});
+
 	it("returns 400 on malformed JSON", async () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: { authorization: AUTH, "content-type": "application/json" },
+				headers: new Headers([
+					["authorization", AUTH],
+					["content-type", "application/json"],
+				]),
 				body: "not json",
 			}),
 		);

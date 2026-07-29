@@ -109,6 +109,7 @@ export function createOtlpIngestHandler(
 	return async function handleOtlpIngest(
 		req: Request,
 		tenant: TenantScope,
+		fallbackProjectId = "",
 	): Promise<Response> {
 		let bodyJson: unknown;
 		try {
@@ -137,7 +138,11 @@ export function createOtlpIngestHandler(
 			const resourceAttributes = rs.resource?.attributes ?? [];
 			for (const ss of rs.scope_spans) {
 				for (const span of ss.spans) {
-					const normalized = normalizeSpan(span, resourceAttributes);
+					const normalized = normalizeSpan(
+						span,
+						resourceAttributes,
+						fallbackProjectId,
+					);
 					const trace: TenantScopedTrace = {
 						...normalized.trace,
 						organization_id: tenant.organizationId,

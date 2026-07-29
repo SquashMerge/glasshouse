@@ -139,12 +139,13 @@ function classifySpanType(
 export function normalizeSpan(
 	span: Span,
 	resourceAttributes: OtlpAttribute[] = [],
+	fallbackProjectId = "",
 ): {
 	trace: NormalizedTrace;
 	observation: NormalizedObservation;
 } {
 	const attrs = (span.attributes ?? []) as Attribute[];
-	const projectId = resourceProjectId(resourceAttributes);
+	const projectId = resourceProjectId(resourceAttributes) || fallbackProjectId;
 
 	// gen_ai.* takes precedence over OpenInference.
 	const agentId =
