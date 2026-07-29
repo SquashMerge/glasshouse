@@ -1,10 +1,34 @@
 import { describe, expect, it } from "bun:test";
 import { normalizeSpan } from "../../src/db/gen-ai-attrs";
 import { observationToInsertRow } from "../../src/db/observation-row";
+import { insertTraces } from "../../src/db/traces-writer";
 
 const HASH = "a".repeat(64);
 
 describe("insertObservations metadata", () => {
+	it("retains normalized project IDs in both ClickHouse row mappings", async () => {
+		const { trace, observation } = normalizeSpan({
+			trace_id: "00112233445566778899aabbccddeeff",
+			span_id: "0011223344556677",
+			name: "project-scoped",
+			start_time_unix_nano: 1_700_000_000_000_000_000,
+			attributes: [],
+		} as never);
+		trace.project_id = "11111111-1111-4111-8111-111111111111";
+		observation.project_id = trace.project_id;
+		const inserts: unknown[] = [];
+		const client = { insert: async (input: unknown) => inserts.push(input) };
+
+		await insertTraces(client as never, [trace]);
+
+		expect(
+			(inserts[0] as { values: Array<{ project_id: string }> }).values[0],
+		).toMatchObject({ project_id: trace.project_id });
+		expect(observationToInsertRow(observation)).toMatchObject({
+			project_id: trace.project_id,
+		});
+	});
+
 	it("maps the versioned metadata envelope to the ClickHouse metadata column", () => {
 		const observation = normalizeSpan({
 			trace_id: "00112233445566778899aabbccddeeff",

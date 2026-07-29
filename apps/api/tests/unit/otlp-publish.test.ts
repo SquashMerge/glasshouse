@@ -36,6 +36,8 @@ const TENANT = {
 };
 const handleOtlpIngest = (request: Request, tenant = TENANT) =>
 	rawHandleOtlpIngest(request, tenant);
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 beforeAll(() => {
 	process.env.UI_USERNAME = USER;
@@ -49,11 +51,14 @@ beforeEach(() => {
 	_resetForTests();
 });
 
-function validOtlp(spans: Array<Record<string, unknown>>) {
+function validOtlp(
+	spans: Array<Record<string, unknown>>,
+	resourceAttributes: Array<Record<string, unknown>> = [],
+) {
 	return {
 		resource_spans: [
 			{
-				resource: { attributes: [] },
+				resource: { attributes: resourceAttributes },
 				scope_spans: [
 					{
 						scope: { name: "test", version: "1.0.0" },
@@ -66,6 +71,104 @@ function validOtlp(spans: Array<Record<string, unknown>>) {
 }
 
 describe("OTLP ingest publishes events", () => {
+	it("propagates a resource project ID to traces and observations, not a span override", async () => {
+		const res = await handleOtlpIngest(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp(
+						[
+							{
+								trace_id: HEX32_A,
+								span_id: HEX16_A,
+								name: "project-scoped",
+								start_time_unix_nano: String(NOW_NS),
+								attributes: [
+									{
+										key: "astraea.project.id",
+										value: { stringValue: OTHER_PROJECT_ID },
+									},
+								],
+							},
+						],
+						[
+							{
+								key: "astraea.project.id",
+								value: { stringValue: PROJECT_ID },
+							},
+						],
+					),
+				),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const traces = insertTraces.mock.calls[0]?.[1] as Array<{
+			project_id: string;
+		}>;
+		const observations = insertObservations.mock.calls[0]?.[1] as Array<{
+			project_id: string;
+		}>;
+		expect(traces[0]?.project_id).toBe(PROJECT_ID);
+		expect(observations[0]?.project_id).toBe(PROJECT_ID);
+	});
+
+	it("leaves missing, span-only, and malformed resource project IDs unscoped", async () => {
+		const res = await handleOtlpIngest(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({
+					resource_spans: [
+						validOtlp([
+							{
+								trace_id: HEX32_A,
+								span_id: HEX16_A,
+								name: "span-only",
+								start_time_unix_nano: String(NOW_NS),
+								attributes: [
+									{
+										key: "astraea.project.id",
+										value: { stringValue: PROJECT_ID },
+									},
+								],
+							},
+						]).resource_spans[0],
+						validOtlp(
+							[
+								{
+									trace_id: HEX32_B,
+									span_id: HEX16_B,
+									name: "malformed-resource",
+									start_time_unix_nano: String(NOW_NS),
+									attributes: [],
+								},
+							],
+							[
+								{
+									key: "astraea.project.id",
+									value: { stringValue: "not-a-project-id" },
+								},
+							],
+						).resource_spans[0],
+					],
+				}),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const traces = insertTraces.mock.calls[0]?.[1] as Array<{
+			project_id: string;
+		}>;
+		const observations = insertObservations.mock.calls[0]?.[1] as Array<{
+			project_id: string;
+		}>;
+		expect(traces.map((trace) => trace.project_id)).toEqual(["", ""]);
+		expect(observations.map((observation) => observation.project_id)).toEqual([
+			"",
+			"",
+		]);
+	});
+
 	it("one trace.created + one observation.created for a single-span payload", async () => {
 		const traces: unknown[] = [];
 		const observations: unknown[] = [];
@@ -102,28 +205,36 @@ describe("OTLP ingest publishes events", () => {
 		expect(insertObservations).toHaveBeenCalledTimes(1);
 	});
 
-	it("persists the authenticated organization and resolved project, not OTLP-supplied tenant data", async () => {
+	it("persists the authenticated organization with the resource project", async () => {
 		const res = await handleOtlpIngest(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
-					validOtlp([
-						{
-							trace_id: HEX32_A,
-							span_id: HEX16_A,
-							name: "tenant-bound",
-							start_time_unix_nano: String(NOW_NS),
-							attributes: [
-								{
-									key: "astraea.organization_id",
-									value: {
-										stringValue: "00000000-0000-4000-8000-000000000099",
+					validOtlp(
+						[
+							{
+								trace_id: HEX32_A,
+								span_id: HEX16_A,
+								name: "tenant-bound",
+								start_time_unix_nano: String(NOW_NS),
+								attributes: [
+									{
+										key: "astraea.organization_id",
+										value: {
+											stringValue: "00000000-0000-4000-8000-000000000099",
+										},
 									},
-								},
-							],
-						},
-					]),
+								],
+							},
+						],
+						[
+							{
+								key: "astraea.project.id",
+								value: { stringValue: PROJECT_ID },
+							},
+						],
+					),
 				),
 			}),
 			TENANT,
@@ -132,13 +243,13 @@ describe("OTLP ingest publishes events", () => {
 		expect(insertTraces.mock.calls[0]?.[1]).toMatchObject([
 			{
 				organization_id: TENANT.organizationId,
-				project_id: TENANT.projectId,
+				project_id: PROJECT_ID,
 			},
 		]);
 		expect(insertObservations.mock.calls[0]?.[1]).toMatchObject([
 			{
 				organization_id: TENANT.organizationId,
-				project_id: TENANT.projectId,
+				project_id: PROJECT_ID,
 			},
 		]);
 	});

@@ -133,6 +133,10 @@ async function ingestProjectTrace(
 					resource: {
 						attributes: [
 							{ key: "service.name", value: { stringValue: "first-pass-e2e" } },
+							{
+								key: "astraea.project.id",
+								value: { stringValue: projectId },
+							},
 						],
 					},
 					scope_spans: [
@@ -147,10 +151,6 @@ async function ingestProjectTrace(
 									end_time_unix_nano: timestamp + 1_000_000,
 									status: { code: 1 },
 									attributes: [
-										{
-											key: "astraea.project.id",
-											value: { stringValue: projectId },
-										},
 										{
 											key: "gen_ai.request.model",
 											value: { stringValue: "e2e-model" },
@@ -185,6 +185,14 @@ async function ingestProjectTrace(
 			{ timeout: 10_000 },
 		)
 		.toBe(200);
+	const persisted = await apiJson<{
+		trace: { project_id: string };
+	}>(
+		await request.get(`${API_BASE}/v1/traces/${traceId}`, {
+			headers: { authorization: authorization() },
+		}),
+	);
+	expect(persisted.trace.project_id).toBe(projectId);
 	return { traceId, observationId };
 }
 

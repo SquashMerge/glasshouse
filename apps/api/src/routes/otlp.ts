@@ -106,18 +106,17 @@ export function createOtlpIngestHandler(
 		const observations: TenantScopedObservation[] = [];
 
 		for (const rs of request.resource_spans) {
+			const resourceAttributes = rs.resource?.attributes ?? [];
 			for (const ss of rs.scope_spans) {
 				for (const span of ss.spans) {
-					const normalized = normalizeSpan(span);
+					const normalized = normalizeSpan(span, resourceAttributes);
 					const trace: TenantScopedTrace = {
 						...normalized.trace,
 						organization_id: tenant.organizationId,
-						project_id: tenant.projectId,
 					};
 					const observation: TenantScopedObservation = {
 						...normalized.observation,
 						organization_id: tenant.organizationId,
-						project_id: tenant.projectId,
 					};
 					trace.input_text = redactTraceText(trace.input_text, redaction);
 					trace.output_text = redactTraceText(trace.output_text, redaction);
