@@ -182,6 +182,62 @@ export type ExperimentDependencies = {
 	}) => Promise<void>;
 };
 
+export function createEvaluationTracePayload(
+	input: Parameters<ExperimentDependencies["trace"]>[0],
+) {
+	const traceId = crypto.randomUUID().replaceAll("-", "");
+	const spanId = traceId.slice(0, 16);
+	const start =
+		BigInt(Date.now()) * 1_000_000n - BigInt(input.duration_ms) * 1_000_000n;
+	const end = BigInt(Date.now()) * 1_000_000n;
+	return {
+		resource_spans: [
+			{
+				resource: {
+					attributes: [
+						{
+							key: "service.name",
+							value: { stringValue: "astraea-evaluation" },
+						},
+						{
+							key: "astraea.project.id",
+							value: { stringValue: input.project_id },
+						},
+					],
+				},
+				scope_spans: [
+					{
+						spans: [
+							{
+								trace_id: traceId,
+								span_id: spanId,
+								name: `evaluation.${input.experiment_id}`,
+								kind: 1,
+								start_time_unix_nano: start.toString(),
+								end_time_unix_nano: end.toString(),
+								attributes: [
+									{
+										key: "gen_ai.response.model",
+										value: { stringValue: input.model },
+									},
+									{
+										key: "input.value",
+										value: { stringValue: JSON.stringify(input.input) },
+									},
+									{
+										key: "output.value",
+										value: { stringValue: input.output },
+									},
+								],
+							},
+						],
+					},
+				],
+			},
+		],
+	};
+}
+
 const traceResult = createOtlpIngestHandler();
 export const production: ExperimentDependencies = {
 	pool: pgPool,
@@ -197,11 +253,6 @@ export const production: ExperimentDependencies = {
 	getDataset,
 	invokeLlm: invokeConfiguredLlm,
 	trace: async (input) => {
-		const traceId = crypto.randomUUID().replaceAll("-", "");
-		const spanId = traceId.slice(0, 16);
-		const start =
-			BigInt(Date.now()) * 1_000_000n - BigInt(input.duration_ms) * 1_000_000n;
-		const end = BigInt(Date.now()) * 1_000_000n;
 		const organization = await pgPool().query<{ organization_id: string }>(
 			"SELECT organization_id FROM projects WHERE id = $1",
 			[input.project_id],
@@ -211,52 +262,7 @@ export const production: ExperimentDependencies = {
 		await traceResult(
 			new Request("http://internal/v1/otel/v1/traces", {
 				method: "POST",
-				body: JSON.stringify({
-					resource_spans: [
-						{
-							resource: {
-								attributes: [
-									{
-										key: "service.name",
-										value: { string_value: "astraea-evaluation" },
-									},
-									{
-										key: "astraea.project.id",
-										value: { string_value: input.project_id },
-									},
-								],
-							},
-							scope_spans: [
-								{
-									spans: [
-										{
-											trace_id: traceId,
-											span_id: spanId,
-											name: `evaluation.${input.experiment_id}`,
-											kind: 1,
-											start_time_unix_nano: start.toString(),
-											end_time_unix_nano: end.toString(),
-											attributes: [
-												{
-													key: "gen_ai.response.model",
-													value: { string_value: input.model },
-												},
-												{
-													key: "input.value",
-													value: { string_value: JSON.stringify(input.input) },
-												},
-												{
-													key: "output.value",
-													value: { string_value: input.output },
-												},
-											],
-										},
-									],
-								},
-							],
-						},
-					],
-				}),
+				body: JSON.stringify(createEvaluationTracePayload(input)),
 				headers: { "content-type": "application/json" },
 			}),
 			{
@@ -332,8 +338,13 @@ export async function executeExperiment(
 					output: JSON.stringify(llm.output),
 					duration_ms,
 				});
-			} catch {
-				// A trace sink outage must not duplicate an already-persisted result.
+			} catch (traceError) {
+				logger.warn("evaluation.trace_failed", {
+					experiment_id: input.experiment_id,
+					dataset_item_id: item.id,
+					error_type:
+						traceError instanceof Error ? traceError.name : typeof traceError,
+				});
 			}
 		} catch {
 			if (signal?.aborted) {
@@ -370,10 +381,8 @@ export async function executeExperiment(
 				logger.warn("evaluation.trace_failed", {
 					experiment_id: input.experiment_id,
 					dataset_item_id: item.id,
-					error:
-						traceError instanceof Error
-							? traceError.message
-							: String(traceError),
+					error_type:
+						traceError instanceof Error ? traceError.name : typeof traceError,
 				});
 			}
 		}

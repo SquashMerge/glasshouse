@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { logger } from "../../src/lib/logger";
+import { createOtlpIngestHandler } from "../../src/routes/otlp";
 import { scoreCase } from "../../src/lib/evaluator";
+import { ExportTraceServiceRequest } from "../../src/schemas/otlp";
 import { ExperimentCreate } from "../../src/schemas/experiments";
 import {
+	createEvaluationTracePayload,
 	createExperimentHandlers,
 	executeExperiment,
 	type ExperimentDependencies,
@@ -10,6 +14,7 @@ import {
 const projectId = "11111111-1111-4111-8111-111111111111";
 const datasetId = "22222222-2222-4222-8222-222222222222";
 const experimentId = "33333333-3333-4333-8333-333333333333";
+const organizationId = "00000000-0000-4000-8000-000000000001";
 
 const baseExperiment = {
 	project_id: projectId,
@@ -23,6 +28,116 @@ const baseExperiment = {
 };
 
 describe("evaluation MVP", () => {
+	it("persists and publishes the production evaluation trace with project provenance", async () => {
+		const persistedTraces: Array<Record<string, unknown>> = [];
+		const persistedObservations: Array<Record<string, unknown>> = [];
+		const published: Array<{
+			event: string;
+			payload: Record<string, unknown>;
+		}> = [];
+		const payload = createEvaluationTracePayload({
+			project_id: projectId,
+			experiment_id: experimentId,
+			item_id: "44444444-4444-4444-8444-444444444444",
+			model: "test-model",
+			input: { question: "one" },
+			output: JSON.stringify({ value: "answer" }),
+			duration_ms: 25,
+		});
+
+		expect(ExportTraceServiceRequest.safeParse(payload).success).toBe(true);
+		expect(payload.resource_spans[0]?.resource.attributes).toContainEqual({
+			key: "astraea.project.id",
+			value: { stringValue: projectId },
+		});
+
+		const handler = createOtlpIngestHandler({
+			defaultClient: () => ({}) as never,
+			insertTraces: async (_client, traces) => {
+				persistedTraces.push(...(traces as Array<Record<string, unknown>>));
+			},
+			insertObservations: async (_client, observations) => {
+				persistedObservations.push(
+					...(observations as Array<Record<string, unknown>>),
+				);
+			},
+			publishSync: (event, payload) => {
+				published.push({ event, payload: payload as Record<string, unknown> });
+			},
+		});
+		const response = await handler(
+			new Request("http://internal/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(payload),
+			}),
+			{ actor: "evaluation-worker", organizationId, projectId },
+		);
+
+		expect(response.status).toBe(200);
+		expect(persistedTraces[0]).toMatchObject({
+		organization_id: organizationId,
+		project_id: projectId,
+	});
+		expect(persistedObservations[0]).toMatchObject({
+		organization_id: organizationId,
+		project_id: projectId,
+			type: "generation",
+			model: "test-model",
+			input_text: JSON.stringify({ question: "one" }),
+			output_text: JSON.stringify({ value: "answer" }),
+		});
+		expect(persistedObservations[0]?.metadata).toMatchObject({
+			attributes: [
+				{ key: "gen_ai.response.model", value: { stringValue: "test-model" } },
+				{
+					key: "input.value",
+					value: { stringValue: JSON.stringify({ question: "one" }) },
+				},
+				{
+					key: "output.value",
+					value: { stringValue: JSON.stringify({ value: "answer" }) },
+				},
+			],
+		});
+		expect(published).toHaveLength(2);
+		expect(published[0]).toMatchObject({
+			event: "trace.created",
+			payload: {
+				trace: { organization_id: organizationId, project_id: projectId },
+			},
+		});
+		expect(published[1]).toMatchObject({
+			event: "observation.created",
+			payload: {
+				observation: {
+					organization_id: organizationId,
+					project_id: projectId,
+					type: "generation",
+					model: "test-model",
+					input_text: JSON.stringify({ question: "one" }),
+					output_text: JSON.stringify({ value: "answer" }),
+					metadata: {
+						attributes: [
+							{
+								key: "gen_ai.response.model",
+								value: { stringValue: "test-model" },
+							},
+							{
+								key: "input.value",
+								value: { stringValue: JSON.stringify({ question: "one" }) },
+							},
+							{
+								key: "output.value",
+								value: { stringValue: JSON.stringify({ value: "answer" }) },
+							},
+						],
+					},
+				},
+			},
+		});
+	});
+
 	it("defaults to the exact-match evaluator and temperature", () => {
 		const parsed = ExperimentCreate.parse({
 			project_id: projectId,
@@ -123,6 +238,63 @@ describe("evaluation MVP", () => {
 		expect((results[0] as { scores: Record<string, number> }).scores).toEqual({
 			contains: 1,
 		});
+	});
+
+	it("logs a trace failure without changing a successful evaluation result", async () => {
+		const statuses: string[] = [];
+		const warnings: Array<{ event: string; fields: Record<string, unknown> }> =
+			[];
+		const originalWarn = logger.warn;
+		logger.warn = (event, fields = {}) => warnings.push({ event, fields });
+		try {
+			const deps = {
+				pool: () => ({}) as never,
+				getExperiment: async () => ({ status: "running" }),
+				getDataset: async () => ({ id: datasetId }),
+				updateExperiment: async (_db: unknown, input: { status: string }) => {
+					statuses.push(input.status);
+					return {} as never;
+				},
+				listDatasetItems: async () => ({
+					items: [
+						{
+							id: "44444444-4444-4444-8444-444444444444",
+							input: { question: "one" },
+							expected_output: { value: "answer" },
+						},
+					],
+				}),
+				invokeLlm: async () => ({
+					output: { value: "answer" },
+					model: "test-model",
+				}),
+				insertResult: async () => ({}) as never,
+				trace: async () => {
+					throw new Error("trace sink unavailable");
+				},
+			} as unknown as ExperimentDependencies;
+
+			await executeExperiment(deps, {
+				project_id: projectId,
+				experiment_id: experimentId,
+				dataset_id: datasetId,
+				config: baseExperiment.config,
+			});
+		} finally {
+			logger.warn = originalWarn;
+		}
+
+		expect(statuses).toEqual(["running", "completed"]);
+		expect(warnings).toEqual([
+			{
+				event: "evaluation.trace_failed",
+				fields: {
+					experiment_id: experimentId,
+					dataset_item_id: "44444444-4444-4444-8444-444444444444",
+					error_type: "Error",
+				},
+			},
+		]);
 	});
 
 	it("emits a failure trace when an LLM call fails", async () => {
