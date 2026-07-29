@@ -223,8 +223,14 @@ BEGIN
         NULL;
     END;
 
-    IF (SELECT role FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'user' THEN
-        RAISE EXCEPTION 'prompt role was not derived from canonical message role';
+    IF (
+        SELECT messages->0->>'role'
+        FROM prompt_versions
+        WHERE prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+        ORDER BY version DESC
+        LIMIT 1
+    ) <> 'user' THEN
+        RAISE EXCEPTION 'prompt role was not preserved in canonical messages';
     END IF;
     IF EXISTS (
         SELECT 1
