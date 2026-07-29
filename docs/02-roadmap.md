@@ -5,12 +5,35 @@
 | Phase | Window | Status | Notes |
 |---|---|---|---|
 | MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Valkey 8, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
-| MVP — Ingest + trace viewer | Day 8–14 | Not started | OTLP receiver at `/v1/otel/v1/traces`; trace list / detail / search screens. Endpoint surface registered as 501 stubs. |
-| MVP — Agent + Experiment | Day 15–21 | Not started | Agent + Experiment REST CRUD; `hermes.register()`; framework adapters; eval runner. Endpoint surface registered as 501 stubs. |
-| MVP — Polish + dev mode | Day 22–30 | Not started | `hermes dev` single-binary; 3-tier prompt cache; prompts / datasets / experiments / settings UI. |
+| MVP — Ingest + trace viewer | Day 8–14 | Shipped | OTLP receiver, normalized GenAI/OpenInference traces, trace list/detail screens, live SSE updates, and trace-focused regression coverage. PR: [#8](https://github.com/dsarlo/astraea/pull/8). |
+| MVP — Prompt management + optimization | Day 15–21 | Shipped | Immutable prompt versions, labels/provenance, GEPA optimization jobs, structured progress, provider/model guardrails, and prompt-management E2E coverage. PRs: [#9](https://github.com/dsarlo/astraea/pull/9), [#22](https://github.com/dsarlo/astraea/pull/22). |
+| MVP — Agent registry + datasets + experiments | Day 22–30 | Next | Establish the Agent → Dataset → Experiment loop. Agent versions and project authorization must precede dataset provenance and experiment execution. |
+| MVP — Dev mode + release polish | Follow-up | Not started | `hermes dev` single-binary, 3-tier prompt cache, settings UI, packaging, and public-release polish after the core product loop is validated. |
 | Wedge | Day 30–60 | Not started | Framework expansion (LangGraph / CrewAI / Pydantic AI); HTTP endpoint registration; evaluator library; manifest version binding. |
 | GitOps | Day 60–90 | Not started | GitHub Actions; manifest drift detection; atomic manifest rollback; `enterprise/` wheel. |
 | Moat | Day 90–180 | Not started | Failure radar; judge calibration; closed-loop prompt optimization; voice-agent support. |
+
+## Current product state and next sequence
+
+The foundation, OTLP trace viewer, prompt management, and first GEPA optimization workflow are now implemented. The repository still exposes intentional `501` stubs for agents, datasets, experiments, and scores; those are product-completeness gaps, not runtime regressions.
+
+The next sequence is deliberately narrower than the original calendar-based MVP plan:
+
+1. **P0 — Contract and roadmap alignment:** keep this document authoritative about what is shipped, what remains stubbed, and which domain contracts gate implementation.
+2. **P1 — Agent registry:** implement project-scoped agents with immutable manifest versions and content-hash idempotency.
+3. **P2 — Datasets:** implement dataset/item persistence and the `sourceTraceId`/`sourceObservationId` provenance needed to turn traces into regression cases.
+4. **P3 — Experiments:** run one agent version against one dataset with one evaluator and live result events.
+5. **Wedge follow-up:** add framework adapters, HTTP invocation, version comparison, environment binding, and drift detection only after the loop works end to end.
+
+### Domain-contract guardrails
+
+- Every agent, dataset, experiment, and result is project-scoped; authentication must resolve to an authorized project before resource lookup.
+- Agent manifest versions are immutable. A content hash identifies equivalent manifests; an experiment stores the exact manifest-version identity it used.
+- Dataset items preserve trace provenance rather than copying an untraceable input/output pair.
+- Background jobs carry project and resource identifiers, never provider credentials or raw secrets; SSE exposes lifecycle metadata and sanitized results only.
+- The first evaluator and invocation path should be deterministic in tests, with provider-backed and framework-specific integrations added behind the same contracts later.
+
+This sequencing is the product decision behind the roadmap: validate **Agent → Dataset → Experiment** before investing in framework breadth, enterprise packaging, or moat features.
 
 ## Phase overview
 
@@ -24,7 +47,7 @@ DAY 0────30────60────90────120───180
 
 | Phase | Window | Goal | What ships |
 |---|---|---|---|
-| **MVP** | Day 0–30 | "We exist and you can run it" | Single-binary dev mode, OpenAPI + REST, OTLP ingest, basic SDK, 8-screen dashboard, ClickHouse schema, 3-tier prompt cache |
+| **MVP** | Day 0–30 | "We exist and you can run the core product loop" | OpenAPI + REST, OTLP ingest, trace viewer, prompt/version management, agent registry, trace-backed datasets, one-evaluator experiments |
 | **Wedge** | Day 30–60 | "Eval against your real agent with version binding" | Framework adapters (Agno/LangGraph/CrewAI/Pydantic AI), `hermes.evaluate()`, trace-to-dataset, HTTP endpoint registration (Maxim parity), per-env API keys, protected labels |
 | **GitOps** | Day 60–90 | "Your CI is the eval runner, your PR is the workflow" | GitHub Actions, manifest-bound drift detection, atomic manifest rollback, CLI for HTTP path, sealed `enterprise/` wheel for v0 premium features |
 | **Moat** | Day 90–180 | "We are the failure radar, we are the optimization loop" | Auto-clustering of drift events, judge calibration, closed-loop manifest optimization, voice-agent support, Quickwit for trace search v2 |
@@ -39,9 +62,9 @@ DAY 0────30────60────90────120───180
 
 | Task | Owner | Deliverable | Status |
 |---|---|---|---|
-| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; 31 stub routes + `/openapi.json`) |
+| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; remaining agent/dataset/experiment/score stubs + `/openapi.json`) |
 | Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI | ✅ Shipped (`Bun.serve()` + Scalar at `/reference`) |
-| Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (7 idempotent migrations; 10 tables) |
+| Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (15 idempotent migrations; current schema includes prompt-optimization tables) |
 | ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
 | Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis instance, persistent volume | ✅ Shipped as Valkey 8 (open-source Redis fork; wire-compatible — `ioredis` clients unchanged). AOF + named volume; BullMQ consumers deferred to a later phase. |
 | React 19 + Vite + TanStack scaffold | Frontend | `npm create vite`, Tailwind, Shadcn/UI, openapi-fetch + openapi-typescript wired | ✅ Shipped (Vite + TanStack Router + Tailwind 3.4 + Shadcn-style; typed client wired in a later slice) |
@@ -53,13 +76,15 @@ DAY 0────30────60────90────120───180
 |---|---|---|
 | OTLP receiver at `/v1/otel/v1/traces` | Backend | Accepts `gen_ai.*` + OpenInference attributes; validates; writes to ClickHouse + Postgres |
 | Trace list screen | Frontend | TanStack Table; columns: time, name, agent, status, duration, score, input excerpt |
-| Trace detail screen | Frontend | Nested span tree + agent graph + per-span I/O + scores; expandable observations |
+| Trace detail screen | Frontend | Nested observation tree + agent graph + per-observation I/O + scores; expandable observations |
 | Trace search API | Backend | `GET /v1/traces/search?q=...&filter[...]` backed by ClickHouse; <50ms p95 for filtered, <100ms p95 for full-text |
 | SDK: hermes-sdk (Python) | SDK | `pip install hermes-sdk`; exports the generated typed client |
 | SDK: @hermes/sdk (TypeScript) | SDK | `npm install @hermes/sdk`; exports the generated typed client |
 | OTel env-var integration | DevEx | Docs: "set OTEL_EXPORTER_OTLP_ENDPOINT, you're tracing" |
 
 ### Week 3 — Agent + Experiment (Days 15–21)
+
+> **Superseded planning detail:** this original calendar slice is retained as historical context. The authoritative implementation sequence is the P0/P1/P2/P3 sequence above; the phase-demo claims below are target-state planning, not shipped functionality.
 
 | Task | Owner | Deliverable |
 |---|---|---|
