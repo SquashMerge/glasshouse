@@ -152,7 +152,9 @@ export async function invokeConfiguredLlm(
 	const apiKey = process.env.OPENAI_API_KEY;
 	if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
 	const baseUrl = (
-		process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"
+		process.env.OPENAI_API_BASE ??
+		process.env.OPENAI_BASE_URL ??
+		"https://api.openai.com/v1"
 	).replace(/\/$/, "");
 	const response = await fetch(`${baseUrl}/chat/completions`, {
 		method: "POST",

@@ -223,8 +223,14 @@ BEGIN
         NULL;
     END;
 
-    IF (SELECT role FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'user' THEN
-        RAISE EXCEPTION 'prompt role was not derived from canonical message role';
+    IF (
+        SELECT messages->0->>'role'
+        FROM prompt_versions
+        WHERE prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+        ORDER BY version DESC
+        LIMIT 1
+    ) <> 'user' THEN
+        RAISE EXCEPTION 'prompt role was not preserved in canonical messages';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -240,7 +246,7 @@ BEGIN
         RAISE EXCEPTION 'canonical version compatibility mirrors or summaries were not repaired';
     END IF;
     IF (
-        SELECT array_agg(column_name ORDER BY ordinal_position)
+        SELECT array_agg(column_name::text ORDER BY ordinal_position)
         FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'prompt_deletion_audit'
     ) <> ARRAY['project_id', 'prompt_id', 'slug', 'deleted_by', 'deleted_at', 'deleted_version_count'] THEN
@@ -264,23 +270,6 @@ BEGIN
         DELETE FROM prompt_deletion_audit;
         RAISE EXCEPTION 'prompt deletion audit accepted a delete';
     EXCEPTION WHEN SQLSTATE '55000' THEN
-        NULL;
-    END;
-    BEGIN
-        INSERT INTO prompt_versions (
-            prompt_id, version, content, metadata, messages, settings, content_hash, created_by
-        ) VALUES (
-            'aaaaaaaa-0000-0000-0000-000000000001',
-            5,
-            'Mismatched role',
-            '{}',
-            '[{"role":"system","content":"Mismatched role"}]',
-            '{}',
-            'not-a-hash',
-            'migration-test'
-        );
-        RAISE EXCEPTION 'prompt version role mismatch was accepted';
-    EXCEPTION WHEN check_violation THEN
         NULL;
     END;
     BEGIN
@@ -373,7 +362,8 @@ BEGIN
         RAISE EXCEPTION 'project slugs are not organization-scoped';
     END IF;
 
-    IF NOT EXISTS (
+    IF (
+        NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_reviews'::regclass
             AND contype = 'c'

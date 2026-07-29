@@ -6,6 +6,9 @@ import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { pgPool } from "./db/postgres.js";
+import { failInterruptedExperiments } from "./db/experiments.js";
+import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
+import { recoverInterruptedWork } from "./lib/recovery.js";
 import {
 	assertTenantProjectAccess,
 	resolveTenantProject,
@@ -205,6 +208,15 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 }
 
 const apiApp = createApiApp();
+
+if (import.meta.main) {
+	await recoverInterruptedWork({
+		pool: pgPool,
+		failExperiments: () => failInterruptedExperiments(pgPool()),
+		failOptimizations: () => failInterruptedOptimizationJobs(pgPool()),
+		log: logger.info,
+	});
+}
 
 logger.info("api.started", {
 	port: PORT,

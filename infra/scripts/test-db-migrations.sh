@@ -31,12 +31,16 @@ docker run --detach --rm \
   postgres:16-alpine >/dev/null
 
 for _ in {1..30}; do
-  if docker exec "$CONTAINER" pg_isready --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null 2>&1; then
+  if docker exec "$CONTAINER" \
+    psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+    --command 'SELECT 1' >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-docker exec "$CONTAINER" pg_isready --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null
+docker exec "$CONTAINER" \
+  psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  --command 'SELECT 1' >/dev/null
 
 PORT_BINDING="$(docker port "$CONTAINER" 5432/tcp)"
 POSTGRES_PORT="${PORT_BINDING##*:}"
@@ -51,9 +55,9 @@ docker exec --interactive "$CONTAINER" \
   < "$ROOT/infra/scripts/test-db-migrations.fixture.sql"
 
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  bun --cwd "$ROOT/apps/api" run db:migrate
+  bun run --cwd "$ROOT/apps/api" db:migrate
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  bun --cwd "$ROOT/apps/api" run db:migrate
+  bun run --cwd "$ROOT/apps/api" db:migrate
 
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \

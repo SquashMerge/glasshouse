@@ -555,15 +555,21 @@ export function createExperimentHandlers(
 					start(controller) {
 						let timer: ReturnType<typeof setInterval> | undefined;
 						let closed = false;
+						let polling = false;
 						const close = () => {
 							if (closed) return;
 							closed = true;
 							if (timer) clearInterval(timer);
-							controller.close();
+							try {
+								controller.close();
+							} catch {
+								// Reader cancellation can close the controller before this callback.
+							}
 						};
 						cancelStream = close;
 						const tick = async () => {
-							if (closed) return;
+							if (closed || polling) return;
+							polling = true;
 							try {
 								const row = await deps.getExperiment(deps.pool(), {
 									id: params.id,
@@ -577,6 +583,8 @@ export function createExperimentHandlers(
 									close();
 							} catch {
 								close();
+							} finally {
+								polling = false;
 							}
 						};
 						timer = setInterval(() => void tick(), 500);

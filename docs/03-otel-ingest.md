@@ -152,11 +152,11 @@ If you're sending spans to Astraea behind a reverse proxy that mounts the receiv
 
 ## After sending — where do traces go?
 
-Traces appear in the dashboard at `http://localhost:5173/traces`. Click a row to see the full span tree, input/output, and token usage. The list polls every 10 seconds.
+Traces appear in the dashboard at `http://localhost:5173/observability`. Click a row to see the full span tree, input/output, and token usage. The list polls every 10 seconds.
 
 ## Production hardening (post-MVP)
 
 - Replace Basic Auth with mTLS or signed JWT (the OTel SDKs support custom exporters / headers).
 - Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://...`).
-- Add tenant / project routing via `deployment.environment.name` attribute (mapping to `projects` table).
+- Configure tenant routing with server-managed Basic credentials and select an authorized project with `x-astraea-project-id`.
 - Enable trace sampling at the agent side for high-volume services (see OTel SDK samplers).
