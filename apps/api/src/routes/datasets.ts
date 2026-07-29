@@ -1,44 +1,72 @@
-import { createRoute } from "@hono/zod-openapi";
-import { z } from "@hono/zod-openapi";
+import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
+import type { Context } from "hono";
+import { pgPool } from "../db/postgres.js";
+import {
+	addDatasetItem as addDatasetItemRecord,
+	createDataset as createDatasetRecord,
+	DatasetRepositoryError,
+	deleteDatasetItem as deleteDatasetItemRecord,
+	getDataset as getDatasetRecord,
+	listDatasetItems as listDatasetItemsRecord,
+	listDatasets as listDatasetsRecord,
+} from "../db/datasets.js";
 import {
 	Dataset,
 	DatasetCreate,
+	DatasetErrorResponses,
+	DatasetIdParam,
 	DatasetItem,
 	DatasetItemCreate,
-	DatasetStubResponses,
+	DatasetItemIdParams,
+	DatasetProjectQuery,
 } from "../schemas/datasets.js";
-import { IdParam } from "../schemas/common.js";
-import { notImplemented } from "./_stub.js";
 
 const tag = "datasets";
+const DatasetList = z
+	.object({ items: z.array(Dataset), total: z.number().int().nonnegative() })
+	.strict();
+const DatasetItemList = z.object({ items: z.array(DatasetItem) }).strict();
+
+const errorResponse = (c: Context, cause: unknown): Response => {
+	const error =
+		cause instanceof DatasetRepositoryError
+			? cause
+			: new DatasetRepositoryError(
+					"INTERNAL",
+					"Dataset operation failed",
+					cause,
+				);
+	return c.json(
+		{
+			code: error.code,
+			message:
+				error.code === "INTERNAL" ? "Dataset operation failed" : error.message,
+		},
+		error.status,
+	);
+};
 
 export const listDatasets = createRoute({
 	method: "get",
 	path: "/v1/datasets",
 	tags: [tag],
-	summary: "List datasets",
+	summary: "List project datasets",
+	security: [{ basicAuth: [] }],
+	request: { query: DatasetProjectQuery },
 	responses: {
 		200: {
 			description: "OK",
-			content: {
-				"application/json": {
-					schema: z.object({
-						items: z.array(Dataset),
-						total: z.number().int(),
-					}),
-				},
-			},
+			content: { "application/json": { schema: DatasetList } },
 		},
-		...DatasetStubResponses,
+		...DatasetErrorResponses,
 	},
 });
-export const handleListDatasets = () => notImplemented();
-
 export const createDataset = createRoute({
 	method: "post",
 	path: "/v1/datasets",
 	tags: [tag],
-	summary: "Create a dataset",
+	summary: "Create a project dataset",
+	security: [{ basicAuth: [] }],
 	request: {
 		body: { content: { "application/json": { schema: DatasetCreate } } },
 	},
@@ -47,54 +75,47 @@ export const createDataset = createRoute({
 			description: "Dataset created",
 			content: { "application/json": { schema: Dataset } },
 		},
-		...DatasetStubResponses,
+		...DatasetErrorResponses,
 	},
 });
-export const handleCreateDataset = () => notImplemented();
-
 export const getDataset = createRoute({
 	method: "get",
 	path: "/v1/datasets/{id}",
 	tags: [tag],
-	summary: "Get a dataset",
-	request: { params: IdParam },
+	summary: "Get a project dataset",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetIdParam, query: DatasetProjectQuery },
 	responses: {
 		200: {
 			description: "OK",
 			content: { "application/json": { schema: Dataset } },
 		},
-		...DatasetStubResponses,
+		...DatasetErrorResponses,
 	},
 });
-export const handleGetDataset = (_id: string) => notImplemented();
-
 export const listDatasetItems = createRoute({
 	method: "get",
 	path: "/v1/datasets/{id}/items",
 	tags: [tag],
 	summary: "List dataset items",
-	request: { params: IdParam },
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetIdParam, query: DatasetProjectQuery },
 	responses: {
 		200: {
 			description: "OK",
-			content: {
-				"application/json": {
-					schema: z.object({ items: z.array(DatasetItem) }),
-				},
-			},
+			content: { "application/json": { schema: DatasetItemList } },
 		},
-		...DatasetStubResponses,
+		...DatasetErrorResponses,
 	},
 });
-export const handleListDatasetItems = (_id: string) => notImplemented();
-
 export const addDatasetItem = createRoute({
 	method: "post",
 	path: "/v1/datasets/{id}/items",
 	tags: [tag],
-	summary: "Add a dataset item",
+	summary: "Add a dataset item, optionally preserving trace provenance",
+	security: [{ basicAuth: [] }],
 	request: {
-		params: IdParam,
+		params: DatasetIdParam,
 		body: { content: { "application/json": { schema: DatasetItemCreate } } },
 	},
 	responses: {
@@ -102,26 +123,136 @@ export const addDatasetItem = createRoute({
 			description: "Item added",
 			content: { "application/json": { schema: DatasetItem } },
 		},
-		...DatasetStubResponses,
+		...DatasetErrorResponses,
 	},
 });
-export const handleAddDatasetItem = (_id: string) => notImplemented();
-
 export const deleteDatasetItem = createRoute({
 	method: "delete",
 	path: "/v1/datasets/{id}/items/{itemId}",
 	tags: [tag],
 	summary: "Delete a dataset item",
-	request: {
-		params: z.object({
-			id: IdParam.shape.id,
-			itemId: z
-				.string()
-				.uuid()
-				.openapi({ param: { name: "itemId", in: "path" } }),
-		}),
-	},
-	responses: { 204: { description: "No content" }, ...DatasetStubResponses },
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetItemIdParams, query: DatasetProjectQuery },
+	responses: { 204: { description: "No content" }, ...DatasetErrorResponses },
 });
-export const handleDeleteDatasetItem = (_id: string, _itemId: string) =>
-	notImplemented();
+
+export type DatasetRouteDependencies = {
+	pool: typeof pgPool;
+	listDatasets: typeof listDatasetsRecord;
+	createDataset: typeof createDatasetRecord;
+	getDataset: typeof getDatasetRecord;
+	listDatasetItems: typeof listDatasetItemsRecord;
+	addDatasetItem: typeof addDatasetItemRecord;
+	deleteDatasetItem: typeof deleteDatasetItemRecord;
+};
+const production: DatasetRouteDependencies = {
+	pool: pgPool,
+	listDatasets: listDatasetsRecord,
+	createDataset: createDatasetRecord,
+	getDataset: getDatasetRecord,
+	listDatasetItems: listDatasetItemsRecord,
+	addDatasetItem: addDatasetItemRecord,
+	deleteDatasetItem: deleteDatasetItemRecord,
+};
+
+export function createDatasetRouteHandlers(
+	dependencies: DatasetRouteDependencies = production,
+) {
+	return {
+		handleListDatasets: async (
+			c: Parameters<RouteHandler<typeof listDatasets>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.listDatasets(
+						dependencies.pool(),
+						c.req.valid("query").project_id,
+					),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleCreateDataset: async (
+			c: Parameters<RouteHandler<typeof createDataset>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.createDataset(
+						dependencies.pool(),
+						c.req.valid("json"),
+					),
+					201,
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleGetDataset: async (
+			c: Parameters<RouteHandler<typeof getDataset>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.getDataset(dependencies.pool(), {
+						id: c.req.valid("param").id,
+						project_id: c.req.valid("query").project_id,
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleListDatasetItems: async (
+			c: Parameters<RouteHandler<typeof listDatasetItems>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.listDatasetItems(dependencies.pool(), {
+						dataset_id: c.req.valid("param").id,
+						project_id: c.req.valid("query").project_id,
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleAddDatasetItem: async (
+			c: Parameters<RouteHandler<typeof addDatasetItem>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.addDatasetItem(dependencies.pool(), {
+						dataset_id: c.req.valid("param").id,
+						...c.req.valid("json"),
+					}),
+					201,
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleDeleteDatasetItem: async (
+			c: Parameters<RouteHandler<typeof deleteDatasetItem>>[0],
+		) => {
+			try {
+				await dependencies.deleteDatasetItem(dependencies.pool(), {
+					dataset_id: c.req.valid("param").id,
+					item_id: c.req.valid("param").itemId,
+					project_id: c.req.valid("query").project_id,
+				});
+				return c.body(null, 204);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+	};
+}
+
+export const {
+	handleListDatasets,
+	handleCreateDataset,
+	handleGetDataset,
+	handleListDatasetItems,
+	handleAddDatasetItem,
+	handleDeleteDatasetItem,
+} = createDatasetRouteHandlers();

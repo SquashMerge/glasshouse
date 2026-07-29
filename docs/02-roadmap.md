@@ -7,7 +7,7 @@
 | MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Valkey 8, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
 | MVP — Ingest + trace viewer | Day 8–14 | Shipped | OTLP receiver, normalized GenAI/OpenInference traces, trace list/detail screens, live SSE updates, and trace-focused regression coverage. PR: [#8](https://github.com/dsarlo/astraea/pull/8). |
 | MVP — Prompt management + optimization | Day 15–21 | Shipped | Immutable prompt versions, labels/provenance, GEPA optimization jobs, structured progress, provider/model guardrails, and prompt-management E2E coverage. PRs: [#9](https://github.com/dsarlo/astraea/pull/9), [#22](https://github.com/dsarlo/astraea/pull/22). |
-| MVP — Agent registry + datasets + experiments | Day 22–30 | Next | Establish the Agent → Dataset → Experiment loop. Agent versions and project authorization must precede dataset provenance and experiment execution. |
+| MVP — Agent registry + datasets + experiments | Day 22–30 | In progress | Dataset persistence/provenance is shipped in PR [#35](https://github.com/dsarlo/astraea/pull/35); agent versions and experiment execution remain. |
 | MVP — Dev mode + release polish | Follow-up | Not started | `hermes dev` single-binary, 3-tier prompt cache, settings UI, packaging, and public-release polish after the core product loop is validated. |
 | Wedge | Day 30–60 | Not started | Framework expansion (LangGraph / CrewAI / Pydantic AI); HTTP endpoint registration; evaluator library; manifest version binding. |
 | GitOps | Day 60–90 | Not started | GitHub Actions; manifest drift detection; atomic manifest rollback; `enterprise/` wheel. |
@@ -15,19 +15,19 @@
 
 ## Current product state and next sequence
 
-The foundation, OTLP trace viewer, prompt management, and first GEPA optimization workflow are now implemented. The repository still exposes intentional `501` stubs for agents, datasets, experiments, and scores; those are product-completeness gaps, not runtime regressions.
+The foundation, OTLP trace viewer, prompt management, first GEPA optimization workflow, and project-scoped dataset persistence are now implemented. The repository still exposes intentional `501` stubs for agents, experiments, and scores; those are product-completeness gaps, not runtime regressions.
 
 The next sequence is deliberately narrower than the original calendar-based MVP plan:
 
 1. **P0 — Contract and roadmap alignment:** keep this document authoritative about what is shipped, what remains stubbed, and which domain contracts gate implementation.
 2. **P1 — Agent registry:** implement project-scoped agents with immutable manifest versions and content-hash idempotency.
-3. **P2 — Datasets:** implement dataset/item persistence and the `sourceTraceId`/`sourceObservationId` provenance needed to turn traces into regression cases.
+3. **P2 — Datasets:** shipped in PR [#35](https://github.com/dsarlo/astraea/pull/35): dataset/item persistence and the `sourceTraceId`/`sourceObservationId` provenance needed to turn traces into regression cases.
 4. **P3 — Experiments:** run one agent version against one dataset with one evaluator and live result events.
 5. **Wedge follow-up:** add framework adapters, HTTP invocation, version comparison, environment binding, and drift detection only after the loop works end to end.
 
 ### Domain-contract guardrails
 
-- Every agent, dataset, experiment, and result is project-scoped; authentication must resolve to an authorized project before resource lookup.
+- Every agent, dataset, experiment, and result is project-scoped. The current Basic Auth deployment is an administrator-only surface, so dataset requests carry an explicit project ID and SQL enforces that boundary; project-membership authorization is required before exposing this API to non-administrators.
 - Agent manifest versions are immutable. A content hash identifies equivalent manifests; an experiment stores the exact manifest-version identity it used.
 - Dataset items preserve trace provenance rather than copying an untraceable input/output pair.
 - Background jobs carry project and resource identifiers, never provider credentials or raw secrets; SSE exposes lifecycle metadata and sanitized results only.
@@ -62,7 +62,7 @@ DAY 0────30────60────90────120───180
 
 | Task | Owner | Deliverable | Status |
 |---|---|---|---|
-| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; remaining agent/dataset/experiment/score stubs + `/openapi.json`) |
+| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; remaining agent/experiment/score stubs + `/openapi.json`) |
 | Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI | ✅ Shipped (`Bun.serve()` + Scalar at `/reference`) |
 | Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (15 idempotent migrations; current schema includes prompt-optimization tables) |
 | ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
