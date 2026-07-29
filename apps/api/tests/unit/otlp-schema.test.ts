@@ -43,6 +43,26 @@ describe("ExportTraceServiceRequest Zod validation", () => {
 		expect(result.success).toBe(true);
 	});
 
+	it("accepts named kvlist attribute values", () => {
+		const result = ExportTraceServiceRequest.safeParse({
+			...validPayload(),
+			resource_spans: [
+				{
+					...validPayload().resource_spans[0],
+					resource: {
+						attributes: [
+							{
+								key: "nested",
+								value: { kvlistValue: { values: [{ key: "child" }] } },
+							},
+						],
+					},
+				},
+			],
+		});
+		expect(result.success).toBe(true);
+	});
+
 	it("rejects payload with invalid trace_id (not 32 hex)", () => {
 		const result = ExportTraceServiceRequest.safeParse(
 			validPayload({ trace_id: "tooshort" }),

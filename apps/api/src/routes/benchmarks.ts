@@ -20,7 +20,12 @@ import {
 	BenchmarkSuiteCreate,
 	BenchmarkSuiteIdParam,
 } from "../schemas/benchmarks.js";
-import { executeExperiment, production } from "./experiments.js";
+import {
+	executeExperiment,
+	production,
+	type ExperimentDependencies,
+} from "./experiments.js";
+import { logger } from "../lib/logger.js";
 
 const tag = "benchmarks";
 const SuiteList = z
@@ -194,14 +199,44 @@ export const handleCreateBenchmarkRun = async (
 			model: body.model ?? null,
 			prompt_version: body.prompt_version ?? null,
 		});
-		void executeExperiment(production, {
+		void executeBenchmarkExperiment({
 			project_id,
 			experiment_id: experiment.id,
 			dataset_id: suite.dataset_id,
 			config,
-		}).catch(() => undefined);
+		});
 		return c.json(run, 202);
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}
 };
+
+export async function executeBenchmarkExperiment(
+	input: Parameters<typeof executeExperiment>[1],
+	dependencies: ExperimentDependencies = production,
+	executor: typeof executeExperiment = executeExperiment,
+) {
+	try {
+		await executor(dependencies, input);
+	} catch (cause) {
+		logger.error("benchmark.failed", undefined, {
+			error_type: cause instanceof Error ? cause.name : typeof cause,
+			experiment_id: input.experiment_id,
+			project_id: input.project_id,
+		});
+		try {
+			await dependencies.updateExperiment(dependencies.pool(), {
+				project_id: input.project_id,
+				id: input.experiment_id,
+				status: "failed",
+			});
+		} catch (updateCause) {
+			logger.error("benchmark.failure_status_update_failed", undefined, {
+				error_type:
+					updateCause instanceof Error ? updateCause.name : typeof updateCause,
+				experiment_id: input.experiment_id,
+				project_id: input.project_id,
+			});
+		}
+	}
+}

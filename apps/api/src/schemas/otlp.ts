@@ -22,6 +22,10 @@ export const SpanId = hexBytes(16);
 export type SpanId = z.infer<typeof SpanId>;
 export const ParentSpanId = SpanId.nullable().optional();
 
+const KvlistValue = z
+	.object({ values: z.array(z.any()).optional() })
+	.openapi("KvlistValue");
+
 const AnyValue = z
 	.union([
 		z.object({ stringValue: z.string() }),
@@ -29,11 +33,7 @@ const AnyValue = z
 		z.object({ intValue: z.union([z.number().int(), z.string()]) }),
 		z.object({ doubleValue: z.number() }),
 		z.object({ stringValue: z.string() }).array(),
-		z
-			.object({
-				kvlistValue: z.object({ values: z.array(z.any()).optional() }),
-			})
-			.optional(),
+		z.object({ kvlistValue: KvlistValue }).optional(),
 		z.object({ bytesValue: z.string() }),
 	])
 	.openapi("AnyValue");

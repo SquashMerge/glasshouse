@@ -19,6 +19,7 @@ import {
 } from "../db/traces-writer.js";
 import type { TenantScope } from "../tenancy.js";
 import { publishSync } from "../lib/event-bus.js";
+import { logger } from "../lib/logger.js";
 
 const tag = "otlp";
 
@@ -115,7 +116,9 @@ export function createOtlpIngestHandler(
 		try {
 			bodyJson = await req.json();
 		} catch (err) {
-			console.error("OTLP body parse failed:", (err as Error).message);
+			logger.warn("otlp.body_parse_failed", {
+				error_type: err instanceof Error ? err.name : typeof err,
+			});
 			return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
 		}
 
@@ -188,7 +191,9 @@ export function createOtlpIngestHandler(
 			);
 			await dependencies.insertObservations(client, observations);
 		} catch (err) {
-			console.error("OTLP insert failed:", (err as Error).message);
+			logger.error("otlp.persist_failed", undefined, {
+				error_type: err instanceof Error ? err.name : typeof err,
+			});
 			return jsonError(
 				500,
 				"INTERNAL",
@@ -202,10 +207,9 @@ export function createOtlpIngestHandler(
 			for (const o of observations)
 				dependencies.publishSync("observation.created", { observation: o });
 		} catch (err) {
-			console.error(
-				"OTLP event publish failed (non-fatal):",
-				(err as Error).message,
-			);
+			logger.warn("otlp.event_publish_failed", {
+				error_type: err instanceof Error ? err.name : typeof err,
+			});
 		}
 
 		return new Response(JSON.stringify({ partial_success: {} }), {
