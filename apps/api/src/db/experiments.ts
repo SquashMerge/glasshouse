@@ -270,6 +270,24 @@ export async function claimExperimentTask(
 		throw normalize(cause);
 	}
 }
+export async function nextExperimentTaskRetryDelay(
+	db: Queryable,
+	input: { project_id: string; experiment_id: string },
+): Promise<number | null> {
+	try {
+		const r = await db.query(
+			`SELECT ceil(extract(epoch FROM min(t.lease_expires_at) - now()) * 1000)::int AS delay_ms
+			FROM experiment_tasks t JOIN experiments e ON e.id = t.experiment_id
+			WHERE t.experiment_id = $1 AND e.project_id = $2 AND e.status = 'running'
+				AND t.status = 'running' AND t.lease_expires_at > now()`,
+			[input.experiment_id, input.project_id],
+		);
+		const delay = r.rows[0]?.delay_ms;
+		return typeof delay === "number" ? Math.max(0, delay) : null;
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
 export async function finalizeExperimentTask(
 	db: Queryable,
 	input: {

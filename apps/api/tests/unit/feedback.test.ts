@@ -105,6 +105,48 @@ describe("feedback review persistence", () => {
 		expect(result.project_id).toBe(base.project_id);
 	});
 
+	it("rejects promotion until feedback has been reviewed", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("FROM scores s JOIN feedback_reviews"))
+					return {
+						rows: [
+							{
+								id: "33333333-3333-4333-8333-333333333333",
+								project_id: base.project_id,
+								trace_id: base.trace_id,
+								observation_id: null,
+								value: -1,
+								metadata: base.metadata,
+								created_at: now,
+								status: "new",
+								note: null,
+								dataset_id: null,
+								dataset_item_id: null,
+								updated_at: now,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release: () => {},
+		};
+
+		await expect(
+			promoteFeedback({ connect: async () => client } as never, {
+				project_id: base.project_id,
+				id: "33333333-3333-4333-8333-333333333333",
+				dataset_id: "22222222-2222-4222-8222-222222222222",
+				input: { question: "hello" },
+			}),
+		).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+		expect(queries.some((sql) => sql.includes("FROM datasets"))).toBe(false);
+		expect(queries).toContain("ROLLBACK");
+	});
+
 	it("locks the project-scoped feedback row before validating and updating a terminal link", async () => {
 		const now = new Date("2026-07-29T12:00:00.000Z");
 		const queries: string[] = [];

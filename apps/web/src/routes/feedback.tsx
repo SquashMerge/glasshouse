@@ -240,6 +240,10 @@ function FeedbackRow({
 						>
 							Dismiss
 						</Button>
+					</>
+				)}
+				{item.status === "reviewed" && (
+					<>
 						<label className="sr-only" htmlFor={`feedback-dataset-${item.id}`}>
 							Dataset
 						</label>

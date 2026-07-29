@@ -241,6 +241,11 @@ export async function promoteFeedback(
 			await client.query("COMMIT");
 			return current;
 		}
+		if (current.status !== "reviewed")
+			throw new FeedbackRepositoryError(
+				"CONFLICT",
+				"Feedback must be reviewed before promotion",
+			);
 		const dataset = await client.query(
 			"SELECT id FROM datasets WHERE id=$1 AND project_id=$2",
 			[input.dataset_id, input.project_id],

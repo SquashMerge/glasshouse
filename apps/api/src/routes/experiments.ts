@@ -13,6 +13,7 @@ import {
 	insertExperimentResult,
 	listExperimentResults,
 	listExperiments as listExperimentsRecord,
+	nextExperimentTaskRetryDelay,
 	updateExperiment,
 } from "../db/experiments.js";
 import { getDataset, listDatasetItems } from "../db/datasets.js";
@@ -171,6 +172,8 @@ export type ExperimentDependencies = {
 	listResults: typeof listExperimentResults;
 	insertResult: typeof insertExperimentResult;
 	claimTask: typeof claimExperimentTask;
+	nextTaskRetryDelay: typeof nextExperimentTaskRetryDelay;
+	waitForTaskRetry: (delayMs: number, signal?: AbortSignal) => Promise<void>;
 	finalizeTask: typeof finalizeExperimentTask;
 	completeExperiment: typeof completeExperimentIfTasksFinished;
 	summary: typeof experimentSummaryRecord;
@@ -281,6 +284,20 @@ export const production: ExperimentDependencies = {
 	listResults: listExperimentResults,
 	insertResult: insertExperimentResult,
 	claimTask: claimExperimentTask,
+	nextTaskRetryDelay: nextExperimentTaskRetryDelay,
+	waitForTaskRetry: (delayMs, signal) =>
+		new Promise((resolve) => {
+			const timer = setTimeout(resolve, delayMs);
+			timer.unref();
+			signal?.addEventListener(
+				"abort",
+				() => {
+					clearTimeout(timer);
+					resolve();
+				},
+				{ once: true },
+			);
+		}),
 	finalizeTask: finalizeExperimentTask,
 	completeExperiment: completeExperimentIfTasksFinished,
 	summary: experimentSummaryRecord,
@@ -328,7 +345,20 @@ export async function executeExperiment(
 			project_id: input.project_id,
 			experiment_id: input.experiment_id,
 		});
-		if (!task) break;
+		if (!task) {
+			const completed = await deps.completeExperiment(db, {
+				project_id: input.project_id,
+				id: input.experiment_id,
+			});
+			if (completed) return;
+			const retryDelay = await deps.nextTaskRetryDelay(db, {
+				project_id: input.project_id,
+				experiment_id: input.experiment_id,
+			});
+			if (retryDelay == null) return;
+			await deps.waitForTaskRetry(retryDelay + 1, signal);
+			continue;
+		}
 		const itemStarted = Date.now();
 		try {
 			const llm = await deps.invokeLlm(task.input, input.config, signal);

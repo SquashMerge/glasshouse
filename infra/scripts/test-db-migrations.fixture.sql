@@ -17,8 +17,20 @@ INSERT INTO prompt_versions (id, prompt_id, version, content, model, metadata, c
     ('dddddddd-0000-0000-0000-000000000101', 'dddddddd-0000-0000-0000-000000000001', 0, 'Legacy empty name', NULL, '{}', '2024-01-01T00:00:00Z'),
     ('eeeeeeee-0000-0000-0000-000000000101', 'eeeeeeee-0000-0000-0000-000000000001', 1, 'Boundary separator', NULL, '{}', '2024-01-01T00:00:00Z');
 
+INSERT INTO agents (id, project_id, name) VALUES
+	('a3000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'Legacy evaluation agent');
+INSERT INTO datasets (id, project_id, name) VALUES
+	('a4000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'Legacy evaluation dataset');
+INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES
+	('a5000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001', '{"question":"already evaluated"}', '{"answer":"done"}'),
+	('a5000000-0000-4000-8000-000000000002', 'a4000000-0000-4000-8000-000000000001', '{"question":"not yet evaluated"}', '{"answer":"later"}');
+INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config) VALUES
+	('a6000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'a3000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001', 'completed', '{}');
+INSERT INTO experiment_results (id, experiment_id, dataset_item_id, output, scores, status) VALUES
+	('a7000000-0000-4000-8000-000000000001', 'a6000000-0000-4000-8000-000000000001', 'a5000000-0000-4000-8000-000000000001', '{"answer":"done"}', '{"exact_match":1}', 'completed');
+
 INSERT INTO prompt_labels (project_id, prompt_id, label, version_id) VALUES
-    ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'production', 'aaaaaaaa-0000-0000-0000-000000000101'),
+	('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'production', 'aaaaaaaa-0000-0000-0000-000000000101'),
     ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'team_alpha', 'aaaaaaaa-0000-0000-0000-000000000101'),
     ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'invalid!', 'aaaaaaaa-0000-0000-0000-000000000101'),
     ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'latest', 'aaaaaaaa-0000-0000-0000-000000000101'),

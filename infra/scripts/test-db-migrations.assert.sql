@@ -474,6 +474,22 @@ BEGIN
         IF SQLSTATE <> 'P0001' THEN RAISE; END IF;
     END;
     IF NOT EXISTS (
+        SELECT 1 FROM experiment_tasks
+        WHERE experiment_id = 'a6000000-0000-4000-8000-000000000001'
+            AND dataset_item_id = 'a5000000-0000-4000-8000-000000000001'
+            AND status = 'completed' AND completed_at IS NOT NULL
+    ) OR NOT EXISTS (
+        SELECT 1 FROM experiment_tasks
+        WHERE experiment_id = 'a6000000-0000-4000-8000-000000000001'
+            AND dataset_item_id = 'a5000000-0000-4000-8000-000000000002'
+            AND status = 'pending'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM experiments
+        WHERE id = 'a6000000-0000-4000-8000-000000000001' AND status = 'completed'
+    ) THEN
+        RAISE EXCEPTION 'experiment task backfill did not preserve completed results';
+    END IF;
+    IF NOT EXISTS (
         SELECT 1 FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'experiment_tasks'
     ) OR NOT EXISTS (

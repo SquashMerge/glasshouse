@@ -64,8 +64,15 @@ AFTER INSERT ON experiments
 FOR EACH ROW EXECUTE FUNCTION seed_experiment_tasks();
 
 -- Existing evaluations receive the same immutable item ledger as new evaluations.
-INSERT INTO experiment_tasks (experiment_id, dataset_item_id)
-SELECT experiment.id, item.id
+-- A persisted result is already terminal work, even if its legacy status predates the
+-- task ledger, so it must never be made claimable by this backfill.
+INSERT INTO experiment_tasks (experiment_id, dataset_item_id, status, completed_at)
+SELECT experiment.id,
+    item.id,
+    CASE WHEN result.id IS NULL THEN 'pending' ELSE 'completed' END,
+    CASE WHEN result.id IS NULL THEN NULL ELSE result.created_at END
 FROM experiments experiment
 JOIN dataset_items item ON item.dataset_id = experiment.dataset_id
+LEFT JOIN experiment_results result
+    ON result.experiment_id = experiment.id AND result.dataset_item_id = item.id
 ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING;
