@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import {
 	basicAuthMiddleware,
 	TRUSTED_ACTOR_CONTEXT_KEY,
+	TRUSTED_TENANT_CONTEXT_KEY,
 } from "../../src/middleware/auth";
 
 describe("basicAuthMiddleware", () => {
@@ -116,8 +117,65 @@ describe("basicAuthMiddleware", () => {
 			headers: { authorization: `Basic ${correct}` },
 		});
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { actor: string };
+		const body = (await res.json()) as { ok: boolean; actor: string };
 		expect(body.actor).toBe("astraea");
+	});
+
+	it("stores the default organization as trusted server context for legacy credentials", async () => {
+		const app = new Hono();
+		app.use("/v1/*", basicAuthMiddleware());
+		app.get("/v1/protected", (c) =>
+			c.json({ tenant: c.get(TRUSTED_TENANT_CONTEXT_KEY) }),
+		);
+		const correct = Buffer.from("astraea:secret123").toString("base64");
+		const res = await app.request("/v1/protected", {
+			headers: { authorization: `Basic ${correct}` },
+		});
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({
+			tenant: {
+				actor: "astraea",
+				organizationId: "00000000-0000-4000-8000-000000000001",
+			},
+		});
+	});
+
+	it("assigns each configured credential only its configured organization", async () => {
+		const original = process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
+		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+			{
+				username: "org-a-user",
+				password: "org-a-secret",
+				organization_id: "00000000-0000-4000-8000-000000000010",
+			},
+			{
+				username: "org-b-user",
+				password: "org-b-secret",
+				organization_id: "00000000-0000-4000-8000-000000000020",
+			},
+		]);
+		try {
+			const app = new Hono();
+			app.use("/v1/*", basicAuthMiddleware());
+			app.get("/v1/protected", (c) =>
+				c.json({ tenant: c.get(TRUSTED_TENANT_CONTEXT_KEY) }),
+			);
+			const auth = Buffer.from("org-b-user:org-b-secret").toString("base64");
+			const res = await app.request("/v1/protected", {
+				headers: { authorization: `Basic ${auth}` },
+			});
+			expect(res.status).toBe(200);
+			expect(await res.json()).toEqual({
+				tenant: {
+					actor: "org-b-user",
+					organizationId: "00000000-0000-4000-8000-000000000020",
+				},
+			});
+		} finally {
+			if (original === undefined)
+				delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
+			else process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = original;
+		}
 	});
 
 	it("throws at construction if UI_PASSWORD is unset", () => {

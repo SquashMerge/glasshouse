@@ -3,14 +3,25 @@ import { ch } from "./clickhouse.js";
 import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
 import { observationToInsertRow } from "./observation-row.js";
 
+export type TenantScopedTrace = NormalizedTrace & {
+	organization_id: string;
+	project_id: string;
+};
+
+export type TenantScopedObservation = NormalizedObservation & {
+	organization_id: string;
+	project_id: string;
+};
+
 interface ClickHouseRow {
 	[key: string]: string | number | null | string[];
 }
 
-function traceToRow(t: NormalizedTrace): ClickHouseRow {
+function traceToRow(t: TenantScopedTrace): ClickHouseRow {
 	return {
 		trace_id: t.trace_id,
-		project_id: "", // populated from auth context (single-tenant for now)
+		organization_id: t.organization_id,
+		project_id: t.project_id,
 		name: t.name,
 		start_time: t.start_time,
 		end_time: t.end_time,
@@ -31,7 +42,7 @@ function traceToRow(t: NormalizedTrace): ClickHouseRow {
 
 export async function insertTraces(
 	client: ClickHouseClient,
-	traces: NormalizedTrace[],
+	traces: TenantScopedTrace[],
 ): Promise<void> {
 	if (traces.length === 0) return;
 	await client.insert({
@@ -43,7 +54,7 @@ export async function insertTraces(
 
 export async function insertObservations(
 	client: ClickHouseClient,
-	observations: NormalizedObservation[],
+	observations: TenantScopedObservation[],
 ): Promise<void> {
 	if (observations.length === 0) return;
 	await client.insert({

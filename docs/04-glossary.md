@@ -42,7 +42,8 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 
 ## Core entities
 
-- **Project** — tenancy boundary (`project_id` on everything). Postgres, UUID-keyed.
+- **Organization** — top-level authenticated tenancy boundary. Basic-auth credentials resolve to one organization; it owns Projects and scopes Postgres access, ClickHouse queries, and live trace events. See `infra/db/migrations/0019_organizations.sql` and `apps/api/src/tenancy.ts`.
+- **Project** — organization-owned workspace and data boundary (`project_id` on stored application and observability data). Postgres, UUID-keyed.
 - **Agent** — versioned, typed entity. Multi-tenant, versioned, has a version history.
 - **Manifest** — serialized form of an Agent (prompts + tools + routing + guardrails + knowledge + deps as one atomic unit). Pinned to eval runs for bisectable regressions and atomic rollback.
 - **Prompt** — immutable collection of up to one system and one user Mustache message, scoped to a Project; its canonical public ID is the Project-local slug, while `slug@version` is display-only. See `apps/api/src/db/prompts.ts`.
@@ -72,7 +73,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **trace** (not request/run/session) in observability context.
 - **generation** (not "LLM call") when `type` matters.
 - **manifest** (not "agent config/spec").
-- **project** (not tenant/workspace/org) — tenancy boundary.
+- **organization** (not tenant) for the authenticated top-level scope; **project** (not organization) for its workspace and data scope.
 - **score** (not metric/eval) in the scoring context.
 - **SSE** for Server-Sent Events; avoid "websocket/live feed/push".
 - **OTLP** for OpenTelemetry Protocol.

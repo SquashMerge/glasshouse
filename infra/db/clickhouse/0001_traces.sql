@@ -1,9 +1,10 @@
 -- Astraea ClickHouse schema: traces
--- Partition by month; sort key (project_id, start_time, trace_id);
+-- Partition by month; sort key (organization_id, project_id, start_time, trace_id);
 -- skip indexes + bloom filters + tokenbf_v1 full-text per design doc §10.
 
 CREATE TABLE IF NOT EXISTS traces (
     trace_id        String,
+    organization_id String,
     project_id      String,
     name            String,
     start_time      DateTime64(3),
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS traces (
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(start_time)
-ORDER BY (project_id, start_time, trace_id);
+ORDER BY (organization_id, project_id, start_time, trace_id);
 
 ALTER TABLE traces
     ADD INDEX IF NOT EXISTS idx_status status TYPE set(4) GRANULARITY 4,

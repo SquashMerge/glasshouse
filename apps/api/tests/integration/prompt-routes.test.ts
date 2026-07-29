@@ -1,7 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { PromptRepositoryError } from "../../src/db/prompts";
-import { TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
+import {
+	TRUSTED_ACTOR_CONTEXT_KEY,
+	TRUSTED_TENANT_CONTEXT_KEY,
+} from "../../src/middleware/auth";
 import {
 	createPrompt,
 	createPromptRouteHandlers,
@@ -165,6 +168,10 @@ function app() {
 	});
 	api.use("/v1/*", async (c, next) => {
 		c.set(TRUSTED_ACTOR_CONTEXT_KEY, "context-admin");
+		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+			actor: "context-admin",
+			organizationId: "00000000-0000-4000-8000-000000000001",
+		});
 		await next();
 	});
 	api.use("/v1/prompts/*", async (c, next) => {
@@ -212,7 +219,10 @@ describe("prompt route contracts", () => {
 			],
 			total: 1,
 		});
-		expect(listProjectsRecord.mock.calls[0]).toHaveLength(1);
+		expect(listProjectsRecord.mock.calls[0]).toEqual([
+			expect.anything(),
+			"00000000-0000-4000-8000-000000000001",
+		]);
 	});
 
 	it("uses the trusted context actor rather than a request actor and returns public prompt ids", async () => {

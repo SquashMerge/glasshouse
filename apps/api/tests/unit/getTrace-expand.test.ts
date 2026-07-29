@@ -16,6 +16,7 @@ const INVALID_METADATA = JSON.stringify({ schema_version: 2, attributes: [] });
 
 const fakeTrace: TraceRow = {
 	trace_id: VALID_TRACE_ID,
+	organization_id: "00000000-0000-4000-8000-000000000001",
 	project_id: "proj-1",
 	name: "test",
 	start_time: "2024-01-01 00:00:00.000",
@@ -37,6 +38,7 @@ const fakeObservations: ObservationRow[] = [
 	{
 		observation_id: "obs-legacy",
 		trace_id: VALID_TRACE_ID,
+		organization_id: "00000000-0000-4000-8000-000000000001",
 		project_id: "proj-1",
 		parent_observation_id: null,
 		type: "generation",
@@ -53,6 +55,7 @@ const fakeObservations: ObservationRow[] = [
 	{
 		observation_id: "obs-envelope",
 		trace_id: VALID_TRACE_ID,
+		organization_id: "00000000-0000-4000-8000-000000000001",
 		project_id: "proj-1",
 		parent_observation_id: null,
 		type: "generation",
@@ -69,6 +72,7 @@ const fakeObservations: ObservationRow[] = [
 	{
 		observation_id: "obs-invalid",
 		trace_id: VALID_TRACE_ID,
+		organization_id: "00000000-0000-4000-8000-000000000001",
 		project_id: "proj-1",
 		parent_observation_id: null,
 		type: "span",
@@ -85,6 +89,7 @@ const fakeObservations: ObservationRow[] = [
 	{
 		observation_id: "obs-non-generation",
 		trace_id: VALID_TRACE_ID,
+		organization_id: "00000000-0000-4000-8000-000000000001",
 		project_id: "proj-1",
 		parent_observation_id: null,
 		type: "tool",
@@ -134,6 +139,10 @@ function fakeContext(traceId = VALID_TRACE_ID): Context {
 				status,
 				headers: { "content-type": "application/json" },
 			}),
+		get: () => ({
+			actor: "test",
+			organizationId: "00000000-0000-4000-8000-000000000001",
+		}),
 	} as unknown as Context;
 }
 

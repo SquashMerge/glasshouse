@@ -3,6 +3,7 @@ import { ch } from "./clickhouse.js";
 
 export interface TraceRow {
 	trace_id: string;
+	organization_id: string;
 	project_id: string;
 	name: string;
 	start_time: string;
@@ -23,6 +24,7 @@ export interface TraceRow {
 export interface ObservationRow {
 	observation_id: string;
 	trace_id: string;
+	organization_id: string;
 	project_id: string;
 	parent_observation_id: string | null;
 	type: "span" | "event" | "generation" | "tool";
@@ -38,6 +40,7 @@ export interface ObservationRow {
 }
 
 export interface TraceListFilters {
+	organization_id: string;
 	project_id?: string;
 	agent_id?: string;
 	env?: string;
@@ -51,6 +54,7 @@ export interface TraceListFilters {
 }
 
 export interface ObservationListFilters {
+	organization_id: string;
 	project_id?: string;
 	agent_id?: string;
 	trace_id?: string; // exact match — useful for "all spans in this trace"
@@ -65,13 +69,13 @@ export interface ObservationListFilters {
 }
 
 const LIST_COLUMNS =
-	"trace_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substring(input_text, 1, 200) AS input_text, output_text, scores_summary";
+	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substring(input_text, 1, 200) AS input_text, output_text, scores_summary";
 
 const OBSERVATION_COLUMNS =
-	"observation_id, trace_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substring(input_text, 1, 200) AS input_text, output_text, metadata";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substring(input_text, 1, 200) AS input_text, output_text, metadata";
 
 const OBSERVATION_FULL_COLUMNS =
-	"observation_id, trace_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, metadata";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, metadata";
 
 function defaultClient(): ClickHouseClient {
 	return ch();
@@ -81,7 +85,8 @@ function buildWhere(
 	filters: TraceListFilters,
 	params: Record<string, unknown>,
 ): string {
-	const where: string[] = [];
+	const where: string[] = ["organization_id = {organization_id: String}"];
+	params.organization_id = filters.organization_id;
 	if (filters.project_id) {
 		where.push("project_id = {project_id: String}");
 		params.project_id = filters.project_id;
@@ -167,11 +172,12 @@ export async function listTraces(
 
 export async function getTrace(
 	client: ClickHouseClient,
+	organizationId: string,
 	traceId: string,
 ): Promise<{ trace: TraceRow | null; observations: ObservationRow[] }> {
 	const traceResult = await client.query({
-		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE trace_id = {trace_id: String} LIMIT 1`,
-		query_params: { trace_id: traceId },
+		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} LIMIT 1`,
+		query_params: { organization_id: organizationId, trace_id: traceId },
 		format: "JSONEachRow",
 	});
 	const traceRows = (await traceResult.json()) as TraceRow[];
@@ -179,8 +185,8 @@ export async function getTrace(
 	if (!trace) return { trace: null, observations: [] };
 
 	const obsResult = await client.query({
-		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE trace_id = {trace_id: String} ORDER BY start_time ASC`,
-		query_params: { trace_id: traceId },
+		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} ORDER BY start_time ASC`,
+		query_params: { organization_id: organizationId, trace_id: traceId },
 		format: "JSONEachRow",
 	});
 	const observations = (await obsResult.json()) as ObservationRow[];
@@ -192,7 +198,8 @@ function buildObservationWhere(
 	filters: ObservationListFilters,
 	params: Record<string, unknown>,
 ): string {
-	const where: string[] = [];
+	const where: string[] = ["organization_id = {organization_id: String}"];
+	params.organization_id = filters.organization_id;
 	if (filters.project_id) {
 		where.push("project_id = {project_id: String}");
 		params.project_id = filters.project_id;

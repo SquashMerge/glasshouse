@@ -19,6 +19,7 @@ import {
 	presentObservationMetadata,
 	type ObservationMetadata,
 } from "../db/observation-metadata.js";
+import { trustedTenant } from "../tenancy.js";
 
 function presentObservation<
 	T extends {
@@ -92,6 +93,7 @@ export async function handleListTraces(c: Context): Promise<Response> {
 	const { limit, offset } = getPagination(c);
 	const q = c.req.query("filter[q]");
 	const filters = {
+		organization_id: trustedTenant(c).organizationId,
 		project_id: c.req.query("filter[project_id]") ?? undefined,
 		agent_id: c.req.query("filter[agent_id]") ?? undefined,
 		env: c.req.query("filter[env]") ?? undefined,
@@ -168,6 +170,7 @@ export async function handleGetTrace(c: Context): Promise<Response> {
 	try {
 		const { trace, observations } = await queryGetTrace(
 			defaultClient(),
+			trustedTenant(c).organizationId,
 			traceId,
 		);
 		if (!trace) {
@@ -214,6 +217,7 @@ export const listObservations = createRoute({
 export async function handleListObservations(c: Context): Promise<Response> {
 	const { limit, offset } = getPagination(c);
 	const filters = {
+		organization_id: trustedTenant(c).organizationId,
 		project_id: c.req.query("filter[project_id]") ?? undefined,
 		agent_id: c.req.query("filter[agent_id]") ?? undefined,
 		trace_id: c.req.query("filter[trace_id]") ?? undefined,

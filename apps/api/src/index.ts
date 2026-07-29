@@ -5,6 +5,13 @@ import { basicAuthMiddleware } from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest } from "./routes/otlp.js";
+import { pgPool } from "./db/postgres.js";
+import {
+	assertTenantProjectAccess,
+	resolveTenantProject,
+	TenantScopeError,
+	trustedTenant,
+} from "./tenancy.js";
 import { logger } from "./lib/logger.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
@@ -13,16 +20,57 @@ const MAX_BODY_BYTES = Number(process.env.API_MAX_BODY_BYTES ?? 1_048_576);
 export type ApiDependencies = {
 	handleHealth: typeof handleHealth;
 	handleOtlpIngest: typeof handleOtlpIngest;
+	pgPool: typeof pgPool;
+	assertTenantProjectAccess: typeof assertTenantProjectAccess;
+	resolveTenantProject: typeof resolveTenantProject;
 };
 
 const productionApiDependencies: ApiDependencies = {
 	handleHealth,
 	handleOtlpIngest,
+	pgPool,
+	assertTenantProjectAccess,
+	resolveTenantProject,
 };
 
-export function createApiApp(
-	dependencies: ApiDependencies = productionApiDependencies,
-): Hono {
+function isUuid(value: unknown): value is string {
+	return (
+		typeof value === "string" &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+			value,
+		)
+	);
+}
+
+async function requestedProjectId(c: {
+	req: {
+		header: (name: string) => string | undefined;
+		path: string;
+		query: (name: string) => string | undefined;
+		raw: Request;
+	};
+}): Promise<string | undefined> {
+	const queryProjectId =
+		c.req.query("project_id") ?? c.req.query("filter[project_id]");
+	if (isUuid(queryProjectId)) return queryProjectId;
+	if (
+		c.req.path === "/v1/otel/v1/traces" ||
+		!c.req.header("content-type")?.includes("application/json")
+	)
+		return undefined;
+	try {
+		const body = (await c.req.raw.clone().json()) as Record<string, unknown>;
+		return isUuid(body.project_id) ? body.project_id : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
+	const resolvedDependencies: ApiDependencies = {
+		...productionApiDependencies,
+		...dependencies,
+	};
 	const apiApp = new Hono();
 
 	apiApp.use("*", async (c, next) => {
@@ -61,8 +109,8 @@ export function createApiApp(
 	// Body size limit applied before auth so unauth'd large payloads don't waste auth work.
 	apiApp.use(bodySizeLimit(MAX_BODY_BYTES));
 
-	apiApp.get("/health", () => dependencies.handleHealth());
-	apiApp.get("/v1/health", () => dependencies.handleHealth());
+	apiApp.get("/health", () => resolvedDependencies.handleHealth());
+	apiApp.get("/v1/health", () => resolvedDependencies.handleHealth());
 
 	apiApp.use("/v1/prompts/*", async (c, next) => {
 		c.header("Cache-Control", "no-store");
@@ -77,12 +125,47 @@ export function createApiApp(
 		await next();
 	});
 	apiApp.use("/v1/*", basicAuthMiddleware());
+	apiApp.use("/v1/*", async (c, next) => {
+		try {
+			const projectId = await requestedProjectId(c);
+			if (projectId)
+				await resolvedDependencies.assertTenantProjectAccess(
+					resolvedDependencies.pgPool(),
+					trustedTenant(c),
+					projectId,
+				);
+			await next();
+		} catch (cause) {
+			if (cause instanceof TenantScopeError)
+				return c.json(
+					{ code: "NOT_FOUND", message: "Project is not available" },
+					404,
+				);
+			throw cause;
+		}
+	});
 
 	// OTLP is mounted as a raw handler (not via openapiApp) because it consumes
 	// the raw JSON body and returns a non-typed OTLP response shape.
-	apiApp.post("/v1/otel/v1/traces", (c) =>
-		dependencies.handleOtlpIngest(c.req.raw),
-	);
+	apiApp.post("/v1/otel/v1/traces", async (c) => {
+		try {
+			const tenant = trustedTenant(c);
+			const scope = await resolvedDependencies.resolveTenantProject(
+				resolvedDependencies.pgPool(),
+				tenant,
+				c.req.header("x-astraea-project-id") ?? undefined,
+			);
+			return resolvedDependencies.handleOtlpIngest(c.req.raw, scope);
+		} catch (cause) {
+			if (cause instanceof TenantScopeError) {
+				return c.json(
+					{ code: "NOT_FOUND", message: "Project is not available" },
+					404,
+				);
+			}
+			throw cause;
+		}
+	});
 
 	apiApp.route("/", openapiApp);
 	return apiApp;

@@ -2,6 +2,12 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { apiReference } from "@scalar/hono-api-reference";
 import type { Context } from "hono";
 import { healthRoute, handleHealth } from "./routes/health.js";
+import { pgPool } from "./db/postgres.js";
+import {
+	resolveTenantProject,
+	TenantScopeError,
+	trustedTenant,
+} from "./tenancy.js";
 import { loginRoute, handleLogin } from "./routes/auth.js";
 import { otlpIngestRoute, handleOtlpIngest } from "./routes/otlp.js";
 import {
@@ -158,7 +164,23 @@ register(healthRoute, handleHealth);
 
 // Login: gated by basicAuthMiddleware in index.ts via the parent /v1/* mount.
 register(loginRoute, handleLogin);
-register(otlpIngestRoute, (c: Context) => handleOtlpIngest(c.req.raw));
+register(otlpIngestRoute, async (c: Context) => {
+	try {
+		const scope = await resolveTenantProject(
+			pgPool(),
+			trustedTenant(c),
+			c.req.header("x-astraea-project-id") ?? undefined,
+		);
+		return handleOtlpIngest(c.req.raw, scope);
+	} catch (cause) {
+		if (cause instanceof TenantScopeError)
+			return c.json(
+				{ code: "NOT_FOUND", message: "Project is not available" },
+				404,
+			);
+		throw cause;
+	}
+});
 
 register(createAgent, handleCreateAgent);
 register(listAgents, handleListAgents);

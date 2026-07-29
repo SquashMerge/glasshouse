@@ -25,6 +25,16 @@ export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH"
 
 The credentials are the same ones you'd use to log in at `http://localhost:5173/login`.
 
+## Organization and project routing
+
+Every Basic-auth credential resolves to a server-configured organization. OTLP payload attributes cannot select or override it. The exporter may select a project only with `x-astraea-project-id`; Astraea verifies that project belongs to the credential's organization before accepting the batch. Omit the header to use that organization’s `default` project (the legacy migration creates one).
+
+```sh
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+```
+
+For a multi-organization deployment, configure `ASTRAEA_BASIC_AUTH_CREDENTIALS` on the API as JSON objects with `username`, `password`, and `organization_id`. The organization and selected project must already exist in Postgres; credentials are authentication configuration, not caller-controlled tenant metadata.
+
 ## Python example
 
 ```python

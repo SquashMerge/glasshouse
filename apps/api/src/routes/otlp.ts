@@ -1,4 +1,4 @@
-import { createRoute } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "../schemas/common.js";
 import {
 	ExportTraceServiceRequest,
@@ -14,7 +14,10 @@ import {
 	insertObservations,
 	insertTraces,
 	defaultClient,
+	type TenantScopedObservation,
+	type TenantScopedTrace,
 } from "../db/traces-writer.js";
+import type { TenantScope } from "../tenancy.js";
 import { publishSync } from "../lib/event-bus.js";
 
 const tag = "otlp";
@@ -30,6 +33,12 @@ export const otlpIngestRoute = createRoute({
 		"to ClickHouse `traces` and `observations`. Returns an empty ExportTraceServiceResponse on success.",
 	security: [{ basicAuth: [] }],
 	request: {
+		headers: z.object({
+			"x-astraea-project-id": z.string().uuid().optional().openapi({
+				description:
+					"Optional project selector, verified against the authenticated organization",
+			}),
+		}),
 		body: {
 			content: { "application/json": { schema: ExportTraceServiceRequest } },
 			required: true,
@@ -55,7 +64,7 @@ export type OtlpIngestDependencies = {
 };
 
 type AggregatedTrace = {
-	trace: ReturnType<typeof normalizeSpan>["trace"];
+	trace: TenantScopedTrace;
 	isRoot: boolean;
 };
 
@@ -69,7 +78,10 @@ const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 export function createOtlpIngestHandler(
 	dependencies: OtlpIngestDependencies = productionOtlpIngestDependencies,
 ) {
-	return async function handleOtlpIngest(req: Request): Promise<Response> {
+	return async function handleOtlpIngest(
+		req: Request,
+		tenant: TenantScope,
+	): Promise<Response> {
 		let bodyJson: unknown;
 		try {
 			bodyJson = await req.json();
@@ -91,12 +103,22 @@ export function createOtlpIngestHandler(
 		const redaction = loadRedactionOptions();
 
 		const traces = new Map<string, AggregatedTrace>();
-		const observations: ReturnType<typeof normalizeSpan>["observation"][] = [];
+		const observations: TenantScopedObservation[] = [];
 
 		for (const rs of request.resource_spans) {
 			for (const ss of rs.scope_spans) {
 				for (const span of ss.spans) {
-					const { trace, observation } = normalizeSpan(span);
+					const normalized = normalizeSpan(span);
+					const trace: TenantScopedTrace = {
+						...normalized.trace,
+						organization_id: tenant.organizationId,
+						project_id: tenant.projectId,
+					};
+					const observation: TenantScopedObservation = {
+						...normalized.observation,
+						organization_id: tenant.organizationId,
+						project_id: tenant.projectId,
+					};
 					trace.input_text = redactTraceText(trace.input_text, redaction);
 					trace.output_text = redactTraceText(trace.output_text, redaction);
 					observation.input_text = trace.input_text;
@@ -152,7 +174,7 @@ export function createOtlpIngestHandler(
 
 function aggregateTrace(
 	existing: AggregatedTrace | undefined,
-	next: ReturnType<typeof normalizeSpan>["trace"],
+	next: TenantScopedTrace,
 	nextIsRoot: boolean,
 ): AggregatedTrace {
 	if (!existing) return { trace: next, isRoot: nextIsRoot };

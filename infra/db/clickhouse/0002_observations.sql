@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS observations (
     observation_id          String,
     trace_id                String,
+    organization_id         String,
     project_id              String,
     parent_observation_id   Nullable(String),
     type                    LowCardinality(String),
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS observations (
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(start_time)
-ORDER BY (trace_id, start_time, observation_id);
+ORDER BY (organization_id, trace_id, start_time, observation_id);
 
 ALTER TABLE observations
     ADD INDEX IF NOT EXISTS idx_obs_trace_id trace_id TYPE bloom_filter(0.01) GRANULARITY 4,

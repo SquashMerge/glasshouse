@@ -27,9 +27,11 @@ import {
 } from "../../src/routes/trace-events";
 
 const VALID_TRACE_ID = "0123456789abcdef0123456789abcdef";
+const DEFAULT_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
 
 const fakeTrace: TraceRow = {
 	trace_id: VALID_TRACE_ID,
+	organization_id: DEFAULT_ORGANIZATION_ID,
 	project_id: "proj-it",
 	name: "integration-trace",
 	start_time: "2024-01-01 00:00:00.000",
@@ -50,6 +52,7 @@ const fakeTrace: TraceRow = {
 const fakeObservation: ObservationRow = {
 	observation_id: "obs-it-1",
 	trace_id: VALID_TRACE_ID,
+	organization_id: DEFAULT_ORGANIZATION_ID,
 	project_id: "proj-it",
 	parent_observation_id: null,
 	type: "generation",
