@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
+import type { Context } from "hono";
 
 const USER = "astraea";
 const PASS = "secret";
@@ -19,10 +20,30 @@ process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
 const { createApiApp } = await import("../../src/index");
+const { handleListObservations, handleListTraces } = await import(
+	"../../src/routes/traces"
+);
 const apiApp = createApiApp();
 
 function request(path: string): Request {
-	return new Request(`http://x${path}`, { headers: { authorization: AUTH } });
+	return new Request(`http://x${path}`, {
+		headers: new Headers([["authorization", AUTH]]),
+	});
+}
+
+function fakeContext(projectId: string): Context {
+	return {
+		req: {
+			valid: () => ({ limit: 50, offset: 0, project_id: projectId }),
+			query: () => undefined,
+		},
+		get: () => ({
+			actor: "test",
+			organizationId: "00000000-0000-4000-8000-000000000001",
+		}),
+		json: (data: unknown, status = 200) =>
+			new Response(JSON.stringify(data), { status }),
+	} as unknown as Context;
 }
 
 beforeEach(() => {
@@ -97,17 +118,13 @@ describe("trace pagination", () => {
 	it("passes the validated project selector into both list queries", async () => {
 		const projectId = "11111111-1111-4111-8111-111111111111";
 
-		const traces = await apiApp.fetch(
-			request(`/v1/traces?project_id=${projectId}`),
-		);
+		const traces = await handleListTraces(fakeContext(projectId));
 		expect(traces.status).toBe(200);
 		expect(listTraces.mock.calls[0]?.[1]).toMatchObject({
 			project_id: projectId,
 		});
 
-		const observations = await apiApp.fetch(
-			request(`/v1/observations?project_id=${projectId}`),
-		);
+		const observations = await handleListObservations(fakeContext(projectId));
 		expect(observations.status).toBe(200);
 		expect(listObservations.mock.calls[0]?.[1]).toMatchObject({
 			project_id: projectId,
