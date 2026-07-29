@@ -1,6 +1,7 @@
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
+import { ch } from "../db/clickhouse.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
 	createDataset as createDatasetRecord,
@@ -144,7 +145,27 @@ export type DatasetRouteDependencies = {
 	listDatasetItems: typeof listDatasetItemsRecord;
 	addDatasetItem: typeof addDatasetItemRecord;
 	deleteDatasetItem: typeof deleteDatasetItemRecord;
+	targetExists: (input: {
+		project_id: string;
+		trace_id: string;
+		observation_id?: string | null;
+	}) => Promise<boolean>;
 };
+async function targetExists(input: {
+	project_id: string;
+	trace_id: string;
+	observation_id?: string | null;
+}) {
+	const table = input.observation_id ? "observations" : "traces";
+	const result = await ch().query({
+		query: `SELECT 1 FROM ${table} WHERE project_id={project_id:String} AND trace_id={trace_id:String}${input.observation_id ? " AND observation_id={observation_id:String}" : ""} LIMIT 1`,
+		query_params: input.observation_id
+			? { ...input, observation_id: input.observation_id }
+			: input,
+		format: "JSONEachRow",
+	});
+	return ((await result.json()) as unknown[]).length > 0;
+}
 const production: DatasetRouteDependencies = {
 	pool: pgPool,
 	listDatasets: listDatasetsRecord,
@@ -153,6 +174,7 @@ const production: DatasetRouteDependencies = {
 	listDatasetItems: listDatasetItemsRecord,
 	addDatasetItem: addDatasetItemRecord,
 	deleteDatasetItem: deleteDatasetItemRecord,
+	targetExists,
 };
 
 export function createDatasetRouteHandlers(
@@ -220,10 +242,28 @@ export function createDatasetRouteHandlers(
 			c: Parameters<RouteHandler<typeof addDatasetItem>>[0],
 		) => {
 			try {
+				const body = c.req.valid("json");
+				if (body.source_observation_id && !body.source_trace_id)
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"Observation provenance requires a trace",
+					);
+				if (
+					body.source_trace_id &&
+					!(await dependencies.targetExists({
+						project_id: body.project_id,
+						trace_id: body.source_trace_id,
+						observation_id: body.source_observation_id,
+					}))
+				)
+					throw new DatasetRepositoryError(
+						"NOT_FOUND",
+						"Source target not found",
+					);
 				return c.json(
 					await dependencies.addDatasetItem(dependencies.pool(), {
 						dataset_id: c.req.valid("param").id,
-						...c.req.valid("json"),
+						...body,
 					}),
 					201,
 				);

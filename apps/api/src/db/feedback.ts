@@ -212,7 +212,7 @@ export async function listFeedback(
 	};
 }
 export async function reviewFeedback(
-	db: Queryable,
+	db: Pick<Pool, "connect">,
 	input: {
 		project_id: string;
 		id: string;
@@ -222,69 +222,89 @@ export async function reviewFeedback(
 		dataset_item_id?: string;
 	},
 ) {
-	const existing = await db.query(
-		`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback'`,
-		[input.id, input.project_id],
-	);
-	if (!existing.rows[0])
-		throw new FeedbackRepositoryError("NOT_FOUND", "Feedback not found");
-	const current = present(existing.rows[0]);
-	if (current.status === "added_to_dataset") {
-		if (
-			input.status === "added_to_dataset" &&
-			input.dataset_id === current.dataset_id &&
-			input.dataset_item_id === current.dataset_item_id
-		)
-			return current;
-		throw new FeedbackRepositoryError("CONFLICT", "Added feedback is terminal");
-	}
-	if (current.value === 1 && input.status === "new")
-		throw new FeedbackRepositoryError(
-			"CONFLICT",
-			"Positive feedback cannot enter the review queue",
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		const existing = await client.query(
+			`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback' FOR UPDATE`,
+			[input.id, input.project_id],
 		);
-	if (input.status === "added_to_dataset") {
-		if (!input.dataset_id || !input.dataset_item_id)
+		if (!existing.rows[0])
+			throw new FeedbackRepositoryError("NOT_FOUND", "Feedback not found");
+		const current = present(existing.rows[0]);
+		if (current.status === "added_to_dataset") {
+			if (
+				input.status === "added_to_dataset" &&
+				input.dataset_id === current.dataset_id &&
+				input.dataset_item_id === current.dataset_item_id
+			) {
+				await client.query("COMMIT");
+				return current;
+			}
 			throw new FeedbackRepositoryError(
 				"CONFLICT",
-				"Dataset item linkage is required",
+				"Added feedback is terminal",
 			);
-		const linked = await db.query(
-			`SELECT i.id FROM dataset_items i JOIN datasets d ON d.id=i.dataset_id WHERE d.project_id=$1 AND d.id=$2 AND i.id=$3 AND i.source_trace_id=$4 AND (i.source_observation_id IS NOT DISTINCT FROM $5)`,
+		}
+		if (current.value === 1 && input.status === "new")
+			throw new FeedbackRepositoryError(
+				"CONFLICT",
+				"Positive feedback cannot enter the review queue",
+			);
+		if (input.status === "added_to_dataset") {
+			if (!input.dataset_id || !input.dataset_item_id)
+				throw new FeedbackRepositoryError(
+					"CONFLICT",
+					"Dataset item linkage is required",
+				);
+			const linked = await client.query(
+				`SELECT i.id FROM dataset_items i JOIN datasets d ON d.id=i.dataset_id WHERE d.project_id=$1 AND d.id=$2 AND i.id=$3 AND i.source_trace_id=$4 AND (i.source_observation_id IS NOT DISTINCT FROM $5)`,
+				[
+					input.project_id,
+					input.dataset_id,
+					input.dataset_item_id,
+					current.trace_id,
+					current.observation_id,
+				],
+			);
+			if (!linked.rows[0])
+				throw new FeedbackRepositoryError(
+					"CONFLICT",
+					"Dataset item does not match feedback provenance",
+				);
+		}
+		const result = await client.query(
+			`UPDATE feedback_reviews SET status=$1,note=$2,dataset_id=$3,dataset_item_id=$4,updated_at=now() WHERE score_id=$5 RETURNING updated_at`,
 			[
-				input.project_id,
-				input.dataset_id,
-				input.dataset_item_id,
-				current.trace_id,
-				current.observation_id,
+				input.status,
+				input.note ?? null,
+				input.status === "added_to_dataset" ? input.dataset_id : null,
+				input.status === "added_to_dataset" ? input.dataset_item_id : null,
+				input.id,
 			],
 		);
-		if (!linked.rows[0])
-			throw new FeedbackRepositoryError(
-				"CONFLICT",
-				"Dataset item does not match feedback provenance",
-			);
+		await client.query("COMMIT");
+		return {
+			...current,
+			status: input.status,
+			note: input.note ?? null,
+			dataset_id:
+				input.status === "added_to_dataset" ? (input.dataset_id ?? null) : null,
+			dataset_item_id:
+				input.status === "added_to_dataset"
+					? (input.dataset_item_id ?? null)
+					: null,
+			updated_at: time(result.rows[0]!, "updated_at"),
+		};
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		if (cause instanceof FeedbackRepositoryError) throw cause;
+		throw new FeedbackRepositoryError(
+			"INTERNAL",
+			"Feedback operation failed",
+			cause,
+		);
+	} finally {
+		client.release();
 	}
-	const result = await db.query(
-		`UPDATE feedback_reviews SET status=$1,note=$2,dataset_id=$3,dataset_item_id=$4,updated_at=now() WHERE score_id=$5 RETURNING updated_at`,
-		[
-			input.status,
-			input.note ?? null,
-			input.status === "added_to_dataset" ? input.dataset_id : null,
-			input.status === "added_to_dataset" ? input.dataset_item_id : null,
-			input.id,
-		],
-	);
-	return {
-		...current,
-		status: input.status,
-		note: input.note ?? null,
-		dataset_id:
-			input.status === "added_to_dataset" ? (input.dataset_id ?? null) : null,
-		dataset_item_id:
-			input.status === "added_to_dataset"
-				? (input.dataset_item_id ?? null)
-				: null,
-		updated_at: time(result.rows[0]!, "updated_at"),
-	};
 }

@@ -20,6 +20,7 @@ export function DatasetsPage() {
 	const [name, setName] = React.useState("");
 	const [description, setDescription] = React.useState("");
 	const [error, setError] = React.useState("");
+	const [pending, setPending] = React.useState(false);
 	const query = useQuery({
 		queryKey: ["datasets", selectedProjectId],
 		queryFn: () => listDatasets(selectedProjectId!),
@@ -32,7 +33,10 @@ export function DatasetsPage() {
 			</PageMessage>
 		);
 	async function submit() {
+		if (pending) return;
 		try {
+			setError("");
+			setPending(true);
 			await createDataset({
 				project_id: selectedProjectId!,
 				name,
@@ -45,6 +49,8 @@ export function DatasetsPage() {
 			});
 		} catch (cause) {
 			setError((cause as Error).message);
+		} finally {
+			setPending(false);
 		}
 	}
 	return (
@@ -54,29 +60,51 @@ export function DatasetsPage() {
 				<p className="text-sm text-muted-foreground">{selectedProject.name}</p>
 			</div>
 			<div className="flex flex-wrap gap-2">
+				<label className="sr-only" htmlFor="dataset-name">
+					Dataset name
+				</label>
 				<Input
+					id="dataset-name"
 					value={name}
 					onChange={(event) => setName(event.target.value)}
 					placeholder="Dataset name"
 					maxLength={120}
 				/>
+				<label className="sr-only" htmlFor="dataset-description">
+					Description
+				</label>
 				<Input
+					id="dataset-description"
 					value={description}
 					onChange={(event) => setDescription(event.target.value)}
 					placeholder="Description"
 					maxLength={1000}
 				/>
-				<Button disabled={!name.trim()} onClick={() => void submit()}>
-					New dataset
+				<Button
+					disabled={!name.trim() || pending}
+					onClick={() => void submit()}
+				>
+					{pending ? "Creating..." : "New dataset"}
 				</Button>
 			</div>
-			{error && <p className="text-sm text-destructive">{error}</p>}
+			{error && (
+				<p className="text-sm text-destructive" role="alert">
+					{error}
+				</p>
+			)}
 			{query.isLoading && (
 				<PageMessage title="Datasets">Loading datasets...</PageMessage>
 			)}
 			{query.isError && (
 				<PageMessage title="Datasets">
-					{(query.error as Error).message}
+					Unable to load datasets.{" "}
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={() => void query.refetch()}
+					>
+						Retry
+					</Button>
 				</PageMessage>
 			)}
 			{query.data?.items.length === 0 && (
@@ -130,8 +158,15 @@ export function DatasetDetailPage() {
 	const [expected, setExpected] = React.useState("");
 	const [metadata, setMetadata] = React.useState("{}");
 	const [error, setError] = React.useState("");
+	const [pending, setPending] = React.useState(false);
+	const [deletingItemId, setDeletingItemId] = React.useState<string | null>(
+		null,
+	);
 	async function add() {
+		if (pending) return;
 		try {
+			setError("");
+			setPending(true);
 			await addDatasetItem({
 				project_id: selectedProjectId!,
 				dataset_id: id,
@@ -150,10 +185,49 @@ export function DatasetDetailPage() {
 			});
 		} catch (cause) {
 			setError((cause as Error).message);
+		} finally {
+			setPending(false);
+		}
+	}
+	async function remove(itemId: string) {
+		if (deletingItemId) return;
+		try {
+			setError("");
+			setDeletingItemId(itemId);
+			await deleteDatasetItem({
+				project_id: selectedProjectId!,
+				dataset_id: id,
+				item_id: itemId,
+			});
+			await client.invalidateQueries({
+				queryKey: ["dataset-items", selectedProjectId, id],
+			});
+			await client.invalidateQueries({
+				queryKey: ["datasets", selectedProjectId],
+			});
+		} catch (cause) {
+			setError((cause as Error).message);
+		} finally {
+			setDeletingItemId(null);
 		}
 	}
 	if (!selectedProjectId)
 		return <PageMessage title="Dataset">Select a project.</PageMessage>;
+	if (dataset.isLoading || items.isLoading)
+		return <PageMessage title="Dataset">Loading dataset...</PageMessage>;
+	if (dataset.isError || items.isError)
+		return (
+			<PageMessage title="Dataset">
+				Unable to load dataset.{" "}
+				<Button
+					size="sm"
+					variant="outline"
+					onClick={() => void Promise.all([dataset.refetch(), items.refetch()])}
+				>
+					Retry
+				</Button>
+			</PageMessage>
+		);
 	return (
 		<div className="space-y-5">
 			<div>
@@ -193,8 +267,14 @@ export function DatasetDetailPage() {
 						onChange={(event) => setMetadata(event.target.value)}
 					/>
 				</label>
-				{error && <p className="text-sm text-destructive">{error}</p>}
-				<Button onClick={() => void add()}>Add case</Button>
+				{error && (
+					<p className="text-sm text-destructive" role="alert">
+						{error}
+					</p>
+				)}
+				<Button disabled={pending} onClick={() => void add()}>
+					{pending ? "Adding..." : "Add case"}
+				</Button>
 			</section>
 			<ul className="space-y-3">
 				{items.data?.items.map((item) => (
@@ -220,19 +300,10 @@ export function DatasetDetailPage() {
 							<Button
 								size="sm"
 								variant="ghost"
-								onClick={() =>
-									void deleteDatasetItem({
-										project_id: selectedProjectId,
-										dataset_id: id,
-										item_id: item.id,
-									}).then(() =>
-										client.invalidateQueries({
-											queryKey: ["dataset-items", selectedProjectId, id],
-										}),
-									)
-								}
+								disabled={deletingItemId !== null}
+								onClick={() => void remove(item.id)}
 							>
-								Delete
+								{deletingItemId === item.id ? "Deleting..." : "Delete"}
 							</Button>
 						</div>
 					</li>

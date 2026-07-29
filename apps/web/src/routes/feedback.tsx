@@ -37,6 +37,21 @@ export function FeedbackPage() {
 				Select a project to review feedback.
 			</PageMessage>
 		);
+	if (feedback.isLoading)
+		return <PageMessage title="Feedback">Loading feedback...</PageMessage>;
+	if (feedback.isError)
+		return (
+			<PageMessage title="Feedback">
+				Unable to load feedback.{" "}
+				<Button
+					size="sm"
+					variant="outline"
+					onClick={() => void feedback.refetch()}
+				>
+					Retry
+				</Button>
+			</PageMessage>
+		);
 	return (
 		<div className="space-y-5">
 			<div>
@@ -61,7 +76,11 @@ export function FeedbackPage() {
 			</div>
 			{!queue && (
 				<div className="flex flex-wrap gap-2">
+					<label className="sr-only" htmlFor="feedback-sentiment">
+						Sentiment
+					</label>
 					<select
+						id="feedback-sentiment"
 						className="h-9 rounded border px-2"
 						value={sentiment}
 						onChange={(event) => setSentiment(event.target.value)}
@@ -70,7 +89,11 @@ export function FeedbackPage() {
 						<option value="positive">Positive</option>
 						<option value="negative">Negative</option>
 					</select>
+					<label className="sr-only" htmlFor="feedback-status">
+						Status
+					</label>
 					<select
+						id="feedback-status"
 						className="h-9 rounded border px-2"
 						value={status}
 						onChange={(event) => setStatus(event.target.value)}
@@ -81,7 +104,11 @@ export function FeedbackPage() {
 						<option value="dismissed">Dismissed</option>
 						<option value="added_to_dataset">Added to dataset</option>
 					</select>
+					<label className="sr-only" htmlFor="feedback-target">
+						Target type
+					</label>
 					<select
+						id="feedback-target"
 						className="h-9 rounded border px-2"
 						value={target}
 						onChange={(event) => setTarget(event.target.value)}
@@ -112,15 +139,16 @@ export function FeedbackPage() {
 		</div>
 	);
 }
-function object(value: string) {
+function object(value: string, label: string) {
+	let parsed: unknown;
 	try {
-		const parsed: unknown = JSON.parse(value);
-		return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>)
-			: { value };
+		parsed = JSON.parse(value);
 	} catch {
-		return { value };
+		throw new Error(`${label} must be valid JSON object`);
 	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+		throw new Error(`${label} must be a JSON object`);
+	return parsed as Record<string, unknown>;
 }
 function FeedbackRow({
 	item,
@@ -139,17 +167,30 @@ function FeedbackRow({
 	const [input, setInput] = React.useState("{}");
 	const [expected, setExpected] = React.useState("{}");
 	const [error, setError] = React.useState("");
+	const [pending, setPending] = React.useState(false);
 	async function transition(status: string) {
-		await reviewFeedback({ project_id: projectId, id: item.id, status });
-		onUpdated();
+		if (pending) return;
+		try {
+			setError("");
+			setPending(true);
+			await reviewFeedback({ project_id: projectId, id: item.id, status });
+			onUpdated();
+		} catch (cause) {
+			setError((cause as Error).message);
+		} finally {
+			setPending(false);
+		}
 	}
 	async function promote() {
+		if (pending) return;
 		try {
+			setError("");
+			setPending(true);
 			const created = await addDatasetItem({
 				project_id: projectId,
 				dataset_id: datasetId,
-				input: object(input),
-				expected_output: object(expected),
+				input: object(input, "Dataset input"),
+				expected_output: object(expected, "Expected output"),
 				source_trace_id: item.trace_id,
 				source_observation_id: item.observation_id ?? undefined,
 			});
@@ -163,6 +204,8 @@ function FeedbackRow({
 			onUpdated();
 		} catch (cause) {
 			setError((cause as Error).message);
+		} finally {
+			setPending(false);
 		}
 	}
 	return (
@@ -192,6 +235,7 @@ function FeedbackRow({
 						<Button
 							size="sm"
 							variant="outline"
+							disabled={pending}
 							onClick={() => void transition("reviewed")}
 						>
 							Mark reviewed
@@ -199,11 +243,16 @@ function FeedbackRow({
 						<Button
 							size="sm"
 							variant="outline"
+							disabled={pending}
 							onClick={() => void transition("dismissed")}
 						>
 							Dismiss
 						</Button>
+						<label className="sr-only" htmlFor={`feedback-dataset-${item.id}`}>
+							Dataset
+						</label>
 						<select
+							id={`feedback-dataset-${item.id}`}
 							className="h-8 rounded border px-2 text-sm"
 							value={datasetId}
 							onChange={(event) => setDatasetId(event.target.value)}
@@ -220,25 +269,27 @@ function FeedbackRow({
 							value={input}
 							onChange={(event) => setInput(event.target.value)}
 							aria-label="Dataset input JSON"
+							disabled={pending}
 						/>
 						<Input
 							className="h-8 w-40 text-xs"
 							value={expected}
 							onChange={(event) => setExpected(event.target.value)}
 							aria-label="Expected output JSON"
+							disabled={pending}
 						/>
 						<Button
 							size="sm"
-							disabled={!datasetId}
+							disabled={!datasetId || pending}
 							onClick={() => void promote()}
 						>
-							Add to dataset
+							{pending ? "Updating..." : "Add to dataset"}
 						</Button>
 					</>
 				)}
 			</div>
 			{error && (
-				<p className="text-sm text-destructive">
+				<p className="text-sm text-destructive" role="alert">
 					Dataset case was not fully linked: {error}
 				</p>
 			)}

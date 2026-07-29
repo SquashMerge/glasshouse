@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { scoreCase } from "../../src/lib/evaluator";
 import { ExperimentCreate } from "../../src/schemas/experiments";
 import {
+	createExperimentHandlers,
 	executeExperiment,
 	type ExperimentDependencies,
 } from "../../src/routes/experiments";
@@ -37,6 +38,38 @@ describe("evaluation MVP", () => {
 		expect(scoreCase("contains", "YES", { value: "yes, definitely" })).toEqual({
 			contains: 1,
 		});
+	});
+
+	it("rejects creation when any dataset item lacks expected output", async () => {
+		let created = false;
+		const handlers = createExperimentHandlers({
+			pool: () => ({}) as never,
+			getDataset: async () => ({ id: datasetId }),
+			listDatasetItems: async () => ({
+				items: [{ id: "case", input: {}, expected_output: null }],
+			}),
+			createExperiment: async () => {
+				created = true;
+				return {} as never;
+			},
+			listExperiments: async () => ({ items: [], total: 0 }),
+			getExperiment: async () => ({ status: "completed" }) as never,
+			updateExperiment: async () => ({}) as never,
+			cancelExperiment: async () => ({}) as never,
+			listResults: async () => ({ items: [] }) as never,
+			insertResult: async () => ({}) as never,
+			summary: async () => ({}) as never,
+			invokeLlm: async () => ({ output: {}, model: "test" }),
+			trace: async () => {},
+		} as never);
+		const response = await handlers.handleCreateExperiment({
+			req: { valid: () => baseExperiment },
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(409);
+		expect(created).toBe(false);
 	});
 
 	it("runs every dataset item, stores results, and emits one trace per item", async () => {

@@ -209,6 +209,30 @@ export async function experimentResults(input: {
 		"experimentResults",
 	);
 }
+export function experimentEventsUrl(input: {
+	project_id: string;
+	id: string;
+}): string {
+	return `/v1/experiments/${encodeURIComponent(input.id)}/events${buildQs({ project_id: input.project_id })}`;
+}
+export async function experimentSummary(input: {
+	project_id: string;
+	id: string;
+}): Promise<{
+	experiment_id: string;
+	total: number;
+	passed: number;
+	failed: number;
+	pass_rate: number;
+	avg_duration_ms: number | null;
+}> {
+	return responseJson(
+		await authedFetch(
+			`/v1/experiments/${encodeURIComponent(input.id)}/summary${buildQs({ project_id: input.project_id })}`,
+		),
+		"experimentSummary",
+	);
+}
 export async function cancelExperiment(input: {
 	project_id: string;
 	id: string;
@@ -238,13 +262,15 @@ export async function createFeedback(input: {
 	observation_id?: string;
 	value: 1 | -1;
 	metadata: JsonObject;
+	idempotency_key?: string;
 }): Promise<Feedback> {
+	const { idempotency_key, ...body } = input;
 	return responseJson(
 		await authedFetch("/v1/feedback", {
-			...jsonRequest(input),
+			...jsonRequest(body),
 			headers: {
 				"content-type": "application/json",
-				"idempotency-key": crypto.randomUUID(),
+				"idempotency-key": idempotency_key ?? crypto.randomUUID(),
 			},
 		}),
 		"createFeedback",
