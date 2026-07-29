@@ -33,6 +33,15 @@ beforeEach(() => {
 
 describe("trace pagination", () => {
 	for (const path of ["/v1/traces", "/v1/observations"]) {
+		it(`rejects a malformed project_id on ${path}`, async () => {
+			const res = await apiApp.fetch(request(`${path}?project_id=not-a-uuid`));
+			expect(res.status).toBe(400);
+			expect(await res.json()).toEqual({
+				code: "BAD_REQUEST",
+				message: "Request validation failed",
+			});
+		});
+
 		for (const query of [
 			"limit=",
 			"limit=%20",
@@ -83,6 +92,26 @@ describe("trace pagination", () => {
 		);
 		expect(maximumOffset.status).toBe(200);
 		expect(listTraces.mock.calls[2]?.slice(2)).toEqual([50, 2_147_483_647]);
+	});
+
+	it("passes the validated project selector into both list queries", async () => {
+		const projectId = "11111111-1111-4111-8111-111111111111";
+
+		const traces = await apiApp.fetch(
+			request(`/v1/traces?project_id=${projectId}`),
+		);
+		expect(traces.status).toBe(200);
+		expect(listTraces.mock.calls[0]?.[1]).toMatchObject({
+			project_id: projectId,
+		});
+
+		const observations = await apiApp.fetch(
+			request(`/v1/observations?project_id=${projectId}`),
+		);
+		expect(observations.status).toBe(200);
+		expect(listObservations.mock.calls[0]?.[1]).toMatchObject({
+			project_id: projectId,
+		});
 	});
 
 	it("preserves the observation limit cap", async () => {

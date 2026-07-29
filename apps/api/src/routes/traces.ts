@@ -8,8 +8,9 @@ import {
 	Observation,
 	ObservationList,
 	TraceDetailQuery,
+	TraceListQuery,
 } from "../schemas/traces.js";
-import { ErrorEnvelope, PageQuery, TraceIdParam } from "../schemas/common.js";
+import { ErrorEnvelope, TraceIdParam } from "../schemas/common.js";
 import {
 	defaultClient,
 	getTrace as queryGetTrace,
@@ -61,11 +62,25 @@ function presentTimestamp(value: string): string {
 	return match ? `${match[1]}T${match[2]}Z` : value;
 }
 
-function getPagination(c: Context): { limit: number; offset: number } {
-	const { limit: requestedLimit = 50, offset = 0 } = (
-		c.req as { valid: (target: "query") => { limit?: number; offset?: number } }
+function getPagination(c: Context): {
+	limit: number;
+	offset: number;
+	projectId?: string;
+} {
+	const {
+		limit: requestedLimit = 50,
+		offset = 0,
+		project_id: projectId,
+	} = (
+		c.req as {
+			valid: (target: "query") => {
+				limit?: number;
+				offset?: number;
+				project_id?: string;
+			};
+		}
 	).valid("query");
-	return { limit: Math.min(requestedLimit, 200), offset };
+	return { limit: Math.min(requestedLimit, 200), offset, projectId };
 }
 
 export const listTraces = createRoute({
@@ -76,7 +91,7 @@ export const listTraces = createRoute({
 	description:
 		"Returns up to 50 traces sorted by start_time DESC. Each row's input_text is truncated to 200 chars.",
 	security: [{ basicAuth: [] }],
-	request: { query: PageQuery },
+	request: { query: TraceListQuery },
 	responses: {
 		200: {
 			description: "OK",
@@ -91,11 +106,11 @@ export const listTraces = createRoute({
 });
 
 export async function handleListTraces(c: Context): Promise<Response> {
-	const { limit, offset } = getPagination(c);
+	const { limit, offset, projectId } = getPagination(c);
 	const q = c.req.query("filter[q]");
 	const filters = {
 		organization_id: trustedTenant(c).organizationId,
-		project_id: c.req.query("filter[project_id]") ?? undefined,
+		project_id: projectId,
 		agent_id: c.req.query("filter[agent_id]") ?? undefined,
 		env: c.req.query("filter[env]") ?? undefined,
 		time_from: c.req.query("filter[time.from]") ?? undefined,
@@ -203,7 +218,7 @@ export const listObservations = createRoute({
 	description:
 		"Returns up to 50 observations per page sorted by start_time DESC. input_text is truncated to 200 chars.",
 	security: [{ basicAuth: [] }],
-	request: { query: PageQuery },
+	request: { query: TraceListQuery },
 	responses: {
 		200: {
 			description: "OK",
@@ -218,10 +233,10 @@ export const listObservations = createRoute({
 });
 
 export async function handleListObservations(c: Context): Promise<Response> {
-	const { limit, offset } = getPagination(c);
+	const { limit, offset, projectId } = getPagination(c);
 	const filters = {
 		organization_id: trustedTenant(c).organizationId,
-		project_id: c.req.query("filter[project_id]") ?? undefined,
+		project_id: projectId,
 		agent_id: c.req.query("filter[agent_id]") ?? undefined,
 		trace_id: c.req.query("filter[trace_id]") ?? undefined,
 		type: c.req.query("filter[type]") ?? undefined,
