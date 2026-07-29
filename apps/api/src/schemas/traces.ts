@@ -31,19 +31,24 @@ export const TraceList = z
 	})
 	.openapi("TraceList");
 
+const ProjectIdQuery = z
+	.string()
+	.uuid()
+	.openapi({ param: { name: "project_id", in: "query" } });
+
 export const TraceDetailQuery = z
 	.object({
 		expand: z.string().optional(),
-		project_id: z
-			.string()
-			.uuid()
-			.optional()
-			.openapi({ param: { name: "project_id", in: "query" } }),
+		project_id: ProjectIdQuery.optional(),
 	})
 	.strict();
 
-export const TraceEventsQuery = TraceDetailQuery.pick({ project_id: true });
-export const TraceListQuery = PageQuery.merge(TraceEventsQuery);
+export const TraceEventsQuery = z
+	.object({ project_id: ProjectIdQuery })
+	.strict();
+export const TraceListQuery = PageQuery.extend({
+	project_id: ProjectIdQuery,
+}).passthrough();
 
 export const PromptProvenance = z
 	.object({

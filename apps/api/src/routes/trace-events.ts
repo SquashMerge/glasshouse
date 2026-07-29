@@ -161,10 +161,9 @@ export function createTraceEventHandlers(
 ) {
 	const streamTraceEventsHandler = async (c: Context): Promise<Response> => {
 		const tenant = trustedTenant(c);
-		const { project_id: projectId } = (
-			c.req as { valid: (target: "query") => { project_id?: string } }
+		const { project_id: expectedProjectId } = (
+			c.req as { valid: (target: "query") => { project_id: string } }
 		).valid("query");
-		const expectedProjectId = projectId ?? "";
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let unsubscribe: (() => void) | null = null;
@@ -212,10 +211,9 @@ export function createTraceEventHandlers(
 		c: Context,
 	): Promise<Response> => {
 		const tenant = trustedTenant(c);
-		const { project_id: projectId } = (
-			c.req as { valid: (target: "query") => { project_id?: string } }
+		const { project_id: expectedProjectId } = (
+			c.req as { valid: (target: "query") => { project_id: string } }
 		).valid("query");
-		const expectedProjectId = projectId ?? "";
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let unsubscribe: (() => void) | null = null;

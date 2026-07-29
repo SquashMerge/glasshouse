@@ -343,11 +343,20 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		expect(res.status).toBe(400);
 	});
 
-	it("heartbeat writes :heartbeat frames at the configured interval", async () => {
+	it("rejects a missing project selector", async () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/traces/events", {
+				headers: new Headers([["authorization", AUTH]]),
+			}),
+		);
+		expect(res.status).toBe(400);
+	});
+
+	it("heartbeat writes :heartbeat frames at the configured interval", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
-				headers: { authorization: AUTH },
+				headers: new Headers([["authorization", AUTH]]),
 			}),
 		);
 		const reader = res.body!.getReader();
@@ -368,9 +377,9 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		expect(subCount).toBe(0); // probe didn't fire (no publish happened)
 
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/traces/events", {
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
-				headers: { authorization: AUTH },
+				headers: new Headers([["authorization", AUTH]]),
 			}),
 		);
 		const reader = res.body!.getReader();
@@ -422,9 +431,9 @@ describe("GET /v1/traces/events (list SSE)", () => {
 
 	it("does not forward trace events from another organization", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/traces/events", {
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
-				headers: { authorization: AUTH },
+				headers: new Headers([["authorization", AUTH]]),
 			}),
 		);
 		const reader = res.body!.getReader();
@@ -511,6 +520,15 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/observations/events?project_id=not-a-uuid", {
 				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects a missing project selector", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/observations/events", {
+				headers: new Headers([["authorization", AUTH]]),
 			}),
 		);
 		expect(res.status).toBe(400);

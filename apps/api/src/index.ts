@@ -42,6 +42,12 @@ function isUuid(value: unknown): value is string {
 	);
 }
 
+function isJsonContentType(contentType: string | undefined): boolean {
+	return (
+		contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
+	);
+}
+
 async function requestedProjectIds(c: {
 	req: {
 		header: (name: string) => string | undefined;
@@ -59,7 +65,7 @@ async function requestedProjectIds(c: {
 	addProjectId(c.req.query("filter[project_id]"));
 	if (
 		c.req.path === "/v1/otel/v1/traces" ||
-		!c.req.header("content-type")?.includes("application/json")
+		!isJsonContentType(c.req.header("content-type"))
 	)
 		return projectIds;
 	try {

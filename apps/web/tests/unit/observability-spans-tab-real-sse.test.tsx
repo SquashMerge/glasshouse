@@ -21,13 +21,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 import { SpansTab } from "../../src/routes/observability";
 import { emptyObservationMetadata, listObservations } from "../../src/lib/api";
+import { authedFetch } from "../../src/lib/auth";
 
 vi.mocked(listObservations);
 
 const navigate = vi.fn();
 
 vi.mock("../../src/components/ProjectProvider", () => ({
-	useProjectSelection: () => ({ selectedProjectId: "proj-1" }),
+	useProjectSelection: () => ({
+		selectedProjectId: "11111111-1111-4111-8111-111111111111",
+	}),
 }));
 
 // --- Fake stream controller -------------------------------------------------
@@ -124,7 +127,7 @@ vi.mock("../../src/lib/api", async () => {
 				{
 					observation_id: "a".repeat(32),
 					trace_id: "t".repeat(32),
-					project_id: "proj-1",
+					project_id: "11111111-1111-4111-8111-111111111111",
 					parent_observation_id: null,
 					type: "span" as const,
 					name: "initial-row",
@@ -186,8 +189,12 @@ describe("SpansTab × real useEventSource — full SSE transport", () => {
 		// Initial REST fetch settles.
 		await screen.findByText("initial-row", {}, { timeout: 2000 });
 
-		// authedFetch has been called once for /v1/observations/events.
+		// authedFetch has been called once for the selected project's observation stream.
 		await waitFor(() => expect(fakeStreams.length).toBeGreaterThanOrEqual(1));
+		expect(authedFetch).toHaveBeenCalledWith(
+			"/v1/observations/events?project_id=11111111-1111-4111-8111-111111111111",
+			expect.any(Object),
+		);
 		const stream = fakeStreams[0]!;
 
 		// Server handshake: `:ok` comment frame first.
@@ -202,7 +209,7 @@ describe("SpansTab × real useEventSource — full SSE transport", () => {
 					observation: {
 						observation_id: "b".repeat(32),
 						trace_id: "t".repeat(32),
-						project_id: "proj-1",
+						project_id: "11111111-1111-4111-8111-111111111111",
 						parent_observation_id: null,
 						type: "span",
 						name: "from-the-wire",
@@ -248,7 +255,7 @@ describe("SpansTab × real useEventSource — full SSE transport", () => {
 						observation: {
 							observation_id: `c${String(i).padStart(31, "0")}`,
 							trace_id: "t".repeat(32),
-							project_id: "proj-1",
+							project_id: "11111111-1111-4111-8111-111111111111",
 							parent_observation_id: null,
 							type: "span",
 							name: `wired-${i}`,

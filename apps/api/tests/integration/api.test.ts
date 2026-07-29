@@ -135,6 +135,23 @@ describe("API integration: auth gate", () => {
 		);
 	});
 
+	it("rejects unavailable project selectors on observability REST lists", async () => {
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		for (const path of ["/v1/traces", "/v1/observations"]) {
+			assertTenantProjectAccess.mockImplementationOnce(async () => {
+				throw new TenantScopeError(
+					"Project is not available to this organization",
+				);
+			});
+			const res = await apiApp.fetch(
+				new Request(`http://x${path}?project_id=${foreignProject}`, {
+					headers: new Headers([["authorization", AUTH]]),
+				}),
+			);
+			expect(res.status).toBe(404);
+		}
+	});
+
 	it("rejects a query/body project mismatch before a body-scoped route executes", async () => {
 		const authorizedProject = "00000000-0000-4000-8000-000000000002";
 		const foreignProject = "00000000-0000-4000-8000-000000000099";
@@ -154,6 +171,29 @@ describe("API integration: auth gate", () => {
 				headers: new Headers([
 					["authorization", AUTH],
 					["content-type", "application/json"],
+				]),
+				body: JSON.stringify({
+					project_id: foreignProject,
+					name: "must-not-write",
+				}),
+			}),
+		);
+
+		expect(res.status).toBe(404);
+		expect(assertTenantProjectAccess).not.toHaveBeenCalled();
+	});
+
+	it("rejects a query/body project mismatch with a mixed-case JSON media type", async () => {
+		const authorizedProject = "00000000-0000-4000-8000-000000000002";
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		assertTenantProjectAccess.mockClear();
+
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/datasets?project_id=${authorizedProject}`, {
+				method: "POST",
+				headers: new Headers([
+					["authorization", AUTH],
+					["content-type", "Application/JSON; Charset=UTF-8"],
 				]),
 				body: JSON.stringify({
 					project_id: foreignProject,

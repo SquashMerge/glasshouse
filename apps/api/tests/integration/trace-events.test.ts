@@ -290,9 +290,9 @@ describe("GET /v1/traces/events (list SSE)", () => {
 
 	it(":ok\n\n is the first frame written", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/traces/events", {
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
 				method: "GET",
-				headers: { authorization: AUTH },
+				headers: new Headers([["authorization", AUTH]]),
 			}),
 		);
 		const reader = res.body!.getReader();

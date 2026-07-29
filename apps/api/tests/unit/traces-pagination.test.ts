@@ -8,6 +8,8 @@ const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 const defaultClient = mock(() => ({}));
 const listTraces = mock(async () => ({ items: [], total: 0 }));
 const listObservations = mock(async () => ({ items: [], total: 0 }));
+const assertTenantProjectAccess = mock(async () => undefined);
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
 mock.module("../../src/db/traces-query", () => ({
 	defaultClient,
@@ -23,12 +25,18 @@ const { createApiApp } = await import("../../src/index");
 const { handleListObservations, handleListTraces } = await import(
 	"../../src/routes/traces"
 );
-const apiApp = createApiApp();
+const apiApp = createApiApp({ assertTenantProjectAccess });
 
 function request(path: string): Request {
 	return new Request(`http://x${path}`, {
 		headers: new Headers([["authorization", AUTH]]),
 	});
+}
+
+function scopedRequest(path: string): Request {
+	const url = new URL(`http://x${path}`);
+	url.searchParams.set("project_id", PROJECT_ID);
+	return request(`${url.pathname}${url.search}`);
 }
 
 function fakeContext(projectId: string): Context {
@@ -63,6 +71,15 @@ describe("trace pagination", () => {
 			});
 		});
 
+		it(`rejects a missing project_id on ${path}`, async () => {
+			const res = await apiApp.fetch(request(path));
+			expect(res.status).toBe(400);
+			expect(await res.json()).toEqual({
+				code: "BAD_REQUEST",
+				message: "Request validation failed",
+			});
+		});
+
 		for (const query of [
 			"limit=",
 			"limit=%20",
@@ -79,7 +96,7 @@ describe("trace pagination", () => {
 			"offset=2147483648",
 		]) {
 			it(`rejects ${query} on ${path}`, async () => {
-				const res = await apiApp.fetch(request(`${path}?${query}`));
+				const res = await apiApp.fetch(scopedRequest(`${path}?${query}`));
 				expect(res.status).toBe(400);
 				expect(await res.json()).toEqual({
 					code: "BAD_REQUEST",
@@ -92,24 +109,34 @@ describe("trace pagination", () => {
 	}
 
 	it("uses the default trace pagination", async () => {
-		const res = await apiApp.fetch(request("/v1/traces"));
+		const res = await apiApp.fetch(scopedRequest("/v1/traces"));
 		expect(res.status).toBe(200);
 		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([50, 0]);
 	});
 
+	it("accepts supported list filters alongside the required project_id", async () => {
+		const res = await apiApp.fetch(
+			scopedRequest("/v1/traces?filter[env]=development"),
+		);
+		expect(res.status).toBe(200);
+		expect(listTraces).toHaveBeenCalledTimes(1);
+	});
+
 	it("accepts zero and the maximum trace page limit", async () => {
-		const zero = await apiApp.fetch(request("/v1/traces?limit=0&offset=0"));
+		const zero = await apiApp.fetch(
+			scopedRequest("/v1/traces?limit=0&offset=0"),
+		);
 		expect(zero.status).toBe(200);
 		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([0, 0]);
 
 		const maximum = await apiApp.fetch(
-			request("/v1/traces?limit=200&offset=200"),
+			scopedRequest("/v1/traces?limit=200&offset=200"),
 		);
 		expect(maximum.status).toBe(200);
 		expect(listTraces.mock.calls[1]?.slice(2)).toEqual([200, 200]);
 
 		const maximumOffset = await apiApp.fetch(
-			request("/v1/traces?offset=2147483647"),
+			scopedRequest("/v1/traces?offset=2147483647"),
 		);
 		expect(maximumOffset.status).toBe(200);
 		expect(listTraces.mock.calls[2]?.slice(2)).toEqual([50, 2_147_483_647]);
@@ -133,7 +160,7 @@ describe("trace pagination", () => {
 
 	it("preserves the observation limit cap", async () => {
 		const res = await apiApp.fetch(
-			request("/v1/observations?limit=201&offset=3"),
+			scopedRequest("/v1/observations?limit=201&offset=3"),
 		);
 		expect(res.status).toBe(200);
 		expect(listObservations.mock.calls[0]?.slice(2)).toEqual([200, 3]);
