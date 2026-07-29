@@ -199,6 +199,12 @@ export const production: ExperimentDependencies = {
 		const start =
 			BigInt(Date.now()) * 1_000_000n - BigInt(input.duration_ms) * 1_000_000n;
 		const end = BigInt(Date.now()) * 1_000_000n;
+		const organization = await pgPool().query<{ organization_id: string }>(
+			"SELECT organization_id FROM projects WHERE id = $1",
+			[input.project_id],
+		);
+		const organizationId = organization.rows[0]?.organization_id;
+		if (!organizationId) return;
 		await traceResult(
 			new Request("http://internal/v1/otel/v1/traces", {
 				method: "POST",
@@ -250,6 +256,11 @@ export const production: ExperimentDependencies = {
 				}),
 				headers: { "content-type": "application/json" },
 			}),
+			{
+				actor: "evaluation-worker",
+				organizationId,
+				projectId: input.project_id,
+			},
 		);
 	},
 };

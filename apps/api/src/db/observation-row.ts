@@ -1,4 +1,4 @@
-import type { NormalizedObservation } from "./gen-ai-attrs.js";
+import type { TenantScopedObservation } from "./traces-writer.js";
 import { serializeObservationMetadata } from "./observation-metadata.js";
 
 export interface ObservationInsertRow {
@@ -7,12 +7,13 @@ export interface ObservationInsertRow {
 }
 
 export function observationToInsertRow(
-	observation: NormalizedObservation,
+	observation: TenantScopedObservation,
 ): ObservationInsertRow {
 	return {
 		observation_id: observation.observation_id,
 		trace_id: observation.trace_id,
-		project_id: "",
+		organization_id: observation.organization_id,
+		project_id: observation.project_id,
 		parent_observation_id: observation.parent_observation_id,
 		type: observation.type,
 		name: observation.name,

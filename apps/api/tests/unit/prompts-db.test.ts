@@ -111,7 +111,7 @@ async function expectError(
 }
 
 describe("prompt repository", () => {
-	it("lists every existing project for the global trusted administrator", async () => {
+	it("lists only projects belonging to the requested organization", async () => {
 		const pool = new MockPool([
 			{ rows: [{ total: "2" }] },
 			{
@@ -132,7 +132,12 @@ describe("prompt repository", () => {
 			},
 		]);
 
-		expect(await listProjects(readPool(pool))).toEqual({
+		expect(
+			await listProjects(
+				readPool(pool),
+				"00000000-0000-4000-8000-000000000001",
+			),
+		).toEqual({
 			total: 2,
 			items: [
 				{
@@ -149,7 +154,12 @@ describe("prompt repository", () => {
 				},
 			],
 		});
-		expect(pool.calls[1]?.text).toContain("FROM projects ORDER BY slug ASC");
+		expect(pool.calls[1]?.text).toContain(
+			"FROM projects WHERE organization_id = $1 ORDER BY slug ASC",
+		);
+		expect(pool.calls[1]?.values).toEqual([
+			"00000000-0000-4000-8000-000000000001",
+		]);
 	});
 
 	it("normalizes canonical slugs and generates a dependency-free textual diff", () => {

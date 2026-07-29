@@ -5,10 +5,11 @@
 
 import { dump as yamlDump } from "js-yaml";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { openapiApp } from "../../apps/api/src/openapi.ts";
 
-const OUT_PATH = resolve(process.cwd(), "openapi.yaml");
+const OUT_PATH = fileURLToPath(new URL("../../openapi.yaml", import.meta.url));
 
 const doc = openapiApp.getOpenAPI31Document({
   openapi: "3.1.0",

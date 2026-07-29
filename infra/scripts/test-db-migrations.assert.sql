@@ -324,5 +324,42 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'prompt optimization worker lease index was not created';
     END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM organizations
+        WHERE id = '00000000-0000-4000-8000-000000000001'
+            AND slug = 'default'
+    ) THEN
+        RAISE EXCEPTION 'default organization was not seeded';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM projects
+        WHERE organization_id <> '00000000-0000-4000-8000-000000000001'
+    ) THEN
+        RAISE EXCEPTION 'legacy projects were not backfilled to the default organization';
+    END IF;
+    BEGIN
+        INSERT INTO projects (name, slug, organization_id)
+        VALUES ('Invalid Organization Project', 'invalid-organization', '00000000-0000-4000-8000-000000000099');
+        RAISE EXCEPTION 'project organization foreign key accepted an unknown organization';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+
+    INSERT INTO organizations (id, name, slug)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'Second Organization', 'second')
+    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES (
+        '33333333-3333-4333-8333-333333333333',
+        'Second Organization Default',
+        'default',
+        '00000000-0000-4000-8000-000000000002'
+    );
+    IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 2 THEN
+        RAISE EXCEPTION 'project slugs are not organization-scoped';
+    END IF;
 END
 $$;

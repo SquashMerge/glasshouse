@@ -9,7 +9,8 @@ import {
 	defaultClient,
 	getTrace as queryGetTrace,
 } from "../db/traces-query.js";
-import type { NormalizedObservation } from "../db/gen-ai-attrs.js";
+import type { TenantScopedObservation } from "../db/traces-writer.js";
+import { trustedTenant } from "../tenancy.js";
 import {
 	presentObservationMetadata,
 	type ObservationMetadata,
@@ -153,6 +154,7 @@ export function createTraceEventHandlers(
 	dependencies: TraceEventRouteDependencies = productionTraceEventRouteDependencies,
 ) {
 	const streamTraceEventsHandler = async (c: Context): Promise<Response> => {
+		const tenant = trustedTenant(c);
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let unsubscribe: (() => void) | null = null;
@@ -175,7 +177,7 @@ export function createTraceEventHandlers(
 
 			unsubscribe = dependencies.subscribe("trace.created", (msg) => {
 				const trace = msg.payload.trace;
-				if (!trace) return;
+				if (!trace || trace.organization_id !== tenant.organizationId) return;
 				void stream.writeSSE({
 					event: "trace",
 					data: JSON.stringify({ trace }),
@@ -194,6 +196,7 @@ export function createTraceEventHandlers(
 	const streamObservationEventsHandler = async (
 		c: Context,
 	): Promise<Response> => {
+		const tenant = trustedTenant(c);
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let unsubscribe: (() => void) | null = null;
@@ -216,7 +219,11 @@ export function createTraceEventHandlers(
 
 			unsubscribe = dependencies.subscribe("observation.created", (msg) => {
 				const observation = msg.payload.observation;
-				if (!observation) return;
+				if (
+					!observation ||
+					observation.organization_id !== tenant.organizationId
+				)
+					return;
 				const presented = presentObservation(observation);
 				void stream.writeSSE({
 					event: "observation",
@@ -239,14 +246,20 @@ export function createTraceEventHandlers(
 	const streamTraceDetailEventsHandler = async (
 		c: Context,
 	): Promise<Response> => {
+		const tenant = trustedTenant(c);
 		const traceId = c.req.param("id")!;
-		const bufferedObservations: NormalizedObservation[] = [];
+		const bufferedObservations: TenantScopedObservation[] = [];
 		let forwardObservation:
-			| ((observation: NormalizedObservation) => void)
+			| ((observation: TenantScopedObservation) => void)
 			| null = null;
 		const unsubscribe = dependencies.subscribe("observation.created", (msg) => {
 			const observation = msg.payload.observation;
-			if (!observation || observation.trace_id !== traceId) return;
+			if (
+				!observation ||
+				observation.organization_id !== tenant.organizationId ||
+				observation.trace_id !== traceId
+			)
+				return;
 			if (forwardObservation) forwardObservation(observation);
 			else bufferedObservations.push(observation);
 		});
@@ -255,6 +268,7 @@ export function createTraceEventHandlers(
 		try {
 			traceExists = await dependencies.getTrace(
 				dependencies.defaultClient(),
+				tenant.organizationId,
 				traceId,
 			);
 		} catch (err) {
@@ -328,7 +342,7 @@ export function createTraceEventHandlers(
 						.finally(cleanup);
 				}, dependencies.graceMs);
 			};
-			const sendObservation = (observation: NormalizedObservation) => {
+			const sendObservation = (observation: TenantScopedObservation) => {
 				if (closed) return;
 				armGraceTimer();
 				void stream.writeSSE({

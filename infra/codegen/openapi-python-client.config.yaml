@@ -5,8 +5,8 @@ path: ../../openapi.yaml
 custom_template_path: ~
 meta: none
 post_hooks:
-  - "ruff check --fix"
-  - "ruff format"
+  - "uvx ruff check --fix"
+  - "uvx ruff format"
 field_prefix: ""
 
 # Stability knobs — keep these so re-runs produce byte-stable output

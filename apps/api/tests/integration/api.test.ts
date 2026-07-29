@@ -9,10 +9,20 @@ process.env.UI_PASSWORD = PASS;
 const { createApiApp } = await import("../../src/index");
 const { createHealthHandler } = await import("../../src/routes/health");
 const { createOtlpIngestHandler } = await import("../../src/routes/otlp");
+const { TenantScopeError } = await import("../../src/tenancy");
 
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
+const assertTenantProjectAccess = mock(async () => undefined);
+const TEST_TENANT = {
+	actor: USER,
+	organizationId: "00000000-0000-4000-8000-000000000001",
+};
+const TEST_SCOPE = {
+	...TEST_TENANT,
+	projectId: "00000000-0000-4000-8000-000000000002",
+};
 const apiApp = createApiApp({
 	handleHealth: createHealthHandler({
 		chPing: async () => "up",
@@ -25,6 +35,8 @@ const apiApp = createApiApp({
 		insertTraces,
 		publishSync: () => undefined,
 	}),
+	assertTenantProjectAccess,
+	resolveTenantProject: async () => TEST_SCOPE,
 });
 
 beforeAll(() => {
@@ -103,6 +115,25 @@ describe("API integration: auth gate", () => {
 			}),
 		);
 		expect(res.status).toBe(401);
+	});
+
+	it("rejects a project selector outside the authenticated organization before the route executes", async () => {
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		assertTenantProjectAccess.mockImplementationOnce(async () => {
+			throw new TenantScopeError(
+				"Project is not available to this organization",
+			);
+		});
+		const res = await apiApp.fetch(
+			new Request(
+				`http://x/v1/traces?filter%5Bproject_id%5D=${foreignProject}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+		expect(res.status).toBe(404);
+		expect(assertTenantProjectAccess.mock.calls.at(-1)?.[2]).toBe(
+			foreignProject,
+		);
 	});
 });
 

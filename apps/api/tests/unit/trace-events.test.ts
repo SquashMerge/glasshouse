@@ -36,6 +36,7 @@ const OBS_ID = "obs-0001";
 const OBS_ID_2 = "obs-0002";
 const OBS_ID_OTHER = "obs-OTHER";
 const HASH = "a".repeat(64);
+const DEFAULT_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
 const LEGACY_METADATA = JSON.stringify([
 	{ key: "model", value: { stringValue: "gpt-4o" } },
 	{ key: "tokens", value: { intValue: 42 } },
@@ -48,6 +49,7 @@ const PROVENANCE_METADATA = {
 
 const fakeTrace: TraceRow = {
 	trace_id: VALID_TRACE_ID,
+	organization_id: DEFAULT_ORGANIZATION_ID,
 	project_id: "proj-1",
 	name: "unit-trace",
 	start_time: "2024-01-01 00:00:00.000",
@@ -68,6 +70,7 @@ const fakeTrace: TraceRow = {
 const fakeObservation: ObservationRow = {
 	observation_id: OBS_ID,
 	trace_id: VALID_TRACE_ID,
+	organization_id: DEFAULT_ORGANIZATION_ID,
 	project_id: "proj-1",
 	parent_observation_id: null,
 	type: "generation",
@@ -110,15 +113,17 @@ const provenanceObservation = {
 
 // Default: trace exists. Individual tests can override per-case with
 // mockResolvedValueOnce(...) / mockImplementationOnce(...).
-const getTraceMock = mock(async (_client: unknown, traceId: string) => {
-	if (traceId === VALID_TRACE_ID) {
-		return {
-			trace: fakeTrace,
-			observations: [fakeObservation, fakeObservationNoMeta],
-		};
-	}
-	return { trace: null, observations: [] };
-});
+const getTraceMock = mock(
+	async (_client: unknown, _organizationId: string, traceId: string) => {
+		if (traceId === VALID_TRACE_ID) {
+			return {
+				trace: fakeTrace,
+				observations: [fakeObservation, fakeObservationNoMeta],
+			};
+		}
+		return { trace: null, observations: [] };
+	},
+);
 
 const defaultClientMock = mock(() => ({}));
 
@@ -268,15 +273,17 @@ beforeEach(() => {
 		};
 	});
 	// Re-establish default behavior: a "valid" trace exists with two observations.
-	getTraceMock.mockImplementation(async (_client: unknown, traceId: string) => {
-		if (traceId === VALID_TRACE_ID) {
-			return {
-				trace: fakeTrace,
-				observations: [fakeObservation, fakeObservationNoMeta],
-			};
-		}
-		return { trace: null, observations: [] };
-	});
+	getTraceMock.mockImplementation(
+		async (_client: unknown, _organizationId: string, traceId: string) => {
+			if (traceId === VALID_TRACE_ID) {
+				return {
+					trace: fakeTrace,
+					observations: [fakeObservation, fakeObservationNoMeta],
+				};
+			}
+			return { trace: null, observations: [] };
+		},
+	);
 });
 
 afterEach(() => {
@@ -399,6 +406,28 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		expect(parsed.trace.trace_id).toBe(fakeTrace.trace_id);
 		expect(parsed.trace.name).toBe(fakeTrace.name);
 		expect(parsed.trace.project_id).toBe(fakeTrace.project_id);
+		await reader.cancel();
+	});
+
+	it("does not forward trace events from another organization", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces/events", {
+				method: "GET",
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		publishSync("trace.created", {
+			trace: {
+				...fakeTrace,
+				organization_id: "00000000-0000-4000-8000-000000000099",
+			},
+		});
+		const frames = await readFramesUntil(reader, () => false, {
+			timeoutMs: 100,
+		});
+		expect(frames.some((frame) => frame.event === "trace")).toBe(false);
 		await reader.cancel();
 	});
 });

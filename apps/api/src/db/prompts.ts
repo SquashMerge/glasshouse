@@ -512,15 +512,18 @@ function messagesText(messages: readonly PromptMessage[]): string {
 
 export async function listProjects(
 	pool: Pick<Pool, "query">,
+	organizationId: string,
 ): Promise<{ items: Project[]; total: number }> {
 	return read(async () => {
 		const countRows = await query<Row>(
 			pool,
-			"SELECT count(*) AS total FROM projects",
+			"SELECT count(*) AS total FROM projects WHERE organization_id = $1",
+			[organizationId],
 		);
 		const rows = await query<Row>(
 			pool,
-			"SELECT id, name, slug, created_at FROM projects ORDER BY slug ASC",
+			"SELECT id, name, slug, created_at FROM projects WHERE organization_id = $1 ORDER BY slug ASC",
+			[organizationId],
 		);
 		const total = positiveIntegerOrZero(countRows[0]?.total, "total");
 		return {

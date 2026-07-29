@@ -13,7 +13,7 @@ import { createOtlpIngestHandler } from "../../src/routes/otlp";
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
-const handleOtlpIngest = createOtlpIngestHandler({
+const rawHandleOtlpIngest = createOtlpIngestHandler({
 	defaultClient,
 	insertObservations,
 	insertTraces,
@@ -30,6 +30,12 @@ const HEX16_A = "0011223344556677";
 const HEX16_B = "0011223344556678";
 const NOW_NS = 1_700_000_000_000_000_000;
 const HASH = "a".repeat(64);
+const TENANT = {
+	organizationId: "00000000-0000-4000-8000-000000000010",
+	projectId: "00000000-0000-4000-8000-000000000011",
+};
+const handleOtlpIngest = (request: Request, tenant = TENANT) =>
+	rawHandleOtlpIngest(request, tenant);
 
 beforeAll(() => {
 	process.env.UI_USERNAME = USER;
@@ -94,6 +100,47 @@ describe("OTLP ingest publishes events", () => {
 		);
 		expect(insertTraces).toHaveBeenCalledTimes(1);
 		expect(insertObservations).toHaveBeenCalledTimes(1);
+	});
+
+	it("persists the authenticated organization and resolved project, not OTLP-supplied tenant data", async () => {
+		const res = await handleOtlpIngest(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "tenant-bound",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "astraea.organization_id",
+									value: {
+										stringValue: "00000000-0000-4000-8000-000000000099",
+									},
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+		expect(res.status).toBe(200);
+		expect(insertTraces.mock.calls[0]?.[1]).toMatchObject([
+			{
+				organization_id: TENANT.organizationId,
+				project_id: TENANT.projectId,
+			},
+		]);
+		expect(insertObservations.mock.calls[0]?.[1]).toMatchObject([
+			{
+				organization_id: TENANT.organizationId,
+				project_id: TENANT.projectId,
+			},
+		]);
 	});
 
 	it("two trace.created + two observation.created for two spans (different trace_ids)", async () => {

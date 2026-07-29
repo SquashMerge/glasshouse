@@ -5,6 +5,7 @@ import {
 	PromptRepositoryError,
 } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
+import { trustedTenant } from "../tenancy.js";
 import { ProjectErrorResponses, ProjectList } from "../schemas/projects.js";
 
 export const listProjects = createRoute({
@@ -38,7 +39,12 @@ export function createProjectRouteHandlers(
 	return {
 		handleListProjects: async (c: Context): Promise<Response> => {
 			try {
-				return c.json(await dependencies.listProjects(dependencies.pool()));
+				return c.json(
+					await dependencies.listProjects(
+						dependencies.pool(),
+						trustedTenant(c).organizationId,
+					),
+				);
 			} catch (cause) {
 				const known =
 					cause instanceof PromptRepositoryError
