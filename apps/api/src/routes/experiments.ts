@@ -296,11 +296,13 @@ export async function executeExperiment(
 	signal?: AbortSignal,
 ) {
 	const db = deps.pool();
-	await deps.updateExperiment(db, {
+	const started = await deps.updateExperiment(db, {
 		project_id: input.project_id,
 		id: input.experiment_id,
 		status: "running",
+		if_status: "pending",
 	});
+	if (started.status !== undefined && started.status !== "running") return;
 	const dataset = await deps.listDatasetItems(db, {
 		project_id: input.project_id,
 		dataset_id: input.dataset_id,
@@ -313,6 +315,7 @@ export async function executeExperiment(
 				project_id: input.project_id,
 				id: input.experiment_id,
 				status: "cancelled",
+				if_status: ["pending", "running"],
 			});
 			return;
 		}
@@ -404,6 +407,7 @@ export async function executeExperiment(
 				project_id: input.project_id,
 				id: input.experiment_id,
 				status: "cancelled",
+				if_status: ["pending", "running"],
 			});
 		return;
 	}
@@ -411,6 +415,7 @@ export async function executeExperiment(
 		project_id: input.project_id,
 		id: input.experiment_id,
 		status: "completed",
+		if_status: "running",
 	});
 }
 
@@ -462,6 +467,9 @@ export function createExperimentHandlers(
 							project_id: body.project_id,
 							id: row.id,
 							status: controller.signal.aborted ? "cancelled" : "failed",
+							if_status: controller.signal.aborted
+								? ["pending", "running"]
+								: "running",
 						});
 					})
 					.finally(() =>

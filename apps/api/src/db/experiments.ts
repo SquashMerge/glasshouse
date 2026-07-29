@@ -149,16 +149,32 @@ export async function getExperiment(
 }
 export async function updateExperiment(
 	db: Queryable,
-	input: { project_id: string; id: string; status: ExperimentStatus },
+	input: {
+		project_id: string;
+		id: string;
+		status: ExperimentStatus;
+		/** Apply only when the persisted state is one of these values. */
+		if_status?: ExperimentStatus | ExperimentStatus[];
+	},
 ) {
 	try {
+		const expected = input.if_status
+			? Array.isArray(input.if_status)
+				? input.if_status
+				: [input.if_status]
+			: null;
 		const r = await db.query(
-			`UPDATE experiments SET status=$1, updated_at=now() WHERE id=$2 AND project_id=$3 RETURNING *`,
-			[input.status, input.id, input.project_id],
+			`UPDATE experiments SET status=$1, updated_at=now() WHERE id=$2 AND project_id=$3${expected ? " AND status = ANY($4::text[])" : ""} RETURNING *`,
+			expected
+				? [input.status, input.id, input.project_id, expected]
+				: [input.status, input.id, input.project_id],
 		);
-		if (!r.rows[0])
-			throw new ExperimentRepositoryError("NOT_FOUND", "Experiment not found");
-		return experiment(r.rows[0]);
+		if (r.rows[0]) return experiment(r.rows[0]);
+		// A conditional transition that lost a race returns the persisted state. This
+		// keeps cancellation terminal rather than turning a concurrent cancel into a
+		// spurious NOT_FOUND or resurrecting the evaluation.
+		if (expected) return getExperiment(db, input);
+		throw new ExperimentRepositoryError("NOT_FOUND", "Experiment not found");
 	} catch (cause) {
 		throw normalize(cause);
 	}

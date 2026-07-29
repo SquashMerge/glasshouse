@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { updateExperiment } from "../../src/db/experiments";
 import { logger } from "../../src/lib/logger";
 import { createOtlpIngestHandler } from "../../src/routes/otlp";
 import { scoreCase } from "../../src/lib/evaluator";
@@ -145,6 +146,40 @@ describe("evaluation MVP", () => {
 			dataset_id: datasetId,
 		});
 		expect(parsed.config).toEqual({ evaluator: "exact_match", temperature: 0 });
+	});
+
+	it("does not overwrite a concurrent cancellation with a terminal worker update", async () => {
+		const cancelled = {
+			id: experimentId,
+			project_id: projectId,
+			agent_id: null,
+			dataset_id: datasetId,
+			name: null,
+			config: {},
+			status: "cancelled",
+			created_at: "2026-07-29T00:00:00.000Z",
+			updated_at: "2026-07-29T00:00:00.000Z",
+		};
+		const calls: Array<{ sql: string; values: unknown[] }> = [];
+		const db = {
+			query: async (sql: string, values: unknown[]) => {
+				calls.push({ sql, values });
+				return calls.length === 1 ? { rows: [] } : { rows: [cancelled] };
+			},
+		};
+
+		const result = await updateExperiment(db as never, {
+			project_id: projectId,
+			id: experimentId,
+			status: "completed",
+			if_status: "running",
+		});
+
+		expect(calls[0]).toMatchObject({
+			sql: expect.stringContaining("status = ANY($4::text[])"),
+			values: ["completed", experimentId, projectId, ["running"]],
+		});
+		expect(result.status).toBe("cancelled");
 	});
 
 	it("scores exact matches and case-insensitive containment", () => {
@@ -356,6 +391,31 @@ describe("evaluation MVP", () => {
 		expect(results).toHaveLength(1);
 		expect(traces).toHaveLength(1);
 		expect((traces[0] as { output: string }).output).toBe("evaluation_failed");
+	});
+
+	it("does not start when cancellation wins the pending-to-running transition", async () => {
+		let listed = false;
+		const deps = {
+			pool: () => ({}) as never,
+			updateExperiment: async () => ({ status: "cancelled" }) as never,
+			listDatasetItems: async () => {
+				listed = true;
+				return { items: [] };
+			},
+			getExperiment: async () => ({ status: "cancelled" }) as never,
+			invokeLlm: async () => ({ output: {}, model: "test" }),
+			insertResult: async () => ({}) as never,
+			trace: async () => {},
+		} as unknown as ExperimentDependencies;
+
+		await executeExperiment(deps, {
+			project_id: projectId,
+			experiment_id: experimentId,
+			dataset_id: datasetId,
+			config: baseExperiment.config,
+		});
+
+		expect(listed).toBe(false);
 	});
 
 	it("stops before the first item when cancellation is already requested", async () => {
