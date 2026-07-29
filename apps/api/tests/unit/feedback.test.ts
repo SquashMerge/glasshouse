@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	requestHash,
 	createFeedback,
+	promoteFeedback,
 	reviewFeedback,
 } from "../../src/db/feedback";
 import { FeedbackCreate, FeedbackReview } from "../../src/schemas/feedback";
@@ -40,8 +41,28 @@ describe("feedback contract", () => {
 		);
 	});
 
-	it("limits review states and link fields", () => {
+	it("requires complete dataset linkage only when a review is added to a dataset", () => {
+		const dataset_id = "22222222-2222-4222-8222-222222222222";
+		const dataset_item_id = "44444444-4444-4444-8444-444444444444";
 		expect(FeedbackReview.safeParse({ status: "reviewed" }).success).toBe(true);
+		expect(
+			FeedbackReview.safeParse({ status: "added_to_dataset", dataset_id })
+				.success,
+		).toBe(false);
+		expect(
+			FeedbackReview.safeParse({
+				status: "added_to_dataset",
+				dataset_id,
+				dataset_item_id,
+			}).success,
+		).toBe(true);
+		expect(
+			FeedbackReview.safeParse({
+				status: "dismissed",
+				dataset_id,
+				dataset_item_id,
+			}).success,
+		).toBe(false);
 		expect(FeedbackReview.safeParse({ status: "unknown" }).success).toBe(false);
 	});
 });
@@ -84,7 +105,7 @@ describe("feedback review persistence", () => {
 		expect(result.project_id).toBe(base.project_id);
 	});
 
-	it("locks the project-scoped feedback row before validating and updating a terminal link", async () => {
+	it("rejects promotion until feedback has been reviewed", async () => {
 		const now = new Date("2026-07-29T12:00:00.000Z");
 		const queries: string[] = [];
 		const client = {
@@ -109,25 +130,123 @@ describe("feedback review persistence", () => {
 							},
 						],
 					};
-				if (sql.includes("SELECT i.id")) return { rows: [{ id: "item" }] };
-				if (sql.includes("UPDATE feedback_reviews"))
-					return { rows: [{ updated_at: now }] };
 				return { rows: [] };
 			},
 			release: () => {},
 		};
-		const pool = { connect: async () => client };
 
-		await reviewFeedback(pool as never, {
-			project_id: base.project_id,
-			id: "33333333-3333-4333-8333-333333333333",
-			status: "added_to_dataset",
-			dataset_id: "22222222-2222-4222-8222-222222222222",
-			dataset_item_id: "44444444-4444-4444-8444-444444444444",
-		});
+		await expect(
+			promoteFeedback({ connect: async () => client } as never, {
+				project_id: base.project_id,
+				id: "33333333-3333-4333-8333-333333333333",
+				dataset_id: "22222222-2222-4222-8222-222222222222",
+				input: { question: "hello" },
+			}),
+		).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+		expect(queries.some((sql) => sql.includes("FROM datasets"))).toBe(false);
+		expect(queries).toContain("ROLLBACK");
+	});
 
-		expect(queries[0]).toBe("BEGIN");
-		expect(queries[1]).toContain("FOR UPDATE");
+	it("rejects direct dataset additions from new or dismissed feedback", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+
+		for (const status of ["new", "dismissed"] as const) {
+			const queries: string[] = [];
+			const client = {
+				query: async (sql: string) => {
+					queries.push(sql);
+					if (sql.includes("FROM scores s JOIN feedback_reviews"))
+						return {
+							rows: [
+								{
+									id: "33333333-3333-4333-8333-333333333333",
+									project_id: base.project_id,
+									trace_id: base.trace_id,
+									observation_id: null,
+									value: -1,
+									metadata: base.metadata,
+									created_at: now,
+									status,
+									note: null,
+									dataset_id: null,
+									dataset_item_id: null,
+									updated_at: now,
+								},
+							],
+						};
+					if (sql.includes("SELECT i.id")) return { rows: [{ id: "item" }] };
+					if (sql.includes("UPDATE feedback_reviews"))
+						return { rows: [{ updated_at: now }] };
+					return { rows: [] };
+				},
+				release: () => {},
+			};
+
+			await expect(
+				reviewFeedback({ connect: async () => client } as never, {
+					project_id: base.project_id,
+					id: "33333333-3333-4333-8333-333333333333",
+					status: "added_to_dataset",
+					dataset_id: "22222222-2222-4222-8222-222222222222",
+					dataset_item_id: "44444444-4444-4444-8444-444444444444",
+				}),
+			).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+			expect(queries[0]).toBe("BEGIN");
+			expect(queries[1]).toContain("FOR UPDATE");
+			expect(queries).toContain("ROLLBACK");
+			expect(queries.some((sql) => sql.includes("SELECT i.id"))).toBe(false);
+			expect(
+				queries.some((sql) => sql.includes("UPDATE feedback_reviews")),
+			).toBe(false);
+		}
+	});
+
+	it("returns the already linked feedback without inserting another dataset item when promotion is retried", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("FROM scores s JOIN feedback_reviews"))
+					return {
+						rows: [
+							{
+								id: "33333333-3333-4333-8333-333333333333",
+								project_id: base.project_id,
+								trace_id: base.trace_id,
+								observation_id: null,
+								value: -1,
+								metadata: base.metadata,
+								created_at: now,
+								status: "added_to_dataset",
+								note: null,
+								dataset_id: "22222222-2222-4222-8222-222222222222",
+								dataset_item_id: "44444444-4444-4444-8444-444444444444",
+								updated_at: now,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release: () => {},
+		};
+
+		const result = await promoteFeedback(
+			{ connect: async () => client } as never,
+			{
+				project_id: base.project_id,
+				id: "33333333-3333-4333-8333-333333333333",
+				dataset_id: "22222222-2222-4222-8222-222222222222",
+				input: { question: "hello" },
+				expected_output: { answer: "world" },
+			},
+		);
+
+		expect(result.status).toBe("added_to_dataset");
+		expect(result.dataset_item_id).toBe("44444444-4444-4444-8444-444444444444");
+		expect(
+			queries.some((sql) => sql.includes("INSERT INTO dataset_items")),
+		).toBe(false);
 		expect(queries.at(-1)).toBe("COMMIT");
 	});
 

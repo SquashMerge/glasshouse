@@ -57,6 +57,14 @@ export const DatasetItemCreate = z
 		source_observation_id: z.string().max(128).nullable().optional(),
 	})
 	.strict()
+	.superRefine((value, ctx) => {
+		if (value.source_observation_id && !value.source_trace_id)
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["source_observation_id"],
+				message: "Observation provenance requires a trace",
+			});
+	})
 	.openapi("DatasetItemCreate");
 
 export const DatasetItemIdParams = z

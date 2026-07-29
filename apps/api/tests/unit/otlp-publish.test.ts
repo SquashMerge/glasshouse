@@ -578,6 +578,59 @@ describe("OTLP ingest publishes events", () => {
 		console.error = orig;
 	});
 
+	it("deduplicates a retry after traces persist but observations fail", async () => {
+		const persistedTraces: Array<{ trace_id: string }> = [];
+		const persistedObservations: Array<{ observation_id: string }> = [];
+		const traceTokens = new Set<string>();
+		const observationTokens = new Set<string>();
+		let failObservations = true;
+		const retryHandler = createOtlpIngestHandler({
+			defaultClient: () => ({}),
+			insertTraces: async (_client, traces, token) => {
+				expect(token).toMatch(/^astraea:otlp:traces:[0-9a-f]{64}$/);
+				if (!traceTokens.has(token)) persistedTraces.push(...traces);
+				traceTokens.add(token);
+			},
+			insertObservations: async (_client, observations, token) => {
+				expect(token).toMatch(/^astraea:otlp:observations:[0-9a-f]{64}$/);
+				if (failObservations) {
+					failObservations = false;
+					throw new Error("simulated observation insert failure");
+				}
+				if (!observationTokens.has(token))
+					persistedObservations.push(...observations);
+				observationTokens.add(token);
+			},
+			publishSync,
+		});
+		const payload = validOtlp([
+			{
+				trace_id: HEX32_A,
+				span_id: HEX16_A,
+				name: "retry-safe",
+				start_time_unix_nano: String(NOW_NS),
+				attributes: [],
+			},
+		]);
+		const retry = () =>
+			retryHandler(
+				new Request("http://x/v1/otel/v1/traces", {
+					method: "POST",
+					headers: { authorization: AUTH, "content-type": "application/json" },
+					body: JSON.stringify(payload),
+				}),
+				TENANT,
+			);
+
+		expect((await retry()).status).toBe(500);
+		expect((await retry()).status).toBe(200);
+		expect(persistedTraces).toHaveLength(1);
+		expect(persistedObservations).toHaveLength(1);
+		expect(traceTokens).toHaveLength(1);
+		expect(observationTokens).toHaveLength(1);
+		expect([...traceTokens][0]).not.toBe([...observationTokens][0]);
+	});
+
 	it("an insert failure does NOT publish events and returns 500", async () => {
 		const traces: unknown[] = [];
 		const observations: unknown[] = [];

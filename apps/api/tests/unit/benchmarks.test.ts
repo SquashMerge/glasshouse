@@ -8,11 +8,17 @@ const datasetId = "33333333-3333-4333-8333-333333333333";
 
 describe("benchmark evaluation execution", () => {
 	it("marks the experiment failed when background execution rejects", async () => {
-		const statuses: string[] = [];
+		const transitions: Array<{
+			status: string;
+			if_status?: string | string[];
+		}> = [];
 		const dependencies = {
 			pool: () => ({}) as never,
-			updateExperiment: async (_db: unknown, input: { status: string }) => {
-				statuses.push(input.status);
+			updateExperiment: async (
+				_db: unknown,
+				input: { status: string; if_status?: string | string[] },
+			) => {
+				transitions.push(input);
 				return {} as never;
 			},
 		} as ExperimentDependencies;
@@ -30,6 +36,11 @@ describe("benchmark evaluation execution", () => {
 			},
 		);
 
-		expect(statuses).toEqual(["failed"]);
+		expect(transitions).toContainEqual(
+			expect.objectContaining({
+				status: "failed",
+				if_status: ["pending", "running"],
+			}),
+		);
 	});
 });

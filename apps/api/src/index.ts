@@ -6,8 +6,12 @@ import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { pgPool } from "./db/postgres.js";
-import { failInterruptedExperiments } from "./db/experiments.js";
+import { listRecoverableExperiments } from "./db/experiments.js";
 import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
+import {
+	executeExperiment,
+	production as evaluationProduction,
+} from "./routes/experiments.js";
 import { recoverInterruptedWork } from "./lib/recovery.js";
 import {
 	assertTenantProjectAccess,
@@ -212,8 +216,21 @@ const apiApp = createApiApp();
 if (import.meta.main) {
 	await recoverInterruptedWork({
 		pool: pgPool,
-		failExperiments: () => failInterruptedExperiments(pgPool()),
+		recoverExperiments: () => listRecoverableExperiments(pgPool()),
 		failOptimizations: () => failInterruptedOptimizationJobs(pgPool()),
+		resumeExperiment: async (experiment) => {
+			void executeExperiment(evaluationProduction, {
+				project_id: experiment.project_id,
+				experiment_id: experiment.id,
+				dataset_id: experiment.dataset_id,
+				config: experiment.config,
+			}).catch((cause) =>
+				logger.error("evaluation.recovery_failed", cause, {
+					experiment_id: experiment.id,
+					project_id: experiment.project_id,
+				}),
+			);
+		},
 		log: logger.info,
 	});
 }

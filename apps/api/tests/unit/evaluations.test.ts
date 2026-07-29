@@ -227,6 +227,7 @@ describe("evaluation MVP", () => {
 		const statuses: string[] = [];
 		const results: unknown[] = [];
 		const traces: unknown[] = [];
+		let claims = 0;
 		const deps = {
 			pool: () => ({}) as never,
 			getExperiment: async () => ({ status: "running" }),
@@ -249,6 +250,29 @@ describe("evaluation MVP", () => {
 					},
 				],
 			}),
+			claimTask: async () => {
+				claims += 1;
+				return claims <= 2
+					? {
+							id: `task-${claims}`,
+							dataset_item_id:
+								claims === 1
+									? "44444444-4444-4444-8444-444444444444"
+									: "55555555-5555-4555-8555-555555555555",
+							lease_token: "66666666-6666-4666-8666-666666666666",
+							input: { question: claims === 1 ? "one" : "two" },
+							expected_output: { value: "answer" },
+						}
+					: null;
+			},
+			finalizeTask: async (_db: unknown, input: unknown) => {
+				results.push(input);
+				return true;
+			},
+			completeExperiment: async () => {
+				statuses.push("completed");
+				return true;
+			},
 			invokeLlm: async () => ({
 				output: { value: "answer" },
 				model: "test-model",
@@ -276,9 +300,101 @@ describe("evaluation MVP", () => {
 		});
 	});
 
+	it("waits for an inherited unexpired lease and retries the task after it expires", async () => {
+		let claims = 0;
+		const retryDelays: number[] = [];
+		const finalized: unknown[] = [];
+		const deps = {
+			pool: () => ({}) as never,
+			updateExperiment: async () => ({ status: "running" }) as never,
+			claimTask: async () => {
+				claims += 1;
+				return claims === 2
+					? {
+							id: "44444444-4444-4444-8444-444444444444",
+							dataset_item_id: "55555555-5555-4555-8555-555555555555",
+							lease_token: "66666666-6666-4666-8666-666666666666",
+							input: { question: "one" },
+							expected_output: { value: "answer" },
+						}
+					: null;
+			},
+			completeExperiment: async () => claims > 2,
+			nextTaskRetryDelay: async () => 2_500,
+			waitForTaskRetry: async (delay: number) => {
+				retryDelays.push(delay);
+			},
+			finalizeTask: async (_db: unknown, input: unknown) => {
+				finalized.push(input);
+				return true;
+			},
+			invokeLlm: async () => ({
+				output: { value: "answer" },
+				model: "test-model",
+			}),
+			trace: async () => {},
+		} as unknown as ExperimentDependencies;
+
+		await executeExperiment(deps, {
+			project_id: projectId,
+			experiment_id: experimentId,
+			dataset_id: datasetId,
+			config: baseExperiment.config,
+		});
+
+		expect(retryDelays).toEqual([2_501]);
+		expect(finalized).toHaveLength(1);
+	});
+
+	it("does not persist a result when cancellation wins after provider invocation", async () => {
+		let claims = 0;
+		const finalized: unknown[] = [];
+		const statuses: string[] = [];
+		const deps = {
+			pool: () => ({}) as never,
+			updateExperiment: async (_db: unknown, input: { status: string }) => {
+				statuses.push(input.status);
+				return { status: input.status } as never;
+			},
+			claimTask: async () => {
+				claims += 1;
+				return claims === 1
+					? {
+							id: "44444444-4444-4444-8444-444444444444",
+							dataset_item_id: "55555555-5555-4555-8555-555555555555",
+							lease_token: "66666666-6666-4666-8666-666666666666",
+							input: { question: "one" },
+							expected_output: { value: "answer" },
+						}
+					: null;
+			},
+			finalizeTask: async (_db: unknown, input: unknown) => {
+				finalized.push(input);
+				return false;
+			},
+			completeExperiment: async () => false,
+			invokeLlm: async () => ({
+				output: { value: "answer" },
+				model: "test-model",
+			}),
+			trace: async () => {},
+		} as unknown as ExperimentDependencies;
+
+		await executeExperiment(deps, {
+			project_id: projectId,
+			experiment_id: experimentId,
+			dataset_id: datasetId,
+			config: baseExperiment.config,
+		});
+
+		expect(finalized).toHaveLength(1);
+		expect(statuses).toEqual(["running"]);
+	});
+
 	it("logs an OTLP error response without changing a successful evaluation result", async () => {
 		const statuses: string[] = [];
 		const results: Array<{ status: string }> = [];
+		let claimed = false;
 		const warnings: Array<{ event: string; fields: Record<string, unknown> }> =
 			[];
 		const trace = createProductionTrace(
@@ -319,6 +435,25 @@ describe("evaluation MVP", () => {
 						},
 					],
 				}),
+				claimTask: async () => {
+					if (claimed) return null;
+					claimed = true;
+					return {
+						id: "task",
+						dataset_item_id: "44444444-4444-4444-8444-444444444444",
+						lease_token: "66666666-6666-4666-8666-666666666666",
+						input: { question: "one" },
+						expected_output: { value: "answer" },
+					};
+				},
+				finalizeTask: async (_db: unknown, result: { status: string }) => {
+					results.push(result);
+					return true;
+				},
+				completeExperiment: async () => {
+					statuses.push("completed");
+					return true;
+				},
 				invokeLlm: async () => ({
 					output: { value: "answer" },
 					model: "test-model",
@@ -357,6 +492,7 @@ describe("evaluation MVP", () => {
 	it("emits a failure trace when an LLM call fails", async () => {
 		const results: unknown[] = [];
 		const traces: unknown[] = [];
+		let claimed = false;
 		const deps = {
 			pool: () => ({}) as never,
 			getExperiment: async () => ({ status: "running" }),
@@ -371,6 +507,22 @@ describe("evaluation MVP", () => {
 					},
 				],
 			}),
+			claimTask: async () => {
+				if (claimed) return null;
+				claimed = true;
+				return {
+					id: "task",
+					dataset_item_id: "44444444-4444-4444-8444-444444444444",
+					lease_token: "66666666-6666-4666-8666-666666666666",
+					input: { question: "one" },
+					expected_output: null,
+				};
+			},
+			finalizeTask: async (_db: unknown, input: unknown) => {
+				results.push(input);
+				return true;
+			},
+			completeExperiment: async () => true,
 			invokeLlm: async () => {
 				throw new Error("provider unavailable");
 			},

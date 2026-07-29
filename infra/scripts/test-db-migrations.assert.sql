@@ -394,6 +394,77 @@ BEGIN
         OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'scores_human_feedback_immutable' AND NOT tgisinternal) THEN
         RAISE EXCEPTION 'feedback indexes or immutability trigger are incomplete';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'dataset_items' AND column_name = 'feedback_score_id'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'dataset_items_feedback_score_id_unique'
+            AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+    ) THEN
+        RAISE EXCEPTION 'feedback promotion idempotency constraint is incomplete';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_score_project_fk'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_dataset_project_fk'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_dataset_item_dataset_fk'
+    ) THEN
+        RAISE EXCEPTION 'feedback project scope constraints are incomplete';
+    END IF;
+
+    INSERT INTO datasets (id, project_id, name) VALUES
+        ('a1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-a'),
+        ('a2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-b'),
+        ('b1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'feedback-scope-other');
+    INSERT INTO dataset_items (id, dataset_id, input) VALUES
+        ('a1000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', '{}'),
+        ('a2000000-0000-4000-8000-000000000002', 'a2000000-0000-4000-8000-000000000001', '{}'),
+        ('b1000000-0000-4000-8000-000000000002', 'b1000000-0000-4000-8000-000000000001', '{}');
+    INSERT INTO scores (id, project_id, trace_id, name, value, metadata) VALUES
+        ('c1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-1', 'human.feedback', -1, '{}'),
+        ('c2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-2', 'human.feedback', -1, '{}'),
+        ('c3000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-3', 'human.feedback', -1, '{}');
+    BEGIN
+        INSERT INTO feedback_reviews (score_id, project_id, status)
+        VALUES ('c1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'new');
+        RAISE EXCEPTION 'feedback review accepted a score from another project';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+        VALUES (
+            'c2000000-0000-4000-8000-000000000001',
+            '11111111-1111-1111-1111-111111111111',
+            'added_to_dataset',
+            'b1000000-0000-4000-8000-000000000001',
+            'b1000000-0000-4000-8000-000000000002'
+        );
+        RAISE EXCEPTION 'feedback review accepted a dataset from another project';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+        VALUES (
+            'c3000000-0000-4000-8000-000000000001',
+            '11111111-1111-1111-1111-111111111111',
+            'added_to_dataset',
+            'a1000000-0000-4000-8000-000000000001',
+            'a2000000-0000-4000-8000-000000000002'
+        );
+        RAISE EXCEPTION 'feedback review accepted a dataset item from another dataset';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
     INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
     VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
     BEGIN
@@ -402,5 +473,41 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
         IF SQLSTATE <> 'P0001' THEN RAISE; END IF;
     END;
+    IF NOT EXISTS (
+        SELECT 1 FROM experiment_tasks
+        WHERE experiment_id = 'a6000000-0000-4000-8000-000000000001'
+            AND dataset_item_id = 'a5000000-0000-4000-8000-000000000001'
+            AND status = 'completed' AND completed_at IS NOT NULL
+    ) OR NOT EXISTS (
+        SELECT 1 FROM experiment_tasks
+        WHERE experiment_id = 'a6000000-0000-4000-8000-000000000001'
+            AND dataset_item_id = 'a5000000-0000-4000-8000-000000000002'
+            AND status = 'pending'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM experiments
+        WHERE id = 'a6000000-0000-4000-8000-000000000001' AND status = 'completed'
+    ) THEN
+        RAISE EXCEPTION 'experiment task backfill did not preserve completed results';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'experiment_tasks'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'experiment_tasks'::regclass AND contype = 'u'
+            AND pg_get_constraintdef(oid) LIKE '%experiment_id, dataset_item_id%'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'experiment_results'::regclass AND contype = 'u'
+            AND pg_get_constraintdef(oid) LIKE '%experiment_id, dataset_item_id%'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'experiment_tasks_claimable_idx'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'experiments_seed_tasks' AND NOT tgisinternal
+    ) THEN
+        RAISE EXCEPTION 'durable experiment task ledger is incomplete';
+    END IF;
 END
 $$;

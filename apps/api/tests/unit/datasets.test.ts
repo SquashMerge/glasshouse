@@ -58,6 +58,16 @@ describe("dataset contracts", () => {
 		expect(result.success).toBe(true);
 	});
 
+	it("rejects observation provenance without its trace", () => {
+		expect(
+			DatasetItemCreate.safeParse({
+				project_id: PROJECT,
+				input: { question: "hello" },
+				source_observation_id: "b".repeat(16),
+			}).success,
+		).toBe(false);
+	});
+
 	it("rejects a dataset item with an invalid project id", () => {
 		expect(
 			DatasetCreate.safeParse({ project_id: "not-a-uuid", name: "golden" })

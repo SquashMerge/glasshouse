@@ -31,11 +31,17 @@ export function EvaluationsPage() {
 		enabled: Boolean(selectedProjectId),
 	});
 	const [datasetId, setDatasetId] = React.useState("");
+	React.useEffect(() => {
+		setDatasetId("");
+	}, [selectedProjectId]);
+	const selectedDataset = datasets.data?.items.find(
+		(dataset) => dataset.id === datasetId,
+	);
 	const selectedItems = useQuery({
 		queryKey: ["dataset-items", selectedProjectId, datasetId],
 		queryFn: () =>
 			listDatasetItems({ project_id: selectedProjectId!, id: datasetId }),
-		enabled: Boolean(selectedProjectId && datasetId),
+		enabled: Boolean(selectedProjectId && selectedDataset),
 	});
 	const [name, setName] = React.useState("");
 	const [model, setModel] = React.useState("");
@@ -47,6 +53,9 @@ export function EvaluationsPage() {
 	const missing =
 		selectedItems.data?.items.filter((item) => !item.expected_output).length ??
 		0;
+	const selectedItemsValid = Boolean(
+		selectedDataset && selectedItems.data && missing === 0,
+	);
 	if (!selectedProject)
 		return (
 			<PageMessage title="Evaluations">
@@ -54,7 +63,7 @@ export function EvaluationsPage() {
 			</PageMessage>
 		);
 	async function run() {
-		if (!datasetId || missing || pending) return;
+		if (!selectedItemsValid || pending) return;
 		try {
 			setError("");
 			setPending(true);
@@ -159,7 +168,7 @@ export function EvaluationsPage() {
 					</p>
 				)}
 				<Button
-					disabled={!datasetId || missing > 0 || pending}
+					disabled={!selectedItemsValid || pending}
 					onClick={() => void run()}
 				>
 					{pending ? "Starting..." : "Run evaluation"}

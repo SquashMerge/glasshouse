@@ -142,6 +142,8 @@ Astraea accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normaliz
 
 A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit), 128 resource spans/scopes/attributes, and 128 events or links per span. Requests over these structural limits are rejected before normalization and persistence. The 10 MiB HTTP body cap still applies independently.
 
+OTLP retries reuse table-namespaced ClickHouse insert-deduplication tokens derived from the validated batch and trusted organization/project scope. This avoids duplicate trace rows when an earlier attempt writes `traces` but fails before writing `observations`. Deduplication is deliberately bounded by ClickHouse's 100,000-block history per table, not a permanent uniqueness guarantee; retries after that history has rolled over can insert duplicates.
+
 Trace-detail reads are capped at 5,000 observations, ordered by start time, so an unusually large trace cannot create an unbounded ClickHouse query or SSE snapshot. Use the paginated observations endpoint to inspect broader data.
 
 ## Custom path
