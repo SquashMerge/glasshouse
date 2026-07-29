@@ -93,6 +93,108 @@ describe("dataset feedback actions", () => {
 		await waitFor(() => expect(trigger).toHaveFocus());
 	});
 
+	it("hydrates delayed trace values before the dialog is opened", async () => {
+		listDatasets.mockResolvedValue({ items: [] });
+		const { rerender } = render(
+			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
+		);
+		rerender(
+			<AddToDatasetDialog
+				projectId="project"
+				traceId="trace"
+				inputText='{"question":"delayed"}'
+				outputText='{"answer":"delayed"}'
+				label="trace"
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
+		await screen.findByRole("dialog");
+		expect(screen.getByLabelText("Input")).toHaveValue(
+			'{\n  "question": "delayed"\n}',
+		);
+		expect(screen.getByLabelText("Expected output suggestion")).toHaveValue(
+			'{\n  "answer": "delayed"\n}',
+		);
+	});
+
+	it("shows dataset loading failures and retries without an unhandled rejection", async () => {
+		let rejectDatasets!: (reason?: unknown) => void;
+		listDatasets
+			.mockImplementationOnce(
+				() =>
+					new Promise<never>((_resolve, reject) => {
+						rejectDatasets = reject;
+					}),
+			)
+			.mockResolvedValueOnce({ items: [{ id: "dataset", name: "Golden" }] });
+		render(
+			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
+
+		expect(await screen.findByRole("status")).toHaveTextContent(
+			"Loading datasets...",
+		);
+		rejectDatasets(new Error("Dataset service unavailable"));
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Dataset service unavailable",
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Retry datasets" }));
+
+		await waitFor(() =>
+			expect(screen.getByRole("option", { name: "Golden" })).toBeTruthy(),
+		);
+	});
+
+	it("traps focus in the dataset dialog and restores the trigger on Escape", async () => {
+		listDatasets.mockResolvedValue({ items: [] });
+		render(
+			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
+		);
+		const trigger = screen.getByRole("button", { name: "Add to dataset" });
+		fireEvent.click(trigger);
+		const dialog = await screen.findByRole("dialog");
+		const dataset = screen.getByLabelText("Dataset");
+		const cancel = screen.getByRole("button", { name: "Cancel" });
+
+		expect(dataset).toHaveFocus();
+		fireEvent.keyDown(dataset, { key: "Tab", shiftKey: true });
+		expect(cancel).toHaveFocus();
+		fireEvent.keyDown(cancel, { key: "Tab" });
+		expect(dataset).toHaveFocus();
+		fireEvent.keyDown(dialog, { key: "Escape" });
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		await waitFor(() => expect(trigger).toHaveFocus());
+	});
+
+	it("leaves absent source output blank and submits null expected output", async () => {
+		listDatasets.mockResolvedValue({
+			items: [{ id: "dataset", name: "Golden" }],
+		});
+		addDatasetItem.mockResolvedValue({});
+		render(
+			<AddToDatasetDialog
+				projectId="project"
+				traceId="trace"
+				inputText='{"question":"one"}'
+				label="trace"
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
+		await screen.findByRole("dialog");
+		expect(screen.getByLabelText("Expected output suggestion")).toHaveValue("");
+		fireEvent.change(screen.getByLabelText("Dataset"), {
+			target: { value: "dataset" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add case" }));
+
+		await waitFor(() => expect(addDatasetItem).toHaveBeenCalledTimes(1));
+		expect(addDatasetItem).toHaveBeenCalledWith(
+			expect.objectContaining({ expected_output: null }),
+		);
+	});
+
 	it("reuses one idempotency key when an explicit thumb submission is retried", async () => {
 		createFeedback.mockRejectedValueOnce(new Error("network interrupted"));
 		createFeedback.mockResolvedValueOnce({});
@@ -112,5 +214,59 @@ describe("dataset feedback actions", () => {
 		};
 		expect(first.idempotency_key).toMatch(/^[0-9a-f-]{36}$/);
 		expect(second.idempotency_key).toBe(first.idempotency_key);
+	});
+
+	it("uses a new retry key after switching feedback targets", async () => {
+		createFeedback.mockRejectedValueOnce(new Error("network interrupted"));
+		createFeedback.mockResolvedValueOnce({});
+		const { rerender } = render(
+			<FeedbackControls projectId="project" traceId="trace-a" label="trace" />,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Thumbs up trace" }));
+		await screen.findByText("network interrupted");
+		const first = createFeedback.mock.calls[0]?.[0] as {
+			idempotency_key: string;
+		};
+
+		rerender(
+			<FeedbackControls projectId="project" traceId="trace-b" label="trace" />,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Thumbs up trace" }));
+		await waitFor(() => expect(createFeedback).toHaveBeenCalledTimes(2));
+		const second = createFeedback.mock.calls[1]?.[0] as {
+			idempotency_key: string;
+			trace_id: string;
+		};
+
+		expect(second.idempotency_key).not.toBe(first.idempotency_key);
+		expect(second.trace_id).toBe("trace-b");
+	});
+
+	it("records an optional positive comment while requiring a negative reason", async () => {
+		createFeedback.mockResolvedValue({});
+		render(
+			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
+		);
+		fireEvent.change(screen.getByLabelText("Comment"), {
+			target: { value: "Useful response" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Thumbs up trace" }));
+		await waitFor(() => expect(createFeedback).toHaveBeenCalledTimes(1));
+		expect(createFeedback).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: 1,
+				metadata: {
+					feedback: expect.objectContaining({
+						sentiment: "positive",
+						comment: "Useful response",
+					}),
+				},
+			}),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Thumbs down trace" }));
+		fireEvent.click(screen.getByRole("button", { name: "Record" }));
+		expect(createFeedback).toHaveBeenCalledTimes(1);
+		expect(screen.getByLabelText("Reason")).toBeTruthy();
 	});
 });

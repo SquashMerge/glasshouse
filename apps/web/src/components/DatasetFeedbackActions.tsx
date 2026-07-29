@@ -27,6 +27,9 @@ function initialJson(value: string | undefined) {
 		return value;
 	}
 }
+function initialExpectedJson(value: string | undefined) {
+	return value ? initialJson(value) : "";
+}
 export function AddToDatasetDialog({
 	projectId,
 	traceId,
@@ -44,24 +47,60 @@ export function AddToDatasetDialog({
 }) {
 	const [open, setOpen] = React.useState(false);
 	const triggerRef = React.useRef<HTMLButtonElement>(null);
+	const dialogRef = React.useRef<HTMLDivElement>(null);
 	const [datasetId, setDatasetId] = React.useState("");
 	const [input, setInput] = React.useState(() => initialJson(inputText));
-	const [expected, setExpected] = React.useState(() => initialJson(outputText));
+	const [expected, setExpected] = React.useState(() =>
+		initialExpectedJson(outputText),
+	);
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
+	const [datasetLoading, setDatasetLoading] = React.useState(false);
+	const [datasetLoadError, setDatasetLoadError] = React.useState("");
+	const [datasetLoadAttempt, setDatasetLoadAttempt] = React.useState(0);
 	const [datasets, setDatasets] = React.useState<
 		Array<{ id: string; name: string }>
 	>([]);
 	React.useEffect(() => {
 		if (!open || !projectId) return;
-		void listDatasets(projectId).then((result) => setDatasets(result.items));
-	}, [open, projectId]);
+		const currentProjectId = projectId;
+		let active = true;
+		async function loadDatasets() {
+			setDatasetLoading(true);
+			setDatasetLoadError("");
+			try {
+				const result = await listDatasets(currentProjectId);
+				if (active) setDatasets(result.items);
+			} catch (cause) {
+				if (active) setDatasetLoadError((cause as Error).message);
+			} finally {
+				if (active) setDatasetLoading(false);
+			}
+		}
+		void loadDatasets();
+		return () => {
+			active = false;
+		};
+	}, [datasetLoadAttempt, open, projectId]);
 	React.useEffect(() => {
 		setDatasetId("");
 		setInput(initialJson(inputText));
-		setExpected(initialJson(outputText));
+		setExpected(initialExpectedJson(outputText));
 		setError("");
 	}, [projectId, traceId, observationId]);
+	React.useEffect(() => {
+		if (open) return;
+		setInput(initialJson(inputText));
+		setExpected(initialExpectedJson(outputText));
+	}, [inputText, open, outputText]);
+	React.useEffect(() => {
+		if (!open) return;
+		dialogRef.current
+			?.querySelector<HTMLElement>(
+				"select:not(:disabled), textarea:not(:disabled), button:not(:disabled)",
+			)
+			?.focus();
+	}, [open]);
 	function close() {
 		setOpen(false);
 		setTimeout(() => triggerRef.current?.focus(), 0);
@@ -71,7 +110,9 @@ export function AddToDatasetDialog({
 		try {
 			setError("");
 			const parsedInput = jsonObject(input, "Input");
-			const parsedExpected = jsonObject(expected, "Expected output");
+			const parsedExpected = expected.trim()
+				? jsonObject(expected, "Expected output")
+				: null;
 			setPending(true);
 			await addDatasetItem({
 				project_id: projectId,
@@ -101,12 +142,34 @@ export function AddToDatasetDialog({
 			</Button>
 			{open && (
 				<div
+					ref={dialogRef}
 					className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
 					role="dialog"
 					aria-modal="true"
 					aria-labelledby="add-to-dataset-title"
 					onKeyDown={(event) => {
-						if (event.key === "Escape") close();
+						if (event.key === "Escape") {
+							close();
+							return;
+						}
+						if (event.key !== "Tab") return;
+						const focusable = Array.from(
+							dialogRef.current?.querySelectorAll<HTMLElement>(
+								'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+							) ?? [],
+						);
+						const first = focusable[0];
+						const last = focusable.at(-1);
+						if (!first || !last) return;
+						if (event.shiftKey && document.activeElement === first) {
+							event.preventDefault();
+							last.focus();
+							return;
+						}
+						if (!event.shiftKey && document.activeElement === last) {
+							event.preventDefault();
+							first.focus();
+						}
 					}}
 				>
 					<div className="w-full max-w-xl space-y-3 rounded-lg bg-background p-5 shadow-lg">
@@ -129,6 +192,22 @@ export function AddToDatasetDialog({
 								))}
 							</select>
 						</label>
+						{datasetLoading && <p role="status">Loading datasets...</p>}
+						{datasetLoadError && (
+							<div className="flex items-center gap-2" role="alert">
+								<span>{datasetLoadError}</span>
+								<Button
+									type="button"
+									size="sm"
+									variant="outline"
+									onClick={() =>
+										setDatasetLoadAttempt((attempt) => attempt + 1)
+									}
+								>
+									Retry datasets
+								</Button>
+							</div>
+						)}
 						<label className="block text-sm">
 							Input
 							<textarea
@@ -186,6 +265,9 @@ export function FeedbackControls({
 	const idempotencyKeys = React.useRef<
 		Partial<Record<"positive" | "negative", string>>
 	>({});
+	React.useEffect(() => {
+		idempotencyKeys.current = {};
+	}, [observationId, traceId]);
 	async function record(value: 1 | -1) {
 		if (pending || !projectId || (value === -1 && !reason.trim())) {
 			setNegative(true);
@@ -243,6 +325,13 @@ export function FeedbackControls({
 			>
 				Thumbs down
 			</Button>
+			<Input
+				className="h-8 w-48"
+				placeholder="Optional comment"
+				aria-label="Comment"
+				value={comment}
+				onChange={(event) => setComment(event.target.value)}
+			/>
 			{negative && (
 				<>
 					<Input
@@ -251,13 +340,6 @@ export function FeedbackControls({
 						placeholder="Reason required"
 						value={reason}
 						onChange={(event) => setReason(event.target.value)}
-					/>
-					<Input
-						className="h-8 w-48"
-						placeholder="Optional comment"
-						aria-label="Comment"
-						value={comment}
-						onChange={(event) => setComment(event.target.value)}
 					/>
 					<Button size="sm" disabled={pending} onClick={() => void record(-1)}>
 						{pending ? "Recording..." : "Record"}
