@@ -469,7 +469,7 @@ export function createExperimentHandlers(
 							status: controller.signal.aborted ? "cancelled" : "failed",
 							if_status: controller.signal.aborted
 								? ["pending", "running"]
-								: "running",
+								: ["pending", "running"],
 						});
 					})
 					.finally(() =>

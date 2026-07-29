@@ -229,7 +229,7 @@ export async function executeBenchmarkExperiment(
 				project_id: input.project_id,
 				id: input.experiment_id,
 				status: "failed",
-				if_status: "running",
+				if_status: ["pending", "running"],
 			});
 		} catch (updateCause) {
 			logger.error("benchmark.failure_status_update_failed", undefined, {
