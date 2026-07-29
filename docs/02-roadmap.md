@@ -7,7 +7,7 @@
 | MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Valkey 8, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
 | MVP — Ingest + trace viewer | Day 8–14 | Shipped | OTLP receiver, normalized GenAI/OpenInference traces, trace list/detail screens, live SSE updates, and trace-focused regression coverage. PR: [#8](https://github.com/dsarlo/astraea/pull/8). |
 | MVP — Prompt management + optimization | Day 15–21 | Shipped | Immutable prompt versions, labels/provenance, GEPA optimization jobs, structured progress, provider/model guardrails, and prompt-management E2E coverage. PRs: [#9](https://github.com/dsarlo/astraea/pull/9), [#22](https://github.com/dsarlo/astraea/pull/22). |
-| MVP — Datasets, evaluations, and feedback | Day 22–30 | In progress | Dataset persistence/provenance and configured-LLM Experiment execution are shipped; this first pass adds dashboard workflows and human feedback review. Agent manifests, versioned datasets, richer judges, and automation remain deferred in `docs/06-dataset-feedback-future.md`. |
+| MVP — Datasets, evaluations, and feedback | Day 22–30 | Shipped | Project-scoped Dataset/Feedback dashboard and API workflows, configured-LLM Experiment execution, golden benchmark suites, provenance, cancellation-safe lifecycle handling, and human review are shipped. PRs: [#39](https://github.com/dsarlo/astraea/pull/39), [#44](https://github.com/dsarlo/astraea/pull/44), [#45](https://github.com/dsarlo/astraea/pull/45). Versioned datasets, richer judges, and automation remain deferred in `docs/06-dataset-feedback-future.md`. |
 | MVP — Dev mode + release polish | Follow-up | Not started | `hermes dev` single-binary, 3-tier prompt cache, settings UI, packaging, and public-release polish after the core product loop is validated. |
 | Wedge | Day 30–60 | Not started | Framework expansion (LangGraph / CrewAI / Pydantic AI); HTTP endpoint registration; evaluator library; manifest version binding. |
 | GitOps | Day 60–90 | Not started | GitHub Actions; manifest drift detection; atomic manifest rollback; `enterprise/` wheel. |
@@ -17,13 +17,13 @@
 
 The foundation, OTLP trace viewer, prompt management, first GEPA optimization workflow, project-scoped Datasets, configured-LLM Experiments, and narrow human feedback workflow are now implemented. Agent registry and broader score/metrics product work remain deferred; the feedback route is intentionally the only supported human-score command surface.
 
-The next sequence is deliberately narrower than the original calendar-based MVP plan:
+The next sequence starts only after the shipped core loop is operated and its governance requirements are met:
 
-1. **P0 — Contract and roadmap alignment:** keep this document authoritative about what is shipped, what remains stubbed, and which domain contracts gate implementation.
+1. **P0 — Operate and govern the first pass:** keep the contract/roadmap current; establish retention/deletion, redaction, and policy-approval workflows before expanding feedback or using it for broader decisions.
 2. **P1 — Agent registry:** implement project-scoped agents with immutable manifest versions and content-hash idempotency.
-3. **P2 — Datasets:** shipped in PR [#35](https://github.com/dsarlo/astraea/pull/35): dataset/item persistence and the `sourceTraceId`/`sourceObservationId` provenance needed to turn traces into regression cases.
-4. **P3 — Experiments:** run one agent version against one dataset with one evaluator and live result events.
-5. **Wedge follow-up:** add framework adapters, HTTP invocation, version comparison, environment binding, and drift detection only after the loop works end to end.
+3. **P2 — Dataset lifecycle:** add drafts, immutable Dataset versions, protected labels, provenance-preserving revisions, and version-pinned evaluation runs.
+4. **P3 — Evaluation definitions:** evolve one-off Experiments into reusable, versioned definitions with explicit target/dataset bindings; then add schedules, CI gates, and richer evaluators.
+5. **Wedge follow-up:** add framework adapters, HTTP invocation, version comparison, environment binding, and drift detection only after those versioning and governance contracts exist.
 
 ### Domain-contract guardrails
 
