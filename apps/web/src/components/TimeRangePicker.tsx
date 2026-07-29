@@ -18,10 +18,6 @@ const PRESETS: { label: string; value: TimeRange }[] = [
 	{ label: "Custom…", value: { kind: "custom", from: "", to: "" } },
 ];
 
-export function presetFor(range: TimeRange): TimeRange {
-	return range;
-}
-
 export function defaultRange(): TimeRange {
 	return { kind: "all" };
 }
