@@ -338,6 +338,11 @@ export async function reviewFeedback(
 				"Positive feedback cannot enter the review queue",
 			);
 		if (input.status === "added_to_dataset") {
+			if (current.status !== "reviewed")
+				throw new FeedbackRepositoryError(
+					"CONFLICT",
+					"Feedback must be reviewed before promotion",
+				);
 			if (!input.dataset_id || !input.dataset_item_id)
 				throw new FeedbackRepositoryError(
 					"CONFLICT",
