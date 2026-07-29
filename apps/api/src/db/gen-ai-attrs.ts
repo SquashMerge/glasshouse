@@ -28,7 +28,7 @@ function attrString(attrs: Attribute[], key: string): string | undefined {
 	return v?.stringValue;
 }
 
-function resourceProjectId(attrs: OtlpAttribute[]): string {
+export function resourceProjectId(attrs: OtlpAttribute[]): string {
 	const value = attrs.find(
 		(attribute) => attribute.key === "astraea.project.id",
 	)?.value;

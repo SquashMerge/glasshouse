@@ -4,7 +4,7 @@ import {
 	ExportTraceServiceRequest,
 	ExportTraceServiceResponse,
 } from "../schemas/otlp.js";
-import { normalizeSpan } from "../db/gen-ai-attrs.js";
+import { normalizeSpan, resourceProjectId } from "../db/gen-ai-attrs.js";
 import {
 	loadRedactionOptions,
 	redactMetadata,
@@ -54,6 +54,11 @@ export const otlpIngestRoute = createRoute({
 				"Malformed request body or conflicting project provenance for a trace",
 			content: { "application/json": { schema: ErrorEnvelope } },
 		},
+		404: {
+			description:
+				"The OTLP project selector or resource provenance is unavailable to the authenticated organization",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
 	},
 });
 
@@ -63,6 +68,28 @@ export type OtlpIngestDependencies = {
 	insertTraces: typeof insertTraces;
 	publishSync: typeof publishSync;
 };
+
+export async function resourceProjectIds(
+	req: Request,
+): Promise<ReadonlySet<string>> {
+	let bodyJson: unknown;
+	try {
+		bodyJson = await req.clone().json();
+	} catch {
+		return new Set();
+	}
+
+	const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
+	if (!parsed.success) return new Set();
+
+	return new Set(
+		parsed.data.resource_spans
+			.map((resourceSpan) =>
+				resourceProjectId(resourceSpan.resource?.attributes ?? []),
+			)
+			.filter(Boolean),
+	);
+}
 
 type AggregatedTrace = {
 	trace: TenantScopedTrace;
