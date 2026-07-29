@@ -28,6 +28,7 @@ import {
 	type TimeRange,
 } from "../components/TimeRangePicker";
 import { useEventSource } from "../hooks/useEventSource";
+import { useProjectSelection } from "../components/ProjectProvider";
 type Tab = "traces" | "spans";
 
 const VALID_TABS = new Set<Tab>(["traces", "spans"]);
@@ -302,6 +303,7 @@ function matchesObservationEvent(
  * Hook that owns the data fetch for TracesTab and the SSE merge.
  */
 function useTracesData() {
+	const { selectedProjectId } = useProjectSelection();
 	const [filters, setFilters] = React.useState<Record<string, string>>(() =>
 		emptyFilters(TRACE_FILTER_FIELDS),
 	);
@@ -320,8 +322,11 @@ function useTracesData() {
 	}, [filters, timeRange]);
 
 	const apiParams = React.useMemo(
-		() => buildTraceApiParams(debouncedFilters, debouncedTimeRange),
-		[debouncedFilters, debouncedTimeRange],
+		() => ({
+			...buildTraceApiParams(debouncedFilters, debouncedTimeRange),
+			project_id: selectedProjectId ?? undefined,
+		}),
+		[debouncedFilters, debouncedTimeRange, selectedProjectId],
 	);
 	const streamScope = JSON.stringify(apiParams);
 
@@ -338,6 +343,7 @@ function useTracesData() {
 				offset: pageParam as number,
 			}),
 		initialPageParam: 0,
+		enabled: Boolean(selectedProjectId),
 		getNextPageParam: (
 			lastPage: { items: TraceRow[]; total: number },
 			allPages: Array<{ items: TraceRow[]; total: number }>,
@@ -394,53 +400,63 @@ function useTracesData() {
 		return () => document.removeEventListener("visibilitychange", onVis);
 	}, []);
 
-	const sse = useEventSource("/v1/traces/events", {
-		enabled,
-		onMessage: (msg) => {
-			const { trace: event } = msg.data as { trace: TraceEvent };
-			if (!matchesTraceEvent(event, apiParams, debouncedTimeRange)) return;
-			const id = event.trace_id;
-			const row: TraceRow = {
-				trace_id: event.trace_id,
-				project_id: event.project_id ?? "",
-				name: event.name,
-				start_time: event.start_time,
-				end_time: event.end_time ?? null,
-				duration_ms: event.duration_ms ?? null,
-				status: event.status,
-				user_id: event.user_id ?? "",
-				session_id: event.session_id ?? "",
-				agent_id: event.agent_id ?? "",
-				agent_version: event.agent_version ?? "",
-				env: event.env ?? "",
-				tags: event.tags ?? [],
-				input_text: event.input_text ?? "",
-				output_text: event.output_text ?? "",
-				scores_summary: event.scores_summary ?? "",
-			};
-			setLiveRows((previous) => {
-				const current =
-					previous.scope === streamScope
-						? previous
-						: emptyLiveRows<TraceRow>(streamScope);
-				const rows = new Map(current.rows);
-				rows.delete(id);
-				rows.set(id, row);
-				if (rows.size > VISIBLE_SSE_CAP) rows.delete(rows.keys().next().value!);
+	const sse = useEventSource(
+		selectedProjectId
+			? `/v1/traces/events?project_id=${encodeURIComponent(selectedProjectId)}`
+			: "",
+		{
+			enabled: enabled && Boolean(selectedProjectId),
+			onMessage: (msg) => {
+				const { trace: event } = msg.data as { trace: TraceEvent };
+				if (event.project_id !== selectedProjectId) return;
+				if (!matchesTraceEvent(event, apiParams, debouncedTimeRange)) return;
+				const id = event.trace_id;
+				const row: TraceRow = {
+					trace_id: event.trace_id,
+					project_id: event.project_id ?? "",
+					name: event.name,
+					start_time: event.start_time,
+					end_time: event.end_time ?? null,
+					duration_ms: event.duration_ms ?? null,
+					status: event.status,
+					user_id: event.user_id ?? "",
+					session_id: event.session_id ?? "",
+					agent_id: event.agent_id ?? "",
+					agent_version: event.agent_version ?? "",
+					env: event.env ?? "",
+					tags: event.tags ?? [],
+					input_text: event.input_text ?? "",
+					output_text: event.output_text ?? "",
+					scores_summary: event.scores_summary ?? "",
+				};
+				setLiveRows((previous) => {
+					const current =
+						previous.scope === streamScope
+							? previous
+							: emptyLiveRows<TraceRow>(streamScope);
+					const rows = new Map(current.rows);
+					rows.delete(id);
+					rows.set(id, row);
+					if (rows.size > VISIBLE_SSE_CAP)
+						rows.delete(rows.keys().next().value!);
 
-				const pendingIds = current.pendingIds;
-				if (!paginatedIds.has(id)) pendingIds.add(id);
+					const pendingIds = current.pendingIds;
+					if (!paginatedIds.has(id)) pendingIds.add(id);
 
-				const highlightVersions = new Map(current.highlightVersions);
-				highlightVersions.delete(id);
-				highlightVersions.set(id, (current.highlightVersions.get(id) ?? 0) + 1);
-				if (highlightVersions.size > VISIBLE_SSE_CAP) {
-					highlightVersions.delete(highlightVersions.keys().next().value!);
-				}
-				return { scope: streamScope, rows, pendingIds, highlightVersions };
-			});
+					const highlightVersions = new Map(current.highlightVersions);
+					highlightVersions.delete(id);
+					highlightVersions.set(
+						id,
+						(current.highlightVersions.get(id) ?? 0) + 1,
+					);
+					if (highlightVersions.size > VISIBLE_SSE_CAP) {
+						highlightVersions.delete(highlightVersions.keys().next().value!);
+					}
+					return { scope: streamScope, rows, pendingIds, highlightVersions };
+				});
+			},
 		},
-	});
+	);
 
 	// Merge paginated + capped streamed rows; sort by start_time DESC so the
 	// live view matches the order returned by the REST endpoint on reload.
@@ -647,6 +663,7 @@ export interface ObservationEvent {
 }
 
 function useSpansData() {
+	const { selectedProjectId } = useProjectSelection();
 	const [filters, setFilters] = React.useState<Record<string, string>>(() =>
 		emptyFilters(SPAN_FILTER_FIELDS),
 	);
@@ -668,8 +685,9 @@ function useSpansData() {
 		() => ({
 			...buildSpanApiParams(debouncedFilters, debouncedTimeRange),
 			limit: PAGE_SIZE,
+			project_id: selectedProjectId ?? undefined,
 		}),
-		[debouncedFilters, debouncedTimeRange],
+		[debouncedFilters, debouncedTimeRange, selectedProjectId],
 	);
 	const streamScope = JSON.stringify(apiParams);
 
@@ -683,6 +701,7 @@ function useSpansData() {
 				offset: pageParam as number,
 			}),
 		initialPageParam: 0,
+		enabled: Boolean(selectedProjectId),
 		getNextPageParam: (
 			lastPage: { items: ObservationRow[]; total: number },
 			allPages: Array<{ items: ObservationRow[]; total: number }>,
@@ -734,57 +753,67 @@ function useSpansData() {
 		return () => document.removeEventListener("visibilitychange", onVis);
 	}, []);
 
-	const sse = useEventSource("/v1/observations/events", {
-		enabled,
-		onMessage: (msg) => {
-			const { observation: event } = msg.data as {
-				observation: ObservationEvent;
-			};
-			if (!matchesObservationEvent(event, apiParams, debouncedTimeRange))
-				return;
-			const id = event.observation_id;
-			const row: ObservationRow = {
-				observation_id: event.observation_id,
-				trace_id: event.trace_id,
-				project_id: event.project_id ?? "",
-				parent_observation_id: event.parent_observation_id ?? null,
-				type: event.type,
-				name: event.name,
-				start_time: event.start_time,
-				end_time: event.end_time ?? null,
-				duration_ms: event.duration_ms ?? null,
-				status: event.status,
-				model: event.model ?? null,
-				input_text: event.input_text ?? "",
-				output_text: event.output_text ?? "",
-				metadata: normalizeObservationMetadata(
-					event.metadata,
-					event.type === "generation",
-				),
-			};
-			setLiveRows((previous) => {
-				const current =
-					previous.scope === streamScope
-						? previous
-						: emptyLiveRows<ObservationRow>(streamScope);
-				const rows = new Map(current.rows);
-				rows.delete(id);
-				rows.set(id, row);
-				if (rows.size > VISIBLE_SSE_CAP) rows.delete(rows.keys().next().value!);
+	const sse = useEventSource(
+		selectedProjectId
+			? `/v1/observations/events?project_id=${encodeURIComponent(selectedProjectId)}`
+			: "",
+		{
+			enabled: enabled && Boolean(selectedProjectId),
+			onMessage: (msg) => {
+				const { observation: event } = msg.data as {
+					observation: ObservationEvent;
+				};
+				if (event.project_id !== selectedProjectId) return;
+				if (!matchesObservationEvent(event, apiParams, debouncedTimeRange))
+					return;
+				const id = event.observation_id;
+				const row: ObservationRow = {
+					observation_id: event.observation_id,
+					trace_id: event.trace_id,
+					project_id: event.project_id ?? "",
+					parent_observation_id: event.parent_observation_id ?? null,
+					type: event.type,
+					name: event.name,
+					start_time: event.start_time,
+					end_time: event.end_time ?? null,
+					duration_ms: event.duration_ms ?? null,
+					status: event.status,
+					model: event.model ?? null,
+					input_text: event.input_text ?? "",
+					output_text: event.output_text ?? "",
+					metadata: normalizeObservationMetadata(
+						event.metadata,
+						event.type === "generation",
+					),
+				};
+				setLiveRows((previous) => {
+					const current =
+						previous.scope === streamScope
+							? previous
+							: emptyLiveRows<ObservationRow>(streamScope);
+					const rows = new Map(current.rows);
+					rows.delete(id);
+					rows.set(id, row);
+					if (rows.size > VISIBLE_SSE_CAP)
+						rows.delete(rows.keys().next().value!);
 
-				const pendingIds = current.pendingIds;
-				if (!paginatedIds.has(id)) pendingIds.add(id);
+					const pendingIds = current.pendingIds;
+					if (!paginatedIds.has(id)) pendingIds.add(id);
 
-				const highlightVersions = new Map(current.highlightVersions);
-				highlightVersions.delete(id);
-				highlightVersions.set(id, (current.highlightVersions.get(id) ?? 0) + 1);
-				if (highlightVersions.size > VISIBLE_SSE_CAP) {
-					highlightVersions.delete(highlightVersions.keys().next().value!);
-				}
-				return { scope: streamScope, rows, pendingIds, highlightVersions };
-			});
+					const highlightVersions = new Map(current.highlightVersions);
+					highlightVersions.delete(id);
+					highlightVersions.set(
+						id,
+						(current.highlightVersions.get(id) ?? 0) + 1,
+					);
+					if (highlightVersions.size > VISIBLE_SSE_CAP) {
+						highlightVersions.delete(highlightVersions.keys().next().value!);
+					}
+					return { scope: streamScope, rows, pendingIds, highlightVersions };
+				});
+			},
 		},
-	});
+	);
 
 	const merged = React.useMemo(
 		() =>

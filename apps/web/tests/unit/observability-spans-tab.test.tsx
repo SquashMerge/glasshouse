@@ -21,6 +21,14 @@ vi.mocked(listObservations);
 
 const navigate = vi.fn();
 let pushEvent: ((msg: { event: string; data: unknown }) => void) | null = null;
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+let selectedProjectId = PROJECT_ID;
+let sseUrl = "";
+
+vi.mock("../../src/components/ProjectProvider", () => ({
+	useProjectSelection: () => ({ selectedProjectId }),
+}));
 
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
@@ -48,7 +56,7 @@ vi.mock("../../src/lib/api", async () => {
 				{
 					observation_id: SPAN_ID,
 					trace_id: TRACE_ID,
-					project_id: "proj-1",
+					project_id: PROJECT_ID,
 					parent_observation_id: null,
 					type: "span",
 					name: "first-span",
@@ -75,12 +83,13 @@ vi.mock("../../src/hooks/useEventSource", async () => {
 	return {
 		...actual,
 		useEventSource: (
-			_url: string,
+			url: string,
 			opts: {
 				enabled?: boolean;
 				onMessage?: (msg: { event: string; data: unknown }) => void;
 			} = {},
 		) => {
+			sseUrl = url;
 			pushEvent = opts.onMessage ?? null;
 			let paused = false;
 			const reconnect: ReconnectFn = (next) => {
@@ -121,7 +130,7 @@ function makeSpanEvent(
 	return {
 		observation_id: overrides.observation_id ?? SPAN_ID,
 		trace_id: overrides.trace_id ?? TRACE_ID,
-		project_id: "proj-1",
+		project_id: PROJECT_ID,
 		parent_observation_id: null,
 		type: overrides.type ?? "span",
 		name: overrides.name ?? "root",
@@ -150,6 +159,8 @@ beforeEach(() => {
 	navigate.mockReset();
 	navigate.mockResolvedValue(undefined);
 	pushEvent = null;
+	selectedProjectId = PROJECT_ID;
+	sseUrl = "";
 });
 
 afterEach(() => {
@@ -180,6 +191,38 @@ describe("SpansTab — SSE merge + highlight", () => {
 		const row = cell.closest("tr");
 		expect(row).not.toBeNull();
 		expect(row!.getAttribute("data-highlighted")).toBe("true");
+		expect(vi.mocked(listObservations)).toHaveBeenCalledWith(
+			expect.objectContaining({ project_id: PROJECT_ID }),
+		);
+		expect(sseUrl).toBe(`/v1/observations/events?project_id=${PROJECT_ID}`);
+	});
+
+	it("uses a fresh SSE scope when the selected project changes", async () => {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+		});
+		const rendered = render(
+			<QueryClientProvider client={client}>
+				<SpansTab />
+			</QueryClientProvider>,
+		);
+		await screen.findByText("first-span", {}, { timeout: 2000 });
+
+		selectedProjectId = OTHER_PROJECT_ID;
+		rendered.rerender(
+			<QueryClientProvider client={client}>
+				<SpansTab />
+			</QueryClientProvider>,
+		);
+
+		await waitFor(() =>
+			expect(vi.mocked(listObservations)).toHaveBeenCalledWith(
+				expect.objectContaining({ project_id: OTHER_PROJECT_ID }),
+			),
+		);
+		expect(sseUrl).toBe(
+			`/v1/observations/events?project_id=${OTHER_PROJECT_ID}`,
+		);
 	});
 
 	it("navigates to /observability/traces/{32-hex}?span={obs_id} on row click", async () => {

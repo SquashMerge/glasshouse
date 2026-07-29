@@ -1,6 +1,6 @@
 // schemas/traces.ts
 import { z } from "@hono/zod-openapi";
-import { ErrorEnvelope, NotImplementedError } from "./common.js";
+import { ErrorEnvelope, NotImplementedError, PageQuery } from "./common.js";
 
 export const TraceStatus = z.enum(["ok", "error"]).openapi("TraceStatus");
 
@@ -31,16 +31,24 @@ export const TraceList = z
 	})
 	.openapi("TraceList");
 
+const ProjectIdQuery = z
+	.string()
+	.uuid()
+	.openapi({ param: { name: "project_id", in: "query" } });
+
 export const TraceDetailQuery = z
 	.object({
 		expand: z.string().optional(),
-		project_id: z
-			.string()
-			.uuid()
-			.optional()
-			.openapi({ param: { name: "project_id", in: "query" } }),
+		project_id: ProjectIdQuery.optional(),
 	})
 	.strict();
+
+export const TraceEventsQuery = z
+	.object({ project_id: ProjectIdQuery })
+	.strict();
+export const TraceListQuery = PageQuery.extend({
+	project_id: ProjectIdQuery,
+}).passthrough();
 
 export const PromptProvenance = z
 	.object({

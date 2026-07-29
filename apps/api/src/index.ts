@@ -42,28 +42,39 @@ function isUuid(value: unknown): value is string {
 	);
 }
 
-async function requestedProjectId(c: {
+function isJsonContentType(contentType: string | undefined): boolean {
+	return (
+		contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
+	);
+}
+
+async function requestedProjectIds(c: {
 	req: {
 		header: (name: string) => string | undefined;
 		path: string;
 		query: (name: string) => string | undefined;
 		raw: Request;
 	};
-}): Promise<string | undefined> {
-	const queryProjectId =
-		c.req.query("project_id") ?? c.req.query("filter[project_id]");
-	if (isUuid(queryProjectId)) return queryProjectId;
+}): Promise<ReadonlySet<string>> {
+	const projectIds = new Set<string>();
+	const addProjectId = (candidate: unknown) => {
+		if (isUuid(candidate)) projectIds.add(candidate.toLowerCase());
+	};
+
+	addProjectId(c.req.query("project_id"));
+	addProjectId(c.req.query("filter[project_id]"));
 	if (
 		c.req.path === "/v1/otel/v1/traces" ||
-		!c.req.header("content-type")?.includes("application/json")
+		!isJsonContentType(c.req.header("content-type"))
 	)
-		return undefined;
+		return projectIds;
 	try {
 		const body = (await c.req.raw.clone().json()) as Record<string, unknown>;
-		return isUuid(body.project_id) ? body.project_id : undefined;
+		addProjectId(body.project_id);
 	} catch {
-		return undefined;
+		// Route-level validation owns malformed or non-JSON request bodies.
 	}
+	return projectIds;
 }
 
 export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
@@ -127,8 +138,10 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	apiApp.use("/v1/*", basicAuthMiddleware());
 	apiApp.use("/v1/*", async (c, next) => {
 		try {
-			const projectId = await requestedProjectId(c);
-			if (projectId)
+			const projectIds = await requestedProjectIds(c);
+			if (projectIds.size > 1)
+				throw new TenantScopeError("Conflicting project selectors");
+			for (const projectId of projectIds)
 				await resolvedDependencies.assertTenantProjectAccess(
 					resolvedDependencies.pgPool(),
 					trustedTenant(c),
@@ -171,7 +184,11 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				throw new TenantScopeError(
 					"Project is not available to this organization",
 				);
-			return resolvedDependencies.handleOtlpIngest(c.req.raw, scope);
+			return resolvedDependencies.handleOtlpIngest(
+				c.req.raw,
+				scope,
+				requestedProjectId ? scope.projectId : undefined,
+			);
 		} catch (cause) {
 			if (cause instanceof TenantScopeError) {
 				return c.json(
