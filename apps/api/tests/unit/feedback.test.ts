@@ -41,8 +41,24 @@ describe("feedback contract", () => {
 		);
 	});
 
-	it("limits review states and link fields", () => {
+	it("requires complete dataset linkage only when a review is added to a dataset", () => {
+		const dataset_id = "22222222-2222-4222-8222-222222222222";
+		const dataset_item_id = "44444444-4444-4444-8444-444444444444";
 		expect(FeedbackReview.safeParse({ status: "reviewed" }).success).toBe(true);
+		expect(
+			FeedbackReview.safeParse({ status: "added_to_dataset", dataset_id }).success,
+		).toBe(false);
+		expect(
+			FeedbackReview.safeParse({
+				status: "added_to_dataset",
+				dataset_id,
+				dataset_item_id,
+			}).success,
+		).toBe(true);
+		expect(
+			FeedbackReview.safeParse({ status: "dismissed", dataset_id, dataset_item_id })
+				.success,
+		).toBe(false);
 		expect(FeedbackReview.safeParse({ status: "unknown" }).success).toBe(false);
 	});
 });

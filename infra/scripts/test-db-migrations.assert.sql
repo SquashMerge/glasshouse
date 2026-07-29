@@ -404,6 +404,67 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'feedback promotion idempotency constraint is incomplete';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_score_project_fk'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_dataset_project_fk'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_dataset_item_dataset_fk'
+    ) THEN
+        RAISE EXCEPTION 'feedback project scope constraints are incomplete';
+    END IF;
+
+    INSERT INTO datasets (id, project_id, name) VALUES
+        ('a1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-a'),
+        ('a2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-b'),
+        ('b1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'feedback-scope-other');
+    INSERT INTO dataset_items (id, dataset_id, input) VALUES
+        ('a1000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', '{}'),
+        ('a2000000-0000-4000-8000-000000000002', 'a2000000-0000-4000-8000-000000000001', '{}'),
+        ('b1000000-0000-4000-8000-000000000002', 'b1000000-0000-4000-8000-000000000001', '{}');
+    INSERT INTO scores (id, project_id, trace_id, name, value, metadata) VALUES
+        ('c1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-1', 'human.feedback', -1, '{}'),
+        ('c2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-2', 'human.feedback', -1, '{}'),
+        ('c3000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-3', 'human.feedback', -1, '{}');
+    BEGIN
+        INSERT INTO feedback_reviews (score_id, project_id, status)
+        VALUES ('c1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'new');
+        RAISE EXCEPTION 'feedback review accepted a score from another project';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+        VALUES (
+            'c2000000-0000-4000-8000-000000000001',
+            '11111111-1111-1111-1111-111111111111',
+            'added_to_dataset',
+            'b1000000-0000-4000-8000-000000000001',
+            'b1000000-0000-4000-8000-000000000002'
+        );
+        RAISE EXCEPTION 'feedback review accepted a dataset from another project';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+        VALUES (
+            'c3000000-0000-4000-8000-000000000001',
+            '11111111-1111-1111-1111-111111111111',
+            'added_to_dataset',
+            'a1000000-0000-4000-8000-000000000001',
+            'a2000000-0000-4000-8000-000000000002'
+        );
+        RAISE EXCEPTION 'feedback review accepted a dataset item from another dataset';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
     INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
     VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
     BEGIN

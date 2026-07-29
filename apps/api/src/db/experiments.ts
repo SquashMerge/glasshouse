@@ -102,7 +102,7 @@ export async function createExperiment(
 ) {
 	try {
 		const r = await db.query(
-			`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status) VALUES ($1,$2,$3,$4,$5,$6::jsonb,'pending') RETURNING *`,
+			`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending' WHERE $3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2) RETURNING *`,
 			[
 				randomUUID(),
 				input.project_id,
@@ -112,7 +112,9 @@ export async function createExperiment(
 				JSON.stringify(input.config),
 			],
 		);
-		return experiment(r.rows[0]!);
+		if (!r.rows[0])
+			throw new ExperimentRepositoryError("NOT_FOUND", "Agent not found");
+		return experiment(r.rows[0]);
 	} catch (cause) {
 		throw normalize(cause);
 	}
