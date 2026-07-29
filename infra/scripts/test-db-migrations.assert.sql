@@ -473,5 +473,25 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
         IF SQLSTATE <> 'P0001' THEN RAISE; END IF;
     END;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'experiment_tasks'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'experiment_tasks'::regclass AND contype = 'u'
+            AND pg_get_constraintdef(oid) LIKE '%experiment_id, dataset_item_id%'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'experiment_results'::regclass AND contype = 'u'
+            AND pg_get_constraintdef(oid) LIKE '%experiment_id, dataset_item_id%'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'experiment_tasks_claimable_idx'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'experiments_seed_tasks' AND NOT tgisinternal
+    ) THEN
+        RAISE EXCEPTION 'durable experiment task ledger is incomplete';
+    END IF;
 END
 $$;

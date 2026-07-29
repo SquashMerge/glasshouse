@@ -10,6 +10,25 @@ export type ExperimentStatus =
 	| "failed"
 	| "cancelled";
 export type JsonObject = Record<string, unknown>;
+export type ExperimentTaskStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "failed"
+	| "cancelled";
+export type ClaimedExperimentTask = {
+	id: string;
+	dataset_item_id: string;
+	lease_token: string;
+	input: JsonObject;
+	expected_output: unknown;
+};
+export type RecoverableExperiment = {
+	id: string;
+	project_id: string;
+	dataset_id: string;
+	config: JsonObject;
+};
 
 export class ExperimentRepositoryError extends Error {
 	readonly status: 400 | 404 | 409 | 500;
@@ -181,15 +200,142 @@ export async function updateExperiment(
 		throw normalize(cause);
 	}
 }
-export async function failInterruptedExperiments(db: Queryable) {
+export async function listRecoverableExperiments(db: Queryable) {
 	try {
 		const result = await db.query(
-			"UPDATE experiments SET status='failed', updated_at=now() WHERE status IN ('pending','running') RETURNING id, project_id",
+			"SELECT id, project_id, dataset_id, config FROM experiments WHERE status IN ('pending', 'running') ORDER BY created_at ASC",
 		);
 		return result.rows.map((row) => ({
 			id: text(row, "id"),
 			project_id: text(row, "project_id"),
+			dataset_id: text(row, "dataset_id"),
+			config: json(row, "config"),
 		}));
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function claimExperimentTask(
+	db: Queryable,
+	input: {
+		project_id: string;
+		experiment_id: string;
+		lease_seconds?: number;
+		lease_token?: string;
+	},
+): Promise<ClaimedExperimentTask | null> {
+	try {
+		const lease_token = input.lease_token ?? randomUUID();
+		const r = await db.query(
+			`WITH candidate AS (
+				SELECT t.id
+				FROM experiment_tasks t
+				JOIN experiments e ON e.id = t.experiment_id
+				WHERE t.experiment_id = $1
+					AND e.project_id = $2
+					AND e.status = 'running'
+					AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_expires_at <= now()))
+				ORDER BY t.created_at ASC
+				FOR UPDATE OF t SKIP LOCKED
+				LIMIT 1
+			), claimed AS (
+				UPDATE experiment_tasks t
+				SET status = 'running', lease_token = $3::uuid,
+					lease_expires_at = now() + ($4::integer * interval '1 second'),
+					claimed_at = coalesce(t.claimed_at, now()), attempt_count = t.attempt_count + 1,
+					updated_at = now()
+				FROM candidate c WHERE t.id = c.id
+				RETURNING t.id, t.dataset_item_id, t.lease_token
+			)
+			SELECT c.id AS task_id, c.dataset_item_id, c.lease_token, i.input, i.expected_output
+			FROM claimed c JOIN dataset_items i ON i.id = c.dataset_item_id`,
+			[
+				input.experiment_id,
+				input.project_id,
+				lease_token,
+				input.lease_seconds ?? 60,
+			],
+		);
+		const row = r.rows[0];
+		return row
+			? {
+					id: text(row, "task_id"),
+					dataset_item_id: text(row, "dataset_item_id"),
+					lease_token: text(row, "lease_token"),
+					input: json(row, "input"),
+					expected_output: row.expected_output,
+				}
+			: null;
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function finalizeExperimentTask(
+	db: Queryable,
+	input: {
+		project_id: string;
+		experiment_id: string;
+		task_id: string;
+		lease_token: string;
+		status: Extract<ExperimentTaskStatus, "completed" | "failed">;
+		agent_version?: string | null;
+		output?: JsonObject | null;
+		scores: Record<string, number>;
+		duration_ms?: number | null;
+	},
+): Promise<boolean> {
+	try {
+		const r = await db.query(
+			`WITH finalized_task AS (
+				UPDATE experiment_tasks t
+				SET status = $5, lease_token = NULL, lease_expires_at = NULL,
+					completed_at = now(), updated_at = now()
+				FROM experiments e
+				WHERE t.id = $1 AND t.experiment_id = $2 AND e.id = t.experiment_id
+					AND e.project_id = $3 AND t.lease_token = $4::uuid
+					AND t.status = 'running' AND e.status = 'running'
+				RETURNING t.experiment_id, t.dataset_item_id
+			), inserted_result AS (
+				INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status)
+				SELECT gen_random_uuid(), experiment_id, dataset_item_id, $6, $7::jsonb, $8::jsonb, $9, $5
+				FROM finalized_task
+				ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING
+				RETURNING id
+			)
+			SELECT EXISTS (SELECT 1 FROM finalized_task) AS finalized`,
+			[
+				input.task_id,
+				input.experiment_id,
+				input.project_id,
+				input.lease_token,
+				input.status,
+				input.agent_version ?? null,
+				input.output == null ? null : JSON.stringify(input.output),
+				JSON.stringify(input.scores),
+				input.duration_ms ?? null,
+			],
+		);
+		return r.rows[0]?.finalized === true;
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function completeExperimentIfTasksFinished(
+	db: Queryable,
+	input: { project_id: string; id: string },
+): Promise<boolean> {
+	try {
+		const r = await db.query(
+			`UPDATE experiments e SET status='completed', updated_at=now()
+			WHERE e.id=$1 AND e.project_id=$2 AND e.status='running'
+				AND NOT EXISTS (
+					SELECT 1 FROM experiment_tasks t
+					WHERE t.experiment_id=e.id AND t.status IN ('pending', 'running')
+				)
+			RETURNING e.id`,
+			[input.id, input.project_id],
+		);
+		return Boolean(r.rows[0]);
 	} catch (cause) {
 		throw normalize(cause);
 	}
@@ -200,7 +346,18 @@ export async function cancelExperiment(
 ) {
 	try {
 		const r = await db.query(
-			`UPDATE experiments SET status='cancelled', updated_at=now() WHERE id=$1 AND project_id=$2 AND status IN ('pending','running') RETURNING *`,
+			`WITH cancelled AS (
+				UPDATE experiments SET status='cancelled', updated_at=now()
+				WHERE id=$1 AND project_id=$2 AND status IN ('pending','running')
+				RETURNING *
+			), cancelled_tasks AS (
+				UPDATE experiment_tasks t SET status='cancelled', lease_token=NULL,
+					lease_expires_at=NULL, updated_at=now()
+				FROM cancelled e
+				WHERE t.experiment_id=e.id AND t.status IN ('pending','running')
+				RETURNING t.id
+			)
+			SELECT * FROM cancelled`,
 			[input.id, input.project_id],
 		);
 		if (!r.rows[0]) {

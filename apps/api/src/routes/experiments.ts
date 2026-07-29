@@ -3,9 +3,12 @@ import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
+	claimExperimentTask,
+	completeExperimentIfTasksFinished,
 	createExperiment as createExperimentRecord,
 	experimentSummary as experimentSummaryRecord,
 	ExperimentRepositoryError,
+	finalizeExperimentTask,
 	getExperiment as getExperimentRecord,
 	insertExperimentResult,
 	listExperimentResults,
@@ -167,6 +170,9 @@ export type ExperimentDependencies = {
 	cancelExperiment: typeof cancelExperimentRecord;
 	listResults: typeof listExperimentResults;
 	insertResult: typeof insertExperimentResult;
+	claimTask: typeof claimExperimentTask;
+	finalizeTask: typeof finalizeExperimentTask;
+	completeExperiment: typeof completeExperimentIfTasksFinished;
 	summary: typeof experimentSummaryRecord;
 	listDatasetItems: typeof listDatasetItems;
 	getDataset: typeof getDataset;
@@ -274,6 +280,9 @@ export const production: ExperimentDependencies = {
 	cancelExperiment: cancelExperimentRecord,
 	listResults: listExperimentResults,
 	insertResult: insertExperimentResult,
+	claimTask: claimExperimentTask,
+	finalizeTask: finalizeExperimentTask,
+	completeExperiment: completeExperimentIfTasksFinished,
 	summary: experimentSummaryRecord,
 	listDatasetItems,
 	getDataset,
@@ -303,13 +312,9 @@ export async function executeExperiment(
 		if_status: "pending",
 	});
 	if (started.status !== undefined && started.status !== "running") return;
-	const dataset = await deps.listDatasetItems(db, {
-		project_id: input.project_id,
-		dataset_id: input.dataset_id,
-	});
 	const evaluator =
 		input.config.evaluator === "contains" ? "contains" : "exact_match";
-	for (const item of dataset.items) {
+	for (;;) {
 		if (signal?.aborted) {
 			await deps.updateExperiment(db, {
 				project_id: input.project_id,
@@ -319,39 +324,42 @@ export async function executeExperiment(
 			});
 			return;
 		}
-		const current = await deps.getExperiment(db, {
+		const task = await deps.claimTask(db, {
 			project_id: input.project_id,
-			id: input.experiment_id,
+			experiment_id: input.experiment_id,
 		});
-		if (current.status === "cancelled") return;
-		const started = Date.now();
+		if (!task) break;
+		const itemStarted = Date.now();
 		try {
-			const llm = await deps.invokeLlm(item.input, input.config, signal);
-			const scores = scoreCase(evaluator, item.expected_output, llm.output);
-			const duration_ms = Date.now() - started;
-			await deps.insertResult(db, {
+			const llm = await deps.invokeLlm(task.input, input.config, signal);
+			const scores = scoreCase(evaluator, task.expected_output, llm.output);
+			const duration_ms = Date.now() - itemStarted;
+			const finalized = await deps.finalizeTask(db, {
+				project_id: input.project_id,
 				experiment_id: input.experiment_id,
-				dataset_item_id: item.id,
+				task_id: task.id,
+				lease_token: task.lease_token,
 				output: llm.output,
 				scores,
 				duration_ms,
 				status: scores[evaluator] === 1 ? "completed" : "failed",
 				agent_version: llm.model,
 			});
+			if (!finalized) return;
 			try {
 				await deps.trace({
 					project_id: input.project_id,
 					experiment_id: input.experiment_id,
-					item_id: item.id,
+					item_id: task.dataset_item_id,
 					model: llm.model,
-					input: item.input,
+					input: task.input,
 					output: JSON.stringify(llm.output),
 					duration_ms,
 				});
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", {
 					experiment_id: input.experiment_id,
-					dataset_item_id: item.id,
+					dataset_item_id: task.dataset_item_id,
 					error_type:
 						traceError instanceof Error ? traceError.name : typeof traceError,
 				});
@@ -362,60 +370,57 @@ export async function executeExperiment(
 					project_id: input.project_id,
 					id: input.experiment_id,
 					status: "cancelled",
+					if_status: ["pending", "running"],
 				});
 				return;
 			}
-			const duration_ms = Date.now() - started;
-			await deps.insertResult(db, {
+			const duration_ms = Date.now() - itemStarted;
+			const finalized = await deps.finalizeTask(db, {
+				project_id: input.project_id,
 				experiment_id: input.experiment_id,
-				dataset_item_id: item.id,
+				task_id: task.id,
+				lease_token: task.lease_token,
 				output: null,
 				scores: { [evaluator]: 0 },
 				duration_ms,
 				status: "failed",
 			});
+			if (!finalized) return;
 			try {
 				await deps.trace({
 					project_id: input.project_id,
 					experiment_id: input.experiment_id,
-					item_id: item.id,
+					item_id: task.dataset_item_id,
 					model:
 						typeof input.config.model === "string"
 							? input.config.model
 							: "configured-model",
-					input: item.input,
+					input: task.input,
 					output: "evaluation_failed",
 					duration_ms,
 				});
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", {
 					experiment_id: input.experiment_id,
-					dataset_item_id: item.id,
+					dataset_item_id: task.dataset_item_id,
 					error_type:
 						traceError instanceof Error ? traceError.name : typeof traceError,
 				});
 			}
 		}
 	}
-	const final = await deps.getExperiment(db, {
-		project_id: input.project_id,
-		id: input.experiment_id,
-	});
-	if (final.status === "cancelled" || signal?.aborted) {
-		if (final.status !== "cancelled")
-			await deps.updateExperiment(db, {
-				project_id: input.project_id,
-				id: input.experiment_id,
-				status: "cancelled",
-				if_status: ["pending", "running"],
-			});
+	if (signal?.aborted) {
+		await deps.updateExperiment(db, {
+			project_id: input.project_id,
+			id: input.experiment_id,
+			status: "cancelled",
+			if_status: ["pending", "running"],
+		});
 		return;
 	}
-	await deps.updateExperiment(db, {
+	await deps.completeExperiment(db, {
 		project_id: input.project_id,
 		id: input.experiment_id,
-		status: "completed",
-		if_status: "running",
 	});
 }
 
