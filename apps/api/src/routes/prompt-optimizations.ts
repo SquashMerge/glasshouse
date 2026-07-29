@@ -255,6 +255,21 @@ export function nextOptimizationEvents(
 	};
 }
 
+export async function renewOptimizationLease(input: {
+	job_id: string;
+	controller: AbortController;
+	renew: () => Promise<boolean>;
+}): Promise<void> {
+	try {
+		if (!(await input.renew())) input.controller.abort();
+	} catch (cause) {
+		logger.error("optimization.lease_renewal_failed", cause, {
+			job_id: input.job_id,
+		});
+		input.controller.abort();
+	}
+}
+
 export function validateGepaCandidate(
 	original: string,
 	candidate: string,
@@ -320,11 +335,11 @@ async function run(
 	});
 	activeWorkers.set(job.id, controller);
 	const leaseRenewal = setInterval(() => {
-		void d
-			.renew(d.pool(), { id: job.id, worker_id: workerId })
-			.then((owned) => {
-				if (!owned) controller.abort();
-			});
+		void renewOptimizationLease({
+			job_id: job.id,
+			controller,
+			renew: () => d.renew(d.pool(), { id: job.id, worker_id: workerId }),
+		});
 	}, 60_000);
 	try {
 		await d.transition(d.pool(), {

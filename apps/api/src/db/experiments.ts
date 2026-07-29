@@ -163,6 +163,19 @@ export async function updateExperiment(
 		throw normalize(cause);
 	}
 }
+export async function failInterruptedExperiments(db: Queryable) {
+	try {
+		const result = await db.query(
+			"UPDATE experiments SET status='failed', updated_at=now() WHERE status IN ('pending','running') RETURNING id, project_id",
+		);
+		return result.rows.map((row) => ({
+			id: text(row, "id"),
+			project_id: text(row, "project_id"),
+		}));
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
 export async function cancelExperiment(
 	db: Queryable,
 	input: { project_id: string; id: string },

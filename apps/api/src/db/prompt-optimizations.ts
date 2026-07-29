@@ -259,6 +259,18 @@ export async function renewOptimizationJobLease(
 	);
 	return renewed.length === 1;
 }
+export async function failInterruptedOptimizationJobs(
+	pool: Pick<Pool, "query">,
+): Promise<Array<{ id: string; project_id: string }>> {
+	const failed = await rows(
+		pool,
+		"UPDATE prompt_optimization_jobs SET status='failed', error_message='Interrupted by API restart', updated_at=now(), completed_at=now() WHERE status IN ('queued','preparing','optimizing','evaluating') RETURNING id, project_id",
+	);
+	return failed.map((row) => ({
+		id: String(row.id),
+		project_id: String(row.project_id),
+	}));
+}
 export async function optimizationSourceMessages(
 	pool: Pick<Pool, "query">,
 	input: { project_id: string; id: string },

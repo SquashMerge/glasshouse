@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import {
 	claimOptimizationJob,
 	createOptimizationJob,
+	failInterruptedOptimizationJobs,
 	publishOptimizationResult,
 	renewOptimizationJobLease,
 	stopOptimizationJob,
@@ -342,5 +343,23 @@ describe("prompt optimization repository", () => {
 		expect(pool.client.calls.map((call) => call.text)).not.toContain(
 			expect.stringContaining("INSERT INTO prompt_optimization_events"),
 		);
+	});
+
+	it("marks incomplete jobs failed after an API restart", async () => {
+		const calls: Call[] = [];
+		const pool = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				return { rows: [{ id: JOB, project_id: PROJECT }] };
+			},
+		};
+
+		expect(await failInterruptedOptimizationJobs(pool)).toEqual([
+			{ id: JOB, project_id: PROJECT },
+		]);
+		expect(calls[0]?.text).toContain(
+			"status IN ('queued','preparing','optimizing','evaluating')",
+		);
+		expect(calls[0]?.text).toContain("SET status='failed'");
 	});
 });
