@@ -51,9 +51,9 @@ docker exec --interactive "$CONTAINER" \
   < "$ROOT/infra/scripts/test-db-migrations.fixture.sql"
 
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  bun --cwd "$ROOT/apps/api" run db:migrate
+  bun run --cwd "$ROOT/apps/api" db:migrate
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  bun --cwd "$ROOT/apps/api" run db:migrate
+  bun run --cwd "$ROOT/apps/api" db:migrate
 
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
