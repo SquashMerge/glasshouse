@@ -196,7 +196,7 @@ export function TraceDetailPage() {
 		}),
 		[clearHighlightTimers],
 	);
-	const stream = useTraceStream(id, handlers);
+	const stream = useTraceStream(id, handlers, project?.selectedProjectId);
 	React.useEffect(() => {
 		if (!validId || receivedSnapshot || notFound) return;
 		const timeout = window.setTimeout(

@@ -50,7 +50,8 @@ export const otlpIngestRoute = createRoute({
 			content: { "application/json": { schema: ExportTraceServiceResponse } },
 		},
 		400: {
-			description: "Malformed request body",
+			description:
+				"Malformed request body or conflicting project provenance for a trace",
 			content: { "application/json": { schema: ErrorEnvelope } },
 		},
 	},
@@ -118,6 +119,17 @@ export function createOtlpIngestHandler(
 						...normalized.observation,
 						organization_id: tenant.organizationId,
 					};
+					const existingTrace = traces.get(trace.trace_id);
+					if (
+						existingTrace &&
+						existingTrace.trace.project_id !== trace.project_id
+					) {
+						return jsonError(
+							400,
+							"BAD_REQUEST",
+							"Trace contains conflicting project provenance",
+						);
+					}
 					trace.input_text = redactTraceText(trace.input_text, redaction);
 					trace.output_text = redactTraceText(trace.output_text, redaction);
 					observation.input_text = trace.input_text;
@@ -129,7 +141,7 @@ export function createOtlpIngestHandler(
 					const isRoot = observation.parent_observation_id === null;
 					traces.set(
 						trace.trace_id,
-						aggregateTrace(traces.get(trace.trace_id), trace, isRoot),
+						aggregateTrace(existingTrace, trace, isRoot),
 					);
 					observations.push(observation);
 				}

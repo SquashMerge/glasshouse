@@ -28,11 +28,12 @@ import {
 
 const VALID_TRACE_ID = "0123456789abcdef0123456789abcdef";
 const DEFAULT_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
 const fakeTrace: TraceRow = {
 	trace_id: VALID_TRACE_ID,
 	organization_id: DEFAULT_ORGANIZATION_ID,
-	project_id: "proj-it",
+	project_id: PROJECT_ID,
 	name: "integration-trace",
 	start_time: "2024-01-01 00:00:00.000",
 	end_time: null,
@@ -53,7 +54,7 @@ const fakeObservation: ObservationRow = {
 	observation_id: "obs-it-1",
 	trace_id: VALID_TRACE_ID,
 	organization_id: DEFAULT_ORGANIZATION_ID,
-	project_id: "proj-it",
+	project_id: PROJECT_ID,
 	parent_observation_id: null,
 	type: "generation",
 	name: "it-obs",
@@ -307,7 +308,7 @@ describe("GET /v1/traces/events (list SSE)", () => {
 
 describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 	it("two parallel SSE clients both receive the same observation (AC8 multi-client)", async () => {
-		const url = `http://x/v1/traces/${VALID_TRACE_ID}/events`;
+		const url = `http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`;
 
 		const resA = await apiApp.fetch(
 			new Request(url, { method: "GET", headers: { authorization: AUTH } }),
@@ -356,10 +357,13 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 
 	it("snapshot event arrives first and contains the snapshot observations", async () => {
 		const res = await apiApp.fetch(
-			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-				method: "GET",
-				headers: { authorization: AUTH },
-			}),
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{
+					method: "GET",
+					headers: { authorization: AUTH },
+				},
+			),
 		);
 		const reader = res.body!.getReader();
 		await reader.read(); // :ok
@@ -385,10 +389,13 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 
 	it("grace timer fires and stream closes after TRACE_COMPLETE_GRACE_MS", async () => {
 		const res = await apiApp.fetch(
-			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-				method: "GET",
-				headers: { authorization: AUTH },
-			}),
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{
+					method: "GET",
+					headers: { authorization: AUTH },
+				},
+			),
 		);
 		const reader = res.body!.getReader();
 		await readOkAndSnapshot(reader);
@@ -416,12 +423,15 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		expect(next.done).toBe(true);
 	});
 
-	it("non-matching observations do NOT arrive on this stream (filter by trace_id)", async () => {
+	it("non-matching observations do NOT arrive on this stream (filter by trace ID and project)", async () => {
 		const res = await apiApp.fetch(
-			new Request(`http://x/v1/traces/${VALID_TRACE_ID}/events`, {
-				method: "GET",
-				headers: { authorization: AUTH },
-			}),
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{
+					method: "GET",
+					headers: { authorization: AUTH },
+				},
+			),
 		);
 		const reader = res.body!.getReader();
 		await readOkAndSnapshot(reader);

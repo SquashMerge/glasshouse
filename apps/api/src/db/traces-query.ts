@@ -174,10 +174,16 @@ export async function getTrace(
 	client: ClickHouseClient,
 	organizationId: string,
 	traceId: string,
+	projectId?: string,
 ): Promise<{ trace: TraceRow | null; observations: ObservationRow[] }> {
+	const query_params = {
+		organization_id: organizationId,
+		trace_id: traceId,
+		project_id: projectId ?? "",
+	};
 	const traceResult = await client.query({
-		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} LIMIT 1`,
-		query_params: { organization_id: organizationId, trace_id: traceId },
+		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} LIMIT 1`,
+		query_params,
 		format: "JSONEachRow",
 	});
 	const traceRows = (await traceResult.json()) as TraceRow[];
@@ -185,8 +191,8 @@ export async function getTrace(
 	if (!trace) return { trace: null, observations: [] };
 
 	const obsResult = await client.query({
-		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} ORDER BY start_time ASC`,
-		query_params: { organization_id: organizationId, trace_id: traceId },
+		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} ORDER BY start_time ASC`,
+		query_params,
 		format: "JSONEachRow",
 	});
 	const observations = (await obsResult.json()) as ObservationRow[];

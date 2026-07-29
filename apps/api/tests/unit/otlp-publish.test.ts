@@ -46,6 +46,7 @@ beforeAll(() => {
 
 beforeEach(() => {
 	delete process.env.VALKEY_PUBSUB_URL;
+	defaultClient.mockClear();
 	insertTraces.mockClear();
 	insertObservations.mockClear();
 	_resetForTests();
@@ -167,6 +168,113 @@ describe("OTLP ingest publishes events", () => {
 			"",
 			"",
 		]);
+	});
+
+	it("rejects a trace split across scoped and unscoped resource spans before writes or events", async () => {
+		const traces: unknown[] = [];
+		const observations: unknown[] = [];
+		subscribe("trace.created", (message) => traces.push(message));
+		subscribe("observation.created", (message) => observations.push(message));
+
+		const res = await handleOtlpIngest(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({
+					resource_spans: [
+						validOtlp(
+							[
+								{
+									trace_id: HEX32_A,
+									span_id: HEX16_A,
+									name: "scoped",
+									start_time_unix_nano: String(NOW_NS),
+									attributes: [],
+								},
+							],
+							[
+								{
+									key: "astraea.project.id",
+									value: { stringValue: PROJECT_ID },
+								},
+							],
+						).resource_spans[0],
+						validOtlp([
+							{
+								trace_id: HEX32_A,
+								span_id: HEX16_B,
+								name: "legacy",
+								start_time_unix_nano: String(NOW_NS + 1),
+								attributes: [],
+							},
+						]).resource_spans[0],
+					],
+				}),
+			}),
+		);
+
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			code: "BAD_REQUEST",
+			message: "Trace contains conflicting project provenance",
+		});
+		expect(defaultClient).not.toHaveBeenCalled();
+		expect(insertTraces).not.toHaveBeenCalled();
+		expect(insertObservations).not.toHaveBeenCalled();
+		expect(traces).toHaveLength(0);
+		expect(observations).toHaveLength(0);
+	});
+
+	it("rejects a trace split across two scoped projects before writes or events", async () => {
+		const res = await handleOtlpIngest(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({
+					resource_spans: [
+						validOtlp(
+							[
+								{
+									trace_id: HEX32_A,
+									span_id: HEX16_A,
+									name: "project-a",
+									start_time_unix_nano: String(NOW_NS),
+									attributes: [],
+								},
+							],
+							[
+								{
+									key: "astraea.project.id",
+									value: { stringValue: PROJECT_ID },
+								},
+							],
+						).resource_spans[0],
+						validOtlp(
+							[
+								{
+									trace_id: HEX32_A,
+									span_id: HEX16_B,
+									name: "project-b",
+									start_time_unix_nano: String(NOW_NS + 1),
+									attributes: [],
+								},
+							],
+							[
+								{
+									key: "astraea.project.id",
+									value: { stringValue: OTHER_PROJECT_ID },
+								},
+							],
+						).resource_spans[0],
+					],
+				}),
+			}),
+		);
+
+		expect(res.status).toBe(400);
+		expect(defaultClient).not.toHaveBeenCalled();
+		expect(insertTraces).not.toHaveBeenCalled();
+		expect(insertObservations).not.toHaveBeenCalled();
 	});
 
 	it("one trace.created + one observation.created for a single-span payload", async () => {

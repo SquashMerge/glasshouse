@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import type { ObservationRow, TraceRow } from "../../src/db/traces-query";
 
 const VALID_TRACE_ID = "0123456789abcdef0123456789abcdef";
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const HASH = "a".repeat(64);
 const LEGACY_METADATA = JSON.stringify([
 	{ key: "gen_ai.request.model", value: { stringValue: "gpt-4o" } },
@@ -125,11 +126,12 @@ beforeEach(() => {
 	defaultClientMock.mockClear();
 });
 
-function fakeContext(traceId = VALID_TRACE_ID): Context {
+function fakeContext(traceId = VALID_TRACE_ID, projectId?: string): Context {
 	const req = new Request(`http://x/v1/traces/${traceId}`, { method: "GET" });
 	return {
 		req: {
-			valid: () => ({ id: traceId }),
+			valid: (target: string) =>
+				target === "query" ? { project_id: projectId } : { id: traceId },
 			param: (name: string) => (name === "id" ? traceId : undefined),
 			query: () => undefined,
 			raw: req,
@@ -232,5 +234,28 @@ describe("handleGetTrace metadata envelopes", () => {
 		const res = await handleGetTrace(fakeContext());
 		expect(res.status).toBe(404);
 		expect(((await res.json()) as { code: string }).code).toBe("NOT_FOUND");
+	});
+
+	it("scopes a trace lookup to the requested project", async () => {
+		const res = await handleGetTrace(fakeContext(VALID_TRACE_ID, PROJECT_ID));
+		expect(res.status).toBe(200);
+		expect(getTraceMock).toHaveBeenCalledWith(
+			expect.anything(),
+			"00000000-0000-4000-8000-000000000001",
+			VALID_TRACE_ID,
+			PROJECT_ID,
+		);
+	});
+
+	it("returns the same 404 for a trace owned by another project", async () => {
+		getTraceMock.mockResolvedValueOnce({ trace: null, observations: [] });
+		const res = await handleGetTrace(fakeContext(VALID_TRACE_ID, PROJECT_ID));
+		expect(res.status).toBe(404);
+		expect(getTraceMock).toHaveBeenCalledWith(
+			expect.anything(),
+			"00000000-0000-4000-8000-000000000001",
+			VALID_TRACE_ID,
+			PROJECT_ID,
+		);
 	});
 });

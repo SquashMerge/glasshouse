@@ -123,18 +123,22 @@ interface TraceStreamHandles {
 	>;
 }
 
-function setupHook(traceId: string): TraceStreamHandles {
+function setupHook(traceId: string, projectId?: string): TraceStreamHandles {
 	const onSnapshot = vi.fn();
 	const onObservation = vi.fn();
 	const onStatus = vi.fn();
 	let capturedResult!: ReturnType<typeof useTraceStream>;
 	const hookResult = renderHook(
 		() => {
-			capturedResult = useTraceStream(traceId, {
-				onSnapshot,
-				onObservation,
-				onStatus,
-			});
+			capturedResult = useTraceStream(
+				traceId,
+				{
+					onSnapshot,
+					onObservation,
+					onStatus,
+				},
+				projectId,
+			);
 			return capturedResult;
 		},
 		{ initialProps: {} as Record<string, never> },
@@ -158,6 +162,20 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("useTraceStream — routing", () => {
+	it("includes the selected project in the detail stream URL", async () => {
+		setupHook(VALID_TRACE_ID, "11111111-1111-4111-8111-111111111111");
+
+		await act(async () => {
+			await flushMicrotasks();
+		});
+
+		expect(
+			handleByUrl.has(
+				`/v1/traces/${VALID_TRACE_ID}/events?project_id=11111111-1111-4111-8111-111111111111`,
+			),
+		).toBe(true);
+	});
+
 	it("routes event: snapshot → onSnapshot", async () => {
 		const { onSnapshot } = setupHook(VALID_TRACE_ID);
 

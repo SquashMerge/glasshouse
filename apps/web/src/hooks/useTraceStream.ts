@@ -97,6 +97,7 @@ interface EnvelopeMsg {
 export function useTraceStream(
 	traceId: string,
 	options: UseTraceStreamOptions,
+	projectId?: string | null,
 ): UseTraceStreamResult {
 	const { onSnapshot, onObservation, onStatus } = options;
 
@@ -160,7 +161,9 @@ export function useTraceStream(
 	// `useEventSource` unconditionally (Rules of Hooks) but with `enabled: false`
 	// and a placeholder URL so no fetch is issued for invalid ids.
 	const url = validTraceId
-		? `/v1/traces/${encodeURIComponent(traceId)}/events`
+		? `/v1/traces/${encodeURIComponent(traceId)}/events${
+				projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""
+			}`
 		: null;
 
 	const es = useEventSource<EnvelopeMsg>(url ?? "about:blank", {

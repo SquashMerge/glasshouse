@@ -73,6 +73,21 @@ async function loginAndSelectE2eProject(page: Page): Promise<Project> {
 	return { id, name: "E2E Project", slug: "e2e-project" };
 }
 
+async function selectProject(
+	page: Page,
+	name: string,
+	slug: string,
+): Promise<Project> {
+	const selector = page.getByTestId("project-selector");
+	await expect(selector.locator("option", { hasText: name })).toHaveCount(1);
+	await selector.selectOption({ label: name });
+	const id = await selector.inputValue();
+	expect(id).toMatch(
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+	);
+	return { id, name, slug };
+}
+
 async function createDatasetInBrowser(
 	page: Page,
 	name: string,
@@ -177,9 +192,12 @@ async function ingestProjectTrace(
 	await expect
 		.poll(
 			async () => {
-				const trace = await request.get(`${API_BASE}/v1/traces/${traceId}`, {
-					headers: { authorization: authorization() },
-				});
+				const trace = await request.get(
+					`${API_BASE}/v1/traces/${traceId}?project_id=${projectId}`,
+					{
+						headers: { authorization: authorization() },
+					},
+				);
 				return trace.status();
 			},
 			{ timeout: 10_000 },
@@ -188,9 +206,12 @@ async function ingestProjectTrace(
 	const persisted = await apiJson<{
 		trace: { project_id: string };
 	}>(
-		await request.get(`${API_BASE}/v1/traces/${traceId}`, {
-			headers: { authorization: authorization() },
-		}),
+		await request.get(
+			`${API_BASE}/v1/traces/${traceId}?project_id=${projectId}`,
+			{
+				headers: { authorization: authorization() },
+			},
+		),
 	);
 	expect(persisted.trace.project_id).toBe(projectId);
 	return { traceId, observationId };
@@ -302,6 +323,67 @@ test("records trace feedback and preserves observation provenance when adding it
 			source_observation_id: trace.observationId,
 		}),
 	);
+});
+
+test("hides and rejects another project's trace while allowing its owner to view it", async ({
+	page,
+	request,
+}) => {
+	const project = await loginAndSelectE2eProject(page);
+	const otherProject = await selectProject(
+		page,
+		"E2E Other Project",
+		"e2e-other-project",
+	);
+	await selectProject(page, project.name, project.slug);
+	const input = { prompt: unique("isolated-input") };
+	const output = { completion: unique("isolated-output") };
+	const trace = await ingestProjectTrace(
+		request,
+		otherProject.id,
+		input,
+		output,
+	);
+
+	const crossProjectDetail = await request.get(
+		`${API_BASE}/v1/traces/${trace.traceId}?project_id=${project.id}`,
+		{ headers: { authorization: authorization() } },
+	);
+	expect(crossProjectDetail.status()).toBe(404);
+	const crossProjectEvents = await request.get(
+		`${API_BASE}/v1/traces/${trace.traceId}/events?project_id=${project.id}`,
+		{ headers: { authorization: authorization() } },
+	);
+	expect(crossProjectEvents.status()).toBe(404);
+
+	const rejectedFeedback = await request.post(`${API_BASE}/v1/feedback`, {
+		headers: {
+			authorization: authorization(),
+			"content-type": "application/json",
+			"idempotency-key": unique("cross-project-feedback"),
+		},
+		data: {
+			project_id: project.id,
+			trace_id: trace.traceId,
+			value: 1,
+			metadata: {
+				feedback: {
+					schema_version: 1,
+					sentiment: "positive",
+					comment: "Must not cross project boundaries",
+				},
+			},
+		},
+	});
+	expect(rejectedFeedback.status()).toBe(404);
+
+	await page.goto(`/observability/traces/${trace.traceId}`);
+	await expect(page.getByTestId("trace-not-found")).toBeVisible();
+	await expect(page.getByLabel("Comment")).toHaveCount(0);
+
+	await selectProject(page, otherProject.name, otherProject.slug);
+	await page.goto(`/observability/traces/${trace.traceId}`);
+	await expect(page.getByTestId("trace-header")).toContainText(trace.traceId);
 });
 
 test("reviews negative feedback through the inbox without promoting a dataset case", async ({
