@@ -31,6 +31,17 @@ export const TraceList = z
 	})
 	.openapi("TraceList");
 
+export const TraceDetailQuery = z
+	.object({
+		expand: z.string().optional(),
+		project_id: z
+			.string()
+			.uuid()
+			.optional()
+			.openapi({ param: { name: "project_id", in: "query" } }),
+	})
+	.strict();
+
 export const PromptProvenance = z
 	.object({
 		id: z
@@ -63,6 +74,7 @@ export const Observation = z
 	.object({
 		observation_id: z.string(),
 		trace_id: z.string(),
+		project_id: z.string(),
 		parent_observation_id: z.string().nullable().optional(),
 		type: z.enum(["span", "event", "generation", "tool"]),
 		name: z.string(),

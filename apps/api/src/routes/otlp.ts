@@ -4,7 +4,7 @@ import {
 	ExportTraceServiceRequest,
 	ExportTraceServiceResponse,
 } from "../schemas/otlp.js";
-import { normalizeSpan } from "../db/gen-ai-attrs.js";
+import { normalizeSpan, resourceProjectId } from "../db/gen-ai-attrs.js";
 import {
 	loadRedactionOptions,
 	redactMetadata,
@@ -50,7 +50,13 @@ export const otlpIngestRoute = createRoute({
 			content: { "application/json": { schema: ExportTraceServiceResponse } },
 		},
 		400: {
-			description: "Malformed request body",
+			description:
+				"Malformed request body or conflicting project provenance for a trace",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
+		404: {
+			description:
+				"The OTLP project selector or resource provenance is unavailable to the authenticated organization",
 			content: { "application/json": { schema: ErrorEnvelope } },
 		},
 	},
@@ -62,6 +68,28 @@ export type OtlpIngestDependencies = {
 	insertTraces: typeof insertTraces;
 	publishSync: typeof publishSync;
 };
+
+export async function resourceProjectIds(
+	req: Request,
+): Promise<ReadonlySet<string>> {
+	let bodyJson: unknown;
+	try {
+		bodyJson = await req.clone().json();
+	} catch {
+		return new Set();
+	}
+
+	const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
+	if (!parsed.success) return new Set();
+
+	return new Set(
+		parsed.data.resource_spans
+			.map((resourceSpan) =>
+				resourceProjectId(resourceSpan.resource?.attributes ?? []),
+			)
+			.filter(Boolean),
+	);
+}
 
 type AggregatedTrace = {
 	trace: TenantScopedTrace;
@@ -106,19 +134,29 @@ export function createOtlpIngestHandler(
 		const observations: TenantScopedObservation[] = [];
 
 		for (const rs of request.resource_spans) {
+			const resourceAttributes = rs.resource?.attributes ?? [];
 			for (const ss of rs.scope_spans) {
 				for (const span of ss.spans) {
-					const normalized = normalizeSpan(span);
+					const normalized = normalizeSpan(span, resourceAttributes);
 					const trace: TenantScopedTrace = {
 						...normalized.trace,
 						organization_id: tenant.organizationId,
-						project_id: tenant.projectId,
 					};
 					const observation: TenantScopedObservation = {
 						...normalized.observation,
 						organization_id: tenant.organizationId,
-						project_id: tenant.projectId,
 					};
+					const existingTrace = traces.get(trace.trace_id);
+					if (
+						existingTrace &&
+						existingTrace.trace.project_id !== trace.project_id
+					) {
+						return jsonError(
+							400,
+							"BAD_REQUEST",
+							"Trace contains conflicting project provenance",
+						);
+					}
 					trace.input_text = redactTraceText(trace.input_text, redaction);
 					trace.output_text = redactTraceText(trace.output_text, redaction);
 					observation.input_text = trace.input_text;
@@ -130,7 +168,7 @@ export function createOtlpIngestHandler(
 					const isRoot = observation.parent_observation_id === null;
 					traces.set(
 						trace.trace_id,
-						aggregateTrace(traces.get(trace.trace_id), trace, isRoot),
+						aggregateTrace(existingTrace, trace, isRoot),
 					);
 					observations.push(observation);
 				}

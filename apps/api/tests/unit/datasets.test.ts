@@ -3,8 +3,10 @@ import {
 	addDatasetItem,
 	createDataset,
 	DatasetRepositoryError,
+	deleteDatasetItem,
 	listDatasets,
 } from "../../src/db/datasets";
+import { createDatasetRouteHandlers } from "../../src/routes/datasets";
 import {
 	DatasetCreate,
 	DatasetItem,
@@ -130,6 +132,77 @@ describe("dataset repository", () => {
 		).rejects.toMatchObject<DatasetRepositoryError>({
 			code: "CONFLICT",
 			status: 409,
+		});
+	});
+
+	it("keeps feedback-linked items immutable and reports a deletion conflict", async () => {
+		const db = fakeDb([]);
+		db.query = async () => {
+			throw { code: "23503" };
+		};
+		await expect(
+			deleteDatasetItem(db, {
+				project_id: PROJECT,
+				dataset_id: DATASET,
+				item_id: "33333333-3333-4333-8333-333333333333",
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			status: 409,
+			message: "Dataset item is retained because feedback links it",
+		});
+	});
+
+	it("does not persist provenance copied from another project", async () => {
+		let added = false;
+		let checked: unknown;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			listDatasets: async () => ({ items: [], total: 0 }),
+			createDataset: async () => datasetRow,
+			getDataset: async () => datasetRow,
+			listDatasetItems: async () => ({ items: [] }),
+			addDatasetItem: async () => {
+				added = true;
+				return {
+					id: "33333333-3333-4333-8333-333333333333",
+					dataset_id: DATASET,
+					input: {},
+					expected_output: null,
+					metadata: {},
+					source_trace_id: "a".repeat(32),
+					source_observation_id: null,
+					created_at: NOW.toISOString(),
+				};
+			},
+			deleteDatasetItem: async () => {},
+			targetExists: async (input: unknown) => {
+				checked = input;
+				return false;
+			},
+		} as never);
+		const response = await handlers.handleAddDatasetItem({
+			req: {
+				valid: (part: string) =>
+					part === "param"
+						? { id: DATASET }
+						: {
+								project_id: PROJECT,
+								input: {},
+								source_trace_id: "a".repeat(32),
+								source_observation_id: "b".repeat(16),
+							},
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(404);
+		expect(added).toBe(false);
+		expect(checked).toEqual({
+			project_id: PROJECT,
+			trace_id: "a".repeat(32),
+			observation_id: "b".repeat(16),
 		});
 	});
 });

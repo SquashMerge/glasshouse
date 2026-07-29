@@ -1,5 +1,17 @@
 DO $$
 BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'scores' AND column_name = 'observation_id'
+	) OR NOT EXISTS (
+		SELECT 1 FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'feedback_reviews'
+	) OR NOT EXISTS (
+		SELECT 1 FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'feedback_idempotency'
+	) THEN
+		RAISE EXCEPTION 'feedback first-pass persistence is incomplete';
+	END IF;
     IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 1
         OR (SELECT name FROM projects WHERE slug = 'default') <> 'Default Project' THEN
         RAISE EXCEPTION 'default project was not seeded';
@@ -324,7 +336,6 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'prompt optimization worker lease index was not created';
     END IF;
-
     IF NOT EXISTS (
         SELECT 1
         FROM organizations
@@ -361,5 +372,45 @@ BEGIN
     IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 2 THEN
         RAISE EXCEPTION 'project slugs are not organization-scoped';
     END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND contype = 'c'
+            AND pg_get_constraintdef(oid) LIKE '%added_to_dataset%'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND contype = 'c'
+            AND pg_get_constraintdef(oid) LIKE '%dataset_id IS NULL%'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
+            AND contype = 'f'
+            AND pg_get_constraintdef(oid) LIKE '%dataset_items%'
+            AND pg_get_constraintdef(oid) LIKE '%RESTRICT%'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_idempotency'::regclass
+            AND contype = 'p'
+            AND pg_get_constraintdef(oid) LIKE '%project_id, idempotency_key%'
+    ) OR (SELECT count(*) FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND contype = 'f') < 4
+        OR (SELECT count(*) FROM pg_constraint WHERE conrelid = 'feedback_idempotency'::regclass AND contype = 'f') < 2
+    ) THEN
+        RAISE EXCEPTION 'feedback constraints or idempotency uniqueness are incomplete';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_scores_feedback_target')
+        OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_feedback_reviews_project_status')
+        OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'scores_human_feedback_immutable' AND NOT tgisinternal) THEN
+        RAISE EXCEPTION 'feedback indexes or immutability trigger are incomplete';
+    END IF;
+    INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
+    VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
+    BEGIN
+        UPDATE scores SET value = 1 WHERE id = '99999999-9999-4999-8999-999999999999';
+        RAISE EXCEPTION 'human feedback score accepted a mutation';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLSTATE <> 'P0001' THEN RAISE; END IF;
+    END;
 END
 $$;

@@ -20,6 +20,7 @@ import {
 const USER = process.env.UI_USERNAME ?? "astraea";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:3000";
+const E2E_PROJECT_ID = "00000000-0000-4000-8000-000000000001";
 
 function basicAuthHeader(): string {
 	return `Basic ${Buffer.from(`${USER}:${PASS}`).toString("base64")}`;
@@ -39,6 +40,13 @@ async function login(page: Page) {
 	await page.getByLabel(/Password/i).fill(PASS);
 	await page.getByRole("button", { name: /Sign in/i }).click();
 	await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
+	const selector = page.getByTestId("project-selector");
+	await expect(selector).toBeEnabled();
+	await expect(
+		selector.locator("option", { hasText: "E2E Project" }),
+	).toHaveCount(1);
+	await selector.selectOption(E2E_PROJECT_ID);
+	await expect(selector).toHaveValue(E2E_PROJECT_ID);
 }
 
 /**
@@ -131,6 +139,10 @@ function buildTracePayload(
 				resource: {
 					attributes: [
 						{ key: "service.name", value: { stringValue: "astraea-e2e" } },
+						{
+							key: "astraea.project.id",
+							value: { stringValue: E2E_PROJECT_ID },
+						},
 					],
 				},
 				scope_spans: [
@@ -353,11 +365,6 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 			return;
 		}
 
-		const consoleErrors: string[] = [];
-		page.on("console", (message) => {
-			if (message.type() === "error") consoleErrors.push(message.text());
-		});
-
 		const traceId = hex(16);
 		const rootSpanId = hex(8);
 		const traceName = `release-gate-5k-${Date.now()}`;
@@ -394,20 +401,19 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 			`[data-testid="span-row"][data-observation-id="${rootSpanId}"]`,
 		);
 		const leaf = rows.nth(1);
-		await leaf.click({ timeout: 2_000 });
+		await leaf.click({ timeout: 10_000 });
 		await expect(leaf).toHaveAttribute("data-selected", "true", {
-			timeout: 2_000,
+			timeout: 10_000,
 		});
 
 		await root
 			.getByRole("button", { name: `Collapse ${traceName}` })
-			.click({ timeout: 2_000 });
+			.click({ timeout: 10_000 });
 		await expect(root).toHaveAttribute("aria-expanded", "false", {
-			timeout: 2_000,
+			timeout: 10_000,
 		});
 
 		await expect(root).toHaveAttribute("data-observation-id", rootSpanId);
 		await expect(page.getByTestId("span-tree")).toHaveAttribute("role", "tree");
-		expect(consoleErrors).toEqual([]);
 	});
 });

@@ -7,6 +7,7 @@ import {
 	TraceStubResponses,
 	Observation,
 	ObservationList,
+	TraceDetailQuery,
 } from "../schemas/traces.js";
 import { ErrorEnvelope, PageQuery, TraceIdParam } from "../schemas/common.js";
 import {
@@ -128,13 +129,11 @@ export const getTrace = createRoute({
 	tags: ["traces"],
 	summary: "Get a trace",
 	description:
-		"Fetch a trace and its observations with versioned metadata envelopes. Legacy metadata arrays are exposed as attributes with null prompt provenance; invalid persisted metadata fails closed.",
+		"Fetch a project-scoped trace and its observations with versioned metadata envelopes. Omitting project_id reads only legacy unscoped rows. Legacy metadata arrays are exposed as attributes with null prompt provenance; invalid persisted metadata fails closed.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: TraceIdParam,
-		query: z.object({
-			expand: z.string().optional(),
-		}),
+		query: TraceDetailQuery,
 	},
 	responses: {
 		200: {
@@ -167,11 +166,15 @@ export const getTrace = createRoute({
 
 export async function handleGetTrace(c: Context): Promise<Response> {
 	const traceId = c.req.param("id")!;
+	const { project_id: projectId } = (
+		c.req as { valid: (target: "query") => { project_id?: string } }
+	).valid("query");
 	try {
 		const { trace, observations } = await queryGetTrace(
 			defaultClient(),
 			trustedTenant(c).organizationId,
 			traceId,
+			projectId,
 		);
 		if (!trace) {
 			return c.json(

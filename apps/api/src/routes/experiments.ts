@@ -2,6 +2,7 @@ import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import {
+	cancelExperiment as cancelExperimentRecord,
 	createExperiment as createExperimentRecord,
 	experimentSummary as experimentSummaryRecord,
 	ExperimentRepositoryError,
@@ -163,6 +164,7 @@ export type ExperimentDependencies = {
 	listExperiments: typeof listExperimentsRecord;
 	getExperiment: typeof getExperimentRecord;
 	updateExperiment: typeof updateExperiment;
+	cancelExperiment: typeof cancelExperimentRecord;
 	listResults: typeof listExperimentResults;
 	insertResult: typeof insertExperimentResult;
 	summary: typeof experimentSummaryRecord;
@@ -180,80 +182,77 @@ export type ExperimentDependencies = {
 	}) => Promise<void>;
 };
 
-const traceResult = createOtlpIngestHandler();
-export const production: ExperimentDependencies = {
-	pool: pgPool,
-	createExperiment: createExperimentRecord,
-	listExperiments: listExperimentsRecord,
-	getExperiment: getExperimentRecord,
-	updateExperiment,
-	listResults: listExperimentResults,
-	insertResult: insertExperimentResult,
-	summary: experimentSummaryRecord,
-	listDatasetItems,
-	getDataset,
-	invokeLlm: invokeConfiguredLlm,
-	trace: async (input) => {
-		const traceId = crypto.randomUUID().replaceAll("-", "");
-		const spanId = traceId.slice(0, 16);
-		const start =
-			BigInt(Date.now()) * 1_000_000n - BigInt(input.duration_ms) * 1_000_000n;
-		const end = BigInt(Date.now()) * 1_000_000n;
-		const organization = await pgPool().query<{ organization_id: string }>(
+export function createEvaluationTracePayload(
+	input: Parameters<ExperimentDependencies["trace"]>[0],
+) {
+	const traceId = crypto.randomUUID().replaceAll("-", "");
+	const spanId = traceId.slice(0, 16);
+	const start =
+		BigInt(Date.now()) * 1_000_000n - BigInt(input.duration_ms) * 1_000_000n;
+	const end = BigInt(Date.now()) * 1_000_000n;
+	return {
+		resource_spans: [
+			{
+				resource: {
+					attributes: [
+						{
+							key: "service.name",
+							value: { stringValue: "astraea-evaluation" },
+						},
+						{
+							key: "astraea.project.id",
+							value: { stringValue: input.project_id },
+						},
+					],
+				},
+				scope_spans: [
+					{
+						spans: [
+							{
+								trace_id: traceId,
+								span_id: spanId,
+								name: `evaluation.${input.experiment_id}`,
+								kind: 1,
+								start_time_unix_nano: start.toString(),
+								end_time_unix_nano: end.toString(),
+								attributes: [
+									{
+										key: "gen_ai.response.model",
+										value: { stringValue: input.model },
+									},
+									{
+										key: "input.value",
+										value: { stringValue: JSON.stringify(input.input) },
+									},
+									{
+										key: "output.value",
+										value: { stringValue: input.output },
+									},
+								],
+							},
+						],
+					},
+				],
+			},
+		],
+	};
+}
+
+export function createProductionTrace(
+	traceResult = createOtlpIngestHandler(),
+	pool = pgPool,
+): ExperimentDependencies["trace"] {
+	return async (input) => {
+		const organization = await pool().query<{ organization_id: string }>(
 			"SELECT organization_id FROM projects WHERE id = $1",
 			[input.project_id],
 		);
 		const organizationId = organization.rows[0]?.organization_id;
 		if (!organizationId) return;
-		await traceResult(
+		const response = await traceResult(
 			new Request("http://internal/v1/otel/v1/traces", {
 				method: "POST",
-				body: JSON.stringify({
-					resource_spans: [
-						{
-							resource: {
-								attributes: [
-									{
-										key: "service.name",
-										value: { string_value: "astraea-evaluation" },
-									},
-									{
-										key: "astraea.project.id",
-										value: { string_value: input.project_id },
-									},
-								],
-							},
-							scope_spans: [
-								{
-									spans: [
-										{
-											trace_id: traceId,
-											span_id: spanId,
-											name: `evaluation.${input.experiment_id}`,
-											kind: 1,
-											start_time_unix_nano: start.toString(),
-											end_time_unix_nano: end.toString(),
-											attributes: [
-												{
-													key: "gen_ai.response.model",
-													value: { string_value: input.model },
-												},
-												{
-													key: "input.value",
-													value: { string_value: JSON.stringify(input.input) },
-												},
-												{
-													key: "output.value",
-													value: { string_value: input.output },
-												},
-											],
-										},
-									],
-								},
-							],
-						},
-					],
-				}),
+				body: JSON.stringify(createEvaluationTracePayload(input)),
 				headers: { "content-type": "application/json" },
 			}),
 			{
@@ -262,7 +261,24 @@ export const production: ExperimentDependencies = {
 				projectId: input.project_id,
 			},
 		);
-	},
+		if (!response.ok) throw new Error("OTLP trace ingestion failed");
+	};
+}
+
+export const production: ExperimentDependencies = {
+	pool: pgPool,
+	createExperiment: createExperimentRecord,
+	listExperiments: listExperimentsRecord,
+	getExperiment: getExperimentRecord,
+	updateExperiment,
+	cancelExperiment: cancelExperimentRecord,
+	listResults: listExperimentResults,
+	insertResult: insertExperimentResult,
+	summary: experimentSummaryRecord,
+	listDatasetItems,
+	getDataset,
+	invokeLlm: invokeConfiguredLlm,
+	trace: createProductionTrace(),
 };
 
 const activeExperiments = new Map<string, AbortController>();
@@ -329,8 +345,13 @@ export async function executeExperiment(
 					output: JSON.stringify(llm.output),
 					duration_ms,
 				});
-			} catch {
-				// A trace sink outage must not duplicate an already-persisted result.
+			} catch (traceError) {
+				logger.warn("evaluation.trace_failed", {
+					experiment_id: input.experiment_id,
+					dataset_item_id: item.id,
+					error_type:
+						traceError instanceof Error ? traceError.name : typeof traceError,
+				});
 			}
 		} catch {
 			if (signal?.aborted) {
@@ -367,10 +388,8 @@ export async function executeExperiment(
 				logger.warn("evaluation.trace_failed", {
 					experiment_id: input.experiment_id,
 					dataset_item_id: item.id,
-					error:
-						traceError instanceof Error
-							? traceError.message
-							: String(traceError),
+					error_type:
+						traceError instanceof Error ? traceError.name : typeof traceError,
 				});
 			}
 		}
@@ -409,6 +428,15 @@ export function createExperimentHandlers(
 					project_id: body.project_id,
 					id: body.dataset_id,
 				});
+				const dataset = await deps.listDatasetItems(db, {
+					project_id: body.project_id,
+					dataset_id: body.dataset_id,
+				});
+				if (dataset.items.some((item) => item.expected_output === null))
+					throw new ExperimentRepositoryError(
+						"CONFLICT",
+						"Every dataset item needs expected output for this evaluator",
+					);
 				const row = await deps.createExperiment(db, body);
 				const controller = new AbortController();
 				activeExperiments.set(
@@ -506,15 +534,12 @@ export function createExperimentHandlers(
 			try {
 				const id = c.req.valid("param").id;
 				const project_id = c.req.valid("query").project_id;
-				await deps.getExperiment(deps.pool(), { id, project_id });
+				const cancelled = await deps.cancelExperiment(deps.pool(), {
+					id,
+					project_id,
+				});
 				activeExperiments.get(experimentKey(project_id, id))?.abort();
-				return c.json(
-					await deps.updateExperiment(deps.pool(), {
-						id,
-						project_id,
-						status: "cancelled",
-					}),
-				);
+				return c.json(cancelled);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}

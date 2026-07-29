@@ -18,11 +18,29 @@ type Attribute = OtlpAttribute & {
 	};
 };
 
+const projectIdPattern =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function attrString(attrs: Attribute[], key: string): string | undefined {
 	const a = attrs.find((x) => x.key === key);
 	if (!a) return undefined;
 	const v = a.value;
 	return v?.stringValue;
+}
+
+export function resourceProjectId(attrs: OtlpAttribute[]): string {
+	const value = attrs.find(
+		(attribute) => attribute.key === "astraea.project.id",
+	)?.value;
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		Array.isArray(value) ||
+		typeof (value as { stringValue?: unknown }).stringValue !== "string"
+	)
+		return "";
+	const projectId = (value as { stringValue: string }).stringValue;
+	return projectIdPattern.test(projectId) ? projectId.toLowerCase() : "";
 }
 
 function attrNumber(attrs: Attribute[], key: string): number | undefined {
@@ -118,11 +136,15 @@ function classifySpanType(
 	return "span";
 }
 
-export function normalizeSpan(span: Span): {
+export function normalizeSpan(
+	span: Span,
+	resourceAttributes: OtlpAttribute[] = [],
+): {
 	trace: NormalizedTrace;
 	observation: NormalizedObservation;
 } {
 	const attrs = (span.attributes ?? []) as Attribute[];
+	const projectId = resourceProjectId(resourceAttributes);
 
 	// gen_ai.* takes precedence over OpenInference.
 	const agentId =
@@ -178,7 +200,7 @@ export function normalizeSpan(span: Span): {
 
 	const trace: NormalizedTrace = {
 		trace_id: span.trace_id,
-		project_id: "",
+		project_id: projectId,
 		name: span.name,
 		start_time: isoFromUnixNano(span.start_time_unix_nano as unknown as number),
 		end_time:
@@ -205,7 +227,7 @@ export function normalizeSpan(span: Span): {
 	const observation: NormalizedObservation = {
 		observation_id: span.span_id,
 		trace_id: span.trace_id,
-		project_id: "",
+		project_id: projectId,
 		parent_observation_id: span.parent_span_id ?? null,
 		type,
 		name: span.name,

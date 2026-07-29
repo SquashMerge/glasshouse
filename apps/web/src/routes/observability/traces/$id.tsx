@@ -18,6 +18,11 @@ import {
 } from "../../../hooks/useTraceStream";
 import { normalizeObservationMetadata, type TraceRow } from "../../../lib/api";
 import {
+	AddToDatasetDialog,
+	FeedbackControls,
+} from "../../../components/DatasetFeedbackActions";
+import { useOptionalProjectSelection } from "../../../components/ProjectProvider";
+import {
 	canonicalObservationId,
 	createTraceModel,
 	traceModelObservations,
@@ -79,9 +84,31 @@ function normalizeStreamObservation(observation: ObservationRowLike) {
 export function TraceDetailPage() {
 	const { id } = useParams({ from: "/protected/observability/traces/$id" });
 	const location = useLocation();
+	const project = useOptionalProjectSelection();
+	const projectId = project?.selectedProjectId ?? null;
+
+	return (
+		<TraceDetailPageContent
+			key={`${id}:${projectId ?? ""}`}
+			id={id}
+			searchStr={location.searchStr}
+			projectId={projectId}
+		/>
+	);
+}
+
+function TraceDetailPageContent({
+	id,
+	searchStr,
+	projectId,
+}: {
+	id: string;
+	searchStr: string;
+	projectId: string | null;
+}) {
 	const spanDeepLink = React.useMemo(
-		() => new URLSearchParams(location.searchStr).get("span"),
-		[location.searchStr],
+		() => new URLSearchParams(searchStr).get("span"),
+		[searchStr],
 	);
 	const validId = TRACE_ID_REGEX.test(id);
 	const [model, setModel] = React.useState<TraceModel<TraceRow>>(() =>
@@ -190,7 +217,7 @@ export function TraceDetailPage() {
 		}),
 		[clearHighlightTimers],
 	);
-	const stream = useTraceStream(id, handlers);
+	const stream = useTraceStream(id, handlers, projectId);
 	React.useEffect(() => {
 		if (!validId || receivedSnapshot || notFound) return;
 		const timeout = window.setTimeout(
@@ -272,6 +299,30 @@ export function TraceDetailPage() {
 				trace={model.trace}
 				recordingStatus={recordingStatus}
 				streamControl={<StreamToggle sse={stream} />}
+				actions={
+					<>
+						<FeedbackControls
+							projectId={projectId}
+							traceId={id}
+							label="trace"
+						/>
+						<AddToDatasetDialog
+							projectId={projectId}
+							traceId={id}
+							inputText={
+								typeof model.trace?.input_text === "string"
+									? model.trace.input_text
+									: ""
+							}
+							outputText={
+								typeof model.trace?.output_text === "string"
+									? model.trace.output_text
+									: ""
+							}
+							label="trace"
+						/>
+					</>
+				}
 				onRefresh={() => {
 					setRecordingStatus("recording");
 					stream.reconnect();
@@ -368,6 +419,34 @@ export function TraceDetailPage() {
 					<ObservationDetailPanel
 						traceId={id}
 						observation={selectedObservation}
+						actions={
+							selectedObservation ? (
+								<>
+									<FeedbackControls
+										projectId={projectId}
+										traceId={id}
+										observationId={selectedObservation.observation_id}
+										label="Observation"
+									/>
+									<AddToDatasetDialog
+										projectId={projectId}
+										traceId={id}
+										observationId={selectedObservation.observation_id}
+										inputText={
+											typeof selectedObservation.input_text === "string"
+												? selectedObservation.input_text
+												: ""
+										}
+										outputText={
+											typeof selectedObservation.output_text === "string"
+												? selectedObservation.output_text
+												: ""
+										}
+										label="Observation"
+									/>
+								</>
+							) : undefined
+						}
 						onClose={closeInspector}
 					/>
 				) : (

@@ -33,6 +33,8 @@ import type { ObservationMetadataInput, TraceRow } from "../lib/api";
  */
 
 const TRACE_ID_REGEX = /^[0-9a-f]{32}$/;
+const PROJECT_ID_REGEX =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface ObservationRowLike {
 	observation_id: string;
@@ -97,6 +99,7 @@ interface EnvelopeMsg {
 export function useTraceStream(
 	traceId: string,
 	options: UseTraceStreamOptions,
+	projectId?: string | null,
 ): UseTraceStreamResult {
 	const { onSnapshot, onObservation, onStatus } = options;
 
@@ -159,8 +162,11 @@ export function useTraceStream(
 	// Open the underlying SSE stream only for valid traceIds. We still call
 	// `useEventSource` unconditionally (Rules of Hooks) but with `enabled: false`
 	// and a placeholder URL so no fetch is issued for invalid ids.
+	const validProjectId = projectId && PROJECT_ID_REGEX.test(projectId);
 	const url = validTraceId
-		? `/v1/traces/${encodeURIComponent(traceId)}/events`
+		? `/v1/traces/${encodeURIComponent(traceId)}/events${
+				validProjectId ? `?project_id=${encodeURIComponent(projectId)}` : ""
+			}`
 		: null;
 
 	const es = useEventSource<EnvelopeMsg>(url ?? "about:blank", {

@@ -45,6 +45,255 @@ function jsonRequest(body: unknown): RequestInit {
 	};
 }
 
+export interface Dataset {
+	id: string;
+	project_id: string;
+	name: string;
+	description: string | null;
+	item_count: number;
+	created_at: string;
+	updated_at: string;
+}
+export interface DatasetItem {
+	id: string;
+	dataset_id: string;
+	input: JsonObject;
+	expected_output: JsonObject | null;
+	metadata: JsonObject;
+	source_trace_id: string | null;
+	source_observation_id: string | null;
+	created_at: string;
+}
+export interface Experiment {
+	id: string;
+	project_id: string;
+	dataset_id: string;
+	name: string | null;
+	status: "pending" | "running" | "completed" | "failed" | "cancelled";
+	config: JsonObject;
+	created_at: string;
+	updated_at: string;
+}
+export interface Feedback {
+	id: string;
+	project_id: string;
+	trace_id: string;
+	observation_id: string | null;
+	target_type: "trace" | "observation";
+	value: 1 | -1;
+	sentiment: "positive" | "negative";
+	reason: string | null;
+	comment: string | null;
+	status: "new" | "reviewed" | "dismissed" | "added_to_dataset";
+	note: string | null;
+	dataset_id: string | null;
+	dataset_item_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+export async function listDatasets(
+	project_id: string,
+): Promise<{ items: Dataset[]; total: number }> {
+	return responseJson(
+		await authedFetch(`/v1/datasets${buildQs({ project_id })}`),
+		"listDatasets",
+	);
+}
+export async function createDataset(input: {
+	project_id: string;
+	name: string;
+	description?: string;
+}): Promise<Dataset> {
+	return responseJson(
+		await authedFetch("/v1/datasets", jsonRequest(input)),
+		"createDataset",
+	);
+}
+export async function getDataset(input: {
+	project_id: string;
+	id: string;
+}): Promise<Dataset> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getDataset",
+	);
+}
+export async function listDatasetItems(input: {
+	project_id: string;
+	id: string;
+}): Promise<{ items: DatasetItem[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/${encodeURIComponent(input.id)}/items${buildQs({ project_id: input.project_id })}`,
+		),
+		"listDatasetItems",
+	);
+}
+export async function addDatasetItem(input: {
+	project_id: string;
+	dataset_id: string;
+	input: JsonObject;
+	expected_output?: JsonObject | null;
+	metadata?: JsonObject;
+	source_trace_id?: string;
+	source_observation_id?: string;
+}): Promise<DatasetItem> {
+	const { dataset_id, ...body } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/${encodeURIComponent(dataset_id)}/items`,
+			jsonRequest(body),
+		),
+		"addDatasetItem",
+	);
+}
+export async function deleteDatasetItem(input: {
+	project_id: string;
+	dataset_id: string;
+	item_id: string;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/datasets/${encodeURIComponent(input.dataset_id)}/items/${encodeURIComponent(input.item_id)}${buildQs({ project_id: input.project_id })}`,
+		{ method: "DELETE" },
+	);
+	if (!response.ok) await responseJson<never>(response, "deleteDatasetItem");
+}
+export async function listExperiments(
+	project_id: string,
+): Promise<{ items: Experiment[]; total: number }> {
+	return responseJson(
+		await authedFetch(`/v1/experiments${buildQs({ project_id })}`),
+		"listExperiments",
+	);
+}
+export async function createExperiment(input: {
+	project_id: string;
+	dataset_id: string;
+	name?: string;
+	config: JsonObject;
+}): Promise<Experiment> {
+	return responseJson(
+		await authedFetch("/v1/experiments", jsonRequest(input)),
+		"createExperiment",
+	);
+}
+export async function getExperiment(input: {
+	project_id: string;
+	id: string;
+}): Promise<Experiment> {
+	return responseJson(
+		await authedFetch(
+			`/v1/experiments/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getExperiment",
+	);
+}
+export async function experimentResults(input: {
+	project_id: string;
+	id: string;
+}): Promise<{
+	items: Array<{
+		id: string;
+		dataset_item_id: string;
+		output: JsonObject | null;
+		scores: Record<string, number>;
+		status: string;
+	}>;
+}> {
+	return responseJson(
+		await authedFetch(
+			`/v1/experiments/${encodeURIComponent(input.id)}/results${buildQs({ project_id: input.project_id })}`,
+		),
+		"experimentResults",
+	);
+}
+export function experimentEventsUrl(input: {
+	project_id: string;
+	id: string;
+}): string {
+	return `/v1/experiments/${encodeURIComponent(input.id)}/events${buildQs({ project_id: input.project_id })}`;
+}
+export async function experimentSummary(input: {
+	project_id: string;
+	id: string;
+}): Promise<{
+	experiment_id: string;
+	total: number;
+	passed: number;
+	failed: number;
+	pass_rate: number;
+	avg_duration_ms: number | null;
+}> {
+	return responseJson(
+		await authedFetch(
+			`/v1/experiments/${encodeURIComponent(input.id)}/summary${buildQs({ project_id: input.project_id })}`,
+		),
+		"experimentSummary",
+	);
+}
+export async function cancelExperiment(input: {
+	project_id: string;
+	id: string;
+}): Promise<Experiment> {
+	return responseJson(
+		await authedFetch(
+			`/v1/experiments/${encodeURIComponent(input.id)}/cancel${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"cancelExperiment",
+	);
+}
+export async function listFeedback(input: {
+	project_id: string;
+	sentiment?: string;
+	status?: string;
+	target_type?: string;
+}): Promise<{ items: Feedback[]; total: number }> {
+	return responseJson(
+		await authedFetch(`/v1/feedback${buildQs(input)}`),
+		"listFeedback",
+	);
+}
+export async function createFeedback(input: {
+	project_id: string;
+	trace_id: string;
+	observation_id?: string;
+	value: 1 | -1;
+	metadata: JsonObject;
+	idempotency_key?: string;
+}): Promise<Feedback> {
+	const { idempotency_key, ...body } = input;
+	return responseJson(
+		await authedFetch("/v1/feedback", {
+			...jsonRequest(body),
+			headers: {
+				"content-type": "application/json",
+				"idempotency-key": idempotency_key ?? crypto.randomUUID(),
+			},
+		}),
+		"createFeedback",
+	);
+}
+export async function reviewFeedback(input: {
+	project_id: string;
+	id: string;
+	status: string;
+	note?: string;
+	dataset_id?: string;
+	dataset_item_id?: string;
+}): Promise<Feedback> {
+	const { project_id, id, ...body } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/feedback/${encodeURIComponent(id)}/review${buildQs({ project_id })}`,
+			jsonRequest(body),
+		),
+		"reviewFeedback",
+	);
+}
+
 export interface Project {
 	id: string;
 	name: string;

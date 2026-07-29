@@ -30,6 +30,8 @@ import type { TraceRow } from "../../src/lib/api";
 // ---------------------------------------------------------------------------
 
 const VALID_ID = "0123456789abcdef0123456789abcdef";
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 interface MockTraceStreamHandle {
 	callbacks: {
@@ -45,6 +47,7 @@ interface MockTraceStreamHandle {
 }
 
 const handleByTraceId = new Map<string, MockTraceStreamHandle>();
+const projectIdByTraceId = new Map<string, string | null | undefined>();
 
 vi.mock("../../src/hooks/useTraceStream", async () => {
 	const actual = await vi.importActual<
@@ -62,6 +65,7 @@ vi.mock("../../src/hooks/useTraceStream", async () => {
 				onObservation: (msg: { observation: Record<string, unknown> }) => void;
 				onStatus: (status: "complete" | "not_found") => void;
 			},
+			projectId?: string | null,
 		) => {
 			// Mirror the real hook's contract: invalid id → don't emit a handle
 			// (the page short-circuits before calling the hook in production).
@@ -80,11 +84,13 @@ vi.mock("../../src/hooks/useTraceStream", async () => {
 			React.useLayoutEffect(() => {
 				if (!/^[0-9a-f]{32}$/.test(traceId)) return;
 				handleByTraceId.set(traceId, handle);
+				projectIdByTraceId.set(traceId, projectId);
 				return () => {
 					if (handleByTraceId.get(traceId) === handle)
 						handleByTraceId.delete(traceId);
+					projectIdByTraceId.delete(traceId);
 				};
-			}, [traceId]);
+			}, [projectId, traceId]);
 
 			return {
 				get status() {
@@ -127,6 +133,13 @@ vi.mock("../../src/hooks/useTraceStream", async () => {
 		},
 	};
 });
+
+let selectedProjectId: string | null = null;
+
+vi.mock("../../src/components/ProjectProvider", () => ({
+	useOptionalProjectSelection: () =>
+		selectedProjectId ? { selectedProjectId } : null,
+}));
 
 // We mock `@tanstack/react-router` so we can supply our own `useParams` /
 // `useLocation` values without standing up a real router instance.
@@ -192,6 +205,8 @@ function renderAt(id: string, span?: string): ReturnType<typeof render> {
 
 beforeEach(() => {
 	handleByTraceId.clear();
+	projectIdByTraceId.clear();
+	selectedProjectId = null;
 	setRoute(VALID_ID);
 });
 
@@ -295,6 +310,46 @@ describe("TraceDetailPage — ?span= deep-link", () => {
 });
 
 describe("TraceDetailPage — snapshot + live observations", () => {
+	it("passes the selected project to the trace detail stream", async () => {
+		selectedProjectId = PROJECT_ID;
+		renderAt(VALID_ID);
+
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		expect(projectIdByTraceId.get(VALID_ID)).toBe(PROJECT_ID);
+	});
+
+	it("clears the prior project's snapshot and observation feedback controls before the new snapshot arrives", async () => {
+		selectedProjectId = PROJECT_ID;
+		const page = renderAt(VALID_ID);
+
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		await act(async () => {
+			handleByTraceId.get(VALID_ID)!.callbacks!.onSnapshot({
+				observations: [
+					makeObservation({
+						observation_id: "a".repeat(32),
+						name: "first-project-observation",
+					}),
+				],
+			});
+		});
+		expect(
+			screen.getAllByText("first-project-observation").length,
+		).toBeGreaterThan(0);
+		expect(screen.getByLabelText("Thumbs up Observation")).toBeInTheDocument();
+
+		selectedProjectId = OTHER_PROJECT_ID;
+		page.rerender(<TraceDetailPage />);
+
+		await waitFor(() =>
+			expect(projectIdByTraceId.get(VALID_ID)).toBe(OTHER_PROJECT_ID),
+		);
+		expect(screen.queryAllByText("first-project-observation")).toHaveLength(0);
+		expect(
+			screen.queryByLabelText("Thumbs up Observation"),
+		).not.toBeInTheDocument();
+	});
+
 	it("uses the snapshot observations without a REST fallback", async () => {
 		renderAt(VALID_ID);
 

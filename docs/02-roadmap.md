@@ -7,7 +7,7 @@
 | MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Valkey 8, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
 | MVP — Ingest + trace viewer | Day 8–14 | Shipped | OTLP receiver, normalized GenAI/OpenInference traces, trace list/detail screens, live SSE updates, and trace-focused regression coverage. PR: [#8](https://github.com/dsarlo/astraea/pull/8). |
 | MVP — Prompt management + optimization | Day 15–21 | Shipped | Immutable prompt versions, labels/provenance, GEPA optimization jobs, structured progress, provider/model guardrails, and prompt-management E2E coverage. PRs: [#9](https://github.com/dsarlo/astraea/pull/9), [#22](https://github.com/dsarlo/astraea/pull/22). |
-| MVP — Agent registry + datasets + experiments | Day 22–30 | In progress | Dataset persistence/provenance is shipped in PR [#35](https://github.com/dsarlo/astraea/pull/35); agent versions and experiment execution remain. |
+| MVP — Datasets, evaluations, and feedback | Day 22–30 | In progress | Dataset persistence/provenance and configured-LLM Experiment execution are shipped; this first pass adds dashboard workflows and human feedback review. Agent manifests, versioned datasets, richer judges, and automation remain deferred in `docs/06-dataset-feedback-future.md`. |
 | MVP — Dev mode + release polish | Follow-up | Not started | `hermes dev` single-binary, 3-tier prompt cache, settings UI, packaging, and public-release polish after the core product loop is validated. |
 | Wedge | Day 30–60 | Not started | Framework expansion (LangGraph / CrewAI / Pydantic AI); HTTP endpoint registration; evaluator library; manifest version binding. |
 | GitOps | Day 60–90 | Not started | GitHub Actions; manifest drift detection; atomic manifest rollback; `enterprise/` wheel. |
@@ -15,7 +15,7 @@
 
 ## Current product state and next sequence
 
-The foundation, OTLP trace viewer, prompt management, first GEPA optimization workflow, and project-scoped dataset persistence are now implemented. The repository still exposes intentional `501` stubs for agents, experiments, and scores; those are product-completeness gaps, not runtime regressions.
+The foundation, OTLP trace viewer, prompt management, first GEPA optimization workflow, project-scoped Datasets, configured-LLM Experiments, and narrow human feedback workflow are now implemented. Agent registry and broader score/metrics product work remain deferred; the feedback route is intentionally the only supported human-score command surface.
 
 The next sequence is deliberately narrower than the original calendar-based MVP plan:
 

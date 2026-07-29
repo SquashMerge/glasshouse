@@ -114,4 +114,8 @@ export function useProjectSelection(): ProjectSelectionContextValue {
 	return context;
 }
 
+export function useOptionalProjectSelection(): ProjectSelectionContextValue | null {
+	return React.useContext(ProjectSelectionContext);
+}
+
 export { SELECTED_PROJECT_KEY };

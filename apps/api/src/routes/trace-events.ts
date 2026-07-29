@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { TraceIdParam } from "../schemas/common.js";
 import { ErrorEnvelope } from "../schemas/common.js";
+import { TraceDetailQuery } from "../schemas/traces.js";
 import { subscribe } from "../lib/event-bus.js";
 import {
 	defaultClient,
@@ -81,13 +82,14 @@ export const streamTraceDetailEvents = createRoute({
 		"subscribes to `observation.created` BEFORE writing the snapshot (so any " +
 		"observation created in the gap is delivered as a live event), writes an " +
 		"`event: snapshot` frame with the existing observations, then forwards " +
-		"matching observations (`observation.trace_id === id`) as `event: observation` " +
+		"matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` " +
 		"frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` " +
 		"default-30s timer; on the timer's fire the server writes " +
 		'`event: status\ndata: {"status":"complete"}` and closes the stream.',
 	security: [{ basicAuth: [] }],
 	request: {
 		params: TraceIdParam,
+		query: TraceDetailQuery.pick({ project_id: true }),
 	},
 	responses: {
 		200: StreamResponse,
@@ -248,6 +250,10 @@ export function createTraceEventHandlers(
 	): Promise<Response> => {
 		const tenant = trustedTenant(c);
 		const traceId = c.req.param("id")!;
+		const { project_id: projectId } = (
+			c.req as { valid: (target: "query") => { project_id?: string } }
+		).valid("query");
+		const expectedProjectId = projectId ?? "";
 		const bufferedObservations: TenantScopedObservation[] = [];
 		let forwardObservation:
 			| ((observation: TenantScopedObservation) => void)
@@ -257,7 +263,8 @@ export function createTraceEventHandlers(
 			if (
 				!observation ||
 				observation.organization_id !== tenant.organizationId ||
-				observation.trace_id !== traceId
+				observation.trace_id !== traceId ||
+				observation.project_id !== expectedProjectId
 			)
 				return;
 			if (forwardObservation) forwardObservation(observation);
@@ -270,6 +277,7 @@ export function createTraceEventHandlers(
 				dependencies.defaultClient(),
 				tenant.organizationId,
 				traceId,
+				projectId,
 			);
 		} catch (err) {
 			unsubscribe();

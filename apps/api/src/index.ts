@@ -4,7 +4,7 @@ import { handleHealth } from "./routes/health.js";
 import { basicAuthMiddleware } from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit } from "./middleware/body-size.js";
-import { handleOtlpIngest } from "./routes/otlp.js";
+import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { pgPool } from "./db/postgres.js";
 import {
 	assertTenantProjectAccess,
@@ -150,11 +150,27 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	apiApp.post("/v1/otel/v1/traces", async (c) => {
 		try {
 			const tenant = trustedTenant(c);
+			const requestedProjectId =
+				c.req.header("x-astraea-project-id") ?? undefined;
+			const resourceProjects = await resourceProjectIds(c.req.raw);
+			for (const projectId of resourceProjects)
+				await resolvedDependencies.assertTenantProjectAccess(
+					resolvedDependencies.pgPool(),
+					tenant,
+					projectId,
+				);
 			const scope = await resolvedDependencies.resolveTenantProject(
 				resolvedDependencies.pgPool(),
 				tenant,
-				c.req.header("x-astraea-project-id") ?? undefined,
+				requestedProjectId,
 			);
+			if (
+				requestedProjectId &&
+				[...resourceProjects].some((projectId) => projectId !== scope.projectId)
+			)
+				throw new TenantScopeError(
+					"Project is not available to this organization",
+				);
 			return resolvedDependencies.handleOtlpIngest(c.req.raw, scope);
 		} catch (cause) {
 			if (cause instanceof TenantScopeError) {

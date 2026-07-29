@@ -43,6 +43,12 @@ function normalizeError(value: unknown): DatasetRepositoryError {
 			"Dataset already exists",
 			value,
 		);
+	if (code === "23503")
+		return new DatasetRepositoryError(
+			"CONFLICT",
+			"Dataset item is retained because feedback links it",
+			value,
+		);
 	return new DatasetRepositoryError(
 		"INTERNAL",
 		"Dataset repository operation failed",

@@ -142,11 +142,14 @@ describe("API integration: OTLP ingest", () => {
 	const HEX16 = "0011223344556677";
 	const NOW_NS = 1_700_000_000_000_000_000;
 
-	function validOtlp(extra: Record<string, unknown> = {}) {
+	function validOtlp(
+		extra: Record<string, unknown> = {},
+		resourceAttributes: Array<Record<string, unknown>> = [],
+	) {
 		return {
 			resource_spans: [
 				{
-					resource: { attributes: [] },
+					resource: { attributes: resourceAttributes },
 					scope_spans: [
 						{
 							scope: { name: "test", version: "1.0.0" },
@@ -222,6 +225,68 @@ describe("API integration: OTLP ingest", () => {
 			}),
 		);
 		expect(res.status).toBe(401);
+	});
+
+	it("rejects an unavailable resource project before OTLP persistence", async () => {
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		insertTraces.mockClear();
+		insertObservations.mockClear();
+		assertTenantProjectAccess.mockImplementationOnce(async () => {
+			throw new TenantScopeError(
+				"Project is not available to this organization",
+			);
+		});
+
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp({}, [
+						{
+							key: "astraea.project.id",
+							value: { stringValue: foreignProject },
+						},
+					]),
+				),
+			}),
+		);
+
+		expect(res.status).toBe(404);
+		expect(assertTenantProjectAccess.mock.calls.at(-1)?.[2]).toBe(
+			foreignProject,
+		);
+		expect(insertTraces).not.toHaveBeenCalled();
+		expect(insertObservations).not.toHaveBeenCalled();
+	});
+
+	it("rejects a resource project that disagrees with the OTLP project header", async () => {
+		const resourceProject = "00000000-0000-4000-8000-000000000003";
+		insertTraces.mockClear();
+		insertObservations.mockClear();
+
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: {
+					authorization: AUTH,
+					"content-type": "application/json",
+					"x-astraea-project-id": TEST_SCOPE.projectId,
+				},
+				body: JSON.stringify(
+					validOtlp({}, [
+						{
+							key: "astraea.project.id",
+							value: { stringValue: resourceProject },
+						},
+					]),
+				),
+			}),
+		);
+
+		expect(res.status).toBe(404);
+		expect(insertTraces).not.toHaveBeenCalled();
+		expect(insertObservations).not.toHaveBeenCalled();
 	});
 
 	it("applies ASTRAEA_REDACT_INPUT=true when ingesting", async () => {
