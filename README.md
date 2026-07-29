@@ -108,7 +108,7 @@ This installs the asdf plugins for every tool and installs the pinned versions. 
 
 ### `make dev`
 
-Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Bootstraps the control plane at `.opencode/factory/`.
+Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. The API applies its ordered PostgreSQL and ClickHouse schema migrations before it starts, so a healthy API has both data stores ready for requests. Bootstraps the control plane at `.opencode/factory/`.
 
 ### Local dev (deps in Docker, api + web via bun)
 
@@ -125,7 +125,7 @@ make dev-backend
 make dev-frontend
 ```
 
-The local api connects to Postgres / ClickHouse / Valkey on `localhost` (the ports docker compose maps to the host). The Vite dev server proxies `/v1/*`, `/openapi.json`, `/reference`, and `/health` to `localhost:3000`.
+The local api connects to Postgres / ClickHouse / Valkey on `localhost` (the ports docker compose maps to the host). Before starting the local API against a fresh ClickHouse instance, run `make ch-schema`; it uses the same ordered migration runner as the production image. The Vite dev server proxies `/v1/*`, `/openapi.json`, `/reference`, and `/health` to `localhost:3000`.
 
 Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 

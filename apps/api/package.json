@@ -15,9 +15,11 @@
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "test:integration": "bun test tests/integration",
+    "test:clickhouse": "bun test tests/integration/clickhouse-schema.test.ts",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
     "db:migrate": "node-pg-migrate up --migrations-dir ../../infra/db/migrations --migration-file-language sql",
+    "ch:migrate": "bun run src/db/clickhouse-migrate.ts",
     "openapi:snapshot": "bun run ../../infra/codegen/snapshot.ts",
     "codegen:ts": "bun x --bun --package=typescript@5.9.3 --package=openapi-typescript@7.13.0 openapi-typescript ../../openapi.yaml --output ../../clients/ts/api.d.ts --enum --immutable --empty-objects false",
     "codegen:py": "cd ../.. && mkdir -p clients && uvx --from openapi-python-client==0.29.0 openapi-python-client generate --path openapi.yaml --config infra/codegen/openapi-python-client.config.yaml --output-path clients/python --overwrite --no-fail-on-warning"
