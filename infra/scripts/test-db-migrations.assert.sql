@@ -1,5 +1,17 @@
 DO $$
 BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'scores' AND column_name = 'observation_id'
+	) OR NOT EXISTS (
+		SELECT 1 FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'feedback_reviews'
+	) OR NOT EXISTS (
+		SELECT 1 FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'feedback_idempotency'
+	) THEN
+		RAISE EXCEPTION 'feedback first-pass persistence is incomplete';
+	END IF;
     IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 1
         OR (SELECT name FROM projects WHERE slug = 'default') <> 'Default Project' THEN
         RAISE EXCEPTION 'default project was not seeded';

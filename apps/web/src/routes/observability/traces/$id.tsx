@@ -18,6 +18,11 @@ import {
 } from "../../../hooks/useTraceStream";
 import { normalizeObservationMetadata, type TraceRow } from "../../../lib/api";
 import {
+	AddToDatasetDialog,
+	FeedbackControls,
+} from "../../../components/DatasetFeedbackActions";
+import { useOptionalProjectSelection } from "../../../components/ProjectProvider";
+import {
 	canonicalObservationId,
 	createTraceModel,
 	traceModelObservations,
@@ -84,6 +89,7 @@ export function TraceDetailPage() {
 		[location.searchStr],
 	);
 	const validId = TRACE_ID_REGEX.test(id);
+	const project = useOptionalProjectSelection();
 	const [model, setModel] = React.useState<TraceModel<TraceRow>>(() =>
 		createTraceModel<TraceRow>({ observations: [] }),
 	);
@@ -272,6 +278,30 @@ export function TraceDetailPage() {
 				trace={model.trace}
 				recordingStatus={recordingStatus}
 				streamControl={<StreamToggle sse={stream} />}
+				actions={
+					<>
+						<FeedbackControls
+							projectId={project?.selectedProjectId ?? null}
+							traceId={id}
+							label="trace"
+						/>
+						<AddToDatasetDialog
+							projectId={project?.selectedProjectId ?? null}
+							traceId={id}
+							inputText={
+								typeof model.trace?.input_text === "string"
+									? model.trace.input_text
+									: ""
+							}
+							outputText={
+								typeof model.trace?.output_text === "string"
+									? model.trace.output_text
+									: ""
+							}
+							label="trace"
+						/>
+					</>
+				}
 				onRefresh={() => {
 					setRecordingStatus("recording");
 					stream.reconnect();
@@ -368,6 +398,34 @@ export function TraceDetailPage() {
 					<ObservationDetailPanel
 						traceId={id}
 						observation={selectedObservation}
+						actions={
+							selectedObservation ? (
+								<>
+									<FeedbackControls
+										projectId={project?.selectedProjectId ?? null}
+										traceId={id}
+										observationId={selectedObservation.observation_id}
+										label="Observation"
+									/>
+									<AddToDatasetDialog
+										projectId={project?.selectedProjectId ?? null}
+										traceId={id}
+										observationId={selectedObservation.observation_id}
+										inputText={
+											typeof selectedObservation.input_text === "string"
+												? selectedObservation.input_text
+												: ""
+										}
+										outputText={
+											typeof selectedObservation.output_text === "string"
+												? selectedObservation.output_text
+												: ""
+										}
+										label="Observation"
+									/>
+								</>
+							) : undefined
+						}
 						onClose={closeInspector}
 					/>
 				) : (

@@ -2,6 +2,7 @@ import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import {
+	cancelExperiment as cancelExperimentRecord,
 	createExperiment as createExperimentRecord,
 	experimentSummary as experimentSummaryRecord,
 	ExperimentRepositoryError,
@@ -163,6 +164,7 @@ export type ExperimentDependencies = {
 	listExperiments: typeof listExperimentsRecord;
 	getExperiment: typeof getExperimentRecord;
 	updateExperiment: typeof updateExperiment;
+	cancelExperiment: typeof cancelExperimentRecord;
 	listResults: typeof listExperimentResults;
 	insertResult: typeof insertExperimentResult;
 	summary: typeof experimentSummaryRecord;
@@ -187,6 +189,7 @@ export const production: ExperimentDependencies = {
 	listExperiments: listExperimentsRecord,
 	getExperiment: getExperimentRecord,
 	updateExperiment,
+	cancelExperiment: cancelExperimentRecord,
 	listResults: listExperimentResults,
 	insertResult: insertExperimentResult,
 	summary: experimentSummaryRecord,
@@ -409,6 +412,15 @@ export function createExperimentHandlers(
 					project_id: body.project_id,
 					id: body.dataset_id,
 				});
+				const dataset = await deps.listDatasetItems(db, {
+					project_id: body.project_id,
+					dataset_id: body.dataset_id,
+				});
+				if (dataset.items.some((item) => item.expected_output === null))
+					throw new ExperimentRepositoryError(
+						"CONFLICT",
+						"Every dataset item needs expected output for this evaluator",
+					);
 				const row = await deps.createExperiment(db, body);
 				const controller = new AbortController();
 				activeExperiments.set(
@@ -506,15 +518,12 @@ export function createExperimentHandlers(
 			try {
 				const id = c.req.valid("param").id;
 				const project_id = c.req.valid("query").project_id;
-				await deps.getExperiment(deps.pool(), { id, project_id });
+				const cancelled = await deps.cancelExperiment(deps.pool(), {
+					id,
+					project_id,
+				});
 				activeExperiments.get(experimentKey(project_id, id))?.abort();
-				return c.json(
-					await deps.updateExperiment(deps.pool(), {
-						id,
-						project_id,
-						status: "cancelled",
-					}),
-				);
+				return c.json(cancelled);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}

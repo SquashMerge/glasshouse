@@ -10,6 +10,9 @@ import {
 	LuChevronLeft,
 	LuChevronRight,
 	LuChevronUp,
+	LuDatabase,
+	LuChartLine,
+	LuMessageSquare,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
@@ -180,6 +183,27 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						collapsed={collapsed}
 					/>
 					<SidebarLink
+						to="/datasets"
+						label="Datasets"
+						icon={<LuDatabase className="h-4 w-4" />}
+						active={isActive("/datasets")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
+						to="/evaluations"
+						label="Evaluations"
+						icon={<LuChartLine className="h-4 w-4" />}
+						active={isActive("/evaluations")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
+						to="/feedback"
+						label="Feedback"
+						icon={<LuMessageSquare className="h-4 w-4" />}
+						active={isActive("/feedback")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
 						to="/observability"
 						label="Observability"
 						icon={<LuActivity className="h-4 w-4" />}
@@ -287,7 +311,13 @@ function SidebarLink({
 	active,
 	collapsed,
 }: {
-	to: "/" | "/observability" | "/prompts";
+	to:
+		| "/"
+		| "/observability"
+		| "/prompts"
+		| "/datasets"
+		| "/evaluations"
+		| "/feedback";
 	label: string;
 	icon: React.ReactNode;
 	active: boolean;

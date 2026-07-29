@@ -13,6 +13,9 @@ import { PromptsPage } from "./routes/prompts";
 import { NewPromptPage } from "./routes/prompts-new";
 import { PromptDetailPage } from "./routes/prompts-detail";
 import { EditPromptPage } from "./routes/prompts-edit";
+import { DatasetsPage, DatasetDetailPage } from "./routes/datasets";
+import { EvaluationsPage, EvaluationDetailPage } from "./routes/evaluations";
+import { FeedbackPage } from "./routes/feedback";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 import { ProjectProvider } from "./components/ProjectProvider";
@@ -82,6 +85,31 @@ const promptEditRoute = createRoute({
 	path: "/prompts/$slug/edit",
 	component: EditPromptPage,
 });
+const datasetsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/datasets",
+	component: DatasetsPage,
+});
+const datasetDetailRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/datasets/$id",
+	component: DatasetDetailPage,
+});
+const evaluationsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/evaluations",
+	component: EvaluationsPage,
+});
+const evaluationDetailRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/evaluations/$id",
+	component: EvaluationDetailPage,
+});
+const feedbackRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/feedback",
+	component: FeedbackPage,
+});
 
 const router = createRouter({
 	routeTree: rootRoute.addChildren([
@@ -94,6 +122,11 @@ const router = createRouter({
 			newPromptRoute,
 			promptDetailRoute,
 			promptEditRoute,
+			datasetsRoute,
+			datasetDetailRoute,
+			evaluationsRoute,
+			evaluationDetailRoute,
+			feedbackRoute,
 		]),
 	]),
 	defaultPreload: false,

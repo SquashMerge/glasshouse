@@ -127,6 +127,14 @@ import {
 	getScore,
 	handleGetScore,
 } from "./routes/scores.js";
+import {
+	createFeedbackRoute,
+	handleCreateFeedback,
+	listFeedbackRoute,
+	handleListFeedback,
+	reviewFeedbackRoute,
+	handleReviewFeedback,
+} from "./routes/feedback.js";
 
 export const openapiApp = new OpenAPIHono({
 	defaultHook: (result, c) => {
@@ -239,6 +247,10 @@ register(getDataset, handleGetDataset);
 register(listDatasetItems, handleListDatasetItems);
 register(addDatasetItem, handleAddDatasetItem);
 register(deleteDatasetItem, handleDeleteDatasetItem);
+
+register(createFeedbackRoute, handleCreateFeedback);
+register(listFeedbackRoute, handleListFeedback);
+register(reviewFeedbackRoute, handleReviewFeedback);
 
 register(createScore, handleCreateScore);
 register(getScore, (c: Context) => handleGetScore(c.req.param("id")!));

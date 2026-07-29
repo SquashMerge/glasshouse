@@ -25,6 +25,7 @@ export interface ObservationDetailPanelProps {
 	observation: CanonicalObservation | null;
 	traceId: string;
 	onClose?: () => void;
+	actions?: React.ReactNode;
 }
 
 function printable(value: unknown): string {
@@ -146,6 +147,7 @@ export function ObservationDetailPanel({
 	observation,
 	traceId,
 	onClose,
+	actions,
 }: ObservationDetailPanelProps) {
 	const [tab, setTab] = React.useState("overview");
 	const [copyMessage, setCopyMessage] = React.useState("");
@@ -304,6 +306,7 @@ export function ObservationDetailPanel({
 					</p>
 				</div>
 				<div className="flex items-center gap-2">
+					{actions}
 					<Button
 						type="button"
 						size="sm"

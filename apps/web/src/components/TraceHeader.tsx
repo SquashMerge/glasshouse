@@ -13,6 +13,7 @@ export interface TraceHeaderProps {
 	recordingStatus?: "recording" | "complete";
 	streamControl?: React.ReactNode;
 	onRefresh?: () => void;
+	actions?: React.ReactNode;
 }
 
 function formatDuration(milliseconds: number | null): string {
@@ -92,6 +93,7 @@ export function TraceHeader({
 	recordingStatus = "recording",
 	streamControl,
 	onRefresh,
+	actions,
 }: TraceHeaderProps) {
 	const [rawOpen, setRawOpen] = React.useState(false);
 	const [copyState, setCopyState] = React.useState<
@@ -186,6 +188,7 @@ export function TraceHeader({
 					</div>
 				</div>
 				<div className="flex items-center gap-2">
+					{actions}
 					{streamControl}
 					{onRefresh && (
 						<Button

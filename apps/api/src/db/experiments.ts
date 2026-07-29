@@ -163,6 +163,27 @@ export async function updateExperiment(
 		throw normalize(cause);
 	}
 }
+export async function cancelExperiment(
+	db: Queryable,
+	input: { project_id: string; id: string },
+) {
+	try {
+		const r = await db.query(
+			`UPDATE experiments SET status='cancelled', updated_at=now() WHERE id=$1 AND project_id=$2 AND status IN ('pending','running') RETURNING *`,
+			[input.id, input.project_id],
+		);
+		if (!r.rows[0]) {
+			const existing = await getExperiment(db, input);
+			throw new ExperimentRepositoryError(
+				"CONFLICT",
+				`Evaluation is already ${existing.status}`,
+			);
+		}
+		return experiment(r.rows[0]);
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
 export async function insertExperimentResult(
 	db: Queryable,
 	input: {
