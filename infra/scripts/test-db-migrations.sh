@@ -31,12 +31,16 @@ docker run --detach --rm \
   postgres:16-alpine >/dev/null
 
 for _ in {1..30}; do
-  if docker exec "$CONTAINER" pg_isready --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null 2>&1; then
+  if docker exec "$CONTAINER" \
+    psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+    --command 'SELECT 1' >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-docker exec "$CONTAINER" pg_isready --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null
+docker exec "$CONTAINER" \
+  psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  --command 'SELECT 1' >/dev/null
 
 PORT_BINDING="$(docker port "$CONTAINER" 5432/tcp)"
 POSTGRES_PORT="${PORT_BINDING##*:}"
