@@ -251,6 +251,7 @@ Runs the end-to-end smoke (AC1 + AC2 + AC9 + AC10): brings up the stack, curls t
 - [`docs/00-explainer.md`](docs/00-explainer.md) — General explainer (the "why" in plain terms)
 - [`docs/01-platform-design.md`](docs/01-platform-design.md) — Full technical design (architecture, licensing, integration tiers, deployment, tech stack, REST API)
 - [`docs/02-roadmap.md`](docs/02-roadmap.md) — 90-day build plan with Implementation Status
+- [`docs/05-unified-dataset-workflow.md`](docs/05-unified-dataset-workflow.md) — implementation contract for versioned datasets, reusable evaluation definitions, and runs
 - [`docs/research/`](docs/research/) — Competitive analysis and framework research
 
 ## Troubleshooting

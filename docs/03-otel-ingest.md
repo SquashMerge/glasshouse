@@ -138,6 +138,12 @@ Astraea accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normaliz
 
 `gen_ai.*` semantic conventions take precedence over OpenInference when both are present.
 
+## Ingestion and query bounds
+
+A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit), 128 resource spans/scopes/attributes, and 128 events or links per span. Requests over these structural limits are rejected before normalization and persistence. The 10 MiB HTTP body cap still applies independently.
+
+Trace-detail reads are capped at 5,000 observations, ordered by start time, so an unusually large trace cannot create an unbounded ClickHouse query or SSE snapshot. Use the paginated observations endpoint to inspect broader data.
+
 ## Custom path
 
 If your OTel SDK appends a different path (e.g. some SDKs use `/v1/traces` while the OTLP spec says it should), set `OTEL_EXPORTER_OTLP_TRACES_PATH` (or the SDK's equivalent) to override the default `/v1/traces`.

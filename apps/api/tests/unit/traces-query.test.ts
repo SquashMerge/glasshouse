@@ -42,11 +42,12 @@ describe("getTrace project scope", () => {
 			},
 		});
 		expect(queries[1]).toMatchObject({
-			query: expect.stringContaining("project_id = {project_id: String}"),
+			query: expect.stringContaining("LIMIT {limit: UInt32}"),
 			query_params: {
 				organization_id: ORGANIZATION_ID,
 				trace_id: TRACE_ID,
 				project_id: PROJECT_ID,
+				limit: 5_000,
 			},
 		});
 	});

@@ -78,6 +78,29 @@ describe("ExportTraceServiceRequest Zod validation", () => {
 		expect(result.success).toBe(false);
 	});
 
+	it("rejects a request whose total span count exceeds the ingestion budget", () => {
+		const payload = validPayload();
+		const scope = payload.resource_spans[0]!.scope_spans[0]!;
+		scope.spans = Array.from({ length: 512 }, () => ({ ...scope.spans[0]! }));
+		payload.resource_spans[0]!.scope_spans = Array.from({ length: 4 }, () => ({
+			...scope,
+			spans: [...scope.spans],
+		}));
+		expect(ExportTraceServiceRequest.safeParse(payload).success).toBe(false);
+	});
+
+	it("rejects oversized attribute collections before normalization", () => {
+		const result = ExportTraceServiceRequest.safeParse(
+			validPayload({
+				attributes: Array.from({ length: 129 }, (_, index) => ({
+					key: `attribute.${index}`,
+					value: { stringValue: "value" },
+				})),
+			}),
+		);
+		expect(result.success).toBe(false);
+	});
+
 	it("rejects span with empty name", () => {
 		const result = ExportTraceServiceRequest.safeParse(
 			validPayload({ name: "" }),

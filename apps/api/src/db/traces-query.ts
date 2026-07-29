@@ -77,6 +77,8 @@ const OBSERVATION_COLUMNS =
 const OBSERVATION_FULL_COLUMNS =
 	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, metadata";
 
+export const MAX_TRACE_DETAIL_OBSERVATIONS = 5_000;
+
 function defaultClient(): ClickHouseClient {
 	return ch();
 }
@@ -180,6 +182,7 @@ export async function getTrace(
 		organization_id: organizationId,
 		trace_id: traceId,
 		project_id: projectId ?? "",
+		limit: MAX_TRACE_DETAIL_OBSERVATIONS,
 	};
 	const traceResult = await client.query({
 		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} LIMIT 1`,
@@ -191,7 +194,7 @@ export async function getTrace(
 	if (!trace) return { trace: null, observations: [] };
 
 	const obsResult = await client.query({
-		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} ORDER BY start_time ASC`,
+		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} ORDER BY start_time ASC LIMIT {limit: UInt32}`,
 		query_params,
 		format: "JSONEachRow",
 	});

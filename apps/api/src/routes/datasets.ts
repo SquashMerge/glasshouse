@@ -2,6 +2,7 @@ import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import { ch } from "../db/clickhouse.js";
+import { trustedTenant } from "../tenancy.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
 	createDataset as createDatasetRecord,
@@ -146,19 +147,21 @@ export type DatasetRouteDependencies = {
 	addDatasetItem: typeof addDatasetItemRecord;
 	deleteDatasetItem: typeof deleteDatasetItemRecord;
 	targetExists: (input: {
+		organization_id: string;
 		project_id: string;
 		trace_id: string;
 		observation_id?: string | null;
 	}) => Promise<boolean>;
 };
 async function targetExists(input: {
+	organization_id: string;
 	project_id: string;
 	trace_id: string;
 	observation_id?: string | null;
 }) {
 	const table = input.observation_id ? "observations" : "traces";
 	const result = await ch().query({
-		query: `SELECT 1 FROM ${table} WHERE project_id={project_id:String} AND trace_id={trace_id:String}${input.observation_id ? " AND observation_id={observation_id:String}" : ""} LIMIT 1`,
+		query: `SELECT 1 FROM ${table} WHERE organization_id={organization_id:String} AND project_id={project_id:String} AND trace_id={trace_id:String}${input.observation_id ? " AND observation_id={observation_id:String}" : ""} LIMIT 1`,
 		query_params: input.observation_id
 			? { ...input, observation_id: input.observation_id }
 			: input,
@@ -251,6 +254,7 @@ export function createDatasetRouteHandlers(
 				if (
 					body.source_trace_id &&
 					!(await dependencies.targetExists({
+						organization_id: trustedTenant(c).organizationId,
 						project_id: body.project_id,
 						trace_id: body.source_trace_id,
 						observation_id: body.source_observation_id,
