@@ -20,6 +20,7 @@ import {
 const USER = process.env.UI_USERNAME ?? "astraea";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:3000";
+const E2E_PROJECT_ID = "00000000-0000-4000-8000-000000000001";
 
 function basicAuthHeader(): string {
 	return `Basic ${Buffer.from(`${USER}:${PASS}`).toString("base64")}`;
@@ -131,6 +132,10 @@ function buildTracePayload(
 				resource: {
 					attributes: [
 						{ key: "service.name", value: { stringValue: "astraea-e2e" } },
+						{
+							key: "astraea.project.id",
+							value: { stringValue: E2E_PROJECT_ID },
+						},
 					],
 				},
 				scope_spans: [

@@ -426,7 +426,7 @@ test("reviews negative feedback through the inbox without promoting a dataset ca
 	await expect(page.getByText("Needs a human review")).toBeVisible();
 	await page.getByRole("button", { name: "Mark reviewed" }).click();
 	await page.getByRole("button", { name: "All feedback" }).click();
-	await expect(page.getByText(/trace · reviewed/)).toBeVisible();
+	await expect(page.getByText(/trace · reviewed/).first()).toBeVisible();
 
 	const feedback = await apiJson<{ items: Feedback[] }>(
 		await request.get(`${API_BASE}/v1/feedback?project_id=${project.id}`, {

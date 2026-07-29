@@ -10,6 +10,7 @@ function fakeClient() {
 		query: string;
 		query_params: Record<string, unknown>;
 	}> = [];
+	let firstQuery = true;
 	return {
 		client: {
 			query: async (request: {
@@ -17,7 +18,9 @@ function fakeClient() {
 				query_params: Record<string, unknown>;
 			}) => {
 				queries.push(request);
-				return { json: async () => (queries.length === 1 ? [{}] : []) };
+				const rows = firstQuery ? [{}] : [];
+				firstQuery = false;
+				return { json: async () => rows };
 			},
 		},
 		queries,
