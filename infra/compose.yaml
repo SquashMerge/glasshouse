@@ -59,7 +59,7 @@ services:
     ports:
       - "${VALKEY_PORT:-6379}:6379"
     volumes:
-      - ./valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+      - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
       - astraea_valkey_data:/data
     healthcheck:
       test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}", "ping"]
@@ -69,7 +69,7 @@ services:
 
   api:
     build:
-      context: ..
+      context: .
       dockerfile: apps/api/Dockerfile
     container_name: astraea-api
     restart: unless-stopped
@@ -108,7 +108,7 @@ services:
 
   web:
     build:
-      context: ..
+      context: .
       dockerfile: apps/web/Dockerfile
     container_name: astraea-web
     restart: unless-stopped

@@ -31,6 +31,8 @@ jobs:
             command: bun run test
           - check: build
             command: bun run build
+          - check: compose-paths
+            command: bash infra/scripts/test-compose-paths.sh
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -138,13 +140,13 @@ jobs:
           sed -i 's/CHANGE_ME/astraea-ci-password/g' infra/.env
 
       - name: Start application stack
-        run: docker compose --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
+        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
 
       - name: Verify idempotent ClickHouse migrations
-        run: docker compose --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'
+        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'
 
       - name: Seed E2E project
-        run: docker compose --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING;"
+        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING;"
 
       - name: Run Playwright E2E suite
         env:
@@ -156,8 +158,8 @@ jobs:
       - name: Dump application diagnostics
         if: failure()
         run: |
-          docker compose --env-file infra/.env -f infra/compose.yaml ps
-          docker compose --env-file infra/.env -f infra/compose.yaml logs --no-color --tail=200
+          docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml ps
+          docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml logs --no-color --tail=200
 
       - name: Upload Playwright artifacts
         if: failure()
@@ -171,4 +173,4 @@ jobs:
 
       - name: Stop application stack
         if: always()
-        run: docker compose --env-file infra/.env -f infra/compose.yaml down --volumes --remove-orphans
+        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml down --volumes --remove-orphans
