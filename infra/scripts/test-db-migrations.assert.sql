@@ -373,7 +373,8 @@ BEGIN
         RAISE EXCEPTION 'project slugs are not organization-scoped';
     END IF;
 
-    IF NOT EXISTS (
+    IF (
+        NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_reviews'::regclass
             AND contype = 'c'
