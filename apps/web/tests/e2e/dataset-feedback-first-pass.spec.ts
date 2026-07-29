@@ -425,6 +425,7 @@ test("reviews negative feedback through the inbox without promoting a dataset ca
 	await page.goto("/feedback");
 	await expect(page.getByText("Needs a human review")).toBeVisible();
 	await page.getByRole("button", { name: "Mark reviewed" }).click();
+	await page.getByRole("button", { name: "All feedback" }).click();
 	await expect(page.getByText(/trace · reviewed/)).toBeVisible();
 
 	const feedback = await apiJson<{ items: Feedback[] }>(
@@ -461,7 +462,7 @@ test("blocks an evaluation before an LLM run when the selected dataset lacks exp
 	);
 
 	await page.goto("/evaluations");
-	await page.getByLabel("Dataset").selectOption(dataset.id);
+	await page.locator("#evaluation-dataset").selectOption(dataset.id);
 	await expect(
 		page.getByText(
 			"1 dataset case need expected output before this evaluation can run.",
