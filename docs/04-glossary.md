@@ -51,13 +51,15 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Prompt tombstone** — immutable `(project_id, slug)` reservation left by a hard deletion; prevents canonical prompt ID reuse. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Prompt deletion audit** — immutable, content-free deletion record: project ID, internal prompt ID, slug, deleting actor, timestamp, and deleted version count. See `infra/db/migrations/0009_prompt_management_canonical.sql`.
 - **Prompt optimization job** — a project-scoped GEPA request that pins a source prompt version, target message role, evaluator/examples, worker model configuration, and budget. Its immutable source-message snapshot supports historical-version publication; `worker_claim_id` with `worker_lease_expires_at` gives one API replica temporary execution ownership and allows recovery after a replica crash. It publishes at most one new immutable prompt version and exposes only lifecycle metadata through its SSE stream. See `apps/api/src/routes/prompt-optimizations.ts`.
-- **Dataset** — collection of `dataset_item`s, scoped to a Project. API: `/v1/datasets`.
+- **Dataset** — current project-scoped collection of `dataset_item`s. The proposed stable-resource, draft, and immutable-version lifecycle is specified in `docs/05-unified-dataset-workflow.md`. API: `/v1/datasets`.
+- **Dataset version** — proposed immutable, ordered snapshot of a Dataset’s schema and item payloads. Evaluation runs must resolve and retain one concrete version, never a mutable draft. Display form: `slug@version`. See `docs/05-unified-dataset-workflow.md`.
 - **Dataset item** — one JSON input/reference pair in a Dataset. Optional `source_trace_id` and `source_observation_id` preserve the production trace origin for regression workflows. API: `/v1/datasets/{id}/items`.
-- **Experiment** — project-scoped evaluation run over a Dataset. It invokes either the configured OpenAI-compatible LLM or the development Codex-compatible CLI (`provider: "codex_cli"`), stores one result per Dataset item, scores with `exact_match` or `contains`, and emits one OTLP trace per item. API: `/v1/experiments`.
+- **Evaluation** — proposed reusable project-scoped definition binding an agent target, Dataset selector, input/output mappings, evaluator configuration, and run defaults. It has immutable published definition versions. See `docs/05-unified-dataset-workflow.md`.
+- **Evaluation run** — proposed execution after resolving immutable Evaluation, Dataset, agent/manifest, and evaluator versions. The existing MVP API/database term is **Experiment** (`/v1/experiments`), which remains the compatibility alias during migration.
+- **Experiment** — current project-scoped evaluation run over a Dataset. It invokes either the configured OpenAI-compatible LLM or the development Codex-compatible CLI (`provider: "codex_cli"`), stores one result per Dataset item, scores with `exact_match` or `contains`, and emits one OTLP trace per item. API: `/v1/experiments`.
 - **Benchmark suite** — project-scoped, longitudinal evaluation definition backed by a grounded golden Dataset whose items all provide expected outputs. Each run records its model/prompt label and ranks against prior runs. API: `/v1/benchmarks`.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 - **Feedback** — immutable `human.feedback` Score plus mutable project-scoped review state; negative `new` feedback appears in `/feedback` Needs review. API: `/v1/feedback`.
-- **Evaluation** — dashboard label for an existing Experiment run against a Dataset. UI: `/evaluations`.
 
 ## Storage roles
 
