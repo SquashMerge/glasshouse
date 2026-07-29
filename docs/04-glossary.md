@@ -53,6 +53,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Dataset** — collection of `dataset_item`s, scoped to a Project. API: `/v1/datasets`.
 - **Dataset item** — one JSON input/reference pair in a Dataset. Optional `source_trace_id` and `source_observation_id` preserve the production trace origin for regression workflows. API: `/v1/datasets/{id}/items`.
 - **Experiment** — project-scoped evaluation run over a Dataset. It invokes either the configured OpenAI-compatible LLM or the development Codex-compatible CLI (`provider: "codex_cli"`), stores one result per Dataset item, scores with `exact_match` or `contains`, and emits one OTLP trace per item. API: `/v1/experiments`.
+- **Benchmark suite** — project-scoped, longitudinal evaluation definition backed by a grounded golden Dataset whose items all provide expected outputs. Each run records its model/prompt label and ranks against prior runs. API: `/v1/benchmarks`.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 
 ## Storage roles

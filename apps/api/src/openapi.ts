@@ -76,6 +76,16 @@ import {
 } from "./routes/prompts.js";
 import { listProjects, handleListProjects } from "./routes/projects.js";
 import {
+	listBenchmarkSuites,
+	createBenchmarkSuiteRoute,
+	listBenchmarkRunsRoute,
+	createBenchmarkRunRoute,
+	handleListBenchmarkSuites,
+	handleCreateBenchmarkSuite,
+	handleListBenchmarkRuns,
+	handleCreateBenchmarkRun,
+} from "./routes/benchmarks.js";
+import {
 	getPromptProvenance,
 	handleGetPromptProvenance,
 } from "./routes/prompt-provenance.js";
@@ -168,6 +178,11 @@ register(getExperimentResults, handleGetExperimentResults);
 register(getExperimentSummary, handleGetExperimentSummary);
 register(getExperimentEvents, handleGetExperimentEvents);
 register(cancelExperiment, handleCancelExperiment);
+
+register(listBenchmarkSuites, handleListBenchmarkSuites);
+register(createBenchmarkSuiteRoute, handleCreateBenchmarkSuite);
+register(listBenchmarkRunsRoute, handleListBenchmarkRuns);
+register(createBenchmarkRunRoute, handleCreateBenchmarkRun);
 
 register(listTraces, handleListTraces);
 // Register the more specific /v1/traces/events SSE route BEFORE
