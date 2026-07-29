@@ -182,6 +182,10 @@ describe("dataset repository", () => {
 			},
 		} as never);
 		const response = await handlers.handleAddDatasetItem({
+			get: () => ({
+				actor: "test",
+				organizationId: "00000000-0000-4000-8000-000000000001",
+			}),
 			req: {
 				valid: (part: string) =>
 					part === "param"
@@ -200,6 +204,7 @@ describe("dataset repository", () => {
 		expect(response.status).toBe(404);
 		expect(added).toBe(false);
 		expect(checked).toEqual({
+			organization_id: "00000000-0000-4000-8000-000000000001",
 			project_id: PROJECT,
 			trace_id: "a".repeat(32),
 			observation_id: "b".repeat(16),

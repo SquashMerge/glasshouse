@@ -1,5 +1,11 @@
 import { z } from "@hono/zod-openapi";
 
+export const MAX_OTLP_RESOURCE_SPANS = 128;
+export const MAX_OTLP_SCOPE_SPANS_PER_RESOURCE = 128;
+export const MAX_OTLP_SPANS_PER_SCOPE = 512;
+export const MAX_OTLP_SPANS_PER_REQUEST = 2_000;
+export const MAX_OTLP_ATTRIBUTES_PER_RECORD = 128;
+
 // OTLP uses lowercase hex with no "0x" prefix.
 // trace_id = 16 bytes (32 hex chars), span_id = 8 bytes (16 hex chars).
 const hexBytes = (len: number) =>
@@ -34,7 +40,7 @@ const AnyValue = z
 
 const KeyValue = z
 	.object({
-		key: z.string().min(1),
+		key: z.string().min(1).max(256),
 		value: AnyValue.optional(),
 	})
 	.openapi("KeyValue");
@@ -73,11 +79,15 @@ export const Span = z
 			.union([z.number().refine(Number.isInteger), z.string()])
 			.optional()
 			.transform((v) => (v === undefined ? undefined : Number(v))),
-		attributes: z.array(KeyValue).optional().default([]),
+		attributes: z
+			.array(KeyValue)
+			.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+			.optional()
+			.default([]),
 		status: SpanStatus.optional(),
-		events: z.array(z.any()).optional(),
-		links: z.array(z.any()).optional(),
-		trace_state: z.string().optional(),
+		events: z.array(z.any()).max(128).optional(),
+		links: z.array(z.any()).max(128).optional(),
+		trace_state: z.string().max(512).optional(),
 	})
 	.openapi("Span");
 export type Span = z.infer<typeof Span>;
@@ -88,10 +98,13 @@ export const ScopeSpans = z
 			.object({
 				name: z.string().optional(),
 				version: z.string().optional(),
-				attributes: z.array(KeyValue).optional(),
+				attributes: z
+					.array(KeyValue)
+					.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+					.optional(),
 			})
 			.optional(),
-		spans: z.array(Span).min(1),
+		spans: z.array(Span).min(1).max(MAX_OTLP_SPANS_PER_SCOPE),
 	})
 	.openapi("ScopeSpans");
 
@@ -99,17 +112,40 @@ export const ResourceSpans = z
 	.object({
 		resource: z
 			.object({
-				attributes: z.array(KeyValue).optional().default([]),
+				attributes: z
+					.array(KeyValue)
+					.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+					.optional()
+					.default([]),
 				dropped_attributes_count: z.number().int().optional(),
 			})
 			.optional(),
-		scope_spans: z.array(ScopeSpans).min(1),
+		scope_spans: z
+			.array(ScopeSpans)
+			.min(1)
+			.max(MAX_OTLP_SCOPE_SPANS_PER_RESOURCE),
 	})
 	.openapi("ResourceSpans");
 
 export const ExportTraceServiceRequest = z
 	.object({
-		resource_spans: z.array(ResourceSpans).min(1),
+		resource_spans: z.array(ResourceSpans).min(1).max(MAX_OTLP_RESOURCE_SPANS),
+	})
+	.superRefine((request, ctx) => {
+		const spanCount = request.resource_spans.reduce(
+			(total, resourceSpan) =>
+				total +
+				resourceSpan.scope_spans.reduce(
+					(scopeTotal, scopeSpan) => scopeTotal + scopeSpan.spans.length,
+					0,
+				),
+			0,
+		);
+		if (spanCount > MAX_OTLP_SPANS_PER_REQUEST)
+			ctx.addIssue({
+				code: "custom",
+				message: `request contains more than ${MAX_OTLP_SPANS_PER_REQUEST} spans`,
+			});
 	})
 	.openapi("ExportTraceServiceRequest");
 
