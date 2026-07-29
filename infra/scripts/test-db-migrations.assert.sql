@@ -246,7 +246,7 @@ BEGIN
         RAISE EXCEPTION 'canonical version compatibility mirrors or summaries were not repaired';
     END IF;
     IF (
-        SELECT array_agg(column_name ORDER BY ordinal_position)
+        SELECT array_agg(column_name::text ORDER BY ordinal_position)
         FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'prompt_deletion_audit'
     ) <> ARRAY['project_id', 'prompt_id', 'slug', 'deleted_by', 'deleted_at', 'deleted_version_count'] THEN
