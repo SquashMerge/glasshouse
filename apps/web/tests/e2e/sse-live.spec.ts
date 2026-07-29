@@ -40,6 +40,13 @@ async function login(page: Page) {
 	await page.getByLabel(/Password/i).fill(PASS);
 	await page.getByRole("button", { name: /Sign in/i }).click();
 	await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
+	const selector = page.getByTestId("project-selector");
+	await expect(selector).toBeEnabled();
+	await expect(
+		selector.locator("option", { hasText: "E2E Project" }),
+	).toHaveCount(1);
+	await selector.selectOption(E2E_PROJECT_ID);
+	await expect(selector).toHaveValue(E2E_PROJECT_ID);
 }
 
 /**

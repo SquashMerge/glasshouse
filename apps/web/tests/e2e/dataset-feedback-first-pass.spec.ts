@@ -267,8 +267,11 @@ test("records trace feedback and preserves observation provenance when adding it
 
 	await page.goto(`/observability/traces/${trace.traceId}`);
 	await expect(page.getByTestId("trace-header")).toContainText(trace.traceId);
-	await page.getByLabel("Comment").first().fill("Helpful first-pass trace");
-	await page.getByRole("button", { name: "Thumbs up trace" }).click();
+	const traceFeedback = page
+		.getByRole("button", { name: "Thumbs up trace" })
+		.locator("..");
+	await traceFeedback.getByLabel("Comment").fill("Helpful first-pass trace");
+	await traceFeedback.getByRole("button", { name: "Thumbs up trace" }).click();
 	await expect(page.getByRole("status")).toContainText("Recorded");
 
 	const panel = page.getByTestId("observation-detail");
