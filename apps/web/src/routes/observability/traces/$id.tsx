@@ -84,12 +84,33 @@ function normalizeStreamObservation(observation: ObservationRowLike) {
 export function TraceDetailPage() {
 	const { id } = useParams({ from: "/protected/observability/traces/$id" });
 	const location = useLocation();
+	const project = useOptionalProjectSelection();
+	const projectId = project?.selectedProjectId ?? null;
+
+	return (
+		<TraceDetailPageContent
+			key={`${id}:${projectId ?? ""}`}
+			id={id}
+			searchStr={location.searchStr}
+			projectId={projectId}
+		/>
+	);
+}
+
+function TraceDetailPageContent({
+	id,
+	searchStr,
+	projectId,
+}: {
+	id: string;
+	searchStr: string;
+	projectId: string | null;
+}) {
 	const spanDeepLink = React.useMemo(
-		() => new URLSearchParams(location.searchStr).get("span"),
-		[location.searchStr],
+		() => new URLSearchParams(searchStr).get("span"),
+		[searchStr],
 	);
 	const validId = TRACE_ID_REGEX.test(id);
-	const project = useOptionalProjectSelection();
 	const [model, setModel] = React.useState<TraceModel<TraceRow>>(() =>
 		createTraceModel<TraceRow>({ observations: [] }),
 	);
@@ -196,7 +217,7 @@ export function TraceDetailPage() {
 		}),
 		[clearHighlightTimers],
 	);
-	const stream = useTraceStream(id, handlers, project?.selectedProjectId);
+	const stream = useTraceStream(id, handlers, projectId);
 	React.useEffect(() => {
 		if (!validId || receivedSnapshot || notFound) return;
 		const timeout = window.setTimeout(
@@ -281,12 +302,12 @@ export function TraceDetailPage() {
 				actions={
 					<>
 						<FeedbackControls
-							projectId={project?.selectedProjectId ?? null}
+							projectId={projectId}
 							traceId={id}
 							label="trace"
 						/>
 						<AddToDatasetDialog
-							projectId={project?.selectedProjectId ?? null}
+							projectId={projectId}
 							traceId={id}
 							inputText={
 								typeof model.trace?.input_text === "string"
@@ -402,13 +423,13 @@ export function TraceDetailPage() {
 							selectedObservation ? (
 								<>
 									<FeedbackControls
-										projectId={project?.selectedProjectId ?? null}
+										projectId={projectId}
 										traceId={id}
 										observationId={selectedObservation.observation_id}
 										label="Observation"
 									/>
 									<AddToDatasetDialog
-										projectId={project?.selectedProjectId ?? null}
+										projectId={projectId}
 										traceId={id}
 										observationId={selectedObservation.observation_id}
 										inputText={

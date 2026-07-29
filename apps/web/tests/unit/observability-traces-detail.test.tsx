@@ -31,6 +31,7 @@ import type { TraceRow } from "../../src/lib/api";
 
 const VALID_ID = "0123456789abcdef0123456789abcdef";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 interface MockTraceStreamHandle {
 	callbacks: {
@@ -315,6 +316,38 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
 		expect(projectIdByTraceId.get(VALID_ID)).toBe(PROJECT_ID);
+	});
+
+	it("clears the prior project's snapshot and observation feedback controls before the new snapshot arrives", async () => {
+		selectedProjectId = PROJECT_ID;
+		const page = renderAt(VALID_ID);
+
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		await act(async () => {
+			handleByTraceId.get(VALID_ID)!.callbacks!.onSnapshot({
+				observations: [
+					makeObservation({
+						observation_id: "a".repeat(32),
+						name: "first-project-observation",
+					}),
+				],
+			});
+		});
+		expect(
+			screen.getAllByText("first-project-observation").length,
+		).toBeGreaterThan(0);
+		expect(screen.getByLabelText("Thumbs up Observation")).toBeInTheDocument();
+
+		selectedProjectId = OTHER_PROJECT_ID;
+		page.rerender(<TraceDetailPage />);
+
+		await waitFor(() =>
+			expect(projectIdByTraceId.get(VALID_ID)).toBe(OTHER_PROJECT_ID),
+		);
+		expect(screen.queryAllByText("first-project-observation")).toHaveLength(0);
+		expect(
+			screen.queryByLabelText("Thumbs up Observation"),
+		).not.toBeInTheDocument();
 	});
 
 	it("uses the snapshot observations without a REST fallback", async () => {

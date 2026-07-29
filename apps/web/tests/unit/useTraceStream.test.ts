@@ -176,6 +176,16 @@ describe("useTraceStream — routing", () => {
 		).toBe(true);
 	});
 
+	it("omits an invalid selected project from the detail stream URL", async () => {
+		setupHook(VALID_TRACE_ID, "not-a-project-id");
+
+		await act(async () => {
+			await flushMicrotasks();
+		});
+
+		expect(handleByUrl.has(`/v1/traces/${VALID_TRACE_ID}/events`)).toBe(true);
+	});
+
 	it("routes event: snapshot → onSnapshot", async () => {
 		const { onSnapshot } = setupHook(VALID_TRACE_ID);
 
