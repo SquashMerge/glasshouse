@@ -238,7 +238,33 @@ export function createEvaluationTracePayload(
 	};
 }
 
-const traceResult = createOtlpIngestHandler();
+export function createProductionTrace(
+	traceResult = createOtlpIngestHandler(),
+	pool = pgPool,
+): ExperimentDependencies["trace"] {
+	return async (input) => {
+		const organization = await pool().query<{ organization_id: string }>(
+			"SELECT organization_id FROM projects WHERE id = $1",
+			[input.project_id],
+		);
+		const organizationId = organization.rows[0]?.organization_id;
+		if (!organizationId) return;
+		const response = await traceResult(
+			new Request("http://internal/v1/otel/v1/traces", {
+				method: "POST",
+				body: JSON.stringify(createEvaluationTracePayload(input)),
+				headers: { "content-type": "application/json" },
+			}),
+			{
+				actor: "evaluation-worker",
+				organizationId,
+				projectId: input.project_id,
+			},
+		);
+		if (!response.ok) throw new Error("OTLP trace ingestion failed");
+	};
+}
+
 export const production: ExperimentDependencies = {
 	pool: pgPool,
 	createExperiment: createExperimentRecord,
@@ -252,26 +278,7 @@ export const production: ExperimentDependencies = {
 	listDatasetItems,
 	getDataset,
 	invokeLlm: invokeConfiguredLlm,
-	trace: async (input) => {
-		const organization = await pgPool().query<{ organization_id: string }>(
-			"SELECT organization_id FROM projects WHERE id = $1",
-			[input.project_id],
-		);
-		const organizationId = organization.rows[0]?.organization_id;
-		if (!organizationId) return;
-		await traceResult(
-			new Request("http://internal/v1/otel/v1/traces", {
-				method: "POST",
-				body: JSON.stringify(createEvaluationTracePayload(input)),
-				headers: { "content-type": "application/json" },
-			}),
-			{
-				actor: "evaluation-worker",
-				organizationId,
-				projectId: input.project_id,
-			},
-		);
-	},
+	trace: createProductionTrace(),
 };
 
 const activeExperiments = new Map<string, AbortController>();

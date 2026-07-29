@@ -7,6 +7,7 @@ import { ExperimentCreate } from "../../src/schemas/experiments";
 import {
 	createEvaluationTracePayload,
 	createExperimentHandlers,
+	createProductionTrace,
 	executeExperiment,
 	type ExperimentDependencies,
 } from "../../src/routes/experiments";
@@ -76,12 +77,12 @@ describe("evaluation MVP", () => {
 
 		expect(response.status).toBe(200);
 		expect(persistedTraces[0]).toMatchObject({
-		organization_id: organizationId,
-		project_id: projectId,
-	});
+			organization_id: organizationId,
+			project_id: projectId,
+		});
 		expect(persistedObservations[0]).toMatchObject({
-		organization_id: organizationId,
-		project_id: projectId,
+			organization_id: organizationId,
+			project_id: projectId,
 			type: "generation",
 			model: "test-model",
 			input_text: JSON.stringify({ question: "one" }),
@@ -240,10 +241,29 @@ describe("evaluation MVP", () => {
 		});
 	});
 
-	it("logs a trace failure without changing a successful evaluation result", async () => {
+	it("logs an OTLP error response without changing a successful evaluation result", async () => {
 		const statuses: string[] = [];
+		const results: Array<{ status: string }> = [];
 		const warnings: Array<{ event: string; fields: Record<string, unknown> }> =
 			[];
+		const trace = createProductionTrace(
+			async () => new Response("provider config: secret", { status: 500 }),
+			() =>
+				({
+					query: async () => ({ rows: [{ organization_id: organizationId }] }),
+				}) as never,
+		);
+		await expect(
+			trace({
+				project_id: projectId,
+				experiment_id: experimentId,
+				item_id: "44444444-4444-4444-8444-444444444444",
+				model: "test-model",
+				input: { question: "one" },
+				output: JSON.stringify({ value: "answer" }),
+				duration_ms: 25,
+			}),
+		).rejects.toThrow("OTLP trace ingestion failed");
 		const originalWarn = logger.warn;
 		logger.warn = (event, fields = {}) => warnings.push({ event, fields });
 		try {
@@ -268,10 +288,11 @@ describe("evaluation MVP", () => {
 					output: { value: "answer" },
 					model: "test-model",
 				}),
-				insertResult: async () => ({}) as never,
-				trace: async () => {
-					throw new Error("trace sink unavailable");
+				insertResult: async (_db: unknown, result: { status: string }) => {
+					results.push(result);
+					return {} as never;
 				},
+				trace,
 			} as unknown as ExperimentDependencies;
 
 			await executeExperiment(deps, {
@@ -285,6 +306,7 @@ describe("evaluation MVP", () => {
 		}
 
 		expect(statuses).toEqual(["running", "completed"]);
+		expect(results[0]).toMatchObject({ status: "completed" });
 		expect(warnings).toEqual([
 			{
 				event: "evaluation.trace_failed",
