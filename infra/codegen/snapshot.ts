@@ -1,7 +1,7 @@
 // Boots the OpenAPIHono app in-process and writes a stable OpenAPI 3.1 YAML
 // snapshot to /openapi.yaml. Idempotent (running twice produces no diff).
 //
-// Usage: bun run apps/api/openapi:snapshot  (or `make openapi-snapshot`)
+// Usage: bun run openapi:snapshot (or `make openapi-snapshot`)
 
 import { dump as yamlDump } from "js-yaml";
 import { writeFileSync, mkdirSync } from "node:fs";

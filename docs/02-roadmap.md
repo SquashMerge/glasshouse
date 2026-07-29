@@ -68,7 +68,7 @@ DAY 0────30────60────90────120───180
 | ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
 | Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis instance, persistent volume | ✅ Shipped as Valkey 8 (open-source Redis fork; wire-compatible — `ioredis` clients unchanged). AOF + named volume; BullMQ consumers deferred to a later phase. |
 | React 19 + Vite + TanStack scaffold | Frontend | `npm create vite`, Tailwind, Shadcn/UI, openapi-fetch + openapi-typescript wired | ✅ Shipped (Vite + TanStack Router + Tailwind 3.4 + Shadcn-style; typed client wired in a later slice) |
-| OpenAPI Codegen pipeline (TS + Python) | DevEx | `make codegen` regenerates typed clients from `openapi.yaml` | ✅ Shipped (`openapi-typescript` + `openapi-python-client`; byte-stable configs) |
+| OpenAPI Codegen pipeline (TS + Python) | DevEx | `bun run codegen` regenerates typed clients from `openapi.yaml` | ✅ Shipped (`openapi-typescript` + `openapi-python-client`; byte-stable configs) |
 
 ### Week 2 — Ingest + trace viewer (Days 8–14)
 
