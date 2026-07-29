@@ -65,13 +65,8 @@ db-migrate: ## Apply Postgres migrations and seed the default project (idempoten
 test-db-migrations: ## Verify SQL migrations against legacy prompt data in PostgreSQL 16
 	bash infra/scripts/test-db-migrations.sh
 
-ch-schema: ## Apply ClickHouse schema (idempotent)
-	@for f in infra/db/clickhouse/*.sql; do \
-		echo "Applying $$f..."; \
-		$(COMPOSE) exec -T -e CLICKHOUSE_DB=$${CLICKHOUSE_DB:-astraea} clickhouse \
-			clickhouse-client --multiquery --database $${CLICKHOUSE_DB:-astraea} < $$f || exit 1; \
-	done
-	@echo "✓ ClickHouse schema applied to $${CLICKHOUSE_DB:-astraea}."
+ch-schema: ## Apply ClickHouse schema migrations (idempotent)
+	$(COMPOSE) run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'
 
 valkey-ping: ## Verify Valkey is up (Redis-compatible)
 	$(COMPOSE) exec -T valkey valkey-cli -a "$${VALKEY_PASSWORD}" ping

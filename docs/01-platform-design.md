@@ -320,7 +320,7 @@ DEPLOY:
 **Why Phoenix is slow:**
 - Single-process SQLite/Postgres + in-memory span search
 - No proper full-text index on trace input/output
-- ClickHouse migration is opt-in (deploy separately)
+- ClickHouse migrations run in order before the production API accepts traffic; the same idempotent runner is available locally through `make ch-schema`
 - Span search is O(N) scan
 
 **Our ClickHouse schema (v1):**
