@@ -394,6 +394,16 @@ BEGIN
         OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'scores_human_feedback_immutable' AND NOT tgisinternal) THEN
         RAISE EXCEPTION 'feedback indexes or immutability trigger are incomplete';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'dataset_items' AND column_name = 'feedback_score_id'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'dataset_items_feedback_score_id_unique'
+            AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+    ) THEN
+        RAISE EXCEPTION 'feedback promotion idempotency constraint is incomplete';
+    END IF;
     INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
     VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
     BEGIN

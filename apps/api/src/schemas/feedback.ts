@@ -42,6 +42,16 @@ export const FeedbackReview = z
 	.strict()
 	.openapi("FeedbackReview");
 
+export const FeedbackPromotion = z
+	.object({
+		dataset_id: z.string().uuid(),
+		input: z.record(z.string(), z.unknown()),
+		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
+		metadata: z.record(z.string(), z.unknown()).optional(),
+	})
+	.strict()
+	.openapi("FeedbackPromotion");
+
 export const Feedback = z
 	.object({
 		id: z.string().uuid(),

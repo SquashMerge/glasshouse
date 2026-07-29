@@ -2,9 +2,9 @@ import * as React from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	addDatasetItem,
 	listDatasets,
 	listFeedback,
+	promoteFeedback,
 	reviewFeedback,
 	type Feedback,
 } from "../lib/api";
@@ -186,20 +186,12 @@ function FeedbackRow({
 		try {
 			setError("");
 			setPending(true);
-			const created = await addDatasetItem({
+			await promoteFeedback({
 				project_id: projectId,
+				id: item.id,
 				dataset_id: datasetId,
 				input: object(input, "Dataset input"),
 				expected_output: object(expected, "Expected output"),
-				source_trace_id: item.trace_id,
-				source_observation_id: item.observation_id ?? undefined,
-			});
-			await reviewFeedback({
-				project_id: projectId,
-				id: item.id,
-				status: "added_to_dataset",
-				dataset_id: datasetId,
-				dataset_item_id: created.id,
 			});
 			onUpdated();
 		} catch (cause) {

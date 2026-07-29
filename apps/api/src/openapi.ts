@@ -132,6 +132,8 @@ import {
 	handleCreateFeedback,
 	listFeedbackRoute,
 	handleListFeedback,
+	promoteFeedbackRoute,
+	handlePromoteFeedback,
 	reviewFeedbackRoute,
 	handleReviewFeedback,
 } from "./routes/feedback.js";
@@ -250,6 +252,7 @@ register(deleteDatasetItem, handleDeleteDatasetItem);
 
 register(createFeedbackRoute, handleCreateFeedback);
 register(listFeedbackRoute, handleListFeedback);
+register(promoteFeedbackRoute, handlePromoteFeedback);
 register(reviewFeedbackRoute, handleReviewFeedback);
 
 register(createScore, handleCreateScore);

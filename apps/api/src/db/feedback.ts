@@ -211,6 +211,87 @@ export async function listFeedback(
 		total: Number(total.rows[0]?.total ?? 0),
 	};
 }
+export async function promoteFeedback(
+	db: Pick<Pool, "connect">,
+	input: {
+		project_id: string;
+		id: string;
+		dataset_id: string;
+		input: Record<string, unknown>;
+		expected_output?: Record<string, unknown> | null;
+		metadata?: Record<string, unknown>;
+	},
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		const existing = await client.query(
+			`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback' FOR UPDATE`,
+			[input.id, input.project_id],
+		);
+		if (!existing.rows[0])
+			throw new FeedbackRepositoryError("NOT_FOUND", "Feedback not found");
+		const current = present(existing.rows[0]);
+		if (current.status === "added_to_dataset") {
+			if (current.dataset_id !== input.dataset_id)
+				throw new FeedbackRepositoryError(
+					"CONFLICT",
+					"Added feedback is terminal",
+				);
+			await client.query("COMMIT");
+			return current;
+		}
+		const dataset = await client.query(
+			"SELECT id FROM datasets WHERE id=$1 AND project_id=$2",
+			[input.dataset_id, input.project_id],
+		);
+		if (!dataset.rows[0])
+			throw new FeedbackRepositoryError("NOT_FOUND", "Dataset not found");
+		const inserted = await client.query(
+			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id, feedback_score_id) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8) ON CONFLICT (feedback_score_id) WHERE feedback_score_id IS NOT NULL DO NOTHING RETURNING id`,
+			[
+				randomUUID(),
+				input.dataset_id,
+				JSON.stringify(input.input),
+				input.expected_output == null
+					? null
+					: JSON.stringify(input.expected_output),
+				JSON.stringify(input.metadata ?? {}),
+				current.trace_id,
+				current.observation_id,
+				current.id,
+			],
+		);
+		const itemId = inserted.rows[0]?.id as string | undefined;
+		if (!itemId)
+			throw new FeedbackRepositoryError(
+				"CONFLICT",
+				"Feedback is already being promoted",
+			);
+		const result = await client.query(
+			"UPDATE feedback_reviews SET status='added_to_dataset',dataset_id=$1,dataset_item_id=$2,updated_at=now() WHERE score_id=$3 RETURNING updated_at",
+			[input.dataset_id, itemId, current.id],
+		);
+		await client.query("COMMIT");
+		return {
+			...current,
+			status: "added_to_dataset" as const,
+			dataset_id: input.dataset_id,
+			dataset_item_id: itemId,
+			updated_at: time(result.rows[0]!, "updated_at"),
+		};
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		if (cause instanceof FeedbackRepositoryError) throw cause;
+		throw new FeedbackRepositoryError(
+			"INTERNAL",
+			"Feedback operation failed",
+			cause,
+		);
+	} finally {
+		client.release();
+	}
+}
 export async function reviewFeedback(
 	db: Pick<Pool, "connect">,
 	input: {

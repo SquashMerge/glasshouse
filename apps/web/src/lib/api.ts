@@ -276,6 +276,23 @@ export async function createFeedback(input: {
 		"createFeedback",
 	);
 }
+export async function promoteFeedback(input: {
+	project_id: string;
+	id: string;
+	dataset_id: string;
+	input: JsonObject;
+	expected_output?: JsonObject | null;
+	metadata?: JsonObject;
+}): Promise<Feedback> {
+	const { project_id, id, ...body } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/feedback/${encodeURIComponent(id)}/promote${buildQs({ project_id })}`,
+			jsonRequest(body),
+		),
+		"promoteFeedback",
+	);
+}
 export async function reviewFeedback(input: {
 	project_id: string;
 	id: string;

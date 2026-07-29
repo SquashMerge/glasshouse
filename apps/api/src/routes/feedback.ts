@@ -6,6 +6,7 @@ import {
 	createFeedback,
 	FeedbackRepositoryError,
 	listFeedback,
+	promoteFeedback,
 	reviewFeedback,
 } from "../db/feedback.js";
 import {
@@ -15,6 +16,7 @@ import {
 	FeedbackIdParam,
 	FeedbackList,
 	FeedbackListQuery,
+	FeedbackPromotion,
 	FeedbackReview,
 } from "../schemas/feedback.js";
 
@@ -91,6 +93,25 @@ export const reviewFeedbackRoute = createRoute({
 		...FeedbackErrors,
 	},
 });
+export const promoteFeedbackRoute = createRoute({
+	method: "post",
+	path: "/v1/feedback/{id}/promote",
+	tags: ["feedback"],
+	summary: "Explicitly promote reviewed feedback into a dataset",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: FeedbackIdParam,
+		query: FeedbackListQuery.pick({ project_id: true }),
+		body: { content: { "application/json": { schema: FeedbackPromotion } } },
+	},
+	responses: {
+		200: {
+			description: "Feedback promoted",
+			content: { "application/json": { schema: Feedback } },
+		},
+		...FeedbackErrors,
+	},
+});
 async function targetExists(input: {
 	project_id: string;
 	trace_id: string;
@@ -140,6 +161,21 @@ export const handleListFeedback = async (
 ) => {
 	try {
 		return c.json(await listFeedback(pgPool(), c.req.valid("query")));
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+export const handlePromoteFeedback = async (
+	c: Parameters<RouteHandler<typeof promoteFeedbackRoute>>[0],
+) => {
+	try {
+		return c.json(
+			await promoteFeedback(pgPool(), {
+				project_id: c.req.valid("query").project_id,
+				id: c.req.valid("param").id,
+				...c.req.valid("json"),
+			}),
+		);
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}

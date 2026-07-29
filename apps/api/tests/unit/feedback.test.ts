@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	requestHash,
 	createFeedback,
+	promoteFeedback,
 	reviewFeedback,
 } from "../../src/db/feedback";
 import { FeedbackCreate, FeedbackReview } from "../../src/schemas/feedback";
@@ -128,6 +129,55 @@ describe("feedback review persistence", () => {
 
 		expect(queries[0]).toBe("BEGIN");
 		expect(queries[1]).toContain("FOR UPDATE");
+		expect(queries.at(-1)).toBe("COMMIT");
+	});
+
+	it("returns the already linked feedback without inserting another dataset item when promotion is retried", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("FROM scores s JOIN feedback_reviews"))
+					return {
+						rows: [
+							{
+								id: "33333333-3333-4333-8333-333333333333",
+								project_id: base.project_id,
+								trace_id: base.trace_id,
+								observation_id: null,
+								value: -1,
+								metadata: base.metadata,
+								created_at: now,
+								status: "added_to_dataset",
+								note: null,
+								dataset_id: "22222222-2222-4222-8222-222222222222",
+								dataset_item_id: "44444444-4444-4444-8444-444444444444",
+								updated_at: now,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release: () => {},
+		};
+
+		const result = await promoteFeedback(
+			{ connect: async () => client } as never,
+			{
+				project_id: base.project_id,
+				id: "33333333-3333-4333-8333-333333333333",
+				dataset_id: "22222222-2222-4222-8222-222222222222",
+				input: { question: "hello" },
+				expected_output: { answer: "world" },
+			},
+		);
+
+		expect(result.status).toBe("added_to_dataset");
+		expect(result.dataset_item_id).toBe("44444444-4444-4444-8444-444444444444");
+		expect(
+			queries.some((sql) => sql.includes("INSERT INTO dataset_items")),
+		).toBe(false);
 		expect(queries.at(-1)).toBe("COMMIT");
 	});
 
