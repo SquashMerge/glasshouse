@@ -15,6 +15,7 @@ import {
 	expect,
 	type Page,
 	type APIRequestContext,
+	type Request,
 } from "@playwright/test";
 
 const USER = process.env.UI_USERNAME ?? "astraea";
@@ -157,6 +158,16 @@ function buildTracePayload(
 }
 
 /** POST one trace payload and assert the API accepted it. */
+function eventStreamRequest(pathname: string) {
+	return (request: Request) => {
+		const url = new URL(request.url());
+		return (
+			url.pathname === pathname &&
+			url.searchParams.get("project_id") === E2E_PROJECT_ID
+		);
+	};
+}
+
 async function postTrace(
 	request: APIRequestContext,
 	payload: Record<string, unknown>,
@@ -232,8 +243,12 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 
 		// Subscribe to the live list before ingesting so the SSE events cannot
 		// race ahead of the browser connection.
+		const traceStream = page.waitForRequest(
+			eventStreamRequest("/v1/traces/events"),
+		);
 		await page.goto("/observability?tab=traces");
 		await expect(page).toHaveURL(/tab=traces/);
+		await traceStream;
 
 		// Ingest 5 distinct traces via OTLP HTTP/JSON. The first name is kept
 		// for a downstream text-content sanity check.
@@ -285,8 +300,12 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 
 		// Subscribe before ingesting so all observation events are delivered to
 		// the live spans list rather than racing ahead of the SSE connection.
+		const observationStream = page.waitForRequest(
+			eventStreamRequest("/v1/observations/events"),
+		);
 		await page.goto("/observability?tab=spans");
 		await expect(page).toHaveURL(/tab=spans/);
+		await observationStream;
 
 		// One OTLP payload with a single trace that has 10 spans. The first
 		// span is the root; children reference its span_id.
