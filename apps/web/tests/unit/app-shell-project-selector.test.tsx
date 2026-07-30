@@ -214,6 +214,6 @@ describe("AppShell project selector", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(container.querySelector("main")).not.toHaveClass("max-w-3xl");
+		expect(container.querySelector("main")?.className).not.toMatch(/\bmax-w-/);
 	});
 });
