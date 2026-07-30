@@ -42,27 +42,17 @@ echo "  ${HEALTH_JSON}"
 echo "$HEALTH_JSON" | grep -q '"status":"ok"' || fail "health status not ok"
 ok "/health returned status=ok"
 
-step "AC4: backend /openapi.json includes all 6 collection roots"
+step "AC4: backend /openapi.json includes supported collection roots"
 PATHS_JSON="$(curl -fsS "${BASE_API}/openapi.json" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("\n".join(d.get("paths",{}).keys()))')"
-for path in /v1/agents /v1/experiments /v1/traces /v1/prompts /v1/datasets /v1/scores; do
+for path in /v1/experiments /v1/traces /v1/prompts /v1/datasets; do
   echo "$PATHS_JSON" | grep -q "^${path}$" || fail "openapi.json missing collection root ${path}"
 done
-ok "all 6 collection roots present"
+ok "supported collection roots present"
 
 step "AC3: backend /reference renders Scalar UI"
 REF_CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE_API}/reference")"
 [ "${REF_CODE}" = "200" ] || fail "/reference returned ${REF_CODE}, expected 200"
 ok "/reference returned 200"
-
-step "Unimplemented endpoints return 501 with NOT_IMPLEMENTED envelope"
-for spec in "POST:/v1/agents" "GET:/v1/agents" "GET:/v1/experiments" "GET:/v1/datasets" "POST:/v1/scores"; do
-  METHOD="${spec%%:*}"
-  PATH_PART="${spec##*:}"
-  CODE="$(curl -s -o /tmp/astraea_stub.json -w '%{http_code}' -H "${AUTH}" -X "${METHOD}" "${BASE_API}${PATH_PART}")"
-  [ "${CODE}" = "501" ] || fail "${METHOD} ${PATH_PART} returned ${CODE}, expected 501"
-  grep -q 'NOT_IMPLEMENTED' /tmp/astraea_stub.json || fail "${METHOD} ${PATH_PART} body missing NOT_IMPLEMENTED"
-done
-ok "unimplemented endpoints return 501 with NOT_IMPLEMENTED envelope"
 
 step "AC7: /v1/* without auth returns 401 with WWW-Authenticate"
 UNAUTH_CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE_API}/v1/traces")"

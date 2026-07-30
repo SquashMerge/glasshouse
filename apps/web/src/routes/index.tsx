@@ -1,81 +1,166 @@
-import { HealthBadge } from "../components/HealthBadge";
+import * as React from "react";
 import { Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { LuCopy, LuExternalLink } from "react-icons/lu";
+import { HealthBadge } from "../components/HealthBadge";
+import { Button } from "../components/ui/button";
+import { useProjectSelection } from "../components/ProjectProvider";
+import { copyText } from "../lib/clipboard";
+import { listTraces } from "../lib/api";
+
+const OTLP_SETUP = `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000/v1/otel
+export OTEL_EXPORTER_OTLP_HEADERS='authorization=Basic <base64(username:password)>'
+export OTEL_SERVICE_NAME=my-agent`;
 
 export function DashboardPage() {
+	const { selectedProjectId } = useProjectSelection();
+	const [copyState, setCopyState] = React.useState<
+		"idle" | "copied" | "failed"
+	>("idle");
+	const recent = useQuery({
+		queryKey: ["dashboard", "recent-traces", selectedProjectId],
+		queryFn: () => listTraces({ project_id: selectedProjectId!, limit: 5 }),
+		enabled: Boolean(selectedProjectId),
+	});
+	const failures = useQuery({
+		queryKey: ["dashboard", "failed-traces", selectedProjectId],
+		queryFn: () =>
+			listTraces({ project_id: selectedProjectId!, status: "error", limit: 1 }),
+		enabled: Boolean(selectedProjectId),
+	});
+
+	async function copyOtlpSetup() {
+		const result = await copyText(OTLP_SETUP);
+		setCopyState(result.ok ? "copied" : "failed");
+	}
+
+	const failedCount = failures.data?.total ?? 0;
+	const recentTraces = recent.data?.items ?? [];
+
 	return (
 		<main className="py-16">
 			<header className="mb-12">
 				<h1 className="text-4xl font-semibold tracking-tight">
 					Operations overview
 				</h1>
-				<p className="mt-2 text-lg text-muted-foreground">
-					Inspect recent agent activity, investigate failures, and verify
-					telemetry is flowing.
+				<p className="mt-2 text-muted-foreground">
+					See whether telemetry is flowing, investigate failures, and pick up
+					where your team left off.
 				</p>
 			</header>
 
-			<section className="grid gap-4 sm:grid-cols-2">
+			<section
+				className="grid gap-4 md:grid-cols-3"
+				aria-label="Telemetry summary"
+			>
 				<Link
 					to="/observability"
-					className="block rounded-lg border border-border bg-card px-6 py-4 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					className="rounded-lg border border-border bg-card p-5 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
-					<div className="text-sm font-medium text-muted-foreground">
-						Observability
-					</div>
-					<div className="mt-1 text-base">
-						View traces, errors, and live observations
-					</div>
-				</Link>
-				<div className="rounded-lg border border-border bg-card px-6 py-4">
-					<div className="text-sm font-medium text-muted-foreground">
-						First trace
-					</div>
-					<div className="mt-1 text-base">
-						Send OTLP to <code>/v1/otel/v1/traces</code>
-					</div>
-					<p className="mt-2 text-sm text-muted-foreground">
-						Use the credentials from <code>infra/.env</code>; new telemetry
-						appears in Observability.
+					<p className="text-sm font-medium text-muted-foreground">
+						Recent traces
 					</p>
+					<p className="mt-2 text-2xl font-semibold">
+						{recent.isPending ? "Loading…" : (recent.data?.total ?? 0)}
+					</p>
+					<p className="mt-1 text-sm text-muted-foreground">
+						Open observability
+					</p>
+				</Link>
+				<Link
+					to="/observability"
+					search={{ tab: "traces", "traces.status": "error" }}
+					className="rounded-lg border border-border bg-card p-5 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				>
+					<p className="text-sm font-medium text-muted-foreground">Failures</p>
+					<p className="mt-2 text-2xl font-semibold text-destructive">
+						{failures.isPending ? "Loading…" : `${failedCount} failed traces`}
+					</p>
+					<p className="mt-1 text-sm text-muted-foreground">
+						Investigate errors
+					</p>
+				</Link>
+				<div className="rounded-lg border border-border bg-card p-5">
+					<p className="text-sm font-medium text-muted-foreground">
+						Ingestion status
+					</p>
+					<div className="mt-3">
+						<HealthBadge />
+					</div>
 				</div>
 			</section>
 
-			<section className="mt-4 space-y-4">
-				<a
-					href="/reference"
-					target="_blank"
-					rel="noreferrer"
-					className="block rounded-lg border border-border bg-muted px-6 py-4 transition-colors hover:bg-muted/70"
-				>
-					<div className="text-sm font-medium text-muted-foreground">
-						OpenAPI Reference
+			<section className="grid gap-4 lg:grid-cols-2">
+				<div className="rounded-lg border border-border bg-card p-5">
+					<div className="flex items-center justify-between gap-3">
+						<h2 className="font-semibold">Recent traces</h2>
+						<Link
+							to="/observability"
+							className="text-sm text-primary hover:underline"
+						>
+							View all
+						</Link>
 					</div>
-					<div className="mt-1 text-base">
-						/reference — Scalar UI for the typed OpenAPI contract
-					</div>
-				</a>
+					{recent.isError ? (
+						<p className="mt-4 text-sm text-destructive">
+							Could not load recent traces.
+						</p>
+					) : recentTraces.length === 0 && !recent.isPending ? (
+						<p className="mt-4 text-sm text-muted-foreground">No traces yet.</p>
+					) : (
+						<ul
+							className="mt-3 divide-y divide-border"
+							aria-busy={recent.isPending}
+						>
+							{recentTraces.map((trace) => (
+								<li key={trace.trace_id} className="py-3 text-sm">
+									<Link
+										to="/observability/traces/$id"
+										params={{ id: trace.trace_id }}
+										className="font-medium hover:underline"
+									>
+										{trace.name}
+									</Link>
+								</li>
+							))}
+						</ul>
+					)}
+				</div>
 
-				<a
-					href="/health"
-					target="_blank"
-					rel="noreferrer"
-					className="block rounded-lg border border-border bg-muted px-6 py-4 transition-colors hover:bg-muted/70"
-				>
-					<div className="text-sm font-medium text-muted-foreground">
-						Health Check
+				<div className="rounded-lg border border-border bg-card p-5">
+					<h2 className="font-semibold">Send your first trace</h2>
+					<p className="mt-2 text-sm text-muted-foreground">
+						Configure any OpenTelemetry SDK with these values, then open
+						Observability to verify the trace arrives.
+					</p>
+					<pre className="mt-4 overflow-x-auto rounded-md bg-muted p-3 text-xs">
+						<code>{OTLP_SETUP}</code>
+					</pre>
+					<div className="mt-4 flex flex-wrap gap-2">
+						<Button
+							type="button"
+							size="sm"
+							onClick={() => void copyOtlpSetup()}
+						>
+							<LuCopy className="mr-1.5 h-3.5 w-3.5" />
+							Copy OTLP setup
+						</Button>
+						<a
+							href="/reference"
+							target="_blank"
+							rel="noreferrer"
+							className="inline-flex items-center text-sm text-primary hover:underline"
+						>
+							API reference <LuExternalLink className="ml-1 h-3.5 w-3.5" />
+						</a>
 					</div>
-					<div className="mt-1 text-base">
-						/health — Postgres, ClickHouse, Valkey status
-					</div>
-				</a>
-			</section>
-
-			<section className="mt-12">
-				<h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-					Stack status
-				</h2>
-				<div className="mt-3">
-					<HealthBadge />
+					{copyState !== "idle" && (
+						<p className="mt-2 text-xs text-muted-foreground" role="status">
+							{copyState === "copied"
+								? "Copied."
+								: "Clipboard access was unavailable."}
+						</p>
+					)}
 				</div>
 			</section>
 		</main>
