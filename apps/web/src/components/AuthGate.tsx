@@ -1,9 +1,12 @@
 import * as React from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { getCredentials, onAuthInvalid } from "../lib/auth";
+import { clearWorkspaceSession } from "./ProjectProvider";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const location = useLocation();
 	const [ready, setReady] = React.useState(false);
 
@@ -24,10 +27,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 		}
 
 		const off = onAuthInvalid(() => {
+			clearWorkspaceSession(queryClient);
 			navigate({ to: "/login" });
 		});
 		return off;
-	}, [location.pathname, location.searchStr, navigate]);
+	}, [location.pathname, location.searchStr, navigate, queryClient]);
 
 	if (!ready) {
 		return (

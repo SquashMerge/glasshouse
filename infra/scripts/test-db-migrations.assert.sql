@@ -653,6 +653,13 @@ BEGIN
         'migration-owner',
         'project_updated'
     );
+    INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+    VALUES (
+        '00000000-0000-4000-8000-000000000002',
+        '33333333-3333-4333-8333-333333333333',
+        'migration-owner',
+        'project_work_cancelled'
+    );
     BEGIN
         INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
         VALUES (

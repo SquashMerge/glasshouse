@@ -17,6 +17,7 @@ const { getCurrentActor, listPrompts } = vi.hoisted(() => ({
 vi.mock("../../src/lib/api", () => ({ getCurrentActor, listPrompts }));
 
 import {
+	clearWorkspaceSession,
 	ProjectProvider,
 	SELECTED_PROJECT_KEY,
 	useProjectSelection,
@@ -173,5 +174,21 @@ describe("ProjectProvider", () => {
 		expect(client.getQueryData(["prompts", nextProjectId])).toEqual({
 			items: [],
 		});
+	});
+
+	it("clears cached identity, project data, and selections before a different actor logs in", () => {
+		const otherSelectionKey = `${SELECTED_PROJECT_KEY}:${ORGANIZATION}:member`;
+		window.localStorage.setItem(selectionKey, PROJECT_ID);
+		window.localStorage.setItem(otherSelectionKey, STALE_PROJECT_ID);
+		const client = new QueryClient();
+		client.setQueryData(["me"], { actor_subject: ACTOR });
+		client.setQueryData(["prompts", PROJECT_ID], { items: [] });
+
+		clearWorkspaceSession(client);
+
+		expect(client.getQueryData(["me"])).toBeUndefined();
+		expect(client.getQueryData(["prompts", PROJECT_ID])).toBeUndefined();
+		expect(window.localStorage.getItem(selectionKey)).toBeNull();
+		expect(window.localStorage.getItem(otherSelectionKey)).toBeNull();
 	});
 });

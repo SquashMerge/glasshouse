@@ -438,6 +438,24 @@ describe("project authorization routes", () => {
 		}
 	});
 
+	it("terminalizes archive-time work in the archive transaction so restore cannot recover it", async () => {
+		await request("manager", `/v1/projects/${PROJECT}/archive`, {
+			method: "POST",
+		});
+
+		const archiveSql = query.mock.calls.find(
+			([sql]) =>
+				sql.includes("project_work_cancelled") &&
+				sql.includes("cancelled_experiments"),
+		)?.[0];
+		expect(archiveSql).toContain("e.status IN ('pending', 'running')");
+		expect(archiveSql).toContain("t.status IN ('pending', 'running')");
+		expect(archiveSql).toContain(
+			"j.status IN ('queued', 'preparing', 'optimizing', 'evaluating')",
+		);
+		expect(archiveSql).toContain("INSERT INTO prompt_optimization_events");
+	});
+
 	it("keeps lifecycle, membership, and audit data non-enumerable across projects", async () => {
 		const archive = await request(
 			"manager",
@@ -514,5 +532,20 @@ describe("project authorization routes", () => {
 		);
 
 		expect(scope.projectRole).toBe("manager");
+	});
+
+	it("does not grant an organization member scope for a project without membership", async () => {
+		const scopeQuery = mock(async (sql: string) => {
+			expect(sql).toContain("pm.actor_subject IS NOT NULL");
+			return { rows: [] };
+		});
+
+		await expect(
+			resolveAuthorizedProjectScope(
+				{ query: scopeQuery } as never,
+				{ actor: "member", organizationId: ORGANIZATION },
+				OTHER_PROJECT,
+			),
+		).rejects.toThrow("Project is not available");
 	});
 });
