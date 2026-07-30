@@ -30,6 +30,8 @@ import { useProjectSelection } from "./ProjectProvider";
 
 const COLLAPSE_KEY = "astraea.nav.collapsed";
 
+export const APP_WORKSPACE_CLASS = "max-w-none";
+
 interface AppShellProps {
 	children: React.ReactNode;
 	currentPath?: string;
@@ -294,7 +296,10 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 
 			<main className="flex-1 min-w-0">
 				<div
-					className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 sm:py-8"
+					className={cn(
+						"mx-auto w-full px-4 py-5 sm:px-6 sm:py-8",
+						APP_WORKSPACE_CLASS,
+					)}
 					data-hydrated={hydrated ? "1" : "0"}
 				>
 					{children}

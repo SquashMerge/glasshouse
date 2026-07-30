@@ -112,6 +112,79 @@ test.describe("Trace list", () => {
 	});
 });
 
+test.describe("Shared app workspace", () => {
+	test("keeps all product routes full-width on desktop and usable on narrow screens", async ({
+		page,
+	}) => {
+		test.setTimeout(90_000);
+		await gotoFresh(page, "/login");
+		await page.getByLabel(/Username/i).fill(USER);
+		await page.getByLabel(/Password/i).fill(PASS);
+		await page.getByRole("button", { name: /Sign in/i }).click();
+		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
+
+		const routes = [
+			"/",
+			"/observability?tab=traces",
+			"/observability?tab=spans",
+			"/prompts",
+			"/datasets",
+			"/evaluations",
+			"/feedback",
+		];
+		const viewports = [
+			{ width: 1920, height: 1080 },
+			{ width: 375, height: 812 },
+		];
+
+		for (const viewport of viewports) {
+			await page.setViewportSize(viewport);
+
+			for (const route of routes) {
+				await page.goto(route);
+				const workspace = page.locator("main.flex-1 > div[data-hydrated='1']");
+				await expect(workspace).toBeVisible();
+				await expect(workspace).toHaveClass("max-w-none");
+
+				const bounds = await workspace.boundingBox();
+				expect(bounds).not.toBeNull();
+				expect(bounds!.x).toBeGreaterThanOrEqual(0);
+				expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
+					viewport.width + 1,
+				);
+
+				if (viewport.width === 1920) {
+					expect(bounds!.width).toBeGreaterThan(1600);
+				}
+			}
+		}
+	});
+
+	test("uses the available main-pane width below the old desktop cap", async ({
+		page,
+	}) => {
+		await gotoFresh(page, "/login");
+		await page.getByLabel(/Username/i).fill(USER);
+		await page.getByLabel(/Password/i).fill(PASS);
+		await page.getByRole("button", { name: /Sign in/i }).click();
+		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
+
+		for (const viewport of [
+			{ width: 1440, height: 900 },
+			{ width: 1024, height: 768 },
+		]) {
+			await page.setViewportSize(viewport);
+			await page.goto("/");
+			const workspace = page.locator("main.flex-1 > div[data-hydrated='1']");
+			await expect(workspace).toBeVisible();
+			const bounds = await workspace.boundingBox();
+			expect(bounds).not.toBeNull();
+			expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width + 1);
+			expect(bounds!.width).toBeGreaterThan(viewport.width - 260);
+		}
+	});
+});
+
 test.describe("Auth gate: 401 from API", () => {
 	test("expired creds route to /login", async ({ page }) => {
 		await gotoFresh(page, "/login");

@@ -34,7 +34,12 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 	}),
 }));
 
-import { AppShell } from "../../src/components/AppShell";
+vi.mock("../../src/components/HealthBadge", () => ({
+	HealthBadge: () => <div>Healthy</div>,
+}));
+
+import { APP_WORKSPACE_CLASS, AppShell } from "../../src/components/AppShell";
+import { DashboardPage } from "../../src/routes/index";
 
 describe("AppShell project selector", () => {
 	beforeEach(() => {
@@ -63,5 +68,24 @@ describe("AppShell project selector", () => {
 		expect(selection.selectProject).toHaveBeenCalledWith(
 			"11111111-1111-4111-8111-111111111111",
 		);
+	});
+
+	it("uses the shared full-width workspace class for authenticated pages", () => {
+		const { container } = render(
+			<AppShell currentPath="/">
+				<div>Page</div>
+			</AppShell>,
+		);
+
+		expect(APP_WORKSPACE_CLASS).toBe("max-w-none");
+		expect(container.querySelector("main > div")).toHaveClass(
+			APP_WORKSPACE_CLASS,
+		);
+	});
+
+	it("does not give the dashboard a narrower page shell", () => {
+		const { container } = render(<DashboardPage />);
+
+		expect(container.querySelector("main")).not.toHaveClass("max-w-3xl");
 	});
 });
