@@ -5,7 +5,10 @@ import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	archiveProject,
 	createProject,
+	deleteProjectMember,
+	listProjectMembers,
 	listProjects,
+	putProjectMember,
 	restoreProject,
 	updateProject,
 	type Project,
@@ -16,20 +19,36 @@ export function ProjectsPage() {
 	const queryClient = useQueryClient();
 	const { organizationRole } = useProjectSelection();
 	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: listProjects,
+		queryKey: ["projects", "management"],
+		queryFn: () => listProjects(true),
 	});
 	const [name, setName] = React.useState("");
 	const [slug, setSlug] = React.useState("");
 	const [editing, setEditing] = React.useState<Project | null>(null);
 	const [editedName, setEditedName] = React.useState("");
-	const [archived, setArchived] = React.useState<Project[]>([]);
+	const [editedSlug, setEditedSlug] = React.useState("");
+	const [membersProject, setMembersProject] = React.useState<Project | null>(
+		null,
+	);
+	const [memberActor, setMemberActor] = React.useState("");
+	const [memberRole, setMemberRole] = React.useState<"manager" | "member">(
+		"member",
+	);
 	const [operationFailed, setOperationFailed] = React.useState(false);
 	const isOwner = organizationRole === "owner";
+	const canManage = (project: Project) => project.project_role !== "member";
+	const membersQuery = useQuery({
+		queryKey: ["project-members", membersProject?.id],
+		queryFn: () => listProjectMembers(membersProject!.id),
+		enabled: Boolean(membersProject),
+	});
 
+	function failed() {
+		setOperationFailed(true);
+	}
 	function replaceProject(project: Project) {
 		queryClient.setQueryData<{ items: Project[]; total: number }>(
-			["projects"],
+			["projects", "management"],
 			(current) =>
 				current
 					? {
@@ -41,22 +60,18 @@ export function ProjectsPage() {
 					: current,
 		);
 	}
-	function failed() {
-		setOperationFailed(true);
+	function refreshSelector() {
+		void queryClient.invalidateQueries({ queryKey: ["me"] });
 	}
 	const createMutation = useMutation({
 		mutationFn: createProject,
-		onSuccess: (project) => {
-			queryClient.setQueryData<{ items: Project[]; total: number }>(
-				["projects"],
-				(current) =>
-					current
-						? { items: [...current.items, project], total: current.total + 1 }
-						: current,
-			);
+		onSuccess: () => {
+			void queryClient.invalidateQueries({
+				queryKey: ["projects", "management"],
+			});
 			setName("");
 			setSlug("");
-			void queryClient.invalidateQueries({ queryKey: ["me"] });
+			refreshSelector();
 		},
 		onError: failed,
 	});
@@ -65,46 +80,42 @@ export function ProjectsPage() {
 		onSuccess: (project) => {
 			replaceProject(project);
 			setEditing(null);
-			void queryClient.invalidateQueries({ queryKey: ["me"] });
+			refreshSelector();
 		},
 		onError: failed,
 	});
 	const archiveMutation = useMutation({
 		mutationFn: archiveProject,
 		onSuccess: (project) => {
-			const current = projectsQuery.data?.items.find(
-				(item) => item.id === project.id,
-			);
-			setArchived((items) => [
-				...items.filter((item) => item.id !== project.id),
-				{ ...project, name: current?.name ?? project.name },
-			]);
-			queryClient.setQueryData<{ items: Project[]; total: number }>(
-				["projects"],
-				(data) =>
-					data
-						? {
-								items: data.items.filter((item) => item.id !== project.id),
-								total: data.total - 1,
-							}
-						: data,
-			);
-			void queryClient.invalidateQueries({ queryKey: ["me"] });
+			replaceProject(project);
+			refreshSelector();
 		},
 		onError: failed,
 	});
 	const restoreMutation = useMutation({
 		mutationFn: restoreProject,
 		onSuccess: (project) => {
-			setArchived((items) => items.filter((item) => item.id !== project.id));
-			queryClient.setQueryData<{ items: Project[]; total: number }>(
-				["projects"],
-				(data) =>
-					data
-						? { items: [...data.items, project], total: data.total + 1 }
-						: data,
-			);
-			void queryClient.invalidateQueries({ queryKey: ["me"] });
+			replaceProject(project);
+			refreshSelector();
+		},
+		onError: failed,
+	});
+	const putMemberMutation = useMutation({
+		mutationFn: putProjectMember,
+		onSuccess: () => {
+			setMemberActor("");
+			void queryClient.invalidateQueries({
+				queryKey: ["project-members", membersProject?.id],
+			});
+		},
+		onError: failed,
+	});
+	const deleteMemberMutation = useMutation({
+		mutationFn: deleteProjectMember,
+		onSuccess: () => {
+			void queryClient.invalidateQueries({
+				queryKey: ["project-members", membersProject?.id],
+			});
 		},
 		onError: failed,
 	});
@@ -115,6 +126,14 @@ export function ProjectsPage() {
 		return (
 			<PageMessage title="Projects">Projects could not be loaded.</PageMessage>
 		);
+	const active =
+		projectsQuery.data?.items.filter(
+			(project) => project.status === "active",
+		) ?? [];
+	const archived =
+		projectsQuery.data?.items.filter(
+			(project) => project.status === "archived",
+		) ?? [];
 
 	return (
 		<div className="space-y-6">
@@ -164,44 +183,251 @@ export function ProjectsPage() {
 					</Button>
 				</form>
 			)}
-			<div className="space-y-3">
-				{projectsQuery.data?.items.map((project) => (
-					<div
-						key={project.id}
-						className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3"
-					>
-						{editing?.id === project.id ? (
+			<ProjectList
+				projects={active}
+				editing={editing}
+				editedName={editedName}
+				editedSlug={editedSlug}
+				canManage={canManage}
+				onEdit={(project) => {
+					setEditing(project);
+					setEditedName(project.name);
+					setEditedSlug(project.slug);
+				}}
+				onEditedName={setEditedName}
+				onEditedSlug={setEditedSlug}
+				onSave={(project) => {
+					setOperationFailed(false);
+					updateMutation.mutate({
+						id: project.id,
+						name: editedName,
+						slug: editedSlug,
+					});
+				}}
+				onArchive={(project) => {
+					setOperationFailed(false);
+					archiveMutation.mutate(project.id);
+				}}
+				onRestore={(project) => {
+					setOperationFailed(false);
+					restoreMutation.mutate(project.id);
+				}}
+				onMembers={(project) => {
+					setMembersProject(project);
+					setOperationFailed(false);
+				}}
+			/>
+			{archived.length > 0 && (
+				<section className="space-y-3">
+					<h2 className="text-lg font-semibold">Archived projects</h2>
+					<ProjectList
+						projects={archived}
+						editing={editing}
+						editedName={editedName}
+						editedSlug={editedSlug}
+						canManage={canManage}
+						onEdit={(project) => {
+							setEditing(project);
+							setEditedName(project.name);
+							setEditedSlug(project.slug);
+						}}
+						onEditedName={setEditedName}
+						onEditedSlug={setEditedSlug}
+						onSave={(project) => {
+							setOperationFailed(false);
+							updateMutation.mutate({
+								id: project.id,
+								name: editedName,
+								slug: editedSlug,
+							});
+						}}
+						onArchive={() => {}}
+						onRestore={(project) => {
+							setOperationFailed(false);
+							restoreMutation.mutate(project.id);
+						}}
+						onMembers={(project) => {
+							setMembersProject(project);
+							setOperationFailed(false);
+						}}
+					/>
+				</section>
+			)}
+			{membersProject && (
+				<section className="space-y-3 rounded-md border border-border p-3">
+					<h2 className="text-lg font-semibold">
+						Members for {membersProject.name}
+					</h2>
+					{membersQuery.isError ? (
+						<p className="text-sm text-destructive" role="alert">
+							Project operation could not be completed.
+						</p>
+					) : (
+						<>
 							<form
-								className="flex items-center gap-2"
+								className="flex flex-wrap items-end gap-2"
 								onSubmit={(event) => {
 									event.preventDefault();
 									setOperationFailed(false);
-									updateMutation.mutate({ id: project.id, name: editedName });
+									putMemberMutation.mutate({
+										projectId: membersProject.id,
+										actorSubject: memberActor,
+										role: memberRole,
+									});
 								}}
 							>
-								<input
-									aria-label={`New name for ${project.name}`}
-									required
-									value={editedName}
-									onChange={(event) => setEditedName(event.target.value)}
-									className="h-9 rounded-md border border-input bg-background px-2"
-								/>
-								<Button type="submit" size="sm">
-									Save name
+								<label className="grid gap-1 text-sm">
+									Member actor
+									<input
+										aria-label="Member actor"
+										required
+										value={memberActor}
+										onChange={(event) => setMemberActor(event.target.value)}
+										className="h-9 rounded-md border border-input bg-background px-2"
+									/>
+								</label>
+								<label className="grid gap-1 text-sm">
+									Member role
+									<select
+										aria-label="Member role"
+										value={memberRole}
+										onChange={(event) =>
+											setMemberRole(event.target.value as "manager" | "member")
+										}
+										className="h-9 rounded-md border border-input bg-background px-2"
+									>
+										<option value="member">Member</option>
+										<option value="manager">Manager</option>
+									</select>
+								</label>
+								<Button
+									type="submit"
+									size="sm"
+									disabled={putMemberMutation.isPending}
+								>
+									Add member
 								</Button>
 							</form>
-						) : (
-							<span className="font-medium">{project.name}</span>
-						)}
+							{membersQuery.data?.items.map((member) => (
+								<div
+									key={member.actor_subject}
+									className="flex items-center justify-between gap-3"
+								>
+									<span>
+										{member.actor_subject} ({member.role})
+									</span>
+									<select
+										aria-label={`Role for ${member.actor_subject}`}
+										value={member.role}
+										onChange={(event) => {
+											setOperationFailed(false);
+											putMemberMutation.mutate({
+												projectId: membersProject.id,
+												actorSubject: member.actor_subject,
+												role: event.target.value as "manager" | "member",
+											});
+										}}
+										className="h-9 rounded-md border border-input bg-background px-2"
+									>
+										<option value="member">Member</option>
+										<option value="manager">Manager</option>
+									</select>
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										aria-label={`Remove ${member.actor_subject}`}
+										onClick={() => {
+											setOperationFailed(false);
+											deleteMemberMutation.mutate({
+												projectId: membersProject.id,
+												actorSubject: member.actor_subject,
+											});
+										}}
+									>
+										Remove member
+									</Button>
+								</div>
+							))}
+						</>
+					)}
+				</section>
+			)}
+		</div>
+	);
+}
+
+function ProjectList({
+	projects,
+	editing,
+	editedName,
+	editedSlug,
+	canManage,
+	onEdit,
+	onEditedName,
+	onEditedSlug,
+	onSave,
+	onArchive,
+	onRestore,
+	onMembers,
+}: {
+	projects: Project[];
+	editing: Project | null;
+	editedName: string;
+	editedSlug: string;
+	canManage: (project: Project) => boolean;
+	onEdit: (project: Project) => void;
+	onEditedName: (value: string) => void;
+	onEditedSlug: (value: string) => void;
+	onSave: (project: Project) => void;
+	onArchive: (project: Project) => void;
+	onRestore: (project: Project) => void;
+	onMembers: (project: Project) => void;
+}) {
+	return (
+		<div className="space-y-3">
+			{projects.map((project) => (
+				<div
+					key={project.id}
+					className="flex flex-wrap items-center justify-between gap-3"
+				>
+					{editing?.id === project.id ? (
+						<form
+							className="flex flex-wrap items-center gap-2"
+							onSubmit={(event) => {
+								event.preventDefault();
+								onSave(project);
+							}}
+						>
+							<input
+								aria-label={`New name for ${project.name}`}
+								required
+								value={editedName}
+								onChange={(event) => onEditedName(event.target.value)}
+								className="h-9 rounded-md border border-input bg-background px-2"
+							/>
+							<input
+								aria-label={`New slug for ${project.name}`}
+								required
+								pattern="[a-z0-9][a-z0-9-]*"
+								value={editedSlug}
+								onChange={(event) => onEditedSlug(event.target.value)}
+								className="h-9 rounded-md border border-input bg-background px-2"
+							/>
+							<Button type="submit" size="sm">
+								Save name
+							</Button>
+						</form>
+					) : (
+						<span className="font-medium">{project.name}</span>
+					)}
+					{canManage(project) && (
 						<div className="flex gap-2">
 							<Button
 								type="button"
 								variant="outline"
 								size="sm"
-								onClick={() => {
-									setEditing(project);
-									setEditedName(project.name);
-								}}
+								onClick={() => onEdit(project)}
 								aria-label={`Rename ${project.name}`}
 							>
 								Rename
@@ -210,43 +436,36 @@ export function ProjectsPage() {
 								type="button"
 								variant="outline"
 								size="sm"
-								onClick={() => {
-									setOperationFailed(false);
-									archiveMutation.mutate(project.id);
-								}}
-								aria-label={`Archive ${project.name}`}
+								onClick={() => onMembers(project)}
+								aria-label={`Manage members for ${project.name}`}
 							>
-								Archive
+								Members
 							</Button>
+							{project.status === "active" ? (
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={() => onArchive(project)}
+									aria-label={`Archive ${project.name}`}
+								>
+									Archive
+								</Button>
+							) : (
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={() => onRestore(project)}
+									aria-label={`Restore ${project.name}`}
+								>
+									Restore
+								</Button>
+							)}
 						</div>
-					</div>
-				))}
-			</div>
-			{archived.length > 0 && (
-				<section className="space-y-3">
-					<h2 className="text-lg font-semibold">Archived this session</h2>
-					{archived.map((project) => (
-						<div
-							key={project.id}
-							className="flex items-center justify-between rounded-md border border-border p-3"
-						>
-							<span className="font-medium">{project.name}</span>
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={() => {
-									setOperationFailed(false);
-									restoreMutation.mutate(project.id);
-								}}
-								aria-label={`Restore ${project.name}`}
-							>
-								Restore
-							</Button>
-						</div>
-					))}
-				</section>
-			)}
+					)}
+				</div>
+			))}
 		</div>
 	);
 }
