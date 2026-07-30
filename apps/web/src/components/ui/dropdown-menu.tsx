@@ -112,9 +112,16 @@ function DropdownMenuContent({
 		};
 
 		update();
+		const content = contentRef.current;
+		let observer: ResizeObserver | null = null;
+		if (typeof ResizeObserver !== "undefined" && content) {
+			observer = new ResizeObserver(update);
+			observer.observe(content);
+		}
 		window.addEventListener("resize", update);
 		window.addEventListener("scroll", update, true);
 		return () => {
+			observer?.disconnect();
 			window.removeEventListener("resize", update);
 			window.removeEventListener("scroll", update, true);
 		};
