@@ -153,13 +153,13 @@ describe("trace viewer acceptance", () => {
 		);
 
 		const ruler = screen.getByTestId("timeline-ruler");
-		expect(ruler).toHaveStyle({ minWidth: "42rem" });
+		expect(ruler.style.minWidth).toBe("42rem");
 
 		fireEvent.click(screen.getByRole("button", { name: /zoom in/i }));
-		expect(ruler).toHaveStyle({ minWidth: "52.5rem" });
+		expect(ruler.style.minWidth).toBe("52.5rem");
 
 		fireEvent.click(screen.getByRole("button", { name: /zoom to fit/i }));
-		expect(ruler).toHaveStyle({ minWidth: "42rem" });
+		expect(ruler.style.minWidth).toBe("42rem");
 	});
 
 	it("AC10: lets a user search attributes before copying a supplied value", () => {
