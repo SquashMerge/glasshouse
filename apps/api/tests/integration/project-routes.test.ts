@@ -8,6 +8,50 @@ const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 const createdAt = new Date("2026-07-15T10:00:00.000Z");
 const query = mock(async (sql: string, values: string[]) => {
+	if (sql.startsWith("WITH authorization AS MATERIALIZED")) {
+		if (values.at(-1) === "member") return { rows: [] };
+		if (values.includes(OTHER_PROJECT)) return { rows: [] };
+		if (sql.includes("UPDATE projects"))
+			return {
+				rows: [
+					{
+						id: PROJECT,
+						name: "Renamed",
+						slug: "project",
+						status: "active",
+						created_at: createdAt,
+						archived_at: null,
+						project_role: "owner",
+					},
+				],
+			};
+		if (sql.includes("INSERT INTO projects"))
+			return {
+				rows: [
+					{
+						id: PROJECT,
+						name: "New Project",
+						slug: "new-project",
+						status: "active",
+						created_at: createdAt,
+						archived_at: null,
+					},
+				],
+			};
+		if (sql.includes("INSERT INTO project_memberships"))
+			return {
+				rows: [
+					{ actor_subject: values[2], role: values[3], created_at: createdAt },
+				],
+			};
+		if (sql.includes("INSERT INTO organization_memberships"))
+			return {
+				rows: [
+					{ actor_subject: values[1], role: values[2], created_at: createdAt },
+				],
+			};
+		if (sql.includes("DELETE FROM")) return { rows: [{}] };
+	}
 	if (
 		sql.includes("COALESCE(pm.role, '')") ||
 		sql.includes("CASE WHEN om.role = 'owner' THEN 'owner'")
@@ -326,9 +370,6 @@ describe("project authorization routes", () => {
 	});
 
 	it("maps a same-organization slug collision to a safe conflict", async () => {
-		query.mockImplementationOnce(async () => ({
-			rows: [{ role: "owner" }],
-		}));
 		query.mockImplementationOnce(async () => {
 			throw Object.assign(new Error("duplicate key"), { code: "23505" });
 		});
@@ -405,6 +446,10 @@ describe("project authorization routes", () => {
 	});
 
 	it("writes each authorization mutation and its audit event in one statement", async () => {
+		await request("owner", "/v1/projects", {
+			method: "POST",
+			body: JSON.stringify({ name: "New Project", slug: "new-project" }),
+		});
 		await request("manager", `/v1/projects/${PROJECT}/archive`, {
 			method: "POST",
 		});
@@ -429,12 +474,14 @@ describe("project authorization routes", () => {
 		const mutations = query.mock.calls
 			.map(([sql]) => sql)
 			.filter((sql) => sql.startsWith("WITH "));
-		expect(mutations).toHaveLength(6);
+		expect(mutations).toHaveLength(7);
 		for (const sql of mutations) {
+			expect(sql).toContain("authorization AS MATERIALIZED");
+			expect(sql).toContain("FOR KEY SHARE");
 			expect(sql).toContain(
 				"audit AS (INSERT INTO project_authorization_audit_events",
 			);
-			expect(sql).toContain("SELECT * FROM");
+			expect(sql).toContain("SELECT");
 		}
 	});
 

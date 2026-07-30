@@ -128,6 +128,10 @@ const getTraceMock = mock(
 );
 
 const defaultClientMock = mock(() => ({}));
+let projectAccessAllowed = true;
+const assertProjectAccessMock = mock(async () => {
+	if (!projectAccessAllowed) throw new Error("Project is not available");
+});
 
 // Spy that records calls (for "subscribe before snapshot" assertions) and
 // delegates to the real subscribe so the SSE handler still receives events.
@@ -151,6 +155,7 @@ process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
 const traceEventHandlers = createTraceEventHandlers({
+	assertProjectAccess: assertProjectAccessMock,
 	defaultClient: defaultClientMock,
 	getTrace: getTraceMock,
 	graceMs: 150,
@@ -263,6 +268,8 @@ beforeEach(() => {
 	unsubscribeCallLog.length = 0;
 	getTraceMock.mockClear();
 	defaultClientMock.mockClear();
+	assertProjectAccessMock.mockClear();
+	projectAccessAllowed = true;
 	subscribeSpy.mockClear();
 	_resetForTests();
 	// Re-attach the spy implementation after _resetForTests clears handlers.
@@ -290,6 +297,56 @@ beforeEach(() => {
 
 afterEach(() => {
 	_resetForTests();
+});
+
+describe("SSE endpoints: authorization revalidation", () => {
+	it("closes trace streams before events after access is revoked", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		projectAccessAllowed = false;
+		publishSync("trace.created", { trace: fakeTrace });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(unsubscribeCallLog).toContain("trace.created");
+		expect((await reader.read()).done).toBe(true);
+	});
+
+	it("closes observation streams before events after their project archives", async () => {
+		const res = await apiApp.fetch(
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const reader = res.body!.getReader();
+		await reader.read();
+		projectAccessAllowed = false;
+		publishSync("observation.created", { observation: fakeObservation });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(unsubscribeCallLog).toContain("observation.created");
+		expect((await reader.read()).done).toBe(true);
+	});
+
+	it("closes trace-detail streams before observations after access is revoked", async () => {
+		const res = await apiApp.fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+		const reader = res.body!.getReader();
+		await readFramesUntil(reader, (frames) =>
+			frames.some((frame) => frame.event === "snapshot"),
+		);
+		projectAccessAllowed = false;
+		publishSync("observation.created", { observation: fakeObservation });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(unsubscribeCallLog).toContain("observation.created");
+		expect((await reader.read()).done).toBe(true);
+	});
 });
 
 // ---------------------------------------------------------------------------
