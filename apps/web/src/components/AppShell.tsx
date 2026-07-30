@@ -123,7 +123,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 							type="button"
 							variant="ghost"
 							size="icon"
-							className="hidden sm:inline-flex"
+							className="max-sm:!hidden sm:inline-flex"
 							onClick={toggleCollapsed}
 							aria-label="Collapse sidebar"
 							title="Collapse sidebar"

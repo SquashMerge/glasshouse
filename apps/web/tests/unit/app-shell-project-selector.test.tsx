@@ -150,6 +150,9 @@ describe("AppShell project selector", () => {
 			"h-9",
 			"w-9",
 		);
+		expect(
+			screen.getByRole("button", { name: "Collapse sidebar" }),
+		).toHaveClass("max-sm:!hidden");
 
 		for (const label of [
 			"Dashboard",
