@@ -338,6 +338,44 @@ export async function listProjects(): Promise<ProjectListResponse> {
 		"listProjects",
 	);
 }
+export async function createProject(input: {
+	name: string;
+	slug: string;
+}): Promise<Project> {
+	return responseJson<Project>(
+		await authedFetch("/v1/projects", jsonRequest(input)),
+		"createProject",
+	);
+}
+export async function updateProject(input: {
+	id: string;
+	name: string;
+}): Promise<Project> {
+	return responseJson<Project>(
+		await authedFetch(`/v1/projects/${encodeURIComponent(input.id)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name: input.name }),
+		}),
+		"updateProject",
+	);
+}
+export async function archiveProject(id: string): Promise<Project> {
+	return responseJson<Project>(
+		await authedFetch(`/v1/projects/${encodeURIComponent(id)}/archive`, {
+			method: "POST",
+		}),
+		"archiveProject",
+	);
+}
+export async function restoreProject(id: string): Promise<Project> {
+	return responseJson<Project>(
+		await authedFetch(`/v1/projects/${encodeURIComponent(id)}/restore`, {
+			method: "POST",
+		}),
+		"restoreProject",
+	);
+}
 export async function getCurrentActor(): Promise<CurrentActor> {
 	return responseJson(await authedFetch("/v1/me"), "getCurrentActor");
 }
