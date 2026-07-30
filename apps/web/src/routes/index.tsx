@@ -82,7 +82,7 @@ export function DashboardPage() {
 				</Link>
 				<div className="rounded-lg border border-border bg-card p-5">
 					<p className="text-sm font-medium text-muted-foreground">
-						Ingestion status
+						Service health
 					</p>
 					<div className="mt-3">
 						<HealthBadge />
