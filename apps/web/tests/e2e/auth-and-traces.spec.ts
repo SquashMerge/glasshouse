@@ -116,7 +116,7 @@ test.describe("Shared app workspace", () => {
 	test("keeps all product routes full-width on desktop and usable on narrow screens", async ({
 		page,
 	}) => {
-		test.setTimeout(90_000);
+		test.setTimeout(120_000);
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
 		await page.getByLabel(/Password/i).fill(PASS);
@@ -124,16 +124,18 @@ test.describe("Shared app workspace", () => {
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
 		const routes = [
-			"/",
-			"/observability?tab=traces",
-			"/observability?tab=spans",
-			"/prompts",
-			"/datasets",
-			"/evaluations",
-			"/feedback",
+			{ path: "/", content: "Operations overview" },
+			{ path: "/observability?tab=traces", content: "Traces" },
+			{ path: "/observability?tab=spans", content: "Spans" },
+			{ path: "/prompts", content: "Prompts" },
+			{ path: "/datasets", content: "Datasets" },
+			{ path: "/evaluations", content: "Evaluations" },
+			{ path: "/feedback", content: "Feedback" },
 		];
 		const viewports = [
 			{ width: 1920, height: 1080 },
+			{ width: 1440, height: 900 },
+			{ width: 1024, height: 768 },
 			{ width: 375, height: 812 },
 		];
 
@@ -141,9 +143,12 @@ test.describe("Shared app workspace", () => {
 			await page.setViewportSize(viewport);
 
 			for (const route of routes) {
-				await page.goto(route);
+				await page.goto(route.path);
 				const workspace = page.locator("main.flex-1 > div[data-hydrated='1']");
 				await expect(workspace).toBeVisible();
+				await expect(
+					page.getByText(route.content, { exact: true }).first(),
+				).toBeVisible();
 				await expect(workspace).toHaveClass(/(^|\s)max-w-none(\s|$)/);
 
 				const bounds = await workspace.boundingBox();
@@ -155,6 +160,16 @@ test.describe("Shared app workspace", () => {
 
 				if (viewport.width === 1920) {
 					expect(bounds!.width).toBeGreaterThan(1600);
+				}
+
+				if (viewport.width === 375) {
+					const pageWidth = await page.evaluate(() => ({
+						clientWidth: document.documentElement.clientWidth,
+						scrollWidth: document.documentElement.scrollWidth,
+					}));
+					expect(pageWidth.scrollWidth).toBeLessThanOrEqual(
+						pageWidth.clientWidth,
+					);
 				}
 			}
 		}
