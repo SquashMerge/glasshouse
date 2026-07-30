@@ -22,6 +22,54 @@ Existing product routes commonly accept `project_id`, but the authenticated acto
 and durable Project-membership model, lifecycle APIs, end-to-end authorization
 matrix, and Project-switch cache/SSE guarantees are incomplete.
 
+## Binding policy decisions
+
+These decisions resolve the original Factory story gate and are part of the
+implementation contract.
+
+1. **Basic Auth identity:** each configured Basic Auth credential has a unique,
+   immutable username that is the stable actor subject for this minimal identity
+   model. The server resolves that credential and its configured organization;
+   neither value can be overridden by a client request. A later identity
+   provider maps into this same actor-subject boundary rather than changing
+   product ownership.
+2. **Minimal roles and safeguards:** an organization owner may create Projects
+   and manage organization-level membership. A Project manager may manage only
+   their Project's metadata, archive/restore state, and Project membership. A
+   Project member can use product data only within that Project. The final
+   organization owner cannot be removed or demoted, and the final active
+   Project manager cannot be removed or demoted while the Project remains
+   active; an owner can add/reassign a manager first.
+3. **No-accessible-Projects UX:** `/v1/me` returns the authenticated actor and
+   an empty accessible-Project collection. The web app shows a deliberate empty
+   workspace, never a fallback Project or organization-wide data. Only an
+   organization owner sees the create-Project action; all product-data requests
+   without an authorized explicit Project target fail safely.
+4. **OTLP targeting:** direct OTLP ingestion requires one explicit
+   `x-astraea-project-id` resource target. The server validates it against the
+   authenticated actor, active Project membership, and organization before
+   decoding/writing telemetry. OTLP resource attributes never establish scope;
+   missing, conflicting, archived, or unauthorized targets are rejected.
+   Internal server-originated ingestion uses the same validated scope, not a
+   client-controlled default.
+5. **Legacy PostgreSQL backfill:** migrations may backfill only records with a
+   known organization and no Project to that organization's durable `default`
+   Project, idempotently. Rows lacking an organization or a valid default
+   Project cause the migration to fail loudly rather than be guessed into a
+   tenant. Existing explicit Project relationships remain unchanged. Legacy
+   ClickHouse ownership is never inferred.
+6. **Archive and jobs:** authorized actors may read explicit archived-Project
+   lifecycle/history detail, but archived Projects are excluded from ordinary
+   selection and product-data reads. Archive blocks all new writes immediately.
+   Queued/in-flight jobs must recheck active Project scope before claim and
+   persistence, then cancel/fail safely with content-free lifecycle evidence;
+   restore does not revive old jobs automatically.
+7. **Audit policy:** lifecycle and membership audit records are append-only,
+   content-free PostgreSQL metadata visible only to organization owners and
+   authorized managers of the relevant Project. They are retained with the
+   Project until the separately designed #49 governance retention policy takes
+   effect; this issue adds no audit deletion/export surface.
+
 ## In scope
 
 ### 1. Durable identity and authorization foundation
