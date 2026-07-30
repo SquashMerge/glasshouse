@@ -327,6 +327,63 @@ BEGIN
     END IF;
     IF NOT EXISTS (
         SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+            AND table_name = 'prompt_optimization_jobs'
+            AND column_name = 'metric_calls_used'
+            AND data_type = 'integer'
+            AND is_nullable = 'YES'
+    ) THEN
+        RAISE EXCEPTION 'prompt optimization metric-call column was not created as nullable integer';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'prompt_optimization_jobs'::regclass
+            AND conname = 'prompt_optimization_jobs_metric_calls_used_check'
+            AND pg_get_constraintdef(oid) LIKE '%metric_calls_used >= 0%'
+    ) THEN
+        RAISE EXCEPTION 'prompt optimization metric-call check was not created';
+    END IF;
+    INSERT INTO prompt_optimization_jobs (
+        id, project_id, prompt_id, prompt_slug, source_version, target_role,
+        source_messages, evaluator, examples, model_config, budget, status,
+        requested_by, metric_calls_used
+    )
+    SELECT
+        'f1000000-0000-4000-8000-000000000001',
+        p.project_id,
+        p.id,
+        p.slug,
+        1,
+        'system',
+        '[{"role":"system","content":"source"}]'::jsonb,
+        '{}'::jsonb,
+        '[]'::jsonb,
+        '{}'::jsonb,
+        '{"max_metric_calls":5}'::jsonb,
+        'completed',
+        'migration-test',
+        NULL
+    FROM prompts p
+    ORDER BY p.created_at, p.id
+    LIMIT 1;
+    IF (SELECT metric_calls_used FROM prompt_optimization_jobs WHERE id = 'f1000000-0000-4000-8000-000000000001') IS NOT NULL THEN
+        RAISE EXCEPTION 'legacy prompt optimization telemetry was not preserved as unavailable';
+    END IF;
+    UPDATE prompt_optimization_jobs
+    SET metric_calls_used = 3
+    WHERE id = 'f1000000-0000-4000-8000-000000000001';
+    BEGIN
+        UPDATE prompt_optimization_jobs
+        SET metric_calls_used = -1
+        WHERE id = 'f1000000-0000-4000-8000-000000000001';
+        RAISE EXCEPTION 'prompt optimization metric-call check accepted a negative value';
+    EXCEPTION WHEN check_violation THEN
+        NULL;
+    END;
+    IF NOT EXISTS (
+        SELECT 1
         FROM organizations
         WHERE id = '00000000-0000-4000-8000-000000000001'
             AND slug = 'default'

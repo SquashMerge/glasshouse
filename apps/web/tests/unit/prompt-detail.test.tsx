@@ -14,14 +14,21 @@ const router = vi.hoisted(() => ({
 	navigate: vi.fn(),
 	location: { searchStr: "" },
 }));
-const sse = vi.hoisted(() => ({ onMessage: vi.fn() }));
+const sse = vi.hoisted(() => ({
+	onMessage: vi.fn(),
+	onOpen: vi.fn(),
+	onError: vi.fn(),
+	reconnect: vi.fn(),
+	url: null as string | null,
+	status: "closed" as "connecting" | "open" | "closed",
+}));
 const {
 	getPrompt,
 	listPromptVersions,
 	deletePrompt,
 	rollbackLatestPromptVersion,
-	getActivePromptOptimization,
 	getPromptOptimization,
+	getLatestPromptOptimization,
 	startPromptOptimization,
 	stopPromptOptimization,
 } = vi.hoisted(() => ({
@@ -29,8 +36,8 @@ const {
 	listPromptVersions: vi.fn(),
 	deletePrompt: vi.fn(),
 	rollbackLatestPromptVersion: vi.fn(),
-	getActivePromptOptimization: vi.fn(),
 	getPromptOptimization: vi.fn(),
+	getLatestPromptOptimization: vi.fn(),
 	startPromptOptimization: vi.fn(),
 	stopPromptOptimization: vi.fn(),
 }));
@@ -61,8 +68,8 @@ vi.mock("../../src/lib/api", () => ({
 	listPromptVersions,
 	deletePrompt,
 	rollbackLatestPromptVersion,
-	getActivePromptOptimization,
 	getPromptOptimization,
+	getLatestPromptOptimization,
 	promptOptimizationEventsUrl: ({
 		project_id,
 		id,
@@ -75,15 +82,22 @@ vi.mock("../../src/lib/api", () => ({
 }));
 vi.mock("../../src/hooks/useEventSource", () => ({
 	useEventSource: (
-		_url: string,
-		options: { onMessage: (message: unknown) => void },
+		url: string | null,
+		options: {
+			onMessage: (message: unknown) => void;
+			onOpen?: () => void;
+			onError?: (cause: unknown) => void;
+		},
 	) => {
+		sse.url = url;
 		sse.onMessage.mockImplementation(options.onMessage);
+		sse.onOpen.mockImplementation(() => options.onOpen?.());
+		sse.onError.mockImplementation((cause) => options.onError?.(cause));
 		return {
-			status: "closed",
+			status: sse.status,
 			paused: false,
 			lastEventAt: null,
-			reconnect: vi.fn(),
+			reconnect: sse.reconnect,
 			debug: {
 				framesReceived: 0,
 				bufferDepth: 0,
@@ -141,18 +155,25 @@ describe("PromptDetailPage", () => {
 		listPromptVersions.mockReset();
 		deletePrompt.mockReset();
 		rollbackLatestPromptVersion.mockReset();
-		getActivePromptOptimization.mockReset();
 		getPromptOptimization.mockReset();
+		getLatestPromptOptimization.mockReset();
 		sse.onMessage.mockReset();
+		sse.onOpen.mockReset();
+		sse.onError.mockReset();
+		sse.reconnect.mockReset();
+		sse.url = null;
+		sse.status = "closed";
 		startPromptOptimization.mockReset();
 		stopPromptOptimization.mockReset();
 		getPrompt.mockResolvedValue(prompt());
-		getActivePromptOptimization.mockResolvedValue(null);
+		getLatestPromptOptimization.mockResolvedValue(null);
+		getPromptOptimization.mockResolvedValue(null);
 		startPromptOptimization.mockResolvedValue({
 			id: "22222222-2222-4222-8222-222222222222",
-			status: "pending",
+			status: "queued",
 			result_version: null,
 			error_message: null,
+			metric_calls_used: null,
 		});
 		listPromptVersions.mockResolvedValue({
 			items: [
@@ -272,7 +293,7 @@ describe("PromptDetailPage", () => {
 	});
 
 	it("disables prompt actions while optimization is active", async () => {
-		getActivePromptOptimization.mockResolvedValue({
+		getLatestPromptOptimization.mockResolvedValue({
 			id: "11111111-1111-4111-8111-111111111111",
 			status: "optimizing",
 			result_version: null,
@@ -347,34 +368,39 @@ describe("PromptDetailPage", () => {
 	});
 
 	it("refreshes the current prompt and version history after optimization completes", async () => {
-		getActivePromptOptimization.mockResolvedValue({
+		getLatestPromptOptimization.mockResolvedValue({
 			id: "22222222-2222-4222-8222-222222222222",
 			status: "optimizing",
 			result_version: null,
 			error_message: null,
+			metric_calls_used: null,
+		});
+		getPromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "completed",
+			result_version: 4,
+			error_message: null,
+			metric_calls_used: 3,
+			completed_at: "2026-07-15T10:02:00.000Z",
 		});
 		renderDetail();
-		await waitFor(() => expect(getActivePromptOptimization).toHaveBeenCalled());
+		await waitFor(() => expect(getLatestPromptOptimization).toHaveBeenCalled());
 		await act(async () => {
-			sse.onMessage({
-				event: "status",
-				data: {
-					id: 1,
-					status: "completed",
-					detail: { result_version: 4, score: 0.9 },
-					created_at: "2026-07-15T10:00:01.000Z",
-				},
-			});
+			sse.onOpen();
 		});
 
 		await waitFor(() => {
+			expect(
+				screen.queryByRole("button", { name: "Stop" }),
+			).not.toBeInTheDocument();
+			expect(screen.getByText("Published as v4.")).toBeInTheDocument();
 			expect(getPrompt).toHaveBeenCalledTimes(2);
 			expect(listPromptVersions).toHaveBeenCalledTimes(2);
 		});
 	});
 
 	it("renders score and configured budget from validated SSE progress", async () => {
-		getActivePromptOptimization.mockResolvedValue({
+		getLatestPromptOptimization.mockResolvedValue({
 			id: "22222222-2222-4222-8222-222222222222",
 			status: "optimizing",
 			result_version: null,
@@ -383,6 +409,17 @@ describe("PromptDetailPage", () => {
 			source_version: 3,
 			budget: { max_metric_calls: 20 },
 			created_at: "2026-07-15T10:00:00.000Z",
+			metric_calls_used: null,
+		});
+		getPromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "evaluating",
+			result_version: null,
+			error_message: null,
+			target: "system",
+			source_version: 3,
+			budget: { max_metric_calls: 20 },
+			metric_calls_used: 3,
 		});
 		renderDetail();
 		await screen.findByText("Support Agent optimizing…");
@@ -400,8 +437,91 @@ describe("PromptDetailPage", () => {
 		});
 
 		expect(await screen.findByText("evaluating")).toBeInTheDocument();
-		expect(screen.getByText("Not reported / 20")).toBeInTheDocument();
+		expect(screen.getByText("3 / 20")).toBeInTheDocument();
 		expect(screen.getByText("0.875")).toBeInTheDocument();
+	});
+
+	it("uses no placeholder events URL when no optimization exists", async () => {
+		renderDetail();
+
+		await screen.findByTestId("prompt-detail");
+		expect(sse.url).toBeNull();
+	});
+
+	it("closes and reopens active and completed status without stopping the job", async () => {
+		getLatestPromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+			metric_calls_used: null,
+			budget: { max_metric_calls: 5 },
+		});
+		getPromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "completed",
+			result_version: 4,
+			error_message: null,
+			metric_calls_used: 3,
+			completed_at: "2026-07-15T10:02:00.000Z",
+			budget: { max_metric_calls: 5 },
+		});
+		renderDetail();
+
+		await screen.findByTestId("optimization-status");
+		fireEvent.click(screen.getByRole("button", { name: "Close status" }));
+		expect(screen.queryByTestId("optimization-status")).not.toBeInTheDocument();
+		expect(stopPromptOptimization).not.toHaveBeenCalled();
+		fireEvent.click(
+			screen.getByRole("button", { name: "View optimization status" }),
+		);
+		expect(screen.getByTestId("optimization-status")).toBeInTheDocument();
+
+		await act(async () => {
+			sse.onOpen();
+		});
+		await screen.findByText("Published as v4.");
+		expect(
+			screen.queryByRole("button", { name: "Stop" }),
+		).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Close status" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "View optimization status" }),
+		);
+		expect(screen.getByText("Published as v4.")).toBeInTheDocument();
+		expect(stopPromptOptimization).not.toHaveBeenCalled();
+	});
+
+	it("shows actionable stream failure and unavailable metric telemetry", async () => {
+		const activeJob = {
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+			metric_calls_used: null,
+			budget: { max_metric_calls: 5 },
+		};
+		getLatestPromptOptimization.mockResolvedValue(activeJob);
+		getPromptOptimization.mockResolvedValue(activeJob);
+		renderDetail();
+
+		await screen.findByTestId("optimization-status");
+		expect(screen.getByText("Telemetry unavailable / 5")).toBeInTheDocument();
+		await act(async () => {
+			sse.onMessage({
+				event: "error",
+				data: { message: "server stream unavailable" },
+			});
+		});
+		expect(
+			await screen.findByText("server stream unavailable"),
+		).toBeInTheDocument();
+		await act(async () => {
+			sse.onError(new Error("connection reset"));
+		});
+		expect(await screen.findByText("connection reset")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Retry now" }));
+		expect(sse.reconnect).toHaveBeenCalled();
 	});
 
 	it("fills the development example when explicitly enabled", async () => {

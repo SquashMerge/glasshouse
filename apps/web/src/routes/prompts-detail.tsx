@@ -12,11 +12,14 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { useEventSource } from "../hooks/useEventSource";
+import {
+	isOptimizationActive,
+	usePromptOptimizationStatus,
+} from "../hooks/usePromptOptimizationStatus";
 import { RollbackLatestVersionDialog } from "./rollback-latest-version-dialog";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	deletePrompt,
-	getActivePromptOptimization,
 	getPrompt,
 	listPromptVersions,
 	promptOptimizationEventsUrl,
@@ -50,10 +53,11 @@ export function PromptDetailPage() {
 	const [optimizeTarget, setOptimizeTarget] = React.useState<
 		"system" | "user" | null
 	>(null);
-	const [optimization, setOptimization] =
-		React.useState<OptimizationJob | null>(null);
 	const [optimizationEvent, setOptimizationEvent] =
 		React.useState<OptimizationEvent | null>(null);
+	const [optimizationPanelOpen, setOptimizationPanelOpen] =
+		React.useState(false);
+	const [stopError, setStopError] = React.useState<string | null>(null);
 	const deleteTriggerRef = React.useRef<HTMLButtonElement>(null);
 	const selectedVersion = queryVersion(location.searchStr, "version");
 
@@ -77,11 +81,9 @@ export function PromptDetailPage() {
 		queryFn: () => listPromptVersions({ project_id: selectedProjectId!, slug }),
 		enabled: Boolean(selectedProjectId),
 	});
-	const activeOptimizationQuery = useQuery({
-		queryKey: ["prompt-optimization", selectedProjectId, slug],
-		queryFn: () =>
-			getActivePromptOptimization({ project_id: selectedProjectId!, slug }),
-		enabled: Boolean(selectedProjectId),
+	const optimizationStatus = usePromptOptimizationStatus({
+		projectId: selectedProjectId ?? null,
+		slug,
 	});
 
 	const deleteMutation = useMutation({
@@ -129,6 +131,28 @@ export function PromptDetailPage() {
 			});
 		},
 	});
+	const stopMutation = useMutation({
+		mutationFn: () => {
+			if (!selectedProjectId || !optimizationStatus.job)
+				throw new Error("Optimization status is unavailable.");
+			return stopPromptOptimization({
+				project_id: selectedProjectId,
+				id: optimizationStatus.job.id,
+			});
+		},
+		onSuccess: (job) => {
+			setStopError(null);
+			optimizationStatus.adopt(job);
+		},
+		onError: (cause) => {
+			setStopError(
+				cause instanceof Error
+					? cause.message
+					: "Optimization could not be stopped.",
+			);
+			void optimizationStatus.reconcile();
+		},
+	});
 	const optimizeMutation = useMutation({
 		mutationFn: (input: {
 			target: "system" | "user";
@@ -155,52 +179,82 @@ export function PromptDetailPage() {
 			}),
 		onSuccess: (job) => {
 			setOptimizationEvent(null);
-			setOptimization(job);
+			optimizationStatus.adoptStartedJob(job);
+			setOptimizationPanelOpen(true);
 		},
 	});
-	const activeOptimization =
-		optimization ?? activeOptimizationQuery.data ?? null;
-	const optimizationActive =
-		activeOptimization !== null &&
-		!["completed", "stopped", "failed"].includes(activeOptimization.status);
-	useEventSource<OptimizationEvent>(
-		activeOptimization && selectedProjectId
+	const activeOptimization = optimizationStatus.job;
+	const optimizationActive = isOptimizationActive(activeOptimization?.status);
+	const optimizationStream = useEventSource<OptimizationEvent>(
+		activeOptimization && selectedProjectId && optimizationActive
 			? promptOptimizationEventsUrl({
 					project_id: selectedProjectId,
 					id: activeOptimization.id,
 				})
-			: "/v1/prompt-optimizations/disabled/events",
+			: null,
 		{
 			enabled: optimizationActive,
+			coalesce: false,
+			onOpen: optimizationStatus.reportStreamOpen,
+			onError: optimizationStatus.reportStreamError,
 			onMessage: ({ event, data }) => {
+				if (event === "error") {
+					const streamMessage =
+						data &&
+						typeof data === "object" &&
+						"message" in data &&
+						typeof data.message === "string"
+							? data.message
+							: "Optimization event stream failed";
+					optimizationStatus.reportStreamError(new Error(streamMessage));
+					return;
+				}
 				if (event !== "status") return;
 				const optimizationEvent = parseOptimizationEvent(data);
 				if (!optimizationEvent) return;
 				setOptimizationEvent(optimizationEvent);
-				setOptimization((current) => {
-					const currentJob = current ?? activeOptimization;
-					if (!currentJob) return current;
-					return {
-						...currentJob,
-						status: optimizationEvent.status,
-						result_version:
-							typeof optimizationEvent.detail.result_version === "number"
-								? optimizationEvent.detail.result_version
-								: currentJob.result_version,
-					};
-				});
-				if (optimizationEvent.status === "completed")
-					void Promise.all([
-						queryClient.invalidateQueries({
-							queryKey: ["prompt", selectedProjectId, slug, "current"],
-						}),
-						queryClient.invalidateQueries({
-							queryKey: ["prompt-versions", selectedProjectId, slug],
-						}),
-					]);
+				void optimizationStatus.reconcile();
 			},
 		},
 	);
+	const seenOptimizationRef = React.useRef<string | null>(null);
+	React.useEffect(() => {
+		if (
+			!activeOptimization ||
+			seenOptimizationRef.current === activeOptimization.id
+		)
+			return;
+		seenOptimizationRef.current = activeOptimization.id;
+		setOptimizationPanelOpen(true);
+		setOptimizationEvent(null);
+		setStopError(null);
+	}, [activeOptimization?.id]);
+	const completedOptimizationRef = React.useRef<string | null>(null);
+	React.useEffect(() => {
+		if (
+			activeOptimization?.status !== "completed" ||
+			completedOptimizationRef.current === activeOptimization.id
+		)
+			return;
+		completedOptimizationRef.current = activeOptimization.id;
+		void Promise.all([
+			queryClient.invalidateQueries({
+				queryKey: ["prompt", selectedProjectId, slug, "current"],
+			}),
+			queryClient.invalidateQueries({
+				queryKey: ["prompt-versions", selectedProjectId, slug],
+			}),
+			queryClient.invalidateQueries({
+				queryKey: ["prompts", selectedProjectId],
+			}),
+		]);
+	}, [
+		activeOptimization?.id,
+		activeOptimization?.status,
+		queryClient,
+		selectedProjectId,
+		slug,
+	]);
 
 	if (!selectedProjectId || !selectedProject) {
 		return (
@@ -301,8 +355,34 @@ export function PromptDetailPage() {
 					>
 						Delete
 					</Button>
+					{activeOptimization && !optimizationPanelOpen && (
+						<Button
+							variant="outline"
+							onClick={() => setOptimizationPanelOpen(true)}
+						>
+							View optimization status
+						</Button>
+					)}
 				</div>
 			</div>
+			{optimizationStatus.snapshotError && (
+				<Alert variant="destructive" aria-live="assertive">
+					<AlertTitle>Optimization status could not be refreshed</AlertTitle>
+					<AlertDescription className="flex items-center justify-between gap-3">
+						<span>{optimizationStatus.snapshotError}</span>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => {
+								optimizationStatus.retry();
+								optimizationStream.reconnect();
+							}}
+						>
+							Retry now
+						</Button>
+					</AlertDescription>
+				</Alert>
+			)}
 
 			<div className="grid gap-6 lg:grid-cols-[minmax(14rem,0.38fr)_minmax(0,1fr)]">
 				<Card>
@@ -424,19 +504,25 @@ export function PromptDetailPage() {
 					}
 				/>
 			)}
-			{activeOptimization && (
+			{activeOptimization && optimizationPanelOpen && (
 				<OptimizationStatus
 					job={activeOptimization}
 					latestEvent={optimizationEvent}
 					versions={historyQuery.data?.items}
 					promptName={prompt.name}
-					onStop={() =>
-						selectedProjectId &&
-						stopPromptOptimization({
-							project_id: selectedProjectId,
-							id: activeOptimization.id,
-						}).then(setOptimization)
-					}
+					streamStatus={optimizationStream.status}
+					streamError={optimizationStatus.streamError}
+					stopPending={stopMutation.isPending}
+					stopError={stopError}
+					onClose={() => setOptimizationPanelOpen(false)}
+					onRetry={() => {
+						optimizationStatus.retry();
+						optimizationStream.reconnect();
+					}}
+					onStop={() => {
+						setStopError(null);
+						stopMutation.mutate();
+					}}
 				/>
 			)}
 		</div>
@@ -634,26 +720,48 @@ function OptimizationStatus({
 	latestEvent,
 	versions,
 	promptName,
+	streamStatus,
+	streamError,
+	stopPending,
+	stopError,
+	onClose,
+	onRetry,
 	onStop,
 }: {
 	job: OptimizationJob;
 	latestEvent: OptimizationEvent | null;
 	versions: PromptVersion[] | undefined;
 	promptName: string;
+	streamStatus: "connecting" | "open" | "closed";
+	streamError: string | null;
+	stopPending: boolean;
+	stopError: string | null;
+	onClose: () => void;
+	onRetry: () => void;
 	onStop: () => void;
 }) {
-	const active = !["completed", "stopped", "failed"].includes(job.status);
-	const elapsed = useElapsedTime(job.created_at, active);
+	const active = isOptimizationActive(job.status);
+	const elapsed = useElapsedTime(
+		job.created_at,
+		job.completed_at ?? job.updated_at,
+		active,
+	);
 	const score = progressScore(latestEvent);
 	const diff = optimizationDiff(job, versions);
 	return (
 		<div
 			className="fixed bottom-4 right-4 z-40 w-[min(28rem,calc(100vw-2rem))] rounded-lg border border-border bg-background p-4 shadow-lg"
 			role="status"
+			data-testid="optimization-status"
 		>
-			<p className="font-medium">
-				{promptName} {optimizationStatusLabel(job.status)}
-			</p>
+			<div className="flex items-start justify-between gap-3">
+				<p className="font-medium">
+					{promptName} {optimizationStatusLabel(job.status)}
+				</p>
+				<Button size="sm" variant="ghost" onClick={onClose}>
+					Close status
+				</Button>
+			</div>
 			<p className="mt-1 text-sm text-muted-foreground">
 				{job.result_version
 					? `Published as v${job.result_version}.`
@@ -671,19 +779,25 @@ function OptimizationStatus({
 					value={job.source_version ? `v${job.source_version}` : "Not reported"}
 				/>
 				<ProgressField label="Elapsed" value={elapsed} />
-				<ProgressField
-					label="Metric calls"
-					value={
-						job.budget?.max_metric_calls
-							? `Not reported / ${job.budget.max_metric_calls}`
-							: "Not reported"
-					}
-				/>
+				<ProgressField label="Metric calls" value={metricCallsLabel(job)} />
 				<ProgressField
 					label="Latest score"
 					value={score === null ? "Not reported" : String(score)}
 				/>
 			</dl>
+			{active && streamStatus !== "open" && (
+				<div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-muted px-3 py-2 text-sm">
+					<span aria-live="polite">
+						{streamError ??
+							(streamStatus === "connecting"
+								? "Connecting to live updates. Status is also checked every 5 seconds."
+								: "Live updates disconnected. Automatic reconnect and status checks continue.")}
+					</span>
+					<Button size="sm" variant="outline" onClick={onRetry}>
+						Retry now
+					</Button>
+				</div>
+			)}
 			{diff && (
 				<div className="mt-4 space-y-2 border-t pt-3 text-sm">
 					<p className="font-medium">Candidate improvement</p>
@@ -700,13 +814,33 @@ function OptimizationStatus({
 				</div>
 			)}
 			{active && (
-				<Button className="mt-3" size="sm" variant="outline" onClick={onStop}>
+				<Button
+					className="mt-3"
+					size="sm"
+					variant="outline"
+					onClick={onStop}
+					disabled={stopPending}
+				>
 					<LuLoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-					Stop
+					{stopPending ? "Stopping…" : "Stop"}
 				</Button>
+			)}
+			{active && stopError && (
+				<p className="mt-3 text-sm text-destructive" role="alert">
+					{stopError}
+				</p>
 			)}
 		</div>
 	);
+}
+
+function metricCallsLabel(job: OptimizationJob): string {
+	const budget = job.budget?.max_metric_calls;
+	if (typeof job.metric_calls_used === "number")
+		return budget
+			? `${job.metric_calls_used} / ${budget}`
+			: String(job.metric_calls_used);
+	return budget ? `Telemetry unavailable / ${budget}` : "Telemetry unavailable";
 }
 
 function ProgressField({ label, value }: { label: string; value: string }) {
@@ -720,6 +854,7 @@ function ProgressField({ label, value }: { label: string; value: string }) {
 
 function useElapsedTime(
 	createdAt: string | undefined,
+	completedAt: string | undefined | null,
 	active: boolean,
 ): string {
 	const [now, setNow] = React.useState(() => Date.now());
@@ -732,7 +867,10 @@ function useElapsedTime(
 	if (!createdAt) return "Not reported";
 	const startedAt = new Date(createdAt).valueOf();
 	if (Number.isNaN(startedAt)) return "Not reported";
-	const seconds = Math.max(0, Math.floor((now - startedAt) / 1_000));
+	const finishedAt = active
+		? now
+		: new Date(completedAt ?? createdAt).valueOf();
+	const seconds = Math.max(0, Math.floor((finishedAt - startedAt) / 1_000));
 	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 

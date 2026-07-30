@@ -420,10 +420,30 @@ export interface OptimizationJob {
 		| "failed";
 	result_version: number | null;
 	error_message: string | null;
+	metric_calls_used: number | null;
 	source_version?: number;
 	target?: PromptRole;
 	budget?: { max_metric_calls?: number };
 	created_at?: string;
+	updated_at?: string;
+	completed_at?: string | null;
+}
+
+export interface OptimizationActivity {
+	id: string;
+	prompt_slug: string;
+	source_version: number;
+	target: PromptRole;
+	status: Exclude<
+		OptimizationJob["status"],
+		"completed" | "stopped" | "failed"
+	>;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface OptimizationActivityListResponse {
+	items: OptimizationActivity[];
 }
 
 export interface OptimizationEvent {
@@ -459,10 +479,12 @@ export async function startPromptOptimization(input: {
 export async function getPromptOptimization(input: {
 	project_id: string;
 	id: string;
+	signal?: AbortSignal;
 }): Promise<OptimizationJob> {
 	return responseJson<OptimizationJob>(
 		await authedFetch(
 			`/v1/prompt-optimizations/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
+			{ signal: input.signal },
 		),
 		"getPromptOptimization",
 	);
@@ -475,6 +497,33 @@ export async function getActivePromptOptimization(input: {
 	return responseJson<OptimizationJob | null>(
 		await authedFetch(`/v1/prompt-optimizations/active${buildQs(input)}`),
 		"getActivePromptOptimization",
+	);
+}
+
+export async function getLatestPromptOptimization(input: {
+	project_id: string;
+	slug: string;
+	signal?: AbortSignal;
+}): Promise<OptimizationJob | null> {
+	return responseJson<OptimizationJob | null>(
+		await authedFetch(
+			`/v1/prompt-optimizations/latest${buildQs({ project_id: input.project_id, slug: input.slug })}`,
+			{ signal: input.signal },
+		),
+		"getLatestPromptOptimization",
+	);
+}
+
+export async function listActivePromptOptimizationActivities(input: {
+	project_id: string;
+	signal?: AbortSignal;
+}): Promise<OptimizationActivityListResponse> {
+	return responseJson<OptimizationActivityListResponse>(
+		await authedFetch(
+			`/v1/prompt-optimizations/activities${buildQs({ project_id: input.project_id })}`,
+			{ signal: input.signal },
+		),
+		"listActivePromptOptimizationActivities",
 	);
 }
 

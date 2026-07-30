@@ -38,6 +38,8 @@ export function EditPromptPage() {
 		queryFn: () =>
 			getActivePromptOptimization({ project_id: selectedProjectId!, slug }),
 		enabled: Boolean(selectedProjectId),
+		refetchInterval: (query) => (query.state.data ? 5_000 : false),
+		refetchIntervalInBackground: true,
 	});
 	const stopMutation = useMutation({
 		mutationFn: () =>

@@ -1,19 +1,28 @@
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 
-const { getActivePromptOptimization, listPrompts } = vi.hoisted(() => ({
-	getActivePromptOptimization: vi.fn(),
-	listPrompts: vi.fn(),
-}));
+const { listActivePromptOptimizationActivities, listPrompts } = vi.hoisted(
+	() => ({
+		listActivePromptOptimizationActivities: vi.fn(),
+		listPrompts: vi.fn(),
+	}),
+);
 
 vi.mock("@tanstack/react-router", () => ({
 	Link: ({
 		children,
+		to,
+		params: _params,
 		...props
-	}: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-		<a {...props}>{children}</a>
+	}: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+		to?: string;
+		params?: unknown;
+	}) => (
+		<a href={to} {...props}>
+			{children}
+		</a>
 	),
 }));
 vi.mock("../../src/components/ProjectProvider", () => ({
@@ -28,29 +37,8 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 	}),
 }));
 vi.mock("../../src/lib/api", () => ({
-	getActivePromptOptimization,
+	listActivePromptOptimizationActivities,
 	listPrompts,
-	promptOptimizationEventsUrl: ({
-		project_id,
-		id,
-	}: {
-		project_id: string;
-		id: string;
-	}) => `/v1/prompt-optimizations/${id}/events?project_id=${project_id}`,
-}));
-vi.mock("../../src/hooks/useEventSource", () => ({
-	useEventSource: () => ({
-		status: "closed",
-		paused: false,
-		lastEventAt: null,
-		reconnect: vi.fn(),
-		debug: {
-			framesReceived: 0,
-			bufferDepth: 0,
-			reconnectAttempts: 0,
-			lastError: null,
-		},
-	}),
 }));
 
 import { PromptsPage } from "../../src/routes/prompts";
@@ -60,10 +48,13 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 describe("PromptsPage", () => {
 	beforeEach(() => {
 		listPrompts.mockReset();
-		getActivePromptOptimization.mockReset();
-		getActivePromptOptimization.mockResolvedValue(null);
+		listActivePromptOptimizationActivities.mockReset();
+		listActivePromptOptimizationActivities.mockResolvedValue({ items: [] });
 	});
-	afterEach(cleanup);
+	afterEach(() => {
+		cleanup();
+		vi.useRealTimers();
+	});
 
 	it("lists the selected project's name, canonical ID, latest version, and time", async () => {
 		listPrompts.mockResolvedValue({
@@ -117,10 +108,18 @@ describe("PromptsPage", () => {
 			],
 			total: 1,
 		});
-		getActivePromptOptimization.mockResolvedValue({
-			id: "22222222-2222-4222-8222-222222222222",
-			prompt_slug: "daily-summary",
-			status: "optimizing",
+		listActivePromptOptimizationActivities.mockResolvedValue({
+			items: [
+				{
+					id: "22222222-2222-4222-8222-222222222222",
+					prompt_slug: "daily-summary",
+					status: "optimizing",
+					source_version: 2,
+					target: "system",
+					created_at: "2026-07-15T10:00:00.000Z",
+					updated_at: "2026-07-15T10:01:00.000Z",
+				},
+			],
 		});
 		render(
 			<QueryClientProvider
@@ -136,9 +135,64 @@ describe("PromptsPage", () => {
 		const row = screen.getByTestId("prompt-row");
 		expect(row).toHaveTextContent("Optimizing…");
 		expect(spinner).toBeInTheDocument();
-		expect(getActivePromptOptimization).toHaveBeenCalledWith({
+		expect(
+			screen.getByRole("link", {
+				name: "View Daily summary optimization status: Optimizing…",
+			}),
+		).toBeInTheDocument();
+		expect(listActivePromptOptimizationActivities).toHaveBeenCalledWith({
 			project_id: PROJECT_ID,
-			slug: "daily-summary",
 		});
+	});
+
+	it("reconciles active list status away after a terminal snapshot", async () => {
+		listPrompts.mockResolvedValue({
+			items: [
+				{
+					id: "daily-summary",
+					project_id: PROJECT_ID,
+					name: "Daily summary",
+					version: 2,
+					created_at: "2026-07-15T10:00:00.000Z",
+				},
+			],
+			total: 1,
+		});
+		listActivePromptOptimizationActivities
+			.mockResolvedValueOnce({
+				items: [
+					{
+						id: "22222222-2222-4222-8222-222222222222",
+						prompt_slug: "daily-summary",
+						status: "preparing",
+						source_version: 2,
+						target: "system",
+						created_at: "2026-07-15T10:00:00.000Z",
+						updated_at: "2026-07-15T10:01:00.000Z",
+					},
+				],
+			})
+			.mockResolvedValueOnce({ items: [] });
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<PromptsPage />
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText("Preparing…");
+		await act(async () => {
+			await client.invalidateQueries({
+				queryKey: ["prompt-optimization-activities", PROJECT_ID],
+			});
+		});
+		expect(listActivePromptOptimizationActivities).toHaveBeenCalledTimes(2);
+		await waitFor(() =>
+			expect(
+				screen.queryByTestId("optimization-status-link"),
+			).not.toBeInTheDocument(),
+		);
 	});
 });

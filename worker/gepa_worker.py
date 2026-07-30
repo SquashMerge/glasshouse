@@ -69,7 +69,15 @@ def validate_request(request):
 
 
 def fake_optimize(source):
-    return {"candidate": source + "\n\nOptimize for clear, accurate answers."}
+    return {
+        "candidate": source + "\n\nOptimize for clear, accurate answers.",
+        "metric_calls_used": 0,
+    }
+
+
+def metric_calls_used(result):
+    value = getattr(result, "total_metric_calls", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
 def cli_mode_is_allowed():
@@ -125,7 +133,11 @@ try:
     )
     candidate = result.best_candidate["system_prompt"]
     score = result.val_aggregate_scores[result.best_idx]
-    print(json.dumps({"candidate": candidate, "score": score}))
+    print(json.dumps({
+        "candidate": candidate,
+        "score": score,
+        "metric_calls_used": metric_calls_used(result),
+    }))
 except DevCliLlmError as error:
     sys.stderr.write(f"GEPA development CLI failed: {error}")
     sys.exit(1)

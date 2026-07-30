@@ -81,11 +81,15 @@ import {
 import {
 	startOptimization,
 	getActiveOptimization,
+	getLatestOptimization,
+	listOptimizationActivities,
 	getOptimization,
 	stopOptimization,
 	optimizationEvents,
 	handleStart,
 	handleGetActive,
+	handleGetLatest,
+	handleListActivities,
 	handleGet,
 	handleStop,
 	handleEvents,
@@ -206,6 +210,8 @@ register(getPrompt, handleGetPrompt);
 register(getPromptProvenance, handleGetPromptProvenance);
 register(startOptimization, handleStart);
 register(getActiveOptimization, handleGetActive);
+register(getLatestOptimization, handleGetLatest);
+register(listOptimizationActivities, handleListActivities);
 register(optimizationEvents, handleEvents);
 register(stopOptimization, handleStop);
 register(getOptimization, handleGet);
