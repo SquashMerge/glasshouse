@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { getTrace } from "../../src/db/traces-query";
+import { getTrace, listTraces } from "../../src/db/traces-query";
 
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 const ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
@@ -64,5 +64,40 @@ describe("getTrace project scope", () => {
 				project_id: "",
 			},
 		});
+	});
+});
+
+describe("listTraces empty result", () => {
+	it("returns an empty collection and zero total while preserving project scope", async () => {
+		const queries: Array<{
+			query: string;
+			query_params: Record<string, unknown>;
+		}> = [];
+		const client = {
+			query: async (request: {
+				query: string;
+				query_params: Record<string, unknown>;
+			}) => {
+				queries.push(request);
+				return { json: async () => [] };
+			},
+		};
+
+		const result = await listTraces(
+			client as never,
+			{ organization_id: ORGANIZATION_ID, project_id: PROJECT_ID },
+			50,
+			0,
+		);
+
+		expect(result).toEqual({ items: [], total: 0 });
+		expect(queries).toHaveLength(2);
+		for (const request of queries) {
+			expect(request.query).toContain("project_id = {project_id: String}");
+			expect(request.query_params).toMatchObject({
+				organization_id: ORGANIZATION_ID,
+				project_id: PROJECT_ID,
+			});
+		}
 	});
 });
