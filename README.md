@@ -91,6 +91,10 @@ make setup-tools
 
 This installs the asdf plugins for every tool and installs the pinned versions. It first uses asdf's plugin index, with explicit upstream fallbacks for Bun and Node.js when the index is unavailable. Re-run anytime `.tool-versions` changes.
 
+### Dependency supply-chain policy
+
+Bun resolves newly added direct and transitive npm packages only after they have been published for seven days (`bunfig.toml`). New direct dependencies are saved as exact versions. A trusted-base CI workflow independently checks every npm package version newly added to `bun.lock` against the npm registry before any dependency installation, so a pull request cannot bypass the seven-day holdback by changing its own verifier. Do not override this policy or add exclusions without a documented security review.
+
 > Note: asdf-managed Postgres / Redis plugins build from source and need a C toolchain (`gcc`) plus `unzip`/`uconv` etc. That's why `.tool-versions` only lists Bun and Node.js — the dev tools the runtime actually needs.
 
 #### Option B — install manually
