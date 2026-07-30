@@ -13,6 +13,7 @@ import {
 	LuDatabase,
 	LuChartLine,
 	LuMessageSquare,
+	LuCheck,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
@@ -26,6 +27,7 @@ import {
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
 import { clearCredentials, getCredentials } from "../lib/auth";
+import type { Project } from "../lib/api";
 import { useProjectSelection } from "./ProjectProvider";
 
 const COLLAPSE_KEY = "astraea.nav.collapsed";
@@ -46,6 +48,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	const {
 		projects,
 		selectedProjectId,
+		selectedProject,
 		isLoading: projectsLoading,
 		error: projectsError,
 		selectProject,
@@ -94,32 +97,33 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 				<div
 					className={cn(
 						"flex h-14 shrink-0 items-center border-b border-border",
-						collapsed ? "justify-center px-2" : "justify-between px-4",
+						collapsed
+							? "justify-center px-2"
+							: "justify-center px-2 sm:justify-between sm:px-4",
 					)}
 				>
 					<Link
 						to="/"
+						aria-label="Astraea home"
+						aria-current={activePath === "/" ? "page" : undefined}
+						title="Astraea home"
 						className={cn(
-							"flex items-center gap-2 font-semibold tracking-tight",
-							collapsed && "justify-center",
+							"flex h-9 w-9 shrink-0 items-center justify-center rounded-md font-semibold tracking-tight transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+							!collapsed &&
+								"sm:h-auto sm:w-auto sm:justify-start sm:gap-2 sm:px-0",
 						)}
 					>
 						<LuHexagon className="h-5 w-5 shrink-0" aria-hidden="true" />
-						<span
-							className={cn(
-								"hidden text-base sm:inline",
-								collapsed && "sm:hidden",
-							)}
-						>
-							Astraea
-						</span>
+						{!collapsed && (
+							<span className="hidden text-base sm:inline">Astraea</span>
+						)}
 					</Link>
 					{!collapsed && (
 						<Button
 							type="button"
 							variant="ghost"
 							size="icon"
-							className="h-8 w-8"
+							className="hidden sm:inline-flex"
 							onClick={toggleCollapsed}
 							aria-label="Collapse sidebar"
 							title="Collapse sidebar"
@@ -134,6 +138,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						"hidden border-b border-border p-2 sm:block",
 						collapsed && "sm:hidden",
 					)}
+					data-testid="expanded-project-selector"
 				>
 					<label htmlFor="selected-project" className="sr-only">
 						Selected project
@@ -173,8 +178,28 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 					)}
 				</div>
 
+				<div
+					className={cn(
+						"flex shrink-0 justify-center border-b border-border p-2",
+						!collapsed && "sm:hidden",
+					)}
+					data-testid="compact-project-selector"
+				>
+					<CompactProjectSelector
+						projects={projects}
+						selectedProject={selectedProject}
+						isLoading={projectsLoading}
+						error={projectsError}
+						selectProject={selectProject}
+						retry={retryProjects}
+					/>
+				</div>
+
 				<nav
-					className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2"
+					className={cn(
+						"min-h-0 flex flex-1 flex-col gap-1 overflow-y-auto p-2",
+						collapsed ? "items-center" : "items-center sm:items-stretch",
+					)}
 					aria-label="Sections"
 				>
 					<SidebarLink
@@ -227,7 +252,6 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 							type="button"
 							variant="ghost"
 							size="icon"
-							className="h-8 w-8"
 							onClick={toggleCollapsed}
 							aria-label="Expand sidebar"
 							title="Expand sidebar"
@@ -240,16 +264,21 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 				<Separator className="shrink-0" />
 
 				<div
-					className={cn("shrink-0 p-2", collapsed ? "flex justify-center" : "")}
+					className={cn(
+						"shrink-0 p-2",
+						collapsed ? "flex justify-center" : "flex justify-center sm:block",
+					)}
 				>
 					{creds ? (
 						<DropdownMenu>
 							<DropdownMenuTrigger
 								className={cn(
-									"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-									collapsed ? "h-9 w-9 justify-center" : "justify-start",
+									"flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+									!collapsed &&
+										"sm:w-full sm:justify-start sm:gap-2 sm:px-2 sm:py-1.5",
 								)}
-								title={collapsed ? creds.username : undefined}
+								aria-label={`Account menu for ${creds.username}`}
+								title={creds.username}
 							>
 								<UserAvatar
 									username={creds.username}
@@ -257,14 +286,14 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 								/>
 								<span
 									className={cn(
-										"flex-1 truncate text-left",
-										collapsed && "hidden",
+										"hidden flex-1 truncate text-left",
+										!collapsed && "sm:block",
 									)}
 								>
 									{creds.username}
 								</span>
 								{!collapsed && (
-									<LuChevronUp className="h-3.5 w-3.5 opacity-60" />
+									<LuChevronUp className="hidden h-3.5 w-3.5 opacity-60 sm:block" />
 								)}
 							</DropdownMenuTrigger>
 							<DropdownMenuContent align={collapsed ? "end" : "start"}>
@@ -284,11 +313,20 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 							variant={collapsed ? "ghost" : "default"}
 							size={collapsed ? "icon" : "default"}
 							onClick={() => (window.location.href = "/login")}
-							className={cn(collapsed ? "h-9 w-9" : "w-full")}
+							className={cn(
+								collapsed ? "h-9 w-9" : "h-9 w-9 px-0 sm:w-full sm:px-4",
+							)}
 							aria-label="Sign in"
 							title="Sign in"
 						>
-							{collapsed ? <LuLogIn className="h-4 w-4" /> : "Sign in"}
+							{collapsed ? (
+								<LuLogIn className="h-4 w-4" aria-hidden="true" />
+							) : (
+								<>
+									<LuLogIn className="h-4 w-4 sm:hidden" aria-hidden="true" />
+									<span className="hidden sm:inline">Sign in</span>
+								</>
+							)}
 						</Button>
 					)}
 				</div>
@@ -306,6 +344,89 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 				</div>
 			</main>
 		</div>
+	);
+}
+
+function CompactProjectSelector({
+	projects,
+	selectedProject,
+	isLoading,
+	error,
+	selectProject,
+	retry,
+}: {
+	projects: Project[];
+	selectedProject: Project | null;
+	isLoading: boolean;
+	error: Error | null;
+	selectProject: (projectId: string) => void;
+	retry: () => void;
+}) {
+	const projectName = selectedProject?.name ?? "No project selected";
+	const label = `Current project: ${projectName}. Switch project`;
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger
+				aria-label={label}
+				title={label}
+				className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+			>
+				<ProjectMark name={selectedProject?.name} className="h-7 w-7" />
+				{selectedProject && (
+					<span
+						className="absolute right-0 bottom-0 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-background bg-primary text-primary-foreground"
+						data-testid="active-project-indicator"
+						aria-hidden="true"
+					>
+						<LuCheck className="h-2.5 w-2.5" />
+					</span>
+				)}
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start">
+				<DropdownMenuLabel>Projects</DropdownMenuLabel>
+				{error ? (
+					<>
+						<div className="px-2 py-1.5 text-xs text-destructive" role="alert">
+							Projects could not be loaded.
+						</div>
+						<DropdownMenuItem onSelect={retry}>
+							Retry loading projects
+						</DropdownMenuItem>
+					</>
+				) : isLoading ? (
+					<DropdownMenuLabel>Loading projects...</DropdownMenuLabel>
+				) : projects.length === 0 ? (
+					<DropdownMenuLabel>No projects available</DropdownMenuLabel>
+				) : (
+					projects.map((project) => {
+						const isSelected = project.id === selectedProject?.id;
+						return (
+							<DropdownMenuItem
+								key={project.id}
+								role="menuitemradio"
+								aria-checked={isSelected}
+								aria-current={isSelected ? "true" : undefined}
+								onSelect={() => selectProject(project.id)}
+								className={cn(isSelected && "bg-accent text-accent-foreground")}
+							>
+								<ProjectMark
+									name={project.name}
+									className="h-5 w-5 text-[10px]"
+								/>
+								<span className="min-w-0 flex-1 truncate">{project.name}</span>
+								{isSelected && (
+									<>
+										<LuCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+										<span className="sr-only">Current project</span>
+									</>
+								)}
+							</DropdownMenuItem>
+						);
+					})
+				)}
+			</DropdownMenuContent>
+		</DropdownMenu>
 	);
 }
 
@@ -334,23 +455,43 @@ function SidebarLink({
 			aria-label={label}
 			aria-current={active ? "page" : undefined}
 			className={cn(
-				"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+				"flex h-9 w-9 shrink-0 items-center justify-center rounded-md px-0 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
 				active
 					? "bg-accent text-accent-foreground"
 					: "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-				collapsed && "h-9 w-9 justify-center px-0",
+				!collapsed &&
+					"sm:h-auto sm:w-auto sm:justify-start sm:gap-2 sm:px-2 sm:py-1.5",
 			)}
-			title={collapsed ? label : undefined}
+			title={label}
 		>
 			<span className="flex h-4 w-4 shrink-0 items-center justify-center">
 				{icon}
 			</span>
-			<span
-				className={cn("hidden truncate sm:inline", collapsed && "sm:hidden")}
-			>
+			<span className={cn("hidden truncate", !collapsed && "sm:inline")}>
 				{label}
 			</span>
 		</Link>
+	);
+}
+
+function ProjectMark({
+	name,
+	className,
+}: {
+	name?: string;
+	className?: string;
+}) {
+	const initial = (name?.trim()[0] ?? "?").toUpperCase();
+	return (
+		<span
+			className={cn(
+				"inline-flex shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold text-foreground",
+				className,
+			)}
+			aria-hidden="true"
+		>
+			{initial}
+		</span>
 	);
 }
 
