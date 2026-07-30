@@ -4,7 +4,7 @@ import { cn } from "../../lib/utils";
 
 interface DropdownMenuContextValue {
 	open: boolean;
-	setOpen: (v: boolean) => void;
+	setOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	triggerRef: React.RefObject<HTMLButtonElement | null>;
 }
 const DropdownMenuContext = React.createContext<DropdownMenuContextValue>({
@@ -27,14 +27,26 @@ function DropdownMenuTrigger({
 	children,
 	asChild: _asChild,
 	className,
+	onClick,
+	onKeyDown,
 	...props
-}: React.HTMLAttributes<HTMLButtonElement> & { asChild?: boolean }) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }) {
 	const ctx = React.useContext(DropdownMenuContext);
 	return (
 		<button
 			type="button"
 			ref={ctx.triggerRef}
-			onClick={() => ctx.setOpen(!ctx.open)}
+			onClick={(event) => {
+				onClick?.(event);
+				if (!event.defaultPrevented) ctx.setOpen((open) => !open);
+			}}
+			onKeyDown={(event) => {
+				onKeyDown?.(event);
+				if (event.defaultPrevented || event.key !== "ArrowDown" || ctx.open)
+					return;
+				event.preventDefault();
+				ctx.setOpen(true);
+			}}
 			aria-haspopup="menu"
 			aria-expanded={ctx.open}
 			className={className}
@@ -100,9 +112,16 @@ function DropdownMenuContent({
 		};
 
 		update();
+		const content = contentRef.current;
+		let observer: ResizeObserver | null = null;
+		if (typeof ResizeObserver !== "undefined" && content) {
+			observer = new ResizeObserver(update);
+			observer.observe(content);
+		}
 		window.addEventListener("resize", update);
 		window.addEventListener("scroll", update, true);
 		return () => {
+			observer?.disconnect();
 			window.removeEventListener("resize", update);
 			window.removeEventListener("scroll", update, true);
 		};
@@ -115,6 +134,14 @@ function DropdownMenuContent({
 			if (contentRef.current?.contains(t)) return;
 			if (ctx.triggerRef.current?.contains(t)) return;
 			ctx.setOpen(false);
+			if (
+				t instanceof Element &&
+				t.closest(
+					'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+				)
+			)
+				return;
+			ctx.triggerRef.current?.focus();
 		};
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === "Escape") ctx.setOpen(false);
@@ -127,6 +154,45 @@ function DropdownMenuContent({
 		};
 	}, [ctx.open, ctx.setOpen, ctx.triggerRef]);
 
+	React.useEffect(() => {
+		if (!ctx.open) return;
+		contentRef.current
+			?.querySelector<HTMLElement>('[role^="menuitem"]')
+			?.focus();
+	}, [ctx.open]);
+
+	function moveFocus(event: React.KeyboardEvent<HTMLDivElement>) {
+		if (event.key === "Escape") {
+			event.preventDefault();
+			event.stopPropagation();
+			ctx.setOpen(false);
+			ctx.triggerRef.current?.focus();
+			return;
+		}
+
+		if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+
+		const items = Array.from(
+			contentRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ??
+				[],
+		).filter((item) => item.getAttribute("aria-disabled") !== "true");
+		if (items.length === 0) return;
+
+		event.preventDefault();
+		const current = items.indexOf(document.activeElement as HTMLElement);
+		const next =
+			event.key === "Home"
+				? 0
+				: event.key === "End"
+					? items.length - 1
+					: event.key === "ArrowUp"
+						? (current - 1 + items.length) % items.length
+						: (current + 1) % items.length;
+		const nextItem = items[next];
+		nextItem?.focus();
+		nextItem?.scrollIntoView?.({ block: "nearest" });
+	}
+
 	if (!ctx.open) return null;
 	if (typeof document === "undefined") return null;
 
@@ -138,9 +204,10 @@ function DropdownMenuContent({
 		<div
 			ref={contentRef}
 			role="menu"
+			onKeyDown={moveFocus}
 			style={style}
 			className={cn(
-				"fixed z-50 min-w-[10rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
+				"fixed z-50 max-h-[calc(100vh-0.5rem)] min-w-[10rem] overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
 				className,
 			)}
 		>
@@ -157,19 +224,20 @@ function DropdownMenuItem({
 	...props
 }: React.HTMLAttributes<HTMLDivElement> & { onSelect?: () => void }) {
 	const ctx = React.useContext(DropdownMenuContext);
+	function select() {
+		onSelect?.();
+		ctx.setOpen(false);
+		ctx.triggerRef.current?.focus();
+	}
 	return (
 		<div
 			role="menuitem"
 			tabIndex={0}
-			onClick={() => {
-				onSelect?.();
-				ctx.setOpen(false);
-			}}
+			onClick={select}
 			onKeyDown={(e) => {
 				if (e.key === "Enter" || e.key === " ") {
 					e.preventDefault();
-					onSelect?.();
-					ctx.setOpen(false);
+					select();
 				}
 			}}
 			className={cn(
