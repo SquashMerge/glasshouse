@@ -11,7 +11,9 @@ import {
 	getTrace as queryGetTrace,
 } from "../db/traces-query.js";
 import type { TenantScopedObservation } from "../db/traces-writer.js";
-import { trustedTenant } from "../tenancy.js";
+import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
+import { pgPool } from "../db/postgres.js";
+import type { TrustedTenantContext } from "../middleware/auth.js";
 import {
 	presentObservationMetadata,
 	type ObservationMetadata,
@@ -141,6 +143,10 @@ function notFoundResponse(traceId: string): Response {
  * frame per `trace.created` bus event. Stays open until the client aborts.
  */
 export type TraceEventRouteDependencies = {
+	assertProjectAccess: (
+		tenant: TrustedTenantContext,
+		projectId: string,
+	) => Promise<void>;
 	defaultClient: typeof defaultClient;
 	getTrace: typeof queryGetTrace;
 	graceMs: number;
@@ -149,6 +155,8 @@ export type TraceEventRouteDependencies = {
 };
 
 const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
+	assertProjectAccess: (tenant, projectId) =>
+		assertTenantProjectAccess(pgPool(), tenant, projectId),
 	defaultClient,
 	getTrace: queryGetTrace,
 	graceMs: GRACE_MS,
@@ -159,6 +167,29 @@ const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
 export function createTraceEventHandlers(
 	dependencies: TraceEventRouteDependencies = productionTraceEventRouteDependencies,
 ) {
+	const guardStream = (
+		stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+		tenant: TrustedTenantContext,
+		projectId: string,
+		cleanup: () => void,
+	) => {
+		let closed = false;
+		let pending = Promise.resolve();
+		return (write: () => Promise<unknown>) => {
+			pending = pending.then(async () => {
+				if (closed || stream.aborted) return;
+				try {
+					await dependencies.assertProjectAccess(tenant, projectId);
+				} catch {
+					closed = true;
+					cleanup();
+					return;
+				}
+				if (!closed && !stream.aborted) await write();
+			});
+			return pending;
+		};
+	};
 	const streamTraceEventsHandler = async (c: Context): Promise<Response> => {
 		const tenant = trustedTenant(c);
 		const { project_id: expectedProjectId } = (
@@ -184,6 +215,12 @@ export function createTraceEventHandlers(
 				return;
 			}
 
+			const guardedWrite = guardStream(
+				stream,
+				tenant,
+				expectedProjectId,
+				cleanup,
+			);
 			unsubscribe = dependencies.subscribe("trace.created", (msg) => {
 				const trace = msg.payload.trace;
 				if (
@@ -192,16 +229,15 @@ export function createTraceEventHandlers(
 					trace.project_id !== expectedProjectId
 				)
 					return;
-				void stream.writeSSE({
-					event: "trace",
-					data: JSON.stringify({ trace }),
-				});
+				guardedWrite(() =>
+					stream.writeSSE({ event: "trace", data: JSON.stringify({ trace }) }),
+				);
 			});
 			heartbeat = setInterval(() => {
-				void stream.write(":heartbeat\n\n");
+				guardedWrite(() => stream.write(":heartbeat\n\n"));
 			}, dependencies.heartbeatMs);
 
-			await stream.write(":ok\n\n");
+			await guardedWrite(() => stream.write(":ok\n\n"));
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -234,6 +270,12 @@ export function createTraceEventHandlers(
 				return;
 			}
 
+			const guardedWrite = guardStream(
+				stream,
+				tenant,
+				expectedProjectId,
+				cleanup,
+			);
 			unsubscribe = dependencies.subscribe("observation.created", (msg) => {
 				const observation = msg.payload.observation;
 				if (
@@ -243,19 +285,21 @@ export function createTraceEventHandlers(
 				)
 					return;
 				const presented = presentObservation(observation);
-				void stream.writeSSE({
-					event: "observation",
-					data: JSON.stringify({
-						observation: presented,
-						metadataParsed: presented.metadata,
+				guardedWrite(() =>
+					stream.writeSSE({
+						event: "observation",
+						data: JSON.stringify({
+							observation: presented,
+							metadataParsed: presented.metadata,
+						}),
 					}),
-				});
+				);
 			});
 			heartbeat = setInterval(() => {
-				void stream.write(":heartbeat\n\n");
+				guardedWrite(() => stream.write(":heartbeat\n\n"));
 			}, dependencies.heartbeatMs);
 
-			await stream.write(":ok\n\n");
+			await guardedWrite(() => stream.write(":ok\n\n"));
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -344,10 +388,16 @@ export function createTraceEventHandlers(
 				return;
 			}
 
+			const guardedWrite = guardStream(
+				stream,
+				tenant,
+				expectedProjectId,
+				cleanup,
+			);
 			heartbeat = setInterval(() => {
-				void stream.write(":heartbeat\n\n");
+				void guardedWrite(() => stream.write(":heartbeat\n\n"));
 			}, dependencies.heartbeatMs);
-			await stream.write(":ok\n\n");
+			await guardedWrite(() => stream.write(":ok\n\n"));
 			if (stream.aborted) {
 				cleanup();
 				return;
@@ -358,32 +408,36 @@ export function createTraceEventHandlers(
 				graceTimer = setTimeout(() => {
 					if (closed) return;
 					closed = true;
-					void stream
-						.writeSSE({
+					void guardedWrite(() =>
+						stream.writeSSE({
 							event: "status",
 							data: JSON.stringify({ status: "complete" }),
-						})
-						.finally(cleanup);
+						}),
+					).finally(cleanup);
 				}, dependencies.graceMs);
 			};
 			const sendObservation = (observation: TenantScopedObservation) => {
 				if (closed) return;
 				armGraceTimer();
-				void stream.writeSSE({
-					event: "observation",
-					data: JSON.stringify({
-						observation: presentObservation(observation),
+				void guardedWrite(() =>
+					stream.writeSSE({
+						event: "observation",
+						data: JSON.stringify({
+							observation: presentObservation(observation),
+						}),
 					}),
-				});
+				);
 			};
 
-			await stream.writeSSE({
-				event: "snapshot",
-				data: JSON.stringify({
-					trace: snapshotTrace,
-					observations: snapshotObservations,
+			await guardedWrite(() =>
+				stream.writeSSE({
+					event: "snapshot",
+					data: JSON.stringify({
+						trace: snapshotTrace,
+						observations: snapshotObservations,
+					}),
 				}),
-			});
+			);
 			forwardObservation = sendObservation;
 			for (const observation of bufferedObservations.splice(0))
 				sendObservation(observation);

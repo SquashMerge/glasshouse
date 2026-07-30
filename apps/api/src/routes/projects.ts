@@ -278,15 +278,15 @@ async function listAccessibleProjects(
 }
 export async function handleCreateProject(c: Context) {
 	try {
-		const tenant = await role(c, undefined, false, true);
+		const tenant = trustedTenant(c);
 		const input = (c.req as any).valid("json");
 		const row = await pgPool().query<Row>(
-			"WITH p AS (INSERT INTO projects (name, slug, organization_id) VALUES ($1, $2, $3) RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
+			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $3 AND actor_subject = $4 AND role = 'owner' FOR KEY SHARE), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
 			[input.name, input.slug, tenant.organizationId, tenant.actor],
 		);
 		const value = row.rows[0];
-		if (!value) throw new Error("Project operation failed");
-		return c.json(project({ ...value, project_role: tenant.projectRole }), 201);
+		if (!value) throw new Error("Forbidden");
+		return c.json(project({ ...value, project_role: "owner" }), 201);
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -308,10 +308,10 @@ export async function handleGetProject(c: Context) {
 export async function handleUpdateProject(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
-		const tenant = await role(c, id, true);
+		const tenant = trustedTenant(c);
 		const input = (c.req as any).valid("json");
 		const rows = await pgPool().query<Row>(
-			"WITH p AS (UPDATE projects SET name = COALESCE($1, name), slug = COALESCE($2, slug), updated_at = now() WHERE id = $3 AND organization_id = $4 RETURNING id, name, slug, status, created_at, archived_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $5, 'project_updated' FROM p) SELECT * FROM p",
+			"WITH authorization AS MATERIALIZED (SELECT p.id, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $5 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $5 FOR KEY SHARE) pm ON true WHERE p.id = $3 AND p.organization_id = $4 AND (om.role = 'owner' OR pm.role = 'manager') FOR KEY SHARE OF p, om), p AS (UPDATE projects SET name = COALESCE($1, name), slug = COALESCE($2, slug), updated_at = now() FROM authorization WHERE projects.id = authorization.id RETURNING projects.id, projects.name, projects.slug, projects.status, projects.created_at, projects.archived_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $5, 'project_updated' FROM p) SELECT p.*, authorization.project_role FROM p JOIN authorization ON true",
 			[
 				input.name ?? null,
 				input.slug ?? null,
@@ -321,9 +321,7 @@ export async function handleUpdateProject(c: Context) {
 			],
 		);
 		if (!rows.rows[0]) throw new Error("Not found");
-		return c.json(
-			project({ ...rows.rows[0], project_role: tenant.projectRole }),
-		);
+		return c.json(project(rows.rows[0]));
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -331,9 +329,9 @@ export async function handleUpdateProject(c: Context) {
 async function lifecycle(c: Context, status: "active" | "archived") {
 	try {
 		const id = (c.req as any).valid("param").id;
-		const tenant = await role(c, id, true);
+		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<Row>(
-			"WITH p AS (UPDATE projects SET status = $1, archived_at = CASE WHEN $1 = 'archived' THEN now() ELSE NULL END, archived_by = CASE WHEN $1 = 'archived' THEN $2 ELSE NULL END, updated_at = now() WHERE id = $3 AND organization_id = $4 RETURNING id, name, slug, status, created_at, archived_at), cancelled_experiments AS (UPDATE experiments e SET status = 'cancelled', updated_at = now() FROM p WHERE $1 = 'archived' AND e.project_id = p.id AND e.status IN ('pending', 'running') RETURNING e.id), cancelled_tasks AS (UPDATE experiment_tasks t SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, updated_at = now() FROM cancelled_experiments e WHERE t.experiment_id = e.id AND t.status IN ('pending', 'running') RETURNING t.id), stopped_jobs AS (UPDATE prompt_optimization_jobs j SET status = 'stopped', cancel_requested_at = now(), updated_at = now(), completed_at = now() FROM p WHERE $1 = 'archived' AND j.project_id = p.id AND j.status IN ('queued', 'preparing', 'optimizing', 'evaluating') RETURNING j.id), job_events AS (INSERT INTO prompt_optimization_events (job_id, status) SELECT id, 'stopped' FROM stopped_jobs), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $2, $5 FROM p), work_audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $2, 'project_work_cancelled' FROM p WHERE $1 = 'archived') SELECT * FROM p",
+			"WITH authorization AS MATERIALIZED (SELECT p.id, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR KEY SHARE) pm ON true WHERE p.id = $3 AND p.organization_id = $4 AND (om.role = 'owner' OR pm.role = 'manager') FOR KEY SHARE OF p, om), p AS (UPDATE projects SET status = $1, archived_at = CASE WHEN $1 = 'archived' THEN now() ELSE NULL END, archived_by = CASE WHEN $1 = 'archived' THEN $2 ELSE NULL END, updated_at = now() FROM authorization WHERE projects.id = authorization.id RETURNING projects.id, projects.name, projects.slug, projects.status, projects.created_at, projects.archived_at), cancelled_experiments AS (UPDATE experiments e SET status = 'cancelled', updated_at = now() FROM p WHERE $1 = 'archived' AND e.project_id = p.id AND e.status IN ('pending', 'running') RETURNING e.id), cancelled_tasks AS (UPDATE experiment_tasks t SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, updated_at = now() FROM cancelled_experiments e WHERE t.experiment_id = e.id AND t.status IN ('pending', 'running') RETURNING t.id), stopped_jobs AS (UPDATE prompt_optimization_jobs j SET status = 'stopped', cancel_requested_at = now(), updated_at = now(), completed_at = now() FROM p WHERE $1 = 'archived' AND j.project_id = p.id AND j.status IN ('queued', 'preparing', 'optimizing', 'evaluating') RETURNING j.id), job_events AS (INSERT INTO prompt_optimization_events (job_id, status) SELECT id, 'stopped' FROM stopped_jobs), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $2, $5 FROM p), work_audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $2, 'project_work_cancelled' FROM p WHERE $1 = 'archived') SELECT p.*, authorization.project_role FROM p JOIN authorization ON true",
 			[
 				status,
 				tenant.actor,
@@ -343,9 +341,7 @@ async function lifecycle(c: Context, status: "active" | "archived") {
 			],
 		);
 		if (!rows.rows[0]) throw new Error("Not found");
-		return c.json(
-			project({ ...rows.rows[0], project_role: tenant.projectRole }),
-		);
+		return c.json(project(rows.rows[0]));
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -402,14 +398,14 @@ export async function handlePutProjectMember(c: Context) {
 		const params = (c.req as any).valid("param");
 		const { id } = params;
 		const input = (c.req as any).valid("json");
-		const tenant = await role(c, id, true);
+		const tenant = trustedTenant(c);
 		if (input.actor_subject !== params.actor) throw new Error("Not found");
 		const member = await pgPool().query<{
 			actor_subject: string;
 			role: "manager" | "member";
 			created_at: Date;
 		}>(
-			"WITH membership AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND actor_subject = $3) ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $2, $1, $5, 'project_membership_updated' FROM membership) SELECT * FROM membership",
+			"WITH authorization AS MATERIALIZED (SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $5 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $5 FOR KEY SHARE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') FOR KEY SHARE OF p, om), membership AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT $1, $2, $3, $4 FROM authorization WHERE EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND actor_subject = $3) ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $2, $1, $5, 'project_membership_updated' FROM membership) SELECT * FROM membership",
 			[
 				id,
 				tenant.organizationId,
@@ -428,9 +424,9 @@ export async function handlePutProjectMember(c: Context) {
 export async function handleDeleteProjectMember(c: Context) {
 	try {
 		const { id, actor } = (c.req as any).valid("param");
-		const tenant = await role(c, id, true);
+		const tenant = trustedTenant(c);
 		const deleted = await pgPool().query(
-			"WITH deleted AS (DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 RETURNING project_id), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, project_id, $4, 'project_membership_removed' FROM deleted) SELECT * FROM deleted",
+			"WITH authorization AS MATERIALIZED (SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $4 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $4 FOR KEY SHARE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR pm.role = 'manager') FOR KEY SHARE OF p, om), deleted AS (DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) RETURNING project_id), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, project_id, $4, 'project_membership_removed' FROM deleted) SELECT * FROM deleted",
 			[id, actor, tenant.organizationId, tenant.actor],
 		);
 		if (!deleted.rows[0]) throw new Error("Not found");
@@ -441,7 +437,7 @@ export async function handleDeleteProjectMember(c: Context) {
 }
 export async function handlePutOrganizationMember(c: Context) {
 	try {
-		const tenant = await role(c, undefined, false, true);
+		const tenant = trustedTenant(c);
 		const { actor } = (c.req as any).valid("param");
 		const input = (c.req as any).valid("json");
 		if (actor !== input.actor_subject) throw new Error("Not found");
@@ -450,11 +446,11 @@ export async function handlePutOrganizationMember(c: Context) {
 			role: "owner" | "member";
 			created_at: Date;
 		}>(
-			"WITH membership AS (INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, $3) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) SELECT $1, $4, 'organization_membership_updated' FROM membership) SELECT * FROM membership",
+			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $4 AND role = 'owner' FOR KEY SHARE), membership AS (INSERT INTO organization_memberships (organization_id, actor_subject, role) SELECT $1, $2, $3 FROM authorization ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) SELECT $1, $4, 'organization_membership_updated' FROM membership) SELECT * FROM membership",
 			[tenant.organizationId, actor, input.role, tenant.actor],
 		);
 		const value = row.rows[0];
-		if (!value) throw new Error("Not found");
+		if (!value) throw new Error("Forbidden");
 		return c.json({
 			...value,
 			created_at: value.created_at.toISOString(),
@@ -486,13 +482,13 @@ export async function handleListOrganizationMembers(c: Context) {
 }
 export async function handleDeleteOrganizationMember(c: Context) {
 	try {
-		const tenant = await role(c, undefined, false, true);
+		const tenant = trustedTenant(c);
 		const { actor } = (c.req as any).valid("param");
 		const deleted = await pgPool().query(
-			"WITH deleted AS (DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 RETURNING actor_subject), audit AS (INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) SELECT $1, $3, 'organization_membership_removed' FROM deleted) SELECT * FROM deleted",
+			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $3 AND role = 'owner' FOR KEY SHARE), deleted AS (DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) RETURNING actor_subject), audit AS (INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) SELECT $1, $3, 'organization_membership_removed' FROM deleted) SELECT * FROM deleted",
 			[tenant.organizationId, actor, tenant.actor],
 		);
-		if (!deleted.rows[0]) throw new Error("Not found");
+		if (!deleted.rows[0]) throw new Error("Forbidden");
 		return c.body(null, 204);
 	} catch (error) {
 		return failure(c, error);

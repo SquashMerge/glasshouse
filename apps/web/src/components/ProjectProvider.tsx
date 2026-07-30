@@ -31,6 +31,15 @@ export function clearWorkspaceSession(queryClient: {
 	}
 }
 
+function hasProjectId(value: unknown, projectId: string): boolean {
+	if (value === projectId) return true;
+	if (Array.isArray(value))
+		return value.some((item) => hasProjectId(item, projectId));
+	if (value && typeof value === "object")
+		return Object.values(value).some((item) => hasProjectId(item, projectId));
+	return false;
+}
+
 function storedProjectId(key: string): string | null {
 	const value = window.localStorage.getItem(key);
 	if (value && !UUID_PATTERN.test(value)) {
@@ -88,10 +97,10 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			if (!identity) return;
 			if (selectedProjectId && selectedProjectId !== project.id) {
 				void queryClient.cancelQueries({
-					predicate: (query) => query.queryKey.includes(selectedProjectId),
+					predicate: (query) => hasProjectId(query.queryKey, selectedProjectId),
 				});
 				queryClient.removeQueries({
-					predicate: (query) => query.queryKey.includes(selectedProjectId),
+					predicate: (query) => hasProjectId(query.queryKey, selectedProjectId),
 				});
 			}
 			window.localStorage.setItem(

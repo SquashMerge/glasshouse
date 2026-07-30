@@ -89,6 +89,7 @@ process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
 const traceEventHandlers = createTraceEventHandlers({
+	assertProjectAccess: async () => undefined,
 	defaultClient: defaultClientMock,
 	getTrace: getTraceMock,
 	graceMs: 200,

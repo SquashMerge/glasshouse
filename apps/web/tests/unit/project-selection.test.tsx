@@ -154,6 +154,11 @@ describe("ProjectProvider", () => {
 		});
 		client.setQueryData(["prompts", PROJECT_ID], { items: [] });
 		client.setQueryData(["datasets", PROJECT_ID], { items: [] });
+		client.setQueryData(["traces", { project_id: PROJECT_ID }], { items: [] });
+		client.setQueryData(
+			["observations", { filters: { project_id: PROJECT_ID } }],
+			{ items: [] },
+		);
 		client.setQueryData(["prompts", nextProjectId], { items: [] });
 
 		render(
@@ -171,6 +176,15 @@ describe("ProjectProvider", () => {
 		);
 		expect(client.getQueryData(["prompts", PROJECT_ID])).toBeUndefined();
 		expect(client.getQueryData(["datasets", PROJECT_ID])).toBeUndefined();
+		expect(
+			client.getQueryData(["traces", { project_id: PROJECT_ID }]),
+		).toBeUndefined();
+		expect(
+			client.getQueryData([
+				"observations",
+				{ filters: { project_id: PROJECT_ID } },
+			]),
+		).toBeUndefined();
 		expect(client.getQueryData(["prompts", nextProjectId])).toEqual({
 			items: [],
 		});
