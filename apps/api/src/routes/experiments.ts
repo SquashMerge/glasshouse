@@ -269,6 +269,9 @@ export function createProductionTrace(
 				actor: "evaluation-worker",
 				organizationId,
 				projectId: input.project_id,
+				organizationRole: "member",
+				projectRole: "manager",
+				projectStatus: "active",
 			},
 		);
 		if (!response.ok) throw new Error("OTLP trace ingestion failed");

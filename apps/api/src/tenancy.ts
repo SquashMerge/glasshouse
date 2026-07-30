@@ -5,9 +5,13 @@ import {
 	type TrustedTenantContext,
 } from "./middleware/auth.js";
 
-export type TenantScope = TrustedTenantContext & {
+export type AuthorizedProjectScope = TrustedTenantContext & {
 	projectId: string;
+	organizationRole: "owner" | "member";
+	projectRole: "manager" | "member";
+	projectStatus: "active" | "archived";
 };
+export type TenantScope = AuthorizedProjectScope;
 
 export class TenantScopeError extends Error {
 	constructor(message: string) {
@@ -26,17 +30,38 @@ export function trustedTenant(c: Context): TrustedTenantContext {
 	return tenant;
 }
 
+export async function resolveAuthorizedProjectScope(
+	pool: Pick<Pool, "query">,
+	tenant: TrustedTenantContext,
+	projectId: string,
+): Promise<AuthorizedProjectScope> {
+	const result = await pool.query<{
+		organization_role: "owner" | "member";
+		project_role: "manager" | "member";
+		status: "active" | "archived";
+	}>(
+		"SELECT om.role AS organization_role, pm.role AS project_role, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
+		[projectId, tenant.organizationId, tenant.actor],
+	);
+	const row = result.rows[0];
+	if (!row) throw new TenantScopeError("Project is not available");
+	return {
+		...tenant,
+		projectId,
+		organizationRole: row.organization_role,
+		projectRole: row.project_role,
+		projectStatus: row.status,
+	};
+}
+
 export async function assertTenantProjectAccess(
 	pool: Pick<Pool, "query">,
 	tenant: TrustedTenantContext,
 	projectId: string,
 ): Promise<void> {
-	const result = await pool.query<{ id: string }>(
-		"SELECT id FROM projects WHERE id = $1 AND organization_id = $2",
-		[projectId, tenant.organizationId],
-	);
-	if (!result.rows[0]?.id)
-		throw new TenantScopeError("Project is not available to this organization");
+	const scope = await resolveAuthorizedProjectScope(pool, tenant, projectId);
+	if (scope.projectStatus !== "active")
+		throw new TenantScopeError("Project is not available");
 }
 
 export async function resolveTenantProject(
@@ -44,18 +69,14 @@ export async function resolveTenantProject(
 	tenant: TrustedTenantContext,
 	requestedProjectId?: string,
 ): Promise<TenantScope> {
-	const result = requestedProjectId
-		? await pool.query<{ id: string }>(
-				"SELECT id FROM projects WHERE id = $1 AND organization_id = $2",
-				[requestedProjectId, tenant.organizationId],
-			)
-		: await pool.query<{ id: string }>(
-				"SELECT id FROM projects WHERE organization_id = $1 AND slug = 'default' LIMIT 1",
-				[tenant.organizationId],
-			);
-	const projectId = result.rows[0]?.id;
-	if (!projectId) {
-		throw new TenantScopeError("Project is not available to this organization");
-	}
-	return { ...tenant, projectId };
+	if (!requestedProjectId)
+		throw new TenantScopeError("Project target is required");
+	const scope = await resolveAuthorizedProjectScope(
+		pool,
+		tenant,
+		requestedProjectId,
+	);
+	if (scope.projectStatus !== "active")
+		throw new TenantScopeError("Project is not available");
+	return scope;
 }

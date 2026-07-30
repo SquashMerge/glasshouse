@@ -11,7 +11,7 @@ export type TrustedTenantContext = {
 	organizationId: string;
 };
 
-type BasicCredential = {
+export type BasicCredential = {
 	username: string;
 	password: string;
 	organizationId: string;

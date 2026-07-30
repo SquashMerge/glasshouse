@@ -315,7 +315,16 @@ export interface Project {
 	id: string;
 	name: string;
 	slug: string;
+	status: "active" | "archived";
 	created_at: string;
+	archived_at: string | null;
+}
+
+export interface CurrentActor {
+	actor_subject: string;
+	organization_id: string;
+	organization_role: "owner" | "member";
+	projects: Project[];
 }
 
 export interface ProjectListResponse {
@@ -328,6 +337,9 @@ export async function listProjects(): Promise<ProjectListResponse> {
 		await authedFetch("/v1/projects"),
 		"listProjects",
 	);
+}
+export async function getCurrentActor(): Promise<CurrentActor> {
+	return responseJson(await authedFetch("/v1/me"), "getCurrentActor");
 }
 
 export type PromptRole = "system" | "user";
