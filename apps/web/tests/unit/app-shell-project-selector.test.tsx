@@ -206,8 +206,6 @@ describe("AppShell project selector", () => {
 	it("does not give the dashboard a narrower page shell", () => {
 		const { container } = render(<DashboardPage />);
 
-		expect(container.querySelector("main")?.className).not.toMatch(
-			/(^|\s)max-w-/,
-		);
+		expect(container.querySelector("main")?.className).not.toMatch(/\bmax-w-/);
 	});
 });

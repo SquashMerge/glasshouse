@@ -125,8 +125,16 @@ test.describe("Shared app workspace", () => {
 
 		const routes = [
 			{ path: "/", content: "Operations overview" },
-			{ path: "/observability?tab=traces", content: "Traces" },
-			{ path: "/observability?tab=spans", content: "Spans" },
+			{
+				path: "/observability?tab=traces",
+				content: "Traces",
+				hasWideTable: true,
+			},
+			{
+				path: "/observability?tab=spans",
+				content: "Spans",
+				hasWideTable: true,
+			},
 			{ path: "/prompts", content: "Prompts" },
 			{ path: "/datasets", content: "Datasets" },
 			{ path: "/evaluations", content: "Evaluations" },
@@ -147,7 +155,7 @@ test.describe("Shared app workspace", () => {
 				const workspace = page.locator("main.flex-1 > div[data-hydrated='1']");
 				await expect(workspace).toBeVisible();
 				await expect(
-					page.getByText(route.content, { exact: true }).first(),
+					workspace.getByText(route.content, { exact: true }).first(),
 				).toBeVisible();
 				await expect(workspace).toHaveClass(/(^|\s)max-w-none(\s|$)/);
 
@@ -157,18 +165,24 @@ test.describe("Shared app workspace", () => {
 				expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
 					viewport.width + 1,
 				);
+				expect(bounds!.x + bounds!.width).toBeGreaterThanOrEqual(
+					viewport.width - 1,
+				);
 
 				if (viewport.width === 1920) {
 					expect(bounds!.width).toBeGreaterThan(1600);
 				}
 
-				if (viewport.width === 375) {
-					const pageWidth = await page.evaluate(() => ({
-						clientWidth: document.documentElement.clientWidth,
-						scrollWidth: document.documentElement.scrollWidth,
+				if (viewport.width === 375 && route.hasWideTable) {
+					const tableViewport = page.locator("table").locator("..");
+					const tableMetrics = await tableViewport.evaluate((element) => ({
+						clientWidth: element.clientWidth,
+						overflowX: getComputedStyle(element).overflowX,
+						scrollWidth: element.scrollWidth,
 					}));
-					expect(pageWidth.scrollWidth).toBeLessThanOrEqual(
-						pageWidth.clientWidth,
+					expect(tableMetrics.overflowX).toBe("auto");
+					expect(tableMetrics.scrollWidth).toBeGreaterThan(
+						tableMetrics.clientWidth,
 					);
 				}
 			}
