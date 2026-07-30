@@ -5,7 +5,14 @@ export type PackageVersion = {
 
 const MINIMUM_RELEASE_AGE_DAYS = 7;
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
-const exactVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const packageName = String.raw`(?:@[^/]+/[^@]+|[^@]+)`;
+const version = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`;
+const directDescriptor = new RegExp(
+	`^(?<name>${packageName})@(?<version>${version})$`,
+);
+const aliasDescriptor = new RegExp(
+	`^(?:${packageName})@npm:(?<name>${packageName})@(?<version>${version})$`,
+);
 
 export function parseAddedPackageVersions(diff: string): PackageVersion[] {
 	const packages = new Map<string, PackageVersion>();
@@ -16,13 +23,19 @@ export function parseAddedPackageVersions(diff: string): PackageVersion[] {
 			continue;
 		}
 
-		const descriptor = /^(?<name>@[^/]+\/[^@]+|[^@]+)@(?<version>.+)$/.exec(
-			match[1],
-		);
-		const name = descriptor?.groups?.name;
-		const version = descriptor?.groups?.version;
-		if (!name || !version || !exactVersion.test(version)) {
+		const descriptor = match[1];
+		if (descriptor.includes("@workspace:")) {
 			continue;
+		}
+
+		const parsed =
+			aliasDescriptor.exec(descriptor) ?? directDescriptor.exec(descriptor);
+		const name = parsed?.groups?.name;
+		const version = parsed?.groups?.version;
+		if (!name || !version) {
+			throw new Error(
+				`Unsupported non-registry lockfile descriptor: ${descriptor}`,
+			);
 		}
 
 		packages.set(`${name}@${version}`, { name, version });
@@ -88,22 +101,21 @@ async function fetchPublishTime(pkg: PackageVersion): Promise<Date> {
 }
 
 function gitDiff(baseSha: string, targetSha: string): string {
-	const ancestor = Bun.spawnSync([
-		"git",
-		"merge-base",
-		"--is-ancestor",
-		baseSha,
-		targetSha,
-	]);
-	if (ancestor.exitCode !== 0) {
-		throw new Error(`BASE_SHA ${baseSha} is not an ancestor of ${targetSha}`);
+	const mergeBase = Bun.spawnSync(["git", "merge-base", baseSha, targetSha]);
+	if (mergeBase.exitCode !== 0) {
+		throw new Error(`BASE_SHA ${baseSha} has no merge base with ${targetSha}`);
+	}
+
+	const commonBase = new TextDecoder().decode(mergeBase.stdout).trim();
+	if (!commonBase) {
+		throw new Error(`BASE_SHA ${baseSha} has no merge base with ${targetSha}`);
 	}
 
 	const result = Bun.spawnSync([
 		"git",
 		"diff",
 		"--unified=0",
-		baseSha,
+		commonBase,
 		targetSha,
 		"--",
 		"bun.lock",

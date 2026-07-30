@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	assertReleaseAges,
 	type PackageVersion,
@@ -11,13 +14,24 @@ describe("parseAddedPackageVersions", () => {
 ++++ b/bun.lock
 +    "@scope/widget": ["@scope/widget@2.3.4", "", {}, "sha512-example"],
 +    "plain-package": ["plain-package@1.2.3", "", {}, "sha512-example"],
++    "alias": ["alias@npm:aliased-package@1.2.3", "", {}, "sha512-example"],
 +    "@astraea/api": ["@astraea/api@workspace:apps/api"],
 +`;
 
 		expect(parseAddedPackageVersions(diff)).toEqual([
 			{ name: "@scope/widget", version: "2.3.4" },
+			{ name: "aliased-package", version: "1.2.3" },
 			{ name: "plain-package", version: "1.2.3" },
 		]);
+	});
+
+	it("fails closed for an unsupported non-workspace descriptor", () => {
+		const diff =
+			'+    "package": ["package@git+https://example.invalid/package.git"]';
+
+		expect(() => parseAddedPackageVersions(diff)).toThrow(
+			"Unsupported non-registry lockfile descriptor",
+		);
 	});
 });
 
@@ -49,5 +63,52 @@ describe("assertReleaseAges", () => {
 		).rejects.toThrow(
 			"new-package@2.0.0 was published less than the required 7 days ago",
 		);
+	});
+});
+
+describe("release-age CLI", () => {
+	it("checks a stale pull request from its common merge base", () => {
+		const repository = mkdtempSync(join(tmpdir(), "astraea-release-age-"));
+		try {
+			const git = (args: string[]) =>
+				Bun.spawnSync(["git", ...args], { cwd: repository });
+			const run = (args: string[]) => {
+				const result = git(args);
+				if (result.exitCode !== 0) {
+					throw new Error(new TextDecoder().decode(result.stderr));
+				}
+			};
+
+			run(["init", "--quiet"]);
+			run(["config", "user.name", "test"]);
+			run(["config", "user.email", "test@example.invalid"]);
+			writeFileSync(join(repository, "bun.lock"), '{\n  "packages": {}\n}\n');
+			run(["add", "bun.lock"]);
+			run(["commit", "--quiet", "-m", "common"]);
+			run(["branch", "feature"]);
+			writeFileSync(join(repository, "README.md"), "base change\n");
+			run(["add", "README.md"]);
+			run(["commit", "--quiet", "-m", "base"]);
+			const baseSha = new TextDecoder()
+				.decode(git(["rev-parse", "HEAD"]).stdout)
+				.trim();
+			run(["checkout", "--quiet", "feature"]);
+			const targetSha = new TextDecoder()
+				.decode(git(["rev-parse", "HEAD"]).stdout)
+				.trim();
+
+			const verifier = new URL(
+				"../verify-dependency-release-age.ts",
+				import.meta.url,
+			).pathname;
+			const result = Bun.spawnSync(
+				[process.execPath, "run", verifier, baseSha, targetSha],
+				{ cwd: repository },
+			);
+
+			expect(result.exitCode).toBe(0);
+		} finally {
+			rmSync(repository, { force: true, recursive: true });
+		}
 	});
 });

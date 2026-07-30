@@ -93,7 +93,7 @@ This installs the asdf plugins for every tool and installs the pinned versions. 
 
 ### Dependency supply-chain policy
 
-Bun resolves newly added direct and transitive npm packages only after they have been published for seven days (`bunfig.toml`). New direct dependencies are saved as exact versions. A trusted-base CI workflow independently checks every npm package version newly added to `bun.lock` against the npm registry before any dependency installation, so a pull request cannot bypass the seven-day holdback by changing its own verifier. Do not override this policy or add exclusions without a documented security review.
+Bun resolves newly added direct and transitive npm packages only after they have been published for seven days (`bunfig.toml`). New direct dependencies are saved as exact versions. A trusted-base workflow independently checks every npm package version newly added to `bun.lock` against the npm registry without checking out or executing pull-request code, so changing a pull request's own verifier cannot bypass the check. GitHub Free cannot make that workflow a required merge check for this private repository; maintainers must review its result until branch-protection support is available. Do not override this policy or add exclusions without a documented security review.
 
 > Note: asdf-managed Postgres / Redis plugins build from source and need a C toolchain (`gcc`) plus `unzip`/`uconv` etc. That's why `.tool-versions` only lists Bun and Node.js — the dev tools the runtime actually needs.
 
