@@ -36,9 +36,9 @@ export const otlpIngestRoute = createRoute({
 	security: [{ basicAuth: [] }],
 	request: {
 		headers: z.object({
-			"x-astraea-project-id": z.string().uuid().optional().openapi({
+			"x-astraea-project-id": z.string().uuid().openapi({
 				description:
-					"Optional project selector, verified against the authenticated organization",
+					"Project selector, verified against the authenticated organization",
 			}),
 		}),
 		body: {

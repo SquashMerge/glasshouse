@@ -14,11 +14,22 @@ interface ProjectSelectionContextValue {
 	isLoading: boolean;
 	error: Error | null;
 	selectProject: (projectId: string) => void;
+	clearSession: () => void;
 	retry: () => void;
 }
 
 const ProjectSelectionContext =
 	React.createContext<ProjectSelectionContextValue | null>(null);
+
+export function clearWorkspaceSession(queryClient: {
+	clear: () => void;
+}): void {
+	queryClient.clear();
+	for (const key of Object.keys(window.localStorage)) {
+		if (key.startsWith(`${SELECTED_PROJECT_KEY}:`))
+			window.localStorage.removeItem(key);
+	}
+}
 
 function storedProjectId(key: string): string | null {
 	const value = window.localStorage.getItem(key);
@@ -101,6 +112,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			isLoading: projectsQuery.isLoading,
 			error: (projectsQuery.error as Error | null) ?? null,
 			selectProject,
+			clearSession: () => clearWorkspaceSession(queryClient),
 			retry: () => void projectsQuery.refetch(),
 		}),
 		[
@@ -109,6 +121,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			projectsQuery.data?.organization_role,
 			projectsQuery.isLoading,
 			projectsQuery.error,
+			queryClient,
 			selectProject,
 			projectsQuery.refetch,
 		],

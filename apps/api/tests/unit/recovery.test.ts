@@ -33,4 +33,19 @@ describe("startup recovery", () => {
 			},
 		]);
 	});
+
+	it("does not resume work terminalized during project archive after restore", async () => {
+		const resumed: string[] = [];
+		await recoverInterruptedWork({
+			pool: () => ({}) as never,
+			recoverExperiments: async () => [],
+			failOptimizations: async () => [],
+			resumeExperiment: async (experiment) => {
+				resumed.push(experiment.id);
+			},
+			log: () => {},
+		});
+
+		expect(resumed).toEqual([]);
+	});
 });

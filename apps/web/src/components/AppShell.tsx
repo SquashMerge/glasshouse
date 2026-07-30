@@ -54,6 +54,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 		error: projectsError,
 		organizationRole,
 		selectProject,
+		clearSession,
 		retry: retryProjects,
 	} = useProjectSelection();
 
@@ -74,6 +75,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	}
 
 	function logout() {
+		clearSession();
 		clearCredentials();
 		setCreds(null);
 		if (typeof window !== "undefined") {

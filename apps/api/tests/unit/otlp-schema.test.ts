@@ -4,6 +4,7 @@ import {
 	ExportTraceServiceResponse,
 	Span,
 } from "../../src/schemas/otlp";
+import { otlpIngestRoute } from "../../src/routes/otlp";
 
 const HEX32 = "00112233445566778899aabbccddeeff";
 const HEX16 = "0011223344556677";
@@ -188,5 +189,12 @@ describe("ExportTraceServiceResponse Zod validation", () => {
 describe("SpanKind enum", () => {
 	it("rejects kind outside 0..5", () => {
 		expect(Span.safeParse({ ...validPayload(), kind: 7 }).success).toBe(false);
+	});
+});
+
+describe("OTLP project targeting contract", () => {
+	it("declares the project selector header as required", () => {
+		const headers = otlpIngestRoute.request?.headers;
+		expect(headers?.safeParse({}).success).toBe(false);
 	});
 });

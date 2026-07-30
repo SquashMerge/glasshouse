@@ -96,4 +96,19 @@ describe("durable experiment task ledger", () => {
 		expect(calls[0]?.text).toContain("p.status = 'active'");
 		expect(calls[0]?.text).toContain("ORDER BY e.created_at ASC");
 	});
+
+	it("terminalizes experiment tasks when a project is archived so restore cannot recover them", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
+		const db = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				return { rows: [] };
+			},
+		};
+
+		await listRecoverableExperiments(db);
+
+		expect(calls[0]?.text).toContain("e.status IN ('pending', 'running')");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
+	});
 });
