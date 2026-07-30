@@ -46,7 +46,19 @@ const query = mock(async (sql: string, values: string[]) => {
 			],
 		};
 	}
-	if (sql.startsWith("UPDATE projects")) {
+	if (sql.startsWith("SELECT id, actor_subject, event_type")) {
+		return {
+			rows: [
+				{
+					id: "33333333-3333-4333-8333-333333333333",
+					actor_subject: "owner",
+					event_type: "project_archived",
+					created_at: createdAt,
+				},
+			],
+		};
+	}
+	if (sql.includes("UPDATE projects")) {
 		return {
 			rows: [
 				{
@@ -67,7 +79,11 @@ const query = mock(async (sql: string, values: string[]) => {
 			],
 		};
 	if (sql.startsWith("INSERT INTO organization_memberships"))
-		return { rows: [{ actor_subject: values[1], role: values[2] }] };
+		return {
+			rows: [
+				{ actor_subject: values[1], role: values[2], created_at: createdAt },
+			],
+		};
 	return { rows: [], rowCount: 1 };
 });
 
@@ -79,12 +95,24 @@ mock.module("../../src/db/postgres", () => ({
 
 const {
 	createProject,
+	archiveProject,
+	deleteOrganizationMember,
+	deleteProjectMember,
+	handleArchiveProject,
 	handleCreateProject,
+	handleDeleteOrganizationMember,
+	handleDeleteProjectMember,
+	handleGetProjectAuditEvents,
+	handleListOrganizationMembers,
 	handlePutOrganizationMember,
 	handlePutProjectMember,
+	handleRestoreProject,
 	handleUpdateProject,
+	listOrganizationMembers,
+	listProjectAuditEvents,
 	putOrganizationMember,
 	putProjectMember,
+	restoreProject,
 	updateProject,
 } = await import("../../src/routes/projects");
 
@@ -105,8 +133,14 @@ api.use("/v1/*", async (c, next) => {
 });
 api.openapi(createProject, handleCreateProject);
 api.openapi(updateProject, handleUpdateProject);
+api.openapi(archiveProject, handleArchiveProject);
+api.openapi(restoreProject, handleRestoreProject);
 api.openapi(putProjectMember, handlePutProjectMember);
+api.openapi(deleteProjectMember, handleDeleteProjectMember);
 api.openapi(putOrganizationMember, handlePutOrganizationMember);
+api.openapi(listOrganizationMembers, handleListOrganizationMembers);
+api.openapi(deleteOrganizationMember, handleDeleteOrganizationMember);
+api.openapi(listProjectAuditEvents, handleGetProjectAuditEvents);
 
 function request(actor: string, path: string, init?: RequestInit) {
 	return api.request(`http://localhost${path}`, {
@@ -168,6 +202,157 @@ describe("project authorization routes", () => {
 
 		expect(update.status).toBe(200);
 		expect(member.status).toBe(200);
+	});
+
+	it("updates a project's name and slug without changing its stable id", async () => {
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ name: "Renamed", slug: "renamed-project" }),
+		});
+
+		expect(response.status).toBe(200);
+		expect((await response.json()).id).toBe(PROJECT);
+		expect(
+			query.mock.calls.some(
+				([sql, values]) =>
+					sql.includes("SET name = COALESCE") &&
+					values.includes("renamed-project") &&
+					sql.includes("'project_updated'"),
+			),
+		).toBe(true);
+	});
+
+	it("rejects empty and invalid project metadata updates", async () => {
+		const empty = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({}),
+		});
+		const invalidSlug = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ slug: "Invalid slug" }),
+		});
+
+		expect(empty.status).toBe(400);
+		expect(invalidSlug.status).toBe(400);
+	});
+
+	it("maps a same-organization slug collision to a safe conflict", async () => {
+		query.mockImplementationOnce(async () => ({
+			rows: [{ role: "owner" }],
+		}));
+		query.mockImplementationOnce(async () => {
+			throw Object.assign(new Error("duplicate key"), { code: "23505" });
+		});
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ slug: "taken" }),
+		});
+
+		expect(response.status).toBe(409);
+		expect(await response.json()).toEqual({
+			code: "CONFLICT",
+			message: "Project slug is already in use",
+		});
+	});
+
+	it("supports archive, restore, member upsert/delete, and manager audit reads", async () => {
+		const archive = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/archive`,
+			{
+				method: "POST",
+			},
+		);
+		const restore = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/restore`,
+			{
+				method: "POST",
+			},
+		);
+		const upsert = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/members/member`,
+			{
+				method: "PUT",
+				body: JSON.stringify({ actor_subject: "member", role: "member" }),
+			},
+		);
+		const remove = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/members/member`,
+			{
+				method: "DELETE",
+			},
+		);
+		const audit = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/audit-events`,
+		);
+		const ownerAudit = await request(
+			"owner",
+			`/v1/projects/${PROJECT}/audit-events`,
+		);
+
+		for (const response of [
+			archive,
+			restore,
+			upsert,
+			remove,
+			audit,
+			ownerAudit,
+		])
+			expect(response.ok).toBe(true);
+		expect((await audit.json()).items).toEqual([
+			{
+				id: "33333333-3333-4333-8333-333333333333",
+				actor_subject: "owner",
+				event_type: "project_archived",
+				created_at: createdAt.toISOString(),
+			},
+		]);
+	});
+
+	it("keeps lifecycle, membership, and audit data non-enumerable across projects", async () => {
+		const archive = await request(
+			"manager",
+			`/v1/projects/${OTHER_PROJECT}/archive`,
+			{
+				method: "POST",
+			},
+		);
+		const remove = await request(
+			"manager",
+			`/v1/projects/${OTHER_PROJECT}/members/member`,
+			{ method: "DELETE" },
+		);
+		const audit = await request(
+			"manager",
+			`/v1/projects/${OTHER_PROJECT}/audit-events`,
+		);
+
+		for (const response of [archive, remove, audit]) {
+			expect(response.status).toBe(404);
+			expect(await response.json()).toEqual({
+				code: "NOT_FOUND",
+				message: "Project is not available",
+			});
+		}
+	});
+
+	it("allows owners to list and remove organization members and audits the removal", async () => {
+		const list = await request("owner", "/v1/organization/members");
+		const remove = await request("owner", "/v1/organization/members/member", {
+			method: "DELETE",
+		});
+
+		expect(list.status).toBe(200);
+		expect(remove.status).toBe(204);
+		expect(
+			query.mock.calls.some(([sql]) =>
+				sql.includes("'organization_membership_removed'"),
+			),
+		).toBe(true);
 	});
 
 	it("does not reveal another project to a manager", async () => {
