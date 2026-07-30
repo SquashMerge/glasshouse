@@ -3,12 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
-const { listProjects, listPrompts } = vi.hoisted(() => ({
-	listProjects: vi.fn(),
+const { getCurrentActor, listPrompts } = vi.hoisted(() => ({
+	getCurrentActor: vi.fn(),
 	listPrompts: vi.fn(),
 }));
 
-vi.mock("../../src/lib/api", () => ({ listProjects, listPrompts }));
+vi.mock("../../src/lib/api", () => ({ getCurrentActor, listPrompts }));
 
 import {
 	ProjectProvider,
@@ -19,6 +19,9 @@ import { PromptsPage } from "../../src/routes/prompts";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const STALE_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+const ACTOR = "owner";
+const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
+const selectionKey = `${SELECTED_PROJECT_KEY}:${ORGANIZATION}:${ACTOR}`;
 
 function wrapper(children: React.ReactNode) {
 	const client = new QueryClient({
@@ -39,21 +42,26 @@ function SelectionProbe() {
 describe("ProjectProvider", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
-		listProjects.mockReset();
+		getCurrentActor.mockReset();
 		listPrompts.mockReset();
 	});
 
 	afterEach(cleanup);
 
-	it("clears a stale stored UUID and persists the first authenticated project", async () => {
-		window.localStorage.setItem(SELECTED_PROJECT_KEY, STALE_PROJECT_ID);
-		listProjects.mockResolvedValue({
-			items: [
+	it("clears a stale stored UUID without selecting the first accessible project", async () => {
+		window.localStorage.setItem(selectionKey, STALE_PROJECT_ID);
+		getCurrentActor.mockResolvedValue({
+			actor_subject: ACTOR,
+			organization_id: ORGANIZATION,
+			organization_role: "owner",
+			projects: [
 				{
 					id: PROJECT_ID,
 					name: "Project One",
 					slug: "project-one",
+					status: "active",
 					created_at: "2026-07-15T10:00:00.000Z",
+					archived_at: null,
 				},
 			],
 			total: 1,
@@ -68,17 +76,20 @@ describe("ProjectProvider", () => {
 		);
 
 		await waitFor(() =>
-			expect(screen.getByTestId("selection")).toHaveTextContent(
-				`${PROJECT_ID}:Project One`,
-			),
+			expect(window.localStorage.getItem(selectionKey)).toBeNull(),
 		);
-		expect(window.localStorage.getItem(SELECTED_PROJECT_KEY)).toBe(PROJECT_ID);
-		expect(listProjects).toHaveBeenCalledTimes(1);
+		expect(screen.getByTestId("selection")).toHaveTextContent(`:none`);
+		expect(getCurrentActor).toHaveBeenCalledTimes(1);
 	});
 
 	it("removes an invalid stored value and does not call prompt APIs when no project exists", async () => {
-		window.localStorage.setItem(SELECTED_PROJECT_KEY, "not-a-uuid");
-		listProjects.mockResolvedValue({ items: [], total: 0 });
+		window.localStorage.setItem(selectionKey, "not-a-uuid");
+		getCurrentActor.mockResolvedValue({
+			actor_subject: ACTOR,
+			organization_id: ORGANIZATION,
+			organization_role: "member",
+			projects: [],
+		});
 
 		render(
 			wrapper(
@@ -89,7 +100,7 @@ describe("ProjectProvider", () => {
 		);
 
 		await screen.findByText("Select a project to manage its prompts.");
-		expect(window.localStorage.getItem(SELECTED_PROJECT_KEY)).toBeNull();
+		expect(window.localStorage.getItem(selectionKey)).toBeNull();
 		expect(listPrompts).not.toHaveBeenCalled();
 	});
 });
