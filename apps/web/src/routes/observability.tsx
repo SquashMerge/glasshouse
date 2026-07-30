@@ -29,6 +29,11 @@ import {
 } from "../components/TimeRangePicker";
 import { useEventSource } from "../hooks/useEventSource";
 import { useProjectSelection } from "../components/ProjectProvider";
+import { copyText } from "../lib/clipboard";
+import {
+	parseObservabilitySearch,
+	serializeObservabilitySearch,
+} from "../lib/observability-search";
 type Tab = "traces" | "spans";
 
 const VALID_TABS = new Set<Tab>(["traces", "spans"]);
@@ -41,7 +46,11 @@ export function ObservabilityPage() {
 	const tab: Tab = VALID_TABS.has(rawTab as Tab) ? (rawTab as Tab) : "traces";
 
 	function setTab(next: Tab) {
-		navigate({ to: "/observability", search: { tab: next } });
+		const nextSearch = Object.fromEntries(searchParams.entries());
+		navigate({
+			to: "/observability",
+			search: { ...nextSearch, tab: next },
+		});
 	}
 
 	return (
@@ -500,16 +509,96 @@ function useTracesData() {
 	};
 }
 
+function useUrlBackedListState(
+	prefix: "traces" | "spans",
+	filterFields: readonly FilterFieldDef[],
+) {
+	const location = useLocation();
+	const [search, setSearch] = React.useState(location.searchStr);
+
+	React.useEffect(() => setSearch(location.searchStr), [location.searchStr]);
+	React.useEffect(() => {
+		const onPopState = () => setSearch(window.location.search);
+		window.addEventListener("popstate", onPopState);
+		return () => window.removeEventListener("popstate", onPopState);
+	}, []);
+
+	const filterKeys = React.useMemo(
+		() => filterFields.map((field) => field.key),
+		[filterFields],
+	);
+	const state = React.useMemo(
+		() => parseObservabilitySearch(search, prefix, filterKeys),
+		[filterKeys, prefix, search],
+	);
+	const persist = React.useCallback(
+		(filters: Record<string, string>, timeRange: TimeRange) => {
+			const next = serializeObservabilitySearch(search, prefix, {
+				filters,
+				timeRange,
+			});
+			if (next === search) return;
+			window.history.pushState({}, "", `${window.location.pathname}${next}`);
+			setSearch(next);
+		},
+		[prefix, search],
+	);
+
+	return { search, state, persist };
+}
+
+function CopyActiveLink() {
+	const [message, setMessage] = React.useState("");
+	return (
+		<span className="inline-flex items-center gap-1">
+			<button
+				type="button"
+				className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				onClick={() => {
+					void copyText(window.location.href).then((result) =>
+						setMessage(result.ok ? "Link copied" : "Could not copy link"),
+					);
+				}}
+			>
+				Copy link
+			</button>
+			{message && (
+				<span className="text-xs text-muted-foreground" role="status">
+					{message}
+				</span>
+			)}
+		</span>
+	);
+}
+
 /** TracesTab — page-owned query + SSE merge, rendered via FilterableTable. */
 export function TracesTab() {
 	const navigate = useNavigate();
 	const data = useTracesData();
+	const {
+		search: urlSearch,
+		state: urlState,
+		persist: persistUrlState,
+	} = useUrlBackedListState("traces", TRACE_FILTER_FIELDS);
+	const onFiltersChange = React.useCallback(
+		(filters: Record<string, string>, timeRange: TimeRange) => {
+			data.onFiltersChange(filters, timeRange);
+			persistUrlState(filters, timeRange);
+		},
+		[data.onFiltersChange, persistUrlState],
+	);
 
 	return (
 		<>
 			<FilterableTable<TraceRow>
+				key={urlSearch}
 				title="Traces"
-				headerActions={<StreamToggle sse={data.sse} />}
+				headerActions={
+					<>
+						<StreamToggle sse={data.sse} />
+						<CopyActiveLink />
+					</>
+				}
 				noun={{ singular: "trace", plural: "traces" }}
 				emptyHint={
 					<>
@@ -520,6 +609,8 @@ export function TracesTab() {
 				noMatchMessage="No traces match the current filters."
 				columns={TRACE_COLUMNS}
 				filterFields={TRACE_FILTER_FIELDS}
+				initialFilters={urlState.filters}
+				initialTimeRange={urlState.timeRange}
 				items={data.merged}
 				total={data.total}
 				isLoading={data.isLoading}
@@ -529,7 +620,7 @@ export function TracesTab() {
 				onRetry={() => void data.refetch()}
 				highlightedVersions={data.highlightVersions}
 				rowKey={(t) => t.trace_id}
-				onFiltersChange={data.onFiltersChange}
+				onFiltersChange={onFiltersChange}
 				onRowClick={(t) => {
 					navigate({
 						to: traceDetailPath(t.trace_id),
@@ -870,12 +961,30 @@ function metadataSearchText(metadata: ObservationMetadataInput): string {
 export function SpansTab() {
 	const navigate = useNavigate();
 	const data = useSpansData();
+	const {
+		search: urlSearch,
+		state: urlState,
+		persist: persistUrlState,
+	} = useUrlBackedListState("spans", SPAN_FILTER_FIELDS);
+	const onFiltersChange = React.useCallback(
+		(filters: Record<string, string>, timeRange: TimeRange) => {
+			data.onFiltersChange(filters, timeRange);
+			persistUrlState(filters, timeRange);
+		},
+		[data.onFiltersChange, persistUrlState],
+	);
 
 	return (
 		<>
 			<FilterableTable<ObservationRow>
+				key={urlSearch}
 				title="Spans"
-				headerActions={<StreamToggle sse={data.sse} />}
+				headerActions={
+					<>
+						<StreamToggle sse={data.sse} />
+						<CopyActiveLink />
+					</>
+				}
 				noun={{ singular: "span", plural: "spans" }}
 				emptyHint={
 					<>
@@ -886,6 +995,8 @@ export function SpansTab() {
 				noMatchMessage="No spans match the current filters."
 				columns={SPAN_COLUMNS}
 				filterFields={SPAN_FILTER_FIELDS}
+				initialFilters={urlState.filters}
+				initialTimeRange={urlState.timeRange}
 				items={data.merged}
 				total={data.total}
 				isLoading={data.isLoading}
@@ -895,7 +1006,7 @@ export function SpansTab() {
 				onRetry={() => void data.refetch()}
 				highlightedVersions={data.highlightVersions}
 				rowKey={(o) => o.observation_id}
-				onFiltersChange={data.onFiltersChange}
+				onFiltersChange={onFiltersChange}
 				onRowClick={(o) => {
 					navigate({
 						to: traceDetailPath(o.trace_id),

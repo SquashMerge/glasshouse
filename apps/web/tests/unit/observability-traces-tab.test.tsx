@@ -207,6 +207,14 @@ afterEach(() => {
 // --- Tests -----------------------------------------------------------------
 
 describe("TracesTab — SSE merge + highlight", () => {
+	it("renders filters in a responsive labeled filter bar", async () => {
+		renderWithQueryClient(<TracesTab />);
+		expect(
+			await screen.findByRole("group", { name: "Filters" }),
+		).toBeInTheDocument();
+		expect(screen.getByLabelText("Name")).toBeInTheDocument();
+	});
+
 	it("highlights an in-view SSE event row", async () => {
 		renderWithQueryClient(<TracesTab />);
 

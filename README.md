@@ -248,7 +248,7 @@ infra/scripts/seed-traces.sh --help
 
 ### `make smoke`
 
-Runs the end-to-end smoke (AC1 + AC2 + AC9 + AC10): brings up the stack, curls the health and OpenAPI endpoints, samples stub routes for 501 responses, and runs the Playwright dashboard test (asserts title, links visible, zero console errors during page load).
+Runs the end-to-end smoke (AC1 + AC2 + AC4 + AC7): brings up the stack, checks the health and OpenAPI endpoints, verifies the supported collection roots, and runs the Playwright dashboard test (asserts title, links visible, zero console errors during page load).
 
 ## Docs
 
