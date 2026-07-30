@@ -157,12 +157,17 @@ function failure(c: Context, error: unknown): Response {
 		);
 	return c.json({ code: "INTERNAL", message: "Project operation failed" }, 500);
 }
-async function role(c: Context, projectId?: string, manager = false) {
+async function role(
+	c: Context,
+	projectId?: string,
+	manager = false,
+	owner = false,
+) {
 	const tenant = trustedTenant(c);
 	const pool = pgPool();
 	const result = projectId
-		? await pool.query<{ role: string }>(
-				"SELECT COALESCE(pm.role, '') AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
+		? await pool.query<{ role: string | null }>(
+				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
 				[projectId, tenant.organizationId, tenant.actor],
 			)
 		: await pool.query<{ role: string }>(
@@ -171,6 +176,7 @@ async function role(c: Context, projectId?: string, manager = false) {
 			);
 	const value = result.rows[0]?.role;
 	if (!value) throw new Error("Not found");
+	if (owner && value !== "owner") throw new Error("Forbidden");
 	if (manager && value !== "manager" && value !== "owner")
 		throw new Error("Forbidden");
 	return tenant;
@@ -206,7 +212,7 @@ export async function handleListProjects(c: Context) {
 }
 export async function handleCreateProject(c: Context) {
 	try {
-		const tenant = await role(c);
+		const tenant = await role(c, undefined, false, true);
 		const input = (c.req as any).valid("json");
 		const row = await pgPool().query<Row>(
 			"WITH p AS (INSERT INTO projects (name, slug, organization_id) VALUES ($1, $2, $3) RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
@@ -344,7 +350,7 @@ export async function handleDeleteProjectMember(c: Context) {
 }
 export async function handlePutOrganizationMember(c: Context) {
 	try {
-		const tenant = await role(c);
+		const tenant = await role(c, undefined, false, true);
 		const { actor } = (c.req as any).valid("param");
 		const input = (c.req as any).valid("json");
 		if (actor !== input.actor_subject) throw new Error("Not found");

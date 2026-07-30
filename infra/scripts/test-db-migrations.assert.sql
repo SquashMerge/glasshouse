@@ -575,5 +575,39 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'durable experiment task ledger is incomplete';
     END IF;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'migration-owner', 'owner');
+    UPDATE organization_memberships
+    SET role = 'owner'
+    WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+        AND actor_subject = 'migration-owner';
+    BEGIN
+        UPDATE organization_memberships
+        SET role = 'member'
+        WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+            AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'final organization owner demotion was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'migration-manager', 'member');
+    INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
+    VALUES ('33333333-3333-4333-8333-333333333333', '00000000-0000-4000-8000-000000000002', 'migration-manager', 'manager');
+    UPDATE project_memberships
+    SET role = 'manager'
+    WHERE project_id = '33333333-3333-4333-8333-333333333333'
+        AND actor_subject = 'migration-manager';
+    BEGIN
+        UPDATE project_memberships
+        SET role = 'member'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333'
+            AND actor_subject = 'migration-manager';
+        RAISE EXCEPTION 'final active project manager demotion was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
 END
 $$;

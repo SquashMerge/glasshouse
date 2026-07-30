@@ -18,10 +18,6 @@ import {
 	rollbackLatestPromptVersion,
 } from "../../src/routes/prompts";
 import {
-	createProjectRouteHandlers,
-	listProjects,
-} from "../../src/routes/projects";
-import {
 	createPromptProvenanceRouteHandlers,
 	getPromptProvenance,
 } from "../../src/routes/prompt-provenance";
@@ -56,17 +52,6 @@ const deletePromptRecord = mock(
 const getPromptRecord = mock(async () => {
 	throw new PromptRepositoryError("NOT_FOUND", "Prompt or version not found");
 });
-const listProjectsRecord = mock(async () => ({
-	items: [
-		{
-			id: "11111111-1111-4111-8111-111111111111",
-			name: "Project One",
-			slug: "project-one",
-			created_at: "2026-07-15T10:00:00.000Z",
-		},
-	],
-	total: 1,
-}));
 const PROMPT_VERSION = {
 	id: "support-agent",
 	version: 2,
@@ -149,10 +134,6 @@ function app() {
 		renderPrompt: renderPromptRecord,
 		rollbackLatestPromptVersion: rollbackLatestPromptVersionRecord,
 	});
-	const projectHandlers = createProjectRouteHandlers({
-		pool,
-		listProjects: listProjectsRecord,
-	});
 	const promptProvenanceHandlers = createPromptProvenanceRouteHandlers({
 		pool,
 		promptProvenanceStatus,
@@ -194,7 +175,6 @@ function app() {
 	);
 	api.openapi(previewPrompt, promptHandlers.handlePreviewPrompt);
 	api.openapi(renderPrompt, promptHandlers.handleRenderPrompt);
-	api.openapi(listProjects, projectHandlers.handleListProjects);
 	api.openapi(
 		getPromptProvenance,
 		promptProvenanceHandlers.handleGetPromptProvenance,
@@ -203,28 +183,6 @@ function app() {
 }
 
 describe("prompt route contracts", () => {
-	it("lists all projects for the globally trusted administrator", async () => {
-		listProjectsRecord.mockClear();
-		const response = await app().request("/v1/projects");
-
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({
-			items: [
-				{
-					id: PROJECT,
-					name: "Project One",
-					slug: "project-one",
-					created_at: "2026-07-15T10:00:00.000Z",
-				},
-			],
-			total: 1,
-		});
-		expect(listProjectsRecord.mock.calls[0]).toEqual([
-			expect.anything(),
-			"00000000-0000-4000-8000-000000000001",
-		]);
-	});
-
 	it("uses the trusted context actor rather than a request actor and returns public prompt ids", async () => {
 		createPromptRecord.mockClear();
 		const response = await app().request("/v1/prompts", {
