@@ -8,6 +8,7 @@ compose = Path("infra/compose.yaml").read_text()
 required = (
     "      - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro",
     "      context: .",
+    "      ASTRAEA_BOOTSTRAP_OWNER_USERNAME: ${ASTRAEA_BOOTSTRAP_OWNER_USERNAME:?ASTRAEA_BOOTSTRAP_OWNER_USERNAME must be set in infra/.env}",
 )
 for value in required:
     if compose.count(value) != (2 if value == "      context: ." else 1):
