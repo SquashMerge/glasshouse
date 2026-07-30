@@ -333,19 +333,16 @@ async function lifecycle(c: Context, status: "active" | "archived") {
 		const id = (c.req as any).valid("param").id;
 		const tenant = await role(c, id, true);
 		const rows = await pgPool().query<Row>(
-			"UPDATE projects SET status = $1, archived_at = CASE WHEN $1 = 'archived' THEN now() ELSE NULL END, archived_by = CASE WHEN $1 = 'archived' THEN $2 ELSE NULL END, updated_at = now() WHERE id = $3 AND organization_id = $4 RETURNING id, name, slug, status, created_at, archived_at",
-			[status, tenant.actor, id, tenant.organizationId],
-		);
-		if (!rows.rows[0]) throw new Error("Not found");
-		await pgPool().query(
-			"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, $4)",
+			"WITH p AS (UPDATE projects SET status = $1, archived_at = CASE WHEN $1 = 'archived' THEN now() ELSE NULL END, archived_by = CASE WHEN $1 = 'archived' THEN $2 ELSE NULL END, updated_at = now() WHERE id = $3 AND organization_id = $4 RETURNING id, name, slug, status, created_at, archived_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $2, $5 FROM p) SELECT * FROM p",
 			[
-				tenant.organizationId,
-				id,
+				status,
 				tenant.actor,
+				id,
+				tenant.organizationId,
 				status === "active" ? "project_restored" : "project_archived",
 			],
 		);
+		if (!rows.rows[0]) throw new Error("Not found");
 		return c.json(
 			project({ ...rows.rows[0], project_role: tenant.projectRole }),
 		);
@@ -412,14 +409,16 @@ export async function handlePutProjectMember(c: Context) {
 			role: "manager" | "member";
 			created_at: Date;
 		}>(
-			"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND actor_subject = $3) ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at",
-			[id, tenant.organizationId, input.actor_subject, input.role],
+			"WITH membership AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND actor_subject = $3) ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $2, $1, $5, 'project_membership_updated' FROM membership) SELECT * FROM membership",
+			[
+				id,
+				tenant.organizationId,
+				input.actor_subject,
+				input.role,
+				tenant.actor,
+			],
 		);
 		if (!member.rows[0]) throw new Error("Not found");
-		await pgPool().query(
-			"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_membership_updated')",
-			[tenant.organizationId, id, tenant.actor],
-		);
 		const row = member.rows[0];
 		return c.json({ ...row, created_at: row.created_at.toISOString() });
 	} catch (error) {
@@ -431,14 +430,10 @@ export async function handleDeleteProjectMember(c: Context) {
 		const { id, actor } = (c.req as any).valid("param");
 		const tenant = await role(c, id, true);
 		const deleted = await pgPool().query(
-			"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-			[id, actor],
+			"WITH deleted AS (DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 RETURNING project_id), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, project_id, $4, 'project_membership_removed' FROM deleted) SELECT * FROM deleted",
+			[id, actor, tenant.organizationId, tenant.actor],
 		);
-		if (!deleted.rowCount) throw new Error("Not found");
-		await pgPool().query(
-			"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_membership_removed')",
-			[tenant.organizationId, id, tenant.actor],
-		);
+		if (!deleted.rows[0]) throw new Error("Not found");
 		return c.body(null, 204);
 	} catch (error) {
 		return failure(c, error);
@@ -455,12 +450,8 @@ export async function handlePutOrganizationMember(c: Context) {
 			role: "owner" | "member";
 			created_at: Date;
 		}>(
-			"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, $3) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at",
-			[tenant.organizationId, actor, input.role],
-		);
-		await pgPool().query(
-			"INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) VALUES ($1, $2, 'organization_membership_updated')",
-			[tenant.organizationId, tenant.actor],
+			"WITH membership AS (INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, $3) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) SELECT $1, $4, 'organization_membership_updated' FROM membership) SELECT * FROM membership",
+			[tenant.organizationId, actor, input.role, tenant.actor],
 		);
 		const value = row.rows[0];
 		if (!value) throw new Error("Not found");
@@ -498,14 +489,10 @@ export async function handleDeleteOrganizationMember(c: Context) {
 		const tenant = await role(c, undefined, false, true);
 		const { actor } = (c.req as any).valid("param");
 		const deleted = await pgPool().query(
-			"DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
-			[tenant.organizationId, actor],
+			"WITH deleted AS (DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 RETURNING actor_subject), audit AS (INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) SELECT $1, $3, 'organization_membership_removed' FROM deleted) SELECT * FROM deleted",
+			[tenant.organizationId, actor, tenant.actor],
 		);
-		if (!deleted.rowCount) throw new Error("Not found");
-		await pgPool().query(
-			"INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) VALUES ($1, $2, 'organization_membership_removed')",
-			[tenant.organizationId, tenant.actor],
-		);
+		if (!deleted.rows[0]) throw new Error("Not found");
 		return c.body(null, 204);
 	} catch (error) {
 		return failure(c, error);
