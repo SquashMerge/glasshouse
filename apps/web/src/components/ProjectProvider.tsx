@@ -10,6 +10,7 @@ interface ProjectSelectionContextValue {
 	projects: Project[];
 	selectedProjectId: string | null;
 	selectedProject: Project | null;
+	organizationRole: "owner" | "member" | null;
 	isLoading: boolean;
 	error: Error | null;
 	selectProject: (projectId: string) => void;
@@ -76,9 +77,11 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			if (!identity) return;
 			if (selectedProjectId && selectedProjectId !== project.id) {
 				void queryClient.cancelQueries({
-					queryKey: ["project", selectedProjectId],
+					predicate: (query) => query.queryKey.includes(selectedProjectId),
 				});
-				queryClient.removeQueries({ queryKey: ["project", selectedProjectId] });
+				queryClient.removeQueries({
+					predicate: (query) => query.queryKey.includes(selectedProjectId),
+				});
 			}
 			window.localStorage.setItem(
 				`${SELECTED_PROJECT_KEY}:${identity.organization_id}:${identity.actor_subject}`,
@@ -94,6 +97,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			projects,
 			selectedProjectId: selectedProject?.id ?? null,
 			selectedProject,
+			organizationRole: projectsQuery.data?.organization_role ?? null,
 			isLoading: projectsQuery.isLoading,
 			error: (projectsQuery.error as Error | null) ?? null,
 			selectProject,
@@ -102,6 +106,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 		[
 			projects,
 			selectedProject,
+			projectsQuery.data?.organization_role,
 			projectsQuery.isLoading,
 			projectsQuery.error,
 			selectProject,
