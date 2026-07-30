@@ -171,4 +171,22 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			id: DATASET_ONE,
 		});
 	});
+
+	it("keeps visible evaluation labels consistently separated from controls", async () => {
+		listDatasetItems.mockResolvedValue(validItems);
+		renderPage();
+
+		await screen.findByRole("option", { name: "Project One dataset" });
+		for (const label of [
+			"Dataset",
+			"Evaluation name",
+			"Model (optional)",
+			"Evaluator",
+		]) {
+			expect(screen.getByText(label)).toHaveClass("space-y-2");
+		}
+		expect(screen.getByLabelText("Dataset")).toHaveClass(
+			"focus-visible:ring-2",
+		);
+	});
 });

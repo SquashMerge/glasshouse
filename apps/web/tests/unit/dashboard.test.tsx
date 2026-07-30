@@ -47,4 +47,27 @@ describe("operations dashboard", () => {
 			screen.getByRole("button", { name: "Copy OTLP setup" }),
 		).toBeInTheDocument();
 	});
+
+	it("keeps dashboard sections and cards visually separated", async () => {
+		const { container } = render(
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
+				<DashboardPage />
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText("Service health");
+		expect(container.querySelector("main")).toHaveClass("space-y-8");
+		expect(screen.getByLabelText("Telemetry summary")).toHaveClass("gap-6");
+		expect(
+			screen.getByLabelText("Telemetry summary").firstElementChild,
+		).toHaveClass("shadow-sm");
+		expect(screen.getByLabelText("Dashboard actions")).toHaveClass("gap-6");
+		expect(
+			screen.getByLabelText("Dashboard actions").firstElementChild,
+		).toHaveClass("shadow-sm");
+	});
 });

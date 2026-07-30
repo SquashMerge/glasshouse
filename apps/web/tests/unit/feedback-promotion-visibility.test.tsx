@@ -1,7 +1,7 @@
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const { listDatasets, listFeedback, promoteFeedback, reviewFeedback } =
@@ -91,5 +91,24 @@ describe("FeedbackPage promotion visibility", () => {
 		expect(
 			screen.getAllByRole("button", { name: "Add to dataset" }),
 		).toHaveLength(1);
+	});
+
+	it("uses accessible shared select styling for feedback filters", async () => {
+		listFeedback.mockResolvedValue({ items: [], total: 0 });
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<FeedbackPage />
+			</QueryClientProvider>,
+		);
+
+		const allFeedback = await screen.findByRole("button", {
+			name: "All feedback",
+		});
+		fireEvent.click(allFeedback);
+		const sentiment = await screen.findByLabelText("Sentiment");
+		expect(sentiment).toHaveClass("focus-visible:ring-2");
 	});
 });
