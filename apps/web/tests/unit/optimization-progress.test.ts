@@ -10,6 +10,7 @@ const job = {
 	status: "completed" as const,
 	result_version: 4,
 	error_message: null,
+	metric_calls_used: null,
 	source_version: 3,
 	target: "system" as const,
 	budget: { max_metric_calls: 20 },

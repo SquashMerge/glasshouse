@@ -225,6 +225,7 @@ describe("useEventSource — SSE transport", () => {
 		const errors: unknown[] = [];
 		const authedFetchMock = (await import("../../src/lib/auth"))
 			.authedFetch as unknown as ReturnType<typeof vi.fn>;
+		authedFetchMock.mockClear();
 		authedFetchMock.mockResolvedValueOnce(
 			new Response(JSON.stringify({ code: "NOT_FOUND" }), { status: 404 }),
 		);
@@ -648,6 +649,31 @@ describe("useEventSource — SSE transport", () => {
 		expect(authedFetchMock.mock.calls.length).toBe(callsBefore);
 	});
 
+	it("cleanup on unmount closes a stream opened by manual reconnect", async () => {
+		const { hook } = setupHook<unknown>({});
+
+		await act(async () => {
+			await settle();
+		});
+		const initialStream = fakeStreams[0]!;
+
+		act(() => {
+			hook.result.reconnect();
+		});
+		await act(async () => {
+			await settle();
+		});
+		const reconnectedStream = fakeStreams[1]!;
+		expect(initialStream.aborted).toBe(true);
+		expect(reconnectedStream.aborted).toBe(false);
+
+		await act(async () => {
+			hook.unmount();
+			await flushMicrotasks();
+		});
+		expect(reconnectedStream.aborted).toBe(true);
+	});
+
 	it("enabled: false does not open the stream", async () => {
 		vi.useFakeTimers({
 			toFake: [
@@ -668,5 +694,93 @@ describe("useEventSource — SSE transport", () => {
 
 		expect(hook.result.status).toBe("closed");
 		expect(fakeStreams).toHaveLength(0);
+	});
+
+	it("does not reconnect a stale URL after the stream identity changes or clears", async () => {
+		vi.useFakeTimers({
+			toFake: [
+				"setTimeout",
+				"clearTimeout",
+				"requestAnimationFrame",
+				"cancelAnimationFrame",
+				"Date",
+				"performance",
+			],
+		});
+		const urlA = "/v1/prompt-optimizations/a/events";
+		const urlB = "/v1/prompt-optimizations/b/events";
+		const wrapper = renderHook(
+			({ url }: { url: string | null }) =>
+				useEventSource(url, { onMessage: vi.fn() }),
+			{ initialProps: { url: null as string | null } },
+		);
+		const authedFetchMock = (await import("../../src/lib/auth"))
+			.authedFetch as unknown as ReturnType<typeof vi.fn>;
+		authedFetchMock.mockClear();
+
+		await act(async () => {
+			await settle();
+		});
+		expect(authedFetchMock).not.toHaveBeenCalled();
+
+		wrapper.rerender({ url: urlA });
+		await act(async () => {
+			await settle();
+		});
+		expect(authedFetchMock.mock.calls.map(([url]) => url)).toEqual([urlA]);
+
+		await act(async () => {
+			fakeStreams[0]!.fail();
+			await flushMicrotasks();
+		});
+		wrapper.rerender({ url: urlB });
+		await act(async () => {
+			await settle();
+			vi.advanceTimersByTime(60_000);
+			await flushMicrotasks();
+		});
+		expect(authedFetchMock.mock.calls.map(([url]) => url)).toEqual([
+			urlA,
+			urlB,
+		]);
+
+		wrapper.rerender({ url: null });
+		await act(async () => {
+			vi.advanceTimersByTime(60_000);
+			await flushMicrotasks();
+		});
+		expect(authedFetchMock.mock.calls.map(([url]) => url)).toEqual([
+			urlA,
+			urlB,
+		]);
+	});
+
+	it("delivers uncoalesced terminal control frames without waiting for RAF", async () => {
+		vi.useFakeTimers({
+			toFake: [
+				"setTimeout",
+				"clearTimeout",
+				"requestAnimationFrame",
+				"cancelAnimationFrame",
+				"Date",
+				"performance",
+			],
+		});
+		const messages: Array<{ event: string; data: unknown }> = [];
+		renderHook(() =>
+			useEventSource("/v1/prompt-optimizations/test/events", {
+				coalesce: false,
+				onMessage: (message) => messages.push(message),
+			}),
+		);
+
+		await act(async () => {
+			await settle();
+			fakeStreams[0]!.enqueue(frame("status", { status: "completed" }));
+			await flushMicrotasks();
+		});
+		expect(messages).toEqual([
+			{ event: "status", data: { status: "completed" } },
+		]);
 	});
 });

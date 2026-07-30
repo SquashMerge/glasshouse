@@ -4,11 +4,14 @@ import { streamSSE } from "hono/streaming";
 import {
 	claimOptimizationJob,
 	getActiveOptimizationJob,
+	getLatestOptimizationJob,
 	getOptimizationJob,
+	listActiveOptimizationActivities,
 	createOptimizationJob,
 	listOptimizationEvents,
 	optimizationSourceMessages,
 	publishOptimizationResult,
+	recordOptimizationMetricCalls,
 	renewOptimizationJobLease,
 	stopOptimizationJob,
 	transitionOptimizationJob,
@@ -85,8 +88,10 @@ const Job = z
 		requested_by: z.string(),
 		result_version: z.number().int().positive().nullable(),
 		error_message: z.string().nullable(),
+		metric_calls_used: z.number().int().nonnegative().nullable(),
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
+		completed_at: z.string().datetime().nullable(),
 	})
 	.strict();
 const JobId = z
@@ -97,9 +102,36 @@ const JobId = z
 			.openapi({ param: { name: "id", in: "path" } }),
 	})
 	.strict();
+const JobStatus = Job.pick({
+	id: true,
+	prompt_slug: true,
+	source_version: true,
+	target: true,
+	budget: true,
+	status: true,
+	result_version: true,
+	error_message: true,
+	metric_calls_used: true,
+	created_at: true,
+	updated_at: true,
+	completed_at: true,
+}).strict();
 const ActiveQuery = z
 	.object({ project_id: z.string().uuid(), slug: PromptId })
 	.strict();
+const ActivitiesQuery = z.object({ project_id: z.string().uuid() }).strict();
+const Activity = z
+	.object({
+		id: z.string().uuid(),
+		prompt_slug: PromptId,
+		source_version: z.number().int().positive(),
+		target: z.enum(["system", "user"]),
+		status: Status.exclude(["completed", "stopped", "failed"]),
+		created_at: z.string().datetime(),
+		updated_at: z.string().datetime(),
+	})
+	.strict();
+const Activities = z.object({ items: z.array(Activity) }).strict();
 const Start = z
 	.object({
 		project_id: z.string().uuid(),
@@ -151,6 +183,35 @@ export const getActiveOptimization = createRoute({
 		200: {
 			description: "OK",
 			content: { "application/json": { schema: Job.nullable() } },
+		},
+		...PromptErrorResponses,
+	},
+});
+export const getLatestOptimization = createRoute({
+	method: "get",
+	path: "/v1/prompt-optimizations/latest",
+	tags: [tag],
+	security: [{ basicAuth: [] }],
+	request: { query: ActiveQuery },
+	responses: {
+		200: {
+			description:
+				"Latest optimization for the prompt, prioritizing active work",
+			content: { "application/json": { schema: JobStatus.nullable() } },
+		},
+		...PromptErrorResponses,
+	},
+});
+export const listOptimizationActivities = createRoute({
+	method: "get",
+	path: "/v1/prompt-optimizations/activities",
+	tags: [tag],
+	security: [{ basicAuth: [] }],
+	request: { query: ActivitiesQuery },
+	responses: {
+		200: {
+			description: "Current active optimization activity for each prompt",
+			content: { "application/json": { schema: Activities } },
 		},
 		...PromptErrorResponses,
 	},
@@ -214,6 +275,8 @@ export type OptimizationDependencies = {
 	create: typeof createOptimizationJob;
 	get: typeof getOptimizationJob;
 	getActive: typeof getActiveOptimizationJob;
+	getLatest: typeof getLatestOptimizationJob;
+	listActivities: typeof listActiveOptimizationActivities;
 	claim: typeof claimOptimizationJob;
 	renew: typeof renewOptimizationJobLease;
 	sourceMessages: typeof optimizationSourceMessages;
@@ -221,6 +284,7 @@ export type OptimizationDependencies = {
 	stop: typeof stopOptimizationJob;
 	transition: typeof transitionOptimizationJob;
 	publish: typeof publishOptimizationResult;
+	recordMetricCalls: typeof recordOptimizationMetricCalls;
 };
 const activeWorkers = new Map<string, AbortController>();
 const workerId = randomUUID();
@@ -303,6 +367,8 @@ const production: OptimizationDependencies = {
 	create: createOptimizationJob,
 	get: getOptimizationJob,
 	getActive: getActiveOptimizationJob,
+	getLatest: getLatestOptimizationJob,
+	listActivities: listActiveOptimizationActivities,
 	claim: claimOptimizationJob,
 	renew: renewOptimizationJobLease,
 	sourceMessages: optimizationSourceMessages,
@@ -310,7 +376,46 @@ const production: OptimizationDependencies = {
 	stop: stopOptimizationJob,
 	transition: transitionOptimizationJob,
 	publish: publishOptimizationResult,
+	recordMetricCalls: recordOptimizationMetricCalls,
 };
+
+function statusSnapshot(job: OptimizationJob | null) {
+	if (!job) return null;
+	return {
+		id: job.id,
+		prompt_slug: job.prompt_slug,
+		source_version: job.source_version,
+		target: job.target,
+		budget: job.budget,
+		status: job.status,
+		result_version: job.result_version,
+		error_message: job.error_message,
+		metric_calls_used: job.metric_calls_used,
+		created_at: job.created_at,
+		updated_at: job.updated_at,
+		completed_at: job.completed_at,
+	};
+}
+
+function metricCallsUsed(
+	job: OptimizationJob,
+	result: Awaited<ReturnType<GepaWorker>>,
+): number | null {
+	const value = result.metric_calls_used;
+	if (value === null) return null;
+	const budget = job.budget.max_metric_calls;
+	if (typeof budget !== "number" || !Number.isSafeInteger(budget))
+		throw new PromptRepositoryError(
+			"BAD_REQUEST",
+			"Optimization job has an invalid metric-call budget",
+		);
+	if (!Number.isSafeInteger(value) || value < 0 || value > budget)
+		throw new PromptRepositoryError(
+			"BAD_REQUEST",
+			"GEPA worker reported an invalid metric-call count",
+		);
+	return value;
+}
 
 async function run(
 	job: OptimizationJob,
@@ -385,17 +490,31 @@ async function run(
 			},
 			controller.signal,
 		);
+		const usedMetricCalls = metricCallsUsed(job, result);
+		if (usedMetricCalls !== null)
+			await d.recordMetricCalls(d.pool(), {
+				id: job.id,
+				worker_id: workerId,
+				metric_calls_used: usedMetricCalls,
+			});
 		logger.info("optimization.worker_completed", {
 			job_id: job.id,
 			duration_ms: Math.round(performance.now() - startedAt),
 			score: result.score,
+			metric_calls_used: usedMetricCalls,
 			candidate_bytes: new TextEncoder().encode(result.candidate).byteLength,
 		});
 		await d.transition(d.pool(), {
 			id: job.id,
 			worker_id: workerId,
 			status: "evaluating",
-			detail: result.score === undefined ? {} : { score: result.score },
+			detail: {
+				...(result.score === undefined ? {} : { score: result.score }),
+				...(usedMetricCalls === null
+					? {}
+					: { metric_calls_used: usedMetricCalls }),
+			},
+			metric_calls_used: usedMetricCalls,
 		});
 		validateGepaCandidate(original.content, result.candidate);
 		await d.publish(d.pool(), {
@@ -507,6 +626,36 @@ export function createOptimizationHandlers(
 				return error(c, cause);
 			}
 		},
+		handleGetLatest: async (
+			c: Parameters<RouteHandler<typeof getLatestOptimization>>[0],
+		): Promise<Response> => {
+			try {
+				return c.json(
+					statusSnapshot(
+						await d.getLatest(
+							d.pool(),
+							c.req.valid("query") as { project_id: string; slug: string },
+						),
+					),
+				);
+			} catch (cause) {
+				return error(c, cause);
+			}
+		},
+		handleListActivities: async (
+			c: Parameters<RouteHandler<typeof listOptimizationActivities>>[0],
+		): Promise<Response> => {
+			try {
+				return c.json({
+					items: await d.listActivities(
+						d.pool(),
+						c.req.valid("query") as { project_id: string },
+					),
+				});
+			} catch (cause) {
+				return error(c, cause);
+			}
+		},
 		handleStop: async (
 			c: Parameters<RouteHandler<typeof stopOptimization>>[0],
 		): Promise<Response> => {
@@ -573,6 +722,8 @@ export const {
 	handleStart,
 	handleGet,
 	handleGetActive,
+	handleGetLatest,
+	handleListActivities,
 	handleStop,
 	handleEvents,
 } = createOptimizationHandlers();

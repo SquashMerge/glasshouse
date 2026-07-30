@@ -3,10 +3,13 @@ import {
 	createPrompt,
 	createPromptVersion,
 	deletePrompt,
+	getLatestPromptOptimization,
 	getPrompt,
+	getPromptOptimization,
 	getPromptProvenance,
 	listProjects,
 	listPromptVersions,
+	listActivePromptOptimizationActivities,
 	listPrompts,
 	previewPrompt,
 	renderPrompt,
@@ -227,5 +230,36 @@ describe("prompt management API client", () => {
 				body: expect.stringContaining('"source_version":2'),
 			}),
 		);
+	});
+
+	it("reads authoritative optimization snapshots and minimal project activity", async () => {
+		fetchMock
+			.mockResolvedValueOnce(jsonResponse({ id: "job", status: "optimizing" }))
+			.mockResolvedValueOnce(jsonResponse({ id: "job", status: "completed" }))
+			.mockResolvedValueOnce(jsonResponse({ items: [] }));
+		const controller = new AbortController();
+
+		await getLatestPromptOptimization({
+			project_id: PROJECT_ID,
+			slug: "support-agent",
+			signal: controller.signal,
+		});
+		await getPromptOptimization({
+			project_id: PROJECT_ID,
+			id: "22222222-2222-4222-8222-222222222222",
+			signal: controller.signal,
+		});
+		await listActivePromptOptimizationActivities({
+			project_id: PROJECT_ID,
+			signal: controller.signal,
+		});
+
+		expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+			`/v1/prompt-optimizations/latest?project_id=${PROJECT_ID}&slug=support-agent`,
+			`/v1/prompt-optimizations/22222222-2222-4222-8222-222222222222?project_id=${PROJECT_ID}`,
+			`/v1/prompt-optimizations/activities?project_id=${PROJECT_ID}`,
+		]);
+		for (const [, init] of fetchMock.mock.calls)
+			expect(init.signal).toBe(controller.signal);
 	});
 });

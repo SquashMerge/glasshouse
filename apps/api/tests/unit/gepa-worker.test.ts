@@ -31,6 +31,7 @@ describe("GEPA worker adapter", () => {
 			new AbortController().signal,
 		);
 		expect(result.candidate).toContain("Hello {{name}}");
+		expect(result.metric_calls_used).toBe(0);
 	});
 
 	it("rejects oversized worker output before buffering it", async () => {

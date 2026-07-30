@@ -26,9 +26,21 @@ export type OptimizationJob = {
 	requested_by: string;
 	result_version: number | null;
 	error_message: string | null;
+	metric_calls_used: number | null;
 	created_at: string;
 	updated_at: string;
+	completed_at: string | null;
 };
+export type OptimizationActivity = Pick<
+	OptimizationJob,
+	| "id"
+	| "prompt_slug"
+	| "source_version"
+	| "target"
+	| "status"
+	| "created_at"
+	| "updated_at"
+>;
 export type OptimizationEvent = {
 	id: number;
 	status: OptimizationStatus;
@@ -82,6 +94,18 @@ function number(value: unknown, name: string): number {
 	if (!Number.isSafeInteger(parsed)) throw fail("INTERNAL", `Invalid ${name}`);
 	return parsed;
 }
+function nullableNonNegativeNumber(
+	value: unknown,
+	name: string,
+): number | null {
+	if (value === null || value === undefined) return null;
+	const parsed = number(value, name);
+	if (parsed < 0) throw fail("INTERNAL", `Invalid ${name}`);
+	return parsed;
+}
+function nullableTime(value: unknown): string | null {
+	return value === null || value === undefined ? null : time(value);
+}
 function messages(value: unknown): PromptMessage[] {
 	const parsed = typeof value === "string" ? JSON.parse(value) : value;
 	if (!Array.isArray(parsed)) throw fail("INTERNAL", "Invalid source messages");
@@ -110,8 +134,13 @@ function mapJob(row: Row): OptimizationJob {
 				: number(row.result_version, "result version"),
 		error_message:
 			row.error_message === null ? null : String(row.error_message),
+		metric_calls_used: nullableNonNegativeNumber(
+			row.metric_calls_used,
+			"metric calls used",
+		),
 		created_at: time(row.created_at),
 		updated_at: time(row.updated_at),
+		completed_at: nullableTime(row.completed_at),
 	};
 }
 async function rows(
@@ -235,6 +264,42 @@ export async function getActiveOptimizationJob(
 	)[0];
 	return row ? mapJob(row) : null;
 }
+export async function getLatestOptimizationJob(
+	pool: Pick<Pool, "query">,
+	input: { project_id: string; slug: string },
+): Promise<OptimizationJob | null> {
+	const row = (
+		await rows(
+			pool,
+			"SELECT * FROM prompt_optimization_jobs WHERE project_id=$1 AND prompt_slug=$2 ORDER BY CASE WHEN status IN ('queued','preparing','optimizing','evaluating') THEN 0 ELSE 1 END, updated_at DESC, id DESC LIMIT 1",
+			[input.project_id, input.slug],
+		)
+	)[0];
+	return row ? mapJob(row) : null;
+}
+export async function listActiveOptimizationActivities(
+	pool: Pick<Pool, "query">,
+	input: { project_id: string },
+): Promise<OptimizationActivity[]> {
+	return (
+		await rows(
+			pool,
+			"SELECT DISTINCT ON (prompt_id) * FROM prompt_optimization_jobs WHERE project_id=$1 AND status IN ('queued','preparing','optimizing','evaluating') ORDER BY prompt_id, updated_at DESC, id DESC",
+			[input.project_id],
+		)
+	).map((row) => {
+		const job = mapJob(row);
+		return {
+			id: job.id,
+			prompt_slug: job.prompt_slug,
+			source_version: job.source_version,
+			target: job.target,
+			status: job.status,
+			created_at: job.created_at,
+			updated_at: job.updated_at,
+		};
+	});
+}
 export async function claimOptimizationJob(
 	pool: Pick<Pool, "connect">,
 	input: { id: string; worker_id: string },
@@ -258,6 +323,18 @@ export async function renewOptimizationJobLease(
 		[input.id, input.worker_id],
 	);
 	return renewed.length === 1;
+}
+export async function recordOptimizationMetricCalls(
+	pool: Pick<Pool, "query">,
+	input: { id: string; worker_id: string; metric_calls_used: number },
+): Promise<void> {
+	const recorded = await rows(
+		pool,
+		"UPDATE prompt_optimization_jobs SET metric_calls_used=COALESCE(metric_calls_used,$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
+		[input.id, input.worker_id, input.metric_calls_used],
+	);
+	if (!recorded.length)
+		throw fail("CONFLICT", "Optimization worker claim was lost");
 }
 export async function failInterruptedOptimizationJobs(
 	pool: Pick<Pool, "query">,
@@ -311,14 +388,21 @@ export async function transitionOptimizationJob(
 		status: OptimizationStatus;
 		detail?: JsonObject;
 		error_message?: string;
+		metric_calls_used?: number | null;
 	},
 ): Promise<OptimizationJob> {
 	return tx(pool, async (client) => {
 		const row = (
 			await rows(
 				client,
-				"UPDATE prompt_optimization_jobs SET status=$2, error_message=COALESCE($3,error_message), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE completed_at END WHERE id=$1 AND worker_claim_id=$4 AND worker_lease_expires_at >= now() AND status NOT IN ('completed','stopped','failed') RETURNING *",
-				[input.id, input.status, input.error_message ?? null, input.worker_id],
+				"UPDATE prompt_optimization_jobs SET status=$2, error_message=COALESCE($3,error_message), metric_calls_used=COALESCE($4,metric_calls_used), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE completed_at END WHERE id=$1 AND worker_claim_id=$5 AND worker_lease_expires_at >= now() AND status NOT IN ('completed','stopped','failed') RETURNING *",
+				[
+					input.id,
+					input.status,
+					input.error_message ?? null,
+					input.metric_calls_used ?? null,
+					input.worker_id,
+				],
 			)
 		)[0];
 		if (!row) throw fail("CONFLICT", "Optimization job is no longer active");
@@ -428,6 +512,9 @@ export async function publishOptimizationResult(
 					...(typeof input.score === "number" && Number.isFinite(input.score)
 						? { score: input.score }
 						: {}),
+					...(job.metric_calls_used === null
+						? {}
+						: { metric_calls_used: job.metric_calls_used }),
 				}),
 			],
 		);

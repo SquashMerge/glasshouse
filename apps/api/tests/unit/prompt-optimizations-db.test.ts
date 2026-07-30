@@ -4,9 +4,13 @@ import {
 	claimOptimizationJob,
 	createOptimizationJob,
 	failInterruptedOptimizationJobs,
+	getLatestOptimizationJob,
+	listActiveOptimizationActivities,
 	publishOptimizationResult,
+	recordOptimizationMetricCalls,
 	renewOptimizationJobLease,
 	stopOptimizationJob,
+	transitionOptimizationJob,
 } from "../../src/db/prompt-optimizations";
 import { PromptRepositoryError } from "../../src/db/prompts";
 
@@ -103,6 +107,7 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
 		error_message: null,
 		created_at: CREATED,
 		updated_at: CREATED,
+		completed_at: null,
 		...overrides,
 	};
 }
@@ -184,6 +189,122 @@ describe("prompt optimization repository", () => {
 			result_version: 4,
 			score: 0.875,
 		});
+	});
+
+	it("persists metric-call usage before candidate publication", async () => {
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [job({ metric_calls_used: 3 })] },
+			{ rows: [] },
+			{ rows: [] },
+		]);
+
+		const result = await transitionOptimizationJob(transactionPool(pool), {
+			id: JOB,
+			worker_id: WORKER,
+			status: "evaluating",
+			metric_calls_used: 3,
+			detail: { score: 0.75, metric_calls_used: 3 },
+		});
+
+		expect(result.metric_calls_used).toBe(3);
+		expect(pool.client.calls[1]?.values).toEqual([
+			JOB,
+			"evaluating",
+			null,
+			3,
+			WORKER,
+		]);
+		expect(JSON.parse(pool.client.calls[2]?.values[2] as string)).toEqual({
+			score: 0.75,
+			metric_calls_used: 3,
+		});
+	});
+
+	it("records metric-call usage when a stop wins the later lifecycle transition", async () => {
+		const calls: Call[] = [];
+		const pool = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				return { rows: [{ id: JOB }] };
+			},
+		};
+
+		await recordOptimizationMetricCalls(pool, {
+			id: JOB,
+			worker_id: WORKER,
+			metric_calls_used: 3,
+		});
+		expect(calls[0]?.text).toContain("worker_lease_expires_at >= now()");
+		expect(calls[0]?.values).toEqual([JOB, WORKER, 3]);
+	});
+
+	it("includes persisted metric-call usage in the content-free completion event", async () => {
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [job({ metric_calls_used: 3 })] },
+			{
+				rows: [
+					{
+						id: PROMPT,
+						slug: "support-agent",
+						version: 3,
+						model: "gpt-test",
+						settings: { temperature: 0.2 },
+					},
+				],
+			},
+			{ rows: [] },
+			{ rows: [] },
+			{ rows: [] },
+			{ rows: [] },
+		]);
+
+		await publishOptimizationResult(transactionPool(pool), {
+			id: JOB,
+			worker_id: WORKER,
+			messages: [{ role: "system", content: "Improved system {{name}}" }],
+		});
+
+		expect(JSON.parse(pool.client.calls[5]?.values[1] as string)).toEqual({
+			result_version: 4,
+			metric_calls_used: 3,
+		});
+	});
+
+	it("returns minimal active activity and scopes latest lookups by project", async () => {
+		const calls: Call[] = [];
+		const pool = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				return { rows: [job()] };
+			},
+		};
+
+		await expect(
+			listActiveOptimizationActivities(pool, { project_id: PROJECT }),
+		).resolves.toEqual([
+			{
+				id: JOB,
+				prompt_slug: "support-agent",
+				source_version: 3,
+				target: "system",
+				status: "evaluating",
+				created_at: CREATED,
+				updated_at: CREATED,
+			},
+		]);
+		expect(calls[0]?.text).toContain("DISTINCT ON (prompt_id)");
+		expect(calls[0]?.values).toEqual([PROJECT]);
+
+		await expect(
+			getLatestOptimizationJob(pool, {
+				project_id: PROJECT,
+				slug: "support-agent",
+			}),
+		).resolves.toMatchObject({ id: JOB, metric_calls_used: null });
+		expect(calls[1]?.text).toContain("project_id=$1 AND prompt_slug=$2");
+		expect(calls[1]?.values).toEqual([PROJECT, "support-agent"]);
 	});
 
 	it("publishes a historical snapshot as the next version", async () => {

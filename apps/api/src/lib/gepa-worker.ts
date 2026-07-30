@@ -7,7 +7,11 @@ export type GepaWorkerInput = {
 	budget: Record<string, unknown>;
 };
 
-export type GepaWorkerResult = { candidate: string; score?: number };
+export type GepaWorkerResult = {
+	candidate: string;
+	score?: number;
+	metric_calls_used: number | null;
+};
 export const MAX_OPTIMIZATION_CANDIDATE_BYTES = 64 * 1024;
 const MAX_WORKER_OUTPUT_BYTES = MAX_OPTIMIZATION_CANDIDATE_BYTES + 1024;
 const MAX_WORKER_DIAGNOSTIC_BYTES = 16 * 1024;
@@ -49,17 +53,33 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 		throw new Error("GEPA worker failed");
 	}
 	try {
-		const result = JSON.parse(stdout) as GepaWorkerResult;
+		const parsed = JSON.parse(stdout) as Omit<
+			GepaWorkerResult,
+			"metric_calls_used"
+		> & { metric_calls_used?: unknown };
+		const maxMetricCalls = input.budget.max_metric_calls;
+		const metricCallsUsed: number | null =
+			parsed.metric_calls_used === undefined ||
+			parsed.metric_calls_used === null
+				? null
+				: typeof parsed.metric_calls_used === "number"
+					? parsed.metric_calls_used
+					: Number.NaN;
 		if (
-			!result ||
-			typeof result.candidate !== "string" ||
-			(result.score !== undefined &&
-				(typeof result.score !== "number" || !Number.isFinite(result.score))) ||
-			new TextEncoder().encode(result.candidate).byteLength >
+			!parsed ||
+			typeof parsed.candidate !== "string" ||
+			(parsed.score !== undefined &&
+				(typeof parsed.score !== "number" || !Number.isFinite(parsed.score))) ||
+			(metricCallsUsed !== null &&
+				(!Number.isSafeInteger(metricCallsUsed) ||
+					metricCallsUsed < 0 ||
+					typeof maxMetricCalls !== "number" ||
+					metricCallsUsed > maxMetricCalls)) ||
+			new TextEncoder().encode(parsed.candidate).byteLength >
 				MAX_OPTIMIZATION_CANDIDATE_BYTES
 		)
 			throw new Error("invalid result");
-		return result;
+		return { ...parsed, metric_calls_used: metricCallsUsed };
 	} catch {
 		throw new Error("GEPA worker returned an invalid result");
 	}

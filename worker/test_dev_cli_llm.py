@@ -153,7 +153,7 @@ class DevCliLlmTests(unittest.TestCase):
                 "    assert callable(reflection_lm)\n"
                 "    kwargs[\"logger\"].log(\"progress\")\n"
                 "    assert reflection_lm(\"reflection\")\n"
-                "    return SimpleNamespace(best_candidate={\"system_prompt\": \"candidate\"}, best_idx=0, val_aggregate_scores=[1])\n"
+                "    return SimpleNamespace(best_candidate={\"system_prompt\": \"candidate\"}, best_idx=0, val_aggregate_scores=[1], total_metric_calls=3)\n"
             )
             (gepa_directory / "adapters" / "__init__.py").write_text("")
             (default_adapter_directory / "__init__.py").write_text("")
@@ -187,7 +187,7 @@ class DevCliLlmTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout), {"candidate": "candidate", "score": 1})
+            self.assertEqual(json.loads(result.stdout), {"candidate": "candidate", "score": 1, "metric_calls_used": 3})
 
 
 if __name__ == "__main__":
