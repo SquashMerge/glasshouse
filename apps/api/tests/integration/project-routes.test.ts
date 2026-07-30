@@ -103,13 +103,19 @@ const {
 	handleDeleteOrganizationMember,
 	handleDeleteProjectMember,
 	handleGetProjectAuditEvents,
+	handleGetMe,
+	handleListProjectMembers,
+	handleListProjects,
 	handleListOrganizationMembers,
 	handlePutOrganizationMember,
 	handlePutProjectMember,
 	handleRestoreProject,
 	handleUpdateProject,
+	getMe,
 	listOrganizationMembers,
+	listProjectMembers,
 	listProjectAuditEvents,
+	listProjects,
 	putOrganizationMember,
 	putProjectMember,
 	restoreProject,
@@ -132,6 +138,8 @@ api.use("/v1/*", async (c, next) => {
 	await next();
 });
 api.openapi(createProject, handleCreateProject);
+api.openapi(getMe, handleGetMe);
+api.openapi(listProjects, handleListProjects);
 api.openapi(updateProject, handleUpdateProject);
 api.openapi(archiveProject, handleArchiveProject);
 api.openapi(restoreProject, handleRestoreProject);
@@ -139,6 +147,7 @@ api.openapi(putProjectMember, handlePutProjectMember);
 api.openapi(deleteProjectMember, handleDeleteProjectMember);
 api.openapi(putOrganizationMember, handlePutOrganizationMember);
 api.openapi(listOrganizationMembers, handleListOrganizationMembers);
+api.openapi(listProjectMembers, handleListProjectMembers);
 api.openapi(deleteOrganizationMember, handleDeleteOrganizationMember);
 api.openapi(listProjectAuditEvents, handleGetProjectAuditEvents);
 
@@ -222,6 +231,83 @@ describe("project authorization routes", () => {
 		).toBe(true);
 	});
 
+	it("lists actor roles and archived projects only in management mode", async () => {
+		query.mockImplementationOnce(async () => ({
+			rows: [{ role: "member" }],
+		}));
+		query.mockImplementationOnce(async (sql: string) => {
+			expect(sql).toContain("p.status = 'active'");
+			expect(sql).toContain("project_role");
+			return {
+				rows: [
+					{
+						id: PROJECT,
+						name: "Project One",
+						slug: "project-one",
+						status: "active",
+						created_at: createdAt,
+						archived_at: null,
+						project_role: "member",
+					},
+				],
+			};
+		});
+		const active = await request("member", "/v1/projects");
+
+		expect(active.status).toBe(200);
+		expect((await active.json()).items[0].project_role).toBe("member");
+
+		query.mockImplementationOnce(async () => ({
+			rows: [{ role: "member" }],
+		}));
+		query.mockImplementationOnce(async (sql: string) => {
+			expect(sql).toContain("$3::boolean");
+			expect(sql).toContain("IN ('manager', 'owner')");
+			return { rows: [] };
+		});
+		const management = await request(
+			"member",
+			"/v1/projects?include_archived=true",
+		);
+
+		expect(management.status).toBe(200);
+		expect((await management.json()).items).toHaveLength(0);
+	});
+
+	it("keeps /v1/me active-only while exposing the actor project role", async () => {
+		query.mockImplementationOnce(async () => ({ rows: [{ role: "member" }] }));
+		query.mockImplementationOnce(async (sql: string) => {
+			expect(sql).toContain("p.status = 'active'");
+			return {
+				rows: [
+					{
+						id: PROJECT,
+						name: "Project One",
+						slug: "project-one",
+						status: "active",
+						created_at: createdAt,
+						archived_at: null,
+						project_role: "member",
+					},
+				],
+			};
+		});
+		const response = await request("member", "/v1/me");
+
+		expect(response.status).toBe(200);
+		expect((await response.json()).projects).toEqual([
+			expect.objectContaining({ id: PROJECT, project_role: "member" }),
+		]);
+	});
+
+	it("rejects invalid archived management mode values", async () => {
+		const response = await request(
+			"owner",
+			"/v1/projects?include_archived=yes",
+		);
+		expect(response.status).toBe(400);
+	});
+
 	it("rejects empty and invalid project metadata updates", async () => {
 		const empty = await request("owner", `/v1/projects/${PROJECT}`, {
 			method: "PATCH",
@@ -256,6 +342,7 @@ describe("project authorization routes", () => {
 	});
 
 	it("supports archive, restore, member upsert/delete, and manager audit reads", async () => {
+		const members = await request("manager", `/v1/projects/${PROJECT}/members`);
 		const archive = await request(
 			"manager",
 			`/v1/projects/${PROJECT}/archive`,
@@ -295,6 +382,7 @@ describe("project authorization routes", () => {
 		);
 
 		for (const response of [
+			members,
 			archive,
 			restore,
 			upsert,

@@ -12,6 +12,7 @@ import {
 	Project,
 	ProjectErrorResponses,
 	ProjectList,
+	ListProjectsQuery,
 	ProjectMember,
 	UpdateProjectInput,
 } from "../schemas/projects.js";
@@ -36,6 +37,7 @@ export const listProjects = createRoute({
 	path: "/v1/projects",
 	tags: ["projects"],
 	security: [{ basicAuth: [] }],
+	request: { query: ListProjectsQuery },
 	responses: ok(ProjectList),
 });
 export const createProject = createRoute({
@@ -160,6 +162,7 @@ type Row = {
 	status: "active" | "archived";
 	created_at: Date;
 	archived_at: Date | null;
+	project_role: "owner" | "manager" | "member";
 };
 const project = (row: Row) => ({
 	...row,
@@ -219,7 +222,7 @@ async function role(
 	if (owner && value !== "owner") throw new Error("Forbidden");
 	if (manager && value !== "manager" && value !== "owner")
 		throw new Error("Forbidden");
-	return tenant;
+	return { ...tenant, projectRole: value as "owner" | "manager" | "member" };
 }
 export async function handleGetMe(c: Context) {
 	try {
@@ -230,10 +233,7 @@ export async function handleGetMe(c: Context) {
 			[tenant.organizationId, tenant.actor],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
-		const rows = await pool.query<Row>(
-			"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at FROM projects p JOIN project_memberships pm ON pm.project_id = p.id WHERE p.organization_id = $1 AND pm.actor_subject = $2 AND p.status = 'active' ORDER BY p.created_at",
-			[tenant.organizationId, tenant.actor],
-		);
+		const rows = await listAccessibleProjects(pool, tenant, false);
 		return c.json({
 			actor_subject: tenant.actor,
 			organization_id: tenant.organizationId,
@@ -245,10 +245,36 @@ export async function handleGetMe(c: Context) {
 	}
 }
 export async function handleListProjects(c: Context) {
-	const me = await handleGetMe(c);
-	if (!me.ok) return me;
-	const body = (await me.json()) as { projects: unknown[] };
-	return c.json({ items: body.projects, total: body.projects.length });
+	try {
+		const tenant = trustedTenant(c);
+		const membership = await pgPool().query(
+			"SELECT role FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
+			[tenant.organizationId, tenant.actor],
+		);
+		if (!membership.rows[0]) throw new Error("Not found");
+		const includeArchived =
+			(c.req as any).valid("query").include_archived === "true";
+		const rows = await listAccessibleProjects(
+			pgPool(),
+			tenant,
+			includeArchived,
+		);
+		const items = rows.rows.map(project);
+		return c.json({ items, total: items.length });
+	} catch (error) {
+		return failure(c, error);
+	}
+}
+
+async function listAccessibleProjects(
+	pool: ReturnType<typeof pgPool>,
+	tenant: ReturnType<typeof trustedTenant>,
+	includeArchived: boolean,
+) {
+	return pool.query<Row>(
+		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $2 WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($3::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
+		[tenant.organizationId, tenant.actor, includeArchived],
+	);
 }
 export async function handleCreateProject(c: Context) {
 	try {
@@ -260,7 +286,7 @@ export async function handleCreateProject(c: Context) {
 		);
 		const value = row.rows[0];
 		if (!value) throw new Error("Project operation failed");
-		return c.json(project(value), 201);
+		return c.json(project({ ...value, project_role: tenant.projectRole }), 201);
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -270,8 +296,8 @@ export async function handleGetProject(c: Context) {
 		const params = (c.req as any).valid("param");
 		const tenant = await role(c, params.id);
 		const rows = await pgPool().query<Row>(
-			"SELECT id, name, slug, status, created_at, archived_at FROM projects WHERE id = $1 AND organization_id = $2",
-			[params.id, tenant.organizationId],
+			"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
+			[params.id, tenant.organizationId, tenant.actor],
 		);
 		if (!rows.rows[0]) throw new Error("Not found");
 		return c.json(project(rows.rows[0]));
@@ -295,7 +321,9 @@ export async function handleUpdateProject(c: Context) {
 			],
 		);
 		if (!rows.rows[0]) throw new Error("Not found");
-		return c.json(project(rows.rows[0]));
+		return c.json(
+			project({ ...rows.rows[0], project_role: tenant.projectRole }),
+		);
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -318,7 +346,9 @@ async function lifecycle(c: Context, status: "active" | "archived") {
 				status === "active" ? "project_restored" : "project_archived",
 			],
 		);
-		return c.json(project(rows.rows[0]));
+		return c.json(
+			project({ ...rows.rows[0], project_role: tenant.projectRole }),
+		);
 	} catch (error) {
 		return failure(c, error);
 	}

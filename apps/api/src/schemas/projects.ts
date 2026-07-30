@@ -2,6 +2,7 @@ import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "./common.js";
 
 export const ProjectRole = z.enum(["manager", "member"]);
+export const ActorProjectRole = z.enum(["owner", "manager", "member"]);
 export const OrganizationRole = z.enum(["owner", "member"]);
 export const ProjectStatus = z.enum(["active", "archived"]);
 export const Project = z
@@ -12,6 +13,7 @@ export const Project = z
 		status: ProjectStatus,
 		created_at: z.string().datetime(),
 		archived_at: z.string().datetime().nullable(),
+		project_role: ActorProjectRole,
 	})
 	.strict()
 	.openapi("Project");
@@ -44,6 +46,9 @@ export const ProjectList = z
 	.object({ items: z.array(Project), total: z.number().int().nonnegative() })
 	.strict()
 	.openapi("ProjectList");
+export const ListProjectsQuery = z
+	.object({ include_archived: z.enum(["true"]).optional() })
+	.strict();
 export const Me = z
 	.object({
 		actor_subject: z.string(),
