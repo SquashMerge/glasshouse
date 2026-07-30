@@ -146,7 +146,7 @@ const project = (row: Row) => ({
 function failure(c: Context, error: unknown): Response {
 	const message =
 		error instanceof Error ? error.message : "Project operation failed";
-	if (message.includes("final"))
+	if (message.includes("final") || message.includes("cannot restore"))
 		return c.json({ code: "CONFLICT", message }, 409);
 	if (message === "Forbidden")
 		return c.json({ code: "FORBIDDEN", message }, 403);
