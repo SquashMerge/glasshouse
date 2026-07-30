@@ -147,6 +147,8 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		try {
 			if (
 				c.req.path === "/v1/me" ||
+				c.req.path === "/v1/auth/login" ||
+				c.req.path === "/v1/otel/v1/traces" ||
 				c.req.path.startsWith("/v1/projects") ||
 				c.req.path.startsWith("/v1/organization/")
 			)
