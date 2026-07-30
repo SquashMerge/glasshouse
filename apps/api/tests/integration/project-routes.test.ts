@@ -72,18 +72,21 @@ const query = mock(async (sql: string, values: string[]) => {
 			],
 		};
 	}
-	if (sql.startsWith("INSERT INTO project_memberships"))
+	if (sql.startsWith("WITH membership AS (INSERT INTO project_memberships"))
 		return {
 			rows: [
 				{ actor_subject: values[2], role: values[3], created_at: createdAt },
 			],
 		};
-	if (sql.startsWith("INSERT INTO organization_memberships"))
+	if (
+		sql.startsWith("WITH membership AS (INSERT INTO organization_memberships")
+	)
 		return {
 			rows: [
 				{ actor_subject: values[1], role: values[2], created_at: createdAt },
 			],
 		};
+	if (sql.startsWith("WITH deleted AS (DELETE")) return { rows: [{}] };
 	return { rows: [], rowCount: 1 };
 });
 
@@ -399,6 +402,40 @@ describe("project authorization routes", () => {
 				created_at: createdAt.toISOString(),
 			},
 		]);
+	});
+
+	it("writes each authorization mutation and its audit event in one statement", async () => {
+		await request("manager", `/v1/projects/${PROJECT}/archive`, {
+			method: "POST",
+		});
+		await request("manager", `/v1/projects/${PROJECT}/restore`, {
+			method: "POST",
+		});
+		await request("manager", `/v1/projects/${PROJECT}/members/member`, {
+			method: "PUT",
+			body: JSON.stringify({ actor_subject: "member", role: "member" }),
+		});
+		await request("manager", `/v1/projects/${PROJECT}/members/member`, {
+			method: "DELETE",
+		});
+		await request("owner", "/v1/organization/members/member", {
+			method: "PUT",
+			body: JSON.stringify({ actor_subject: "member", role: "member" }),
+		});
+		await request("owner", "/v1/organization/members/member", {
+			method: "DELETE",
+		});
+
+		const mutations = query.mock.calls
+			.map(([sql]) => sql)
+			.filter((sql) => sql.startsWith("WITH "));
+		expect(mutations).toHaveLength(6);
+		for (const sql of mutations) {
+			expect(sql).toContain(
+				"audit AS (INSERT INTO project_authorization_audit_events",
+			);
+			expect(sql).toContain("SELECT * FROM");
+		}
 	});
 
 	it("keeps lifecycle, membership, and audit data non-enumerable across projects", async () => {
