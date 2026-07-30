@@ -1,15 +1,18 @@
 import { randomUUID } from "node:crypto";
+import { rectifyConfusion } from "unicode-confusables";
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import { streamSSE } from "hono/streaming";
 import {
 	claimOptimizationJob,
+	completeOptimizationResult,
+	createOptimizationJob,
 	getActiveOptimizationJob,
 	getLatestOptimizationJob,
 	getOptimizationJob,
 	listActiveOptimizationActivities,
-	createOptimizationJob,
 	listOptimizationEvents,
 	optimizationSourceMessages,
+	promoteOptimizationDraft,
 	publishOptimizationResult,
 	recordOptimizationMetricCalls,
 	renewOptimizationJobLease,
@@ -25,6 +28,13 @@ import {
 	runGepaWorker,
 	type GepaWorker,
 } from "../lib/gepa-worker.js";
+import {
+	automaticPromotionReason,
+	hasOverlappingOptimizationInputs,
+	type OptimizationDataset,
+	type OptimizationEvidence,
+	type OptimizationLeakage,
+} from "../lib/optimization-dataset.js";
 import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
 import {
 	GepaConfigurationError,
@@ -55,11 +65,63 @@ const JsonObject = z.record(z.string(), z.unknown());
 const Evaluator = z.object({ type: z.literal("default_adapter") }).strict();
 const Example = z
 	.object({
-		input: z.string().min(1),
-		answer: z.string().min(1),
+		input: z.string().trim().min(1).max(12_000),
+		answer: z.string().trim().min(1).max(12_000),
 		additional_context: JsonObject.optional(),
 	})
 	.strict();
+const Dataset = z
+	.object({
+		version: z.literal(1),
+		rubric: z.string().trim().min(1).max(2_000),
+		training_examples: z.array(Example).min(1).max(25),
+		validation_examples: z.array(Example).min(1).max(25),
+	})
+	.strict();
+const LegacyDataset = z
+	.object({
+		version: z.literal(0),
+		rubric: z.string(),
+		training_examples: z.array(Example),
+		validation_examples: z.array(Example),
+	})
+	.strict();
+const MetricEvidence = z
+	.object({
+		metric: z.literal("default_adapter.expected_answer_contains"),
+		rubric: z.string(),
+		training: z
+			.object({
+				sample_count: z.number().int().nonnegative(),
+				score: z.number().finite().nullable(),
+			})
+			.strict(),
+		validation: z
+			.object({
+				sample_count: z.number().int().nonnegative(),
+				score: z.number().finite().nullable(),
+				baseline_score: z.number().finite().nullable(),
+				held_out: z.literal(true),
+			})
+			.strict(),
+		leakage: z
+			.object({
+				status: z.enum(["not_run", "passed", "failed"]),
+				reason: z
+					.enum(["expected_answer_full_match", "expected_answer_material_span"])
+					.nullable(),
+			})
+			.strict(),
+	})
+	.strict();
+const PromotionStatus = z.enum([
+	"pending",
+	"auto_promoted",
+	"review_required",
+	"blocked",
+	"reviewed_promoted",
+	"legacy",
+]);
 const ModelConfig = z
 	.object({ task_lm: z.string().min(1), reflection_lm: z.string().min(1) })
 	.strict();
@@ -81,12 +143,19 @@ const Job = z
 		source_version: z.number().int().positive(),
 		target: z.enum(["system", "user"]),
 		evaluator: JsonObject,
-		examples: z.array(z.unknown()),
+		dataset: z.union([Dataset, LegacyDataset]),
+		dataset_hash: z.string().regex(/^[a-f0-9]{64}$/),
 		model_config: JsonObject,
 		budget: JsonObject,
 		status: Status,
 		requested_by: z.string(),
 		result_version: z.number().int().positive().nullable(),
+		candidate_content: z.string().nullable(),
+		evidence: MetricEvidence.nullable(),
+		promotion_status: PromotionStatus,
+		promotion_reason: z.string().nullable(),
+		reviewed_by: z.string().nullable(),
+		promoted_at: z.string().datetime().nullable(),
 		error_message: z.string().nullable(),
 		metric_calls_used: z.number().int().nonnegative().nullable(),
 		created_at: z.string().datetime(),
@@ -139,11 +208,12 @@ const Start = z
 		source_version: z.number().int().positive(),
 		target: z.enum(["system", "user"]),
 		evaluator: Evaluator,
-		examples: z.array(Example).min(1),
+		dataset: Dataset,
 		model_config: ModelConfig,
 		budget: Budget,
 	})
 	.strict();
+
 export const startOptimization = createRoute({
 	method: "post",
 	path: "/v1/prompt-optimizations",
@@ -159,6 +229,7 @@ export const startOptimization = createRoute({
 		...PromptErrorResponses,
 	},
 });
+
 export const getOptimization = createRoute({
 	method: "get",
 	path: "/v1/prompt-optimizations/{id}",
@@ -173,6 +244,7 @@ export const getOptimization = createRoute({
 		...PromptErrorResponses,
 	},
 });
+
 export const getActiveOptimization = createRoute({
 	method: "get",
 	path: "/v1/prompt-optimizations/active",
@@ -216,6 +288,21 @@ export const listOptimizationActivities = createRoute({
 		...PromptErrorResponses,
 	},
 });
+export const promoteOptimization = createRoute({
+	method: "post",
+	path: "/v1/prompt-optimizations/{id}/promote",
+	tags: [tag],
+	summary: "Promote a reviewed GEPA draft",
+	security: [{ basicAuth: [] }],
+	request: { params: JobId, query: ProjectIdQuery },
+	responses: {
+		200: {
+			description: "Promoted",
+			content: { "application/json": { schema: Job } },
+		},
+		...PromptErrorResponses,
+	},
+});
 export const stopOptimization = createRoute({
 	method: "post",
 	path: "/v1/prompt-optimizations/{id}/stop",
@@ -230,6 +317,7 @@ export const stopOptimization = createRoute({
 		...PromptErrorResponses,
 	},
 });
+
 export const optimizationEvents = createRoute({
 	method: "get",
 	path: "/v1/prompt-optimizations/{id}/events",
@@ -244,6 +332,7 @@ export const optimizationEvents = createRoute({
 		...PromptErrorResponses,
 	},
 });
+
 function error(
 	c: { json: (body: unknown, status: 400 | 404 | 409 | 500) => Response },
 	cause: unknown,
@@ -263,12 +352,14 @@ function error(
 		known.status,
 	);
 }
+
 function actor(c: { get: (key: string) => unknown }): string {
 	const value = c.get(TRUSTED_ACTOR_CONTEXT_KEY);
 	if (typeof value !== "string")
 		throw new PromptRepositoryError("INTERNAL", "Trusted actor is unavailable");
 	return value;
 }
+
 export type OptimizationDependencies = {
 	pool: typeof pgPool;
 	worker: GepaWorker;
@@ -283,9 +374,12 @@ export type OptimizationDependencies = {
 	events: typeof listOptimizationEvents;
 	stop: typeof stopOptimizationJob;
 	transition: typeof transitionOptimizationJob;
+	complete: typeof completeOptimizationResult;
 	publish: typeof publishOptimizationResult;
 	recordMetricCalls: typeof recordOptimizationMetricCalls;
+	promote: typeof promoteOptimizationDraft;
 };
+
 const activeWorkers = new Map<string, AbortController>();
 const workerId = randomUUID();
 const terminalStatuses = new Set<OptimizationJob["status"]>([
@@ -334,10 +428,153 @@ export async function renewOptimizationLease(input: {
 	}
 }
 
+function normalizedVisibleText(value: string): string {
+	return rectifyConfusion(
+		value
+			.normalize("NFKD")
+			.toUpperCase()
+			.replace(/[\p{Cc}\p{Cf}\p{M}\p{Default_Ignorable_Code_Point}]/gu, ""),
+	)
+		.toLowerCase()
+		.normalize("NFKD")
+		.replace(/[\p{Cc}\p{Cf}\p{M}\p{Default_Ignorable_Code_Point}]/gu, "")
+		.trim()
+		.replace(/\s+/gu, " ");
+}
+
+function normalizedLeakageText(value: string): string {
+	return (normalizedVisibleText(value).match(/[\p{L}\p{N}]+/gu) ?? []).join(
+		" ",
+	);
+}
+
+function compactLeakageText(value: string): string {
+	return (normalizedVisibleText(value).match(/[\p{L}\p{N}]+/gu) ?? []).join("");
+}
+
+function containsCompactFullAnswer(
+	visibleCandidate: string,
+	compactAnswer: string,
+): boolean {
+	if (!compactAnswer) return false;
+	const separator = "[^\\p{L}\\p{N}]*";
+	const body = Array.from(compactAnswer)
+		.map((character) => character.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&"))
+		.join(separator);
+	return new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, "u").test(
+		visibleCandidate,
+	);
+}
+
+function containsOrderedMaterial(
+	candidateTokens: string[],
+	expectedTokens: string[],
+	budget: { comparisons: number },
+): boolean {
+	// Filler words cannot make an ordered copy of an expected-answer span safe.
+	const positions = new Map<string, number[]>();
+	for (const [index, token] of candidateTokens.entries()) {
+		const indexes = positions.get(token) ?? [];
+		indexes.push(index);
+		positions.set(token, indexes);
+	}
+	for (
+		let expectedStart = 0;
+		expectedStart < expectedTokens.length;
+		expectedStart += 1
+	) {
+		const startingToken = expectedTokens[expectedStart]!;
+		for (const candidateStart of positions.get(startingToken) ?? []) {
+			let candidateIndex = candidateStart;
+			let spanLength = startingToken.length;
+			for (
+				let expectedIndex = expectedStart + 1;
+				expectedIndex < expectedTokens.length;
+				expectedIndex += 1
+			) {
+				budget.comparisons += 1;
+				if (budget.comparisons > 250_000) return true;
+				const next = firstPositionAfter(
+					positions.get(expectedTokens[expectedIndex]!) ?? [],
+					candidateIndex,
+				);
+				if (next === null) break;
+				candidateIndex = next;
+				spanLength += expectedTokens[expectedIndex]!.length + 1;
+				if (expectedIndex - expectedStart + 1 >= 8 && spanLength >= 48)
+					return true;
+			}
+		}
+	}
+	return false;
+}
+
+function firstPositionAfter(positions: number[], index: number): number | null {
+	let low = 0;
+	let high = positions.length;
+	while (low < high) {
+		const middle = Math.floor((low + high) / 2);
+		if (positions[middle]! > index) high = middle;
+		else low = middle + 1;
+	}
+	return positions[low] ?? null;
+}
+
+export function checkExpectedAnswerLeakage(
+	candidate: string,
+	expectedAnswers: string[],
+): OptimizationLeakage {
+	const normalizedCandidate = normalizedLeakageText(candidate);
+	const candidateTokens = normalizedCandidate
+		? normalizedCandidate.split(" ")
+		: [];
+	const paddedCandidate = ` ${normalizedCandidate} `;
+	const compactCandidate = compactLeakageText(candidate);
+	const visibleCandidate = normalizedVisibleText(candidate);
+	const budget = { comparisons: 0 };
+	for (const answer of expectedAnswers) {
+		const visibleAnswer = normalizedVisibleText(answer);
+		const normalizedAnswer = normalizedLeakageText(answer);
+		const answerTokens = normalizedAnswer ? normalizedAnswer.split(" ") : [];
+		const paddedAnswer = ` ${normalizedAnswer} `;
+		const compactAnswer = compactLeakageText(answer);
+		if (
+			(visibleAnswer &&
+				answerTokens.length === 0 &&
+				visibleCandidate.includes(visibleAnswer)) ||
+			(answerTokens.length > 0 && paddedCandidate.includes(paddedAnswer)) ||
+			containsCompactFullAnswer(visibleCandidate, compactAnswer)
+		)
+			return { status: "failed", reason: "expected_answer_full_match" };
+		for (let start = 0; start <= answerTokens.length - 8; start += 1) {
+			let end = start + 8;
+			let spanLength = answerTokens.slice(start, end).join(" ").length;
+			while (spanLength < 48 && end < answerTokens.length) {
+				spanLength += answerTokens[end]!.length + 1;
+				end += 1;
+			}
+			if (spanLength < 48) continue;
+			const spanTokens = answerTokens.slice(start, end);
+			const span = spanTokens.join(" ");
+			if (
+				paddedCandidate.includes(` ${span} `) ||
+				compactCandidate.includes(spanTokens.join("")) ||
+				containsOrderedMaterial(candidateTokens, spanTokens, budget)
+			)
+				return {
+					status: "failed",
+					reason: "expected_answer_material_span",
+				};
+		}
+	}
+	return { status: "passed", reason: null };
+}
+
 export function validateGepaCandidate(
 	original: string,
 	candidate: string,
-): void {
+	expectedAnswers: string[] = [],
+): OptimizationLeakage {
 	if (
 		new TextEncoder().encode(candidate).byteLength >
 		MAX_OPTIMIZATION_CANDIDATE_BYTES
@@ -359,6 +596,41 @@ export function validateGepaCandidate(
 			"BAD_REQUEST",
 			"GEPA candidate changed Mustache tokens",
 		);
+	const leakage = checkExpectedAnswerLeakage(candidate, expectedAnswers);
+	if (leakage.status === "failed")
+		throw new PromptRepositoryError(
+			"BAD_REQUEST",
+			"GEPA candidate contains expected-answer material",
+		);
+	return leakage;
+}
+
+function expectedAnswers(dataset: OptimizationDataset): string[] {
+	return [...dataset.training_examples, ...dataset.validation_examples].map(
+		(example) => example.answer,
+	);
+}
+
+function evidenceFor(
+	dataset: OptimizationDataset,
+	result: Awaited<ReturnType<GepaWorker>>,
+	leakage: OptimizationLeakage,
+): OptimizationEvidence {
+	return {
+		metric: "default_adapter.expected_answer_contains",
+		rubric: dataset.rubric,
+		training: {
+			sample_count: dataset.training_examples.length,
+			score: result.training_score,
+		},
+		validation: {
+			sample_count: dataset.validation_examples.length,
+			score: result.validation_score,
+			baseline_score: result.baseline_validation_score,
+			held_out: true,
+		},
+		leakage,
+	};
 }
 
 const production: OptimizationDependencies = {
@@ -375,8 +647,10 @@ const production: OptimizationDependencies = {
 	events: listOptimizationEvents,
 	stop: stopOptimizationJob,
 	transition: transitionOptimizationJob,
+	complete: completeOptimizationResult,
 	publish: publishOptimizationResult,
 	recordMetricCalls: recordOptimizationMetricCalls,
+	promote: promoteOptimizationDraft,
 };
 
 function statusSnapshot(job: OptimizationJob | null) {
@@ -402,7 +676,7 @@ function metricCallsUsed(
 	result: Awaited<ReturnType<GepaWorker>>,
 ): number | null {
 	const value = result.metric_calls_used;
-	if (value === null) return null;
+	if (value === null || value === undefined) return null;
 	const budget = job.budget.max_metric_calls;
 	if (typeof budget !== "number" || !Number.isSafeInteger(budget))
 		throw new PromptRepositoryError(
@@ -417,7 +691,7 @@ function metricCallsUsed(
 	return value;
 }
 
-async function run(
+export async function runOptimizationJob(
 	job: OptimizationJob,
 	d: OptimizationDependencies,
 ): Promise<void> {
@@ -447,6 +721,11 @@ async function run(
 		});
 	}, 60_000);
 	try {
+		if (job.dataset.version !== 1)
+			throw new PromptRepositoryError(
+				"BAD_REQUEST",
+				"Legacy optimization jobs cannot be resumed",
+			);
 		await d.transition(d.pool(), {
 			id: job.id,
 			worker_id: workerId,
@@ -454,6 +733,9 @@ async function run(
 			detail: {
 				target: job.target,
 				source_version: job.source_version,
+				dataset_version: job.dataset.version,
+				training_sample_count: job.dataset.training_examples.length,
+				validation_sample_count: job.dataset.validation_examples.length,
 				max_metric_calls: job.budget.max_metric_calls ?? null,
 			},
 		});
@@ -484,7 +766,7 @@ async function run(
 				target: job.target,
 				source: original.content,
 				evaluator: job.evaluator,
-				examples: job.examples,
+				dataset: job.dataset,
 				model_config: job.model_config,
 				budget: job.budget,
 			},
@@ -497,10 +779,17 @@ async function run(
 				worker_id: workerId,
 				metric_calls_used: usedMetricCalls,
 			});
+		const leakage = checkExpectedAnswerLeakage(
+			result.candidate,
+			expectedAnswers(job.dataset),
+		);
+		const evidence = evidenceFor(job.dataset, result, leakage);
 		logger.info("optimization.worker_completed", {
 			job_id: job.id,
 			duration_ms: Math.round(performance.now() - startedAt),
-			score: result.score,
+			training_score: result.training_score,
+			validation_score: result.validation_score,
+			baseline_validation_score: result.baseline_validation_score,
 			metric_calls_used: usedMetricCalls,
 			candidate_bytes: new TextEncoder().encode(result.candidate).byteLength,
 		});
@@ -509,27 +798,95 @@ async function run(
 			worker_id: workerId,
 			status: "evaluating",
 			detail: {
-				...(result.score === undefined ? {} : { score: result.score }),
+				metric: evidence.metric,
+				training_sample_count: evidence.training.sample_count,
+				validation_sample_count: evidence.validation.sample_count,
 				...(usedMetricCalls === null
 					? {}
 					: { metric_calls_used: usedMetricCalls }),
 			},
 			metric_calls_used: usedMetricCalls,
 		});
-		validateGepaCandidate(original.content, result.candidate);
-		await d.publish(d.pool(), {
-			id: job.id,
-			worker_id: workerId,
-			score: result.score,
-			messages: sourceMessages.map((item) =>
-				item.role === job.target
-					? { ...item, content: result.candidate }
-					: item,
-			),
-		});
+		try {
+			validateGepaCandidate(
+				original.content,
+				result.candidate,
+				expectedAnswers(job.dataset),
+			);
+		} catch {
+			const reason = leakage.reason ?? "candidate_validation_failed";
+			await d.complete(d.pool(), {
+				id: job.id,
+				worker_id: workerId,
+				candidate_content: null,
+				evidence,
+				promotion_status: "blocked",
+				promotion_reason: reason,
+			});
+			logger.warn("optimization.candidate_blocked", {
+				job_id: job.id,
+				promotion_reason: reason,
+				leakage_status: leakage.status,
+			});
+			return;
+		}
+		const promotionReason = automaticPromotionReason(evidence);
+		if (promotionReason !== null) {
+			await d.complete(d.pool(), {
+				id: job.id,
+				worker_id: workerId,
+				candidate_content: result.candidate,
+				evidence,
+				promotion_status: "review_required",
+				promotion_reason: promotionReason,
+			});
+			logger.info("optimization.completed", {
+				job_id: job.id,
+				duration_ms: Math.round(performance.now() - startedAt),
+				promotion_status: "review_required",
+				promotion_reason: promotionReason,
+			});
+			return;
+		}
+		try {
+			await d.publish(d.pool(), {
+				id: job.id,
+				worker_id: workerId,
+				evidence,
+				messages: sourceMessages.map((item) =>
+					item.role === job.target
+						? { ...item, content: result.candidate }
+						: item,
+				),
+			});
+		} catch (cause) {
+			if (
+				cause instanceof PromptRepositoryError &&
+				cause.code === "CONFLICT" &&
+				cause.message.startsWith("Source prompt version is no longer current")
+			) {
+				await d.complete(d.pool(), {
+					id: job.id,
+					worker_id: workerId,
+					candidate_content: result.candidate,
+					evidence,
+					promotion_status: "review_required",
+					promotion_reason: "source_version_is_stale",
+				});
+				logger.info("optimization.completed", {
+					job_id: job.id,
+					duration_ms: Math.round(performance.now() - startedAt),
+					promotion_status: "review_required",
+					promotion_reason: "source_version_is_stale",
+				});
+				return;
+			}
+			throw cause;
+		}
 		logger.info("optimization.completed", {
 			job_id: job.id,
 			duration_ms: Math.round(performance.now() - startedAt),
+			promotion_status: "auto_promoted",
 		});
 	} catch (cause) {
 		logger.error("optimization.failed", cause, {
@@ -549,13 +906,14 @@ async function run(
 						: "Worker failed",
 			});
 		} catch {
-			// A stopped job is terminal and wins every worker failure race.
+			// A stopped or completed job is terminal and wins every worker failure race.
 		}
 	} finally {
 		clearInterval(leaseRenewal);
 		if (activeWorkers.get(job.id) === controller) activeWorkers.delete(job.id);
 	}
 }
+
 export function createOptimizationHandlers(
 	d: OptimizationDependencies = production,
 ) {
@@ -570,10 +928,15 @@ export function createOptimizationHandlers(
 					source_version: number;
 					target: "system" | "user";
 					evaluator: JsonObject;
-					examples: unknown[];
+					dataset: OptimizationDataset;
 					model_config: JsonObject;
 					budget: JsonObject;
 				};
+				if (hasOverlappingOptimizationInputs(body.dataset))
+					throw new PromptRepositoryError(
+						"BAD_REQUEST",
+						"Training and held-out validation inputs must be unique and non-overlapping",
+					);
 				validateGepaConfiguration({
 					model_config: body.model_config as {
 						task_lm: string;
@@ -588,10 +951,13 @@ export function createOptimizationHandlers(
 					prompt_slug: job.prompt_slug,
 					source_version: job.source_version,
 					target: job.target,
+					dataset_version: job.dataset.version,
+					training_sample_count: body.dataset.training_examples.length,
+					validation_sample_count: body.dataset.validation_examples.length,
 					models: body.model_config,
 					budget: body.budget,
 				});
-				void run(job, d);
+				void runOptimizationJob(job, d);
 				return c.json(job, 202);
 			} catch (cause) {
 				return error(c, cause);
@@ -652,6 +1018,50 @@ export function createOptimizationHandlers(
 						c.req.valid("query") as { project_id: string },
 					),
 				});
+			} catch (cause) {
+				return error(c, cause);
+			}
+		},
+		handlePromote: async (
+			c: Parameters<RouteHandler<typeof promoteOptimization>>[0],
+		): Promise<Response> => {
+			try {
+				const input = {
+					project_id: (c.req.valid("query") as { project_id: string })
+						.project_id,
+					id: (c.req.valid("param") as { id: string }).id,
+				};
+				const job = await d.get(d.pool(), input);
+				if (job.dataset.version !== 1 || job.candidate_content === null)
+					throw new PromptRepositoryError(
+						"CONFLICT",
+						"Optimization draft is not eligible for promotion",
+					);
+				const sourceMessages = await d.sourceMessages(d.pool(), input);
+				const original = sourceMessages.find(
+					(message) => message.role === job.target,
+				);
+				if (!original)
+					throw new PromptRepositoryError(
+						"CONFLICT",
+						"Optimization draft is not eligible for promotion",
+					);
+				validateGepaCandidate(
+					original.content,
+					job.candidate_content,
+					expectedAnswers(job.dataset),
+				);
+				const promoted = await d.promote(d.pool(), {
+					...input,
+					actor: actor(c),
+				});
+				logger.info("optimization.promoted", {
+					job_id: promoted.id,
+					project_id: promoted.project_id,
+					prompt_slug: promoted.prompt_slug,
+					result_version: promoted.result_version,
+				});
+				return c.json(promoted);
 			} catch (cause) {
 				return error(c, cause);
 			}
@@ -718,12 +1128,14 @@ export function createOptimizationHandlers(
 		},
 	};
 }
+
 export const {
 	handleStart,
 	handleGet,
 	handleGetActive,
 	handleGetLatest,
 	handleListActivities,
+	handlePromote,
 	handleStop,
 	handleEvents,
 } = createOptimizationHandlers();

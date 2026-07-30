@@ -326,6 +326,81 @@ BEGIN
         RAISE EXCEPTION 'prompt optimization worker lease index was not created';
     END IF;
     IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+            AND table_name = 'prompt_optimization_jobs'
+            AND column_name IN (
+                'dataset',
+                'dataset_hash',
+                'candidate_content',
+                'evidence',
+                'promotion_status',
+                'promotion_reason',
+                'reviewed_by',
+                'promoted_at'
+            )
+        GROUP BY table_schema, table_name
+        HAVING count(*) = 8
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'prompt_optimization_jobs'::regclass
+            AND conname = 'prompt_optimization_jobs_dataset_shape_check'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'prompt_optimization_jobs'::regclass
+            AND conname = 'prompt_optimization_jobs_promotion_status_check'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public'
+            AND indexname = 'prompt_optimization_jobs_review_required_idx'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'prompt_optimization_dataset_immutable' AND NOT tgisinternal
+    ) THEN
+        RAISE EXCEPTION 'held-out optimization dataset persistence is incomplete';
+    END IF;
+    INSERT INTO prompt_optimization_jobs (
+        id,
+        project_id,
+        prompt_id,
+        prompt_slug,
+        source_version,
+        target_role,
+        source_messages,
+        evaluator,
+        examples,
+        dataset,
+        dataset_hash,
+        model_config,
+        budget,
+        status,
+        requested_by
+    ) VALUES (
+        'aaaaaaaa-0000-4000-8000-000000000023',
+        '11111111-1111-1111-1111-111111111111',
+        'aaaaaaaa-0000-0000-0000-000000000001',
+        'first-prompt',
+        1,
+        'system',
+        '[{"role":"system","content":"Hello {{name}}"}]',
+        '{"type":"default_adapter"}',
+        '[]',
+        '{"version":1,"rubric":"Preserve task deadlines.","training_examples":[{"input":"training","answer":"training label"}],"validation_examples":[{"input":"held-out","answer":"held-out label"}]}',
+        repeat('a', 64),
+        '{"task_lm":"task","reflection_lm":"reflection"}',
+        '{"max_metric_calls":2}',
+        'completed',
+        'migration-test'
+    );
+    BEGIN
+        UPDATE prompt_optimization_jobs
+        SET dataset = '{"version":1,"rubric":"mutated","training_examples":[],"validation_examples":[]}'
+        WHERE id = 'aaaaaaaa-0000-4000-8000-000000000023';
+        RAISE EXCEPTION 'optimization dataset snapshot accepted mutation';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    IF NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
         WHERE table_schema = 'public'
@@ -345,10 +420,10 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'prompt optimization metric-call check was not created';
     END IF;
-    INSERT INTO prompt_optimization_jobs (
-        id, project_id, prompt_id, prompt_slug, source_version, target_role,
-        source_messages, evaluator, examples, model_config, budget, status,
-        requested_by, metric_calls_used
+	INSERT INTO prompt_optimization_jobs (
+		id, project_id, prompt_id, prompt_slug, source_version, target_role,
+		source_messages, evaluator, examples, dataset, dataset_hash, model_config, budget, status,
+		requested_by, metric_calls_used
     )
     SELECT
         'f1000000-0000-4000-8000-000000000001',
@@ -357,10 +432,12 @@ BEGIN
         p.slug,
         1,
         'system',
-        '[{"role":"system","content":"source"}]'::jsonb,
-        '{}'::jsonb,
-        '[]'::jsonb,
-        '{}'::jsonb,
+		'[{"role":"system","content":"source"}]'::jsonb,
+		'{}'::jsonb,
+		'[]'::jsonb,
+		'{"version":0,"rubric":"Legacy optimization dataset; held-out validation was not recorded.","training_examples":[],"validation_examples":[]}'::jsonb,
+		repeat('b', 64),
+		'{}'::jsonb,
         '{"max_metric_calls":5}'::jsonb,
         'completed',
         'migration-test',

@@ -424,6 +424,14 @@ export interface OptimizationJob {
 	source_version?: number;
 	target?: PromptRole;
 	budget?: { max_metric_calls?: number };
+	dataset?: OptimizationDataset;
+	dataset_hash?: string;
+	candidate_content?: string | null;
+	evidence?: OptimizationEvidence | null;
+	promotion_status?: OptimizationPromotionStatus;
+	promotion_reason?: string | null;
+	reviewed_by?: string | null;
+	promoted_at?: string | null;
 	created_at?: string;
 	updated_at?: string;
 	completed_at?: string | null;
@@ -446,6 +454,46 @@ export interface OptimizationActivityListResponse {
 	items: OptimizationActivity[];
 }
 
+export interface OptimizationExample {
+	input: string;
+	answer: string;
+	additional_context?: JsonObject;
+}
+
+export interface OptimizationDataset {
+	version: 1;
+	rubric: string;
+	training_examples: OptimizationExample[];
+	validation_examples: OptimizationExample[];
+}
+
+export interface OptimizationEvidence {
+	metric: "default_adapter.expected_answer_contains";
+	rubric: string;
+	training: { sample_count: number; score: number | null };
+	validation: {
+		sample_count: number;
+		score: number | null;
+		baseline_score: number | null;
+		held_out: true;
+	};
+	leakage: {
+		status: "not_run" | "passed" | "failed";
+		reason:
+			| "expected_answer_full_match"
+			| "expected_answer_material_span"
+			| null;
+	};
+}
+
+export type OptimizationPromotionStatus =
+	| "pending"
+	| "auto_promoted"
+	| "review_required"
+	| "blocked"
+	| "reviewed_promoted"
+	| "legacy";
+
 export interface OptimizationEvent {
 	id: number;
 	status: OptimizationJob["status"];
@@ -466,13 +514,26 @@ export async function startPromptOptimization(input: {
 	source_version: number;
 	target: PromptRole;
 	evaluator: JsonObject;
-	examples: unknown[];
+	dataset: OptimizationDataset;
 	model_config: JsonObject;
 	budget: JsonObject;
 }): Promise<OptimizationJob> {
 	return responseJson<OptimizationJob>(
 		await authedFetch("/v1/prompt-optimizations", jsonRequest(input)),
 		"startPromptOptimization",
+	);
+}
+
+export async function promotePromptOptimization(input: {
+	project_id: string;
+	id: string;
+}): Promise<OptimizationJob> {
+	return responseJson<OptimizationJob>(
+		await authedFetch(
+			`/v1/prompt-optimizations/${encodeURIComponent(input.id)}/promote${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"promotePromptOptimization",
 	);
 }
 

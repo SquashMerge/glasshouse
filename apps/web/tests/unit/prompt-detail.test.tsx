@@ -29,6 +29,7 @@ const {
 	rollbackLatestPromptVersion,
 	getPromptOptimization,
 	getLatestPromptOptimization,
+	promotePromptOptimization,
 	startPromptOptimization,
 	stopPromptOptimization,
 } = vi.hoisted(() => ({
@@ -38,6 +39,7 @@ const {
 	rollbackLatestPromptVersion: vi.fn(),
 	getPromptOptimization: vi.fn(),
 	getLatestPromptOptimization: vi.fn(),
+	promotePromptOptimization: vi.fn(),
 	startPromptOptimization: vi.fn(),
 	stopPromptOptimization: vi.fn(),
 }));
@@ -70,6 +72,7 @@ vi.mock("../../src/lib/api", () => ({
 	rollbackLatestPromptVersion,
 	getPromptOptimization,
 	getLatestPromptOptimization,
+	promotePromptOptimization,
 	promptOptimizationEventsUrl: ({
 		project_id,
 		id,
@@ -157,6 +160,7 @@ describe("PromptDetailPage", () => {
 		rollbackLatestPromptVersion.mockReset();
 		getPromptOptimization.mockReset();
 		getLatestPromptOptimization.mockReset();
+		promotePromptOptimization.mockReset();
 		sse.onMessage.mockReset();
 		sse.onOpen.mockReset();
 		sse.onError.mockReset();
@@ -174,6 +178,13 @@ describe("PromptDetailPage", () => {
 			result_version: null,
 			error_message: null,
 			metric_calls_used: null,
+		});
+		getPromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "completed",
+			result_version: 4,
+			error_message: null,
+			promotion_status: "auto_promoted",
 		});
 		listPromptVersions.mockResolvedValue({
 			items: [
@@ -293,12 +304,14 @@ describe("PromptDetailPage", () => {
 	});
 
 	it("disables prompt actions while optimization is active", async () => {
-		getLatestPromptOptimization.mockResolvedValue({
+		const activeJob = {
 			id: "11111111-1111-4111-8111-111111111111",
 			status: "optimizing",
 			result_version: null,
 			error_message: null,
-		});
+		};
+		getLatestPromptOptimization.mockResolvedValue(activeJob);
+		getPromptOptimization.mockResolvedValue(activeJob);
 		renderDetail();
 
 		expect(
@@ -317,7 +330,7 @@ describe("PromptDetailPage", () => {
 		expect(router.navigate).not.toHaveBeenCalled();
 	});
 
-	it("opens one optimization dialog with a single target radio group and useful input placeholders", async () => {
+	it("opens one optimization dialog with separate train and held-out validation inputs", async () => {
 		renderDetail();
 
 		fireEvent.click(
@@ -337,14 +350,17 @@ describe("PromptDetailPage", () => {
 		const userRadio = screen.getByRole("radio", { name: "User prompt" });
 		expect(systemRadio).toBeChecked();
 		expect(userRadio).not.toBeChecked();
-		expect(screen.getByLabelText("Representative input")).toHaveAttribute(
+		expect(screen.getByLabelText("Scoring rubric / objective")).toHaveAttribute(
 			"placeholder",
-			"e.g. A customer asks how to reset their password",
+			"e.g. Prioritize urgent work, preserve deadlines, and use concise grouped headings",
 		);
-		expect(screen.getByLabelText("Expected answer")).toHaveAttribute(
-			"placeholder",
-			"e.g. Explain the steps clearly and include the support link",
-		);
+		expect(screen.getByLabelText("Training 1 input")).toBeInTheDocument();
+		expect(
+			screen.getByLabelText("Training 1 expected answer"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByLabelText("Held-out validation 1 input"),
+		).toBeInTheDocument();
 		expect(screen.getByLabelText("Task model")).toHaveAttribute(
 			"placeholder",
 			"e.g. openai/gpt-4o-mini",
@@ -365,6 +381,66 @@ describe("PromptDetailPage", () => {
 			"max",
 			"20",
 		);
+	});
+
+	it("rejects materially overlapping training and held-out inputs", async () => {
+		renderDetail();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+
+		fireEvent.change(screen.getByLabelText("Training 1 input"), {
+			target: { value: "Please summarize today tasks" },
+		});
+		fireEvent.change(screen.getByLabelText("Held-out validation 1 input"), {
+			target: { value: "Please summarize today tasks with dates" },
+		});
+
+		expect(
+			screen.getByText(
+				"Training and held-out validation inputs must be unique and not materially overlap.",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("rejects reordered near-identical training and held-out inputs", async () => {
+		renderDetail();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+
+		fireEvent.change(screen.getByLabelText("Training 1 input"), {
+			target: { value: "order a salad with fries" },
+		});
+		fireEvent.change(screen.getByLabelText("Held-out validation 1 input"), {
+			target: { value: "fries with a salad order" },
+		});
+
+		expect(
+			screen.getByText(
+				"Training and held-out validation inputs must be unique and not materially overlap.",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("rejects single-token training and held-out containment", async () => {
+		renderDetail();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+
+		fireEvent.change(screen.getByLabelText("Training 1 input"), {
+			target: { value: "refund" },
+		});
+		fireEvent.change(screen.getByLabelText("Held-out validation 1 input"), {
+			target: { value: "refund now" },
+		});
+
+		expect(
+			screen.getByText(
+				"Training and held-out validation inputs must be unique and not materially overlap.",
+			),
+		).toBeInTheDocument();
 	});
 
 	it("refreshes the current prompt and version history after optimization completes", async () => {
@@ -399,7 +475,7 @@ describe("PromptDetailPage", () => {
 		});
 	});
 
-	it("renders score and configured budget from validated SSE progress", async () => {
+	it("renders distinct training and held-out evidence instead of an ambiguous score", async () => {
 		getLatestPromptOptimization.mockResolvedValue({
 			id: "22222222-2222-4222-8222-222222222222",
 			status: "optimizing",
@@ -408,37 +484,114 @@ describe("PromptDetailPage", () => {
 			target: "system",
 			source_version: 3,
 			budget: { max_metric_calls: 20 },
+			evidence: {
+				metric: "default_adapter.expected_answer_contains",
+				rubric: "Preserve deadlines and concise grouping.",
+				training: { sample_count: 1, score: 1 },
+				validation: {
+					sample_count: 1,
+					score: 0.875,
+					baseline_score: 0.5,
+					held_out: true,
+				},
+				leakage: { status: "passed", reason: null },
+			},
+			promotion_status: "review_required",
+			promotion_reason: "insufficient_held_out_validation",
 			created_at: "2026-07-15T10:00:00.000Z",
 			metric_calls_used: null,
 		});
 		getPromptOptimization.mockResolvedValue({
 			id: "22222222-2222-4222-8222-222222222222",
-			status: "evaluating",
+			status: "optimizing",
 			result_version: null,
 			error_message: null,
 			target: "system",
 			source_version: 3,
 			budget: { max_metric_calls: 20 },
-			metric_calls_used: 3,
+			evidence: {
+				metric: "default_adapter.expected_answer_contains",
+				rubric: "Preserve deadlines and concise grouping.",
+				training: { sample_count: 1, score: 1 },
+				validation: {
+					sample_count: 1,
+					score: 0.875,
+					baseline_score: 0.5,
+					held_out: true,
+				},
+				leakage: { status: "passed", reason: null },
+			},
+			promotion_status: "review_required",
+			promotion_reason: "insufficient_held_out_validation",
+			created_at: "2026-07-15T10:00:00.000Z",
+			metric_calls_used: null,
 		});
 		renderDetail();
 		await screen.findByText("Support Agent optimizing…");
 
-		await act(async () => {
-			sse.onMessage({
-				event: "status",
-				data: {
-					id: 2,
-					status: "evaluating",
-					detail: { score: 0.875 },
-					created_at: "2026-07-15T10:00:01.000Z",
-				},
-			});
-		});
-
-		expect(await screen.findByText("evaluating")).toBeInTheDocument();
-		expect(screen.getByText("3 / 20")).toBeInTheDocument();
+		expect(
+			await screen.findByText("Training score (diagnostic)"),
+		).toBeInTheDocument();
+		expect(screen.getByText("Held-out validation score")).toBeInTheDocument();
+		expect(screen.getByText("Telemetry unavailable / 20")).toBeInTheDocument();
 		expect(screen.getByText("0.875")).toBeInTheDocument();
+	});
+
+	it("keeps a one-sample held-out result as a reviewable draft", async () => {
+		const draft = {
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "completed",
+			result_version: null,
+			error_message: null,
+			source_version: 3,
+			target: "system",
+			candidate_content: "Improved {{customer}}",
+			evidence: {
+				metric: "default_adapter.expected_answer_contains",
+				rubric: "Preserve customer details.",
+				training: { sample_count: 1, score: 1 },
+				validation: {
+					sample_count: 1,
+					score: 1,
+					baseline_score: 0,
+					held_out: true,
+				},
+				leakage: { status: "passed", reason: null },
+			},
+			promotion_status: "review_required",
+			promotion_reason: "insufficient_held_out_validation",
+		};
+		getLatestPromptOptimization.mockResolvedValue({
+			id: draft.id,
+			status: draft.status,
+			result_version: draft.result_version,
+			error_message: draft.error_message,
+			metric_calls_used: null,
+		});
+		getPromptOptimization.mockResolvedValue(draft);
+		promotePromptOptimization.mockResolvedValue({
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "completed",
+			result_version: 4,
+			error_message: null,
+			promotion_status: "reviewed_promoted",
+		});
+		renderDetail();
+
+		expect(
+			await screen.findByText(
+				"Draft only: fewer than two independent held-out examples.",
+			),
+		).toBeInTheDocument();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Promote reviewed draft" }),
+		);
+		await waitFor(() =>
+			expect(promotePromptOptimization).toHaveBeenCalledWith({
+				project_id: PROJECT_ID,
+				id: "22222222-2222-4222-8222-222222222222",
+			}),
+		);
 	});
 
 	it("uses no placeholder events URL when no optimization exists", async () => {
@@ -448,51 +601,7 @@ describe("PromptDetailPage", () => {
 		expect(sse.url).toBeNull();
 	});
 
-	it("closes and reopens active and completed status without stopping the job", async () => {
-		getLatestPromptOptimization.mockResolvedValue({
-			id: "22222222-2222-4222-8222-222222222222",
-			status: "optimizing",
-			result_version: null,
-			error_message: null,
-			metric_calls_used: null,
-			budget: { max_metric_calls: 5 },
-		});
-		getPromptOptimization.mockResolvedValue({
-			id: "22222222-2222-4222-8222-222222222222",
-			status: "completed",
-			result_version: 4,
-			error_message: null,
-			metric_calls_used: 3,
-			completed_at: "2026-07-15T10:02:00.000Z",
-			budget: { max_metric_calls: 5 },
-		});
-		renderDetail();
-
-		await screen.findByTestId("optimization-status");
-		fireEvent.click(screen.getByRole("button", { name: "Close status" }));
-		expect(screen.queryByTestId("optimization-status")).not.toBeInTheDocument();
-		expect(stopPromptOptimization).not.toHaveBeenCalled();
-		fireEvent.click(
-			screen.getByRole("button", { name: "View optimization status" }),
-		);
-		expect(screen.getByTestId("optimization-status")).toBeInTheDocument();
-
-		await act(async () => {
-			sse.onOpen();
-		});
-		await screen.findByText("Published as v4.");
-		expect(
-			screen.queryByRole("button", { name: "Stop" }),
-		).not.toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "Close status" }));
-		fireEvent.click(
-			screen.getByRole("button", { name: "View optimization status" }),
-		);
-		expect(screen.getByText("Published as v4.")).toBeInTheDocument();
-		expect(stopPromptOptimization).not.toHaveBeenCalled();
-	});
-
-	it("shows actionable stream failure and unavailable metric telemetry", async () => {
+	it("shows stream failures while retaining authoritative status polling", async () => {
 		const activeJob = {
 			id: "22222222-2222-4222-8222-222222222222",
 			status: "optimizing",
@@ -524,6 +633,49 @@ describe("PromptDetailPage", () => {
 		expect(sse.reconnect).toHaveBeenCalled();
 	});
 
+	it("keeps a completed optimization visible after closing and reopening its panel", async () => {
+		const activeJob = {
+			id: "22222222-2222-4222-8222-222222222222",
+			status: "optimizing",
+			result_version: null,
+			error_message: null,
+			metric_calls_used: null,
+			budget: { max_metric_calls: 5 },
+		};
+		const completedJob = {
+			...activeJob,
+			status: "completed",
+			result_version: 4,
+			metric_calls_used: 3,
+			completed_at: "2026-07-15T10:02:00.000Z",
+		};
+		getLatestPromptOptimization.mockResolvedValue(activeJob);
+		getPromptOptimization.mockResolvedValue(activeJob);
+		renderDetail();
+
+		await screen.findByTestId("optimization-status");
+		fireEvent.click(screen.getByRole("button", { name: "Close status" }));
+		expect(screen.queryByTestId("optimization-status")).not.toBeInTheDocument();
+		fireEvent.click(
+			screen.getByRole("button", { name: "View optimization status" }),
+		);
+		expect(screen.getByTestId("optimization-status")).toBeInTheDocument();
+
+		getPromptOptimization.mockResolvedValue(completedJob);
+		await act(async () => {
+			sse.onOpen();
+		});
+		await screen.findByText("Published as v4.");
+		expect(
+			screen.queryByRole("button", { name: "Stop" }),
+		).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Close status" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "View optimization status" }),
+		);
+		expect(screen.getByText("Published as v4.")).toBeInTheDocument();
+	});
+
 	it("fills the development example when explicitly enabled", async () => {
 		vi.stubEnv("VITE_SHOW_DEV_OPTIMIZATION_EXAMPLE", "true");
 		renderDetail();
@@ -535,11 +687,14 @@ describe("PromptDetailPage", () => {
 			screen.getByRole("button", { name: "Fill development example" }),
 		);
 
-		expect(screen.getByLabelText("Representative input")).toHaveValue(
+		expect(screen.getByLabelText("Training 1 input")).toHaveValue(
 			"Here is my task list for today:\n\n- Finish the quarterly status report and send it to the team by 2:00 PM.\n- Pick up groceries after work.\n- Review and approve the open pull request for the API changes.\n- Call the dentist to schedule a cleaning.\n- Take the dog for a 30-minute walk in the evening.",
 		);
-		expect(screen.getByLabelText("Expected answer")).toHaveValue(
+		expect(screen.getByLabelText("Training 1 expected answer")).toHaveValue(
 			"**Today’s priorities:** Finish and send the quarterly status report by 2:00 PM, then review and approve the API pull request.  \n**After work:** Pick up groceries, schedule a dental cleaning, and take the dog for a 30-minute walk.",
+		);
+		expect(screen.getByLabelText("Held-out validation 2 input")).toHaveValue(
+			"My list:\n\n- Book travel for next week’s conference.\n- Respond to the security review comments by end of day.\n- Make dinner.\n- Return the library books before they are due tomorrow.",
 		);
 		expect(screen.getByLabelText("Task model")).toHaveValue("gpt-5.6-terra");
 		expect(screen.getByLabelText("Reflection model")).toHaveValue(
@@ -570,12 +725,22 @@ describe("PromptDetailPage", () => {
 			await screen.findByRole("button", { name: "Optimize prompt" }),
 		);
 		fireEvent.click(screen.getByRole("radio", { name: "User prompt" }));
-		fireEvent.change(screen.getByLabelText("Representative input"), {
+		fireEvent.change(screen.getByLabelText("Scoring rubric / objective"), {
+			target: { value: "Answer with a concise, accurate explanation." },
+		});
+		fireEvent.change(screen.getByLabelText("Training 1 input"), {
 			target: { value: "Question" },
 		});
-		fireEvent.change(screen.getByLabelText("Expected answer"), {
+		fireEvent.change(screen.getByLabelText("Training 1 expected answer"), {
 			target: { value: "Answer" },
 		});
+		fireEvent.change(screen.getByLabelText("Held-out validation 1 input"), {
+			target: { value: "Separate query" },
+		});
+		fireEvent.change(
+			screen.getByLabelText("Held-out validation 1 expected answer"),
+			{ target: { value: "Different answer" } },
+		);
 		fireEvent.change(screen.getByLabelText("Task model"), {
 			target: { value: "gpt-4o" },
 		});

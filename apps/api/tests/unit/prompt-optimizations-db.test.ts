@@ -2,10 +2,12 @@ import { describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 import {
 	claimOptimizationJob,
+	completeOptimizationResult,
 	createOptimizationJob,
 	failInterruptedOptimizationJobs,
 	getLatestOptimizationJob,
 	listActiveOptimizationActivities,
+	promoteOptimizationDraft,
 	publishOptimizationResult,
 	recordOptimizationMetricCalls,
 	renewOptimizationJobLease,
@@ -13,6 +15,7 @@ import {
 	transitionOptimizationJob,
 } from "../../src/db/prompt-optimizations";
 import { PromptRepositoryError } from "../../src/db/prompts";
+import type { OptimizationEvidence } from "../../src/lib/optimization-dataset";
 
 type Reply = { rows: Record<string, unknown>[] };
 type Call = { text: string; values: unknown[] };
@@ -89,6 +92,36 @@ const WORKER = "11111111-1111-4111-8111-111111111111";
 const PROMPT = "33333333-3333-4333-8333-333333333333";
 const CREATED = "2026-07-15T10:00:00.000Z";
 
+function optimizationDataset() {
+	return {
+		version: 1,
+		rubric: "Prioritize urgent work and preserve deadlines.",
+		training_examples: [{ input: "Training task", answer: "Training label" }],
+		validation_examples: [
+			{ input: "Held-out task one", answer: "Held-out label one" },
+			{ input: "Held-out task two", answer: "Held-out label two" },
+		],
+	} as const;
+}
+
+function optimizationEvidence(
+	overrides: Partial<OptimizationEvidence> = {},
+): OptimizationEvidence {
+	return {
+		metric: "default_adapter.expected_answer_contains",
+		rubric: optimizationDataset().rubric,
+		training: { sample_count: 1, score: 1 },
+		validation: {
+			sample_count: 2,
+			score: 1,
+			baseline_score: 0.5,
+			held_out: true,
+		},
+		leakage: { status: "passed", reason: null },
+		...overrides,
+	};
+}
+
 function job(overrides: Partial<Record<string, unknown>> = {}) {
 	return {
 		id: JOB,
@@ -97,13 +130,22 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
 		prompt_slug: "support-agent",
 		source_version: 3,
 		target_role: "system",
+		source_messages: [{ role: "system", content: "Source {{name}}" }],
 		evaluator: { type: "default_adapter" },
 		examples: [{ input: "question", answer: "answer" }],
+		dataset: optimizationDataset(),
+		dataset_hash: "a".repeat(64),
 		model_config: { task_lm: "task", reflection_lm: "reflection" },
 		budget: { max_metric_calls: 1 },
 		status: "evaluating",
 		requested_by: "admin",
 		result_version: null,
+		candidate_content: null,
+		evidence: null,
+		promotion_status: "pending",
+		promotion_reason: null,
+		reviewed_by: null,
+		promoted_at: null,
 		error_message: null,
 		created_at: CREATED,
 		updated_at: CREATED,
@@ -147,6 +189,7 @@ describe("prompt optimization repository", () => {
 				id: JOB,
 				worker_id: WORKER,
 				messages,
+				evidence: optimizationEvidence(),
 			}),
 		).toBe(4);
 		const insert = pool.client.calls[3];
@@ -154,10 +197,20 @@ describe("prompt optimization repository", () => {
 		expect(JSON.parse(insert?.values[5] as string)).toEqual(messages);
 		expect(JSON.parse(pool.client.calls[5]?.values[1] as string)).toEqual({
 			result_version: 4,
+			metric: "default_adapter.expected_answer_contains",
+			training: { sample_count: 1, score: 1 },
+			validation: {
+				sample_count: 2,
+				score: 1,
+				baseline_score: 0.5,
+				held_out: true,
+			},
+			leakage: { status: "passed", reason: null },
+			promotion_status: "auto_promoted",
 		});
 	});
 
-	it("persists a finite final score without candidate content in the event", async () => {
+	it("persists labeled held-out evidence without candidate content in the event", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
 			{ rows: [job()] },
@@ -182,12 +235,29 @@ describe("prompt optimization repository", () => {
 			id: JOB,
 			worker_id: WORKER,
 			messages: [{ role: "system", content: "Improved system {{name}}" }],
-			score: 0.875,
+			evidence: optimizationEvidence({
+				training: { sample_count: 1, score: 1 },
+				validation: {
+					sample_count: 2,
+					score: 0.875,
+					baseline_score: 0.5,
+					held_out: true,
+				},
+			}),
 		});
 
 		expect(JSON.parse(pool.client.calls[5]?.values[1] as string)).toEqual({
 			result_version: 4,
-			score: 0.875,
+			metric: "default_adapter.expected_answer_contains",
+			training: { sample_count: 1, score: 1 },
+			validation: {
+				sample_count: 2,
+				score: 0.875,
+				baseline_score: 0.5,
+				held_out: true,
+			},
+			leakage: { status: "passed", reason: null },
+			promotion_status: "auto_promoted",
 		});
 	});
 
@@ -264,10 +334,21 @@ describe("prompt optimization repository", () => {
 			id: JOB,
 			worker_id: WORKER,
 			messages: [{ role: "system", content: "Improved system {{name}}" }],
+			evidence: optimizationEvidence(),
 		});
 
 		expect(JSON.parse(pool.client.calls[5]?.values[1] as string)).toEqual({
 			result_version: 4,
+			metric: "default_adapter.expected_answer_contains",
+			training: { sample_count: 1, score: 1 },
+			validation: {
+				sample_count: 2,
+				score: 1,
+				baseline_score: 0.5,
+				held_out: true,
+			},
+			leakage: { status: "passed", reason: null },
+			promotion_status: "auto_promoted",
 			metric_calls_used: 3,
 		});
 	});
@@ -307,7 +388,7 @@ describe("prompt optimization repository", () => {
 		expect(calls[1]?.values).toEqual([PROJECT, "support-agent"]);
 	});
 
-	it("publishes a historical snapshot as the next version", async () => {
+	it("keeps a stale historical snapshot out of automatic publication", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
 			{ rows: [job({ source_version: 2 })] },
@@ -323,25 +404,21 @@ describe("prompt optimization repository", () => {
 				],
 			},
 			{ rows: [] },
-			{ rows: [] },
-			{ rows: [] },
-			{ rows: [] },
 		]);
 		const snapshot = [
 			{ role: "system" as const, content: "Improved historical system" },
 			{ role: "user" as const, content: "Historical user" },
 		];
 
-		expect(
-			await publishOptimizationResult(transactionPool(pool), {
+		await expect(
+			publishOptimizationResult(transactionPool(pool), {
 				id: JOB,
 				worker_id: WORKER,
 				messages: snapshot,
+				evidence: optimizationEvidence(),
 			}),
-		).toBe(5);
-		const insert = pool.client.calls[3];
-		expect(insert?.values[1]).toBe(5);
-		expect(JSON.parse(insert?.values[5] as string)).toEqual(snapshot);
+		).rejects.toMatchObject({ code: "CONFLICT" });
+		expect(pool.client.calls).toHaveLength(4);
 	});
 
 	it("allows exactly one concurrent worker claim", async () => {
@@ -406,6 +483,7 @@ describe("prompt optimization repository", () => {
 				id: JOB,
 				worker_id: WORKER,
 				messages: [{ role: "system", content: "Improved" }],
+				evidence: optimizationEvidence(),
 			}),
 		).rejects.toMatchObject({ code: "CONFLICT" });
 		expect(pool.client.calls[1]?.text).toContain(
@@ -434,7 +512,7 @@ describe("prompt optimization repository", () => {
 			source_version: 3,
 			target: "system",
 			evaluator: { type: "default_adapter" },
-			examples: [{ input: "question", answer: "answer" }],
+			dataset: optimizationDataset(),
 			model_config: { task_lm: "task", reflection_lm: "reflection" },
 			budget: { max_metric_calls: 1 },
 			actor: "admin",
@@ -443,6 +521,111 @@ describe("prompt optimization repository", () => {
 		expect(result.id).toBe(JOB);
 		expect(pool.client.calls).toHaveLength(4);
 		expect(pool.client.calls[2]?.text).toContain("ON CONFLICT");
+	});
+
+	it("persists insufficient held-out evidence as a safe review-required draft", async () => {
+		const evidence = optimizationEvidence({
+			validation: {
+				sample_count: 1,
+				score: 1,
+				baseline_score: 0,
+				held_out: true,
+			},
+		});
+		const pool = new MockPool([
+			{ rows: [] },
+			{
+				rows: [
+					job({
+						status: "completed",
+						candidate_content: "Improved {{name}}",
+						evidence,
+						promotion_status: "review_required",
+						promotion_reason: "insufficient_held_out_validation",
+					}),
+				],
+			},
+			{ rows: [] },
+			{ rows: [] },
+		]);
+
+		const result = await completeOptimizationResult(transactionPool(pool), {
+			id: JOB,
+			worker_id: WORKER,
+			candidate_content: "Improved {{name}}",
+			evidence,
+			promotion_status: "review_required",
+			promotion_reason: "insufficient_held_out_validation",
+		});
+
+		expect(result.result_version).toBeNull();
+		expect(result.promotion_status).toBe("review_required");
+		expect(pool.client.calls[1]?.text).toContain("candidate_content=$2");
+		expect(JSON.parse(pool.client.calls[2]?.values[1] as string)).toMatchObject(
+			{
+				promotion_status: "review_required",
+				validation: { sample_count: 1, score: 1 },
+			},
+		);
+	});
+
+	it("promotes a reviewed draft only from its unchanged source version", async () => {
+		const evidence = optimizationEvidence({
+			validation: {
+				sample_count: 1,
+				score: 1,
+				baseline_score: 0,
+				held_out: true,
+			},
+		});
+		const draft = job({
+			status: "completed",
+			candidate_content: "Improved {{name}}",
+			evidence,
+			promotion_status: "review_required",
+			promotion_reason: "insufficient_held_out_validation",
+		});
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [draft] },
+			{
+				rows: [
+					{
+						id: PROMPT,
+						slug: "support-agent",
+						version: 3,
+						model: "gpt-test",
+						settings: { temperature: 0.2 },
+					},
+				],
+			},
+			{ rows: [] },
+			{
+				rows: [
+					job({
+						status: "completed",
+						result_version: 4,
+						candidate_content: "Improved {{name}}",
+						evidence,
+						promotion_status: "reviewed_promoted",
+						reviewed_by: "reviewer",
+						promoted_at: CREATED,
+					}),
+				],
+			},
+			{ rows: [] },
+			{ rows: [] },
+		]);
+
+		const result = await promoteOptimizationDraft(transactionPool(pool), {
+			project_id: PROJECT,
+			id: JOB,
+			actor: "reviewer",
+		});
+
+		expect(result.result_version).toBe(4);
+		expect(result.promotion_status).toBe("reviewed_promoted");
+		expect(pool.client.calls[3]?.values[7]).toBe("reviewer");
 	});
 
 	it("does not turn a completed optimization into stopped when stop races completion", async () => {

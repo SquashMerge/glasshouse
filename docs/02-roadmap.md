@@ -261,7 +261,7 @@ DAY 0────30────60────90────120───180
 | Rollback on regression | Backend | If post-deploy eval drops > X%, auto-rollback to previous version |
 | Optimization dashboard | Frontend | Variant comparison view; Pareto chart; one-click promote |
 
-**Differentiation:** DSPy/GEPA are libraries — users have to wire them up. We ship optimization as a UI surface with automated deployment. Braintrust's "AI-assisted optimization" is closest but partial.
+**Differentiation:** DSPy/GEPA are libraries — users have to wire them up. We ship optimization as a UI surface with held-out validation-gated deployment. Braintrust's "AI-assisted optimization" is closest but partial.
 
 ### Week 25–28 — Voice agent support (Days 169–196)
 

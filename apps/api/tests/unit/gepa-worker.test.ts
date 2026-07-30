@@ -21,7 +21,14 @@ describe("GEPA worker adapter", () => {
 				target: "system",
 				source: "Hello {{name}}",
 				evaluator: { type: "default_adapter" },
-				examples: [{ input: "Hello", answer: "Hello" }],
+				dataset: {
+					version: 1,
+					rubric: "Greet the caller clearly.",
+					training_examples: [{ input: "Hello", answer: "Hello" }],
+					validation_examples: [
+						{ input: "Welcome Ada", answer: "Welcome Ada" },
+					],
+				},
 				model_config: {
 					task_lm: "openai/gpt-4.1-mini",
 					reflection_lm: "openai/gpt-4.1-mini",
@@ -32,6 +39,11 @@ describe("GEPA worker adapter", () => {
 		);
 		expect(result.candidate).toContain("Hello {{name}}");
 		expect(result.metric_calls_used).toBe(0);
+		expect(result).toMatchObject({
+			training_score: 1,
+			validation_score: 1,
+			baseline_validation_score: 0,
+		});
 	});
 
 	it("rejects oversized worker output before buffering it", async () => {
