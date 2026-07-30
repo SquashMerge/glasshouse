@@ -38,6 +38,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 - Add migration fixture/assert coverage under `infra/scripts/` for constraints, indexes, backfills, and seeded rows. Run `make test-db-migrations` when changing migration behavior, plus the API tests and typecheck.
 - Before merging a migration, verify the migration is included in the production image, `make db-migrate` reaches the same `apps/api` script used in deployment, and startup still waits for healthy PostgreSQL before applying it.
 - Keep ClickHouse schema changes separate under `infra/db/clickhouse/`; they are not PostgreSQL migrations and are applied by `make ch-schema`.
+- OTLP seeders and fixtures must be explicitly project-scoped. `infra/scripts/seed_traces.py` resolves the authenticated organization's current `default` project through `GET /v1/projects` unless `SEED_PROJECT_ID`/`--project-id` is provided, then sends `x-astraea-project-id` on every OTLP POST. If tenant/project or OTLP provenance semantics change, update this seeder, its Python regression test, and this rule in the same change.
 
 ## Observability and logging
 

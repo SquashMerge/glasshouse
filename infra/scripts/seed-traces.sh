@@ -16,6 +16,7 @@
 #   --max-spans N     max spans per trace    (default 5)
 #   --concurrency N   parallel POST workers  (default 8)
 #   --url URL         api base url           (default http://localhost:3000)
+#   --project-id ID   target project UUID (default: authenticated org's default project)
 #   --dry-run         build payloads without POSTing
 #   --seed N          rng seed for reproducibility
 #
