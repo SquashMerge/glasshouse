@@ -254,7 +254,7 @@ export function createProductionTrace(
 ): ExperimentDependencies["trace"] {
 	return async (input) => {
 		const organization = await pool().query<{ organization_id: string }>(
-			"SELECT organization_id FROM projects WHERE id = $1",
+			"SELECT organization_id FROM projects WHERE id = $1 AND status = 'active'",
 			[input.project_id],
 		);
 		const organizationId = organization.rows[0]?.organization_id;

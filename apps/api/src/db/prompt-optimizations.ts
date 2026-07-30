@@ -307,7 +307,7 @@ export async function claimOptimizationJob(
 	return tx(pool, async (client) => {
 		const claimed = await rows(
 			client,
-			"UPDATE prompt_optimization_jobs SET worker_claim_id=$2,worker_claimed_at=now(),worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() WHERE id=$1 AND status IN ('queued','preparing','optimizing','evaluating') AND (worker_claim_id IS NULL OR worker_lease_expires_at IS NULL OR worker_lease_expires_at < now()) RETURNING id",
+			"UPDATE prompt_optimization_jobs j SET worker_claim_id=$2,worker_claimed_at=now(),worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() FROM projects p WHERE j.id=$1 AND p.id=j.project_id AND p.status = 'active' AND j.status IN ('queued','preparing','optimizing','evaluating') AND (j.worker_claim_id IS NULL OR j.worker_lease_expires_at IS NULL OR j.worker_lease_expires_at < now()) RETURNING j.id",
 			[input.id, input.worker_id],
 		);
 		return claimed.length === 1;
@@ -319,7 +319,7 @@ export async function renewOptimizationJobLease(
 ): Promise<boolean> {
 	const renewed = await rows(
 		pool,
-		"UPDATE prompt_optimization_jobs SET worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() AND status IN ('queued','preparing','optimizing','evaluating') RETURNING id",
+		"UPDATE prompt_optimization_jobs j SET worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$2 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() AND j.status IN ('queued','preparing','optimizing','evaluating') RETURNING j.id",
 		[input.id, input.worker_id],
 	);
 	return renewed.length === 1;
@@ -341,7 +341,7 @@ export async function failInterruptedOptimizationJobs(
 ): Promise<Array<{ id: string; project_id: string }>> {
 	const failed = await rows(
 		pool,
-		"UPDATE prompt_optimization_jobs SET status='failed', error_message='Interrupted by API restart', updated_at=now(), completed_at=now() WHERE status IN ('queued','preparing','optimizing','evaluating') RETURNING id, project_id",
+		"UPDATE prompt_optimization_jobs j SET status='failed', error_message='Interrupted by API restart', updated_at=now(), completed_at=now() FROM projects p WHERE p.id=j.project_id AND p.status = 'active' AND j.status IN ('queued','preparing','optimizing','evaluating') RETURNING j.id, j.project_id",
 	);
 	return failed.map((row) => ({
 		id: String(row.id),
@@ -395,14 +395,14 @@ export async function transitionOptimizationJob(
 		const row = (
 			await rows(
 				client,
-				"UPDATE prompt_optimization_jobs SET status=$2, error_message=COALESCE($3,error_message), metric_calls_used=COALESCE($4,metric_calls_used), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE completed_at END WHERE id=$1 AND worker_claim_id=$5 AND worker_lease_expires_at >= now() AND status NOT IN ('completed','stopped','failed') RETURNING *",
-				[
-					input.id,
-					input.status,
-					input.error_message ?? null,
-					input.metric_calls_used ?? null,
-					input.worker_id,
-				],
+"UPDATE prompt_optimization_jobs j SET status=$2, error_message=COALESCE($3,j.error_message), metric_calls_used=COALESCE($4,j.metric_calls_used), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE j.completed_at END FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$5 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() AND j.status NOT IN ('completed','stopped','failed') RETURNING j.*",
+[
+	input.id,
+	input.status,
+	input.error_message ?? null,
+	input.metric_calls_used ?? null,
+	input.worker_id,
+],
 			)
 		)[0];
 		if (!row) throw fail("CONFLICT", "Optimization job is no longer active");
@@ -460,7 +460,7 @@ export async function publishOptimizationResult(
 		const jobRow = (
 			await rows(
 				client,
-				"SELECT * FROM prompt_optimization_jobs WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() FOR UPDATE",
+				"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id=j.project_id WHERE j.id=$1 AND j.worker_claim_id=$2 AND p.status = 'active' AND j.worker_lease_expires_at >= now() FOR UPDATE OF j, p",
 				[input.id, input.worker_id],
 			)
 		)[0];
@@ -499,7 +499,7 @@ export async function publishOptimizationResult(
 		);
 		await rows(
 			client,
-			"UPDATE prompt_optimization_jobs SET status='completed',result_version=$2,updated_at=now(),completed_at=now() WHERE id=$1",
+			"UPDATE prompt_optimization_jobs j SET status='completed',result_version=$2,updated_at=now(),completed_at=now() FROM projects p WHERE j.id=$1 AND p.id=j.project_id AND p.status = 'active'",
 			[job.id, version],
 		);
 		await rows(

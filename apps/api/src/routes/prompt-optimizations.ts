@@ -561,10 +561,7 @@ async function run(
 				id: job.id,
 				worker_id: workerId,
 				status: "failed",
-				error_message:
-					cause instanceof Error
-						? cause.message.slice(0, 240)
-						: "Worker failed",
+				error_message: "Optimization worker failed",
 			});
 		} catch {
 			// A stopped job is terminal and wins every worker failure race.

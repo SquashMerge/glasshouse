@@ -6,7 +6,7 @@ import {
 } from "../../src/db/experiments";
 
 describe("durable experiment task ledger", () => {
-	it("atomically claims one pending or expired task with a lease", async () => {
+	it("does not claim a task from an archived project", async () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const db = {
 			query: async (text: string, values: unknown[] = []) => {
@@ -40,9 +40,10 @@ describe("durable experiment task ledger", () => {
 		expect(calls[0]?.text).toContain("lease_expires_at <= now()");
 		expect(calls[0]?.text).toContain("t.status = 'pending'");
 		expect(calls[0]?.text).toContain("e.status = 'running'");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 	});
 
-	it("only finalizes the worker's live lease while the experiment is still running", async () => {
+	it("does not finalize a task after its project is archived during work", async () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const db = {
 			query: async (text: string, values: unknown[] = []) => {
@@ -66,6 +67,7 @@ describe("durable experiment task ledger", () => {
 		expect(finalized).toBe(true);
 		expect(calls[0]?.text).toContain("t.lease_token = $4::uuid");
 		expect(calls[0]?.text).toContain("e.status = 'running'");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 		expect(calls[0]?.text).toContain(
 			"ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
 		);
@@ -91,6 +93,7 @@ describe("durable experiment task ledger", () => {
 
 		expect(await listRecoverableExperiments(db)).toHaveLength(1);
 		expect(calls[0]?.text).toContain("status IN ('pending', 'running')");
-		expect(calls[0]?.text).toContain("ORDER BY created_at ASC");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
+		expect(calls[0]?.text).toContain("ORDER BY e.created_at ASC");
 	});
 });
