@@ -10,24 +10,7 @@ import {
 } from "./tenancy.js";
 import { loginRoute, handleLogin } from "./routes/auth.js";
 import { otlpIngestRoute, handleOtlpIngest } from "./routes/otlp.js";
-import {
-	createAgent,
-	handleCreateAgent,
-	listAgents,
-	handleListAgents,
-	getAgent,
-	handleGetAgent,
-	patchAgent,
-	handlePatchAgent,
-	deleteAgent,
-	handleDeleteAgent,
-	syncAgent,
-	handleSyncAgent,
-	runAgent,
-	handleRunAgent,
-	listAgentVersions,
-	handleListAgentVersions,
-} from "./routes/agents.js";
+
 import {
 	createExperiment,
 	handleCreateExperiment,
@@ -121,12 +104,7 @@ import {
 	deleteDatasetItem,
 	handleDeleteDatasetItem,
 } from "./routes/datasets.js";
-import {
-	createScore,
-	handleCreateScore,
-	getScore,
-	handleGetScore,
-} from "./routes/scores.js";
+
 import {
 	createFeedbackRoute,
 	handleCreateFeedback,
@@ -192,17 +170,6 @@ register(otlpIngestRoute, async (c: Context) => {
 	}
 });
 
-register(createAgent, handleCreateAgent);
-register(listAgents, handleListAgents);
-register(getAgent, (c: Context) => handleGetAgent(c.req.param("id")!));
-register(patchAgent, (c: Context) => handlePatchAgent(c.req.param("id")!));
-register(deleteAgent, (c: Context) => handleDeleteAgent(c.req.param("id")!));
-register(syncAgent, (c: Context) => handleSyncAgent(c.req.param("id")!));
-register(runAgent, (c: Context) => handleRunAgent(c.req.param("id")!));
-register(listAgentVersions, (c: Context) =>
-	handleListAgentVersions(c.req.param("id")!),
-);
-
 register(createExperiment, handleCreateExperiment);
 register(listExperiments, handleListExperiments);
 register(getExperiment, handleGetExperiment);
@@ -254,9 +221,6 @@ register(createFeedbackRoute, handleCreateFeedback);
 register(listFeedbackRoute, handleListFeedback);
 register(promoteFeedbackRoute, handlePromoteFeedback);
 register(reviewFeedbackRoute, handleReviewFeedback);
-
-register(createScore, handleCreateScore);
-register(getScore, (c: Context) => handleGetScore(c.req.param("id")!));
 
 openapiApp.doc("/openapi.json", {
 	openapi: "3.1.0",

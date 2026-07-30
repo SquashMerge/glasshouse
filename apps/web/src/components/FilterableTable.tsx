@@ -78,6 +78,9 @@ export interface FilterableTableProps<TRow> {
 		filters: Record<string, string>,
 		timeRange: TimeRange,
 	) => void;
+	/** Initial URL-backed state. The host owns persisting subsequent changes. */
+	initialFilters?: Record<string, string>;
+	initialTimeRange?: TimeRange;
 
 	/**
 	 * Set of row keys currently in the "briefly highlighted" state (e.g. just
@@ -110,20 +113,24 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 		rowKey,
 		onRowClick,
 		onFiltersChange,
+		initialFilters,
+		initialTimeRange,
 		highlightedKeys,
 		highlightedVersions,
 		headerActions,
 		disableHighlightTimeout = false,
 	} = props;
 	const totalColCount = columns.length;
-	const leadingSpacerCount = Math.max(0, columns.length - filterFields.length);
 
-	const [filters, setFilters] = React.useState<Record<string, string>>(() =>
-		emptyFilters(filterFields),
-	);
+	const [filters, setFilters] = React.useState<Record<string, string>>(() => ({
+		...emptyFilters(filterFields),
+		...initialFilters,
+	}));
 	const [debouncedFilters, setDebouncedFilters] =
 		React.useState<Record<string, string>>(filters);
-	const [timeRange, setTimeRange] = React.useState<TimeRange>(defaultRange());
+	const [timeRange, setTimeRange] = React.useState<TimeRange>(
+		initialTimeRange ?? defaultRange,
+	);
 	const [debouncedTimeRange, setDebouncedTimeRange] =
 		React.useState<TimeRange>(timeRange);
 
@@ -210,6 +217,11 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 				)}
 
 				<TimeRangePicker value={timeRange} onChange={setTimeRange} />
+				<FilterBar
+					filterFields={filterFields}
+					filters={filters}
+					setFilter={setFilter}
+				/>
 
 				<Table>
 					<TableHeader>
@@ -222,12 +234,6 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 						</TableRow>
 					</TableHeader>
 					<TableBody>
-						<FilterRow
-							filterFields={filterFields}
-							filters={filters}
-							setFilter={setFilter}
-							leadingSpacerCount={leadingSpacerCount}
-						/>
 						{isLoading && items.length === 0 ? (
 							Array.from({ length: 8 }).map((_, i) => (
 								<TableRow key={`s-${i}`}>
@@ -301,34 +307,42 @@ function emptyFilters(fields: FilterFieldDef[]): Record<string, string> {
 	return out;
 }
 
-function FilterRow({
+function FilterBar({
 	filterFields,
 	filters,
 	setFilter,
-	leadingSpacerCount,
 }: {
 	filterFields: FilterFieldDef[];
 	filters: Record<string, string>;
 	setFilter: (key: string, value: string) => void;
-	leadingSpacerCount: number;
 }) {
+	if (filterFields.length === 0) return null;
 	return (
-		<TableRow className="hover:bg-transparent">
-			{Array.from({ length: leadingSpacerCount }).map((_, i) => (
-				<TableCell key={`spacer-${i}`} className="p-1" aria-hidden="true" />
-			))}
-			{filterFields.map((f) => (
-				<TableCell key={f.key} className="p-1">
-					<Input
-						value={filters[f.key] ?? ""}
-						onChange={(e) => setFilter(f.key, e.target.value)}
-						placeholder={f.placeholder}
-						className={cn("h-7 text-xs", f.className)}
-						aria-label={f.placeholder}
-					/>
-				</TableCell>
-			))}
-		</TableRow>
+		<fieldset
+			aria-label="Filters"
+			className="grid grid-cols-1 gap-2 rounded-md border border-border bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-3"
+		>
+			<legend className="px-1 text-xs font-medium text-muted-foreground">
+				Filters
+			</legend>
+			{filterFields.map((field) => {
+				const label = field.key
+					.replaceAll("_", " ")
+					.replace(/\b\w/g, (character) => character.toUpperCase());
+				return (
+					<label key={field.key} className="grid gap-1 text-xs font-medium">
+						<span>{label}</span>
+						<Input
+							value={filters[field.key] ?? ""}
+							onChange={(event) => setFilter(field.key, event.target.value)}
+							placeholder={field.placeholder}
+							className={cn("h-8 text-xs", field.className)}
+							aria-label={label}
+						/>
+					</label>
+				);
+			})}
+		</fieldset>
 	);
 }
 

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	cleanup,
 	fireEvent,
@@ -7,6 +7,7 @@ import {
 	screen,
 	within,
 } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const selection = vi.hoisted(() => ({ selectProject: vi.fn() }));
 
@@ -204,7 +205,14 @@ describe("AppShell project selector", () => {
 	});
 
 	it("does not give the dashboard a narrower page shell", () => {
-		const { container } = render(<DashboardPage />);
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const { container } = render(
+			<QueryClientProvider client={client}>
+				<DashboardPage />
+			</QueryClientProvider>,
+		);
 
 		expect(container.querySelector("main")?.className).not.toMatch(/\bmax-w-/);
 	});
