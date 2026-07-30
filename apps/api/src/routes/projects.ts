@@ -6,7 +6,9 @@ import {
 	CreateProjectInput,
 	Me,
 	MemberInput,
+	OrganizationMember,
 	OrganizationMemberInput,
+	ProjectAuditEvent,
 	Project,
 	ProjectErrorResponses,
 	ProjectList,
@@ -95,6 +97,14 @@ export const listProjectMembers = createRoute({
 	request: { params: projectParams },
 	responses: ok(z.object({ items: z.array(ProjectMember) })),
 });
+export const listProjectAuditEvents = createRoute({
+	method: "get",
+	path: "/v1/projects/{id}/audit-events",
+	tags: ["projects"],
+	security: [{ basicAuth: [] }],
+	request: { params: projectParams },
+	responses: ok(z.object({ items: z.array(ProjectAuditEvent) })),
+});
 export const putProjectMember = createRoute({
 	method: "put",
 	path: "/v1/projects/{id}/members/{actor}",
@@ -125,9 +135,22 @@ export const putOrganizationMember = createRoute({
 			content: { "application/json": { schema: OrganizationMemberInput } },
 		},
 	},
-	responses: ok(
-		z.object({ actor_subject: z.string(), role: z.enum(["owner", "member"]) }),
-	),
+	responses: ok(OrganizationMember),
+});
+export const listOrganizationMembers = createRoute({
+	method: "get",
+	path: "/v1/organization/members",
+	tags: ["projects"],
+	security: [{ basicAuth: [] }],
+	responses: ok(z.object({ items: z.array(OrganizationMember) })),
+});
+export const deleteOrganizationMember = createRoute({
+	method: "delete",
+	path: "/v1/organization/members/{actor}",
+	tags: ["projects"],
+	security: [{ basicAuth: [] }],
+	request: { params: organizationMemberParams },
+	responses: { 204: { description: "Deleted" }, ...ProjectErrorResponses },
 });
 
 type Row = {
@@ -146,6 +169,23 @@ const project = (row: Row) => ({
 function failure(c: Context, error: unknown): Response {
 	const message =
 		error instanceof Error ? error.message : "Project operation failed";
+	const code =
+		typeof error === "object" && error !== null && "code" in error
+			? (error as { code?: string }).code
+			: undefined;
+	if (code === "23505")
+		return c.json(
+			{ code: "CONFLICT", message: "Project slug is already in use" },
+			409,
+		);
+	if (code === "23503")
+		return c.json(
+			{
+				code: "CONFLICT",
+				message: "Organization member has project memberships",
+			},
+			409,
+		);
 	if (message.includes("final") || message.includes("cannot restore"))
 		return c.json({ code: "CONFLICT", message }, 409);
 	if (message === "Forbidden")
@@ -243,15 +283,18 @@ export async function handleUpdateProject(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
 		const tenant = await role(c, id, true);
+		const input = (c.req as any).valid("json");
 		const rows = await pgPool().query<Row>(
-			"UPDATE projects SET name = $1, updated_at = now() WHERE id = $2 AND organization_id = $3 RETURNING id, name, slug, status, created_at, archived_at",
-			[(c.req as any).valid("json").name, id, tenant.organizationId],
+			"WITH p AS (UPDATE projects SET name = COALESCE($1, name), slug = COALESCE($2, slug), updated_at = now() WHERE id = $3 AND organization_id = $4 RETURNING id, name, slug, status, created_at, archived_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $5, 'project_updated' FROM p) SELECT * FROM p",
+			[
+				input.name ?? null,
+				input.slug ?? null,
+				id,
+				tenant.organizationId,
+				tenant.actor,
+			],
 		);
 		if (!rows.rows[0]) throw new Error("Not found");
-		await pgPool().query(
-			"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated')",
-			[tenant.organizationId, id, tenant.actor],
-		);
 		return c.json(project(rows.rows[0]));
 	} catch (error) {
 		return failure(c, error);
@@ -292,6 +335,29 @@ export async function handleListProjectMembers(c: Context) {
 			created_at: Date;
 		}>(
 			"SELECT actor_subject, role, created_at FROM project_memberships WHERE project_id = $1 ORDER BY actor_subject",
+			[id],
+		);
+		return c.json({
+			items: rows.rows.map((row) => ({
+				...row,
+				created_at: row.created_at.toISOString(),
+			})),
+		});
+	} catch (error) {
+		return failure(c, error);
+	}
+}
+export async function handleGetProjectAuditEvents(c: Context) {
+	try {
+		const id = (c.req as any).valid("param").id;
+		await role(c, id, true);
+		const rows = await pgPool().query<{
+			id: string;
+			actor_subject: string;
+			event_type: string;
+			created_at: Date;
+		}>(
+			"SELECT id, actor_subject, event_type, created_at FROM project_authorization_audit_events WHERE project_id = $1 ORDER BY created_at, id",
 			[id],
 		);
 		return c.json({
@@ -357,15 +423,60 @@ export async function handlePutOrganizationMember(c: Context) {
 		const row = await pgPool().query<{
 			actor_subject: string;
 			role: "owner" | "member";
+			created_at: Date;
 		}>(
-			"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, $3) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role",
+			"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, $3) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_subject, role, created_at",
 			[tenant.organizationId, actor, input.role],
 		);
 		await pgPool().query(
 			"INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) VALUES ($1, $2, 'organization_membership_updated')",
 			[tenant.organizationId, tenant.actor],
 		);
-		return c.json(row.rows[0]);
+		const value = row.rows[0];
+		if (!value) throw new Error("Not found");
+		return c.json({
+			...value,
+			created_at: value.created_at.toISOString(),
+		});
+	} catch (error) {
+		return failure(c, error);
+	}
+}
+export async function handleListOrganizationMembers(c: Context) {
+	try {
+		const tenant = await role(c, undefined, false, true);
+		const rows = await pgPool().query<{
+			actor_subject: string;
+			role: "owner" | "member";
+			created_at: Date;
+		}>(
+			"SELECT actor_subject, role, created_at FROM organization_memberships WHERE organization_id = $1 ORDER BY actor_subject",
+			[tenant.organizationId],
+		);
+		return c.json({
+			items: rows.rows.map((row) => ({
+				...row,
+				created_at: row.created_at.toISOString(),
+			})),
+		});
+	} catch (error) {
+		return failure(c, error);
+	}
+}
+export async function handleDeleteOrganizationMember(c: Context) {
+	try {
+		const tenant = await role(c, undefined, false, true);
+		const { actor } = (c.req as any).valid("param");
+		const deleted = await pgPool().query(
+			"DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
+			[tenant.organizationId, actor],
+		);
+		if (!deleted.rowCount) throw new Error("Not found");
+		await pgPool().query(
+			"INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) VALUES ($1, $2, 'organization_membership_removed')",
+			[tenant.organizationId, tenant.actor],
+		);
+		return c.body(null, 204);
 	} catch (error) {
 		return failure(c, error);
 	}

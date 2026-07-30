@@ -96,6 +96,21 @@ Add typed Zod/OpenAPI routes and generated clients for:
   restore;
 - owner/manager-governed Project membership management.
 
+`PATCH /v1/projects/{id}` accepts a non-empty subset of `name` and `slug`.
+Names and slugs use the same validation as creation; slugs remain unique within
+an organization, and a collision returns a content-free `409`. Project IDs are
+immutable across metadata and lifecycle changes. `GET
+/v1/projects/{id}/audit-events` exposes the Project's content-free lifecycle
+and membership evidence only to organization owners and managers authorized for
+that Project. Unauthorized Project targets return the same non-enumerating
+response as other Project lifecycle routes.
+
+Organization owners manage the organization membership directory through
+`GET /v1/organization/members` and `PUT` or `DELETE
+/v1/organization/members/{actor}`. Deletion preserves the database
+final-owner safeguard and is audited; an actor with Project memberships must be
+removed from those Projects before organization membership deletion.
+
 Projects have stable IDs. Archive is non-destructive, removes a Project from
 normal selection, and blocks new product-data writes until explicit restore.
 

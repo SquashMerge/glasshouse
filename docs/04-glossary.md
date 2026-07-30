@@ -43,9 +43,9 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 ## Core entities
 
 - **Organization** — top-level authenticated tenancy boundary. Basic-auth credentials resolve to an immutable actor subject and one organization. Organization owners manage organization membership and may create Projects.
-- **Project** — organization-owned workspace and data boundary (`project_id` on stored application and observability data). A Project is `active` or non-destructively `archived`; product access requires explicit active Project membership.
-- **Project membership** — an actor's `manager` or `member` role within one Project. Managers govern membership and lifecycle; members use product data.
-- **Authorization audit event** — append-only, content-free PostgreSQL evidence for workspace bootstrap, membership, and lifecycle actions.
+- **Project** — organization-owned workspace and data boundary (`project_id` on stored application and observability data). A Project is `active` or non-destructively `archived`; product access requires explicit active Project membership. Its UUID is immutable; its validated slug is unique within its organization.
+- **Project membership** — an actor's `manager` or `member` role within one Project. Managers govern membership and lifecycle; members use product data. Organization owners manage the organization membership directory and override Project-manager authorization.
+- **Authorization audit event** — append-only, content-free PostgreSQL evidence for workspace bootstrap, membership, and lifecycle actions. `GET /v1/projects/{id}/audit-events` is visible only to organization owners and managers authorized for that Project.
 - **Agent** — versioned, typed entity. Multi-tenant, versioned, has a version history.
 - **Manifest** — serialized form of an Agent (prompts + tools + routing + guardrails + knowledge + deps as one atomic unit). Pinned to eval runs for bisectable regressions and atomic rollback.
 - **Prompt** — immutable collection of up to one system and one user Mustache message, scoped to a Project; its canonical public ID is the Project-local slug, while `slug@version` is display-only. See `apps/api/src/db/prompts.ts`.

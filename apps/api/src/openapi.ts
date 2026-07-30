@@ -66,14 +66,18 @@ import {
 import {
 	archiveProject,
 	createProject,
+	deleteOrganizationMember,
 	deleteProjectMember,
 	getMe,
 	getProject,
 	handleArchiveProject,
 	handleCreateProject,
+	handleDeleteOrganizationMember,
 	handleDeleteProjectMember,
 	handleGetMe,
 	handleGetProject,
+	handleGetProjectAuditEvents,
+	handleListOrganizationMembers,
 	handleListProjectMembers,
 	handleListProjects,
 	handlePutOrganizationMember,
@@ -81,6 +85,8 @@ import {
 	handleRestoreProject,
 	handleUpdateProject,
 	listProjectMembers,
+	listOrganizationMembers,
+	listProjectAuditEvents,
 	listProjects,
 	putOrganizationMember,
 	putProjectMember,
@@ -228,9 +234,12 @@ register(updateProject, handleUpdateProject);
 register(archiveProject, handleArchiveProject);
 register(restoreProject, handleRestoreProject);
 register(listProjectMembers, handleListProjectMembers);
+register(listProjectAuditEvents, handleGetProjectAuditEvents);
 register(putProjectMember, handlePutProjectMember);
 register(deleteProjectMember, handleDeleteProjectMember);
 register(putOrganizationMember, handlePutOrganizationMember);
+register(listOrganizationMembers, handleListOrganizationMembers);
+register(deleteOrganizationMember, handleDeleteOrganizationMember);
 register(listPrompts, handleListPrompts);
 register(createPrompt, handleCreatePrompt);
 register(previewPrompt, handlePreviewPrompt);

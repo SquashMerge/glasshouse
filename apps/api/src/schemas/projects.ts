@@ -23,6 +23,23 @@ export const ProjectMember = z
 	})
 	.strict()
 	.openapi("ProjectMember");
+export const OrganizationMember = z
+	.object({
+		actor_subject: z.string().min(1),
+		role: OrganizationRole,
+		created_at: z.string().datetime(),
+	})
+	.strict()
+	.openapi("OrganizationMember");
+export const ProjectAuditEvent = z
+	.object({
+		id: z.string().uuid(),
+		actor_subject: z.string().min(1),
+		event_type: z.string().min(1),
+		created_at: z.string().datetime(),
+	})
+	.strict()
+	.openapi("ProjectAuditEvent");
 export const ProjectList = z
 	.object({ items: z.array(Project), total: z.number().int().nonnegative() })
 	.strict()
@@ -36,20 +53,25 @@ export const Me = z
 	})
 	.strict()
 	.openapi("CurrentActor");
+const ProjectName = z.string().trim().min(1).max(200);
+const ProjectSlug = z
+	.string()
+	.trim()
+	.min(1)
+	.max(100)
+	.regex(/^[a-z0-9][a-z0-9-]*$/);
 export const CreateProjectInput = z
 	.object({
-		name: z.string().trim().min(1).max(200),
-		slug: z
-			.string()
-			.trim()
-			.min(1)
-			.max(100)
-			.regex(/^[a-z0-9][a-z0-9-]*$/),
+		name: ProjectName,
+		slug: ProjectSlug,
 	})
 	.strict();
 export const UpdateProjectInput = z
-	.object({ name: z.string().trim().min(1).max(200) })
-	.strict();
+	.object({ name: ProjectName.optional(), slug: ProjectSlug.optional() })
+	.strict()
+	.refine((value) => value.name !== undefined || value.slug !== undefined, {
+		message: "At least one project field is required",
+	});
 export const MemberInput = z
 	.object({
 		actor_subject: z.string().trim().min(1).max(200),
@@ -77,6 +99,10 @@ export const ProjectErrorResponses = {
 	},
 	404: {
 		description: "Not found",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	409: {
+		description: "Conflict",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	500: {
