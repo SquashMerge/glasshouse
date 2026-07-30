@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 
 export function DashboardPage() {
 	return (
-		<main className="mx-auto max-w-3xl px-6 py-16">
+		<main className="py-16">
 			<header className="mb-12">
 				<h1 className="text-4xl font-semibold tracking-tight">
 					Operations overview
