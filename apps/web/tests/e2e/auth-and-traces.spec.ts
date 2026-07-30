@@ -144,7 +144,7 @@ test.describe("Shared app workspace", () => {
 				await page.goto(route);
 				const workspace = page.locator("main.flex-1 > div[data-hydrated='1']");
 				await expect(workspace).toBeVisible();
-				await expect(workspace).toHaveClass("max-w-none");
+				await expect(workspace).toHaveClass(/(^|\s)max-w-none(\s|$)/);
 
 				const bounds = await workspace.boundingBox();
 				expect(bounds).not.toBeNull();
