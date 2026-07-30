@@ -344,7 +344,7 @@ describe("prompt optimization repository", () => {
 		expect(JSON.parse(insert?.values[5] as string)).toEqual(snapshot);
 	});
 
-	it("allows exactly one concurrent worker claim", async () => {
+	it("does not claim an optimization job from an archived project", async () => {
 		const pool = new ClaimPool();
 		const [first, second] = await Promise.all([
 			claimOptimizationJob(pool as unknown as Pick<Pool, "connect">, {
@@ -362,6 +362,9 @@ describe("prompt optimization repository", () => {
 				call.includes("worker_lease_expires_at < now()"),
 			),
 		).toBe(true);
+		expect(
+			pool.calls.some((call) => call.includes("p.status = 'active'")),
+		).toBe(true);
 	});
 
 	it("renews only the current worker lease", async () => {
@@ -378,6 +381,7 @@ describe("prompt optimization repository", () => {
 		).toBe(true);
 		expect(calls[0]?.text).toContain("worker_claim_id=$2");
 		expect(calls[0]?.text).toContain("worker_lease_expires_at >= now()");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 	});
 
 	it("reclaims an expired lease while preserving one owner per claim attempt", async () => {
@@ -399,7 +403,7 @@ describe("prompt optimization repository", () => {
 		);
 	});
 
-	it("rejects publication by a worker whose lease was reclaimed", async () => {
+	it("does not publish after an optimization project is archived during work", async () => {
 		const pool = new MockPool([{ rows: [] }, { rows: [] }, { rows: [] }]);
 		await expect(
 			publishOptimizationResult(transactionPool(pool), {
@@ -411,6 +415,7 @@ describe("prompt optimization repository", () => {
 		expect(pool.client.calls[1]?.text).toContain(
 			"worker_lease_expires_at >= now()",
 		);
+		expect(pool.client.calls[1]?.text).toContain("p.status = 'active'");
 	});
 
 	it("reuses the active start row without recording a second queued event", async () => {
@@ -466,7 +471,7 @@ describe("prompt optimization repository", () => {
 		);
 	});
 
-	it("marks incomplete jobs failed after an API restart", async () => {
+	it("does not fail archived jobs during restart recovery", async () => {
 		const calls: Call[] = [];
 		const pool = {
 			query: async (text: string, values: unknown[] = []) => {
@@ -482,5 +487,6 @@ describe("prompt optimization repository", () => {
 			"status IN ('queued','preparing','optimizing','evaluating')",
 		);
 		expect(calls[0]?.text).toContain("SET status='failed'");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 	});
 });

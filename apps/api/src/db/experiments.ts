@@ -185,7 +185,7 @@ export async function updateExperiment(
 				: [input.if_status]
 			: null;
 		const r = await db.query(
-			`UPDATE experiments SET status=$1, updated_at=now() WHERE id=$2 AND project_id=$3${expected ? " AND status = ANY($4::text[])" : ""} RETURNING *`,
+			`UPDATE experiments e SET status=$1, updated_at=now() FROM projects p WHERE e.id=$2 AND e.project_id=$3 AND p.id=e.project_id AND p.status = 'active'${expected ? " AND e.status = ANY($4::text[])" : ""} RETURNING e.*`,
 			expected
 				? [input.status, input.id, input.project_id, expected]
 				: [input.status, input.id, input.project_id],
@@ -203,7 +203,7 @@ export async function updateExperiment(
 export async function listRecoverableExperiments(db: Queryable) {
 	try {
 		const result = await db.query(
-			"SELECT id, project_id, dataset_id, config FROM experiments WHERE status IN ('pending', 'running') ORDER BY created_at ASC",
+			"SELECT e.id, e.project_id, e.dataset_id, e.config FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.status IN ('pending', 'running') AND p.status = 'active' ORDER BY e.created_at ASC",
 		);
 		return result.rows.map((row) => ({
 			id: text(row, "id"),
@@ -231,9 +231,11 @@ export async function claimExperimentTask(
 				SELECT t.id
 				FROM experiment_tasks t
 				JOIN experiments e ON e.id = t.experiment_id
+				JOIN projects p ON p.id = e.project_id
 				WHERE t.experiment_id = $1
 					AND e.project_id = $2
 					AND e.status = 'running'
+					AND p.status = 'active'
 					AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_expires_at <= now()))
 				ORDER BY t.created_at ASC
 				FOR UPDATE OF t SKIP LOCKED
@@ -277,8 +279,8 @@ export async function nextExperimentTaskRetryDelay(
 	try {
 		const r = await db.query(
 			`SELECT ceil(extract(epoch FROM min(t.lease_expires_at) - now()) * 1000)::int AS delay_ms
-			FROM experiment_tasks t JOIN experiments e ON e.id = t.experiment_id
-			WHERE t.experiment_id = $1 AND e.project_id = $2 AND e.status = 'running'
+			FROM experiment_tasks t JOIN experiments e ON e.id = t.experiment_id JOIN projects p ON p.id=e.project_id
+			WHERE t.experiment_id = $1 AND e.project_id = $2 AND e.status = 'running' AND p.status = 'active'
 				AND t.status = 'running' AND t.lease_expires_at > now()`,
 			[input.experiment_id, input.project_id],
 		);
@@ -308,10 +310,11 @@ export async function finalizeExperimentTask(
 				UPDATE experiment_tasks t
 				SET status = $5, lease_token = NULL, lease_expires_at = NULL,
 					completed_at = now(), updated_at = now()
-				FROM experiments e
+			FROM experiments e
+			JOIN projects p ON p.id = e.project_id
 				WHERE t.id = $1 AND t.experiment_id = $2 AND e.id = t.experiment_id
 					AND e.project_id = $3 AND t.lease_token = $4::uuid
-					AND t.status = 'running' AND e.status = 'running'
+					AND t.status = 'running' AND e.status = 'running' AND p.status = 'active'
 				RETURNING t.experiment_id, t.dataset_item_id
 			), inserted_result AS (
 				INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status)
@@ -345,7 +348,7 @@ export async function completeExperimentIfTasksFinished(
 	try {
 		const r = await db.query(
 			`UPDATE experiments e SET status='completed', updated_at=now()
-			WHERE e.id=$1 AND e.project_id=$2 AND e.status='running'
+			FROM projects p WHERE e.id=$1 AND e.project_id=$2 AND p.id=e.project_id AND p.status = 'active' AND e.status='running'
 				AND NOT EXISTS (
 					SELECT 1 FROM experiment_tasks t
 					WHERE t.experiment_id=e.id AND t.status IN ('pending', 'running')
