@@ -40,7 +40,7 @@ export async function resolveAuthorizedProjectScope(
 		project_role: "manager" | "member";
 		status: "active" | "archived";
 	}>(
-		"SELECT om.role AS organization_role, pm.role AS project_role, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
+		"SELECT om.role AS organization_role, CASE WHEN om.role = 'owner' THEN 'manager' ELSE pm.role END AS project_role, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
 		[projectId, tenant.organizationId, tenant.actor],
 	);
 	const row = result.rows[0];
