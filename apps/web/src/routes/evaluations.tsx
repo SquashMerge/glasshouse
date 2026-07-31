@@ -15,6 +15,7 @@ import {
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Select } from "../components/ui/select";
 import { PageMessage } from "./prompts";
 import { useEventSource } from "../hooks/useEventSource";
 export function EvaluationsPage() {
@@ -96,11 +97,10 @@ export function EvaluationsPage() {
 				</p>
 			</div>
 			<section className="grid gap-2 rounded border p-4">
-				<label className="text-sm" htmlFor="evaluation-dataset">
+				<label className="block space-y-2 text-sm" htmlFor="evaluation-dataset">
 					Dataset
-					<select
+					<Select
 						id="evaluation-dataset"
-						className="h-9 rounded border px-2"
 						value={datasetId}
 						onChange={(event) => setDatasetId(event.target.value)}
 					>
@@ -110,42 +110,44 @@ export function EvaluationsPage() {
 								{dataset.name}
 							</option>
 						))}
-					</select>
+					</Select>
 				</label>
-				<label className="text-sm">
+				<label className="block space-y-2 text-sm">
 					Evaluation name
 					<Input
 						value={name}
 						onChange={(event) => setName(event.target.value)}
 					/>
 				</label>
-				<label className="text-sm">
+				<label className="block space-y-2 text-sm">
 					Model (optional)
 					<Input
 						value={model}
 						onChange={(event) => setModel(event.target.value)}
 					/>
 				</label>
-				<label className="text-sm">
+				<label className="block space-y-2 text-sm">
 					System prompt (optional)
 					<Input
 						value={systemPrompt}
 						onChange={(event) => setSystemPrompt(event.target.value)}
 					/>
 				</label>
-				<label className="text-sm" htmlFor="evaluation-evaluator">
+				<label
+					className="block space-y-2 text-sm"
+					htmlFor="evaluation-evaluator"
+				>
 					Evaluator
-					<select
+					<Select
 						id="evaluation-evaluator"
-						className="h-9 rounded border px-2"
 						value={evaluator}
 						onChange={(event) => setEvaluator(event.target.value)}
 					>
 						<option value="exact_match">Exact match</option>
 						<option value="contains">Contains</option>
-					</select>
+					</Select>
 				</label>
-				<label className="text-sm">
+				<label className="block space-y-2 text-sm">
 					Temperature
 					<Input
 						type="number"

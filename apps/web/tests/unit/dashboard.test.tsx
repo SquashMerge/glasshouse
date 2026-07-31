@@ -47,4 +47,57 @@ describe("operations dashboard", () => {
 			screen.getByRole("button", { name: "Copy OTLP setup" }),
 		).toBeInTheDocument();
 	});
+
+	it("keeps dashboard sections and cards visually separated", async () => {
+		const { container } = render(
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
+				<DashboardPage />
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText("Service health");
+		expect(container.querySelector("main")).toHaveClass("space-y-8");
+		expect(screen.getByLabelText("Telemetry summary")).toHaveClass("gap-6");
+		expect(
+			screen.getByLabelText("Telemetry summary").firstElementChild,
+		).toHaveClass("shadow-sm");
+		expect(screen.getByLabelText("Dashboard actions")).toHaveClass("gap-6");
+		expect(
+			screen.getByLabelText("Dashboard actions").firstElementChild,
+		).toHaveClass("shadow-sm");
+	});
+
+	it("gives each non-summary dashboard card the same top content padding", async () => {
+		render(
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
+				<DashboardPage />
+			</QueryClientProvider>,
+		);
+
+		const serviceHealth = await screen.findByText("Service health");
+		expect(serviceHealth.parentElement).toHaveClass("p-5", "pt-5");
+
+		const recentTraces = screen.getByRole("heading", {
+			name: "Recent traces",
+			level: 2,
+		});
+		expect(recentTraces.parentElement?.parentElement).toHaveClass(
+			"p-5",
+			"pt-5",
+		);
+
+		const firstTrace = screen.getByRole("heading", {
+			name: "Send your first trace",
+			level: 2,
+		});
+		expect(firstTrace.parentElement).toHaveClass("p-5", "pt-5");
+	});
 });
