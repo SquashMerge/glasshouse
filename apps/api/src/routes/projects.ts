@@ -326,26 +326,6 @@ export async function handleUpdateProject(c: Context) {
 		return failure(c, error);
 	}
 }
-async function _lifecycle(c: Context, status: "active" | "archived") {
-	try {
-		const id = (c.req as any).valid("param").id;
-		const tenant = trustedTenant(c);
-		const rows = await pgPool().query<Row>(
-			"WITH authorization AS MATERIALIZED (SELECT p.id, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR KEY SHARE) pm ON true WHERE p.id = $3 AND p.organization_id = $4 AND (om.role = 'owner' OR pm.role = 'manager') FOR KEY SHARE OF p, om), p AS (UPDATE projects SET status = $1, archived_at = CASE WHEN $1 = 'archived' THEN now() ELSE NULL END, archived_by = CASE WHEN $1 = 'archived' THEN $2 ELSE NULL END, updated_at = now() FROM authorization WHERE projects.id = authorization.id RETURNING projects.id, projects.name, projects.slug, projects.status, projects.created_at, projects.archived_at), cancelled_experiments AS (UPDATE experiments e SET status = 'cancelled', updated_at = now() FROM p WHERE $1 = 'archived' AND e.project_id = p.id AND e.status IN ('pending', 'running') RETURNING e.id), cancelled_tasks AS (UPDATE experiment_tasks t SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, updated_at = now() FROM cancelled_experiments e WHERE t.experiment_id = e.id AND t.status IN ('pending', 'running') RETURNING t.id), stopped_jobs AS (UPDATE prompt_optimization_jobs j SET status = 'stopped', cancel_requested_at = now(), updated_at = now(), completed_at = now() FROM p WHERE $1 = 'archived' AND j.project_id = p.id AND j.status IN ('queued', 'preparing', 'optimizing', 'evaluating') RETURNING j.id), job_events AS (INSERT INTO prompt_optimization_events (job_id, status) SELECT id, 'stopped' FROM stopped_jobs), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $2, $5 FROM p), work_audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $2, 'project_work_cancelled' FROM p WHERE $1 = 'archived') SELECT p.*, authorization.project_role FROM p JOIN authorization ON true",
-			[
-				status,
-				tenant.actor,
-				id,
-				tenant.organizationId,
-				status === "active" ? "project_restored" : "project_archived",
-			],
-		);
-		if (!rows.rows[0]) throw new Error("Not found");
-		return c.json(project(rows.rows[0]));
-	} catch (error) {
-		return failure(c, error);
-	}
-}
 async function serializedLifecycle(c: Context, status: "active" | "archived") {
 	try {
 		const id = (c.req as any).valid("param").id;
@@ -356,7 +336,7 @@ async function serializedLifecycle(c: Context, status: "active" | "archived") {
 			const authorized = await client.query<{
 				project_role: Row["project_role"];
 			}>(
-				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $2 WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om, pm",
+				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
 				[id, tenant.actor, tenant.organizationId],
 			);
 			if (!authorized.rows[0]) throw new Error("Not found");
