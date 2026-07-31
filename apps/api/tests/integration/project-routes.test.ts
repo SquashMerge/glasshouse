@@ -492,6 +492,15 @@ describe("project authorization routes", () => {
 			);
 			expect(sql).toContain("SELECT");
 		}
+		expect(
+			mutations
+				.filter((sql) => sql.includes("'organization_membership_"))
+				.every(
+					(sql) =>
+						sql.includes("audit_project AS MATERIALIZED") &&
+						sql.includes("projects WHERE organization_id = $1"),
+				),
+		).toBe(true);
 	});
 
 	it("serializes archive-time work cancellation with the project row", async () => {
