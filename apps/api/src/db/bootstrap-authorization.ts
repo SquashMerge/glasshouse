@@ -40,7 +40,7 @@ export async function bootstrapAuthorization(
 		);
 		if (owner.rowCount)
 			await client.query(
-				"INSERT INTO project_authorization_audit_events (organization_id, actor_subject, event_type) VALUES ($1, $2, 'bootstrap_owner_added')",
+				"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, id, $2, 'bootstrap_owner_added' FROM projects WHERE organization_id = $1 ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1",
 				[credential.organizationId, credential.username],
 			);
 		await client.query("COMMIT");

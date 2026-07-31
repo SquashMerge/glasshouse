@@ -53,6 +53,14 @@ describe("bootstrap authorization", () => {
 				sql.includes("SELECT id, $1, $2, 'manager' FROM projects"),
 			),
 		).toBe(true);
+		expect(
+			queries.some(
+				({ sql }) =>
+					sql.includes("bootstrap_owner_added") &&
+					sql.includes("project_id") &&
+					sql.includes("WHERE organization_id = $1"),
+			),
+		).toBe(true);
 		expect(ended).toBe(true);
 	});
 });
