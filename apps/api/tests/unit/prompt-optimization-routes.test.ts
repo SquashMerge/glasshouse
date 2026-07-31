@@ -19,45 +19,6 @@ const getLatest = mock(
 		return null;
 	},
 );
-const get = mock(async () => ({
-	id: "33333333-3333-4333-8333-333333333333",
-	project_id: PROJECT,
-	prompt_id: "44444444-4444-4444-8444-444444444444",
-	prompt_slug: "daily-summary",
-	source_version: 2,
-	target: "system" as const,
-	evaluator: { type: "default_adapter" },
-	dataset: {
-		version: 1 as const,
-		rubric: "Preserve deadlines.",
-		training_examples: [
-			{ input: "private training input", answer: "private training answer" },
-		],
-		validation_examples: [
-			{
-				input: "private held-out input",
-				answer: "private held-out answer",
-			},
-		],
-	},
-	dataset_hash: "a".repeat(64),
-	model_config: { task_lm: "private-model" },
-	budget: { max_metric_calls: 5 },
-	status: "completed" as const,
-	requested_by: "private-requester",
-	result_version: null,
-	candidate_content: "Safe candidate {{tasks}}",
-	evidence: null,
-	promotion_status: "review_required" as const,
-	promotion_reason: "insufficient_held_out_validation",
-	reviewed_by: null,
-	promoted_at: null,
-	error_message: null,
-	metric_calls_used: 3,
-	created_at: "2026-07-30T21:37:45.906Z",
-	updated_at: "2026-07-30T21:39:45.325Z",
-	completed_at: "2026-07-30T21:39:45.325Z",
-}));
 const listActivities = mock(async () => [
 	{
 		id: "33333333-3333-4333-8333-333333333333",
@@ -69,6 +30,50 @@ const listActivities = mock(async () => [
 		updated_at: "2026-07-30T21:38:00.000Z",
 	},
 ]);
+
+function privateJob(candidate_content = "Safe candidate {{tasks}}") {
+	return {
+		id: "33333333-3333-4333-8333-333333333333",
+		project_id: PROJECT,
+		prompt_id: "44444444-4444-4444-8444-444444444444",
+		prompt_slug: "daily-summary",
+		source_version: 2,
+		target: "system" as const,
+		evaluator: { type: "default_adapter" },
+		dataset: {
+			version: 1 as const,
+			rubric: "Preserve deadlines.",
+			training_examples: [
+				{ input: "private training input", answer: "private training answer" },
+			],
+			validation_examples: [
+				{
+					input: "private held-out input",
+					answer: "private held-out answer",
+				},
+			],
+		},
+		dataset_hash: "a".repeat(64),
+		model_config: { task_lm: "private-model" },
+		budget: { max_metric_calls: 5 },
+		status: "completed" as const,
+		requested_by: "private-requester",
+		result_version: null,
+		candidate_content,
+		evidence: null,
+		promotion_status: "review_required" as const,
+		promotion_reason: "insufficient_held_out_validation",
+		reviewed_by: null,
+		promoted_at: null,
+		error_message: null,
+		metric_calls_used: 3,
+		created_at: "2026-07-30T21:37:45.906Z",
+		updated_at: "2026-07-30T21:39:45.325Z",
+		completed_at: "2026-07-30T21:39:45.325Z",
+	};
+}
+
+const get = mock(async () => privateJob());
 
 function app() {
 	const handlers = createOptimizationHandlers({
@@ -198,5 +203,19 @@ describe("prompt optimization status routes", () => {
 			project_id: PROJECT,
 			id: "33333333-3333-4333-8333-333333333333",
 		});
+	});
+
+	it("hides legacy candidates that copy protected example material", async () => {
+		get.mockResolvedValueOnce(
+			privateJob("Summarize {{tasks}} with private held-out input."),
+		);
+		const response = await app().request(
+			`/v1/prompt-optimizations/33333333-3333-4333-8333-333333333333?project_id=${PROJECT}`,
+		);
+
+		expect(response.status).toBe(200);
+		const body = await response.json();
+		expect(body).toMatchObject({ candidate_content: null });
+		expect(JSON.stringify(body)).not.toContain("private held-out input");
 	});
 });

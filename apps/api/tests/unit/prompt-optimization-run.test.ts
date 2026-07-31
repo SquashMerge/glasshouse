@@ -174,4 +174,27 @@ describe("optimization completion policy", () => {
 			},
 		});
 	});
+
+	it("blocks an example-input leak before it can reach a draft", async () => {
+		const leakingJob = job();
+		const leakedInput = leakingJob.dataset.validation_examples[0]!.input;
+		const input = dependencies({
+			result: {
+				candidate: `Summarize {{tasks}}. Include this example: ${leakedInput}`,
+				training_score: 1,
+				validation_score: 1,
+				baseline_validation_score: 0,
+				metric_calls_used: 3,
+			},
+		});
+		await runOptimizationJob(leakingJob, input.d);
+
+		expect(input.published).toHaveLength(0);
+		expect(input.completed[0]).toMatchObject({
+			candidate_content: null,
+			promotion_status: "blocked",
+			promotion_reason: "candidate_validation_failed",
+			evidence: { leakage: { status: "passed", reason: null } },
+		});
+	});
 });

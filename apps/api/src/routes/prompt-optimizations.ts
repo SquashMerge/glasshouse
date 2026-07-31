@@ -630,6 +630,7 @@ export function validateGepaCandidate(
 	original: string,
 	candidate: string,
 	expectedAnswers: string[] = [],
+	exampleInputs: string[] = [],
 ): OptimizationLeakage {
 	if (
 		new TextEncoder().encode(candidate).byteLength >
@@ -658,12 +659,40 @@ export function validateGepaCandidate(
 			"BAD_REQUEST",
 			"GEPA candidate contains expected-answer material",
 		);
+	if (checkExpectedAnswerLeakage(candidate, exampleInputs).status === "failed")
+		throw new PromptRepositoryError(
+			"BAD_REQUEST",
+			"GEPA candidate contains example input material",
+		);
 	return leakage;
 }
 
-function expectedAnswers(dataset: OptimizationDataset): string[] {
+type OptimizationDatasetExamples = Pick<
+	OptimizationDataset,
+	"training_examples" | "validation_examples"
+>;
+
+function expectedAnswers(dataset: OptimizationDatasetExamples): string[] {
 	return [...dataset.training_examples, ...dataset.validation_examples].map(
 		(example) => example.answer,
+	);
+}
+
+function exampleInputs(dataset: OptimizationDatasetExamples): string[] {
+	return [...dataset.training_examples, ...dataset.validation_examples].map(
+		(example) => example.input,
+	);
+}
+
+function containsProtectedExampleMaterial(
+	candidate: string,
+	dataset: OptimizationDatasetExamples,
+): boolean {
+	return (
+		checkExpectedAnswerLeakage(candidate, [
+			...expectedAnswers(dataset),
+			...exampleInputs(dataset),
+		]).status === "failed"
 	);
 }
 
@@ -710,6 +739,11 @@ const production: OptimizationDependencies = {
 };
 
 function publicJob(job: OptimizationJob) {
+	const candidateContent =
+		job.candidate_content &&
+		containsProtectedExampleMaterial(job.candidate_content, job.dataset)
+			? null
+			: job.candidate_content;
 	return {
 		id: job.id,
 		prompt_slug: job.prompt_slug,
@@ -725,7 +759,7 @@ function publicJob(job: OptimizationJob) {
 		budget: job.budget,
 		status: job.status,
 		result_version: job.result_version,
-		candidate_content: job.candidate_content,
+		candidate_content: candidateContent,
 		evidence: job.evidence,
 		promotion_status: job.promotion_status,
 		promotion_reason: job.promotion_reason,
@@ -897,6 +931,7 @@ export async function runOptimizationJob(
 				original.content,
 				result.candidate,
 				expectedAnswers(job.dataset),
+				exampleInputs(job.dataset),
 			);
 		} catch {
 			const reason = leakage.reason ?? "candidate_validation_failed";
@@ -1133,6 +1168,7 @@ export function createOptimizationHandlers(
 					original.content,
 					job.candidate_content,
 					expectedAnswers(job.dataset),
+					exampleInputs(job.dataset),
 				);
 				const promoted = await d.promote(d.pool(), {
 					...input,
