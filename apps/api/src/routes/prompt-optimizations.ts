@@ -1,45 +1,46 @@
 import { randomUUID } from "node:crypto";
-import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
+import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import { streamSSE } from "hono/streaming";
+import { pgPool } from "../db/postgres.js";
 import {
 	claimOptimizationJob,
+	createOptimizationJob,
 	getActiveOptimizationJob,
 	getLatestOptimizationJob,
 	getOptimizationJob,
 	listActiveOptimizationActivities,
-	createOptimizationJob,
 	listOptimizationEvents,
+	type OptimizationJob,
 	optimizationSourceMessages,
 	publishOptimizationResult,
 	recordOptimizationMetricCalls,
 	renewOptimizationJobLease,
 	stopOptimizationJob,
 	transitionOptimizationJob,
-	type OptimizationJob,
 } from "../db/prompt-optimizations.js";
-import { pgPool } from "../db/postgres.js";
-import { PromptRepositoryError } from "../db/prompts.js";
 import type { JsonObject } from "../db/prompts.js";
-import {
-	MAX_OPTIMIZATION_CANDIDATE_BYTES,
-	runGepaWorker,
-	type GepaWorker,
-} from "../lib/gepa-worker.js";
-import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
+import { PromptRepositoryError } from "../db/prompts.js";
 import {
 	GepaConfigurationError,
 	MAX_GEPA_METRIC_CALLS,
 	MIN_GEPA_METRIC_CALLS,
 	validateGepaConfiguration,
 } from "../lib/gepa-config.js";
-import { validatePromptTemplate } from "../lib/prompt-templates.js";
-import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
-import { logger, type LogFields } from "../lib/logger.js";
 import {
-	PromptErrorResponses,
+	type GepaWorker,
+	MAX_OPTIMIZATION_CANDIDATE_BYTES,
+	runGepaWorker,
+} from "../lib/gepa-worker.js";
+import { logger, type LogFields } from "../lib/logger.js";
+import { validatePromptTemplate } from "../lib/prompt-templates.js";
+import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
+import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
+import {
 	ProjectIdQuery,
+	PromptErrorResponses,
 	PromptId,
 } from "../schemas/prompts.js";
+import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
 
 const tag = "prompt-optimization";
 const Status = z.enum([
@@ -712,6 +713,11 @@ export function createOptimizationHandlers(
 					let last = 0;
 					try {
 						while (!stream.aborted) {
+							await assertTenantProjectAccess(
+								d.pool(),
+								trustedTenant(c),
+								input.project_id,
+							);
 							const next = nextOptimizationEvents(
 								await d.events(d.pool(), input),
 								last,
@@ -727,8 +733,11 @@ export function createOptimizationHandlers(
 							if (next.terminal) return;
 							await new Promise((resolve) => setTimeout(resolve, 500));
 						}
-					} catch {
-						if (!stream.aborted)
+					} catch (cause) {
+						if (
+							!stream.aborted &&
+							!(cause instanceof Error && cause.name === "TenantScopeError")
+						)
 							await stream.writeSSE({
 								event: "error",
 								data: JSON.stringify({

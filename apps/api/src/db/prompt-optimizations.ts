@@ -188,7 +188,7 @@ export async function createOptimizationJob(
 		const project = (
 			await rows(
 				client,
-				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR KEY SHARE",
+				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
 				[input.project_id],
 			)
 		)[0];
@@ -252,7 +252,7 @@ export async function getOptimizationJob(
 	const row = (
 		await rows(
 			pool,
-			"SELECT * FROM prompt_optimization_jobs WHERE project_id = $1 AND id = $2",
+			"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id = $1 AND j.id = $2",
 			[input.project_id, input.id],
 		)
 	)[0];
@@ -266,7 +266,7 @@ export async function getActiveOptimizationJob(
 	const row = (
 		await rows(
 			pool,
-			"SELECT * FROM prompt_optimization_jobs WHERE project_id=$1 AND prompt_slug=$2 AND status IN ('queued','preparing','optimizing','evaluating') ORDER BY created_at DESC LIMIT 1",
+			"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND j.prompt_slug=$2 AND j.status IN ('queued','preparing','optimizing','evaluating') ORDER BY j.created_at DESC LIMIT 1",
 			[input.project_id, input.slug],
 		)
 	)[0];
@@ -363,7 +363,7 @@ export async function optimizationSourceMessages(
 	const row = (
 		await rows(
 			pool,
-			"SELECT j.source_messages FROM prompt_optimization_jobs j WHERE j.project_id=$1 AND j.id=$2",
+			"SELECT j.source_messages FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND j.id=$2",
 			[input.project_id, input.id],
 		)
 	)[0];
@@ -378,7 +378,7 @@ export async function listOptimizationEvents(
 	return (
 		await rows(
 			pool,
-			"SELECT e.id, e.status, e.detail, e.created_at FROM prompt_optimization_events e JOIN prompt_optimization_jobs j ON j.id=e.job_id WHERE j.project_id=$1 AND e.job_id=$2 ORDER BY e.id",
+			"SELECT e.id, e.status, e.detail, e.created_at FROM prompt_optimization_events e JOIN prompt_optimization_jobs j ON j.id=e.job_id JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND e.job_id=$2 ORDER BY e.id",
 			[input.project_id, input.id],
 		)
 	).map((row) => ({

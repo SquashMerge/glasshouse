@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
+	hasAtMostLines,
+	MAX_DIFF_INPUT_CHARS,
+	MAX_DIFF_INPUT_LINES,
+} from "../lib/prompt-limits.js";
+import {
 	PromptTemplateError,
 	renderPromptTemplateWithWarnings,
 	validatePromptTemplate,
 } from "../lib/prompt-templates.js";
-import {
-	MAX_DIFF_INPUT_CHARS,
-	MAX_DIFF_INPUT_LINES,
-	hasAtMostLines,
-} from "../lib/prompt-limits.js";
 
 export type JsonValue =
 	| null
@@ -207,7 +207,7 @@ async function requireProject(
 ): Promise<void> {
 	const rows = await query(
 		client,
-		`SELECT id FROM projects WHERE id = $1${lock ? " FOR UPDATE" : ""}`,
+		`SELECT id FROM projects WHERE id = $1 AND status = 'active'${lock ? " FOR UPDATE" : ""}`,
 		[projectId],
 	);
 	if (rows.length === 0) throw error("NOT_FOUND", "Project not found");

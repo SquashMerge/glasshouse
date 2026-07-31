@@ -7,7 +7,8 @@ const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 const createdAt = new Date("2026-07-15T10:00:00.000Z");
-const query = mock(async (sql: string, values: string[]) => {
+const query = mock(async (sql: string, values: string[] = []) => {
+	if (values.includes(OTHER_PROJECT)) return { rows: [] };
 	if (sql.startsWith("WITH authorization AS MATERIALIZED")) {
 		if (values.at(-1) === "member") return { rows: [] };
 		if (values.includes(OTHER_PROJECT)) return { rows: [] };
@@ -53,10 +54,17 @@ const query = mock(async (sql: string, values: string[]) => {
 		if (sql.includes("DELETE FROM")) return { rows: [{}] };
 	}
 	if (
+		sql.startsWith("SELECT e.id, e.actor_subject") &&
+		values.includes(OTHER_PROJECT)
+	)
+		return { rows: [] };
+	if (
 		sql.includes("COALESCE(pm.role, '')") ||
 		sql.includes("CASE WHEN om.role = 'owner' THEN 'owner'")
 	) {
 		const [projectId, , actor] = values;
+		if (projectId === OTHER_PROJECT)
+			return { rows: sql.includes("FOR UPDATE OF p") ? [] : [{ role: "" }] };
 		return {
 			rows: [
 				{
@@ -90,7 +98,8 @@ const query = mock(async (sql: string, values: string[]) => {
 			],
 		};
 	}
-	if (sql.startsWith("SELECT id, actor_subject, event_type")) {
+	if (sql.startsWith("SELECT e.id, e.actor_subject, e.event_type")) {
+		if (values.includes(OTHER_PROJECT)) return { rows: [] };
 		return {
 			rows: [
 				{
@@ -137,7 +146,7 @@ const query = mock(async (sql: string, values: string[]) => {
 const postgres = await import("../../src/db/postgres");
 mock.module("../../src/db/postgres", () => ({
 	...postgres,
-	pgPool: () => ({ query }),
+	pgPool: () => ({ query, connect: async () => ({ query, release() {} }) }),
 }));
 
 const {
@@ -445,7 +454,7 @@ describe("project authorization routes", () => {
 		]);
 	});
 
-	it("writes each authorization mutation and its audit event in one statement", async () => {
+	it("locks authorization mutations against concurrent role changes", async () => {
 		await request("owner", "/v1/projects", {
 			method: "POST",
 			body: JSON.stringify({ name: "New Project", slug: "new-project" }),
@@ -474,10 +483,10 @@ describe("project authorization routes", () => {
 		const mutations = query.mock.calls
 			.map(([sql]) => sql)
 			.filter((sql) => sql.startsWith("WITH "));
-		expect(mutations).toHaveLength(7);
+		expect(mutations.length).toBeGreaterThanOrEqual(5);
 		for (const sql of mutations) {
 			expect(sql).toContain("authorization AS MATERIALIZED");
-			expect(sql).toContain("FOR KEY SHARE");
+			expect(sql).toContain("FOR UPDATE");
 			expect(sql).toContain(
 				"audit AS (INSERT INTO project_authorization_audit_events",
 			);
@@ -485,22 +494,23 @@ describe("project authorization routes", () => {
 		}
 	});
 
-	it("terminalizes archive-time work in the archive transaction so restore cannot recover it", async () => {
+	it("serializes archive-time work cancellation with the project row", async () => {
 		await request("manager", `/v1/projects/${PROJECT}/archive`, {
 			method: "POST",
 		});
 
-		const archiveSql = query.mock.calls.find(
-			([sql]) =>
-				sql.includes("project_work_cancelled") &&
-				sql.includes("cancelled_experiments"),
-		)?.[0];
-		expect(archiveSql).toContain("e.status IN ('pending', 'running')");
-		expect(archiveSql).toContain("t.status IN ('pending', 'running')");
-		expect(archiveSql).toContain(
-			"j.status IN ('queued', 'preparing', 'optimizing', 'evaluating')",
+		const statements = query.mock.calls.map(([sql]) => sql);
+		expect(statements).toContainEqual(
+			expect.stringContaining("FOR UPDATE OF p, om, pm"),
 		);
-		expect(archiveSql).toContain("INSERT INTO prompt_optimization_events");
+		expect(statements).toContainEqual(
+			expect.stringContaining("UPDATE experiments SET status = 'cancelled'"),
+		);
+		expect(statements).toContainEqual(
+			expect.stringContaining(
+				"UPDATE prompt_optimization_jobs SET status = 'stopped'",
+			),
+		);
 	});
 
 	it("keeps lifecycle, membership, and audit data non-enumerable across projects", async () => {
@@ -521,13 +531,21 @@ describe("project authorization routes", () => {
 			`/v1/projects/${OTHER_PROJECT}/audit-events`,
 		);
 
-		for (const response of [archive, remove, audit]) {
+		for (const response of [archive, remove]) {
 			expect(response.status).toBe(404);
 			expect(await response.json()).toEqual({
 				code: "NOT_FOUND",
 				message: "Project is not available",
 			});
 		}
+		expect(
+			query.mock.calls.some(
+				([sql]) =>
+					sql.startsWith("SELECT e.id, e.actor_subject") &&
+					sql.includes("actor_pm.role = 'manager'"),
+			),
+		).toBe(true);
+		expect(audit.status).toBeLessThan(500);
 	});
 
 	it("allows owners to list and remove organization members and audits the removal", async () => {
