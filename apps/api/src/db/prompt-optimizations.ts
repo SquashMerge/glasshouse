@@ -403,14 +403,14 @@ export async function transitionOptimizationJob(
 		const row = (
 			await rows(
 				client,
-"UPDATE prompt_optimization_jobs j SET status=$2, error_message=COALESCE($3,j.error_message), metric_calls_used=COALESCE($4,j.metric_calls_used), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE j.completed_at END FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$5 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() AND j.status NOT IN ('completed','stopped','failed') RETURNING j.*",
-[
-	input.id,
-	input.status,
-	input.error_message ?? null,
-	input.metric_calls_used ?? null,
-	input.worker_id,
-],
+				"UPDATE prompt_optimization_jobs j SET status=$2, error_message=COALESCE($3,j.error_message), metric_calls_used=COALESCE($4,j.metric_calls_used), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE j.completed_at END FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$5 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() AND j.status NOT IN ('completed','stopped','failed') RETURNING j.*",
+				[
+					input.id,
+					input.status,
+					input.error_message ?? null,
+					input.metric_calls_used ?? null,
+					input.worker_id,
+				],
 			)
 		)[0];
 		if (!row) throw fail("CONFLICT", "Optimization job is no longer active");
