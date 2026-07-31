@@ -450,7 +450,7 @@ describe("prompt optimization repository", () => {
 		expect(pool.client.calls).toHaveLength(5);
 		expect(pool.client.calls[1]?.text).toContain("FROM projects");
 		expect(pool.client.calls[1]?.text).toContain("status = 'active'");
-		expect(pool.client.calls[1]?.text).toContain("FOR KEY SHARE");
+		expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
 		expect(pool.client.calls[3]?.text).toContain("ON CONFLICT");
 	});
 

@@ -290,7 +290,9 @@ describe("prompt repository", () => {
 		]);
 		expect(pool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
-			expect.stringContaining("FROM projects WHERE id = $1 FOR UPDATE"),
+			expect.stringContaining(
+				"FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			),
 			expect.stringContaining("pg_advisory_xact_lock"),
 			expect.stringContaining("prompt_tombstones"),
 			expect.stringContaining("FROM prompts"),
@@ -426,7 +428,9 @@ describe("prompt repository", () => {
 		);
 		expect(pool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
-			expect.stringContaining("FROM projects WHERE id = $1 FOR UPDATE"),
+			expect.stringContaining(
+				"FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			),
 			expect.stringContaining("pg_advisory_xact_lock"),
 			expect.stringContaining("prompt_tombstones"),
 			"ROLLBACK",
@@ -507,7 +511,9 @@ describe("prompt repository", () => {
 		);
 		expect(stalePool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
-			expect.stringContaining("FROM projects WHERE id = $1 FOR UPDATE"),
+			expect.stringContaining(
+				"FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			),
 			expect.stringContaining("FROM prompts"),
 			expect.stringContaining("prompt_optimization_jobs"),
 			expect.stringContaining("FROM prompt_versions"),

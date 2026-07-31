@@ -110,7 +110,7 @@ function result(row: Row) {
 }
 
 export async function createExperiment(
-	db: Queryable,
+	db: Pick<Pool, "connect">,
 	input: {
 		project_id: string;
 		dataset_id: string;
@@ -119,9 +119,20 @@ export async function createExperiment(
 		agent_id?: string | null;
 	},
 ) {
+	const client = await db.connect();
 	try {
-		const r = await db.query(
-			`WITH active_project AS MATERIALIZED (SELECT id FROM projects WHERE id = $2 AND status = 'active' FOR KEY SHARE) INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending' FROM active_project WHERE $3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2) RETURNING *`,
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new ExperimentRepositoryError(
+				"NOT_FOUND",
+				"Project is not available",
+			);
+		const r = await client.query(
+			`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending' WHERE $3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2) RETURNING *`,
 			[
 				randomUUID(),
 				input.project_id,
@@ -133,9 +144,13 @@ export async function createExperiment(
 		);
 		if (!r.rows[0])
 			throw new ExperimentRepositoryError("NOT_FOUND", "Agent not found");
+		await client.query("COMMIT");
 		return experiment(r.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalize(cause);
+	} finally {
+		client.release();
 	}
 }
 export async function listExperiments(db: Queryable, project_id: string) {

@@ -111,7 +111,7 @@ function item(row: Row) {
 export async function listDatasets(db: Queryable, project_id: string) {
 	try {
 		const result = await db.query(
-			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id WHERE d.project_id = $1 GROUP BY d.id ORDER BY d.created_at DESC`,
+			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $1 GROUP BY d.id ORDER BY d.created_at DESC`,
 			[project_id],
 		);
 		return {
@@ -129,10 +129,12 @@ export async function createDataset(
 ) {
 	try {
 		const result = await db.query(
-			`INSERT INTO datasets (id, project_id, name, description) VALUES ($1, $2, $3, $4) RETURNING *, 0::int AS item_count`,
+			`INSERT INTO datasets (id, project_id, name, description) SELECT $1, $2, $3, $4 FROM projects WHERE id = $2 AND status = 'active' RETURNING *, 0::int AS item_count`,
 			[randomUUID(), input.project_id, input.name, input.description ?? null],
 		);
-		return dataset(result.rows[0]!);
+		if (!result.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		return dataset(result.rows[0]);
 	} catch (cause) {
 		throw normalizeError(cause);
 	}
@@ -144,7 +146,7 @@ export async function getDataset(
 ) {
 	try {
 		const result = await db.query(
-			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id WHERE d.id = $1 AND d.project_id = $2 GROUP BY d.id`,
+			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 GROUP BY d.id`,
 			[input.id, input.project_id],
 		);
 		if (!result.rows[0])
@@ -165,7 +167,7 @@ export async function listDatasetItems(
 			id: input.dataset_id,
 		});
 		const result = await db.query(
-			`SELECT i.* FROM dataset_items i JOIN datasets d ON d.id = i.dataset_id WHERE i.dataset_id = $1 AND d.project_id = $2 ORDER BY i.created_at ASC, i.id ASC`,
+			`SELECT i.* FROM dataset_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE i.dataset_id = $1 AND d.project_id = $2 ORDER BY i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
 		return { items: result.rows.map(item) };
@@ -192,7 +194,7 @@ export async function addDatasetItem(
 			id: input.dataset_id,
 		});
 		const result = await db.query(
-			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7) RETURNING *`,
+			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7 FROM datasets d JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $2 AND d.project_id = $8 RETURNING *`,
 			[
 				randomUUID(),
 				input.dataset_id,
@@ -203,9 +205,12 @@ export async function addDatasetItem(
 				JSON.stringify(input.metadata ?? {}),
 				input.source_trace_id ?? null,
 				input.source_observation_id ?? null,
+				input.project_id,
 			],
 		);
-		return item(result.rows[0]!);
+		if (!result.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		return item(result.rows[0]);
 	} catch (cause) {
 		throw normalizeError(cause);
 	}
@@ -217,7 +222,7 @@ export async function deleteDatasetItem(
 ) {
 	try {
 		const result = await db.query(
-			`DELETE FROM dataset_items i USING datasets d WHERE i.id = $1 AND i.dataset_id = $2 AND d.id = i.dataset_id AND d.project_id = $3`,
+			`DELETE FROM dataset_items i USING datasets d, projects p WHERE i.id = $1 AND i.dataset_id = $2 AND d.id = i.dataset_id AND d.project_id = $3 AND p.id = d.project_id AND p.status = 'active'`,
 			[input.item_id, input.dataset_id, input.project_id],
 		);
 		if (result.rowCount !== 1)
