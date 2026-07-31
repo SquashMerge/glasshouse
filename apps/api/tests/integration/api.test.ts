@@ -258,6 +258,15 @@ describe("API integration: OTLP ingest", () => {
 		expect(body.partial_success).toEqual({});
 		expect(insertTraces).toHaveBeenCalledTimes(1);
 		expect(insertObservations).toHaveBeenCalledTimes(1);
+		expect(
+			(insertTraces.mock.calls[0]?.[1] as Array<{ project_id: string }>)[0]
+				?.project_id,
+		).toBe(TEST_SCOPE.projectId);
+		expect(
+			(
+				insertObservations.mock.calls[0]?.[1] as Array<{ project_id: string }>
+			)[0]?.project_id,
+		).toBe(TEST_SCOPE.projectId);
 	});
 
 	it("uses the authorized OTLP header project when resource provenance is absent", async () => {
