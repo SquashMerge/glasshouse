@@ -18,11 +18,42 @@ function configuredLevel(): LogLevel {
 		: "info";
 }
 
-function serializeError(error: unknown): LogFields {
-	if (error instanceof Error) {
-		return { error: error.message, error_type: error.name };
+const MAX_ERROR_DETAIL_CHARS = 16_384;
+const MAX_ERROR_CAUSE_DEPTH = 5;
+
+function truncateErrorDetail(value: string): string {
+	return value.length <= MAX_ERROR_DETAIL_CHARS
+		? value
+		: `${value.slice(0, MAX_ERROR_DETAIL_CHARS)}… [truncated]`;
+}
+
+function stringifyError(error: unknown): string {
+	try {
+		return truncateErrorDetail(String(error));
+	} catch {
+		return "[error could not be stringified]";
 	}
-	return { error: String(error) };
+}
+
+function serializeError(
+	error: unknown,
+	seen = new Set<unknown>(),
+	depth = 0,
+): LogFields {
+	if (!(error instanceof Error)) return { error: stringifyError(error) };
+	if (seen.has(error)) return { error: "[circular error cause]" };
+	seen.add(error);
+	const cause = error.cause;
+	return {
+		error: truncateErrorDetail(error.message),
+		error_type: error.name,
+		...(error.stack ? { error_stack: truncateErrorDetail(error.stack) } : {}),
+		...(cause === undefined
+			? {}
+			: depth >= MAX_ERROR_CAUSE_DEPTH
+				? { error_cause: "[error cause depth exceeded]" }
+				: { error_cause: serializeError(cause, seen, depth + 1) }),
+	};
 }
 
 function write(level: LogLevel, event: string, fields: LogFields = {}): void {
@@ -46,8 +77,14 @@ export const logger = {
 	info(event: string, fields?: LogFields) {
 		write("info", event, fields);
 	},
-	warn(event: string, fields?: LogFields) {
-		write("warn", event, fields);
+	warn(event: string, errorOrFields?: unknown, fields: LogFields = {}) {
+		write(
+			"warn",
+			event,
+			errorOrFields instanceof Error
+				? { ...fields, ...serializeError(errorOrFields) }
+				: (errorOrFields as LogFields | undefined),
+		);
 	},
 	error(event: string, error?: unknown, fields: LogFields = {}) {
 		write("error", event, {

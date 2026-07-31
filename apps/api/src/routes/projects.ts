@@ -5,6 +5,7 @@ import {
 	PromptRepositoryError,
 } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
+import { logger } from "../lib/logger.js";
 import { trustedTenant } from "../tenancy.js";
 import { ProjectErrorResponses, ProjectList } from "../schemas/projects.js";
 
@@ -54,6 +55,8 @@ export function createProjectRouteHandlers(
 								"Project operation failed",
 								cause,
 							);
+				if (known.status === 500)
+					logger.error("projects.request_failed", cause);
 				return c.json(
 					{
 						code: known.code,

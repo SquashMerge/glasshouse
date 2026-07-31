@@ -4,6 +4,7 @@ import {
 	PromptRepositoryError,
 } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
+import { logger } from "../lib/logger.js";
 import {
 	PromptErrorResponses,
 	PromptIdParam,
@@ -72,6 +73,8 @@ export function createPromptProvenanceRouteHandlers(
 								"Prompt provenance operation failed",
 								cause,
 							);
+				if (known.status === 500)
+					logger.error("prompt_provenance.request_failed", cause);
 				return c.json(
 					{
 						code: known.code,

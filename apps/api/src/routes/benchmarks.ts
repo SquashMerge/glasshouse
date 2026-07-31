@@ -44,6 +44,7 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 					"Benchmark operation failed",
 					cause,
 				);
+	if (error.status === 500) logger.error("benchmarks.request_failed", cause);
 	return c.json(
 		{
 			code: error.code,
@@ -219,8 +220,7 @@ export async function executeBenchmarkExperiment(
 	try {
 		await executor(dependencies, input);
 	} catch (cause) {
-		logger.error("benchmark.failed", undefined, {
-			error_type: cause instanceof Error ? cause.name : typeof cause,
+		logger.error("benchmark.failed", cause, {
 			experiment_id: input.experiment_id,
 			project_id: input.project_id,
 		});
@@ -232,9 +232,7 @@ export async function executeBenchmarkExperiment(
 				if_status: ["pending", "running"],
 			});
 		} catch (updateCause) {
-			logger.error("benchmark.failure_status_update_failed", undefined, {
-				error_type:
-					updateCause instanceof Error ? updateCause.name : typeof updateCause,
+			logger.error("benchmark.failure_status_update_failed", updateCause, {
 				experiment_id: input.experiment_id,
 				project_id: input.project_id,
 			});

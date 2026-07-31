@@ -42,6 +42,7 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 					"Experiment operation failed",
 					cause,
 				);
+	if (error.status === 500) logger.error("experiments.request_failed", cause);
 	return c.json(
 		{
 			code: error.code,

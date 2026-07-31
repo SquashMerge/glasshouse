@@ -34,7 +34,7 @@ import {
 } from "../lib/gepa-config.js";
 import { validatePromptTemplate } from "../lib/prompt-templates.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
-import { logger } from "../lib/logger.js";
+import { logger, type LogFields } from "../lib/logger.js";
 import {
 	PromptErrorResponses,
 	ProjectIdQuery,
@@ -247,6 +247,7 @@ export const optimizationEvents = createRoute({
 function error(
 	c: { json: (body: unknown, status: 400 | 404 | 409 | 500) => Response },
 	cause: unknown,
+	fields: LogFields = {},
 ): Response {
 	const known =
 		cause instanceof PromptRepositoryError
@@ -254,6 +255,8 @@ function error(
 			: cause instanceof GepaConfigurationError
 				? new PromptRepositoryError("BAD_REQUEST", cause.message)
 				: new PromptRepositoryError("INTERNAL", "Optimization failed");
+	if (known.status === 500)
+		logger.error("optimization.request_failed", cause, fields);
 	return c.json(
 		{
 			code: known.code,
@@ -609,7 +612,18 @@ export function createOptimizationHandlers(
 				void run(job, d);
 				return c.json(job, 202);
 			} catch (cause) {
-				return error(c, cause);
+				const body = c.req.valid("json") as {
+					project_id: string;
+					slug: string;
+					source_version: number;
+					target: "system" | "user";
+				};
+				return error(c, cause, {
+					project_id: body.project_id,
+					prompt_slug: body.slug,
+					source_version: body.source_version,
+					target: body.target,
+				});
 			}
 		},
 		handleGet: async (

@@ -1,3 +1,5 @@
+import { logger } from "./logger.js";
+
 export type GepaWorkerInput = {
 	target: "system" | "user";
 	source: string;
@@ -48,8 +50,13 @@ export const runGepaWorker: GepaWorker = async (input, signal, onProgress) => {
 	]);
 	if (exitCode !== 0) {
 		const diagnostic = stderr.trim();
-		console.error(
-			`[gepa-worker] exited with code ${exitCode}${diagnostic ? `: ${diagnostic}` : ""}`,
+		logger.error(
+			"optimization.worker_failed",
+			new Error(`GEPA worker exited with code ${exitCode}`),
+			{
+				exit_code: exitCode,
+				...(diagnostic ? { diagnostic } : {}),
+			},
 		);
 		// Worker diagnostics stay in server logs; never surface them through jobs or SSE.
 		throw new Error("GEPA worker failed");

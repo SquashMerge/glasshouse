@@ -133,9 +133,7 @@ export function createOtlpIngestHandler(
 		try {
 			bodyJson = await req.json();
 		} catch (err) {
-			logger.warn("otlp.body_parse_failed", {
-				error_type: err instanceof Error ? err.name : typeof err,
-			});
+			logger.warn("otlp.body_parse_failed", err);
 			return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
 		}
 
@@ -214,9 +212,7 @@ export function createOtlpIngestHandler(
 				deduplicationTokens.observations,
 			);
 		} catch (err) {
-			logger.error("otlp.persist_failed", undefined, {
-				error_type: err instanceof Error ? err.name : typeof err,
-			});
+			logger.error("otlp.persist_failed", err);
 			return jsonError(
 				500,
 				"INTERNAL",
@@ -230,9 +226,7 @@ export function createOtlpIngestHandler(
 			for (const o of observations)
 				dependencies.publishSync("observation.created", { observation: o });
 		} catch (err) {
-			logger.warn("otlp.event_publish_failed", {
-				error_type: err instanceof Error ? err.name : typeof err,
-			});
+			logger.warn("otlp.event_publish_failed", err);
 		}
 
 		return new Response(JSON.stringify({ partial_success: {} }), {
