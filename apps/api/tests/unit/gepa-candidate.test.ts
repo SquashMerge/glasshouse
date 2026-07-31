@@ -50,8 +50,8 @@ describe("GEPA candidate validation", () => {
 
 	it("rejects copied example input material", () => {
 		const exampleInput =
-			"Customer SSN 123-45-6789 and routing number 021000021 require review.";
-		const obfuscatedInput = exampleInput.replace("number", "nurnber");
+			"The confidential memo requires immediate approval before Friday noon.";
+		const obfuscatedInput = exampleInput.replaceAll("m", "rn");
 		expect(() =>
 			validateGepaCandidate(
 				"Summarize {{tasks}}",
@@ -60,6 +60,12 @@ describe("GEPA candidate validation", () => {
 				[exampleInput],
 			),
 		).toThrow("example input material");
+		expect(checkExpectedAnswerLeakage(obfuscatedInput, [exampleInput])).toEqual(
+			{
+				status: "failed",
+				reason: "expected_answer_full_match",
+			},
+		);
 	});
 
 	it("normalizes case and apostrophe variants before checking a full answer", () => {

@@ -49,7 +49,7 @@ function privateJob(candidate_content = "Safe candidate {{tasks}}") {
 			validation_examples: [
 				{
 					input:
-						"Customer account number 5432109876 must be reviewed before Friday.",
+						"The confidential memo requires immediate approval before Friday noon.",
 					answer: "private held-out answer",
 				},
 			],
@@ -197,7 +197,7 @@ describe("prompt optimization status routes", () => {
 		expect(serialized).not.toContain("private training input");
 		expect(serialized).not.toContain("private training answer");
 		expect(serialized).not.toContain(
-			"Customer account number 5432109876 must be reviewed before Friday.",
+			"The confidential memo requires immediate approval before Friday noon.",
 		);
 		expect(serialized).not.toContain("private held-out answer");
 		expect(serialized).not.toContain("private-model");
@@ -211,7 +211,7 @@ describe("prompt optimization status routes", () => {
 	it("hides legacy candidates that copy protected example material", async () => {
 		get.mockResolvedValueOnce(
 			privateJob(
-				"Summarize {{tasks}}. Customer account nurnber 5432109876 must be reviewed before Friday.",
+				"Summarize {{tasks}}. The confidential rnerno requires irnrnediate approval before Friday noon.",
 			),
 		);
 		const response = await app().request(
@@ -221,6 +221,6 @@ describe("prompt optimization status routes", () => {
 		expect(response.status).toBe(200);
 		const body = await response.json();
 		expect(body).toMatchObject({ candidate_content: null });
-		expect(JSON.stringify(body)).not.toContain("Customer account nurnber");
+		expect(JSON.stringify(body)).not.toContain("confidential rnerno");
 	});
 });

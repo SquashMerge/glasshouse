@@ -568,12 +568,19 @@ function containsOrderedMaterial(
 	return false;
 }
 
+function segmentedTokenSkeleton(token: string): string {
+	return token.replace(/rn/gu, "m");
+}
+
 // Handle multi-character confusables such as m -> rn without trusting one skeleton.
 function tokensWithinLeakageDistance(
 	left: string,
 	right: string,
 	budget: ComparisonBudget,
 ): boolean {
+	if (left === right) return true;
+	left = segmentedTokenSkeleton(left);
+	right = segmentedTokenSkeleton(right);
 	if (left === right) return true;
 	if (
 		left.length < 4 ||

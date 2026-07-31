@@ -178,11 +178,11 @@ describe("optimization completion policy", () => {
 	it("blocks an example-input leak before it can reach a draft", async () => {
 		const leakingJob = job();
 		const leakedInput =
-			"Customer account number 5432109876 must be reviewed before Friday.";
+			"The confidential memo requires immediate approval before Friday noon.";
 		leakingJob.dataset.validation_examples[0]!.input = leakedInput;
 		const input = dependencies({
 			result: {
-				candidate: `Summarize {{tasks}}. Include this example: ${leakedInput.replace("number", "nurnber")}`,
+				candidate: `Summarize {{tasks}}. Include this example: ${leakedInput.replaceAll("m", "rn")}`,
 				training_score: 1,
 				validation_score: 1,
 				baseline_validation_score: 0,
