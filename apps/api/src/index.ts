@@ -194,7 +194,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 			return resolvedDependencies.handleOtlpIngest(
 				c.req.raw,
 				scope,
-				requestedProjectId ? scope.projectId : undefined,
+				scope.projectId,
 			);
 		} catch (cause) {
 			if (cause instanceof TenantScopeError) {

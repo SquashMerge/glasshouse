@@ -127,7 +127,7 @@ export function createOtlpIngestHandler(
 	return async function handleOtlpIngest(
 		req: Request,
 		tenant: TenantScope,
-		fallbackProjectId = "",
+		fallbackProjectId = tenant.projectId,
 	): Promise<Response> {
 		let bodyJson: unknown;
 		try {
