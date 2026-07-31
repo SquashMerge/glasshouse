@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
 	TRUSTED_TENANT_CONTEXT_KEY,
 	type TrustedTenantContext,
@@ -12,6 +12,7 @@ export type AuthorizedProjectScope = TrustedTenantContext & {
 	projectStatus: "active" | "archived";
 };
 export type TenantScope = AuthorizedProjectScope;
+type Transactional = Pick<Pool, "connect">;
 
 export class TenantScopeError extends Error {
 	constructor(message: string) {
@@ -79,4 +80,42 @@ export async function resolveTenantProject(
 	if (scope.projectStatus !== "active")
 		throw new TenantScopeError("Project is not available");
 	return scope;
+}
+
+export async function withActiveAuthorizedProjectLock<T>(
+	db: Transactional,
+	tenant: TenantScope,
+	callback: () => Promise<T>,
+): Promise<T> {
+	const client = await db.connect();
+	let transactionOpen = false;
+	try {
+		await client.query("BEGIN");
+		transactionOpen = true;
+		const authorized = await lockedActiveProjectAccess(client, tenant);
+		if (!authorized.rows[0])
+			throw new TenantScopeError("Project is not available");
+		const value = await callback();
+		await client.query("COMMIT");
+		transactionOpen = false;
+		return value;
+	} catch (cause) {
+		if (transactionOpen) {
+			try {
+				await client.query("ROLLBACK");
+			} catch {
+				// Preserve the authorization or persistence failure that triggered rollback.
+			}
+		}
+		throw cause;
+	} finally {
+		client.release();
+	}
+}
+
+function lockedActiveProjectAccess(client: PoolClient, tenant: TenantScope) {
+	return client.query(
+		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status = 'active' AND (om.role = 'owner' OR pm.role IS NOT NULL) FOR UPDATE OF p, om",
+		[tenant.projectId, tenant.actor, tenant.organizationId],
+	);
 }

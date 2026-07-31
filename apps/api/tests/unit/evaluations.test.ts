@@ -66,6 +66,7 @@ describe("evaluation MVP", () => {
 			publishSync: (event, payload) => {
 				published.push({ event, payload: payload as Record<string, unknown> });
 			},
+			withActiveAuthorizedProjectLock: async (_tenant, callback) => callback(),
 		});
 		const response = await handler(
 			new Request("http://internal/v1/otel/v1/traces", {
