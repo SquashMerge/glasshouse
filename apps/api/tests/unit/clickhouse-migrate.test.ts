@@ -29,24 +29,24 @@ describe("ClickHouse migrations", () => {
 		expect(queries[6]).toContain("non_replicated_deduplication_window");
 		expect(queries[7]).toContain("ALTER TABLE observations");
 		expect(queries[7]).toContain("non_replicated_deduplication_window");
-		expect(queries[8]).toContain("ALTER TABLE traces");
-		expect(queries[8]).toContain("DELETE WHERE");
-		expect(queries[8]).toContain("mutations_sync = 2");
-		expect(queries[9]).toContain("ALTER TABLE observations");
-		expect(queries[9]).toContain("DELETE WHERE");
-		expect(queries[9]).toContain("mutations_sync = 2");
-		expect(queries[10]).toContain(
+		expect(queries[8]).toContain(
 			"ADD CONSTRAINT IF NOT EXISTS traces_tenant_scope_required",
 		);
-		expect(queries[10]).toContain(
+		expect(queries[8]).toContain(
 			"CHECK notEmpty(organization_id) AND notEmpty(project_id)",
 		);
-		expect(queries[11]).toContain(
+		expect(queries[9]).toContain(
 			"ADD CONSTRAINT IF NOT EXISTS observations_tenant_scope_required",
 		);
-		expect(queries[11]).toContain(
+		expect(queries[9]).toContain(
 			"CHECK notEmpty(organization_id) AND notEmpty(project_id)",
 		);
+		expect(queries[10]).toContain("ALTER TABLE traces");
+		expect(queries[10]).toContain("DELETE WHERE");
+		expect(queries[10]).toContain("mutations_sync = 2");
+		expect(queries[11]).toContain("ALTER TABLE observations");
+		expect(queries[11]).toContain("DELETE WHERE");
+		expect(queries[11]).toContain("mutations_sync = 2");
 		expect(closed).toBe(true);
 	});
 });
