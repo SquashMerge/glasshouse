@@ -9,15 +9,21 @@ import {
 	subscribe,
 } from "../../src/lib/event-bus";
 import { createOtlpIngestHandler } from "../../src/routes/otlp";
+import { TenantScopeError } from "../../src/tenancy";
 
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
+const withActiveAuthorizedProjectLock = async <T>(
+	_tenant: unknown,
+	callback: () => Promise<T>,
+) => callback();
 const rawHandleOtlpIngest = createOtlpIngestHandler({
 	defaultClient,
 	insertObservations,
 	insertTraces,
 	publishSync,
+	withActiveAuthorizedProjectLock,
 });
 
 const USER = "astraea";
@@ -72,6 +78,45 @@ function validOtlp(
 }
 
 describe("OTLP ingest publishes events", () => {
+	it("does not invoke ClickHouse writers when final archive or revocation revalidation fails", async () => {
+		for (const unavailable of ["archived", "revoked"]) {
+			const rejectedHandler = createOtlpIngestHandler({
+				defaultClient,
+				insertObservations,
+				insertTraces,
+				publishSync,
+				withActiveAuthorizedProjectLock: async () => {
+					throw new TenantScopeError(`Project is ${unavailable}`);
+				},
+			});
+			insertTraces.mockClear();
+			insertObservations.mockClear();
+
+			await expect(
+				rejectedHandler(
+					new Request("http://x/v1/otel/v1/traces", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(
+							validOtlp([
+								{
+									trace_id: HEX32_A,
+									span_id: HEX16_A,
+									name: "denied",
+									start_time_unix_nano: String(NOW_NS),
+									attributes: [],
+								},
+							]),
+						),
+					}),
+					TENANT,
+				),
+			).rejects.toBeInstanceOf(TenantScopeError);
+			expect(insertTraces, unavailable).not.toHaveBeenCalled();
+			expect(insertObservations, unavailable).not.toHaveBeenCalled();
+		}
+	});
+
 	it("propagates a resource project ID to traces and observations, not a span override", async () => {
 		const res = await handleOtlpIngest(
 			new Request("http://x/v1/otel/v1/traces", {
@@ -605,6 +650,7 @@ describe("OTLP ingest publishes events", () => {
 				observationTokens.add(token);
 			},
 			publishSync,
+			withActiveAuthorizedProjectLock,
 		});
 		const payload = validOtlp([
 			{

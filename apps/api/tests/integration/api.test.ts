@@ -14,6 +14,10 @@ const { TenantScopeError } = await import("../../src/tenancy");
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
+const withActiveAuthorizedProjectLock = async <T>(
+	_tenant: unknown,
+	callback: () => Promise<T>,
+) => callback();
 const assertTenantProjectAccess = mock(async () => undefined);
 const resolveTenantProject = mock(async () => TEST_SCOPE);
 const TEST_TENANT = {
@@ -35,6 +39,7 @@ const apiApp = createApiApp({
 		insertObservations,
 		insertTraces,
 		publishSync: () => undefined,
+		withActiveAuthorizedProjectLock,
 	}),
 	assertTenantProjectAccess,
 	resolveTenantProject,
