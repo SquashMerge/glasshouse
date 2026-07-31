@@ -149,8 +149,11 @@ class DevCliLlmTests(unittest.TestCase):
                 "def optimize(*, adapter, task_lm, reflection_lm, **kwargs):\n"
                 "    assert adapter is not None\n"
                 "    assert callable(adapter.model)\n"
+                "    assert adapter.propose_new_texts is None\n"
                 "    assert task_lm is None\n"
                 "    assert callable(reflection_lm)\n"
+                "    evaluation = adapter.evaluate([{\"input\": \"input\", \"answer\": \"answer\", \"additional_context\": {}}], {\"system_prompt\": \"seed\"})\n"
+                "    assert evaluation.scores == [1]\n"
                 "    kwargs[\"logger\"].log(\"progress\")\n"
                 "    assert reflection_lm(\"reflection\")\n"
                 "    return SimpleNamespace(best_candidate={\"system_prompt\": \"candidate\"}, best_idx=0, val_aggregate_scores=[1], total_metric_calls=3)\n"
@@ -158,9 +161,12 @@ class DevCliLlmTests(unittest.TestCase):
             (gepa_directory / "adapters" / "__init__.py").write_text("")
             (default_adapter_directory / "__init__.py").write_text("")
             (default_adapter_directory / "default_adapter.py").write_text(
+                "from types import SimpleNamespace\n"
                 "class DefaultAdapter:\n"
                 "    def __init__(self, model):\n"
                 "        self.model = model\n"
+                "    def evaluate(self, *args, **kwargs):\n"
+                "        return SimpleNamespace(scores=[1])\n"
             )
             request = {
                 "source": "Hello",
@@ -187,6 +193,7 @@ class DevCliLlmTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('ASTRAEA_GEPA_PROGRESS {"metric_calls_used": 1}', result.stderr)
             self.assertEqual(json.loads(result.stdout), {"candidate": "candidate", "score": 1, "metric_calls_used": 3})
 
 
