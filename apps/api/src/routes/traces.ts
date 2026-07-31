@@ -144,7 +144,7 @@ export const getTrace = createRoute({
 	tags: ["traces"],
 	summary: "Get a trace",
 	description:
-		"Fetch a project-scoped trace and its observations with versioned metadata envelopes. Omitting project_id reads only legacy unscoped rows. Legacy metadata arrays are exposed as attributes with null prompt provenance; invalid persisted metadata fails closed.",
+		"Fetch a project-scoped trace and its observations with versioned metadata envelopes. Legacy metadata arrays are exposed as attributes with null prompt provenance; invalid persisted metadata fails closed.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: TraceIdParam,
@@ -176,13 +176,17 @@ export const getTrace = createRoute({
 				},
 			},
 		},
+		400: {
+			description: "Missing or invalid project_id",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
 	},
 });
 
 export async function handleGetTrace(c: Context): Promise<Response> {
 	const traceId = c.req.param("id")!;
 	const { project_id: projectId } = (
-		c.req as { valid: (target: "query") => { project_id?: string } }
+		c.req as { valid: (target: "query") => { project_id: string } }
 	).valid("query");
 	try {
 		const { trace, observations } = await queryGetTrace(

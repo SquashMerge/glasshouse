@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
+type Transactional = Pick<Pool, "connect">;
 type Row = Record<string, any>;
 
 export class BenchmarkRepositoryError extends Error {
@@ -77,7 +78,7 @@ function run(row: Row) {
 	};
 }
 export async function createBenchmarkSuite(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		project_id: string;
 		dataset_id: string;
@@ -85,8 +86,19 @@ export async function createBenchmarkSuite(
 		description?: string | null;
 	},
 ) {
+	const client = await db.connect();
 	try {
-		const r = await db.query(
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new BenchmarkRepositoryError(
+				"NOT_FOUND",
+				"Project is not available",
+			);
+		const r = await client.query(
 			`INSERT INTO benchmark_suites (id, project_id, dataset_id, name, description) SELECT $1,$2,$3,$4,$5 FROM projects WHERE id=$2 AND status='active' RETURNING *`,
 			[
 				randomUUID(),
@@ -101,9 +113,13 @@ export async function createBenchmarkSuite(
 				"NOT_FOUND",
 				"Project is not available",
 			);
+		await client.query("COMMIT");
 		return suite(r.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalize(cause);
+	} finally {
+		client.release();
 	}
 }
 export async function getBenchmarkSuite(
@@ -137,7 +153,7 @@ export async function listBenchmarkSuites(db: Queryable, project_id: string) {
 	}
 }
 export async function createBenchmarkRun(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		project_id: string;
 		suite_id: string;
@@ -147,8 +163,19 @@ export async function createBenchmarkRun(
 		prompt_version?: string | null;
 	},
 ) {
+	const client = await db.connect();
 	try {
-		const r = await db.query(
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new BenchmarkRepositoryError(
+				"NOT_FOUND",
+				"Project is not available",
+			);
+		const r = await client.query(
 			`INSERT INTO benchmark_runs (id, project_id, suite_id, experiment_id, label, model, prompt_version) SELECT $1,$2,$3,$4,$5,$6,$7 FROM projects WHERE id=$2 AND status='active' RETURNING *`,
 			[
 				randomUUID(),
@@ -165,9 +192,13 @@ export async function createBenchmarkRun(
 				"NOT_FOUND",
 				"Project is not available",
 			);
+		await client.query("COMMIT");
 		return run(r.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalize(cause);
+	} finally {
+		client.release();
 	}
 }
 export async function listBenchmarkRuns(

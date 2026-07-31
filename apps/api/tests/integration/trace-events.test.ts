@@ -465,10 +465,10 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 	it("404 when trace doesn't exist — JSON response (no SSE upgrade)", async () => {
 		getTraceMock.mockResolvedValueOnce({ trace: null, observations: [] });
 		const res = await apiApp.fetch(
-			new Request(`http://x/v1/traces/${"0".repeat(32)}/events`, {
-				method: "GET",
-				headers: { authorization: AUTH },
-			}),
+			new Request(
+				`http://x/v1/traces/${"0".repeat(32)}/events?project_id=${PROJECT_ID}`,
+				{ method: "GET", headers: { authorization: AUTH } },
+			),
 		);
 		expect(res.status).toBe(404);
 		expect(res.headers.get("content-type")).toMatch(/application\/json/);
