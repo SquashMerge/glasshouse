@@ -423,6 +423,34 @@ describe("PromptDetailPage", () => {
 		).toBeInTheDocument();
 	});
 
+	it("rejects near-duplicate training and held-out inputs", async () => {
+		renderDetail();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+		const trainingInput = Array.from(
+			{ length: 100 },
+			(_, index) => `training${index}`,
+		).join(" ");
+		const validationInput = [
+			...Array.from({ length: 79 }, (_, index) => `training${index}`),
+			...Array.from({ length: 21 }, (_, index) => `validation${index}`),
+		].join(" ");
+
+		fireEvent.change(screen.getByLabelText("Training 1 input"), {
+			target: { value: trainingInput },
+		});
+		fireEvent.change(screen.getByLabelText("Held-out validation 1 input"), {
+			target: { value: validationInput },
+		});
+
+		expect(
+			screen.getByText(
+				"Training and held-out validation inputs must be unique and not materially overlap.",
+			),
+		).toBeInTheDocument();
+	});
+
 	it("rejects single-token training and held-out containment", async () => {
 		renderDetail();
 		fireEvent.click(

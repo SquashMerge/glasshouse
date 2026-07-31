@@ -108,7 +108,7 @@ describe("GEPA candidate validation", () => {
 
 		expect(checkExpectedAnswerLeakage(candidate, [expectedAnswer])).toEqual({
 			status: "failed",
-			reason: "expected_answer_material_span",
+			reason: "expected_answer_full_match",
 		});
 	});
 
@@ -124,6 +124,26 @@ describe("GEPA candidate validation", () => {
 			.join(" ");
 
 		expect(checkExpectedAnswerLeakage(candidate, [expectedAnswer])).toEqual({
+			status: "failed",
+			reason: "expected_answer_full_match",
+		});
+	});
+
+	it("blocks complete and material expected-answer copies with reordered tokens", () => {
+		const expectedAnswer =
+			"first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth";
+		const reversed = expectedAnswer.split(" ").reverse().join(" ");
+
+		expect(checkExpectedAnswerLeakage(reversed, [expectedAnswer])).toEqual({
+			status: "failed",
+			reason: "expected_answer_full_match",
+		});
+		expect(
+			checkExpectedAnswerLeakage(
+				"summarize safely eighth seventh sixth fifth fourth third second first",
+				[expectedAnswer],
+			),
+		).toEqual({
 			status: "failed",
 			reason: "expected_answer_material_span",
 		});

@@ -91,7 +91,7 @@ def inputs_materially_overlap(left, right):
             continue
         shared += 1
         longer_counts[token] = remaining - 1
-    return shared / len(shorter) >= 0.8
+    return shared / len(shorter) >= 0.7
 
 
 def examples(dataset, name):

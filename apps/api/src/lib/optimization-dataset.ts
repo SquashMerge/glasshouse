@@ -162,7 +162,7 @@ function inputsMateriallyOverlap(left: string, right: string): boolean {
 		shared += 1;
 		longerCounts.set(token, remaining - 1);
 	}
-	return shared / shorter.length >= 0.8;
+	return shared / shorter.length >= 0.7;
 }
 
 export function automaticPromotionReason(

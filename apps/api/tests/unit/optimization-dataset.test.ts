@@ -113,6 +113,27 @@ describe("optimization dataset policy", () => {
 		).toBe(true);
 	});
 
+	it("rejects near-duplicate inputs below the former overlap threshold", () => {
+		const trainingInput = Array.from(
+			{ length: 100 },
+			(_, index) => `training${index}`,
+		).join(" ");
+		const validationInput = [
+			...Array.from({ length: 79 }, (_, index) => `training${index}`),
+			...Array.from({ length: 21 }, (_, index) => `validation${index}`),
+		].join(" ");
+
+		expect(
+			hasOverlappingOptimizationInputs({
+				...dataset,
+				training_examples: [{ input: trainingInput, answer: "Training label" }],
+				validation_examples: [
+					{ input: validationInput, answer: "Held-out label" },
+				],
+			}),
+		).toBe(true);
+	});
+
 	it("requires independent held-out improvement for automatic promotion", () => {
 		const evidence = {
 			metric: "default_adapter.expected_answer_contains" as const,

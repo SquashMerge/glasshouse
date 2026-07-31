@@ -206,6 +206,34 @@ class DevCliLlmTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("unique and non-overlapping", result.stderr)
 
+    def test_worker_rejects_near_duplicate_train_validation_overlap(self):
+        training_input = " ".join(f"training{index}" for index in range(100))
+        validation_input = " ".join(
+            [*(f"training{index}" for index in range(79)), *(f"validation{index}" for index in range(21))]
+        )
+        request = {
+            "source": "Summarize {{tasks}}",
+            "target": "system",
+            "evaluator": {"type": "default_adapter"},
+            "dataset": optimization_dataset(
+                [{"input": training_input, "answer": "Training label"}],
+                [{"input": validation_input, "answer": "Held-out label"}],
+            ),
+            "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
+            "budget": {"max_metric_calls": 2},
+        }
+        worker = Path(__file__).with_name("gepa_worker.py")
+        result = subprocess.run(
+            [sys.executable, worker],
+            input=json.dumps(request),
+            text=True,
+            capture_output=True,
+            env={"GEPA_WORKER_MODE": "fake", "GEPA_ALLOWED_MODELS": "local-model"},
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unique and non-overlapping", result.stderr)
+
     def test_worker_rejects_single_token_train_validation_containment(self):
         request = {
             "source": "Summarize {{tasks}}",

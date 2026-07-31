@@ -466,6 +466,28 @@ function containsCompactFullAnswer(
 	);
 }
 
+function tokenCounts(tokens: string[]): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const token of tokens) counts.set(token, (counts.get(token) ?? 0) + 1);
+	return counts;
+}
+
+function containsTokenMultiset(
+	candidateTokenCounts: Map<string, number>,
+	expectedTokens: string[],
+	budget: { comparisons: number },
+): boolean {
+	const expectedTokenCounts = new Map<string, number>();
+	for (const token of expectedTokens) {
+		budget.comparisons += 1;
+		if (budget.comparisons > 250_000) return true;
+		const expectedCount = (expectedTokenCounts.get(token) ?? 0) + 1;
+		if ((candidateTokenCounts.get(token) ?? 0) < expectedCount) return false;
+		expectedTokenCounts.set(token, expectedCount);
+	}
+	return true;
+}
+
 function containsOrderedMaterial(
 	candidateTokens: string[],
 	expectedTokens: string[],
@@ -528,6 +550,7 @@ export function checkExpectedAnswerLeakage(
 	const candidateTokens = normalizedCandidate
 		? normalizedCandidate.split(" ")
 		: [];
+	const candidateTokenCounts = tokenCounts(candidateTokens);
 	const paddedCandidate = ` ${normalizedCandidate} `;
 	const compactCandidate = compactLeakageText(candidate);
 	const visibleCandidate = normalizedVisibleText(candidate);
@@ -542,8 +565,10 @@ export function checkExpectedAnswerLeakage(
 			(visibleAnswer &&
 				answerTokens.length === 0 &&
 				visibleCandidate.includes(visibleAnswer)) ||
-			(answerTokens.length > 0 && paddedCandidate.includes(paddedAnswer)) ||
-			containsCompactFullAnswer(visibleCandidate, compactAnswer)
+			(answerTokens.length > 0 &&
+				(paddedCandidate.includes(paddedAnswer) ||
+					containsCompactFullAnswer(visibleCandidate, compactAnswer) ||
+					containsTokenMultiset(candidateTokenCounts, answerTokens, budget)))
 		)
 			return { status: "failed", reason: "expected_answer_full_match" };
 		for (let start = 0; start <= answerTokens.length - 8; start += 1) {
@@ -559,7 +584,8 @@ export function checkExpectedAnswerLeakage(
 			if (
 				paddedCandidate.includes(` ${span} `) ||
 				compactCandidate.includes(spanTokens.join("")) ||
-				containsOrderedMaterial(candidateTokens, spanTokens, budget)
+				containsOrderedMaterial(candidateTokens, spanTokens, budget) ||
+				containsTokenMultiset(candidateTokenCounts, spanTokens, budget)
 			)
 				return {
 					status: "failed",
