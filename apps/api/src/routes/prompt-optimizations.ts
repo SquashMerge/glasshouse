@@ -397,7 +397,7 @@ function statusSnapshot(job: OptimizationJob | null) {
 	};
 }
 
-function metricCallsUsed(
+export function metricCallsUsed(
 	job: OptimizationJob,
 	result: Awaited<ReturnType<GepaWorker>>,
 ): number | null {
@@ -409,7 +409,7 @@ function metricCallsUsed(
 			"BAD_REQUEST",
 			"Optimization job has an invalid metric-call budget",
 		);
-	if (!Number.isSafeInteger(value) || value < 0 || value > budget)
+	if (!Number.isSafeInteger(value) || value < 0)
 		throw new PromptRepositoryError(
 			"BAD_REQUEST",
 			"GEPA worker reported an invalid metric-call count",
@@ -489,6 +489,21 @@ async function run(
 				budget: job.budget,
 			},
 			controller.signal,
+			async ({ metric_calls_used }) => {
+				try {
+					await d.recordMetricCalls(d.pool(), {
+						id: job.id,
+						worker_id: workerId,
+						metric_calls_used,
+					});
+				} catch (cause) {
+					logger.error("optimization.metric_telemetry_failed", cause, {
+						job_id: job.id,
+						project_id: job.project_id,
+						metric_calls_used,
+					});
+				}
+			},
 		);
 		const usedMetricCalls = metricCallsUsed(job, result);
 		if (usedMetricCalls !== null)

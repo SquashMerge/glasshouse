@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
 	MAX_OPTIMIZATION_CANDIDATE_BYTES,
+	parseWorkerResult,
+	readWorkerDiagnostics,
 	readWorkerOutput,
 	runGepaWorker,
 } from "../../src/lib/gepa-worker";
@@ -32,6 +34,53 @@ describe("GEPA worker adapter", () => {
 		);
 		expect(result.candidate).toContain("Hello {{name}}");
 		expect(result.metric_calls_used).toBe(0);
+	});
+
+	it("keeps GEPA's actual metric-call total when a batch crosses its soft stop threshold", () => {
+		expect(
+			parseWorkerResult(
+				JSON.stringify({ candidate: "candidate", metric_calls_used: 7 }),
+				5,
+			),
+		).toEqual({ candidate: "candidate", metric_calls_used: 7 });
+	});
+
+	it("reports structured metric progress without retaining it in diagnostics", async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					new TextEncoder().encode(
+						'Iteration 0 started\nASTRAEA_GEPA_PROGRESS {"metric_calls_used":3}\n',
+					),
+				);
+				controller.close();
+			},
+		});
+		const progress: number[] = [];
+		await expect(
+			readWorkerDiagnostics(stream, ({ metric_calls_used }) => {
+				progress.push(metric_calls_used);
+			}),
+		).resolves.toBe("Iteration 0 started");
+		expect(progress).toEqual([3]);
+	});
+
+	it("propagates a live telemetry persistence failure", async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					new TextEncoder().encode(
+						'ASTRAEA_GEPA_PROGRESS {"metric_calls_used":3}\n',
+					),
+				);
+				controller.close();
+			},
+		});
+		await expect(
+			readWorkerDiagnostics(stream, () => {
+				throw new Error("telemetry persistence failed");
+			}),
+		).rejects.toThrow("telemetry persistence failed");
 	});
 
 	it("rejects oversized worker output before buffering it", async () => {

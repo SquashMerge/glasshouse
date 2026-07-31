@@ -236,6 +236,9 @@ describe("prompt optimization repository", () => {
 			metric_calls_used: 3,
 		});
 		expect(calls[0]?.text).toContain("worker_lease_expires_at >= now()");
+		expect(calls[0]?.text).toContain(
+			"GREATEST(COALESCE(metric_calls_used,0),$3)",
+		);
 		expect(calls[0]?.values).toEqual([JOB, WORKER, 3]);
 	});
 
