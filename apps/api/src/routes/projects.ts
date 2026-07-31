@@ -397,13 +397,14 @@ export const handleRestoreProject = (c: Context) =>
 export async function handleListProjectMembers(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
+		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<{
 			actor_subject: string;
 			role: "manager" | "member";
 			created_at: Date;
 		}>(
-			"SELECT pm.actor_subject, pm.role, pm.created_at FROM project_memberships pm WHERE pm.project_id = $1 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND actor_pm.actor_subject = $2 WHERE p.id = $1 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY pm.actor_subject",
-			[id, trustedTenant(c).actor],
+			"SELECT pm.actor_subject, pm.role, pm.created_at FROM project_memberships pm WHERE pm.project_id = $1 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND actor_pm.actor_subject = $2 WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY pm.actor_subject",
+			[id, tenant.actor, tenant.organizationId],
 		);
 		return c.json({
 			items: rows.rows.map((row) => ({
@@ -418,14 +419,15 @@ export async function handleListProjectMembers(c: Context) {
 export async function handleGetProjectAuditEvents(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
+		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<{
 			id: string;
 			actor_subject: string;
 			event_type: string;
 			created_at: Date;
 		}>(
-			"SELECT e.id, e.actor_subject, e.event_type, e.created_at FROM project_authorization_audit_events e WHERE e.project_id = $1 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND actor_pm.actor_subject = $2 WHERE p.id = $1 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY e.created_at, e.id",
-			[id, trustedTenant(c).actor],
+			"SELECT e.id, e.actor_subject, e.event_type, e.created_at FROM project_authorization_audit_events e WHERE e.project_id = $1 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND actor_pm.actor_subject = $2 WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY e.created_at, e.id",
+			[id, tenant.actor, tenant.organizationId],
 		);
 		return c.json({
 			items: rows.rows.map((row) => ({

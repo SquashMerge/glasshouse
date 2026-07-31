@@ -31,13 +31,18 @@ function fakeDb(
 	responses: Array<{ rows?: Record<string, unknown>[]; rowCount?: number }>,
 ) {
 	const queries: Array<{ text: string; values?: unknown[] }> = [];
-	return {
+	const db = {
 		queries,
 		query: async (text: string, values?: unknown[]) => {
 			queries.push({ text, values });
 			return responses.shift() ?? { rows: [], rowCount: 0 };
 		},
 	};
+	const pool = db as typeof db & {
+		connect: () => Promise<typeof db & { release: () => void }>;
+	};
+	pool.connect = async () => ({ ...pool, release() {} });
+	return pool;
 }
 
 describe("dataset contracts", () => {
@@ -102,6 +107,8 @@ describe("dataset repository", () => {
 	it("persists trace and observation provenance when adding an item", async () => {
 		const itemId = "33333333-3333-4333-8333-333333333333";
 		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
 			{ rows: [datasetRow], rowCount: 1 },
 			{
 				rows: [
@@ -128,14 +135,20 @@ describe("dataset repository", () => {
 		});
 		expect(result.source_trace_id).toBe("a".repeat(32));
 		expect(result.source_observation_id).toBe("b".repeat(16));
-		expect(db.queries[1]?.text).toContain("source_trace_id");
-		expect(db.queries[1]?.values).toContain("a".repeat(32));
+		expect(
+			db.queries.some((query) => query.text.includes("source_trace_id")),
+		).toBe(true);
+		expect(
+			db.queries.some((query) => query.values?.includes("a".repeat(32))),
+		).toBe(true);
 	});
 
 	it("maps duplicate dataset names to a conflict", async () => {
-		const db = fakeDb([]);
-		db.query = async () => {
-			throw { code: "23505" };
+		const db = fakeDb([{ rows: [] }, { rows: [{ id: PROJECT }] }]);
+		const query = db.query;
+		db.query = async (text, values) => {
+			if (text.startsWith("INSERT INTO datasets")) throw { code: "23505" };
+			return query(text, values);
 		};
 		await expect(
 			createDataset(db, { project_id: PROJECT, name: "golden" }),
@@ -146,9 +159,11 @@ describe("dataset repository", () => {
 	});
 
 	it("keeps feedback-linked items immutable and reports a deletion conflict", async () => {
-		const db = fakeDb([]);
-		db.query = async () => {
-			throw { code: "23503" };
+		const db = fakeDb([{ rows: [] }, { rows: [{ id: PROJECT }] }]);
+		const query = db.query;
+		db.query = async (text, values) => {
+			if (text.startsWith("DELETE FROM dataset_items")) throw { code: "23503" };
+			return query(text, values);
 		};
 		await expect(
 			deleteDatasetItem(db, {
@@ -161,6 +176,13 @@ describe("dataset repository", () => {
 			status: 409,
 			message: "Dataset item is retained because feedback links it",
 		});
+	});
+
+	it("locks the active project before every dataset mutation", async () => {
+		for (const operation of [createDataset, addDatasetItem, deleteDatasetItem])
+			expect(operation.toString()).toContain(
+				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			);
 	});
 
 	it("does not persist provenance copied from another project", async () => {

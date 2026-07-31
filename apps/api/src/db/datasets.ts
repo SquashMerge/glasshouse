@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 
 export type JsonObject = Record<string, unknown>;
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
+type Transactional = Pick<Pool, "connect">;
 type Row = Record<string, unknown>;
 
 export type DatasetRepositoryErrorCode =
@@ -124,19 +125,31 @@ export async function listDatasets(db: Queryable, project_id: string) {
 }
 
 export async function createDataset(
-	db: Queryable,
+	db: Transactional,
 	input: { project_id: string; name: string; description?: string | null },
 ) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const result = await client.query(
 			`INSERT INTO datasets (id, project_id, name, description) SELECT $1, $2, $3, $4 FROM projects WHERE id = $2 AND status = 'active' RETURNING *, 0::int AS item_count`,
 			[randomUUID(), input.project_id, input.name, input.description ?? null],
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await client.query("COMMIT");
 		return dataset(result.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
@@ -177,7 +190,7 @@ export async function listDatasetItems(
 }
 
 export async function addDatasetItem(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		project_id: string;
 		dataset_id: string;
@@ -188,12 +201,20 @@ export async function addDatasetItem(
 		source_observation_id?: string | null;
 	},
 ) {
+	const client = await db.connect();
 	try {
-		await getDataset(db, {
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await getDataset(client, {
 			project_id: input.project_id,
 			id: input.dataset_id,
 		});
-		const result = await db.query(
+		const result = await client.query(
 			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7 FROM datasets d JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $2 AND d.project_id = $8 RETURNING *`,
 			[
 				randomUUID(),
@@ -210,24 +231,40 @@ export async function addDatasetItem(
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		await client.query("COMMIT");
 		return item(result.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
 export async function deleteDatasetItem(
-	db: Queryable,
+	db: Transactional,
 	input: { project_id: string; dataset_id: string; item_id: string },
 ) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const result = await client.query(
 			`DELETE FROM dataset_items i USING datasets d, projects p WHERE i.id = $1 AND i.dataset_id = $2 AND d.id = i.dataset_id AND d.project_id = $3 AND p.id = d.project_id AND p.status = 'active'`,
 			[input.item_id, input.dataset_id, input.project_id],
 		);
 		if (result.rowCount !== 1)
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset item not found");
+		await client.query("COMMIT");
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }

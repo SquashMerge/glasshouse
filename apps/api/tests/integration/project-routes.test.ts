@@ -556,6 +556,33 @@ describe("project authorization routes", () => {
 		expect(audit.status).toBeLessThan(500);
 	});
 
+	it("does not use a same-subject manager role from another organization", async () => {
+		const members = await request(
+			"cross-org-manager",
+			`/v1/projects/${OTHER_PROJECT}/members`,
+		);
+		const audit = await request(
+			"cross-org-manager",
+			`/v1/projects/${OTHER_PROJECT}/audit-events`,
+		);
+
+		for (const response of [members, audit]) {
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual({ items: [] });
+		}
+		const reads = query.mock.calls.filter(([sql]) =>
+			sql.includes("actor_pm.role = 'manager'"),
+		);
+		expect(reads).toHaveLength(2);
+		for (const [, values] of reads) {
+			expect(values).toEqual([
+				OTHER_PROJECT,
+				"cross-org-manager",
+				ORGANIZATION,
+			]);
+		}
+	});
+
 	it("allows owners to list and remove organization members and audits the removal", async () => {
 		const list = await request("owner", "/v1/organization/members");
 		const remove = await request("owner", "/v1/organization/members/member", {
