@@ -64,6 +64,29 @@ describe("assertReleaseAges", () => {
 			"new-package@2.0.0 was published less than the required 7 days ago",
 		);
 	});
+
+	it("accepts the time-boxed security patch exception only until normal age enforcement applies", async () => {
+		const securityPatch = [{ name: "brace-expansion", version: "5.0.9" }];
+		const publishedAt = async () => new Date("2026-07-30T10:00:32.762Z");
+
+		await expect(
+			assertReleaseAges(
+				securityPatch,
+				7,
+				new Date("2026-08-04T00:00:00.000Z"),
+				publishedAt,
+			),
+		).resolves.toBeUndefined();
+
+		await expect(
+			assertReleaseAges(
+				securityPatch,
+				7,
+				new Date("2026-08-06T10:00:32.762Z"),
+				publishedAt,
+			),
+		).resolves.toBeUndefined();
+	});
 });
 
 describe("release-age CLI", () => {

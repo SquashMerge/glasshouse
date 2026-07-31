@@ -63,7 +63,36 @@ import {
 	rollbackLatestPromptVersion,
 	handleRollbackLatestPromptVersion,
 } from "./routes/prompts.js";
-import { listProjects, handleListProjects } from "./routes/projects.js";
+import {
+	archiveProject,
+	createProject,
+	deleteOrganizationMember,
+	deleteProjectMember,
+	getMe,
+	getProject,
+	handleArchiveProject,
+	handleCreateProject,
+	handleDeleteOrganizationMember,
+	handleDeleteProjectMember,
+	handleGetMe,
+	handleGetProject,
+	handleGetProjectAuditEvents,
+	handleListOrganizationMembers,
+	handleListProjectMembers,
+	handleListProjects,
+	handlePutOrganizationMember,
+	handlePutProjectMember,
+	handleRestoreProject,
+	handleUpdateProject,
+	listProjectMembers,
+	listOrganizationMembers,
+	listProjectAuditEvents,
+	listProjects,
+	putOrganizationMember,
+	putProjectMember,
+	restoreProject,
+	updateProject,
+} from "./routes/projects.js";
 import {
 	listBenchmarkSuites,
 	createBenchmarkSuiteRoute,
@@ -121,6 +150,22 @@ import {
 	reviewFeedbackRoute,
 	handleReviewFeedback,
 } from "./routes/feedback.js";
+import {
+	approvePolicy,
+	createPolicyDraft,
+	getEffectivePolicy,
+	handleApprovePolicy,
+	handleCreatePolicyDraft,
+	handleGetEffectivePolicy,
+	handleListPolicyHistory,
+	handleListRetentionRuns,
+	handlePreviewRetention,
+	handleRunRetention,
+	listRetentionRuns,
+	listPolicyHistory,
+	previewRetention,
+	runRetention,
+} from "./routes/governance.js";
 
 export const openapiApp = new OpenAPIHono({
 	defaultHook: (result, c) => {
@@ -199,7 +244,20 @@ register(listObservations, handleListObservations);
 register(streamObservationEvents, handleStreamObservationEvents);
 register(streamTraceDetailEvents, handleStreamTraceDetailEvents);
 
+register(getMe, handleGetMe);
 register(listProjects, handleListProjects);
+register(createProject, handleCreateProject);
+register(getProject, handleGetProject);
+register(updateProject, handleUpdateProject);
+register(archiveProject, handleArchiveProject);
+register(restoreProject, handleRestoreProject);
+register(listProjectMembers, handleListProjectMembers);
+register(listProjectAuditEvents, handleGetProjectAuditEvents);
+register(putProjectMember, handlePutProjectMember);
+register(deleteProjectMember, handleDeleteProjectMember);
+register(putOrganizationMember, handlePutOrganizationMember);
+register(listOrganizationMembers, handleListOrganizationMembers);
+register(deleteOrganizationMember, handleDeleteOrganizationMember);
 register(listPrompts, handleListPrompts);
 register(createPrompt, handleCreatePrompt);
 register(previewPrompt, handlePreviewPrompt);
@@ -230,6 +288,14 @@ register(createFeedbackRoute, handleCreateFeedback);
 register(listFeedbackRoute, handleListFeedback);
 register(promoteFeedbackRoute, handlePromoteFeedback);
 register(reviewFeedbackRoute, handleReviewFeedback);
+
+register(getEffectivePolicy, handleGetEffectivePolicy);
+register(listPolicyHistory, handleListPolicyHistory);
+register(createPolicyDraft, handleCreatePolicyDraft);
+register(approvePolicy, handleApprovePolicy);
+register(previewRetention, handlePreviewRetention);
+register(runRetention, handleRunRetention);
+register(listRetentionRuns, handleListRetentionRuns);
 
 openapiApp.doc("/openapi.json", {
 	openapi: "3.1.0",

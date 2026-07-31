@@ -16,6 +16,8 @@ import { EditPromptPage } from "./routes/prompts-edit";
 import { DatasetsPage, DatasetDetailPage } from "./routes/datasets";
 import { EvaluationsPage, EvaluationDetailPage } from "./routes/evaluations";
 import { FeedbackPage } from "./routes/feedback";
+import { ProjectsPage } from "./routes/projects";
+import { GovernancePage } from "./routes/governance";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 import { ProjectProvider } from "./components/ProjectProvider";
@@ -110,6 +112,16 @@ const feedbackRoute = createRoute({
 	path: "/feedback",
 	component: FeedbackPage,
 });
+const projectsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/projects",
+	component: ProjectsPage,
+});
+const governanceRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/governance",
+	component: GovernancePage,
+});
 
 const router = createRouter({
 	routeTree: rootRoute.addChildren([
@@ -127,6 +139,8 @@ const router = createRouter({
 			evaluationsRoute,
 			evaluationDetailRoute,
 			feedbackRoute,
+			projectsRoute,
+			governanceRoute,
 		]),
 	]),
 	defaultPreload: false,

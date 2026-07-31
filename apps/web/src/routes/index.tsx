@@ -88,7 +88,7 @@ export function DashboardPage() {
 					</Link>
 				</Card>
 				<Card>
-					<CardContent className="p-5">
+					<CardContent className="p-5 pt-5">
 						<p className="text-sm font-medium text-muted-foreground">
 							Service health
 						</p>
@@ -104,7 +104,7 @@ export function DashboardPage() {
 				aria-label="Dashboard actions"
 			>
 				<Card>
-					<CardContent className="p-5">
+					<CardContent className="p-5 pt-5">
 						<div className="flex items-center justify-between gap-3">
 							<h2 className="font-semibold">Recent traces</h2>
 							<Link
@@ -144,7 +144,7 @@ export function DashboardPage() {
 				</Card>
 
 				<Card>
-					<CardContent className="p-5">
+					<CardContent className="p-5 pt-5">
 						<h2 className="font-semibold">Send your first trace</h2>
 						<p className="mt-2 text-sm text-muted-foreground">
 							Configure any OpenTelemetry SDK with these values, then open

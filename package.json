@@ -25,6 +25,9 @@
     "test:supply-chain": "bun test infra/scripts/tests/verify-dependency-release-age.test.ts",
     "verify:dependency-release-age": "bun run infra/scripts/verify-dependency-release-age.ts"
   },
+  "overrides": {
+    "brace-expansion": "5.0.9"
+  },
   "dependencies": {
     "config": "4.4.2",
     "dotenv": "17.4.2",

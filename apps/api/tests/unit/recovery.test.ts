@@ -19,6 +19,9 @@ describe("startup recovery", () => {
 			failOptimizations: async () => [
 				{ id: "optimization", project_id: "project" },
 			],
+			failRetentionRuns: async () => [
+				{ id: "retention", project_id: "project" },
+			],
 			resumeExperiment: async (experiment) => {
 				resumed.push(experiment.id);
 			},
@@ -29,8 +32,28 @@ describe("startup recovery", () => {
 		expect(events).toEqual([
 			{
 				event: "work.recovered_after_restart",
-				fields: { experiments_resumed: 1, optimizations_failed: 1 },
+				fields: {
+					experiments_resumed: 1,
+					optimizations_failed: 1,
+					retention_runs_failed: 1,
+				},
 			},
 		]);
+	});
+
+	it("does not resume work terminalized during project archive after restore", async () => {
+		const resumed: string[] = [];
+		await recoverInterruptedWork({
+			pool: () => ({}) as never,
+			recoverExperiments: async () => [],
+			failOptimizations: async () => [],
+			failRetentionRuns: async () => [],
+			resumeExperiment: async (experiment) => {
+				resumed.push(experiment.id);
+			},
+			log: () => {},
+		});
+
+		expect(resumed).toEqual([]);
 	});
 });

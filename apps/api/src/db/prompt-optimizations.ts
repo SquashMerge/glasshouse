@@ -368,6 +368,14 @@ export async function createOptimizationJob(
 		throw fail("BAD_REQUEST", "validation examples must not be empty");
 	const datasetHash = hashOptimizationDataset(input.dataset);
 	return tx(pool, async (client) => {
+		const project = (
+			await rows(
+				client,
+				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+				[input.project_id],
+			)
+		)[0];
+		if (!project) throw fail("NOT_FOUND", "Project is not available");
 		const source = (
 			await rows(
 				client,
@@ -433,7 +441,7 @@ export async function getOptimizationJob(
 	const row = (
 		await rows(
 			pool,
-			"SELECT * FROM prompt_optimization_jobs WHERE project_id = $1 AND id = $2",
+			"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id = $1 AND j.id = $2",
 			[input.project_id, input.id],
 		)
 	)[0];
@@ -448,7 +456,7 @@ export async function getActiveOptimizationJob(
 	const row = (
 		await rows(
 			pool,
-			"SELECT * FROM prompt_optimization_jobs WHERE project_id=$1 AND prompt_slug=$2 AND (status IN ('queued','preparing','optimizing','evaluating') OR promotion_status='review_required') ORDER BY CASE WHEN status IN ('queued','preparing','optimizing','evaluating') THEN 0 ELSE 1 END, updated_at DESC, id DESC LIMIT 1",
+			"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND j.prompt_slug=$2 AND (j.status IN ('queued','preparing','optimizing','evaluating') OR j.promotion_status='review_required') ORDER BY CASE WHEN j.status IN ('queued','preparing','optimizing','evaluating') THEN 0 ELSE 1 END, j.updated_at DESC, j.id DESC LIMIT 1",
 			[input.project_id, input.slug],
 		)
 	)[0];
@@ -497,7 +505,7 @@ export async function claimOptimizationJob(
 	return tx(pool, async (client) => {
 		const claimed = await rows(
 			client,
-			"UPDATE prompt_optimization_jobs SET worker_claim_id=$2,worker_claimed_at=now(),worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() WHERE id=$1 AND status IN ('queued','preparing','optimizing','evaluating') AND (worker_claim_id IS NULL OR worker_lease_expires_at IS NULL OR worker_lease_expires_at < now()) RETURNING id",
+			"UPDATE prompt_optimization_jobs j SET worker_claim_id=$2,worker_claimed_at=now(),worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() FROM projects p WHERE j.id=$1 AND p.id=j.project_id AND p.status = 'active' AND j.status IN ('queued','preparing','optimizing','evaluating') AND (j.worker_claim_id IS NULL OR j.worker_lease_expires_at IS NULL OR j.worker_lease_expires_at < now()) RETURNING j.id",
 			[input.id, input.worker_id],
 		);
 		return claimed.length === 1;
@@ -510,7 +518,7 @@ export async function renewOptimizationJobLease(
 ): Promise<boolean> {
 	const renewed = await rows(
 		pool,
-		"UPDATE prompt_optimization_jobs SET worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() AND status IN ('queued','preparing','optimizing','evaluating') RETURNING id",
+		"UPDATE prompt_optimization_jobs j SET worker_lease_expires_at=now() + interval '5 minutes',updated_at=now() FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$2 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() AND j.status IN ('queued','preparing','optimizing','evaluating') RETURNING j.id",
 		[input.id, input.worker_id],
 	);
 	return renewed.length === 1;
@@ -521,7 +529,7 @@ export async function recordOptimizationMetricCalls(
 ): Promise<void> {
 	const recorded = await rows(
 		pool,
-		"UPDATE prompt_optimization_jobs SET metric_calls_used=COALESCE(metric_calls_used,$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
+		"UPDATE prompt_optimization_jobs SET metric_calls_used=GREATEST(COALESCE(metric_calls_used,0),$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
 		[input.id, input.worker_id, input.metric_calls_used],
 	);
 	if (!recorded.length)
@@ -532,7 +540,7 @@ export async function failInterruptedOptimizationJobs(
 ): Promise<Array<{ id: string; project_id: string }>> {
 	const failed = await rows(
 		pool,
-		"UPDATE prompt_optimization_jobs SET status='failed', error_message='Interrupted by API restart', updated_at=now(), completed_at=now() WHERE status IN ('queued','preparing','optimizing','evaluating') RETURNING id, project_id",
+		"UPDATE prompt_optimization_jobs j SET status='failed', error_message='Interrupted by API restart', updated_at=now(), completed_at=now() FROM projects p WHERE p.id=j.project_id AND p.status = 'active' AND j.status IN ('queued','preparing','optimizing','evaluating') RETURNING j.id, j.project_id",
 	);
 	return failed.map((row) => ({
 		id: String(row.id),
@@ -547,7 +555,7 @@ export async function optimizationSourceMessages(
 	const row = (
 		await rows(
 			pool,
-			"SELECT j.source_messages FROM prompt_optimization_jobs j WHERE j.project_id=$1 AND j.id=$2",
+			"SELECT j.source_messages FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND j.id=$2",
 			[input.project_id, input.id],
 		)
 	)[0];
@@ -563,7 +571,7 @@ export async function listOptimizationEvents(
 	return (
 		await rows(
 			pool,
-			"SELECT e.id, e.status, e.detail, e.created_at FROM prompt_optimization_events e JOIN prompt_optimization_jobs j ON j.id=e.job_id WHERE j.project_id=$1 AND e.job_id=$2 ORDER BY e.id",
+			"SELECT e.id, e.status, e.detail, e.created_at FROM prompt_optimization_events e JOIN prompt_optimization_jobs j ON j.id=e.job_id JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND e.job_id=$2 ORDER BY e.id",
 			[input.project_id, input.id],
 		)
 	).map((row) => ({
@@ -589,7 +597,7 @@ export async function transitionOptimizationJob(
 		const row = (
 			await rows(
 				client,
-				"UPDATE prompt_optimization_jobs SET status=$2, error_message=COALESCE($3,error_message), metric_calls_used=COALESCE($4,metric_calls_used), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE completed_at END WHERE id=$1 AND worker_claim_id=$5 AND worker_lease_expires_at >= now() AND status NOT IN ('completed','stopped','failed') RETURNING *",
+				"UPDATE prompt_optimization_jobs j SET status=$2, error_message=COALESCE($3,j.error_message), metric_calls_used=COALESCE($4,j.metric_calls_used), updated_at=now(), completed_at=CASE WHEN $2 IN ('completed','stopped','failed') THEN now() ELSE j.completed_at END FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$5 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() AND j.status NOT IN ('completed','stopped','failed') RETURNING j.*",
 				[
 					input.id,
 					input.status,
@@ -614,6 +622,14 @@ export async function stopOptimizationJob(
 	input: { project_id: string; id: string },
 ): Promise<OptimizationJob> {
 	return tx(pool, async (client) => {
+		const project = (
+			await rows(
+				client,
+				"SELECT id FROM projects WHERE id=$1 AND status='active' FOR UPDATE",
+				[input.project_id],
+			)
+		)[0];
+		if (!project) throw fail("NOT_FOUND", "Project is not available");
 		const row = (
 			await rows(
 				client,
@@ -703,7 +719,7 @@ export async function publishOptimizationResult(
 		const jobRow = (
 			await rows(
 				client,
-				"SELECT * FROM prompt_optimization_jobs WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() FOR UPDATE",
+				"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id=j.project_id WHERE j.id=$1 AND j.worker_claim_id=$2 AND p.status = 'active' AND j.worker_lease_expires_at >= now() FOR UPDATE OF j, p",
 				[input.id, input.worker_id],
 			)
 		)[0];
@@ -747,7 +763,7 @@ export async function publishOptimizationResult(
 		);
 		await rows(
 			client,
-			"UPDATE prompt_optimization_jobs SET status='completed',result_version=$2,candidate_content=$3,evidence=$4::jsonb,promotion_status='auto_promoted',promotion_reason=NULL,updated_at=now(),completed_at=now(),promoted_at=now() WHERE id=$1",
+			"UPDATE prompt_optimization_jobs j SET status='completed',result_version=$2,candidate_content=$3,evidence=$4::jsonb,promotion_status='auto_promoted',promotion_reason=NULL,updated_at=now(),completed_at=now(),promoted_at=now() FROM projects p WHERE j.id=$1 AND p.id=j.project_id AND p.status = 'active'",
 			[job.id, version, content, JSON.stringify(input.evidence)],
 		);
 		await rows(

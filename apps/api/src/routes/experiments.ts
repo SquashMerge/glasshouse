@@ -1,13 +1,13 @@
-import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
+import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import { pgPool } from "../db/postgres.js";
+import { getDataset, listDatasetItems } from "../db/datasets.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
 	claimExperimentTask,
 	completeExperimentIfTasksFinished,
 	createExperiment as createExperimentRecord,
-	experimentSummary as experimentSummaryRecord,
 	ExperimentRepositoryError,
+	experimentSummary as experimentSummaryRecord,
 	finalizeExperimentTask,
 	getExperiment as getExperimentRecord,
 	insertExperimentResult,
@@ -16,21 +16,22 @@ import {
 	nextExperimentTaskRetryDelay,
 	updateExperiment,
 } from "../db/experiments.js";
-import { getDataset, listDatasetItems } from "../db/datasets.js";
-import { createOtlpIngestHandler } from "./otlp.js";
-import { invokeConfiguredLlm } from "../lib/llm.js";
+import { pgPool } from "../db/postgres.js";
 import { scoreCase } from "../lib/evaluator.js";
+import { invokeConfiguredLlm } from "../lib/llm.js";
 import { logger } from "../lib/logger.js";
 import {
 	Experiment,
 	ExperimentCreate,
 	ExperimentErrorResponses,
 	ExperimentIdParam,
-	ExperimentProjectQuery,
 	ExperimentList,
+	ExperimentProjectQuery,
 	ExperimentResults,
 	ExperimentSummary,
 } from "../schemas/experiments.js";
+import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
+import { createOtlpIngestHandler } from "./otlp.js";
 
 const tag = "experiments";
 const errorResponse = (c: Context, cause: unknown): Response => {
@@ -42,6 +43,7 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 					"Experiment operation failed",
 					cause,
 				);
+	if (error.status === 500) logger.error("experiments.request_failed", cause);
 	return c.json(
 		{
 			code: error.code,
@@ -253,7 +255,7 @@ export function createProductionTrace(
 ): ExperimentDependencies["trace"] {
 	return async (input) => {
 		const organization = await pool().query<{ organization_id: string }>(
-			"SELECT organization_id FROM projects WHERE id = $1",
+			"SELECT organization_id FROM projects WHERE id = $1 AND status = 'active'",
 			[input.project_id],
 		);
 		const organizationId = organization.rows[0]?.organization_id;
@@ -268,6 +270,9 @@ export function createProductionTrace(
 				actor: "evaluation-worker",
 				organizationId,
 				projectId: input.project_id,
+				organizationRole: "member",
+				projectRole: "manager",
+				projectStatus: "active",
 			},
 		);
 		if (!response.ok) throw new Error("OTLP trace ingestion failed");
@@ -614,6 +619,11 @@ export function createExperimentHandlers(
 							if (closed || polling) return;
 							polling = true;
 							try {
+								await assertTenantProjectAccess(
+									deps.pool(),
+									trustedTenant(c),
+									query.project_id,
+								);
 								const row = await deps.getExperiment(deps.pool(), {
 									id: params.id,
 									project_id: query.project_id,

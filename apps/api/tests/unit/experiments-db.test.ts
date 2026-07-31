@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import {
 	claimExperimentTask,
+	cancelExperiment,
 	finalizeExperimentTask,
 	listRecoverableExperiments,
 } from "../../src/db/experiments";
 
 describe("durable experiment task ledger", () => {
-	it("atomically claims one pending or expired task with a lease", async () => {
+	it("does not claim a task from an archived project", async () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const db = {
 			query: async (text: string, values: unknown[] = []) => {
@@ -40,9 +41,10 @@ describe("durable experiment task ledger", () => {
 		expect(calls[0]?.text).toContain("lease_expires_at <= now()");
 		expect(calls[0]?.text).toContain("t.status = 'pending'");
 		expect(calls[0]?.text).toContain("e.status = 'running'");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 	});
 
-	it("only finalizes the worker's live lease while the experiment is still running", async () => {
+	it("does not finalize a task after its project is archived during work", async () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const db = {
 			query: async (text: string, values: unknown[] = []) => {
@@ -66,6 +68,7 @@ describe("durable experiment task ledger", () => {
 		expect(finalized).toBe(true);
 		expect(calls[0]?.text).toContain("t.lease_token = $4::uuid");
 		expect(calls[0]?.text).toContain("e.status = 'running'");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 		expect(calls[0]?.text).toContain(
 			"ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
 		);
@@ -91,6 +94,40 @@ describe("durable experiment task ledger", () => {
 
 		expect(await listRecoverableExperiments(db)).toHaveLength(1);
 		expect(calls[0]?.text).toContain("status IN ('pending', 'running')");
-		expect(calls[0]?.text).toContain("ORDER BY created_at ASC");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
+		expect(calls[0]?.text).toContain("ORDER BY e.created_at ASC");
+	});
+
+	it("terminalizes experiment tasks when a project is archived so restore cannot recover them", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
+		const db = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				return { rows: [] };
+			},
+		};
+
+		await listRecoverableExperiments(db);
+
+		expect(calls[0]?.text).toContain("e.status IN ('pending', 'running')");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
+	});
+
+	it("does not cancel an experiment after its project is archived", async () => {
+		const calls: string[] = [];
+		const db = {
+			query: async (text: string) => {
+				calls.push(text);
+				return { rows: [] };
+			},
+		};
+
+		await expect(
+			cancelExperiment(db, {
+				project_id: "11111111-1111-4111-8111-111111111111",
+				id: "22222222-2222-4222-8222-222222222222",
+			}),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(calls[0]).toContain("status='active' FOR UPDATE");
 	});
 });

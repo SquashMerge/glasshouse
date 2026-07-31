@@ -1,5 +1,27 @@
 DO $$
 BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_versions')
+		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_approvals')
+		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
+		RAISE EXCEPTION 'governance persistence is incomplete';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_previews')
+		OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'governance_retention_runs_one_running_per_project' AND indexdef LIKE '%WHERE (status = ''running''::text)%') THEN
+		RAISE EXCEPTION 'retention preview authorization or single-running-run constraint is incomplete';
+	END IF;
+	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'governance_retention_runs' AND column_name IN ('owner_token', 'lease_expires_at', 'heartbeat_at')) <> 3
+		OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'governance_retention_runs_expired_lease') THEN
+		RAISE EXCEPTION 'retention lease ownership fields are incomplete';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'governance_retention_runs'::regclass AND conname = 'governance_retention_runs_running_lease') THEN
+		RAISE EXCEPTION 'retention running lease invariant is incomplete';
+	END IF;
+	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 10 THEN
+		RAISE EXCEPTION 'governance tenant fields must be not null';
+	END IF;
+	IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('governance_policies_project_organization_fkey', 'governance_policy_versions_project_organization_fkey', 'governance_policy_approvals_version_tenant_fkey', 'governance_audit_events_version_tenant_fkey', 'governance_retention_runs_version_tenant_fkey')) <> 5 THEN
+		RAISE EXCEPTION 'governance composite ownership constraints are incomplete';
+	END IF;
 	IF NOT EXISTS (
 		SELECT 1 FROM information_schema.columns
 		WHERE table_schema = 'public' AND table_name = 'scores' AND column_name = 'observation_id'
@@ -474,6 +496,15 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'legacy projects were not backfilled to the default organization';
     END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+            AND column_name IN ('organization_id', 'project_id')
+            AND is_nullable <> 'NO'
+    ) THEN
+        RAISE EXCEPTION 'tenant identifier columns must be NOT NULL';
+    END IF;
     BEGIN
         INSERT INTO projects (name, slug, organization_id)
         VALUES ('Invalid Organization Project', 'invalid-organization', '00000000-0000-4000-8000-000000000099');
@@ -643,5 +674,160 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'durable experiment task ledger is incomplete';
     END IF;
+
+    IF (SELECT count(*) FROM project_memberships WHERE organization_id = '00000000-0000-4000-8000-000000000001' AND actor_subject = 'bootstrap-owner' AND role = 'manager') <> 4
+        OR EXISTS (
+            SELECT 1 FROM projects p
+            WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'
+                AND NOT EXISTS (
+                    SELECT 1 FROM project_memberships pm
+                    WHERE pm.project_id = p.id AND pm.actor_subject = 'bootstrap-owner' AND pm.role = 'manager'
+                )
+        )
+        OR NOT EXISTS (
+            SELECT 1 FROM organization_memberships
+            WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+                AND actor_subject = 'bootstrap-owner' AND role = 'owner'
+        )
+        OR (SELECT count(*) FROM project_authorization_audit_events WHERE actor_subject = 'bootstrap-owner' AND event_type = 'bootstrap_manager_added') <> 4 THEN
+        RAISE EXCEPTION 'bootstrap owner was not idempotently granted manager membership for every historical project';
+    END IF;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'migration-owner', 'owner');
+    UPDATE organization_memberships
+    SET role = 'owner'
+    WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+        AND actor_subject = 'migration-owner';
+    BEGIN
+        UPDATE organization_memberships
+        SET role = 'member'
+        WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+            AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'final organization owner demotion was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+    BEGIN
+        UPDATE organization_memberships
+        SET organization_id = '00000000-0000-4000-8000-000000000001'
+        WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+            AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'sole organization owner membership move was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'migration-manager', 'member');
+    INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
+    VALUES ('33333333-3333-4333-8333-333333333333', '00000000-0000-4000-8000-000000000002', 'migration-manager', 'manager');
+    UPDATE project_memberships
+    SET role = 'manager'
+    WHERE project_id = '33333333-3333-4333-8333-333333333333'
+        AND actor_subject = 'migration-manager';
+    BEGIN
+        UPDATE project_memberships
+        SET role = 'member'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333'
+            AND actor_subject = 'migration-manager';
+        RAISE EXCEPTION 'final active project manager demotion was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+    BEGIN
+        UPDATE project_memberships
+        SET project_id = '55555555-5555-4555-8555-555555555555'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333'
+            AND actor_subject = 'migration-manager';
+        RAISE EXCEPTION 'sole active project manager membership move was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'archived-member', 'member');
+    INSERT INTO projects (id, name, slug, organization_id, status)
+    VALUES (
+        '55555555-5555-4555-8555-555555555555',
+        'Managerless Archived Project',
+        'managerless-archived',
+        '00000000-0000-4000-8000-000000000002',
+        'archived'
+    );
+    BEGIN
+        UPDATE projects SET status = 'active'
+        WHERE id = '55555555-5555-4555-8555-555555555555';
+        RAISE EXCEPTION 'managerless archived project was restored';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+
+    INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+    VALUES (
+        '00000000-0000-4000-8000-000000000002',
+        '33333333-3333-4333-8333-333333333333',
+        'migration-owner',
+        'project_updated'
+    );
+    INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+    VALUES (
+        '00000000-0000-4000-8000-000000000002',
+        '33333333-3333-4333-8333-333333333333',
+        'migration-owner',
+        'project_work_cancelled'
+    );
+    BEGIN
+        INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+        VALUES (
+            '00000000-0000-4000-8000-000000000001',
+            '33333333-3333-4333-8333-333333333333',
+            'migration-owner',
+            'project_updated'
+        );
+        RAISE EXCEPTION 'authorization audit accepted a cross-organization project';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        UPDATE project_authorization_audit_events SET event_type = 'project_archived'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333';
+        RAISE EXCEPTION 'authorization audit accepted an update';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    BEGIN
+        DELETE FROM project_authorization_audit_events
+        WHERE project_id = '33333333-3333-4333-8333-333333333333';
+        RAISE EXCEPTION 'authorization audit accepted a delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+END
+$$;
+
+DO $$
+DECLARE
+    version_id UUID := '99999999-0000-4000-8000-000000000001';
+BEGIN
+    INSERT INTO organizations (id, name, slug) VALUES ('99999999-0000-4000-8000-000000000010', 'Governance Test Organization', 'governance-test') ON CONFLICT DO NOTHING;
+    INSERT INTO projects (id, name, slug, organization_id) VALUES ('99999999-0000-4000-8000-000000000011', 'Governance Test Project', 'governance-test', '99999999-0000-4000-8000-000000000010') ON CONFLICT DO NOTHING;
+    INSERT INTO governance_policies (id, organization_id, project_id) VALUES ('99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111') ON CONFLICT DO NOTHING;
+    INSERT INTO governance_policy_versions (id, policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) VALUES (version_id, '99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 1, '{}', '{"mode":"none","keys":[]}', repeat('a', 64), 'migration-test') ON CONFLICT DO NOTHING;
+    BEGIN
+        INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES (version_id, '99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', 'migration-test');
+        RAISE EXCEPTION 'governance approval provenance mismatch was accepted';
+    EXCEPTION WHEN foreign_key_violation THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'policy_created');
+        RAISE EXCEPTION 'governance audit provenance mismatch was accepted';
+    EXCEPTION WHEN foreign_key_violation THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status, owner_token, heartbeat_at, lease_expires_at) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running', gen_random_uuid(), now(), now() + interval '5 minutes');
+        RAISE EXCEPTION 'governance retention provenance mismatch was accepted';
+    EXCEPTION WHEN foreign_key_violation THEN NULL;
+    END;
 END
 $$;

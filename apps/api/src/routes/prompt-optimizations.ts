@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rectifyConfusion } from "unicode-confusables";
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import { streamSSE } from "hono/streaming";
+import { pgPool } from "../db/postgres.js";
 import {
 	claimOptimizationJob,
 	completeOptimizationResult,
@@ -11,6 +12,7 @@ import {
 	getOptimizationJob,
 	listActiveOptimizationActivities,
 	listOptimizationEvents,
+	type OptimizationJob,
 	optimizationSourceMessages,
 	promoteOptimizationDraft,
 	publishOptimizationResult,
@@ -18,11 +20,8 @@ import {
 	renewOptimizationJobLease,
 	stopOptimizationJob,
 	transitionOptimizationJob,
-	type OptimizationJob,
 } from "../db/prompt-optimizations.js";
-import { pgPool } from "../db/postgres.js";
-import { PromptRepositoryError } from "../db/prompts.js";
-import type { JsonObject } from "../db/prompts.js";
+import { PromptRepositoryError, type JsonObject } from "../db/prompts.js";
 import {
 	MAX_OPTIMIZATION_CANDIDATE_BYTES,
 	runGepaWorker,
@@ -42,14 +41,21 @@ import {
 	MIN_GEPA_METRIC_CALLS,
 	validateGepaConfiguration,
 } from "../lib/gepa-config.js";
-import { validatePromptTemplate } from "../lib/prompt-templates.js";
-import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
-import { logger } from "../lib/logger.js";
 import {
-	PromptErrorResponses,
+	type GepaWorker,
+	MAX_OPTIMIZATION_CANDIDATE_BYTES,
+	runGepaWorker,
+} from "../lib/gepa-worker.js";
+import { logger, type LogFields } from "../lib/logger.js";
+import { validatePromptTemplate } from "../lib/prompt-templates.js";
+import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
+import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
+import {
 	ProjectIdQuery,
+	PromptErrorResponses,
 	PromptId,
 } from "../schemas/prompts.js";
+import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
 
 const tag = "prompt-optimization";
 const Status = z.enum([
@@ -366,6 +372,7 @@ export const optimizationEvents = createRoute({
 function error(
 	c: { json: (body: unknown, status: 400 | 404 | 409 | 500) => Response },
 	cause: unknown,
+	fields: LogFields = {},
 ): Response {
 	const known =
 		cause instanceof PromptRepositoryError
@@ -373,6 +380,8 @@ function error(
 			: cause instanceof GepaConfigurationError
 				? new PromptRepositoryError("BAD_REQUEST", cause.message)
 				: new PromptRepositoryError("INTERNAL", "Optimization failed");
+	if (known.status === 500)
+		logger.error("optimization.request_failed", cause, fields);
 	return c.json(
 		{
 			code: known.code,
@@ -884,7 +893,7 @@ function statusSnapshot(job: OptimizationJob | null) {
 	};
 }
 
-function metricCallsUsed(
+export function metricCallsUsed(
 	job: OptimizationJob,
 	result: Awaited<ReturnType<GepaWorker>>,
 ): number | null {
@@ -896,7 +905,7 @@ function metricCallsUsed(
 			"BAD_REQUEST",
 			"Optimization job has an invalid metric-call budget",
 		);
-	if (!Number.isSafeInteger(value) || value < 0 || value > budget)
+	if (!Number.isSafeInteger(value) || value < 0)
 		throw new PromptRepositoryError(
 			"BAD_REQUEST",
 			"GEPA worker reported an invalid metric-call count",
@@ -984,6 +993,21 @@ export async function runOptimizationJob(
 				budget: job.budget,
 			},
 			controller.signal,
+			async ({ metric_calls_used }) => {
+				try {
+					await d.recordMetricCalls(d.pool(), {
+						id: job.id,
+						worker_id: workerId,
+						metric_calls_used,
+					});
+				} catch (cause) {
+					logger.error("optimization.metric_telemetry_failed", cause, {
+						job_id: job.id,
+						project_id: job.project_id,
+						metric_calls_used,
+					});
+				}
+			},
 		);
 		const usedMetricCalls = metricCallsUsed(job, result);
 		if (usedMetricCalls !== null)
@@ -1114,10 +1138,7 @@ export async function runOptimizationJob(
 				id: job.id,
 				worker_id: workerId,
 				status: "failed",
-				error_message:
-					cause instanceof Error
-						? cause.message.slice(0, 240)
-						: "Worker failed",
+				error_message: "Optimization worker failed",
 			});
 		} catch {
 			// A stopped or completed job is terminal and wins every worker failure race.
@@ -1174,7 +1195,18 @@ export function createOptimizationHandlers(
 				void runOptimizationJob(job, d);
 				return c.json(publicJob(job), 202);
 			} catch (cause) {
-				return error(c, cause);
+				const body = c.req.valid("json") as {
+					project_id: string;
+					slug: string;
+					source_version: number;
+					target: "system" | "user";
+				};
+				return error(c, cause, {
+					project_id: body.project_id,
+					prompt_slug: body.slug,
+					source_version: body.source_version,
+					target: body.target,
+				});
 			}
 		},
 		handleGet: async (
@@ -1309,6 +1341,11 @@ export function createOptimizationHandlers(
 					let last = 0;
 					try {
 						while (!stream.aborted) {
+							await assertTenantProjectAccess(
+								d.pool(),
+								trustedTenant(c),
+								input.project_id,
+							);
 							const next = nextOptimizationEvents(
 								await d.events(d.pool(), input),
 								last,
@@ -1324,8 +1361,11 @@ export function createOptimizationHandlers(
 							if (next.terminal) return;
 							await new Promise((resolve) => setTimeout(resolve, 500));
 						}
-					} catch {
-						if (!stream.aborted)
+					} catch (cause) {
+						if (
+							!stream.aborted &&
+							!(cause instanceof Error && cause.name === "TenantScopeError")
+						)
 							await stream.writeSSE({
 								event: "error",
 								data: JSON.stringify({

@@ -2,8 +2,10 @@
 // ids and accepts valid OTEL-format trace ids, and that the route that
 // uses it (GET /v1/traces/{id} -> handleGetTrace) returns 400 on a bad id.
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, mock } from "bun:test";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { TraceIdParam } from "../../src/schemas/common";
+import { TraceDetailQuery } from "../../src/schemas/traces";
 import { getTrace as getTraceRoute } from "../../src/routes/traces";
 
 const VALID_HEX32 = "0123456789abcdef0123456789abcdef";
@@ -69,5 +71,27 @@ describe("TraceIdParam (Zod schema)", () => {
 				{ id: "abc" },
 			).success,
 		).toBe(false);
+	});
+
+	it("requires project_id for trace detail lookups", () => {
+		expect(TraceDetailQuery.safeParse({}).success).toBe(false);
+		expect(
+			TraceDetailQuery.safeParse({
+				project_id: "11111111-1111-4111-8111-111111111111",
+			}).success,
+		).toBe(true);
+	});
+
+	it("rejects an unscoped trace detail request before its handler runs", async () => {
+		const handler = mock(async () => new Response());
+		const app = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success ? undefined : c.json({ code: "BAD_REQUEST" }, 400),
+		});
+		app.openapi(getTraceRoute, handler as never);
+
+		const response = await app.request(`http://x/v1/traces/${VALID_HEX32}`);
+		expect(response.status).toBe(400);
+		expect(handler).not.toHaveBeenCalled();
 	});
 });

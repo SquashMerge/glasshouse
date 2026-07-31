@@ -42,8 +42,10 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 
 ## Core entities
 
-- **Organization** — top-level authenticated tenancy boundary. Basic-auth credentials resolve to one organization; it owns Projects and scopes Postgres access, ClickHouse queries, and live trace events. See `infra/db/migrations/0019_organizations.sql` and `apps/api/src/tenancy.ts`.
-- **Project** — organization-owned workspace and data boundary (`project_id` on stored application and observability data). Postgres, UUID-keyed.
+- **Organization** — top-level authenticated tenancy boundary. Basic-auth credentials resolve to an immutable actor subject and one organization. Organization owners manage organization membership and may create Projects.
+- **Project** — organization-owned workspace and data boundary (`project_id` on stored application and observability data). A Project is `active` or non-destructively `archived`; product access requires explicit active Project membership. Its UUID is immutable; its validated slug is unique within its organization.
+- **Project membership** — an actor's `manager` or `member` role within one Project. Managers govern membership and lifecycle; members use product data. Organization owners manage the organization membership directory and override Project-manager authorization.
+- **Authorization audit event** — append-only, content-free PostgreSQL evidence for workspace bootstrap, membership, and lifecycle actions. `GET /v1/projects/{id}/audit-events` is visible only to organization owners and managers authorized for that Project.
 - **Agent** — versioned, typed entity. Multi-tenant, versioned, has a version history.
 - **Manifest** — serialized form of an Agent (prompts + tools + routing + guardrails + knowledge + deps as one atomic unit). Pinned to eval runs for bisectable regressions and atomic rollback.
 - **Prompt** — immutable collection of up to one system and one user Mustache message, scoped to a Project; its canonical public ID is the Project-local slug, while `slug@version` is display-only. See `apps/api/src/db/prompts.ts`.
@@ -64,6 +66,8 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Benchmark suite** — project-scoped, longitudinal evaluation definition backed by a grounded golden Dataset whose items all provide expected outputs. Each run records its model/prompt label and ranks against prior runs. API: `/v1/benchmarks`.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 - **Feedback** — immutable `human.feedback` Score plus mutable project-scoped review state; negative `new` feedback appears in `/feedback` Needs review. API: `/v1/feedback`.
+- **Governance policy version** — immutable project-scoped retention and ingress-redaction configuration. It has no effect until one version is explicitly approved; equivalent content is hash-idempotent. API/UI: `apps/api/src/routes/governance.ts`, `/governance`.
+- **Retention run** — one bounded, project-scoped application of an approved governance policy. Its stored evidence has IDs, safe counts, status, and timings only; it never includes deleted source data. Summaries are available through `/v1/governance/retention/runs` and `/governance`. See `infra/db/migrations/0029_governance_policies.sql`.
 
 ## Storage roles
 

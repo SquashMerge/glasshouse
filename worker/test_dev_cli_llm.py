@@ -269,6 +269,7 @@ class DevCliLlmTests(unittest.TestCase):
                 "def optimize(*, adapter, task_lm, reflection_lm, seed_candidate, trainset, valset, **kwargs):\n"
                 "    assert adapter is not None\n"
                 "    assert callable(adapter.model)\n"
+                "    assert adapter.propose_new_texts is None\n"
                 "    assert task_lm is None\n"
                 "    assert callable(reflection_lm)\n"
                 "    assert trainset is not valset\n"
@@ -290,6 +291,7 @@ class DevCliLlmTests(unittest.TestCase):
             (gepa_directory / "adapters" / "__init__.py").write_text("")
             (default_adapter_directory / "__init__.py").write_text("")
             (default_adapter_directory / "default_adapter.py").write_text(
+                "from types import SimpleNamespace\n"
                 "class DefaultAdapter:\n"
                 "    def __init__(self, model):\n"
                 "        self.model = model\n"
@@ -368,6 +370,7 @@ class DevCliLlmTests(unittest.TestCase):
             )
             self.assertNotIn(training_answer, output["candidate"])
             self.assertNotIn(held_out_answer, output["candidate"])
+            self.assertIn('ASTRAEA_GEPA_PROGRESS {"metric_calls_used": 1}', result.stderr)
 
 
 if __name__ == "__main__":

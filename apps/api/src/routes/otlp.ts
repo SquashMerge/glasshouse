@@ -7,10 +7,11 @@ import {
 } from "../schemas/otlp.js";
 import { normalizeSpan, resourceProjectId } from "../db/gen-ai-attrs.js";
 import {
-	loadRedactionOptions,
+	policyRedactionOptions,
 	redactMetadata,
 	redactTraceText,
 } from "../db/redact.js";
+import { approvedRedaction } from "../db/governance.js";
 import {
 	insertObservations,
 	insertTraces,
@@ -18,7 +19,12 @@ import {
 	type TenantScopedObservation,
 	type TenantScopedTrace,
 } from "../db/traces-writer.js";
-import type { TenantScope } from "../tenancy.js";
+import {
+	type TenantScope,
+	TenantScopeError,
+	withActiveAuthorizedProjectLock as lockActiveAuthorizedProject,
+} from "../tenancy.js";
+import { pgPool } from "../db/postgres.js";
 import { publishSync } from "../lib/event-bus.js";
 import { logger } from "../lib/logger.js";
 
@@ -36,9 +42,9 @@ export const otlpIngestRoute = createRoute({
 	security: [{ basicAuth: [] }],
 	request: {
 		headers: z.object({
-			"x-astraea-project-id": z.string().uuid().optional().openapi({
+			"x-astraea-project-id": z.string().uuid().openapi({
 				description:
-					"Optional project selector, verified against the authenticated organization",
+					"Project selector, verified against the authenticated organization",
 			}),
 		}),
 		body: {
@@ -69,6 +75,11 @@ export type OtlpIngestDependencies = {
 	insertObservations: typeof insertObservations;
 	insertTraces: typeof insertTraces;
 	publishSync: typeof publishSync;
+	approvedRedaction: typeof approvedRedaction;
+	withActiveAuthorizedProjectLock: <T>(
+		tenant: TenantScope,
+		callback: () => Promise<T>,
+	) => Promise<T>;
 };
 
 export async function resourceProjectIds(
@@ -98,11 +109,16 @@ type AggregatedTrace = {
 	isRoot: boolean;
 };
 
+class OtlpConflictError extends Error {}
+
 const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 	defaultClient,
 	insertObservations,
 	insertTraces,
 	publishSync,
+	approvedRedaction,
+	withActiveAuthorizedProjectLock: (tenant, callback) =>
+		lockActiveAuthorizedProject(pgPool(), tenant, callback),
 };
 
 function otlpDeduplicationTokens(request: unknown, tenant: TenantScope) {
@@ -122,20 +138,22 @@ function otlpDeduplicationTokens(request: unknown, tenant: TenantScope) {
 }
 
 export function createOtlpIngestHandler(
-	dependencies: OtlpIngestDependencies = productionOtlpIngestDependencies,
+	dependencies: Partial<OtlpIngestDependencies> = {},
 ) {
+	const resolvedDependencies: OtlpIngestDependencies = {
+		...productionOtlpIngestDependencies,
+		...dependencies,
+	};
 	return async function handleOtlpIngest(
 		req: Request,
 		tenant: TenantScope,
-		fallbackProjectId = "",
+		fallbackProjectId = tenant.projectId,
 	): Promise<Response> {
 		let bodyJson: unknown;
 		try {
 			bodyJson = await req.json();
 		} catch (err) {
-			logger.warn("otlp.body_parse_failed", {
-				error_type: err instanceof Error ? err.name : typeof err,
-			});
+			logger.warn("otlp.body_parse_failed", err);
 			return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
 		}
 
@@ -150,73 +168,98 @@ export function createOtlpIngestHandler(
 
 		const request = parsed.data;
 		const deduplicationTokens = otlpDeduplicationTokens(request, tenant);
-		const redaction = loadRedactionOptions();
-
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];
 
-		for (const rs of request.resource_spans) {
-			const resourceAttributes = rs.resource?.attributes ?? [];
-			for (const ss of rs.scope_spans) {
-				for (const span of ss.spans) {
-					const normalized = normalizeSpan(
-						span,
-						resourceAttributes,
-						fallbackProjectId,
-					);
-					const trace: TenantScopedTrace = {
-						...normalized.trace,
-						organization_id: tenant.organizationId,
-					};
-					const observation: TenantScopedObservation = {
-						...normalized.observation,
-						organization_id: tenant.organizationId,
-					};
-					const existingTrace = traces.get(trace.trace_id);
-					if (
-						existingTrace &&
-						existingTrace.trace.project_id !== trace.project_id
-					) {
-						return jsonError(
-							400,
-							"BAD_REQUEST",
-							"Trace contains conflicting project provenance",
-						);
-					}
-					trace.input_text = redactTraceText(trace.input_text, redaction);
-					trace.output_text = redactTraceText(trace.output_text, redaction);
-					observation.input_text = trace.input_text;
-					observation.output_text = trace.output_text;
-					observation.metadata = redactMetadata(
-						observation.metadata,
-						redaction,
-					);
-					const isRoot = observation.parent_observation_id === null;
-					traces.set(
-						trace.trace_id,
-						aggregateTrace(existingTrace, trace, isRoot),
-					);
-					observations.push(observation);
-				}
-			}
-		}
-
-		const client = dependencies.defaultClient();
 		try {
-			await dependencies.insertTraces(
-				client,
-				[...traces.values()].map(({ trace }) => trace),
-				deduplicationTokens.traces,
-			);
-			await dependencies.insertObservations(
-				client,
-				observations,
-				deduplicationTokens.observations,
+			await resolvedDependencies.withActiveAuthorizedProjectLock(
+				tenant,
+				async () => {
+					// Resolve while holding the project lock so an approval cannot race an
+					// in-flight ingest. Strip configured keys before normalization derives
+					// identity fields such as trace.user_id.
+					const policy = await resolvedDependencies.approvedRedaction(
+						pgPool(),
+						tenant.organizationId,
+						tenant.projectId,
+					);
+					const redaction = policyRedactionOptions(
+						policy ?? { mode: "none", keys: [] },
+					);
+					for (const rs of request.resource_spans) {
+						const resourceAttributes = redactAttributes(
+							rs.resource?.attributes ?? [],
+							redaction.redactKeys,
+						);
+						for (const ss of rs.scope_spans) {
+							for (const sourceSpan of ss.spans) {
+								const span = {
+									...sourceSpan,
+									attributes: redactAttributes(
+										sourceSpan.attributes ?? [],
+										redaction.redactKeys,
+									),
+								};
+								const normalized = normalizeSpan(
+									span,
+									resourceAttributes,
+									fallbackProjectId,
+								);
+								const trace: TenantScopedTrace = {
+									...normalized.trace,
+									organization_id: tenant.organizationId,
+								};
+								const observation: TenantScopedObservation = {
+									...normalized.observation,
+									organization_id: tenant.organizationId,
+								};
+								const existingTrace = traces.get(trace.trace_id);
+								if (
+									existingTrace &&
+									existingTrace.trace.project_id !== trace.project_id
+								) {
+									throw new OtlpConflictError(
+										"Trace contains conflicting project provenance",
+									);
+								}
+								trace.input_text = redactTraceText(trace.input_text, redaction);
+								trace.output_text = redactTraceText(
+									trace.output_text,
+									redaction,
+								);
+								observation.input_text = trace.input_text;
+								observation.output_text = trace.output_text;
+								observation.metadata = redactMetadata(
+									observation.metadata,
+									redaction,
+								);
+								const isRoot = observation.parent_observation_id === null;
+								traces.set(
+									trace.trace_id,
+									aggregateTrace(existingTrace, trace, isRoot),
+								);
+								observations.push(observation);
+							}
+						}
+					}
+					const client = resolvedDependencies.defaultClient();
+					await resolvedDependencies.insertTraces(
+						client,
+						[...traces.values()].map(({ trace }) => trace),
+						deduplicationTokens.traces,
+					);
+					await resolvedDependencies.insertObservations(
+						client,
+						observations,
+						deduplicationTokens.observations,
+					);
+				},
 			);
 		} catch (err) {
-			logger.error("otlp.persist_failed", undefined, {
-				error_type: err instanceof Error ? err.name : typeof err,
-			});
+			if (err instanceof TenantScopeError) throw err;
+			if (err instanceof OtlpConflictError)
+				return jsonError(400, "BAD_REQUEST", err.message);
+			logger.error("otlp.persist_failed", err);
 			return jsonError(
 				500,
 				"INTERNAL",
@@ -226,13 +269,13 @@ export function createOtlpIngestHandler(
 
 		try {
 			for (const { trace } of traces.values())
-				dependencies.publishSync("trace.created", { trace });
+				resolvedDependencies.publishSync("trace.created", { trace });
 			for (const o of observations)
-				dependencies.publishSync("observation.created", { observation: o });
+				resolvedDependencies.publishSync("observation.created", {
+					observation: o,
+				});
 		} catch (err) {
-			logger.warn("otlp.event_publish_failed", {
-				error_type: err instanceof Error ? err.name : typeof err,
-			});
+			logger.warn("otlp.event_publish_failed", err);
 		}
 
 		return new Response(JSON.stringify({ partial_success: {} }), {
@@ -240,6 +283,15 @@ export function createOtlpIngestHandler(
 			headers: { "content-type": "application/json" },
 		});
 	};
+}
+
+function redactAttributes<T extends { key: string }>(
+	attributes: T[],
+	keys: string[],
+): T[] {
+	if (!keys.length) return attributes;
+	const redacted = new Set(keys);
+	return attributes.filter((attribute) => !redacted.has(attribute.key));
 }
 
 function aggregateTrace(

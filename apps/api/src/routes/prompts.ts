@@ -13,6 +13,7 @@ import {
 } from "../db/prompts.js";
 import type { JsonObject } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
+import { logger } from "../lib/logger.js";
 import { renderPromptTemplatesWithWarnings } from "../lib/prompt-templates.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
 import {
@@ -50,6 +51,7 @@ function failure(c: Context, cause: unknown): Response {
 		cause instanceof PromptRepositoryError
 			? cause
 			: new PromptRepositoryError("INTERNAL", "Prompt operation failed", cause);
+	if (known.status === 500) logger.error("prompts.request_failed", cause);
 	return c.json(
 		{
 			code: known.code,

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	Card,
 	CardContent,
@@ -12,9 +13,11 @@ import { Label } from "../components/ui/label";
 import { Button } from "../components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { authHeader, setCredentials } from "../lib/auth";
+import { clearWorkspaceSession } from "../components/ProjectProvider";
 
 export function LoginPage() {
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const location = useLocation();
 	const [username, setUsername] = React.useState("");
 	const [password, setPassword] = React.useState("");
@@ -33,6 +36,7 @@ export function LoginPage() {
 				body: "{}",
 			});
 			if (res.status === 200) {
+				clearWorkspaceSession(queryClient);
 				setCredentials(username, password);
 				const redirect = new URLSearchParams(location.searchStr).get(
 					"redirect",

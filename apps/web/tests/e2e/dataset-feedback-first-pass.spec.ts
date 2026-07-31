@@ -141,6 +141,7 @@ async function ingestProjectTrace(
 		headers: {
 			authorization: authorization(),
 			"content-type": "application/json",
+			"x-astraea-project-id": projectId,
 		},
 		data: {
 			resource_spans: [

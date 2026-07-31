@@ -1,12 +1,23 @@
 import { describe, expect, it } from "bun:test";
 import { executeBenchmarkExperiment } from "../../src/routes/benchmarks";
 import type { ExperimentDependencies } from "../../src/routes/experiments";
+import {
+	createBenchmarkRun,
+	createBenchmarkSuite,
+} from "../../src/db/benchmarks";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const experimentId = "22222222-2222-4222-8222-222222222222";
 const datasetId = "33333333-3333-4333-8333-333333333333";
 
 describe("benchmark evaluation execution", () => {
+	it("locks the active project before benchmark writes", () => {
+		for (const operation of [createBenchmarkSuite, createBenchmarkRun])
+			expect(operation.toString()).toContain(
+				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			);
+	});
+
 	it("marks the experiment failed when background execution rejects", async () => {
 		const transitions: Array<{
 			status: string;

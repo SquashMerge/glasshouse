@@ -70,4 +70,34 @@ describe("operations dashboard", () => {
 			screen.getByLabelText("Dashboard actions").firstElementChild,
 		).toHaveClass("shadow-sm");
 	});
+
+	it("gives each non-summary dashboard card the same top content padding", async () => {
+		render(
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
+				<DashboardPage />
+			</QueryClientProvider>,
+		);
+
+		const serviceHealth = await screen.findByText("Service health");
+		expect(serviceHealth.parentElement).toHaveClass("p-5", "pt-5");
+
+		const recentTraces = screen.getByRole("heading", {
+			name: "Recent traces",
+			level: 2,
+		});
+		expect(recentTraces.parentElement?.parentElement).toHaveClass(
+			"p-5",
+			"pt-5",
+		);
+
+		const firstTrace = screen.getByRole("heading", {
+			name: "Send your first trace",
+			level: 2,
+		});
+		expect(firstTrace.parentElement).toHaveClass("p-5", "pt-5");
+	});
 });

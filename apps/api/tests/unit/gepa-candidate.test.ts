@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	checkExpectedAnswerLeakage,
+	metricCallsUsed,
 	validateGepaCandidate,
 } from "../../src/routes/prompt-optimizations";
 
@@ -9,6 +10,15 @@ describe("GEPA candidate validation", () => {
 		expect(() =>
 			validateGepaCandidate("Hello {{name}}", "Hello {{name"),
 		).toThrow("malformed");
+	});
+
+	it("retains the actual GEPA metric count after a soft stop threshold is crossed", () => {
+		expect(
+			metricCallsUsed({ budget: { max_metric_calls: 5 } } as never, {
+				candidate: "candidate",
+				metric_calls_used: 7,
+			}),
+		).toBe(7);
 	});
 
 	it("accepts exactly 4096 characters and rejects 4097", () => {

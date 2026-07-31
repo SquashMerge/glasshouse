@@ -20,16 +20,18 @@ export type GepaWorkerResult = {
 export const MAX_OPTIMIZATION_CANDIDATE_BYTES = 64 * 1024;
 const MAX_WORKER_OUTPUT_BYTES = MAX_OPTIMIZATION_CANDIDATE_BYTES + 1024;
 const MAX_WORKER_DIAGNOSTIC_BYTES = 16 * 1024;
+export type GepaWorkerProgress = { metric_calls_used: number };
 export type GepaWorker = (
 	input: GepaWorkerInput,
 	signal: AbortSignal,
+	onProgress?: (progress: GepaWorkerProgress) => Promise<void> | void,
 ) => Promise<GepaWorkerResult>;
 
 function workerPath(): string {
 	return new URL("../../../../worker/gepa_worker.py", import.meta.url).pathname;
 }
 
-export const runGepaWorker: GepaWorker = async (input, signal) => {
+export const runGepaWorker: GepaWorker = async (input, signal, onProgress) => {
 	const payload = JSON.stringify(input);
 	const child = Bun.spawn(
 		[process.env.GEPA_PYTHON ?? "python3", workerPath()],
@@ -46,7 +48,7 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 	);
 	const [stdout, stderr, exitCode] = await Promise.all([
 		readWorkerOutput(child.stdout),
-		readWorkerOutput(child.stderr, MAX_WORKER_DIAGNOSTIC_BYTES),
+		readWorkerDiagnostics(child.stderr, onProgress),
 		child.exited,
 	]);
 	if (exitCode !== 0) {
@@ -60,11 +62,17 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 		);
 		throw new Error("GEPA worker failed");
 	}
+	return parseWorkerResult(stdout, input.budget.max_metric_calls);
+};
+
+export function parseWorkerResult(
+	stdout: string,
+	maxMetricCalls: unknown,
+): GepaWorkerResult {
 	try {
 		const parsed = JSON.parse(stdout) as Partial<GepaWorkerResult> & {
 			metric_calls_used?: unknown;
 		};
-		const maxMetricCalls = input.budget.max_metric_calls;
 		const metricCallsUsed: number | null =
 			parsed.metric_calls_used === undefined ||
 			parsed.metric_calls_used === null
@@ -82,10 +90,10 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 			typeof parsed.baseline_validation_score !== "number" ||
 			!Number.isFinite(parsed.baseline_validation_score) ||
 			(metricCallsUsed !== null &&
-				(!Number.isSafeInteger(metricCallsUsed) ||
-					metricCallsUsed < 0 ||
-					typeof maxMetricCalls !== "number" ||
-					metricCallsUsed > maxMetricCalls)) ||
+				(!Number.isSafeInteger(metricCallsUsed) || metricCallsUsed < 0)) ||
+			typeof maxMetricCalls !== "number" ||
+			!Number.isSafeInteger(maxMetricCalls) ||
+			maxMetricCalls < 0 ||
 			new TextEncoder().encode(parsed.candidate).byteLength >
 				MAX_OPTIMIZATION_CANDIDATE_BYTES
 		)
@@ -100,7 +108,67 @@ export const runGepaWorker: GepaWorker = async (input, signal) => {
 	} catch {
 		throw new Error("GEPA worker returned an invalid result");
 	}
-};
+}
+
+const PROGRESS_PREFIX = "ASTRAEA_GEPA_PROGRESS ";
+
+export async function readWorkerDiagnostics(
+	stream: ReadableStream<Uint8Array>,
+	onProgress?: (progress: GepaWorkerProgress) => Promise<void> | void,
+): Promise<string> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	const diagnostics: string[] = [];
+	let diagnosticBytes = 0;
+	let pending = "";
+	const appendDiagnostic = (line: string): void => {
+		const bytes = new TextEncoder().encode(line).byteLength;
+		if (diagnosticBytes + bytes > MAX_WORKER_DIAGNOSTIC_BYTES)
+			throw new Error("GEPA worker output exceeded size limit");
+		diagnosticBytes += bytes;
+		diagnostics.push(line);
+	};
+	const processLine = async (line: string): Promise<void> => {
+		if (!line.startsWith(PROGRESS_PREFIX)) {
+			appendDiagnostic(line);
+			return;
+		}
+		let progress: unknown;
+		try {
+			progress = JSON.parse(line.slice(PROGRESS_PREFIX.length)) as unknown;
+		} catch {
+			appendDiagnostic(line);
+			return;
+		}
+		if (
+			!progress ||
+			typeof progress !== "object" ||
+			!("metric_calls_used" in progress) ||
+			typeof progress.metric_calls_used !== "number" ||
+			!Number.isSafeInteger(progress.metric_calls_used) ||
+			progress.metric_calls_used < 0
+		) {
+			appendDiagnostic(line);
+			return;
+		}
+		await onProgress?.({ metric_calls_used: progress.metric_calls_used });
+	};
+	try {
+		while (true) {
+			const next = await reader.read();
+			if (next.done) break;
+			pending += decoder.decode(next.value, { stream: true });
+			const lines = pending.split("\n");
+			pending = lines.pop() ?? "";
+			for (const line of lines) await processLine(line);
+		}
+		pending += decoder.decode();
+		if (pending) await processLine(pending);
+	} finally {
+		reader.releaseLock();
+	}
+	return diagnostics.join("\n");
+}
 
 export async function readWorkerOutput(
 	stream: ReadableStream<Uint8Array>,

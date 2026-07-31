@@ -9,15 +9,22 @@ import {
 	subscribe,
 } from "../../src/lib/event-bus";
 import { createOtlpIngestHandler } from "../../src/routes/otlp";
+import { TenantScopeError } from "../../src/tenancy";
 
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
+const withActiveAuthorizedProjectLock = async <T>(
+	_tenant: unknown,
+	callback: () => Promise<T>,
+) => callback();
 const rawHandleOtlpIngest = createOtlpIngestHandler({
 	defaultClient,
 	insertObservations,
 	insertTraces,
 	publishSync,
+	approvedRedaction: async () => null,
+	withActiveAuthorizedProjectLock,
 });
 
 const USER = "astraea";
@@ -72,6 +79,46 @@ function validOtlp(
 }
 
 describe("OTLP ingest publishes events", () => {
+	it("does not invoke ClickHouse writers when final archive or revocation revalidation fails", async () => {
+		for (const unavailable of ["archived", "revoked"]) {
+			const rejectedHandler = createOtlpIngestHandler({
+				defaultClient,
+				insertObservations,
+				insertTraces,
+				publishSync,
+				approvedRedaction: async () => null,
+				withActiveAuthorizedProjectLock: async () => {
+					throw new TenantScopeError(`Project is ${unavailable}`);
+				},
+			});
+			insertTraces.mockClear();
+			insertObservations.mockClear();
+
+			await expect(
+				rejectedHandler(
+					new Request("http://x/v1/otel/v1/traces", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(
+							validOtlp([
+								{
+									trace_id: HEX32_A,
+									span_id: HEX16_A,
+									name: "denied",
+									start_time_unix_nano: String(NOW_NS),
+									attributes: [],
+								},
+							]),
+						),
+					}),
+					TENANT,
+				),
+			).rejects.toBeInstanceOf(TenantScopeError);
+			expect(insertTraces, unavailable).not.toHaveBeenCalled();
+			expect(insertObservations, unavailable).not.toHaveBeenCalled();
+		}
+	});
+
 	it("propagates a resource project ID to traces and observations, not a span override", async () => {
 		const res = await handleOtlpIngest(
 			new Request("http://x/v1/otel/v1/traces", {
@@ -114,7 +161,7 @@ describe("OTLP ingest publishes events", () => {
 		expect(observations[0]?.project_id).toBe(PROJECT_ID);
 	});
 
-	it("leaves missing, span-only, and malformed resource project IDs unscoped", async () => {
+	it("falls back to the resolved project when resource project IDs are missing or malformed", async () => {
 		const res = await handleOtlpIngest(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
@@ -163,10 +210,13 @@ describe("OTLP ingest publishes events", () => {
 		const observations = insertObservations.mock.calls[0]?.[1] as Array<{
 			project_id: string;
 		}>;
-		expect(traces.map((trace) => trace.project_id)).toEqual(["", ""]);
+		expect(traces.map((trace) => trace.project_id)).toEqual([
+			TENANT.projectId,
+			TENANT.projectId,
+		]);
 		expect(observations.map((observation) => observation.project_id)).toEqual([
-			"",
-			"",
+			TENANT.projectId,
+			TENANT.projectId,
 		]);
 	});
 
@@ -544,6 +594,66 @@ describe("OTLP ingest publishes events", () => {
 		});
 	});
 
+	it("redacts configured identity keys before persistence and event normalization", async () => {
+		const secret = "UNIQUE_GOVERNANCE_ENDUSER_SECRET";
+		const traces: unknown[] = [];
+		const observations: unknown[] = [];
+		subscribe("trace.created", (message) => traces.push(message));
+		subscribe("observation.created", (message) => observations.push(message));
+		const redactedHandler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => ({
+				mode: "all_text",
+				keys: ["enduser.id"],
+			}),
+			withActiveAuthorizedProjectLock,
+		});
+
+		const res = await redactedHandler(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "redacted",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{ key: "enduser.id", value: { stringValue: secret } },
+								{
+									key: "gen_ai.prompt.0.content",
+									value: { stringValue: secret },
+								},
+								{
+									key: "gen_ai.completion.0.content",
+									value: { stringValue: secret },
+								},
+								{ key: "input.value", value: { stringValue: secret } },
+								{ key: "output.value", value: { stringValue: secret } },
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+		expect(res.status).toBe(200);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		const persisted = JSON.stringify({
+			traces: insertTraces.mock.calls.at(-1)?.[1],
+			observations: insertObservations.mock.calls.at(-1)?.[1],
+			events: [...traces, ...observations],
+		});
+		expect(persisted).not.toContain(secret);
+		expect(persisted).toContain("[REDACTED]");
+		expect(insertTraces.mock.calls.at(-1)?.[1]?.[0]?.user_id).toBe("");
+	});
+
 	it("a throwing subscriber does NOT change the HTTP response", async () => {
 		const orig = console.error;
 		console.error = () => undefined;
@@ -602,6 +712,8 @@ describe("OTLP ingest publishes events", () => {
 				observationTokens.add(token);
 			},
 			publishSync,
+			approvedRedaction: async () => null,
+			withActiveAuthorizedProjectLock,
 		});
 		const payload = validOtlp([
 			{

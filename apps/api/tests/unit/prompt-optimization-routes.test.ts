@@ -1,11 +1,14 @@
 import { describe, expect, it, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { PromptRepositoryError } from "../../src/db/prompts";
+import { logger } from "../../src/lib/logger";
+import { TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
 import {
 	createOptimizationHandlers,
 	getOptimization,
 	getLatestOptimization,
 	listOptimizationActivities,
+	startOptimization,
 	type OptimizationDependencies,
 } from "../../src/routes/prompt-optimizations";
 
@@ -222,5 +225,79 @@ describe("prompt optimization status routes", () => {
 		const body = await response.json();
 		expect(body).toMatchObject({ candidate_content: null });
 		expect(JSON.stringify(body)).not.toContain("confidential rnerno");
+	});
+
+	it("logs the exception when an optimization start returns an internal error", async () => {
+		const originalModels = process.env.GEPA_ALLOWED_MODELS;
+		const originalLogger = logger.error;
+		const errors: Array<{ event: string; cause: unknown; fields: unknown }> =
+			[];
+		process.env.GEPA_ALLOWED_MODELS = "local-model";
+		logger.error = (event, cause, fields = {}) =>
+			errors.push({ event, cause, fields });
+		try {
+			const handlers = createOptimizationHandlers({
+				pool: () => ({}) as never,
+				create: async () => {
+					throw new Error("database connection lost");
+				},
+			} as unknown as OptimizationDependencies);
+			const api = new OpenAPIHono({
+				defaultHook: (result, c) =>
+					result.success
+						? undefined
+						: c.json(
+								{ code: "BAD_REQUEST", message: "Request validation failed" },
+								400,
+							),
+			});
+			api.use("*", async (c, next) => {
+				c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+				await next();
+			});
+			api.openapi(startOptimization, handlers.handleStart);
+
+			const response = await api.request("/v1/prompt-optimizations", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					project_id: PROJECT,
+					slug: "daily-summary",
+					source_version: 1,
+					target: "system",
+					evaluator: { type: "default_adapter" },
+					dataset: {
+						version: 1,
+						rubric: "Preserve concise summaries.",
+						training_examples: [{ input: "training input", answer: "training answer" }],
+						validation_examples: [{ input: "held-out input", answer: "held-out answer" }],
+					},
+					model_config: {
+						task_lm: "local-model",
+						reflection_lm: "local-model",
+					},
+					budget: { max_metric_calls: 2 },
+				}),
+			});
+
+			expect(response.status).toBe(500);
+			expect(errors).toEqual([
+				{
+					event: "optimization.request_failed",
+					cause: expect.objectContaining({
+						message: "database connection lost",
+					}),
+					fields: {
+						project_id: PROJECT,
+						prompt_slug: "daily-summary",
+						source_version: 1,
+						target: "system",
+					},
+				},
+			]);
+		} finally {
+			logger.error = originalLogger;
+			process.env.GEPA_ALLOWED_MODELS = originalModels;
+		}
 	});
 });

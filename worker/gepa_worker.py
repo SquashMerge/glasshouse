@@ -41,6 +41,31 @@ class StderrLogger:
     def log(self, message):
         print(message, file=sys.stderr, flush=True)
 
+    def progress(self, metric_calls_used):
+        print(
+            "ASTRAEA_GEPA_PROGRESS " + json.dumps({"metric_calls_used": metric_calls_used}),
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+class ProgressReportingAdapter:
+    def __init__(self, base_adapter, logger):
+        self._base_adapter = base_adapter
+        self._logger = logger
+        self.model = base_adapter.model
+        self.propose_new_texts = getattr(base_adapter, "propose_new_texts", None)
+        self.metric_calls_used = 0
+
+    def evaluate(self, *args, **kwargs):
+        evaluation = self._base_adapter.evaluate(*args, **kwargs)
+        self.metric_calls_used += len(evaluation.scores)
+        self._logger.progress(self.metric_calls_used)
+        return evaluation
+
+    def make_reflective_dataset(self, *args, **kwargs):
+        return self._base_adapter.make_reflective_dataset(*args, **kwargs)
+
 
 def allowed_models():
     models = [model.strip() for model in os.environ.get("GEPA_ALLOWED_MODELS", "").split(",") if model.strip()]
@@ -255,7 +280,8 @@ class AstraeaDefaultAdapter(DefaultAdapter):
 
 
 try:
-    adapter = AstraeaDefaultAdapter(model=task_lm, rubric=rubric)
+    logger = StderrLogger()
+    adapter = ProgressReportingAdapter(AstraeaDefaultAdapter(model=task_lm, rubric=rubric), logger)
     result = gepa.optimize(
         seed_candidate={"system_prompt": source},
         trainset=trainset,
@@ -264,7 +290,7 @@ try:
         task_lm=None,
         reflection_lm=reflection_lm,
         max_metric_calls=max_metric_calls,
-        logger=StderrLogger(),
+        logger=logger,
     )
     best_idx = result.best_idx
     candidate = result.best_candidate["system_prompt"]

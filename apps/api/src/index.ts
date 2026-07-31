@@ -8,6 +8,7 @@ import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { pgPool } from "./db/postgres.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
 import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
+import { failInterruptedRetentionRuns } from "./db/governance.js";
 import {
 	executeExperiment,
 	production as evaluationProduction,
@@ -145,9 +146,19 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	apiApp.use("/v1/*", basicAuthMiddleware());
 	apiApp.use("/v1/*", async (c, next) => {
 		try {
+			if (
+				c.req.path === "/v1/me" ||
+				c.req.path === "/v1/auth/login" ||
+				c.req.path === "/v1/otel/v1/traces" ||
+				c.req.path.startsWith("/v1/projects") ||
+				c.req.path.startsWith("/v1/organization/")
+			)
+				return await next();
 			const projectIds = await requestedProjectIds(c);
 			if (projectIds.size > 1)
 				throw new TenantScopeError("Conflicting project selectors");
+			if (projectIds.size === 0)
+				throw new TenantScopeError("Project target is required");
 			for (const projectId of projectIds)
 				await resolvedDependencies.assertTenantProjectAccess(
 					resolvedDependencies.pgPool(),
@@ -156,6 +167,14 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				);
 			await next();
 		} catch (cause) {
+			if (
+				cause instanceof TenantScopeError &&
+				cause.message === "Project target is required"
+			)
+				return c.json(
+					{ code: "BAD_REQUEST", message: "Request validation failed" },
+					400,
+				);
 			if (cause instanceof TenantScopeError)
 				return c.json(
 					{ code: "NOT_FOUND", message: "Project is not available" },
@@ -170,15 +189,11 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	apiApp.post("/v1/otel/v1/traces", async (c) => {
 		try {
 			const tenant = trustedTenant(c);
-			const requestedProjectId =
-				c.req.header("x-astraea-project-id") ?? undefined;
+			const header = c.req.header("x-astraea-project-id");
+			if (!header || !isUuid(header))
+				throw new TenantScopeError("Project target is required");
+			const requestedProjectId = header;
 			const resourceProjects = await resourceProjectIds(c.req.raw);
-			for (const projectId of resourceProjects)
-				await resolvedDependencies.assertTenantProjectAccess(
-					resolvedDependencies.pgPool(),
-					tenant,
-					projectId,
-				);
 			const scope = await resolvedDependencies.resolveTenantProject(
 				resolvedDependencies.pgPool(),
 				tenant,
@@ -194,7 +209,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 			return resolvedDependencies.handleOtlpIngest(
 				c.req.raw,
 				scope,
-				requestedProjectId ? scope.projectId : undefined,
+				scope.projectId,
 			);
 		} catch (cause) {
 			if (cause instanceof TenantScopeError) {
@@ -218,6 +233,7 @@ if (import.meta.main) {
 		pool: pgPool,
 		recoverExperiments: () => listRecoverableExperiments(pgPool()),
 		failOptimizations: () => failInterruptedOptimizationJobs(pgPool()),
+		failRetentionRuns: () => failInterruptedRetentionRuns(pgPool()),
 		resumeExperiment: async (experiment) => {
 			void executeExperiment(evaluationProduction, {
 				project_id: experiment.project_id,

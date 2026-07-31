@@ -12,7 +12,18 @@ describe("evaluation event stream", () => {
 			release = resolve;
 		});
 		const handlers = createExperimentHandlers({
-			pool: () => ({}) as never,
+			pool: () =>
+				({
+					query: async () => ({
+						rows: [
+							{
+								organization_role: "owner",
+								project_role: "manager",
+								status: "active",
+							},
+						],
+					}),
+				}) as never,
 			getExperiment: async () => {
 				calls += 1;
 				await blocked;
@@ -24,6 +35,10 @@ describe("evaluation event stream", () => {
 				valid: (key: string) =>
 					key === "param" ? { id: experimentId } : { project_id: projectId },
 			},
+			get: () => ({
+				actor: "owner",
+				organizationId: "00000000-0000-4000-8000-000000000001",
+			}),
 		} as never);
 		const reader = response.body?.getReader();
 
