@@ -60,6 +60,17 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 - Review the exact PR head, not a stale local branch or an author's fix comment. Map every blocker to code and regression coverage before declaring it addressed.
 - For Bun changes, use a clean checkout/worktree and `bun install --frozen-lockfile` before relying on tests. Run format, lint, typecheck, build, API tests, web tests, and worker tests as applicable; report unavailable Docker/provider checks as unverified rather than passing them by assumption.
 
+## UI design and quality bar
+
+- Treat look and feel as a product requirement, not a final polish pass. Every authenticated product page must feel like one coherent Astraea application.
+- Use the repository's Tailwind CSS setup as the default styling mechanism: express layout, spacing, typography, responsive behavior, and state styling with composable utility classes. Use the configured semantic theme tokens (for example, `bg-background`, `text-muted-foreground`, and `border-border`) so light/dark themes remain consistent; add a shared token when the design system needs a new semantic role rather than introducing page-local color values.
+- Compose conditional Tailwind classes with the shared `cn` helper and keep cross-page visual patterns in shadcn primitives or shared components. Avoid page-scoped CSS and inline styles unless a CSS variable, third-party integration, or behavior Tailwind cannot express makes them necessary.
+- Prefer the repository's shadcn UI primitives and shared abstractions (`Button`, `Input`, `Label`, `Card`, `Select`, `Separator`, and existing layout utilities) over raw page-local replicas. If the right primitive is absent, add or extend one deliberately rather than duplicating ad hoc styling.
+- Use a deliberate, consistent spacing rhythm. Leave clear separation between page headers, sections, cards, action/filter rows, form fields, and empty/error states; adjacent cards must never appear visually fused or collide at responsive widths.
+- Pair each visible form label with its control using the standard label/control pattern and a comfortable vertical gap. Preserve semantic labels, accessible names, keyboard navigation, focus-visible treatment, disabled state, and error/help text relationships.
+- Keep shared authenticated pages aligned to the AppShell workspace contract. Do not reintroduce arbitrary page-level outer width caps; intentionally compact forms, dialogs, and popovers may retain local constraints.
+- For UI work, review Dashboard, Feedback, Evaluations, and Datasets alongside the changed page when relevant, at representative desktop, laptop/tablet, and mobile widths. Verify visual states and responsive layout with component tests and screenshot/visual evidence where available.
+
 ## Comments
 
 Don't add unnecessary comments throughout the codebase. Code should speak for itself. Only comment when the code is complex, easy to misread, hides a non-obvious decision (ordering, race, perf, pinned contract from a brief), or when a brief/issue requires it. Future readers will thank you for fewer lines.
