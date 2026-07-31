@@ -163,8 +163,8 @@ jobs:
       - name: Verify idempotent ClickHouse migrations
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'
 
-      - name: Seed E2E project
-        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING;"
+      - name: Seed E2E projects and memberships
+        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING; INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, organization_id, 'astraea', 'manager' FROM projects WHERE id IN ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002') ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now();"
 
       - name: Run Playwright E2E suite
         env:

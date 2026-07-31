@@ -177,6 +177,7 @@ async function postTrace(
 		headers: {
 			"content-type": "application/json",
 			authorization: basicAuthHeader(),
+			"x-astraea-project-id": E2E_PROJECT_ID,
 		},
 	});
 	expect(
