@@ -87,5 +87,54 @@ class SeedTraceProjectRoutingTests(unittest.TestCase):
         urlopen.assert_not_called()
 
 
+class SeedTracePromptProvenanceTests(unittest.TestCase):
+    def test_adds_one_valid_provenance_tuple_to_most_llm_spans_only(self):
+        ctx = seed_traces.TraceContext(
+            trace_id="0" * 32,
+            root_span_id="1" * 16,
+            start_unix_nano=1_700_000_000_000_000_000,
+            env="development",
+            agent_id="code-reviewer",
+            agent_version="1.0.0",
+            user_id="user-1",
+            session_id="session-1",
+        )
+
+        with patch.object(seed_traces.random, "random", return_value=0.1):
+            payload = seed_traces.build_trace_payload(ctx, num_children=2, conv="genai")
+
+        spans = payload["resource_spans"][0]["scope_spans"][0]["spans"]
+        root = next(span for span in spans if span["name"].startswith("agent.run."))
+        llm = next(span for span in spans if span["name"] == "llm.call")
+        root_keys = {attribute["key"] for attribute in root["attributes"]}
+        llm_attributes = {attribute["key"]: attribute["value"] for attribute in llm["attributes"]}
+
+        self.assertFalse(any(key.startswith("astraea.prompt.") for key in root_keys))
+        self.assertEqual(
+            set(llm_attributes).intersection(
+                {
+                    "astraea.prompt.id",
+                    "astraea.prompt.version",
+                    "astraea.prompt.content_hash",
+                }
+            ),
+            {
+                "astraea.prompt.id",
+                "astraea.prompt.version",
+                "astraea.prompt.content_hash",
+            },
+        )
+        self.assertRegex(
+            llm_attributes["astraea.prompt.id"]["stringValue"],
+            r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        )
+        self.assertRegex(
+            llm_attributes["astraea.prompt.version"]["intValue"], r"^[1-9]\d*$"
+        )
+        self.assertRegex(
+            llm_attributes["astraea.prompt.content_hash"]["stringValue"], r"^[0-9a-f]{64}$"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

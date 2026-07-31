@@ -22,6 +22,7 @@ CLI flags mirror the SEED_* env vars (env is read first, CLI overrides).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -81,6 +82,19 @@ LLM_RESPONSES = [
 ]
 
 TOOL_NAMES = ["search_db", "search_web", "fetch_user_profile", "get_weather"]
+PROMPT_PROVENANCE_RATE = 0.7
+PROMPT_TEMPLATES = {
+    "customer-support-bot": (12, "You resolve customer issues accurately and empathetically."),
+    "code-reviewer": (9, "You review code for correctness, security, and maintainability."),
+    "data-analyst": (6, "You analyze business data and explain the evidence clearly."),
+    "research-assistant": (4, "You research questions and cite reliable evidence."),
+    "sql-copilot": (8, "You write safe, efficient SQL for the requested analysis."),
+    "doc-summarizer": (5, "You summarize documents faithfully and preserve key context."),
+    "translation-agent": (3, "You translate text accurately while preserving its intended tone."),
+    "calendar-helper": (7, "You coordinate schedules while respecting stated constraints."),
+    "email-drafter": (11, "You draft concise, audience-appropriate emails."),
+    "bug-triager": (10, "You classify bugs by impact, urgency, and affected component."),
+}
 
 
 # ---------- OTLP payload construction ----------
@@ -114,6 +128,18 @@ def make_attr(key: str, value) -> dict:
     if isinstance(value, float):
         return {"key": key, "value": {"doubleValue": value}}
     raise TypeError(f"unsupported attr value type: {type(value)}")
+
+
+def prompt_provenance_attrs(agent_id: str) -> list[dict]:
+    if random.random() >= PROMPT_PROVENANCE_RATE:
+        return []
+    version, template = PROMPT_TEMPLATES[agent_id]
+    content_hash = hashlib.sha256(template.encode("utf-8")).hexdigest()
+    return [
+        make_attr("astraea.prompt.id", agent_id),
+        make_attr("astraea.prompt.version", version),
+        make_attr("astraea.prompt.content_hash", content_hash),
+    ]
 
 
 def genai_resource_attrs(ctx: TraceContext) -> list[dict]:
@@ -244,7 +270,28 @@ def build_trace_payload(ctx: TraceContext, num_children: int, conv: str) -> dict
     cur_span_id = hex_id(8)
 
     # Always at least one LLM child
-    llm_attrs = genai_span_attrs(model, in_tok, out_tok, prompt, completion, ctx.agent_id, ctx.agent_version) if conv == "genai" else openinference_span_attrs(model, in_tok, out_tok, prompt, completion, ctx.agent_id, ctx.agent_version)
+    llm_attrs = (
+        genai_span_attrs(
+            model,
+            in_tok,
+            out_tok,
+            prompt,
+            completion,
+            ctx.agent_id,
+            ctx.agent_version,
+        )
+        if conv == "genai"
+        else openinference_span_attrs(
+            model,
+            in_tok,
+            out_tok,
+            prompt,
+            completion,
+            ctx.agent_id,
+            ctx.agent_version,
+        )
+    )
+    llm_attrs.extend(prompt_provenance_attrs(ctx.agent_id))
     spans.append(make_span(
         name="llm.call",
         span_id=cur_span_id,
