@@ -427,6 +427,14 @@ export async function stopOptimizationJob(
 	input: { project_id: string; id: string },
 ): Promise<OptimizationJob> {
 	return tx(pool, async (client) => {
+		const project = (
+			await rows(
+				client,
+				"SELECT id FROM projects WHERE id=$1 AND status='active' FOR UPDATE",
+				[input.project_id],
+			)
+		)[0];
+		if (!project) throw fail("NOT_FOUND", "Project is not available");
 		const row = (
 			await rows(
 				client,

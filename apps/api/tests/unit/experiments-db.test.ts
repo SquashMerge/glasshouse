@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	claimExperimentTask,
+	cancelExperiment,
 	finalizeExperimentTask,
 	listRecoverableExperiments,
 } from "../../src/db/experiments";
@@ -110,5 +111,23 @@ describe("durable experiment task ledger", () => {
 
 		expect(calls[0]?.text).toContain("e.status IN ('pending', 'running')");
 		expect(calls[0]?.text).toContain("p.status = 'active'");
+	});
+
+	it("does not cancel an experiment after its project is archived", async () => {
+		const calls: string[] = [];
+		const db = {
+			query: async (text: string) => {
+				calls.push(text);
+				return { rows: [] };
+			},
+		};
+
+		await expect(
+			cancelExperiment(db, {
+				project_id: "11111111-1111-4111-8111-111111111111",
+				id: "22222222-2222-4222-8222-222222222222",
+			}),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(calls[0]).toContain("status='active' FOR UPDATE");
 	});
 });

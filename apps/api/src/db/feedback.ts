@@ -76,7 +76,15 @@ function present(row: Row) {
 		updated_at: time(row, "updated_at"),
 	};
 }
-const SELECT = `SELECT s.id, s.project_id, s.trace_id, s.observation_id, s.value, s.metadata, s.created_at, r.status, r.note, r.dataset_id, r.dataset_item_id, r.updated_at FROM scores s JOIN feedback_reviews r ON r.score_id=s.id`;
+const SELECT = `SELECT s.id, s.project_id, s.trace_id, s.observation_id, s.value, s.metadata, s.created_at, r.status, r.note, r.dataset_id, r.dataset_item_id, r.updated_at FROM scores s JOIN projects p ON p.id=s.project_id AND p.status='active' JOIN feedback_reviews r ON r.score_id=s.id`;
+async function requireActiveProject(client: PoolClient, projectId: string) {
+	const project = await client.query(
+		"SELECT id FROM projects WHERE id=$1 AND status='active' FOR UPDATE",
+		[projectId],
+	);
+	if (!project.rows[0])
+		throw new FeedbackRepositoryError("NOT_FOUND", "Project is not available");
+}
 function normalized(input: {
 	trace_id: string;
 	observation_id?: string;
@@ -111,6 +119,7 @@ export async function createFeedback(
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
+		await requireActiveProject(client, input.project_id);
 		const existing = await client.query(
 			`${SELECT} WHERE s.project_id=$1 AND s.id=(SELECT score_id FROM feedback_idempotency WHERE project_id=$1 AND idempotency_key=$2)`,
 			[input.project_id, input.idempotency_key],
@@ -203,7 +212,7 @@ export async function listFeedback(
 		values,
 	);
 	const total = await db.query(
-		`SELECT COUNT(*)::int AS total FROM scores s JOIN feedback_reviews r ON r.score_id=s.id WHERE ${where}`,
+		`SELECT COUNT(*)::int AS total FROM scores s JOIN projects p ON p.id=s.project_id AND p.status='active' JOIN feedback_reviews r ON r.score_id=s.id WHERE ${where}`,
 		values.slice(0, -2),
 	);
 	return {
@@ -225,6 +234,7 @@ export async function promoteFeedback(
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
+		await requireActiveProject(client, input.project_id);
 		const existing = await client.query(
 			`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback' FOR UPDATE`,
 			[input.id, input.project_id],
@@ -311,6 +321,7 @@ export async function reviewFeedback(
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
+		await requireActiveProject(client, input.project_id);
 		const existing = await client.query(
 			`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback' FOR UPDATE`,
 			[input.id, input.project_id],

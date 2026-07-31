@@ -501,6 +501,14 @@ describe("project authorization routes", () => {
 
 		const statements = query.mock.calls.map(([sql]) => sql);
 		expect(statements).toContainEqual(
+			expect.stringContaining(
+				"LEFT JOIN LATERAL (SELECT role FROM project_memberships",
+			),
+		);
+		expect(statements).toContainEqual(
+			expect.stringContaining("FOR UPDATE OF p, om"),
+		);
+		expect(statements).not.toContainEqual(
 			expect.stringContaining("FOR UPDATE OF p, om, pm"),
 		);
 		expect(statements).toContainEqual(

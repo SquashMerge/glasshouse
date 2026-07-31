@@ -457,6 +457,7 @@ describe("prompt optimization repository", () => {
 	it("does not turn a completed optimization into stopped when stop races completion", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
 			{ rows: [] },
 			{ rows: [job({ status: "completed", result_version: 4 })] },
 			{ rows: [] },
@@ -470,6 +471,7 @@ describe("prompt optimization repository", () => {
 		).rejects.toMatchObject({
 			code: "CONFLICT",
 		} satisfies Partial<PromptRepositoryError>);
+		expect(pool.client.calls[1]?.text).toContain("status='active' FOR UPDATE");
 		expect(pool.client.calls.map((call) => call.text)).not.toContain(
 			expect.stringContaining("INSERT INTO prompt_optimization_events"),
 		);

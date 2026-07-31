@@ -156,7 +156,7 @@ export async function createExperiment(
 export async function listExperiments(db: Queryable, project_id: string) {
 	try {
 		const r = await db.query(
-			`SELECT * FROM experiments WHERE project_id=$1 ORDER BY created_at DESC`,
+			`SELECT e.* FROM experiments e JOIN projects p ON p.id=e.project_id AND p.status='active' WHERE e.project_id=$1 ORDER BY e.created_at DESC`,
 			[project_id],
 		);
 		return {
@@ -173,7 +173,7 @@ export async function getExperiment(
 ) {
 	try {
 		const r = await db.query(
-			`SELECT * FROM experiments WHERE id=$1 AND project_id=$2`,
+			`SELECT e.* FROM experiments e JOIN projects p ON p.id=e.project_id AND p.status='active' WHERE e.id=$1 AND e.project_id=$2`,
 			[input.id, input.project_id],
 		);
 		if (!r.rows[0])
@@ -382,9 +382,12 @@ export async function cancelExperiment(
 ) {
 	try {
 		const r = await db.query(
-			`WITH cancelled AS (
+			`WITH active_project AS MATERIALIZED (
+				SELECT id FROM projects WHERE id=$2 AND status='active' FOR UPDATE
+			), cancelled AS (
 				UPDATE experiments SET status='cancelled', updated_at=now()
 				WHERE id=$1 AND project_id=$2 AND status IN ('pending','running')
+					AND EXISTS (SELECT 1 FROM active_project)
 				RETURNING *
 			), cancelled_tasks AS (
 				UPDATE experiment_tasks t SET status='cancelled', lease_token=NULL,
