@@ -502,15 +502,23 @@ function tokenCounts(tokens: string[]): Map<string, number> {
 	return counts;
 }
 
+type ComparisonBudget = { comparisons: number; exhausted: boolean };
+
+function consumeComparison(budget: ComparisonBudget): boolean {
+	budget.comparisons += 1;
+	if (budget.comparisons <= 250_000) return true;
+	budget.exhausted = true;
+	return false;
+}
+
 function containsTokenMultiset(
 	candidateTokenCounts: Map<string, number>,
 	expectedTokens: string[],
-	budget: { comparisons: number },
+	budget: ComparisonBudget,
 ): boolean {
 	const expectedTokenCounts = new Map<string, number>();
 	for (const token of expectedTokens) {
-		budget.comparisons += 1;
-		if (budget.comparisons > 250_000) return true;
+		if (!consumeComparison(budget)) return true;
 		const expectedCount = (expectedTokenCounts.get(token) ?? 0) + 1;
 		if ((candidateTokenCounts.get(token) ?? 0) < expectedCount) return false;
 		expectedTokenCounts.set(token, expectedCount);
@@ -521,7 +529,7 @@ function containsTokenMultiset(
 function containsOrderedMaterial(
 	candidateTokens: string[],
 	expectedTokens: string[],
-	budget: { comparisons: number },
+	budget: ComparisonBudget,
 ): boolean {
 	// Filler words cannot make an ordered copy of an expected-answer span safe.
 	const positions = new Map<string, number[]>();
@@ -544,8 +552,7 @@ function containsOrderedMaterial(
 				expectedIndex < expectedTokens.length;
 				expectedIndex += 1
 			) {
-				budget.comparisons += 1;
-				if (budget.comparisons > 250_000) return true;
+				if (!consumeComparison(budget)) return true;
 				const next = firstPositionAfter(
 					positions.get(expectedTokens[expectedIndex]!) ?? [],
 					candidateIndex,
@@ -559,6 +566,84 @@ function containsOrderedMaterial(
 		}
 	}
 	return false;
+}
+
+// Handle multi-character confusables such as m -> rn without trusting one skeleton.
+function tokensWithinLeakageDistance(
+	left: string,
+	right: string,
+	budget: ComparisonBudget,
+): boolean {
+	if (left === right) return true;
+	if (
+		left.length < 4 ||
+		right.length < 4 ||
+		Math.abs(left.length - right.length) > 2
+	)
+		return false;
+	const previous = Array.from(
+		{ length: right.length + 1 },
+		(_, index) => index,
+	);
+	for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+		const next = [leftIndex];
+		let rowMinimum = next[0]!;
+		for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+			if (!consumeComparison(budget)) return false;
+			const distance = Math.min(
+				next[rightIndex - 1]! + 1,
+				previous[rightIndex]! + 1,
+				previous[rightIndex - 1]! +
+					(left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+			);
+			next.push(distance);
+			rowMinimum = Math.min(rowMinimum, distance);
+		}
+		if (rowMinimum > 2) return false;
+		previous.splice(0, previous.length, ...next);
+	}
+	return previous[right.length]! <= 2;
+}
+
+function containsFuzzyOrderedTokens(
+	candidateTokens: string[],
+	expectedTokens: string[],
+	budget: ComparisonBudget,
+): boolean {
+	if (!expectedTokens.length) return false;
+	const positions = new Map<string, number[]>();
+	const positionsFor = (expectedToken: string): number[] | null => {
+		const known = positions.get(expectedToken);
+		if (known) return known;
+		const matches: number[] = [];
+		for (const [index, candidateToken] of candidateTokens.entries()) {
+			if (tokensWithinLeakageDistance(candidateToken, expectedToken, budget))
+				matches.push(index);
+			if (budget.exhausted) return null;
+		}
+		positions.set(expectedToken, matches);
+		return matches;
+	};
+	for (const candidateStart of positionsFor(expectedTokens[0]!) ?? []) {
+		let candidateIndex = candidateStart;
+		let matched = true;
+		for (
+			let expectedIndex = 1;
+			expectedIndex < expectedTokens.length;
+			expectedIndex += 1
+		) {
+			const matches = positionsFor(expectedTokens[expectedIndex]!);
+			if (matches === null) return true;
+			const next = firstPositionAfter(matches, candidateIndex);
+			if (next === null) {
+				matched = false;
+				break;
+			}
+			candidateIndex = next;
+		}
+		if (matched) return true;
+	}
+	return budget.exhausted;
 }
 
 function firstPositionAfter(positions: number[], index: number): number | null {
@@ -584,7 +669,7 @@ export function checkExpectedAnswerLeakage(
 	const paddedCandidate = ` ${normalizedCandidate} `;
 	const compactCandidate = compactLeakageText(candidate);
 	const visibleCandidate = normalizedVisibleText(candidate);
-	const budget = { comparisons: 0 };
+	const budget = { comparisons: 0, exhausted: false };
 	for (const answer of expectedAnswers) {
 		const visibleAnswer = normalizedVisibleText(answer);
 		const normalizedAnswer = normalizedLeakageText(answer);
@@ -598,7 +683,8 @@ export function checkExpectedAnswerLeakage(
 			(answerTokens.length > 0 &&
 				(paddedCandidate.includes(paddedAnswer) ||
 					containsCompactFullAnswer(visibleCandidate, compactAnswer) ||
-					containsTokenMultiset(candidateTokenCounts, answerTokens, budget)))
+					containsTokenMultiset(candidateTokenCounts, answerTokens, budget) ||
+					containsFuzzyOrderedTokens(candidateTokens, answerTokens, budget)))
 		)
 			return { status: "failed", reason: "expected_answer_full_match" };
 		for (let start = 0; start <= answerTokens.length - 8; start += 1) {
@@ -615,7 +701,8 @@ export function checkExpectedAnswerLeakage(
 				paddedCandidate.includes(` ${span} `) ||
 				compactCandidate.includes(spanTokens.join("")) ||
 				containsOrderedMaterial(candidateTokens, spanTokens, budget) ||
-				containsTokenMultiset(candidateTokenCounts, spanTokens, budget)
+				containsTokenMultiset(candidateTokenCounts, spanTokens, budget) ||
+				containsFuzzyOrderedTokens(candidateTokens, spanTokens, budget)
 			)
 				return {
 					status: "failed",

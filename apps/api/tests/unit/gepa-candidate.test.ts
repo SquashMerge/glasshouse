@@ -51,10 +51,11 @@ describe("GEPA candidate validation", () => {
 	it("rejects copied example input material", () => {
 		const exampleInput =
 			"Customer SSN 123-45-6789 and routing number 021000021 require review.";
+		const obfuscatedInput = exampleInput.replace("number", "nurnber");
 		expect(() =>
 			validateGepaCandidate(
 				"Summarize {{tasks}}",
-				`Summarize {{tasks}}. ${exampleInput}`,
+				`Summarize {{tasks}}. ${obfuscatedInput}`,
 				["Classify the submitted records as incomplete."],
 				[exampleInput],
 			),

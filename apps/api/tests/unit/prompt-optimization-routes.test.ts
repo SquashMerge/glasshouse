@@ -48,7 +48,8 @@ function privateJob(candidate_content = "Safe candidate {{tasks}}") {
 			],
 			validation_examples: [
 				{
-					input: "private held-out input",
+					input:
+						"Customer account number 5432109876 must be reviewed before Friday.",
 					answer: "private held-out answer",
 				},
 			],
@@ -195,7 +196,9 @@ describe("prompt optimization status routes", () => {
 		const serialized = JSON.stringify(body);
 		expect(serialized).not.toContain("private training input");
 		expect(serialized).not.toContain("private training answer");
-		expect(serialized).not.toContain("private held-out input");
+		expect(serialized).not.toContain(
+			"Customer account number 5432109876 must be reviewed before Friday.",
+		);
 		expect(serialized).not.toContain("private held-out answer");
 		expect(serialized).not.toContain("private-model");
 		expect(serialized).not.toContain("private-requester");
@@ -207,7 +210,9 @@ describe("prompt optimization status routes", () => {
 
 	it("hides legacy candidates that copy protected example material", async () => {
 		get.mockResolvedValueOnce(
-			privateJob("Summarize {{tasks}} with private held-out input."),
+			privateJob(
+				"Summarize {{tasks}}. Customer account nurnber 5432109876 must be reviewed before Friday.",
+			),
 		);
 		const response = await app().request(
 			`/v1/prompt-optimizations/33333333-3333-4333-8333-333333333333?project_id=${PROJECT}`,
@@ -216,6 +221,6 @@ describe("prompt optimization status routes", () => {
 		expect(response.status).toBe(200);
 		const body = await response.json();
 		expect(body).toMatchObject({ candidate_content: null });
-		expect(JSON.stringify(body)).not.toContain("private held-out input");
+		expect(JSON.stringify(body)).not.toContain("Customer account nurnber");
 	});
 });
