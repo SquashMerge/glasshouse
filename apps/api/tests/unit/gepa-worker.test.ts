@@ -65,6 +65,24 @@ describe("GEPA worker adapter", () => {
 		expect(progress).toEqual([3]);
 	});
 
+	it("propagates a live telemetry persistence failure", async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					new TextEncoder().encode(
+						'ASTRAEA_GEPA_PROGRESS {"metric_calls_used":3}\n',
+					),
+				);
+				controller.close();
+			},
+		});
+		await expect(
+			readWorkerDiagnostics(stream, () => {
+				throw new Error("telemetry persistence failed");
+			}),
+		).rejects.toThrow("telemetry persistence failed");
+	});
+
 	it("rejects oversized worker output before buffering it", async () => {
 		const stream = new ReadableStream<Uint8Array>({
 			start(controller) {

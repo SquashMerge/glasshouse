@@ -490,11 +490,19 @@ async function run(
 			},
 			controller.signal,
 			async ({ metric_calls_used }) => {
-				await d.recordMetricCalls(d.pool(), {
-					id: job.id,
-					worker_id: workerId,
-					metric_calls_used,
-				});
+				try {
+					await d.recordMetricCalls(d.pool(), {
+						id: job.id,
+						worker_id: workerId,
+						metric_calls_used,
+					});
+				} catch (cause) {
+					logger.error("optimization.metric_telemetry_failed", cause, {
+						job_id: job.id,
+						project_id: job.project_id,
+						metric_calls_used,
+					});
+				}
 			},
 		);
 		const usedMetricCalls = metricCallsUsed(job, result);

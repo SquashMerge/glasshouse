@@ -116,25 +116,25 @@ export async function readWorkerDiagnostics(
 			appendDiagnostic(line);
 			return;
 		}
+		let progress: unknown;
 		try {
-			const progress = JSON.parse(
-				line.slice(PROGRESS_PREFIX.length),
-			) as unknown;
-			if (
-				!progress ||
-				typeof progress !== "object" ||
-				!("metric_calls_used" in progress) ||
-				typeof progress.metric_calls_used !== "number" ||
-				!Number.isSafeInteger(progress.metric_calls_used) ||
-				progress.metric_calls_used < 0
-			) {
-				appendDiagnostic(line);
-				return;
-			}
-			await onProgress?.({ metric_calls_used: progress.metric_calls_used });
+			progress = JSON.parse(line.slice(PROGRESS_PREFIX.length)) as unknown;
 		} catch {
 			appendDiagnostic(line);
+			return;
 		}
+		if (
+			!progress ||
+			typeof progress !== "object" ||
+			!("metric_calls_used" in progress) ||
+			typeof progress.metric_calls_used !== "number" ||
+			!Number.isSafeInteger(progress.metric_calls_used) ||
+			progress.metric_calls_used < 0
+		) {
+			appendDiagnostic(line);
+			return;
+		}
+		await onProgress?.({ metric_calls_used: progress.metric_calls_used });
 	};
 	try {
 		while (true) {
