@@ -330,7 +330,7 @@ export async function recordOptimizationMetricCalls(
 ): Promise<void> {
 	const recorded = await rows(
 		pool,
-		"UPDATE prompt_optimization_jobs SET metric_calls_used=COALESCE(metric_calls_used,$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
+		"UPDATE prompt_optimization_jobs SET metric_calls_used=GREATEST(COALESCE(metric_calls_used,0),$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
 		[input.id, input.worker_id, input.metric_calls_used],
 	);
 	if (!recorded.length)
