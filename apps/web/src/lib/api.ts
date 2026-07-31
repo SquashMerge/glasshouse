@@ -424,13 +424,12 @@ export interface OptimizationJob {
 	source_version?: number;
 	target?: PromptRole;
 	budget?: { max_metric_calls?: number };
-	dataset?: OptimizationDataset;
+	dataset?: OptimizationDatasetSummary;
 	dataset_hash?: string;
 	candidate_content?: string | null;
 	evidence?: OptimizationEvidence | null;
 	promotion_status?: OptimizationPromotionStatus;
 	promotion_reason?: string | null;
-	reviewed_by?: string | null;
 	promoted_at?: string | null;
 	created_at?: string;
 	updated_at?: string;
@@ -465,6 +464,13 @@ export interface OptimizationDataset {
 	rubric: string;
 	training_examples: OptimizationExample[];
 	validation_examples: OptimizationExample[];
+}
+
+export interface OptimizationDatasetSummary {
+	version: 0 | 1;
+	rubric: string;
+	training_example_count: number;
+	validation_example_count: number;
 }
 
 export interface OptimizationEvidence {

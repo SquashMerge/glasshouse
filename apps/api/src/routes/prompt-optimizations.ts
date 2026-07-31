@@ -163,6 +163,36 @@ const Job = z
 		completed_at: z.string().datetime().nullable(),
 	})
 	.strict();
+const DatasetSummary = z
+	.object({
+		version: z.union([z.literal(0), z.literal(1)]),
+		rubric: z.string(),
+		training_example_count: z.number().int().nonnegative(),
+		validation_example_count: z.number().int().nonnegative(),
+	})
+	.strict();
+const PublicJob = Job.pick({
+	id: true,
+	prompt_slug: true,
+	source_version: true,
+	target: true,
+	dataset_hash: true,
+	budget: true,
+	status: true,
+	result_version: true,
+	candidate_content: true,
+	evidence: true,
+	promotion_status: true,
+	promotion_reason: true,
+	promoted_at: true,
+	error_message: true,
+	metric_calls_used: true,
+	created_at: true,
+	updated_at: true,
+	completed_at: true,
+})
+	.extend({ dataset: DatasetSummary })
+	.strict();
 const JobId = z
 	.object({
 		id: z
@@ -224,7 +254,7 @@ export const startOptimization = createRoute({
 	responses: {
 		202: {
 			description: "Queued",
-			content: { "application/json": { schema: Job } },
+			content: { "application/json": { schema: PublicJob } },
 		},
 		...PromptErrorResponses,
 	},
@@ -239,7 +269,7 @@ export const getOptimization = createRoute({
 	responses: {
 		200: {
 			description: "OK",
-			content: { "application/json": { schema: Job } },
+			content: { "application/json": { schema: PublicJob } },
 		},
 		...PromptErrorResponses,
 	},
@@ -254,7 +284,7 @@ export const getActiveOptimization = createRoute({
 	responses: {
 		200: {
 			description: "OK",
-			content: { "application/json": { schema: Job.nullable() } },
+			content: { "application/json": { schema: PublicJob.nullable() } },
 		},
 		...PromptErrorResponses,
 	},
@@ -298,7 +328,7 @@ export const promoteOptimization = createRoute({
 	responses: {
 		200: {
 			description: "Promoted",
-			content: { "application/json": { schema: Job } },
+			content: { "application/json": { schema: PublicJob } },
 		},
 		...PromptErrorResponses,
 	},
@@ -312,7 +342,7 @@ export const stopOptimization = createRoute({
 	responses: {
 		200: {
 			description: "Stopped",
-			content: { "application/json": { schema: Job } },
+			content: { "application/json": { schema: PublicJob } },
 		},
 		...PromptErrorResponses,
 	},
@@ -679,6 +709,35 @@ const production: OptimizationDependencies = {
 	promote: promoteOptimizationDraft,
 };
 
+function publicJob(job: OptimizationJob) {
+	return {
+		id: job.id,
+		prompt_slug: job.prompt_slug,
+		source_version: job.source_version,
+		target: job.target,
+		dataset: {
+			version: job.dataset.version,
+			rubric: job.dataset.rubric,
+			training_example_count: job.dataset.training_examples.length,
+			validation_example_count: job.dataset.validation_examples.length,
+		},
+		dataset_hash: job.dataset_hash,
+		budget: job.budget,
+		status: job.status,
+		result_version: job.result_version,
+		candidate_content: job.candidate_content,
+		evidence: job.evidence,
+		promotion_status: job.promotion_status,
+		promotion_reason: job.promotion_reason,
+		promoted_at: job.promoted_at,
+		error_message: job.error_message,
+		metric_calls_used: job.metric_calls_used,
+		created_at: job.created_at,
+		updated_at: job.updated_at,
+		completed_at: job.completed_at,
+	};
+}
+
 function statusSnapshot(job: OptimizationJob | null) {
 	if (!job) return null;
 	return {
@@ -984,7 +1043,7 @@ export function createOptimizationHandlers(
 					budget: body.budget,
 				});
 				void runOptimizationJob(job, d);
-				return c.json(job, 202);
+				return c.json(publicJob(job), 202);
 			} catch (cause) {
 				return error(c, cause);
 			}
@@ -993,13 +1052,12 @@ export function createOptimizationHandlers(
 			c: Parameters<RouteHandler<typeof getOptimization>>[0],
 		): Promise<Response> => {
 			try {
-				return c.json(
-					await d.get(d.pool(), {
-						project_id: (c.req.valid("query") as { project_id: string })
-							.project_id,
-						id: (c.req.valid("param") as { id: string }).id,
-					}),
-				);
+				const job = await d.get(d.pool(), {
+					project_id: (c.req.valid("query") as { project_id: string })
+						.project_id,
+					id: (c.req.valid("param") as { id: string }).id,
+				});
+				return c.json(publicJob(job));
 			} catch (cause) {
 				return error(c, cause);
 			}
@@ -1008,12 +1066,11 @@ export function createOptimizationHandlers(
 			c: Parameters<RouteHandler<typeof getActiveOptimization>>[0],
 		): Promise<Response> => {
 			try {
-				return c.json(
-					await d.getActive(
-						d.pool(),
-						c.req.valid("query") as { project_id: string; slug: string },
-					),
+				const job = await d.getActive(
+					d.pool(),
+					c.req.valid("query") as { project_id: string; slug: string },
 				);
+				return c.json(job ? publicJob(job) : null);
 			} catch (cause) {
 				return error(c, cause);
 			}
@@ -1087,7 +1144,7 @@ export function createOptimizationHandlers(
 					prompt_slug: promoted.prompt_slug,
 					result_version: promoted.result_version,
 				});
-				return c.json(promoted);
+				return c.json(publicJob(promoted));
 			} catch (cause) {
 				return error(c, cause);
 			}
@@ -1103,7 +1160,7 @@ export function createOptimizationHandlers(
 				});
 				logger.info("optimization.stop_requested", { job_id: job.id });
 				activeWorkers.get(job.id)?.abort();
-				return c.json(job);
+				return c.json(publicJob(job));
 			} catch (cause) {
 				return error(c, cause);
 			}

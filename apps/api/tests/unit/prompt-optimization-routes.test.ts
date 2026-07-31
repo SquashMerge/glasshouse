@@ -3,6 +3,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { PromptRepositoryError } from "../../src/db/prompts";
 import {
 	createOptimizationHandlers,
+	getOptimization,
 	getLatestOptimization,
 	listOptimizationActivities,
 	type OptimizationDependencies,
@@ -18,6 +19,45 @@ const getLatest = mock(
 		return null;
 	},
 );
+const get = mock(async () => ({
+	id: "33333333-3333-4333-8333-333333333333",
+	project_id: PROJECT,
+	prompt_id: "44444444-4444-4444-8444-444444444444",
+	prompt_slug: "daily-summary",
+	source_version: 2,
+	target: "system" as const,
+	evaluator: { type: "default_adapter" },
+	dataset: {
+		version: 1 as const,
+		rubric: "Preserve deadlines.",
+		training_examples: [
+			{ input: "private training input", answer: "private training answer" },
+		],
+		validation_examples: [
+			{
+				input: "private held-out input",
+				answer: "private held-out answer",
+			},
+		],
+	},
+	dataset_hash: "a".repeat(64),
+	model_config: { task_lm: "private-model" },
+	budget: { max_metric_calls: 5 },
+	status: "completed" as const,
+	requested_by: "private-requester",
+	result_version: null,
+	candidate_content: "Safe candidate {{tasks}}",
+	evidence: null,
+	promotion_status: "review_required" as const,
+	promotion_reason: "insufficient_held_out_validation",
+	reviewed_by: null,
+	promoted_at: null,
+	error_message: null,
+	metric_calls_used: 3,
+	created_at: "2026-07-30T21:37:45.906Z",
+	updated_at: "2026-07-30T21:39:45.325Z",
+	completed_at: "2026-07-30T21:39:45.325Z",
+}));
 const listActivities = mock(async () => [
 	{
 		id: "33333333-3333-4333-8333-333333333333",
@@ -33,6 +73,7 @@ const listActivities = mock(async () => [
 function app() {
 	const handlers = createOptimizationHandlers({
 		pool: () => ({}) as never,
+		get,
 		getLatest,
 		listActivities,
 	} as unknown as OptimizationDependencies);
@@ -47,6 +88,7 @@ function app() {
 	});
 	api.openapi(listOptimizationActivities, handlers.handleListActivities);
 	api.openapi(getLatestOptimization, handlers.handleGetLatest);
+	api.openapi(getOptimization, handlers.handleGet);
 	return api;
 }
 
@@ -126,5 +168,35 @@ describe("prompt optimization status routes", () => {
 		});
 		expect(JSON.stringify(body)).not.toContain("private");
 		expect(JSON.stringify(body)).not.toContain("requested_by");
+	});
+
+	it("does not expose held-out answers from a job response", async () => {
+		get.mockClear();
+		const response = await app().request(
+			`/v1/prompt-optimizations/33333333-3333-4333-8333-333333333333?project_id=${PROJECT}`,
+		);
+
+		expect(response.status).toBe(200);
+		const body = await response.json();
+		expect(body).toMatchObject({
+			dataset: {
+				version: 1,
+				rubric: "Preserve deadlines.",
+				training_example_count: 1,
+				validation_example_count: 1,
+			},
+			candidate_content: "Safe candidate {{tasks}}",
+		});
+		const serialized = JSON.stringify(body);
+		expect(serialized).not.toContain("private training input");
+		expect(serialized).not.toContain("private training answer");
+		expect(serialized).not.toContain("private held-out input");
+		expect(serialized).not.toContain("private held-out answer");
+		expect(serialized).not.toContain("private-model");
+		expect(serialized).not.toContain("private-requester");
+		expect(get.mock.calls[0]?.[1]).toEqual({
+			project_id: PROJECT,
+			id: "33333333-3333-4333-8333-333333333333",
+		});
 	});
 });
