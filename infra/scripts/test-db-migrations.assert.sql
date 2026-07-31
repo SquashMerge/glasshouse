@@ -609,6 +609,15 @@ BEGIN
     EXCEPTION WHEN raise_exception THEN
         NULL;
     END;
+    BEGIN
+        UPDATE organization_memberships
+        SET organization_id = '00000000-0000-4000-8000-000000000001'
+        WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+            AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'sole organization owner membership move was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
 
     INSERT INTO organization_memberships (organization_id, actor_subject, role)
     VALUES ('00000000-0000-4000-8000-000000000002', 'migration-manager', 'member');
@@ -624,6 +633,15 @@ BEGIN
         WHERE project_id = '33333333-3333-4333-8333-333333333333'
             AND actor_subject = 'migration-manager';
         RAISE EXCEPTION 'final active project manager demotion was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+    BEGIN
+        UPDATE project_memberships
+        SET project_id = '55555555-5555-4555-8555-555555555555'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333'
+            AND actor_subject = 'migration-manager';
+        RAISE EXCEPTION 'sole active project manager membership move was accepted';
     EXCEPTION WHEN raise_exception THEN
         NULL;
     END;

@@ -34,4 +34,21 @@ describe("experiment agent scope", () => {
 		expect(calls[0]?.text).toContain("project_id");
 		expect(calls[0]?.values).toContain(agent_id);
 	});
+
+	it("locks and rechecks the active project in the insert statement", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
+		const db = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				return { rows: [] };
+			},
+		};
+
+		await expect(
+			createExperiment(db, { project_id, dataset_id, config: {} }),
+		).rejects.toMatchObject<ExperimentRepositoryError>({ code: "NOT_FOUND" });
+		expect(calls[0]?.text).toContain("FROM projects");
+		expect(calls[0]?.text).toContain("status = 'active'");
+		expect(calls[0]?.text).toContain("FOR KEY SHARE");
+	});
 });
