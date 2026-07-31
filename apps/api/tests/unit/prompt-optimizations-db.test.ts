@@ -421,6 +421,7 @@ describe("prompt optimization repository", () => {
 	it("reuses the active start row without recording a second queued event", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
 			{
 				rows: [
 					{
@@ -446,8 +447,11 @@ describe("prompt optimization repository", () => {
 		});
 
 		expect(result.id).toBe(JOB);
-		expect(pool.client.calls).toHaveLength(4);
-		expect(pool.client.calls[2]?.text).toContain("ON CONFLICT");
+		expect(pool.client.calls).toHaveLength(5);
+		expect(pool.client.calls[1]?.text).toContain("FROM projects");
+		expect(pool.client.calls[1]?.text).toContain("status = 'active'");
+		expect(pool.client.calls[1]?.text).toContain("FOR KEY SHARE");
+		expect(pool.client.calls[3]?.text).toContain("ON CONFLICT");
 	});
 
 	it("does not turn a completed optimization into stopped when stop races completion", async () => {

@@ -121,7 +121,7 @@ export async function createExperiment(
 ) {
 	try {
 		const r = await db.query(
-			`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending' WHERE $3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2) RETURNING *`,
+			`WITH active_project AS MATERIALIZED (SELECT id FROM projects WHERE id = $2 AND status = 'active' FOR KEY SHARE) INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending' FROM active_project WHERE $3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2) RETURNING *`,
 			[
 				randomUUID(),
 				input.project_id,

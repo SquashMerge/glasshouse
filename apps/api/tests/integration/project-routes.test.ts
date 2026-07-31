@@ -545,6 +545,31 @@ describe("project authorization routes", () => {
 		).toBe(true);
 	});
 
+	it("records created membership facts only for inserts and updated facts only for role changes", async () => {
+		await request("owner", `/v1/projects/${PROJECT}/members/member`, {
+			method: "PUT",
+			body: JSON.stringify({ actor_subject: "member", role: "manager" }),
+		});
+		await request("owner", "/v1/organization/members/member", {
+			method: "PUT",
+			body: JSON.stringify({ actor_subject: "member", role: "member" }),
+		});
+
+		const membershipUpserts = query.mock.calls
+			.map(([sql]) => sql)
+			.filter(
+				(sql) => sql.includes("ON CONFLICT") && sql.includes("membership"),
+			);
+		expect(membershipUpserts).toHaveLength(2);
+		for (const sql of membershipUpserts) {
+			expect(sql).toContain("(xmax = 0) AS created");
+			expect(sql).toContain("role IS DISTINCT FROM EXCLUDED.role");
+			expect(sql).toContain("WHEN created THEN");
+			expect(sql).toContain("membership_created");
+			expect(sql).toContain("membership_updated");
+		}
+	});
+
 	it("does not reveal another project to a manager", async () => {
 		const response = await request("manager", `/v1/projects/${OTHER_PROJECT}`, {
 			method: "PATCH",

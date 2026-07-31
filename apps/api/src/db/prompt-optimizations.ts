@@ -185,6 +185,14 @@ export async function createOptimizationJob(
 	if (!input.examples.length)
 		throw fail("BAD_REQUEST", "examples must not be empty");
 	return tx(pool, async (client) => {
+		const project = (
+			await rows(
+				client,
+				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR KEY SHARE",
+				[input.project_id],
+			)
+		)[0];
+		if (!project) throw fail("NOT_FOUND", "Project is not available");
 		const source = (
 			await rows(
 				client,
