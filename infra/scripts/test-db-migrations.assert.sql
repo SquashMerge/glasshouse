@@ -474,6 +474,15 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'legacy projects were not backfilled to the default organization';
     END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+            AND column_name IN ('organization_id', 'project_id')
+            AND is_nullable <> 'NO'
+    ) THEN
+        RAISE EXCEPTION 'tenant identifier columns must be NOT NULL';
+    END IF;
     BEGIN
         INSERT INTO projects (name, slug, organization_id)
         VALUES ('Invalid Organization Project', 'invalid-organization', '00000000-0000-4000-8000-000000000099');

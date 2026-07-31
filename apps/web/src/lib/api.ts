@@ -928,9 +928,7 @@ export async function listTraces(
 		"filter[time.from]": params.time_from,
 		"filter[time.to]": params.time_to,
 	});
-	const res = await authedFetch(`/v1/traces${qs}`);
-	if (!res.ok) throw new Error(`listTraces ${res.status}`);
-	return res.json();
+	return responseJson(await authedFetch(`/v1/traces${qs}`), "listTraces");
 }
 
 export interface ListObservationsParams {

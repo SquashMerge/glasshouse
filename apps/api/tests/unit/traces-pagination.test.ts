@@ -108,6 +108,19 @@ describe("trace pagination", () => {
 		}
 	}
 
+	it("returns an empty selected project as a normal trace collection", async () => {
+		listTraces.mockResolvedValueOnce({ items: [], total: 0 });
+
+		const res = await apiApp.fetch(scopedRequest("/v1/traces"));
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ items: [], total: 0 });
+		expect(listTraces.mock.calls[0]?.[1]).toMatchObject({
+			organization_id: "00000000-0000-4000-8000-000000000001",
+			project_id: PROJECT_ID,
+		});
+	});
+
 	it("uses the default trace pagination", async () => {
 		const res = await apiApp.fetch(scopedRequest("/v1/traces"));
 		expect(res.status).toBe(200);

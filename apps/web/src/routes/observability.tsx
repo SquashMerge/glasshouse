@@ -12,6 +12,7 @@ import {
 import { StreamToggle } from "../components/StreamToggle";
 import { SseDebugOverlay } from "../components/SseDebugOverlay";
 import {
+	ApiError,
 	listTraces,
 	listObservations,
 	type ListTracesParams,
@@ -617,7 +618,11 @@ export function TracesTab() {
 				isError={data.isError}
 				hasNextPage={data.hasNextPage}
 				onLoadMore={data.fetchNextPage}
-				onRetry={() => void data.refetch()}
+				onRetry={
+					data.isError instanceof ApiError && data.isError.status === 500
+						? () => void data.refetch()
+						: undefined
+				}
 				highlightedVersions={data.highlightVersions}
 				rowKey={(t) => t.trace_id}
 				onFiltersChange={onFiltersChange}

@@ -290,7 +290,52 @@ def build_trace_payload(ctx: TraceContext, num_children: int, conv: str) -> dict
 
 # ---------- HTTP ----------
 
-def post_otlp(url: str, auth_header: str, payload: dict, timeout: float = 30.0) -> tuple[int, str]:
+def resolve_project_id(
+    api_base_url: str, auth_header: str, configured_project_id: str | None
+) -> str:
+    if configured_project_id:
+        return configured_project_id
+
+    request = urllib.request.Request(
+        api_base_url.rstrip("/") + "/v1/projects",
+        method="GET",
+        headers={
+            "accept": "application/json",
+            "authorization": auth_header,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30.0) as response:
+            body = response.read(500_000).decode("utf-8", errors="replace")
+            if response.status != 200:
+                raise RuntimeError(f"GET /v1/projects returned HTTP {response.status}")
+    except urllib.error.HTTPError as error:
+        detail = error.read(500).decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"could not resolve the default project (HTTP {error.code}): {detail}"
+        ) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(
+            f"could not resolve the default project: {error.reason}"
+        ) from error
+
+    try:
+        projects = json.loads(body)["items"]
+        project_id = next(
+            project["id"]
+            for project in projects
+            if project.get("slug") == "default" and isinstance(project.get("id"), str)
+        )
+    except (KeyError, StopIteration, TypeError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            "could not find the authenticated organization's default project in GET /v1/projects"
+        ) from error
+    return project_id
+
+
+def post_otlp(
+    url: str, auth_header: str, payload: dict, project_id: str, timeout: float = 30.0
+) -> tuple[int, str]:
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -299,6 +344,7 @@ def post_otlp(url: str, auth_header: str, payload: dict, timeout: float = 30.0) 
         headers={
             "content-type": "application/json",
             "authorization": auth_header,
+            "x-astraea-project-id": project_id,
         },
     )
     try:
@@ -316,6 +362,7 @@ def parse_args() -> argparse.Namespace:
     env = os.environ
     p = argparse.ArgumentParser(description="Seed OTLP traces into Astraea.")
     p.add_argument("--url", default=env.get("API_URL", "http://localhost:3000"), help="Astraea API base URL")
+    p.add_argument("--project-id", default=env.get("SEED_PROJECT_ID"), help="Target project UUID (default: authenticated org's default project)")
     p.add_argument("--username", default=env.get("UI_USERNAME", "astraea"), help="Basic auth username")
     p.add_argument("--password", default=env.get("UI_PASSWORD", ""), help="Basic auth password")
     p.add_argument("--count", type=int, default=int(env.get("SEED_COUNT", "100000")), help="Number of traces to seed")
@@ -350,6 +397,11 @@ def main() -> int:
         return 2
 
     auth = "Basic " + __import__("base64").b64encode(f"{args.username}:{args.password}".encode()).decode()
+    try:
+        project_id = resolve_project_id(args.url, auth, args.project_id)
+    except RuntimeError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     url = args.url.rstrip("/") + "/v1/otel/v1/traces"
 
     if args.reset:
@@ -398,7 +450,7 @@ def main() -> int:
 
     # Build all batches first so concurrency is bounded by the request pool, not the build.
     print(f"Seeding {args.count} traces (convention={args.convention}, batch={args.batch_size}, spans={args.min_spans}-{args.max_spans}, days={args.days})")
-    print(f"  → {url}")
+    print(f"  → {url} (project={project_id})")
     if args.dry_run:
         print("  → DRY-RUN: not POSTing")
 
@@ -429,7 +481,7 @@ def main() -> int:
                 futures.append(None)
                 posted += args.batch_size
                 continue
-            futures.append(pool.submit(post_otlp, url, auth, payload))
+            futures.append(pool.submit(post_otlp, url, auth, payload, project_id))
 
         done = 0
         for f in as_completed([f for f in futures if f is not None]):

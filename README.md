@@ -247,7 +247,10 @@ make seed-traces SEED_COUNT=1000                 # quick smoke
 SEED_CONVENTION=genai make seed-traces           # only OTel GenAI attrs
 SEED_CONVENTION=openinference make seed-traces   # only Arize Phoenix attrs
 make seed-traces-reset                           # wipe + re-seed (TRUNCATE traces + observations first)
+SEED_PROJECT_ID=<uuid> make seed-traces          # target a non-default project
 ```
+
+The seeder resolves the authenticated organization's current `default` project from `GET /v1/projects` and sends its ID on every OTLP request. This is required because traces without an explicit project selector are intentionally unscoped; use `SEED_PROJECT_ID` or `--project-id` to target another project.
 
 Or invoke the script directly for finer control:
 

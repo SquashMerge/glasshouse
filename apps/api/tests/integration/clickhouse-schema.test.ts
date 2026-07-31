@@ -73,6 +73,63 @@ describe("ClickHouse schema integration", () => {
 		]);
 	});
 
+	it("rejects trace and observation inserts without a complete tenant scope", async () => {
+		await expect(
+			client.insert({
+				table: "traces",
+				format: "JSONEachRow",
+				values: [
+					{
+						trace_id: "trace-without-organization",
+						organization_id: "",
+						project_id: "11111111-1111-4111-8111-111111111111",
+						name: "invalid-trace",
+						start_time: "2026-07-31 00:00:00.000",
+						end_time: null,
+						duration_ms: null,
+						status: "ok",
+						user_id: "",
+						session_id: "",
+						agent_id: "",
+						agent_version: "",
+						env: "test",
+						tags: [],
+						input_text: "",
+						output_text: "",
+						scores_summary: "",
+						metadata: "",
+					},
+				],
+			}),
+		).rejects.toThrow(/traces_tenant_scope_required/);
+
+		await expect(
+			client.insert({
+				table: "observations",
+				format: "JSONEachRow",
+				values: [
+					{
+						observation_id: "observation-without-project",
+						trace_id: "trace-without-project",
+						organization_id: "00000000-0000-4000-8000-000000000001",
+						project_id: "",
+						parent_observation_id: null,
+						type: "span",
+						name: "invalid-observation",
+						start_time: "2026-07-31 00:00:00.000",
+						end_time: null,
+						duration_ms: null,
+						status: "ok",
+						model: null,
+						input_text: "",
+						output_text: "",
+						metadata: "",
+					},
+				],
+			}),
+		).rejects.toThrow(/observations_tenant_scope_required/);
+	});
+
 	it("has every expected data-skipping index", async () => {
 		const indices = await values(
 			"SELECT name FROM system.data_skipping_indices WHERE database = currentDatabase() AND table IN ('traces', 'observations') ORDER BY name",

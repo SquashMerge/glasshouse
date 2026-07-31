@@ -114,7 +114,7 @@ describe("OTLP ingest publishes events", () => {
 		expect(observations[0]?.project_id).toBe(PROJECT_ID);
 	});
 
-	it("leaves missing, span-only, and malformed resource project IDs unscoped", async () => {
+	it("falls back to the resolved project when resource project IDs are missing or malformed", async () => {
 		const res = await handleOtlpIngest(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
@@ -163,10 +163,13 @@ describe("OTLP ingest publishes events", () => {
 		const observations = insertObservations.mock.calls[0]?.[1] as Array<{
 			project_id: string;
 		}>;
-		expect(traces.map((trace) => trace.project_id)).toEqual(["", ""]);
+		expect(traces.map((trace) => trace.project_id)).toEqual([
+			TENANT.projectId,
+			TENANT.projectId,
+		]);
 		expect(observations.map((observation) => observation.project_id)).toEqual([
-			"",
-			"",
+			TENANT.projectId,
+			TENANT.projectId,
 		]);
 	});
 
