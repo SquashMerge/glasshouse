@@ -11,6 +11,7 @@ import {
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Select } from "../components/ui/select";
 import { PageMessage } from "./prompts";
 export function FeedbackPage() {
 	const { selectedProjectId, selectedProject } = useProjectSelection();
@@ -53,7 +54,7 @@ export function FeedbackPage() {
 			</PageMessage>
 		);
 	return (
-		<div className="space-y-5">
+		<div className="space-y-6">
 			<div>
 				<h1 className="text-2xl font-semibold">Feedback</h1>
 				<p className="text-sm text-muted-foreground">
@@ -79,22 +80,22 @@ export function FeedbackPage() {
 					<label className="sr-only" htmlFor="feedback-sentiment">
 						Sentiment
 					</label>
-					<select
+					<Select
 						id="feedback-sentiment"
-						className="h-9 rounded border px-2"
+						className="w-auto"
 						value={sentiment}
 						onChange={(event) => setSentiment(event.target.value)}
 					>
 						<option value="">All sentiment</option>
 						<option value="positive">Positive</option>
 						<option value="negative">Negative</option>
-					</select>
+					</Select>
 					<label className="sr-only" htmlFor="feedback-status">
 						Status
 					</label>
-					<select
+					<Select
 						id="feedback-status"
-						className="h-9 rounded border px-2"
+						className="w-auto"
 						value={status}
 						onChange={(event) => setStatus(event.target.value)}
 					>
@@ -103,20 +104,20 @@ export function FeedbackPage() {
 						<option value="reviewed">Reviewed</option>
 						<option value="dismissed">Dismissed</option>
 						<option value="added_to_dataset">Added to dataset</option>
-					</select>
+					</Select>
 					<label className="sr-only" htmlFor="feedback-target">
 						Target type
 					</label>
-					<select
+					<Select
 						id="feedback-target"
-						className="h-9 rounded border px-2"
+						className="w-auto"
 						value={target}
 						onChange={(event) => setTarget(event.target.value)}
 					>
 						<option value="">All targets</option>
 						<option value="trace">Trace</option>
 						<option value="observation">Observation</option>
-					</select>
+					</Select>
 				</div>
 			)}
 			{feedback.data?.items.length === 0 && (
@@ -247,9 +248,9 @@ function FeedbackRow({
 						<label className="sr-only" htmlFor={`feedback-dataset-${item.id}`}>
 							Dataset
 						</label>
-						<select
+						<Select
 							id={`feedback-dataset-${item.id}`}
-							className="h-8 rounded border px-2 text-sm"
+							className="h-8 w-auto text-sm"
 							value={datasetId}
 							onChange={(event) => setDatasetId(event.target.value)}
 						>
@@ -259,7 +260,7 @@ function FeedbackRow({
 									{dataset.name}
 								</option>
 							))}
-						</select>
+						</Select>
 						<Input
 							className="h-8 w-40 text-xs"
 							value={input}
