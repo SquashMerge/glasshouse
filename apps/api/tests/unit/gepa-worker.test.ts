@@ -6,6 +6,7 @@ import {
 	readWorkerOutput,
 	runGepaWorker,
 } from "../../src/lib/gepa-worker";
+import { logger } from "../../src/lib/logger";
 
 describe("GEPA worker adapter", () => {
 	const prior = process.env.GEPA_WORKER_MODE;
@@ -81,6 +82,48 @@ describe("GEPA worker adapter", () => {
 				throw new Error("telemetry persistence failed");
 			}),
 		).rejects.toThrow("telemetry persistence failed");
+	});
+
+	it("writes bounded worker diagnostics to the structured log on worker failure", async () => {
+		process.env.GEPA_WORKER_MODE = "fake";
+		process.env.GEPA_ALLOWED_MODELS = "openai/gpt-4.1-mini";
+		const originalLogger = logger.error;
+		const errors: Array<{ event: string; cause: unknown; fields: unknown }> =
+			[];
+		logger.error = (event, cause, fields = {}) =>
+			errors.push({ event, cause, fields });
+		try {
+			await expect(
+				runGepaWorker(
+					{
+						target: "system",
+						source: "Hello",
+						evaluator: { type: "unsupported" },
+						examples: [{ input: "Hello", answer: "Hello" }],
+						model_config: {
+							task_lm: "openai/gpt-4.1-mini",
+							reflection_lm: "openai/gpt-4.1-mini",
+						},
+						budget: { max_metric_calls: 2 },
+					},
+					new AbortController().signal,
+				),
+			).rejects.toThrow("GEPA worker failed");
+			expect(errors).toEqual([
+				{
+					event: "optimization.worker_failed",
+					cause: expect.objectContaining({
+						message: "GEPA worker exited with code 2",
+					}),
+					fields: {
+						exit_code: 2,
+						diagnostic: "evaluator must be the default_adapter",
+					},
+				},
+			]);
+		} finally {
+			logger.error = originalLogger;
+		}
 	});
 
 	it("rejects oversized worker output before buffering it", async () => {

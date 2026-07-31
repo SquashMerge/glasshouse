@@ -2,6 +2,7 @@ import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import { ch } from "../db/clickhouse.js";
+import { logger } from "../lib/logger.js";
 import { trustedTenant } from "../tenancy.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
@@ -38,6 +39,7 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 					"Dataset operation failed",
 					cause,
 				);
+	if (error.status === 500) logger.error("datasets.request_failed", cause);
 	return c.json(
 		{
 			code: error.code,
