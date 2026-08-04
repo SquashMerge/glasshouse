@@ -32,6 +32,9 @@ export function GovernancePage() {
 	const [preview, setPreview] = React.useState<Record<string, number> | null>(
 		null,
 	);
+	const [previewedPolicyId, setPreviewedPolicyId] = React.useState<
+		string | null
+	>(null);
 	const effective = useQuery({
 		queryKey: ["governance-policy", selectedProjectId],
 		queryFn: () => getEffectiveGovernancePolicy(selectedProjectId!),
@@ -60,23 +63,43 @@ export function GovernancePage() {
 	};
 	const draft = useMutation({
 		mutationFn: createGovernancePolicyDraft,
-		onSuccess: refresh,
+		onSuccess: () => {
+			setPreview(null);
+			setPreviewedPolicyId(null);
+			refresh();
+		},
 	});
 	const approve = useMutation({
 		mutationFn: approveGovernancePolicy,
-		onSuccess: refresh,
+		onSuccess: () => {
+			setPreview(null);
+			setPreviewedPolicyId(null);
+			refresh();
+		},
 	});
 	const previewMutation = useMutation({
 		mutationFn: previewGovernanceRetention,
-		onSuccess: (result) => setPreview(result.counts),
+		onSuccess: (result) => {
+			setPreview(result.counts);
+			setPreviewedPolicyId(result.policy_version_id);
+		},
 	});
 	const run = useMutation({
 		mutationFn: runGovernanceRetention,
 		onSuccess: (result) => {
 			setPreview(result.counts);
+			setPreviewedPolicyId(null);
 			refresh();
 		},
 	});
+	React.useEffect(() => {
+		setPreview(null);
+		setPreviewedPolicyId(null);
+		draft.reset();
+		approve.reset();
+		previewMutation.reset();
+		run.reset();
+	}, [selectedProjectId]);
 	if (!selectedProjectId)
 		return (
 			<PageMessage title="Governance">
@@ -90,7 +113,10 @@ export function GovernancePage() {
 	if (effective.isError || history.isError || retentionRuns.isError)
 		return (
 			<PageMessage title="Governance">
-				Governance policy could not be loaded.
+				<p role="alert">Governance policy could not be loaded.</p>
+				<Button type="button" variant="outline" onClick={() => refresh()}>
+					Retry
+				</Button>
 			</PageMessage>
 		);
 	const policy = effective.data?.policy;
@@ -207,6 +233,11 @@ export function GovernancePage() {
 						<Button type="submit" disabled={draft.isPending}>
 							Create draft
 						</Button>
+						{draft.isSuccess && (
+							<p className="text-sm" role="status">
+								Draft created.
+							</p>
+						)}
 						{draft.isError && (
 							<p className="text-sm text-destructive" role="alert">
 								The policy draft could not be created.
@@ -237,7 +268,9 @@ export function GovernancePage() {
 						<Button
 							type="button"
 							variant="destructive"
-							disabled={!policy || run.isPending}
+							disabled={
+								!policy || run.isPending || previewedPolicyId !== policy.id
+							}
 							onClick={() =>
 								run.mutate({ project_id: selectedProjectId, batch_size: 100 })
 							}
@@ -250,6 +283,21 @@ export function GovernancePage() {
 							{Object.entries(preview)
 								.map(([name, count]) => `${name}: ${count}`)
 								.join(", ") || "No eligible data."}
+						</p>
+					)}
+					{previewMutation.isError && (
+						<p className="text-sm text-destructive" role="alert">
+							Preview failed. Retry before running retention.
+						</p>
+					)}
+					{run.isSuccess && (
+						<p className="text-sm" role="status">
+							Retention batch completed.
+						</p>
+					)}
+					{run.isError && (
+						<p className="text-sm text-destructive" role="alert">
+							Retention batch failed. Preview again before retrying.
 						</p>
 					)}
 				</CardContent>
@@ -324,6 +372,16 @@ export function GovernancePage() {
 							</li>
 						))}
 					</ul>
+					{approve.isSuccess && (
+						<p className="text-sm" role="status">
+							Draft approved.
+						</p>
+					)}
+					{approve.isError && (
+						<p className="text-sm text-destructive" role="alert">
+							Draft approval failed. Retry when ready.
+						</p>
+					)}
 				</CardContent>
 			</Card>
 		</div>

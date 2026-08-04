@@ -40,6 +40,30 @@ describe("governance policy validation", () => {
 });
 
 describe("approved policy redaction", () => {
+	it("preserves operator redaction as a non-relaxable baseline", () => {
+		const input = process.env.ASTRAEA_REDACT_INPUT;
+		const keys = process.env.ASTRAEA_REDACT_KEYS;
+		process.env.ASTRAEA_REDACT_INPUT = "true";
+		process.env.ASTRAEA_REDACT_KEYS = "operator.secret, user.email";
+		try {
+			expect(policyRedactionOptions({ mode: "none", keys: [] })).toEqual({
+				redactInput: true,
+				redactKeys: ["operator.secret", "user.email"],
+			});
+			expect(
+				policyRedactionOptions({ mode: "all_text", keys: ["policy.secret"] }),
+			).toEqual({
+				redactInput: true,
+				redactKeys: ["operator.secret", "user.email", "policy.secret"],
+			});
+		} finally {
+			if (input === undefined) delete process.env.ASTRAEA_REDACT_INPUT;
+			else process.env.ASTRAEA_REDACT_INPUT = input;
+			if (keys === undefined) delete process.env.ASTRAEA_REDACT_KEYS;
+			else process.env.ASTRAEA_REDACT_KEYS = keys;
+		}
+	});
+
 	it("redacts text and configured metadata before an ingress consumer uses it", () => {
 		const options = policyRedactionOptions({
 			mode: "all_text",
@@ -58,5 +82,28 @@ describe("approved policy redaction", () => {
 				options,
 			).attributes[0]?.value,
 		).toEqual({ stringValue: "[REDACTED]" });
+	});
+
+	it("removes normalized text aliases from metadata in all-text mode", () => {
+		const metadata = redactMetadata(
+			{
+				schema_version: 1,
+				attributes: [
+					{ key: "gen_ai.prompt.0.content", value: { stringValue: "secret" } },
+					{
+						key: "gen_ai.completion.0.content",
+						value: { stringValue: "secret" },
+					},
+					{ key: "input.value", value: { stringValue: "secret" } },
+					{ key: "output.value", value: { stringValue: "secret" } },
+					{ key: "safe", value: { stringValue: "kept" } },
+				],
+				prompt_provenance: null,
+			},
+			policyRedactionOptions({ mode: "all_text", keys: [] }),
+		);
+		expect(metadata.attributes).toEqual([
+			{ key: "safe", value: { stringValue: "kept" } },
+		]);
 	});
 });

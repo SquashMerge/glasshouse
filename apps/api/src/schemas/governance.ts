@@ -68,4 +68,8 @@ export const GovernanceErrors = {
 		description: "Policy state conflict",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
+	500: {
+		description: "Internal server error",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
 };

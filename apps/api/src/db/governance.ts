@@ -65,11 +65,12 @@ export async function retentionCounts(
 	for (const [dataClass, days] of Object.entries(retention)) {
 		const cutoff = new Date(Date.now() - days! * 86_400_000);
 		if (dataClass === "datasets") {
-			const result = await pool.query<{ count: string }>(
-				"SELECT count(*)::text AS count FROM datasets WHERE project_id = $1 AND created_at < $2",
+			const result = await pool.query<{ eligible: string; skipped: string }>(
+				"SELECT count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id))::text AS eligible, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id))::text AS skipped FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2",
 				[projectId, cutoff],
 			);
-			counts.datasets = Number(result.rows[0]?.count ?? 0);
+			counts.datasets = Number(result.rows[0]?.eligible ?? 0);
+			counts.datasets_skipped = Number(result.rows[0]?.skipped ?? 0);
 		}
 		if (dataClass === "feedback") {
 			const result = await pool.query<{ count: string }>(
@@ -94,6 +95,22 @@ export async function retentionCounts(
 		}
 	}
 	return counts;
+}
+
+export async function deleteSafeDatasetRetentionBatch(
+	pool: Pick<Pool, "query">,
+	projectId: string,
+	cutoff: Date,
+	batchSize: number,
+): Promise<{ deleted: number; skipped: number }> {
+	const result = await pool.query<{ id: string; skipped: string }>(
+		"WITH candidates AS MATERIALIZED (SELECT d.id FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) ORDER BY d.created_at, d.id LIMIT $3 FOR UPDATE), deleted_feedback AS (DELETE FROM feedback_reviews f USING candidates c WHERE f.dataset_id = c.id), deleted AS (DELETE FROM datasets d USING candidates c WHERE d.id = c.id RETURNING d.id), skipped AS (SELECT count(*)::text AS count FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND (EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id))) SELECT id, (SELECT count FROM skipped) AS skipped FROM deleted",
+		[projectId, cutoff, batchSize],
+	);
+	return {
+		deleted: result.rows.length,
+		skipped: Number(result.rows[0]?.skipped ?? 0),
+	};
 }
 
 export async function deleteTraceRetentionBatch(

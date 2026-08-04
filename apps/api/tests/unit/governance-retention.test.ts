@@ -9,8 +9,11 @@ mock.module("../../src/db/clickhouse", () => ({
 	ch: () => ({ query, command }),
 }));
 
-const { deleteTraceRetentionBatch, failInterruptedRetentionRuns } =
-	await import("../../src/db/governance");
+const {
+	deleteSafeDatasetRetentionBatch,
+	deleteTraceRetentionBatch,
+	failInterruptedRetentionRuns,
+} = await import("../../src/db/governance");
 
 describe("governance retention", () => {
 	it("selects a bounded trace batch and deletes only its observations and traces", async () => {
@@ -47,5 +50,26 @@ describe("governance retention", () => {
 		expect(calls[0]).toContain("SET status = 'failed'");
 		expect(calls[0]).toContain("'retention_failed'");
 		expect(calls[0]).not.toContain("cursor");
+	});
+
+	it("deletes governed feedback before eligible datasets and skips non-governed dependencies", async () => {
+		const statements: string[] = [];
+		const result = await deleteSafeDatasetRetentionBatch(
+			{
+				query: async (statement: string) => {
+					statements.push(statement);
+					return { rows: [{ id: "dataset", skipped: "2" }] };
+				},
+			},
+			"project",
+			new Date("2026-01-01T00:00:00Z"),
+			10,
+		);
+		expect(result).toEqual({ deleted: 1, skipped: 2 });
+		expect(statements[0]).toContain("DELETE FROM feedback_reviews");
+		expect(statements[0]).toContain("NOT EXISTS (SELECT 1 FROM experiments");
+		expect(statements[0]).toContain(
+			"NOT EXISTS (SELECT 1 FROM benchmark_suites",
+		);
 	});
 });

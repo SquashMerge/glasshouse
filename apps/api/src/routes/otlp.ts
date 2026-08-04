@@ -173,9 +173,9 @@ export function createOtlpIngestHandler(
 			tenant.organizationId,
 			tenant.projectId,
 		);
-		const redaction = policy
-			? policyRedactionOptions(policy)
-			: { redactInput: false, redactKeys: [] };
+		const redaction = policyRedactionOptions(
+			policy ?? { mode: "none", keys: [] },
+		);
 
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];
