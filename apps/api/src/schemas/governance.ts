@@ -31,17 +31,22 @@ export const PolicyVersion = z.object({
 });
 export const PolicyHistory = z.object({ items: z.array(PolicyVersion) });
 export const EffectivePolicy = z.object({ policy: PolicyVersion.nullable() });
+export const PolicyResponse = z.object({ policy: PolicyVersion });
 export const ProjectQuery = z.object({ project_id: z.string().uuid() });
 export const PolicyMutation = PolicyInput.extend({
 	project_id: z.string().uuid(),
 });
-export const RetentionSummary = z.object({
+export const RetentionPreview = z.object({
 	policy_version_id: z.string().uuid(),
 	counts: z.record(z.string(), z.number().int().nonnegative()),
-	preview_id: z.string().uuid().optional(),
-	preview_expires_at: z.string().datetime().optional(),
-	run_id: z.string().uuid().optional(),
-	status: z.enum(["completed", "failed"]).optional(),
+	preview_id: z.string().uuid(),
+	preview_expires_at: z.string().datetime(),
+});
+export const RetentionCompleted = z.object({
+	policy_version_id: z.string().uuid(),
+	counts: z.record(z.string(), z.number().int().nonnegative()),
+	run_id: z.string().uuid(),
+	status: z.literal("completed"),
 });
 export const RetentionRun = z.object({
 	id: z.string().uuid(),

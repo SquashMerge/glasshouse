@@ -346,7 +346,7 @@ async function serializedLifecycle(c: Context, status: "active" | "archived") {
 			);
 			if (status === "archived") {
 				await client.query(
-					"WITH failed AS (UPDATE governance_retention_runs SET status = 'failed', completed_at = now() WHERE project_id = $1 AND status = 'running' RETURNING organization_id, project_id, policy_version_id, requested_by, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT 1",
+					"WITH failed AS (UPDATE governance_retention_runs SET status = 'failed', completed_at = now(), lease_expires_at = NULL WHERE project_id = $1 AND status = 'running' RETURNING organization_id, project_id, policy_version_id, requested_by, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT 1",
 					[id],
 				);
 				await client.query(

@@ -22,6 +22,7 @@ export function validatePolicy(
 		if (!RETENTION_CLASSES.includes(dataClass as RetentionClass))
 			throw new Error("Unsupported retention data class");
 	}
+
 	for (const dataClass of RETENTION_CLASSES) {
 		const days = input.retention[dataClass];
 		if (days === undefined) continue;
@@ -119,16 +120,21 @@ export async function deleteSafeDatasetRetentionBatch(
 	};
 }
 
-export async function deleteTraceRetentionBatch(
+export type TraceRetentionSelection = {
+	traceIds: string[];
+	physicalUnits: number;
+};
+
+export async function selectTraceRetentionBatch(
 	organizationId: string,
 	projectId: string,
 	cutoff: Date,
 	batchSize: number,
-): Promise<number> {
+): Promise<TraceRetentionSelection> {
 	const client = ch();
 	const selected = await client.query({
 		query:
-			"WITH grouped AS (SELECT trace_id, min(start_time) AS oldest, max(start_time) AS newest, count() AS physical_rows FROM (SELECT trace_id, start_time FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} UNION ALL SELECT trace_id, start_time FROM observations WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}) GROUP BY trace_id HAVING newest < {cutoff:DateTime64(3)} AND physical_rows <= {batchSize:UInt64}), bounded AS (SELECT trace_id, oldest, sum(physical_rows) OVER (ORDER BY oldest, trace_id) AS cumulative_rows FROM grouped) SELECT trace_id FROM bounded WHERE cumulative_rows <= {batchSize:UInt64} ORDER BY oldest, trace_id",
+			"WITH grouped AS (SELECT trace_id, min(start_time) AS oldest, max(start_time) AS newest, count() AS physical_rows FROM (SELECT trace_id, start_time FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} UNION ALL SELECT trace_id, start_time FROM observations WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}) GROUP BY trace_id HAVING newest < {cutoff:DateTime64(3)} AND physical_rows <= {batchSize:UInt64}), bounded AS (SELECT trace_id, physical_rows, oldest, sum(physical_rows) OVER (ORDER BY oldest, trace_id) AS cumulative_rows FROM grouped) SELECT trace_id, physical_rows FROM bounded WHERE cumulative_rows <= {batchSize:UInt64} ORDER BY oldest, trace_id",
 		query_params: {
 			organizationId,
 			projectId,
@@ -137,10 +143,27 @@ export async function deleteTraceRetentionBatch(
 		},
 		format: "JSONEachRow",
 	});
-	const traceIds = (await selected.json<{ trace_id: string }>()).map(
-		(row) => row.trace_id,
-	);
-	if (!traceIds.length) return 0;
+	const rows = await selected.json<{
+		trace_id: string;
+		physical_rows: string;
+	}>();
+	return {
+		traceIds: rows.map((row) => row.trace_id),
+		physicalUnits: rows.reduce(
+			(total, row) => total + Number(row.physical_rows),
+			0,
+		),
+	};
+}
+
+export async function deleteTraceObservations(
+	organizationId: string,
+	projectId: string,
+	cutoff: Date,
+	traceIds: string[],
+): Promise<void> {
+	if (!traceIds.length) return;
+	const client = ch();
 	const query_params = {
 		organizationId,
 		projectId,
@@ -152,19 +175,34 @@ export async function deleteTraceRetentionBatch(
 			"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND trace_id IN {traceIds:Array(String)} AND start_time < {cutoff:DateTime64(3)} SETTINGS mutations_sync = 1",
 		query_params,
 	});
+}
+
+export async function deleteTraces(
+	organizationId: string,
+	projectId: string,
+	cutoff: Date,
+	traceIds: string[],
+): Promise<void> {
+	if (!traceIds.length) return;
+	const client = ch();
+	const query_params = {
+		organizationId,
+		projectId,
+		traceIds,
+		cutoff: cutoff.toISOString(),
+	};
 	await client.command({
 		query:
 			"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND trace_id IN {traceIds:Array(String)} AND start_time < {cutoff:DateTime64(3)} SETTINGS mutations_sync = 1",
 		query_params,
 	});
-	return traceIds.length;
 }
 
 export async function failInterruptedRetentionRuns(
 	pool: Pick<Pool, "query">,
 ): Promise<Array<{ id: string; project_id: string }>> {
 	const failed = await pool.query<{ id: string; project_id: string }>(
-		"WITH failed AS (UPDATE governance_retention_runs SET status = 'failed', completed_at = now() WHERE status = 'running' RETURNING id, organization_id, project_id, policy_version_id, requested_by, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT id, project_id FROM failed",
+		"WITH failed AS (UPDATE governance_retention_runs SET status = 'failed', completed_at = now(), lease_expires_at = NULL WHERE status = 'running' AND lease_expires_at < now() RETURNING id, organization_id, project_id, policy_version_id, requested_by, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT id, project_id FROM failed",
 	);
 	return failed.rows;
 }

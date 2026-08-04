@@ -1,7 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
 
 const query = mock(async () => ({
-	json: async () => [{ trace_id: "trace-1" }, { trace_id: "trace-2" }],
+	json: async () => [
+		{ trace_id: "trace-1", physical_rows: "1" },
+		{ trace_id: "trace-2", physical_rows: "1" },
+	],
 }));
 const command = mock(async () => undefined);
 
@@ -11,26 +14,40 @@ mock.module("../../src/db/clickhouse", () => ({
 
 const {
 	deleteSafeDatasetRetentionBatch,
-	deleteTraceRetentionBatch,
+	deleteTraceObservations,
+	deleteTraces,
 	failInterruptedRetentionRuns,
+	selectTraceRetentionBatch,
 } = await import("../../src/db/governance");
 
 describe("governance retention", () => {
 	it("selects only wholly expired bounded trace groups and preserves post-cutoff rows", async () => {
 		expect(
-			await deleteTraceRetentionBatch(
+			await selectTraceRetentionBatch(
 				"organization",
 				"project",
 				new Date("2026-01-01T00:00:00Z"),
 				2,
 			),
-		).toBe(2);
+		).toEqual({ traceIds: ["trace-1", "trace-2"], physicalUnits: 2 });
 		expect(query.mock.calls[0]?.[0]).toMatchObject({
 			query: expect.stringMatching(
 				/HAVING newest < \{cutoff:DateTime64\(3\)\} AND physical_rows <= \{batchSize:UInt64\}[\s\S]*cumulative_rows <= \{batchSize:UInt64\}/,
 			),
 			query_params: expect.objectContaining({ batchSize: 2 }),
 		});
+		await deleteTraceObservations(
+			"organization",
+			"project",
+			new Date("2026-01-01T00:00:00Z"),
+			["trace-1", "trace-2"],
+		);
+		await deleteTraces(
+			"organization",
+			"project",
+			new Date("2026-01-01T00:00:00Z"),
+			["trace-1", "trace-2"],
+		);
 		expect(command).toHaveBeenCalledTimes(2);
 		for (const [request] of command.mock.calls) {
 			expect(request.query).toContain("trace_id IN {traceIds:Array(String)}");
@@ -40,7 +57,7 @@ describe("governance retention", () => {
 		}
 	});
 
-	it("terminalizes abandoned runs and emits content-free failure evidence", async () => {
+	it("terminalizes only expired leases and emits content-free failure evidence", async () => {
 		const calls: string[] = [];
 		const pool = {
 			query: async (statement: string) => {
@@ -52,9 +69,24 @@ describe("governance retention", () => {
 			{ id: "run", project_id: "project" },
 		]);
 		expect(calls[0]).toContain("SET status = 'failed'");
+		expect(calls[0]).toContain("lease_expires_at < now()");
 		expect(calls[0]).toContain("'retention_failed'");
 		expect(calls[0]).not.toContain("p.status = 'active'");
 		expect(calls[0]).not.toContain("cursor");
+	});
+
+	it("leaves an active lease untouched during startup recovery", async () => {
+		const calls: string[] = [];
+		await failInterruptedRetentionRuns({
+			query: async (statement: string) => {
+				calls.push(statement);
+				return { rows: [] };
+			},
+		});
+		expect(calls[0]).toContain(
+			"status = 'running' AND lease_expires_at < now()",
+		);
+		expect(calls[0]).toContain("RETURNING id");
 	});
 
 	it("skips datasets whose linked feedback is disabled or not yet eligible", async () => {

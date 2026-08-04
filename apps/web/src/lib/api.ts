@@ -385,7 +385,7 @@ export async function runGovernanceRetention(input: {
 	policy_version_id: string;
 	counts: Record<string, number>;
 	run_id: string;
-	status: "completed" | "failed";
+	status: "completed";
 }> {
 	return responseJson(
 		await authedFetch("/v1/governance/retention/runs", jsonRequest(input)),

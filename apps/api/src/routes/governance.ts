@@ -1,12 +1,15 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
+import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { pgPool } from "../db/postgres.js";
 import {
 	policyHash,
 	deleteSafeDatasetRetentionBatch,
-	deleteTraceRetentionBatch,
+	deleteTraceObservations,
+	deleteTraces,
 	retentionCounts,
+	selectTraceRetentionBatch,
 	validatePolicy,
 } from "../db/governance.js";
 import {
@@ -15,7 +18,9 @@ import {
 	PolicyHistory,
 	PolicyMutation,
 	ProjectQuery,
-	RetentionSummary,
+	RetentionCompleted,
+	RetentionPreview,
+	PolicyResponse,
 	RetentionRunHistory,
 } from "../schemas/governance.js";
 import { trustedTenant } from "../tenancy.js";
@@ -48,12 +53,15 @@ export const createPolicyDraft = createRoute({
 	tags: ["governance"],
 	security: [{ basicAuth: [] }],
 	request: {
-		body: { content: { "application/json": { schema: PolicyMutation } } },
+		body: {
+			required: true,
+			content: { "application/json": { schema: PolicyMutation } },
+		},
 	},
 	responses: {
 		201: {
 			description: "Created",
-			content: { "application/json": { schema: EffectivePolicy } },
+			content: { "application/json": { schema: PolicyResponse } },
 		},
 		...GovernanceErrors,
 	},
@@ -64,7 +72,7 @@ export const approvePolicy = createRoute({
 	tags: ["governance"],
 	security: [{ basicAuth: [] }],
 	request: { params: policyParams, query: ProjectQuery },
-	responses: ok(EffectivePolicy),
+	responses: ok(PolicyResponse),
 });
 const previewBody = z.object({ project_id: z.string().uuid() });
 const runBody = z.object({
@@ -79,17 +87,25 @@ export const previewRetention = createRoute({
 	tags: ["governance"],
 	security: [{ basicAuth: [] }],
 	request: {
-		body: { content: { "application/json": { schema: previewBody } } },
+		body: {
+			required: true,
+			content: { "application/json": { schema: previewBody } },
+		},
 	},
-	responses: ok(RetentionSummary),
+	responses: ok(RetentionPreview),
 });
 export const runRetention = createRoute({
 	method: "post",
 	path: "/v1/governance/retention/runs",
 	tags: ["governance"],
 	security: [{ basicAuth: [] }],
-	request: { body: { content: { "application/json": { schema: runBody } } } },
-	responses: ok(RetentionSummary),
+	request: {
+		body: {
+			required: true,
+			content: { "application/json": { schema: runBody } },
+		},
+	},
+	responses: ok(RetentionCompleted),
 });
 export const listRetentionRuns = createRoute({
 	method: "get",
@@ -127,10 +143,14 @@ async function manager(c: Context, projectId: string) {
 		throw new Error("Forbidden");
 	return tenant;
 }
-async function versions(projectId: string, organizationId: string) {
+async function versions(
+	projectId: string,
+	organizationId: string,
+	actor: string,
+) {
 	return pgPool().query<VersionRow>(
-		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE p.project_id = $1 AND p.organization_id = $2 ORDER BY v.version DESC",
-		[projectId, organizationId],
+		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies gp ON gp.id = v.policy_id JOIN projects p ON p.id = gp.project_id AND p.status = 'active' JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE gp.project_id = $1 AND gp.organization_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') ORDER BY v.version DESC",
+		[projectId, organizationId, actor],
 	);
 }
 function failure(c: Context, cause: unknown) {
@@ -168,9 +188,9 @@ export async function handleGetEffectivePolicy(c: Context) {
 		const { project_id } = (c.req as any).valid("query");
 		const tenant = await manager(c, project_id);
 		const row =
-			(await versions(project_id, tenant.organizationId)).rows.find(
-				(version) => version.approved_at,
-			) ?? null;
+			(
+				await versions(project_id, tenant.organizationId, tenant.actor)
+			).rows.find((version) => version.approved_at) ?? null;
 		return c.json({ policy: row ? output(row) : null });
 	} catch (cause) {
 		return failure(c, cause);
@@ -181,9 +201,9 @@ export async function handleListPolicyHistory(c: Context) {
 		const { project_id } = (c.req as any).valid("query");
 		const tenant = await manager(c, project_id);
 		return c.json({
-			items: (await versions(project_id, tenant.organizationId)).rows.map(
-				output,
-			),
+			items: (
+				await versions(project_id, tenant.organizationId, tenant.actor)
+			).rows.map(output),
 		});
 	} catch (cause) {
 		return failure(c, cause);
@@ -192,12 +212,18 @@ export async function handleListPolicyHistory(c: Context) {
 export async function handleCreatePolicyDraft(c: Context) {
 	try {
 		const { project_id, ...input } = (c.req as any).valid("json");
-		const tenant = await manager(c, project_id);
+		const tenant = trustedTenant(c);
 		const policy = validatePolicy(input);
 		const hash = policyHash(policy);
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
+			await lockActiveManager(
+				client,
+				tenant.organizationId,
+				project_id,
+				tenant.actor,
+			);
 			await client.query(
 				"INSERT INTO governance_policies (organization_id, project_id) VALUES ($1, $2) ON CONFLICT (project_id) DO NOTHING",
 				[tenant.organizationId, project_id],
@@ -293,9 +319,9 @@ export async function handleApprovePolicy(c: Context) {
 }
 async function approved(c: Context, projectId: string) {
 	const tenant = await manager(c, projectId);
-	const version = (await versions(projectId, tenant.organizationId)).rows.find(
-		(row) => row.approved_at,
-	);
+	const version = (
+		await versions(projectId, tenant.organizationId, tenant.actor)
+	).rows.find((row) => row.approved_at);
 	if (!version) throw new Error("No approved policy exists");
 	return { tenant, version };
 }
@@ -369,8 +395,8 @@ export async function handleListRetentionRuns(c: Context) {
 			completed_at: Date | null;
 			duration_ms: number | null;
 		}>(
-			"SELECT id, policy_version_id, status, counts, started_at, completed_at, CASE WHEN completed_at IS NULL THEN NULL ELSE GREATEST(0, round(EXTRACT(epoch FROM completed_at - started_at) * 1000)::integer) END AS duration_ms FROM governance_retention_runs WHERE organization_id = $1 AND project_id = $2 ORDER BY started_at DESC, id DESC LIMIT 50",
-			[tenant.organizationId, project_id],
+			"SELECT r.id, r.policy_version_id, r.status, r.counts, r.started_at, r.completed_at, CASE WHEN r.completed_at IS NULL THEN NULL ELSE GREATEST(0, round(EXTRACT(epoch FROM r.completed_at - r.started_at) * 1000)::integer) END AS duration_ms FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id AND p.status = 'active' JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE r.organization_id = $1 AND r.project_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') ORDER BY r.started_at DESC, r.id DESC LIMIT 50",
+			[tenant.organizationId, project_id, tenant.actor],
 		);
 		return c.json({
 			items: result.rows.map((run) => ({
@@ -393,6 +419,7 @@ export async function handleRunRetention(c: Context) {
 		const db = pgPool();
 		const client = await db.connect();
 		let runId = "";
+		const ownerToken = randomUUID();
 		let startedCommitted = false;
 		let version: VersionRow;
 		const counts: Record<string, number> = {};
@@ -421,8 +448,14 @@ export async function handleRunRetention(c: Context) {
 					"Retention preview is absent, expired, or already used",
 				);
 			const run = await client.query<{ id: string }>(
-				"INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status) VALUES ($1, $2, $3, $4, 'running') RETURNING id",
-				[tenant.organizationId, project_id, version.id, tenant.actor],
+				"INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status, owner_token, heartbeat_at, lease_expires_at) VALUES ($1, $2, $3, $4, 'running', $5::uuid, now(), now() + interval '5 minutes') RETURNING id",
+				[
+					tenant.organizationId,
+					project_id,
+					version.id,
+					tenant.actor,
+					ownerToken,
+				],
 			);
 			runId = run.rows[0]!.id;
 			await client.query(
@@ -451,6 +484,7 @@ export async function handleRunRetention(c: Context) {
 					project_id,
 					version,
 					runId,
+					ownerToken,
 					"feedback",
 					async (stage) => {
 						counts.feedback = await deleteFeedbackRetentionBatch(
@@ -473,6 +507,7 @@ export async function handleRunRetention(c: Context) {
 					project_id,
 					version,
 					runId,
+					ownerToken,
 					"datasets",
 					async (stage) => {
 						const deleted = await deleteSafeDatasetRetentionBatch(
@@ -495,73 +530,79 @@ export async function handleRunRetention(c: Context) {
 				const cutoff = new Date(
 					Date.now() - version.retention.traces * 86_400_000,
 				);
-				await destructiveStage(
+				await validateRunStage(
 					db,
 					tenant,
 					project_id,
 					version,
 					runId,
-					"traces",
-					async () => {
-						counts.traces = await deleteTraceRetentionBatch(
-							tenant.organizationId,
-							project_id,
-							cutoff,
-							batch_size,
-						);
-					},
-					counts,
+					ownerToken,
 				);
+				const selected = await selectTraceRetentionBatch(
+					tenant.organizationId,
+					project_id,
+					cutoff,
+					batch_size,
+				);
+				counts.traces_selected_groups = selected.traceIds.length;
+				counts.traces_selected_physical_units = selected.physicalUnits;
+				await checkpointRun(db, runId, ownerToken, counts, "traces_intent");
+				await deleteTraceObservations(
+					tenant.organizationId,
+					project_id,
+					cutoff,
+					selected.traceIds,
+				);
+				counts.traces_observations_deleted_groups = selected.traceIds.length;
+				await checkpointRun(
+					db,
+					runId,
+					ownerToken,
+					counts,
+					"traces_observations_deleted",
+				);
+				await deleteTraces(
+					tenant.organizationId,
+					project_id,
+					cutoff,
+					selected.traceIds,
+				);
+				counts.traces = selected.traceIds.length;
+				await checkpointRun(db, runId, ownerToken, counts, "traces_deleted");
 			}
 			const duration = Math.round(performance.now() - started);
-			await withRunTransaction(db, async (stage) => {
-				await stage.query(
-					"UPDATE governance_retention_runs SET status = 'completed', counts = $2::jsonb, cursor = jsonb_build_object('stage', 'completed'), completed_at = now() WHERE id = $1 AND status = 'running'",
-					[runId, JSON.stringify(counts)],
-				);
-				await stage.query(
-					"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) VALUES ($1, $2, $3, $4, 'retention_completed', $5::jsonb, $6)",
-					[
-						tenant.organizationId,
-						project_id,
-						version.id,
-						tenant.actor,
-						JSON.stringify(counts),
-						duration,
-					],
-				);
-			});
+			const terminal = await terminalizeRun(
+				db,
+				runId,
+				ownerToken,
+				"completed",
+				counts,
+				duration,
+			);
+			if (terminal.status !== "completed")
+				throw new Error("Retention run was terminalized by another operation");
 			logger.info("governance.retention_completed", {
 				project_id,
 				run_id: runId,
 				duration_ms: duration,
-				counts,
+				counts: terminal.counts,
 			});
 			return c.json({
 				policy_version_id: version.id,
-				counts,
+				counts: terminal.counts,
 				run_id: runId,
 				status: "completed",
 			});
 		} catch (cause) {
 			const duration = Math.round(performance.now() - started);
-			await withRunTransaction(db, async (stage) => {
-				await stage.query(
-					"UPDATE governance_retention_runs SET status = 'failed', counts = $2::jsonb, completed_at = now() WHERE id = $1 AND status = 'running'",
-					[runId, JSON.stringify(counts)],
-				);
-				await stage.query(
-					"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) VALUES ($1, $2, $3, $4, 'retention_failed', $5::jsonb, $6)",
-					[
-						tenant.organizationId,
-						project_id,
-						version.id,
-						tenant.actor,
-						JSON.stringify(counts),
-						duration,
-					],
-				);
-			}).catch(() => {});
+			await terminalizeRun(
+				db,
+				runId,
+				ownerToken,
+				"failed",
+				counts,
+				duration,
+			).catch(() => {});
 			logger.error("governance.retention_failed", cause, {
 				project_id,
 				run_id: runId,
@@ -599,14 +640,7 @@ async function activeManagerAndVersion(
 	projectId: string,
 	actor: string,
 ): Promise<VersionRow> {
-	const authorized = await client.query(
-		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
-		[projectId, organizationId, actor],
-	);
-	if (!authorized.rows[0])
-		throw new Error(
-			"Project is no longer active or manager access was revoked",
-		);
+	await lockActiveManager(client, organizationId, projectId, actor);
 	const latest = await client.query<VersionRow>(
 		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE p.project_id = $1 AND p.organization_id = $2 ORDER BY v.version DESC LIMIT 1",
 		[projectId, organizationId],
@@ -615,12 +649,29 @@ async function activeManagerAndVersion(
 	return latest.rows[0];
 }
 
+async function lockActiveManager(
+	client: Pick<PoolClient, "query">,
+	organizationId: string,
+	projectId: string,
+	actor: string,
+) {
+	const authorized = await client.query(
+		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+		[projectId, organizationId, actor],
+	);
+	if (!authorized.rows[0])
+		throw new Error(
+			"Project is no longer active or manager access was revoked",
+		);
+}
+
 async function destructiveStage<T>(
 	db: Pick<Pool, "connect">,
 	tenant: { organizationId: string; actor: string },
 	projectId: string,
 	version: VersionRow,
 	runId: string,
+	ownerToken: string,
 	stageName: string,
 	stage: (client: PoolClient) => Promise<T>,
 	counts: Record<string, number>,
@@ -634,22 +685,99 @@ async function destructiveStage<T>(
 		);
 		if (current.id !== version.id)
 			throw new Error("Policy is stale before destructive stage");
+		await renewRunLease(client, runId, ownerToken);
 		const result = await stage(client);
-		await persistRunProgress(client, runId, counts, stageName);
+		await persistRunProgress(client, runId, ownerToken, counts, stageName);
 		return result;
 	});
+}
+
+async function renewRunLease(
+	client: Pick<PoolClient, "query">,
+	runId: string,
+	ownerToken: string,
+) {
+	const renewed = await client.query(
+		"UPDATE governance_retention_runs SET heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' AND lease_expires_at > now() RETURNING id",
+		[runId, ownerToken],
+	);
+	if (!renewed.rows[0]) throw new Error("Retention run ownership was lost");
 }
 
 async function persistRunProgress(
 	client: Pick<PoolClient, "query">,
 	runId: string,
+	ownerToken: string,
 	counts: Record<string, number>,
 	stage: string,
 ) {
-	await client.query(
-		"UPDATE governance_retention_runs SET counts = $2::jsonb, cursor = jsonb_build_object('stage', $3, 'counts', $2::jsonb) WHERE id = $1 AND status = 'running'",
-		[runId, JSON.stringify(counts), stage],
+	const result = await client.query(
+		"UPDATE governance_retention_runs SET counts = $3::jsonb, cursor = jsonb_build_object('stage', $4, 'counts', $3::jsonb), heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' AND lease_expires_at > now() RETURNING id",
+		[runId, ownerToken, JSON.stringify(counts), stage],
 	);
+	if (!result.rows[0]) throw new Error("Retention run ownership was lost");
+}
+
+async function validateRunStage(
+	db: Pick<Pool, "connect">,
+	tenant: { organizationId: string; actor: string },
+	projectId: string,
+	version: VersionRow,
+	runId: string,
+	ownerToken: string,
+) {
+	await withRunTransaction(db, async (client) => {
+		const current = await activeManagerAndVersion(
+			client,
+			tenant.organizationId,
+			projectId,
+			tenant.actor,
+		);
+		if (current.id !== version.id)
+			throw new Error("Policy is stale before destructive stage");
+		await renewRunLease(client, runId, ownerToken);
+	});
+}
+
+async function checkpointRun(
+	db: Pick<Pool, "connect">,
+	runId: string,
+	ownerToken: string,
+	counts: Record<string, number>,
+	stage: string,
+) {
+	await withRunTransaction(db, (client) =>
+		persistRunProgress(client, runId, ownerToken, counts, stage),
+	);
+}
+
+async function terminalizeRun(
+	db: Pick<Pool, "connect">,
+	runId: string,
+	ownerToken: string,
+	status: "completed" | "failed",
+	counts: Record<string, number>,
+	duration: number,
+): Promise<{ status: "completed" | "failed"; counts: Record<string, number> }> {
+	return withRunTransaction(db, async (client) => {
+		const transitioned = await client.query<{
+			status: "completed" | "failed";
+			counts: Record<string, number>;
+		}>(
+			"WITH changed AS (UPDATE governance_retention_runs SET status = $3, counts = $4::jsonb, cursor = jsonb_build_object('stage', $3, 'counts', $4::jsonb), completed_at = now(), lease_expires_at = NULL WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' AND lease_expires_at > now() RETURNING organization_id, project_id, policy_version_id, requested_by, status, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, CASE WHEN status = 'completed' THEN 'retention_completed' ELSE 'retention_failed' END, counts, $5 FROM changed) SELECT status, counts FROM changed",
+			[runId, ownerToken, status, JSON.stringify(counts), duration],
+		);
+		if (transitioned.rows[0]) return transitioned.rows[0];
+		const existing = await client.query<{
+			status: "running" | "completed" | "failed";
+			counts: Record<string, number>;
+		}>("SELECT status, counts FROM governance_retention_runs WHERE id = $1", [
+			runId,
+		]);
+		if (!existing.rows[0] || existing.rows[0].status === "running")
+			throw new Error("Retention run ownership was lost");
+		return { status: existing.rows[0].status, counts: existing.rows[0].counts };
+	});
 }
 
 async function deleteFeedbackRetentionBatch(

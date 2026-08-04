@@ -76,8 +76,12 @@ mock.module("../../src/db/postgres", () => ({
 const {
 	approvePolicy,
 	handleApprovePolicy,
+	handleGetEffectivePolicy,
+	handleListRetentionRuns,
 	handlePreviewRetention,
 	handleRunRetention,
+	getEffectivePolicy,
+	listRetentionRuns,
 	previewRetention,
 	runRetention,
 } = await import("../../src/routes/governance");
@@ -100,6 +104,8 @@ app.use("/v1/*", async (c, next) => {
 app.openapi(previewRetention, handlePreviewRetention);
 app.openapi(approvePolicy, handleApprovePolicy);
 app.openapi(runRetention, handleRunRetention);
+app.openapi(getEffectivePolicy, handleGetEffectivePolicy);
+app.openapi(listRetentionRuns, handleListRetentionRuns);
 
 function request(actor: string, path: string, init?: RequestInit) {
 	return app.request(`http://test${path}`, {
@@ -129,6 +135,28 @@ describe("governance route guards", () => {
 		expect(calls.some((call) => call.includes("retention_previewed"))).toBe(
 			false,
 		);
+	});
+
+	it("rechecks active manager authorization in governance read queries", async () => {
+		calls.length = 0;
+		const effective = await request(
+			"manager",
+			`/v1/governance/policy?project_id=${projectId}`,
+		);
+		expect(effective.status).toBe(200);
+		const history = calls.find((call) => call.startsWith("SELECT v.id"));
+		expect(history).toContain("p.status = 'active'");
+		expect(history).toContain("om.role = 'owner' OR pm.role = 'manager'");
+
+		calls.length = 0;
+		const runs = await request(
+			"manager",
+			`/v1/governance/retention/runs?project_id=${projectId}`,
+		);
+		expect(runs.status).toBe(200);
+		const summary = calls.find((call) => call.startsWith("SELECT r.id"));
+		expect(summary).toContain("p.status = 'active'");
+		expect(summary).toContain("om.role = 'owner' OR pm.role = 'manager'");
 	});
 
 	it("commits policy approval and its immutable audit event together", async () => {
