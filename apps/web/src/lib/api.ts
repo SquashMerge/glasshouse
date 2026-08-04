@@ -362,9 +362,12 @@ export async function approveGovernancePolicy(input: {
 		"approveGovernancePolicy",
 	);
 }
-export async function previewGovernanceRetention(
-	project_id: string,
-): Promise<{ policy_version_id: string; counts: Record<string, number> }> {
+export async function previewGovernanceRetention(project_id: string): Promise<{
+	policy_version_id: string;
+	counts: Record<string, number>;
+	preview_id: string;
+	preview_expires_at: string;
+}> {
 	return responseJson(
 		await authedFetch(
 			"/v1/governance/retention/preview",
@@ -376,6 +379,7 @@ export async function previewGovernanceRetention(
 export async function runGovernanceRetention(input: {
 	project_id: string;
 	policy_version_id: string;
+	preview_id: string;
 	batch_size: number;
 }): Promise<{
 	policy_version_id: string;

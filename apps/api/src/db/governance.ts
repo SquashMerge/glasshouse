@@ -86,7 +86,7 @@ export async function retentionCounts(
 		if (dataClass === "traces") {
 			const result = await ch().query({
 				query:
-					"SELECT count() AS count FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND start_time < {cutoff:DateTime64(3)}",
+					"WITH grouped AS (SELECT trace_id, max(start_time) AS newest, count() AS physical_rows FROM (SELECT trace_id, start_time FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} UNION ALL SELECT trace_id, start_time FROM observations WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}) GROUP BY trace_id) SELECT countIf(newest < {cutoff:DateTime64(3)} AND physical_rows <= 500) AS count, countIf(newest < {cutoff:DateTime64(3)} AND physical_rows > 500) AS skipped FROM grouped",
 				query_params: {
 					organizationId,
 					projectId,
@@ -94,8 +94,9 @@ export async function retentionCounts(
 				},
 				format: "JSONEachRow",
 			});
-			const rows = await result.json<{ count: string }>();
+			const rows = await result.json<{ count: string; skipped: string }>();
 			counts.traces = Number(rows[0]?.count ?? 0);
+			counts.traces_skipped = Number(rows[0]?.skipped ?? 0);
 		}
 	}
 	return counts;
@@ -127,7 +128,7 @@ export async function deleteTraceRetentionBatch(
 	const client = ch();
 	const selected = await client.query({
 		query:
-			"SELECT trace_id FROM (SELECT trace_id, min(start_time) AS oldest, max(start_time) AS newest FROM (SELECT trace_id, start_time FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} UNION ALL SELECT trace_id, start_time FROM observations WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}) GROUP BY trace_id HAVING newest < {cutoff:DateTime64(3)}) ORDER BY oldest, trace_id LIMIT {batchSize:UInt64}",
+			"WITH grouped AS (SELECT trace_id, min(start_time) AS oldest, max(start_time) AS newest, count() AS physical_rows FROM (SELECT trace_id, start_time FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} UNION ALL SELECT trace_id, start_time FROM observations WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}) GROUP BY trace_id HAVING newest < {cutoff:DateTime64(3)} AND physical_rows <= {batchSize:UInt64}), bounded AS (SELECT trace_id, oldest, sum(physical_rows) OVER (ORDER BY oldest, trace_id) AS cumulative_rows FROM grouped) SELECT trace_id FROM bounded WHERE cumulative_rows <= {batchSize:UInt64} ORDER BY oldest, trace_id",
 		query_params: {
 			organizationId,
 			projectId,
@@ -163,7 +164,7 @@ export async function failInterruptedRetentionRuns(
 	pool: Pick<Pool, "query">,
 ): Promise<Array<{ id: string; project_id: string }>> {
 	const failed = await pool.query<{ id: string; project_id: string }>(
-		"WITH failed AS (UPDATE governance_retention_runs r SET status = 'failed', completed_at = now() FROM projects p WHERE p.id = r.project_id AND p.status = 'active' AND r.status = 'running' RETURNING r.id, r.organization_id, r.project_id, r.policy_version_id, r.requested_by, r.counts, r.started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT id, project_id FROM failed",
+		"WITH failed AS (UPDATE governance_retention_runs SET status = 'failed', completed_at = now() WHERE status = 'running' RETURNING id, organization_id, project_id, policy_version_id, requested_by, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT id, project_id FROM failed",
 	);
 	return failed.rows;
 }

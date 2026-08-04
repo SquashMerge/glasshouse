@@ -38,6 +38,8 @@ export const PolicyMutation = PolicyInput.extend({
 export const RetentionSummary = z.object({
 	policy_version_id: z.string().uuid(),
 	counts: z.record(z.string(), z.number().int().nonnegative()),
+	preview_id: z.string().uuid().optional(),
+	preview_expires_at: z.string().datetime().optional(),
 	run_id: z.string().uuid().optional(),
 	status: z.enum(["completed", "failed"]).optional(),
 });

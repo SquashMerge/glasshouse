@@ -5,6 +5,10 @@ BEGIN
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
 		RAISE EXCEPTION 'governance persistence is incomplete';
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_previews')
+		OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'governance_retention_runs_one_running_per_project' AND indexdef LIKE '%WHERE (status = ''running''::text)%') THEN
+		RAISE EXCEPTION 'retention preview authorization or single-running-run constraint is incomplete';
+	END IF;
 	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 10 THEN
 		RAISE EXCEPTION 'governance tenant fields must be not null';
 	END IF;

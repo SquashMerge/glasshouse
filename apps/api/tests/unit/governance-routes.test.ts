@@ -173,6 +173,7 @@ describe("governance route guards", () => {
 			body: JSON.stringify({
 				project_id: projectId,
 				policy_version_id: "44444444-4444-4444-8444-444444444444",
+				preview_id: "55555555-5555-4555-8555-555555555555",
 				batch_size: 1,
 			}),
 		});
@@ -180,5 +181,38 @@ describe("governance route guards", () => {
 		expect(calls.some((call) => call.includes("retention_started"))).toBe(
 			false,
 		);
+	});
+
+	it("requires a server-issued, actor-bound single-use preview before starting", async () => {
+		calls.length = 0;
+		const response = await request("manager", "/v1/governance/retention/runs", {
+			method: "POST",
+			body: JSON.stringify({
+				project_id: projectId,
+				policy_version_id: policyId,
+				preview_id: "55555555-5555-4555-8555-555555555555",
+				batch_size: 1,
+			}),
+		});
+		expect(response.status).toBe(409);
+		const consume = calls.find((call) =>
+			call.includes("UPDATE governance_retention_previews SET consumed_at"),
+		);
+		expect(consume).toContain("actor_subject = $5");
+		expect(consume).toContain("consumed_at IS NULL AND expires_at > now()");
+		expect(calls.some((call) => call.includes("retention_started"))).toBe(
+			false,
+		);
+	});
+
+	it("rejects a run request without preview authorization", async () => {
+		const response = await request("manager", "/v1/governance/retention/runs", {
+			method: "POST",
+			body: JSON.stringify({
+				project_id: projectId,
+				policy_version_id: policyId,
+			}),
+		});
+		expect(response.status).toBe(400);
 	});
 });

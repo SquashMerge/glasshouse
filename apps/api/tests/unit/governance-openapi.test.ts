@@ -42,4 +42,19 @@ describe("governance OpenAPI contracts", () => {
 			}
 		}
 	});
+
+	it("requires preview authorization for retention runs", () => {
+		const app = new OpenAPIHono();
+		app.openapi(runRetention, handleRunRetention);
+		const document = app.getOpenAPIDocument({
+			openapi: "3.1.0",
+			info: { title: "test", version: "1" },
+		});
+		const schema = (
+			document.paths?.["/v1/governance/retention/runs"]?.post?.requestBody as {
+				content: { "application/json": { schema: { required: string[] } } };
+			}
+		).content["application/json"].schema;
+		expect(schema.required).toContain("preview_id");
+	});
 });

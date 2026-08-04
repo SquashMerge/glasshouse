@@ -70,6 +70,7 @@ const previewBody = z.object({ project_id: z.string().uuid() });
 const runBody = z.object({
 	project_id: z.string().uuid(),
 	policy_version_id: z.string().uuid(),
+	preview_id: z.string().uuid(),
 	batch_size: z.number().int().min(1).max(500).default(100),
 });
 export const previewRetention = createRoute({
@@ -147,7 +148,14 @@ function failure(c: Context, cause: unknown) {
 			{ code: "BAD_REQUEST", message: "Request validation failed" },
 			400,
 		);
-	if (message.includes("approved") || message.includes("stale"))
+	if (
+		message.includes("approved") ||
+		message.includes("stale") ||
+		message.includes("preview") ||
+		message.includes("running") ||
+		message.includes("no longer active") ||
+		message.includes("revoked")
+	)
 		return c.json({ code: "CONFLICT", message }, 409);
 	logger.error("governance.operation_failed", cause);
 	return c.json(
@@ -301,17 +309,49 @@ export async function handlePreviewRetention(c: Context) {
 			project_id,
 			version.retention,
 		);
-		await pgPool().query(
-			"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts) VALUES ($1, $2, $3, $4, 'retention_previewed', $5::jsonb)",
-			[
+		const client = await pgPool().connect();
+		try {
+			await client.query("BEGIN");
+			const current = await activeManagerAndVersion(
+				client,
 				tenant.organizationId,
 				project_id,
-				version.id,
 				tenant.actor,
-				JSON.stringify(counts),
-			],
-		);
-		return c.json({ policy_version_id: version.id, counts });
+			);
+			if (current.id !== version.id) throw new Error("Policy preview is stale");
+			const preview = await client.query<{ id: string; expires_at: Date }>(
+				"INSERT INTO governance_retention_previews (organization_id, project_id, policy_version_id, actor_subject, counts, expires_at) VALUES ($1, $2, $3, $4, $5::jsonb, now() + interval '15 minutes') RETURNING id, expires_at",
+				[
+					tenant.organizationId,
+					project_id,
+					version.id,
+					tenant.actor,
+					JSON.stringify(counts),
+				],
+			);
+			await client.query(
+				"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts) VALUES ($1, $2, $3, $4, 'retention_previewed', $5::jsonb)",
+				[
+					tenant.organizationId,
+					project_id,
+					version.id,
+					tenant.actor,
+					JSON.stringify(counts),
+				],
+			);
+			await client.query("COMMIT");
+			return c.json({
+				policy_version_id: version.id,
+				counts,
+				preview_id: preview.rows[0]!.id,
+				preview_expires_at: preview.rows[0]!.expires_at.toISOString(),
+			});
+		} catch (cause) {
+			await client.query("ROLLBACK").catch(() => {});
+			throw cause;
+		} finally {
+			client.release();
+		}
 	} catch (cause) {
 		return failure(c, cause);
 	}
@@ -345,9 +385,9 @@ export async function handleListRetentionRuns(c: Context) {
 }
 export async function handleRunRetention(c: Context) {
 	try {
-		const { project_id, policy_version_id, batch_size } = (c.req as any).valid(
-			"json",
-		);
+		const { project_id, policy_version_id, preview_id, batch_size } = (
+			c.req as any
+		).valid("json");
 		const tenant = await manager(c, project_id);
 		const started = performance.now();
 		const db = pgPool();
@@ -358,19 +398,28 @@ export async function handleRunRetention(c: Context) {
 		const counts: Record<string, number> = {};
 		try {
 			await client.query("BEGIN");
-			const authorized = await client.query(
-				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
-				[project_id, tenant.organizationId, tenant.actor],
+			version = await activeManagerAndVersion(
+				client,
+				tenant.organizationId,
+				project_id,
+				tenant.actor,
 			);
-			if (!authorized.rows[0]) throw new Error("Not found");
-			const latest = await client.query<VersionRow>(
-				"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE p.project_id = $1 AND p.organization_id = $2 ORDER BY v.version DESC LIMIT 1",
-				[project_id, tenant.organizationId],
-			);
-			version = latest.rows[0]!;
-			if (!version) throw new Error("No approved policy exists");
 			if (version.id !== policy_version_id)
-				throw new Error("Policy preview is stale; preview the latest approval");
+				throw new Error("Policy preview is stale");
+			const consumed = await client.query(
+				"UPDATE governance_retention_previews SET consumed_at = now() WHERE id = $1 AND organization_id = $2 AND project_id = $3 AND policy_version_id = $4 AND actor_subject = $5 AND consumed_at IS NULL AND expires_at > now() RETURNING id",
+				[
+					preview_id,
+					tenant.organizationId,
+					project_id,
+					version.id,
+					tenant.actor,
+				],
+			);
+			if (!consumed.rows[0])
+				throw new Error(
+					"Retention preview is absent, expired, or already used",
+				);
 			const run = await client.query<{ id: string }>(
 				"INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status) VALUES ($1, $2, $3, $4, 'running') RETURNING id",
 				[tenant.organizationId, project_id, version.id, tenant.actor],
@@ -382,6 +431,10 @@ export async function handleRunRetention(c: Context) {
 			);
 			await client.query("COMMIT");
 			startedCommitted = true;
+		} catch (cause: any) {
+			if (cause?.code === "23505")
+				throw new Error("A retention run is already running");
+			throw cause;
 		} finally {
 			if (!startedCommitted) await client.query("ROLLBACK").catch(() => {});
 			client.release();
@@ -392,12 +445,21 @@ export async function handleRunRetention(c: Context) {
 				? new Date(Date.now() - feedbackDays * 86_400_000)
 				: undefined;
 			if (feedbackCutoff) {
-				counts.feedback = await deleteFeedbackRetentionBatch(
+				await destructiveStage(
 					db,
-					runId,
+					tenant,
 					project_id,
-					feedbackCutoff,
-					batch_size,
+					version,
+					runId,
+					"feedback",
+					async (stage) => {
+						counts.feedback = await deleteFeedbackRetentionBatch(
+							stage,
+							project_id,
+							feedbackCutoff,
+							batch_size,
+						);
+					},
 					counts,
 				);
 			}
@@ -405,26 +467,27 @@ export async function handleRunRetention(c: Context) {
 				const cutoff = new Date(
 					Date.now() - version.retention.datasets * 86_400_000,
 				);
-				const result = await withRunTransaction(db, async (stage) => {
-					const deleted = await deleteSafeDatasetRetentionBatch(
-						stage,
-						project_id,
-						cutoff,
-						batch_size,
-						feedbackCutoff,
-					);
-					await persistRunProgress(
-						stage,
-						runId,
-						{
-							...counts,
-							datasets: deleted.deleted,
-							datasets_skipped: deleted.skipped,
-						},
-						"datasets",
-					);
-					return deleted;
-				});
+				const result = (await destructiveStage(
+					db,
+					tenant,
+					project_id,
+					version,
+					runId,
+					"datasets",
+					async (stage) => {
+						const deleted = await deleteSafeDatasetRetentionBatch(
+							stage,
+							project_id,
+							cutoff,
+							batch_size,
+							feedbackCutoff,
+						);
+						counts.datasets = deleted.deleted;
+						counts.datasets_skipped = deleted.skipped;
+						return deleted;
+					},
+					counts,
+				)) as { deleted: number; skipped: number };
 				counts.datasets = result.deleted;
 				counts.datasets_skipped = result.skipped;
 			}
@@ -432,14 +495,22 @@ export async function handleRunRetention(c: Context) {
 				const cutoff = new Date(
 					Date.now() - version.retention.traces * 86_400_000,
 				);
-				counts.traces = await deleteTraceRetentionBatch(
-					tenant.organizationId,
+				await destructiveStage(
+					db,
+					tenant,
 					project_id,
-					cutoff,
-					batch_size,
-				);
-				await withRunTransaction(db, (stage) =>
-					persistRunProgress(stage, runId, counts, "traces"),
+					version,
+					runId,
+					"traces",
+					async () => {
+						counts.traces = await deleteTraceRetentionBatch(
+							tenant.organizationId,
+							project_id,
+							cutoff,
+							batch_size,
+						);
+					},
+					counts,
 				);
 			}
 			const duration = Math.round(performance.now() - started);
@@ -522,6 +593,53 @@ async function withRunTransaction<T>(
 	}
 }
 
+async function activeManagerAndVersion(
+	client: Pick<PoolClient, "query">,
+	organizationId: string,
+	projectId: string,
+	actor: string,
+): Promise<VersionRow> {
+	const authorized = await client.query(
+		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+		[projectId, organizationId, actor],
+	);
+	if (!authorized.rows[0])
+		throw new Error(
+			"Project is no longer active or manager access was revoked",
+		);
+	const latest = await client.query<VersionRow>(
+		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE p.project_id = $1 AND p.organization_id = $2 ORDER BY v.version DESC LIMIT 1",
+		[projectId, organizationId],
+	);
+	if (!latest.rows[0]) throw new Error("No approved policy exists");
+	return latest.rows[0];
+}
+
+async function destructiveStage<T>(
+	db: Pick<Pool, "connect">,
+	tenant: { organizationId: string; actor: string },
+	projectId: string,
+	version: VersionRow,
+	runId: string,
+	stageName: string,
+	stage: (client: PoolClient) => Promise<T>,
+	counts: Record<string, number>,
+): Promise<T> {
+	return withRunTransaction(db, async (client) => {
+		const current = await activeManagerAndVersion(
+			client,
+			tenant.organizationId,
+			projectId,
+			tenant.actor,
+		);
+		if (current.id !== version.id)
+			throw new Error("Policy is stale before destructive stage");
+		const result = await stage(client);
+		await persistRunProgress(client, runId, counts, stageName);
+		return result;
+	});
+}
+
 async function persistRunProgress(
 	client: Pick<PoolClient, "query">,
 	runId: string,
@@ -535,24 +653,14 @@ async function persistRunProgress(
 }
 
 async function deleteFeedbackRetentionBatch(
-	db: ReturnType<typeof pgPool>,
-	runId: string,
+	client: Pick<PoolClient, "query">,
 	projectId: string,
 	cutoff: Date,
 	batchSize: number,
-	counts: Record<string, number>,
 ) {
-	return withRunTransaction(db, async (client) => {
-		const result = await client.query<{ score_id: string }>(
-			"DELETE FROM feedback_reviews WHERE score_id IN (SELECT score_id FROM feedback_reviews WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING score_id",
-			[projectId, cutoff, batchSize],
-		);
-		await persistRunProgress(
-			client,
-			runId,
-			{ ...counts, feedback: result.rows.length },
-			"feedback",
-		);
-		return result.rows.length;
-	});
+	const result = await client.query<{ score_id: string }>(
+		"DELETE FROM feedback_reviews WHERE score_id IN (SELECT score_id FROM feedback_reviews WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING score_id",
+		[projectId, cutoff, batchSize],
+	);
+	return result.rows.length;
 }

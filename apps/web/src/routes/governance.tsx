@@ -37,6 +37,7 @@ export function GovernancePage() {
 	const [previewedPolicyId, setPreviewedPolicyId] = React.useState<
 		string | null
 	>(null);
+	const [previewId, setPreviewId] = React.useState<string | null>(null);
 	const effective = useQuery({
 		queryKey: ["governance-policy", selectedProjectId],
 		queryFn: () => getEffectiveGovernancePolicy(selectedProjectId!),
@@ -69,6 +70,7 @@ export function GovernancePage() {
 			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(null);
 			setPreviewedPolicyId(null);
+			setPreviewId(null);
 			refresh(variables.project_id);
 		},
 	});
@@ -78,6 +80,7 @@ export function GovernancePage() {
 			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(null);
 			setPreviewedPolicyId(null);
+			setPreviewId(null);
 			refresh(variables.project_id);
 		},
 	});
@@ -87,6 +90,7 @@ export function GovernancePage() {
 			if (projectId !== selectedProjectIdRef.current) return;
 			setPreview(result.counts);
 			setPreviewedPolicyId(result.policy_version_id);
+			setPreviewId(result.preview_id);
 		},
 	});
 	const run = useMutation({
@@ -95,12 +99,14 @@ export function GovernancePage() {
 			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(result.counts);
 			setPreviewedPolicyId(null);
+			setPreviewId(null);
 			refresh(variables.project_id);
 		},
 	});
 	React.useEffect(() => {
 		setPreview(null);
 		setPreviewedPolicyId(null);
+		setPreviewId(null);
 		draft.reset();
 		approve.reset();
 		previewMutation.reset();
@@ -262,9 +268,9 @@ export function GovernancePage() {
 				</CardHeader>
 				<CardContent className="space-y-3">
 					<p className="text-sm text-muted-foreground">
-						Preview reports counts only. A run deletes at most 100 trace roots
-						(including their observations), datasets, or feedback records per
-						class and only data older than the approved policy interval.
+						Preview reports counts only. A run deletes at most 100 eligible
+						trace groups, with no more than 100 physical trace/observation rows
+						total, or 100 datasets or feedback records per class.
 					</p>
 					<div className="flex flex-wrap gap-2">
 						<Button
@@ -279,12 +285,16 @@ export function GovernancePage() {
 							type="button"
 							variant="destructive"
 							disabled={
-								!policy || run.isPending || previewedPolicyId !== policy.id
+								!policy ||
+								run.isPending ||
+								previewedPolicyId !== policy.id ||
+								!previewId
 							}
 							onClick={() =>
 								run.mutate({
 									project_id: selectedProjectId,
 									policy_version_id: previewedPolicyId!,
+									preview_id: previewId!,
 									batch_size: 100,
 								})
 							}

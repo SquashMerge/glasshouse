@@ -16,7 +16,7 @@ const {
 } = await import("../../src/db/governance");
 
 describe("governance retention", () => {
-	it("selects only wholly expired distinct trace IDs and preserves post-cutoff rows", async () => {
+	it("selects only wholly expired bounded trace groups and preserves post-cutoff rows", async () => {
 		expect(
 			await deleteTraceRetentionBatch(
 				"organization",
@@ -26,8 +26,8 @@ describe("governance retention", () => {
 			),
 		).toBe(2);
 		expect(query.mock.calls[0]?.[0]).toMatchObject({
-			query: expect.stringContaining(
-				"GROUP BY trace_id HAVING newest < {cutoff:DateTime64(3)}",
+			query: expect.stringMatching(
+				/HAVING newest < \{cutoff:DateTime64\(3\)\} AND physical_rows <= \{batchSize:UInt64\}[\s\S]*cumulative_rows <= \{batchSize:UInt64\}/,
 			),
 			query_params: expect.objectContaining({ batchSize: 2 }),
 		});
@@ -53,6 +53,7 @@ describe("governance retention", () => {
 		]);
 		expect(calls[0]).toContain("SET status = 'failed'");
 		expect(calls[0]).toContain("'retention_failed'");
+		expect(calls[0]).not.toContain("p.status = 'active'");
 		expect(calls[0]).not.toContain("cursor");
 	});
 
