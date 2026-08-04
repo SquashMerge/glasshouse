@@ -14,6 +14,18 @@ async function gotoFresh(page: Page, path: string) {
 	await page.evaluate(() => window.localStorage.clear());
 }
 
+async function selectAccessibleProject(page: Page) {
+	const selector = page.getByTestId("project-selector");
+	await expect(selector).toBeVisible();
+	const projectId = await selector
+		.locator("option")
+		.nth(1)
+		.getAttribute("value");
+	if (!projectId) throw new Error("Expected an accessible Project fixture");
+	await selector.selectOption(projectId);
+	await expect(selector).toHaveValue(projectId);
+}
+
 test.describe("Login flow", () => {
 	test("unauthenticated / redirects to /login", async ({ page }) => {
 		await gotoFresh(page, "/");
@@ -221,6 +233,7 @@ test.describe("Shared app workspace", () => {
 		await page.getByLabel(/Password/i).fill(PASS);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
+		await selectAccessibleProject(page);
 		await page.setViewportSize({ width: 375, height: 812 });
 		await page.goto("/");
 
