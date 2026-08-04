@@ -5,6 +5,13 @@ export type PackageVersion = {
 
 const MINIMUM_RELEASE_AGE_DAYS = 7;
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// CVE-2026-69152 is a high-severity denial-of-service vulnerability in the
+// transitive migration dependency. The exception ends at the exact point where
+// the normal seven-day policy accepts the upstream 5.0.9 security patch.
+const TEMPORARY_SECURITY_RELEASE_AGE_EXCEPTIONS = new Map([
+	["brace-expansion@5.0.9", new Date("2026-08-06T10:00:32.762Z")],
+]);
 const packageName = String.raw`(?:@[^/]+/[^@]+|[^@]+)`;
 const version = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`;
 const directDescriptor = new RegExp(
@@ -58,6 +65,12 @@ export async function assertReleaseAges(
 	const violations: string[] = [];
 
 	for (const pkg of packages) {
+		const exceptionEndsAt =
+			TEMPORARY_SECURITY_RELEASE_AGE_EXCEPTIONS.get(`${pkg.name}@${pkg.version}`);
+		if (exceptionEndsAt && now.getTime() < exceptionEndsAt.getTime()) {
+			continue;
+		}
+
 		const published = await publishedAt(pkg);
 		if (Number.isNaN(published.getTime())) {
 			throw new Error(
