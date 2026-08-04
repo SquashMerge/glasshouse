@@ -21,6 +21,27 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		if (values[0] === otherProjectId) return { rows: [] };
 		return { rows: [{ role: values[2] === "member" ? "member" : "manager" }] };
 	}
+	if (statement.startsWith("SELECT p.id FROM projects"))
+		return { rows: [{ id: projectId }] };
+	if (
+		statement.includes("JOIN governance_policy_approvals a ON") &&
+		!statement.includes("LEFT JOIN governance_policy_approvals")
+	)
+		return {
+			rows: [
+				{
+					id: policyId,
+					version: 1,
+					retention: {},
+					redaction: { mode: "none", keys: [] },
+					content_hash: "a".repeat(64),
+					created_by: "manager",
+					created_at: new Date("2026-01-01T00:00:00Z"),
+					approved_by: "manager",
+					approved_at: new Date("2026-01-01T00:00:00Z"),
+				},
+			],
+		};
 	if (
 		statement.startsWith("SELECT v.id, v.version") &&
 		statement.includes("WHERE v.id")
@@ -56,7 +77,9 @@ const {
 	approvePolicy,
 	handleApprovePolicy,
 	handlePreviewRetention,
+	handleRunRetention,
 	previewRetention,
+	runRetention,
 } = await import("../../src/routes/governance");
 const app = new OpenAPIHono({
 	defaultHook: (result, c) =>
@@ -76,6 +99,7 @@ app.use("/v1/*", async (c, next) => {
 });
 app.openapi(previewRetention, handlePreviewRetention);
 app.openapi(approvePolicy, handleApprovePolicy);
+app.openapi(runRetention, handleRunRetention);
 
 function request(actor: string, path: string, init?: RequestInit) {
 	return app.request(`http://test${path}`, {
@@ -140,5 +164,21 @@ describe("governance route guards", () => {
 		);
 		expect(calls).toContain("ROLLBACK");
 		approvalConflict = false;
+	});
+
+	it("binds retention to the latest previewed approval and commits durable start evidence first", async () => {
+		calls.length = 0;
+		const response = await request("manager", "/v1/governance/retention/runs", {
+			method: "POST",
+			body: JSON.stringify({
+				project_id: projectId,
+				policy_version_id: "44444444-4444-4444-8444-444444444444",
+				batch_size: 1,
+			}),
+		});
+		expect(response.status).toBe(409);
+		expect(calls.some((call) => call.includes("retention_started"))).toBe(
+			false,
+		);
 	});
 });

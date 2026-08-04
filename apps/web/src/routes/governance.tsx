@@ -23,6 +23,8 @@ import { PageMessage } from "./prompts";
 
 export function GovernancePage() {
 	const { selectedProjectId } = useProjectSelection();
+	const selectedProjectIdRef = React.useRef(selectedProjectId);
+	selectedProjectIdRef.current = selectedProjectId;
 	const queryClient = useQueryClient();
 	const [traces, setTraces] = React.useState("30");
 	const [datasets, setDatasets] = React.useState("90");
@@ -50,46 +52,50 @@ export function GovernancePage() {
 		queryFn: () => listGovernanceRetentionRuns(selectedProjectId!),
 		enabled: Boolean(selectedProjectId),
 	});
-	const refresh = () => {
+	const refresh = (projectId: string) => {
 		void queryClient.invalidateQueries({
-			queryKey: ["governance-policy", selectedProjectId],
+			queryKey: ["governance-policy", projectId],
 		});
 		void queryClient.invalidateQueries({
-			queryKey: ["governance-history", selectedProjectId],
+			queryKey: ["governance-history", projectId],
 		});
 		void queryClient.invalidateQueries({
-			queryKey: ["governance-retention-runs", selectedProjectId],
+			queryKey: ["governance-retention-runs", projectId],
 		});
 	};
 	const draft = useMutation({
 		mutationFn: createGovernancePolicyDraft,
-		onSuccess: () => {
+		onSuccess: (_, variables) => {
+			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(null);
 			setPreviewedPolicyId(null);
-			refresh();
+			refresh(variables.project_id);
 		},
 	});
 	const approve = useMutation({
 		mutationFn: approveGovernancePolicy,
-		onSuccess: () => {
+		onSuccess: (_, variables) => {
+			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(null);
 			setPreviewedPolicyId(null);
-			refresh();
+			refresh(variables.project_id);
 		},
 	});
 	const previewMutation = useMutation({
 		mutationFn: previewGovernanceRetention,
-		onSuccess: (result) => {
+		onSuccess: (result, projectId) => {
+			if (projectId !== selectedProjectIdRef.current) return;
 			setPreview(result.counts);
 			setPreviewedPolicyId(result.policy_version_id);
 		},
 	});
 	const run = useMutation({
 		mutationFn: runGovernanceRetention,
-		onSuccess: (result) => {
+		onSuccess: (result, variables) => {
+			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(result.counts);
 			setPreviewedPolicyId(null);
-			refresh();
+			refresh(variables.project_id);
 		},
 	});
 	React.useEffect(() => {
@@ -114,7 +120,11 @@ export function GovernancePage() {
 		return (
 			<PageMessage title="Governance">
 				<p role="alert">Governance policy could not be loaded.</p>
-				<Button type="button" variant="outline" onClick={() => refresh()}>
+				<Button
+					type="button"
+					variant="outline"
+					onClick={() => refresh(selectedProjectId)}
+				>
 					Retry
 				</Button>
 			</PageMessage>
@@ -272,7 +282,11 @@ export function GovernancePage() {
 								!policy || run.isPending || previewedPolicyId !== policy.id
 							}
 							onClick={() =>
-								run.mutate({ project_id: selectedProjectId, batch_size: 100 })
+								run.mutate({
+									project_id: selectedProjectId,
+									policy_version_id: previewedPolicyId!,
+									batch_size: 100,
+								})
 							}
 						>
 							Run one bounded batch

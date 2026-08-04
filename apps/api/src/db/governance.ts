@@ -65,9 +65,13 @@ export async function retentionCounts(
 	for (const [dataClass, days] of Object.entries(retention)) {
 		const cutoff = new Date(Date.now() - days! * 86_400_000);
 		if (dataClass === "datasets") {
+			const feedbackDays = retention.feedback;
+			const feedbackCutoff = feedbackDays
+				? new Date(Date.now() - feedbackDays * 86_400_000)
+				: null;
 			const result = await pool.query<{ eligible: string; skipped: string }>(
-				"SELECT count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id))::text AS eligible, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id))::text AS skipped FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2",
-				[projectId, cutoff],
+				"SELECT count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($3::timestamptz IS NULL OR f.created_at >= $3)))::text AS eligible, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($3::timestamptz IS NULL OR f.created_at >= $3)))::text AS skipped FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2",
+				[projectId, cutoff, feedbackCutoff],
 			);
 			counts.datasets = Number(result.rows[0]?.eligible ?? 0);
 			counts.datasets_skipped = Number(result.rows[0]?.skipped ?? 0);
@@ -102,13 +106,14 @@ export async function deleteSafeDatasetRetentionBatch(
 	projectId: string,
 	cutoff: Date,
 	batchSize: number,
+	feedbackCutoff?: Date,
 ): Promise<{ deleted: number; skipped: number }> {
-	const result = await pool.query<{ id: string; skipped: string }>(
-		"WITH candidates AS MATERIALIZED (SELECT d.id FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) ORDER BY d.created_at, d.id LIMIT $3 FOR UPDATE), deleted_feedback AS (DELETE FROM feedback_reviews f USING candidates c WHERE f.dataset_id = c.id), deleted AS (DELETE FROM datasets d USING candidates c WHERE d.id = c.id RETURNING d.id), skipped AS (SELECT count(*)::text AS count FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND (EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id))) SELECT id, (SELECT count FROM skipped) AS skipped FROM deleted",
-		[projectId, cutoff, batchSize],
+	const result = await pool.query<{ id: string | null; skipped: string }>(
+		"WITH candidates AS MATERIALIZED (SELECT d.id FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($4::timestamptz IS NULL OR f.created_at >= $4)) ORDER BY d.created_at, d.id LIMIT $3 FOR UPDATE), deleted AS (DELETE FROM datasets d USING candidates c WHERE d.id = c.id RETURNING d.id), skipped AS (SELECT count(*)::text AS count FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND (EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($4::timestamptz IS NULL OR f.created_at >= $4)))) SELECT id, (SELECT count FROM skipped) AS skipped FROM deleted UNION ALL SELECT NULL::uuid AS id, count AS skipped FROM skipped WHERE NOT EXISTS (SELECT 1 FROM deleted)",
+		[projectId, cutoff, batchSize, feedbackCutoff ?? null],
 	);
 	return {
-		deleted: result.rows.length,
+		deleted: result.rows.filter((row) => row.id !== null).length,
 		skipped: Number(result.rows[0]?.skipped ?? 0),
 	};
 }
@@ -122,7 +127,7 @@ export async function deleteTraceRetentionBatch(
 	const client = ch();
 	const selected = await client.query({
 		query:
-			"SELECT trace_id FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND start_time < {cutoff:DateTime64(3)} ORDER BY start_time, trace_id LIMIT {batchSize:UInt64}",
+			"SELECT trace_id FROM (SELECT trace_id, min(start_time) AS oldest, max(start_time) AS newest FROM (SELECT trace_id, start_time FROM traces WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} UNION ALL SELECT trace_id, start_time FROM observations WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}) GROUP BY trace_id HAVING newest < {cutoff:DateTime64(3)}) ORDER BY oldest, trace_id LIMIT {batchSize:UInt64}",
 		query_params: {
 			organizationId,
 			projectId,
@@ -135,15 +140,20 @@ export async function deleteTraceRetentionBatch(
 		(row) => row.trace_id,
 	);
 	if (!traceIds.length) return 0;
-	const query_params = { organizationId, projectId, traceIds };
+	const query_params = {
+		organizationId,
+		projectId,
+		traceIds,
+		cutoff: cutoff.toISOString(),
+	};
 	await client.command({
 		query:
-			"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND trace_id IN {traceIds:Array(String)} SETTINGS mutations_sync = 1",
+			"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND trace_id IN {traceIds:Array(String)} AND start_time < {cutoff:DateTime64(3)} SETTINGS mutations_sync = 1",
 		query_params,
 	});
 	await client.command({
 		query:
-			"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND trace_id IN {traceIds:Array(String)} SETTINGS mutations_sync = 1",
+			"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND trace_id IN {traceIds:Array(String)} AND start_time < {cutoff:DateTime64(3)} SETTINGS mutations_sync = 1",
 		query_params,
 	});
 	return traceIds.length;

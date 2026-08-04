@@ -109,6 +109,8 @@ type AggregatedTrace = {
 	isRoot: boolean;
 };
 
+class OtlpConflictError extends Error {}
+
 const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 	defaultClient,
 	insertObservations,
@@ -166,70 +168,80 @@ export function createOtlpIngestHandler(
 
 		const request = parsed.data;
 		const deduplicationTokens = otlpDeduplicationTokens(request, tenant);
-		// Only an approved immutable version can affect ingress. This happens before
-		// writer, event-bus, audit, or logger paths can observe span content.
-		const policy = await resolvedDependencies.approvedRedaction(
-			pgPool(),
-			tenant.organizationId,
-			tenant.projectId,
-		);
-		const redaction = policyRedactionOptions(
-			policy ?? { mode: "none", keys: [] },
-		);
-
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];
-
-		for (const rs of request.resource_spans) {
-			const resourceAttributes = rs.resource?.attributes ?? [];
-			for (const ss of rs.scope_spans) {
-				for (const span of ss.spans) {
-					const normalized = normalizeSpan(
-						span,
-						resourceAttributes,
-						fallbackProjectId,
-					);
-					const trace: TenantScopedTrace = {
-						...normalized.trace,
-						organization_id: tenant.organizationId,
-					};
-					const observation: TenantScopedObservation = {
-						...normalized.observation,
-						organization_id: tenant.organizationId,
-					};
-					const existingTrace = traces.get(trace.trace_id);
-					if (
-						existingTrace &&
-						existingTrace.trace.project_id !== trace.project_id
-					) {
-						return jsonError(
-							400,
-							"BAD_REQUEST",
-							"Trace contains conflicting project provenance",
-						);
-					}
-					trace.input_text = redactTraceText(trace.input_text, redaction);
-					trace.output_text = redactTraceText(trace.output_text, redaction);
-					observation.input_text = trace.input_text;
-					observation.output_text = trace.output_text;
-					observation.metadata = redactMetadata(
-						observation.metadata,
-						redaction,
-					);
-					const isRoot = observation.parent_observation_id === null;
-					traces.set(
-						trace.trace_id,
-						aggregateTrace(existingTrace, trace, isRoot),
-					);
-					observations.push(observation);
-				}
-			}
-		}
 
 		try {
 			await resolvedDependencies.withActiveAuthorizedProjectLock(
 				tenant,
 				async () => {
+					// Resolve while holding the project lock so an approval cannot race an
+					// in-flight ingest. Strip configured keys before normalization derives
+					// identity fields such as trace.user_id.
+					const policy = await resolvedDependencies.approvedRedaction(
+						pgPool(),
+						tenant.organizationId,
+						tenant.projectId,
+					);
+					const redaction = policyRedactionOptions(
+						policy ?? { mode: "none", keys: [] },
+					);
+					for (const rs of request.resource_spans) {
+						const resourceAttributes = redactAttributes(
+							rs.resource?.attributes ?? [],
+							redaction.redactKeys,
+						);
+						for (const ss of rs.scope_spans) {
+							for (const sourceSpan of ss.spans) {
+								const span = {
+									...sourceSpan,
+									attributes: redactAttributes(
+										sourceSpan.attributes ?? [],
+										redaction.redactKeys,
+									),
+								};
+								const normalized = normalizeSpan(
+									span,
+									resourceAttributes,
+									fallbackProjectId,
+								);
+								const trace: TenantScopedTrace = {
+									...normalized.trace,
+									organization_id: tenant.organizationId,
+								};
+								const observation: TenantScopedObservation = {
+									...normalized.observation,
+									organization_id: tenant.organizationId,
+								};
+								const existingTrace = traces.get(trace.trace_id);
+								if (
+									existingTrace &&
+									existingTrace.trace.project_id !== trace.project_id
+								) {
+									throw new OtlpConflictError(
+										"Trace contains conflicting project provenance",
+									);
+								}
+								trace.input_text = redactTraceText(trace.input_text, redaction);
+								trace.output_text = redactTraceText(
+									trace.output_text,
+									redaction,
+								);
+								observation.input_text = trace.input_text;
+								observation.output_text = trace.output_text;
+								observation.metadata = redactMetadata(
+									observation.metadata,
+									redaction,
+								);
+								const isRoot = observation.parent_observation_id === null;
+								traces.set(
+									trace.trace_id,
+									aggregateTrace(existingTrace, trace, isRoot),
+								);
+								observations.push(observation);
+							}
+						}
+					}
 					const client = resolvedDependencies.defaultClient();
 					await resolvedDependencies.insertTraces(
 						client,
@@ -245,6 +257,8 @@ export function createOtlpIngestHandler(
 			);
 		} catch (err) {
 			if (err instanceof TenantScopeError) throw err;
+			if (err instanceof OtlpConflictError)
+				return jsonError(400, "BAD_REQUEST", err.message);
 			logger.error("otlp.persist_failed", err);
 			return jsonError(
 				500,
@@ -269,6 +283,15 @@ export function createOtlpIngestHandler(
 			headers: { "content-type": "application/json" },
 		});
 	};
+}
+
+function redactAttributes<T extends { key: string }>(
+	attributes: T[],
+	keys: string[],
+): T[] {
+	if (!keys.length) return attributes;
+	const redacted = new Set(keys);
+	return attributes.filter((attribute) => !redacted.has(attribute.key));
 }
 
 function aggregateTrace(

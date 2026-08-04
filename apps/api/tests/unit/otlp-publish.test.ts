@@ -594,8 +594,8 @@ describe("OTLP ingest publishes events", () => {
 		});
 	});
 
-	it("removes all-text secrets from persisted traces, observation metadata, and events", async () => {
-		const secret = "UNIQUE_ALL_TEXT_SECRET";
+	it("redacts configured identity keys before persistence and event normalization", async () => {
+		const secret = "UNIQUE_GOVERNANCE_ENDUSER_SECRET";
 		const traces: unknown[] = [];
 		const observations: unknown[] = [];
 		subscribe("trace.created", (message) => traces.push(message));
@@ -605,7 +605,10 @@ describe("OTLP ingest publishes events", () => {
 			insertObservations,
 			insertTraces,
 			publishSync,
-			approvedRedaction: async () => ({ mode: "all_text", keys: [] }),
+			approvedRedaction: async () => ({
+				mode: "all_text",
+				keys: ["enduser.id"],
+			}),
 			withActiveAuthorizedProjectLock,
 		});
 
@@ -621,6 +624,7 @@ describe("OTLP ingest publishes events", () => {
 							name: "redacted",
 							start_time_unix_nano: String(NOW_NS),
 							attributes: [
+								{ key: "enduser.id", value: { stringValue: secret } },
 								{
 									key: "gen_ai.prompt.0.content",
 									value: { stringValue: secret },
@@ -647,6 +651,7 @@ describe("OTLP ingest publishes events", () => {
 		});
 		expect(persisted).not.toContain(secret);
 		expect(persisted).toContain("[REDACTED]");
+		expect(insertTraces.mock.calls.at(-1)?.[1]?.[0]?.user_id).toBe("");
 	});
 
 	it("a throwing subscriber does NOT change the HTTP response", async () => {

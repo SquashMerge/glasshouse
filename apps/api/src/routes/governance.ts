@@ -1,5 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
+import type { Pool, PoolClient } from "pg";
 import { pgPool } from "../db/postgres.js";
 import {
 	policyHash,
@@ -68,6 +69,7 @@ export const approvePolicy = createRoute({
 const previewBody = z.object({ project_id: z.string().uuid() });
 const runBody = z.object({
 	project_id: z.string().uuid(),
+	policy_version_id: z.string().uuid(),
 	batch_size: z.number().int().min(1).max(500).default(100),
 });
 export const previewRetention = createRoute({
@@ -145,7 +147,7 @@ function failure(c: Context, cause: unknown) {
 			{ code: "BAD_REQUEST", message: "Request validation failed" },
 			400,
 		);
-	if (message.includes("approved"))
+	if (message.includes("approved") || message.includes("stale"))
 		return c.json({ code: "CONFLICT", message }, 409);
 	logger.error("governance.operation_failed", cause);
 	return c.json(
@@ -242,6 +244,11 @@ export async function handleApprovePolicy(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
+			const authorized = await client.query(
+				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+				[project_id, tenant.organizationId, tenant.actor],
+			);
+			if (!authorized.rows[0]) throw new Error("Not found");
 			const version = (
 				await client.query<VersionRow>(
 					"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id WHERE v.id = $1 AND p.project_id = $2 AND p.organization_id = $3",
@@ -338,67 +345,110 @@ export async function handleListRetentionRuns(c: Context) {
 }
 export async function handleRunRetention(c: Context) {
 	try {
-		const { project_id, batch_size } = (c.req as any).valid("json");
-		const { tenant, version } = await approved(c, project_id);
+		const { project_id, policy_version_id, batch_size } = (c.req as any).valid(
+			"json",
+		);
+		const tenant = await manager(c, project_id);
 		const started = performance.now();
 		const db = pgPool();
 		const client = await db.connect();
-		let transactionOpen = false;
-		let authorizedTransaction = false;
+		let runId = "";
+		let startedCommitted = false;
+		let version: VersionRow;
+		const counts: Record<string, number> = {};
 		try {
 			await client.query("BEGIN");
-			transactionOpen = true;
 			const authorized = await client.query(
 				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
 				[project_id, tenant.organizationId, tenant.actor],
 			);
 			if (!authorized.rows[0]) throw new Error("Not found");
-			authorizedTransaction = true;
+			const latest = await client.query<VersionRow>(
+				"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE p.project_id = $1 AND p.organization_id = $2 ORDER BY v.version DESC LIMIT 1",
+				[project_id, tenant.organizationId],
+			);
+			version = latest.rows[0]!;
+			if (!version) throw new Error("No approved policy exists");
+			if (version.id !== policy_version_id)
+				throw new Error("Policy preview is stale; preview the latest approval");
 			const run = await client.query<{ id: string }>(
 				"INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status) VALUES ($1, $2, $3, $4, 'running') RETURNING id",
 				[tenant.organizationId, project_id, version.id, tenant.actor],
 			);
-			const counts: Record<string, number> = {};
-			const runId = run.rows[0]!.id;
-			try {
-				await client.query(
-					"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ($1, $2, $3, $4, 'retention_started')",
-					[tenant.organizationId, project_id, version.id, tenant.actor],
+			runId = run.rows[0]!.id;
+			await client.query(
+				"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ($1, $2, $3, $4, 'retention_started')",
+				[tenant.organizationId, project_id, version.id, tenant.actor],
+			);
+			await client.query("COMMIT");
+			startedCommitted = true;
+		} finally {
+			if (!startedCommitted) await client.query("ROLLBACK").catch(() => {});
+			client.release();
+		}
+		try {
+			const feedbackDays = version.retention.feedback;
+			const feedbackCutoff = feedbackDays
+				? new Date(Date.now() - feedbackDays * 86_400_000)
+				: undefined;
+			if (feedbackCutoff) {
+				counts.feedback = await deleteFeedbackRetentionBatch(
+					db,
+					runId,
+					project_id,
+					feedbackCutoff,
+					batch_size,
+					counts,
 				);
-				for (const [dataClass, days] of Object.entries(version.retention)) {
-					const cutoff = new Date(Date.now() - days * 86_400_000);
-					if (dataClass === "datasets") {
-						const result = await deleteSafeDatasetRetentionBatch(
-							client,
-							project_id,
-							cutoff,
-							batch_size,
-						);
-						counts.datasets = result.deleted;
-						counts.datasets_skipped = result.skipped;
-					}
-					if (dataClass === "feedback") {
-						const result = await client.query<{ score_id: string }>(
-							"DELETE FROM feedback_reviews WHERE score_id IN (SELECT score_id FROM feedback_reviews WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING score_id",
-							[project_id, cutoff, batch_size],
-						);
-						counts.feedback = result.rows.length;
-					}
-					if (dataClass === "traces") {
-						counts.traces = await deleteTraceRetentionBatch(
-							tenant.organizationId,
-							project_id,
-							cutoff,
-							batch_size,
-						);
-					}
-				}
-				const duration = Math.round(performance.now() - started);
-				await client.query(
-					"UPDATE governance_retention_runs SET status = 'completed', counts = $2::jsonb, completed_at = now() WHERE id = $1",
+			}
+			if (version.retention.datasets) {
+				const cutoff = new Date(
+					Date.now() - version.retention.datasets * 86_400_000,
+				);
+				const result = await withRunTransaction(db, async (stage) => {
+					const deleted = await deleteSafeDatasetRetentionBatch(
+						stage,
+						project_id,
+						cutoff,
+						batch_size,
+						feedbackCutoff,
+					);
+					await persistRunProgress(
+						stage,
+						runId,
+						{
+							...counts,
+							datasets: deleted.deleted,
+							datasets_skipped: deleted.skipped,
+						},
+						"datasets",
+					);
+					return deleted;
+				});
+				counts.datasets = result.deleted;
+				counts.datasets_skipped = result.skipped;
+			}
+			if (version.retention.traces) {
+				const cutoff = new Date(
+					Date.now() - version.retention.traces * 86_400_000,
+				);
+				counts.traces = await deleteTraceRetentionBatch(
+					tenant.organizationId,
+					project_id,
+					cutoff,
+					batch_size,
+				);
+				await withRunTransaction(db, (stage) =>
+					persistRunProgress(stage, runId, counts, "traces"),
+				);
+			}
+			const duration = Math.round(performance.now() - started);
+			await withRunTransaction(db, async (stage) => {
+				await stage.query(
+					"UPDATE governance_retention_runs SET status = 'completed', counts = $2::jsonb, cursor = jsonb_build_object('stage', 'completed'), completed_at = now() WHERE id = $1 AND status = 'running'",
 					[runId, JSON.stringify(counts)],
 				);
-				await client.query(
+				await stage.query(
 					"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) VALUES ($1, $2, $3, $4, 'retention_completed', $5::jsonb, $6)",
 					[
 						tenant.organizationId,
@@ -409,25 +459,27 @@ export async function handleRunRetention(c: Context) {
 						duration,
 					],
 				);
-				logger.info("governance.retention_completed", {
-					project_id,
-					run_id: runId,
-					duration_ms: duration,
-					counts,
-				});
-				return c.json({
-					policy_version_id: version.id,
-					counts,
-					run_id: runId,
-					status: "completed",
-				});
-			} catch (cause) {
-				const duration = Math.round(performance.now() - started);
-				await client.query(
+			});
+			logger.info("governance.retention_completed", {
+				project_id,
+				run_id: runId,
+				duration_ms: duration,
+				counts,
+			});
+			return c.json({
+				policy_version_id: version.id,
+				counts,
+				run_id: runId,
+				status: "completed",
+			});
+		} catch (cause) {
+			const duration = Math.round(performance.now() - started);
+			await withRunTransaction(db, async (stage) => {
+				await stage.query(
 					"UPDATE governance_retention_runs SET status = 'failed', counts = $2::jsonb, completed_at = now() WHERE id = $1 AND status = 'running'",
 					[runId, JSON.stringify(counts)],
 				);
-				await client.query(
+				await stage.query(
 					"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) VALUES ($1, $2, $3, $4, 'retention_failed', $5::jsonb, $6)",
 					[
 						tenant.organizationId,
@@ -438,22 +490,69 @@ export async function handleRunRetention(c: Context) {
 						duration,
 					],
 				);
-				logger.error("governance.retention_failed", cause, {
-					project_id,
-					run_id: runId,
-					duration_ms: duration,
-					counts,
-				});
-				return failure(c, cause);
-			}
-		} finally {
-			if (transactionOpen)
-				await client
-					.query(authorizedTransaction ? "COMMIT" : "ROLLBACK")
-					.catch(() => {});
-			client.release();
+			}).catch(() => {});
+			logger.error("governance.retention_failed", cause, {
+				project_id,
+				run_id: runId,
+				duration_ms: duration,
+				counts,
+			});
+			return failure(c, cause);
 		}
 	} catch (cause) {
 		return failure(c, cause);
 	}
+}
+
+async function withRunTransaction<T>(
+	db: Pick<Pool, "connect">,
+	callback: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		const result = await callback(client);
+		await client.query("COMMIT");
+		return result;
+	} catch (cause) {
+		await client.query("ROLLBACK").catch(() => {});
+		throw cause;
+	} finally {
+		client.release();
+	}
+}
+
+async function persistRunProgress(
+	client: Pick<PoolClient, "query">,
+	runId: string,
+	counts: Record<string, number>,
+	stage: string,
+) {
+	await client.query(
+		"UPDATE governance_retention_runs SET counts = $2::jsonb, cursor = jsonb_build_object('stage', $3, 'counts', $2::jsonb) WHERE id = $1 AND status = 'running'",
+		[runId, JSON.stringify(counts), stage],
+	);
+}
+
+async function deleteFeedbackRetentionBatch(
+	db: ReturnType<typeof pgPool>,
+	runId: string,
+	projectId: string,
+	cutoff: Date,
+	batchSize: number,
+	counts: Record<string, number>,
+) {
+	return withRunTransaction(db, async (client) => {
+		const result = await client.query<{ score_id: string }>(
+			"DELETE FROM feedback_reviews WHERE score_id IN (SELECT score_id FROM feedback_reviews WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING score_id",
+			[projectId, cutoff, batchSize],
+		);
+		await persistRunProgress(
+			client,
+			runId,
+			{ ...counts, feedback: result.rows.length },
+			"feedback",
+		);
+		return result.rows.length;
+	});
 }

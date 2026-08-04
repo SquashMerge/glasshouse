@@ -375,6 +375,7 @@ export async function previewGovernanceRetention(
 }
 export async function runGovernanceRetention(input: {
 	project_id: string;
+	policy_version_id: string;
 	batch_size: number;
 }): Promise<{
 	policy_version_id: string;
