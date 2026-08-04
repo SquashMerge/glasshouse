@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	requestHash,
 	createFeedback,
+	listFeedback,
 	promoteFeedback,
 	reviewFeedback,
 } from "../../src/db/feedback";
@@ -86,6 +87,7 @@ describe("feedback review persistence", () => {
 		};
 		const client = {
 			query: async (sql: string) => {
+				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
 				if (sql.includes("JOIN feedback_reviews")) return { rows: [row] };
 				if (sql.includes("SELECT request_hash"))
 					return { rows: [{ request_hash: requestHash(base) }] };
@@ -111,7 +113,8 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("FROM scores s JOIN feedback_reviews"))
+				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
 							{
@@ -155,7 +158,8 @@ describe("feedback review persistence", () => {
 			const client = {
 				query: async (sql: string) => {
 					queries.push(sql);
-					if (sql.includes("FROM scores s JOIN feedback_reviews"))
+					if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+					if (sql.includes("JOIN feedback_reviews"))
 						return {
 							rows: [
 								{
@@ -207,7 +211,8 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("FROM scores s JOIN feedback_reviews"))
+				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
 							{
@@ -256,7 +261,8 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("FROM scores s JOIN feedback_reviews"))
+				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
 							{
@@ -287,5 +293,52 @@ describe("feedback review persistence", () => {
 			}),
 		).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
 		expect(queries).toContain("ROLLBACK");
+	});
+
+	it("locks active projects for every feedback mutation and excludes archived projects from lists", async () => {
+		const calls: string[] = [];
+		const client = () => ({
+			query: async (sql: string) => {
+				calls.push(sql);
+				return { rows: [] };
+			},
+			release: () => {},
+		});
+		const mutations = [
+			() =>
+				createFeedback({ connect: async () => client() } as never, {
+					...base,
+					idempotency_key: "archived",
+				}),
+			() =>
+				promoteFeedback({ connect: async () => client() } as never, {
+					project_id: base.project_id,
+					id: "33333333-3333-4333-8333-333333333333",
+					dataset_id: "22222222-2222-4222-8222-222222222222",
+					input: {},
+				}),
+			() =>
+				reviewFeedback({ connect: async () => client() } as never, {
+					project_id: base.project_id,
+					id: "33333333-3333-4333-8333-333333333333",
+					status: "dismissed",
+				}),
+		];
+		for (const mutate of mutations) {
+			const before = calls.length;
+			await expect(mutate()).rejects.toMatchObject({ code: "NOT_FOUND" });
+			expect(calls[before + 1]).toContain("status='active' FOR UPDATE");
+		}
+
+		const listed = await listFeedback(
+			{
+				query: async (sql: string) => (calls.push(sql), { rows: [] }),
+			} as never,
+			{ ...base, limit: 10, offset: 0 },
+		);
+		expect(listed).toEqual({ items: [], total: 0 });
+		const reads = calls.filter((sql) => sql.includes("feedback_reviews"));
+		expect(reads).toHaveLength(2);
+		for (const sql of reads) expect(sql).toContain("p.status='active'");
 	});
 });

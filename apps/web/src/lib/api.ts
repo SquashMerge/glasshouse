@@ -315,7 +315,23 @@ export interface Project {
 	id: string;
 	name: string;
 	slug: string;
+	status: "active" | "archived";
 	created_at: string;
+	archived_at: string | null;
+	project_role: "owner" | "manager" | "member";
+}
+
+export interface ProjectMember {
+	actor_subject: string;
+	role: "manager" | "member";
+	created_at: string;
+}
+
+export interface CurrentActor {
+	actor_subject: string;
+	organization_id: string;
+	organization_role: "owner" | "member";
+	projects: Project[];
 }
 
 export interface ProjectListResponse {
@@ -323,11 +339,89 @@ export interface ProjectListResponse {
 	total: number;
 }
 
-export async function listProjects(): Promise<ProjectListResponse> {
+export async function listProjects(
+	includeArchived = false,
+): Promise<ProjectListResponse> {
 	return responseJson<ProjectListResponse>(
-		await authedFetch("/v1/projects"),
+		await authedFetch(
+			`/v1/projects${buildQs({ include_archived: includeArchived ? "true" : undefined })}`,
+		),
 		"listProjects",
 	);
+}
+export async function createProject(input: {
+	name: string;
+	slug: string;
+}): Promise<Project> {
+	return responseJson<Project>(
+		await authedFetch("/v1/projects", jsonRequest(input)),
+		"createProject",
+	);
+}
+export async function updateProject(input: {
+	id: string;
+	name?: string;
+	slug?: string;
+}): Promise<Project> {
+	const { id, ...body } = input;
+	return responseJson<Project>(
+		await authedFetch(`/v1/projects/${encodeURIComponent(id)}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		}),
+		"updateProject",
+	);
+}
+export async function listProjectMembers(
+	projectId: string,
+): Promise<{ items: ProjectMember[] }> {
+	return responseJson(
+		await authedFetch(`/v1/projects/${encodeURIComponent(projectId)}/members`),
+		"listProjectMembers",
+	);
+}
+export async function putProjectMember(input: {
+	projectId: string;
+	actorSubject: string;
+	role: ProjectMember["role"];
+}): Promise<ProjectMember> {
+	return responseJson(
+		await authedFetch(
+			`/v1/projects/${encodeURIComponent(input.projectId)}/members/${encodeURIComponent(input.actorSubject)}`,
+			jsonRequest({ actor_subject: input.actorSubject, role: input.role }),
+		),
+		"putProjectMember",
+	);
+}
+export async function deleteProjectMember(input: {
+	projectId: string;
+	actorSubject: string;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/projects/${encodeURIComponent(input.projectId)}/members/${encodeURIComponent(input.actorSubject)}`,
+		{ method: "DELETE" },
+	);
+	if (!response.ok) await responseJson<never>(response, "deleteProjectMember");
+}
+export async function archiveProject(id: string): Promise<Project> {
+	return responseJson<Project>(
+		await authedFetch(`/v1/projects/${encodeURIComponent(id)}/archive`, {
+			method: "POST",
+		}),
+		"archiveProject",
+	);
+}
+export async function restoreProject(id: string): Promise<Project> {
+	return responseJson<Project>(
+		await authedFetch(`/v1/projects/${encodeURIComponent(id)}/restore`, {
+			method: "POST",
+		}),
+		"restoreProject",
+	);
+}
+export async function getCurrentActor(): Promise<CurrentActor> {
+	return responseJson(await authedFetch("/v1/me"), "getCurrentActor");
 }
 
 export type PromptRole = "system" | "user";

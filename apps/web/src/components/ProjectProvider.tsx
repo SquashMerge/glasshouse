@@ -1,6 +1,6 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import { listProjects, type Project } from "../lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getCurrentActor, type Project } from "../lib/api";
 
 const SELECTED_PROJECT_KEY = "astraea.selected-project-id";
 const UUID_PATTERN =
@@ -10,19 +10,40 @@ interface ProjectSelectionContextValue {
 	projects: Project[];
 	selectedProjectId: string | null;
 	selectedProject: Project | null;
+	organizationRole: "owner" | "member" | null;
 	isLoading: boolean;
 	error: Error | null;
 	selectProject: (projectId: string) => void;
+	clearSession: () => void;
 	retry: () => void;
 }
 
 const ProjectSelectionContext =
 	React.createContext<ProjectSelectionContextValue | null>(null);
 
-function storedProjectId(): string | null {
-	const value = window.localStorage.getItem(SELECTED_PROJECT_KEY);
+export function clearWorkspaceSession(queryClient: {
+	clear: () => void;
+}): void {
+	queryClient.clear();
+	for (const key of Object.keys(window.localStorage)) {
+		if (key.startsWith(`${SELECTED_PROJECT_KEY}:`))
+			window.localStorage.removeItem(key);
+	}
+}
+
+function hasProjectId(value: unknown, projectId: string): boolean {
+	if (value === projectId) return true;
+	if (Array.isArray(value))
+		return value.some((item) => hasProjectId(item, projectId));
+	if (value && typeof value === "object")
+		return Object.values(value).some((item) => hasProjectId(item, projectId));
+	return false;
+}
+
+function storedProjectId(key: string): string | null {
+	const value = window.localStorage.getItem(key);
 	if (value && !UUID_PATTERN.test(value)) {
-		window.localStorage.removeItem(SELECTED_PROJECT_KEY);
+		window.localStorage.removeItem(key);
 		return null;
 	}
 	return value;
@@ -30,41 +51,39 @@ function storedProjectId(): string | null {
 
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
 	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: listProjects,
+		queryKey: ["me"],
+		queryFn: getCurrentActor,
 	});
+	const queryClient = useQueryClient();
 	const [selectedProjectId, setSelectedProjectId] = React.useState<
 		string | null
 	>(null);
 
 	React.useEffect(() => {
-		storedProjectId();
-	}, []);
-
-	React.useEffect(() => {
 		if (!projectsQuery.data) return;
 
-		const projects = projectsQuery.data.items.filter((project) =>
+		const projects = projectsQuery.data.projects.filter((project) =>
 			UUID_PATTERN.test(project.id),
 		);
-		const stored = storedProjectId();
+		const key = `${SELECTED_PROJECT_KEY}:${projectsQuery.data.organization_id}:${projectsQuery.data.actor_subject}`;
+		const stored = storedProjectId(key);
 		const selected =
 			stored && projects.some((project) => project.id === stored)
 				? stored
-				: (projects[0]?.id ?? null);
+				: null;
 
 		if (!selected) {
-			window.localStorage.removeItem(SELECTED_PROJECT_KEY);
+			window.localStorage.removeItem(key);
 			setSelectedProjectId(null);
 			return;
 		}
 
-		window.localStorage.setItem(SELECTED_PROJECT_KEY, selected);
+		window.localStorage.setItem(key, selected);
 		setSelectedProjectId(selected);
 	}, [projectsQuery.data]);
 
 	const projects =
-		projectsQuery.data?.items.filter((project) =>
+		projectsQuery.data?.projects.filter((project) =>
 			UUID_PATTERN.test(project.id),
 		) ?? [];
 	const selectedProject =
@@ -74,10 +93,23 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 		(projectId: string) => {
 			const project = projects.find((candidate) => candidate.id === projectId);
 			if (!project || !UUID_PATTERN.test(project.id)) return;
-			window.localStorage.setItem(SELECTED_PROJECT_KEY, project.id);
+			const identity = projectsQuery.data;
+			if (!identity) return;
+			if (selectedProjectId && selectedProjectId !== project.id) {
+				void queryClient.cancelQueries({
+					predicate: (query) => hasProjectId(query.queryKey, selectedProjectId),
+				});
+				queryClient.removeQueries({
+					predicate: (query) => hasProjectId(query.queryKey, selectedProjectId),
+				});
+			}
+			window.localStorage.setItem(
+				`${SELECTED_PROJECT_KEY}:${identity.organization_id}:${identity.actor_subject}`,
+				project.id,
+			);
 			setSelectedProjectId(project.id);
 		},
-		[projects],
+		[projects, projectsQuery.data, queryClient, selectedProjectId],
 	);
 
 	const value = React.useMemo<ProjectSelectionContextValue>(
@@ -85,16 +117,20 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			projects,
 			selectedProjectId: selectedProject?.id ?? null,
 			selectedProject,
+			organizationRole: projectsQuery.data?.organization_role ?? null,
 			isLoading: projectsQuery.isLoading,
 			error: (projectsQuery.error as Error | null) ?? null,
 			selectProject,
+			clearSession: () => clearWorkspaceSession(queryClient),
 			retry: () => void projectsQuery.refetch(),
 		}),
 		[
 			projects,
 			selectedProject,
+			projectsQuery.data?.organization_role,
 			projectsQuery.isLoading,
 			projectsQuery.error,
+			queryClient,
 			selectProject,
 			projectsQuery.refetch,
 		],

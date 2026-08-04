@@ -575,5 +575,134 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'durable experiment task ledger is incomplete';
     END IF;
+
+    IF (SELECT count(*) FROM project_memberships WHERE organization_id = '00000000-0000-4000-8000-000000000001' AND actor_subject = 'bootstrap-owner' AND role = 'manager') <> 4
+        OR EXISTS (
+            SELECT 1 FROM projects p
+            WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'
+                AND NOT EXISTS (
+                    SELECT 1 FROM project_memberships pm
+                    WHERE pm.project_id = p.id AND pm.actor_subject = 'bootstrap-owner' AND pm.role = 'manager'
+                )
+        )
+        OR NOT EXISTS (
+            SELECT 1 FROM organization_memberships
+            WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+                AND actor_subject = 'bootstrap-owner' AND role = 'owner'
+        )
+        OR (SELECT count(*) FROM project_authorization_audit_events WHERE actor_subject = 'bootstrap-owner' AND event_type = 'bootstrap_manager_added') <> 4 THEN
+        RAISE EXCEPTION 'bootstrap owner was not idempotently granted manager membership for every historical project';
+    END IF;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'migration-owner', 'owner');
+    UPDATE organization_memberships
+    SET role = 'owner'
+    WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+        AND actor_subject = 'migration-owner';
+    BEGIN
+        UPDATE organization_memberships
+        SET role = 'member'
+        WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+            AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'final organization owner demotion was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+    BEGIN
+        UPDATE organization_memberships
+        SET organization_id = '00000000-0000-4000-8000-000000000001'
+        WHERE organization_id = '00000000-0000-4000-8000-000000000002'
+            AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'sole organization owner membership move was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'migration-manager', 'member');
+    INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
+    VALUES ('33333333-3333-4333-8333-333333333333', '00000000-0000-4000-8000-000000000002', 'migration-manager', 'manager');
+    UPDATE project_memberships
+    SET role = 'manager'
+    WHERE project_id = '33333333-3333-4333-8333-333333333333'
+        AND actor_subject = 'migration-manager';
+    BEGIN
+        UPDATE project_memberships
+        SET role = 'member'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333'
+            AND actor_subject = 'migration-manager';
+        RAISE EXCEPTION 'final active project manager demotion was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+    BEGIN
+        UPDATE project_memberships
+        SET project_id = '55555555-5555-4555-8555-555555555555'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333'
+            AND actor_subject = 'migration-manager';
+        RAISE EXCEPTION 'sole active project manager membership move was accepted';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES ('00000000-0000-4000-8000-000000000002', 'archived-member', 'member');
+    INSERT INTO projects (id, name, slug, organization_id, status)
+    VALUES (
+        '55555555-5555-4555-8555-555555555555',
+        'Managerless Archived Project',
+        'managerless-archived',
+        '00000000-0000-4000-8000-000000000002',
+        'archived'
+    );
+    BEGIN
+        UPDATE projects SET status = 'active'
+        WHERE id = '55555555-5555-4555-8555-555555555555';
+        RAISE EXCEPTION 'managerless archived project was restored';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+
+    INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+    VALUES (
+        '00000000-0000-4000-8000-000000000002',
+        '33333333-3333-4333-8333-333333333333',
+        'migration-owner',
+        'project_updated'
+    );
+    INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+    VALUES (
+        '00000000-0000-4000-8000-000000000002',
+        '33333333-3333-4333-8333-333333333333',
+        'migration-owner',
+        'project_work_cancelled'
+    );
+    BEGIN
+        INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+        VALUES (
+            '00000000-0000-4000-8000-000000000001',
+            '33333333-3333-4333-8333-333333333333',
+            'migration-owner',
+            'project_updated'
+        );
+        RAISE EXCEPTION 'authorization audit accepted a cross-organization project';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        UPDATE project_authorization_audit_events SET event_type = 'project_archived'
+        WHERE project_id = '33333333-3333-4333-8333-333333333333';
+        RAISE EXCEPTION 'authorization audit accepted an update';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    BEGIN
+        DELETE FROM project_authorization_audit_events
+        WHERE project_id = '33333333-3333-4333-8333-333333333333';
+        RAISE EXCEPTION 'authorization audit accepted a delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
 END
 $$;

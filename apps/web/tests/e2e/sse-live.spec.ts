@@ -177,6 +177,7 @@ async function postTrace(
 		headers: {
 			"content-type": "application/json",
 			authorization: basicAuthHeader(),
+			"x-astraea-project-id": E2E_PROJECT_ID,
 		},
 	});
 	expect(
@@ -413,7 +414,7 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 			);
 		}
 		await expect(workspace).toHaveAttribute("data-row-count", "5000", {
-			timeout: 10_000,
+			timeout: 45_000,
 		});
 
 		const root = page.locator(

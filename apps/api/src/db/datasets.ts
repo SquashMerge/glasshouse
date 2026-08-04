@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 
 export type JsonObject = Record<string, unknown>;
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
+type Transactional = Pick<Pool, "connect">;
 type Row = Record<string, unknown>;
 
 export type DatasetRepositoryErrorCode =
@@ -111,7 +112,7 @@ function item(row: Row) {
 export async function listDatasets(db: Queryable, project_id: string) {
 	try {
 		const result = await db.query(
-			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id WHERE d.project_id = $1 GROUP BY d.id ORDER BY d.created_at DESC`,
+			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $1 GROUP BY d.id ORDER BY d.created_at DESC`,
 			[project_id],
 		);
 		return {
@@ -124,17 +125,31 @@ export async function listDatasets(db: Queryable, project_id: string) {
 }
 
 export async function createDataset(
-	db: Queryable,
+	db: Transactional,
 	input: { project_id: string; name: string; description?: string | null },
 ) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
-			`INSERT INTO datasets (id, project_id, name, description) VALUES ($1, $2, $3, $4) RETURNING *, 0::int AS item_count`,
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const result = await client.query(
+			`INSERT INTO datasets (id, project_id, name, description) SELECT $1, $2, $3, $4 FROM projects WHERE id = $2 AND status = 'active' RETURNING *, 0::int AS item_count`,
 			[randomUUID(), input.project_id, input.name, input.description ?? null],
 		);
-		return dataset(result.rows[0]!);
+		if (!result.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await client.query("COMMIT");
+		return dataset(result.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
@@ -144,7 +159,7 @@ export async function getDataset(
 ) {
 	try {
 		const result = await db.query(
-			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id WHERE d.id = $1 AND d.project_id = $2 GROUP BY d.id`,
+			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 GROUP BY d.id`,
 			[input.id, input.project_id],
 		);
 		if (!result.rows[0])
@@ -165,7 +180,7 @@ export async function listDatasetItems(
 			id: input.dataset_id,
 		});
 		const result = await db.query(
-			`SELECT i.* FROM dataset_items i JOIN datasets d ON d.id = i.dataset_id WHERE i.dataset_id = $1 AND d.project_id = $2 ORDER BY i.created_at ASC, i.id ASC`,
+			`SELECT i.* FROM dataset_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE i.dataset_id = $1 AND d.project_id = $2 ORDER BY i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
 		return { items: result.rows.map(item) };
@@ -175,7 +190,7 @@ export async function listDatasetItems(
 }
 
 export async function addDatasetItem(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		project_id: string;
 		dataset_id: string;
@@ -186,13 +201,21 @@ export async function addDatasetItem(
 		source_observation_id?: string | null;
 	},
 ) {
+	const client = await db.connect();
 	try {
-		await getDataset(db, {
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await getDataset(client, {
 			project_id: input.project_id,
 			id: input.dataset_id,
 		});
-		const result = await db.query(
-			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7) RETURNING *`,
+		const result = await client.query(
+			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7 FROM datasets d JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $2 AND d.project_id = $8 RETURNING *`,
 			[
 				randomUUID(),
 				input.dataset_id,
@@ -203,26 +226,45 @@ export async function addDatasetItem(
 				JSON.stringify(input.metadata ?? {}),
 				input.source_trace_id ?? null,
 				input.source_observation_id ?? null,
+				input.project_id,
 			],
 		);
-		return item(result.rows[0]!);
+		if (!result.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		await client.query("COMMIT");
+		return item(result.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
 export async function deleteDatasetItem(
-	db: Queryable,
+	db: Transactional,
 	input: { project_id: string; dataset_id: string; item_id: string },
 ) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
-			`DELETE FROM dataset_items i USING datasets d WHERE i.id = $1 AND i.dataset_id = $2 AND d.id = i.dataset_id AND d.project_id = $3`,
+		await client.query("BEGIN");
+		const active = await client.query(
+			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
+			[input.project_id],
+		);
+		if (!active.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const result = await client.query(
+			`DELETE FROM dataset_items i USING datasets d, projects p WHERE i.id = $1 AND i.dataset_id = $2 AND d.id = i.dataset_id AND d.project_id = $3 AND p.id = d.project_id AND p.status = 'active'`,
 			[input.item_id, input.dataset_id, input.project_id],
 		);
 		if (result.rowCount !== 1)
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset item not found");
+		await client.query("COMMIT");
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }

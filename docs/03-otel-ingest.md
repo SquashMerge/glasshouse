@@ -27,7 +27,7 @@ The credentials are the same ones you'd use to log in at `http://localhost:5173/
 
 ## Organization and project routing
 
-Every Basic-auth credential resolves to a server-configured organization. OTLP payload attributes cannot select or override it. The exporter may select a project only with `x-astraea-project-id`; Astraea verifies that project belongs to the credential's organization before accepting the batch. Omit the header to use that organization’s `default` project (the legacy migration creates one).
+Every Basic-auth credential resolves to a server-configured organization. OTLP payload attributes cannot select or override it. The exporter must select a project with `x-astraea-project-id`; Astraea verifies that project belongs to the credential's organization before accepting the batch.
 
 ```sh
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"

@@ -9,6 +9,15 @@ async function login(page: Page) {
 	await page.getByLabel(/Password/i).fill(PASS);
 	await page.getByRole("button", { name: /Sign in/i }).click();
 	await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
+	const selector = page.getByTestId("project-selector");
+	await expect(selector).toBeVisible();
+	const projectId = await selector
+		.locator("option")
+		.nth(1)
+		.getAttribute("value");
+	if (!projectId) throw new Error("Expected an accessible Project fixture");
+	await selector.selectOption(projectId);
+	await expect(selector).toHaveValue(projectId);
 }
 
 test("lists and creates a prompt through the dashboard", async ({ page }) => {

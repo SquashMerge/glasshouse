@@ -39,7 +39,7 @@ const ProjectIdQuery = z
 export const TraceDetailQuery = z
 	.object({
 		expand: z.string().optional(),
-		project_id: ProjectIdQuery.optional(),
+		project_id: ProjectIdQuery,
 	})
 	.strict();
 

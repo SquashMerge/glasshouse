@@ -18,7 +18,12 @@ import {
 	type TenantScopedObservation,
 	type TenantScopedTrace,
 } from "../db/traces-writer.js";
-import type { TenantScope } from "../tenancy.js";
+import {
+	type TenantScope,
+	TenantScopeError,
+	withActiveAuthorizedProjectLock as lockActiveAuthorizedProject,
+} from "../tenancy.js";
+import { pgPool } from "../db/postgres.js";
 import { publishSync } from "../lib/event-bus.js";
 import { logger } from "../lib/logger.js";
 
@@ -36,9 +41,9 @@ export const otlpIngestRoute = createRoute({
 	security: [{ basicAuth: [] }],
 	request: {
 		headers: z.object({
-			"x-astraea-project-id": z.string().uuid().optional().openapi({
+			"x-astraea-project-id": z.string().uuid().openapi({
 				description:
-					"Optional project selector, verified against the authenticated organization",
+					"Project selector, verified against the authenticated organization",
 			}),
 		}),
 		body: {
@@ -69,6 +74,10 @@ export type OtlpIngestDependencies = {
 	insertObservations: typeof insertObservations;
 	insertTraces: typeof insertTraces;
 	publishSync: typeof publishSync;
+	withActiveAuthorizedProjectLock: <T>(
+		tenant: TenantScope,
+		callback: () => Promise<T>,
+	) => Promise<T>;
 };
 
 export async function resourceProjectIds(
@@ -103,6 +112,8 @@ const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 	insertObservations,
 	insertTraces,
 	publishSync,
+	withActiveAuthorizedProjectLock: (tenant, callback) =>
+		lockActiveAuthorizedProject(pgPool(), tenant, callback),
 };
 
 function otlpDeduplicationTokens(request: unknown, tenant: TenantScope) {
@@ -122,8 +133,12 @@ function otlpDeduplicationTokens(request: unknown, tenant: TenantScope) {
 }
 
 export function createOtlpIngestHandler(
-	dependencies: OtlpIngestDependencies = productionOtlpIngestDependencies,
+	dependencies: Partial<OtlpIngestDependencies> = {},
 ) {
+	const resolvedDependencies: OtlpIngestDependencies = {
+		...productionOtlpIngestDependencies,
+		...dependencies,
+	};
 	return async function handleOtlpIngest(
 		req: Request,
 		tenant: TenantScope,
@@ -199,19 +214,25 @@ export function createOtlpIngestHandler(
 			}
 		}
 
-		const client = dependencies.defaultClient();
 		try {
-			await dependencies.insertTraces(
-				client,
-				[...traces.values()].map(({ trace }) => trace),
-				deduplicationTokens.traces,
-			);
-			await dependencies.insertObservations(
-				client,
-				observations,
-				deduplicationTokens.observations,
+			await resolvedDependencies.withActiveAuthorizedProjectLock(
+				tenant,
+				async () => {
+					const client = resolvedDependencies.defaultClient();
+					await resolvedDependencies.insertTraces(
+						client,
+						[...traces.values()].map(({ trace }) => trace),
+						deduplicationTokens.traces,
+					);
+					await resolvedDependencies.insertObservations(
+						client,
+						observations,
+						deduplicationTokens.observations,
+					);
+				},
 			);
 		} catch (err) {
+			if (err instanceof TenantScopeError) throw err;
 			logger.error("otlp.persist_failed", err);
 			return jsonError(
 				500,
@@ -222,9 +243,11 @@ export function createOtlpIngestHandler(
 
 		try {
 			for (const { trace } of traces.values())
-				dependencies.publishSync("trace.created", { trace });
+				resolvedDependencies.publishSync("trace.created", { trace });
 			for (const o of observations)
-				dependencies.publishSync("observation.created", { observation: o });
+				resolvedDependencies.publishSync("observation.created", {
+					observation: o,
+				});
 		} catch (err) {
 			logger.warn("otlp.event_publish_failed", err);
 		}

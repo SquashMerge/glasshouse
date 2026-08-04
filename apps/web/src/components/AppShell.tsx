@@ -14,6 +14,7 @@ import {
 	LuChartLine,
 	LuMessageSquare,
 	LuCheck,
+	LuSettings,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
@@ -51,7 +52,9 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 		selectedProject,
 		isLoading: projectsLoading,
 		error: projectsError,
+		organizationRole,
 		selectProject,
+		clearSession,
 		retry: retryProjects,
 	} = useProjectSelection();
 
@@ -72,6 +75,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	}
 
 	function logout() {
+		clearSession();
 		clearCredentials();
 		setCreds(null);
 		if (typeof window !== "undefined") {
@@ -176,6 +180,11 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 							</button>
 						</div>
 					)}
+					{!projectsLoading && !projectsError && projects.length === 0 && (
+						<p className="mt-2 text-xs text-muted-foreground">
+							No accessible projects.
+						</p>
+					)}
 				</div>
 
 				<div
@@ -235,6 +244,17 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						label="Observability"
 						icon={<LuActivity className="h-4 w-4" />}
 						active={isActive("/observability") || isActive("/traces")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
+						to="/projects"
+						label={
+							organizationRole === "owner"
+								? "Create / manage projects"
+								: "Manage projects"
+						}
+						icon={<LuSettings className="h-4 w-4" />}
+						active={isActive("/projects")}
 						collapsed={collapsed}
 					/>
 					<SidebarLink
@@ -443,7 +463,8 @@ function SidebarLink({
 		| "/prompts"
 		| "/datasets"
 		| "/evaluations"
-		| "/feedback";
+		| "/feedback"
+		| "/projects";
 	label: string;
 	icon: React.ReactNode;
 	active: boolean;

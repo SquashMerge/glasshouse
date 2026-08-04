@@ -14,7 +14,12 @@ const { TenantScopeError } = await import("../../src/tenancy");
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
+const withActiveAuthorizedProjectLock = async <T>(
+	_tenant: unknown,
+	callback: () => Promise<T>,
+) => callback();
 const assertTenantProjectAccess = mock(async () => undefined);
+const resolveTenantProject = mock(async () => TEST_SCOPE);
 const TEST_TENANT = {
 	actor: USER,
 	organizationId: "00000000-0000-4000-8000-000000000001",
@@ -34,9 +39,10 @@ const apiApp = createApiApp({
 		insertObservations,
 		insertTraces,
 		publishSync: () => undefined,
+		withActiveAuthorizedProjectLock,
 	}),
 	assertTenantProjectAccess,
-	resolveTenantProject: async () => TEST_SCOPE,
+	resolveTenantProject,
 });
 
 beforeAll(() => {
@@ -101,6 +107,7 @@ describe("API integration: auth gate", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
+		expect(assertTenantProjectAccess).not.toHaveBeenCalled();
 	});
 
 	it("POST /v1/auth/login with bad creds returns 401", async () => {
@@ -242,14 +249,24 @@ describe("API integration: OTLP ingest", () => {
 		};
 	}
 
-	it("accepts a valid OTLP body and returns 200 with empty partial_success", async () => {
+	function otlpHeaders(projectId = TEST_SCOPE.projectId) {
+		return {
+			authorization: AUTH,
+			"content-type": "application/json",
+			"x-astraea-project-id": projectId,
+		};
+	}
+
+	it("routes valid headed OTLP through its dedicated membership resolver", async () => {
 		insertTraces.mockClear();
 		insertObservations.mockClear();
+		assertTenantProjectAccess.mockClear();
+		resolveTenantProject.mockClear();
 
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: { authorization: AUTH, "content-type": "application/json" },
+				headers: otlpHeaders(),
 				body: JSON.stringify(validOtlp()),
 			}),
 		);
@@ -267,6 +284,12 @@ describe("API integration: OTLP ingest", () => {
 				insertObservations.mock.calls[0]?.[1] as Array<{ project_id: string }>
 			)[0]?.project_id,
 		).toBe(TEST_SCOPE.projectId);
+		expect(resolveTenantProject).toHaveBeenCalledWith(
+			expect.anything(),
+			TEST_TENANT,
+			TEST_SCOPE.projectId,
+		);
+		expect(assertTenantProjectAccess).not.toHaveBeenCalled();
 	});
 
 	it("uses the authorized OTLP header project when resource provenance is absent", async () => {
@@ -275,11 +298,7 @@ describe("API integration: OTLP ingest", () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: new Headers([
-					["authorization", AUTH],
-					["content-type", "application/json"],
-					["x-astraea-project-id", TEST_SCOPE.projectId],
-				]),
+				headers: otlpHeaders(),
 				body: JSON.stringify(validOtlp()),
 			}),
 		);
@@ -299,10 +318,7 @@ describe("API integration: OTLP ingest", () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: new Headers([
-					["authorization", AUTH],
-					["content-type", "application/json"],
-				]),
+				headers: otlpHeaders(),
 				body: "not json",
 			}),
 		);
@@ -315,7 +331,7 @@ describe("API integration: OTLP ingest", () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: { authorization: AUTH, "content-type": "application/json" },
+				headers: otlpHeaders(),
 				body: JSON.stringify({ resource_spans: [] }),
 			}),
 		);
@@ -335,11 +351,34 @@ describe("API integration: OTLP ingest", () => {
 		expect(res.status).toBe(401);
 	});
 
-	it("rejects an unavailable resource project before OTLP persistence", async () => {
+	it("rejects a missing or malformed OTLP project header before persistence", async () => {
+		for (const header of [undefined, "not-a-uuid"]) {
+			insertTraces.mockClear();
+			insertObservations.mockClear();
+			const headers = new Headers({
+				authorization: AUTH,
+				"content-type": "application/json",
+			});
+			if (header) headers.set("x-astraea-project-id", header);
+
+			const res = await apiApp.fetch(
+				new Request("http://x/v1/otel/v1/traces", {
+					method: "POST",
+					headers,
+					body: JSON.stringify(validOtlp()),
+				}),
+			);
+			expect(res.status).toBe(404);
+			expect(insertTraces).not.toHaveBeenCalled();
+			expect(insertObservations).not.toHaveBeenCalled();
+		}
+	});
+
+	it("rejects an unavailable OTLP header project before persistence", async () => {
 		const foreignProject = "00000000-0000-4000-8000-000000000099";
 		insertTraces.mockClear();
 		insertObservations.mockClear();
-		assertTenantProjectAccess.mockImplementationOnce(async () => {
+		resolveTenantProject.mockImplementationOnce(async () => {
 			throw new TenantScopeError(
 				"Project is not available to this organization",
 			);
@@ -348,22 +387,13 @@ describe("API integration: OTLP ingest", () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: { authorization: AUTH, "content-type": "application/json" },
-				body: JSON.stringify(
-					validOtlp({}, [
-						{
-							key: "astraea.project.id",
-							value: { stringValue: foreignProject },
-						},
-					]),
-				),
+				headers: otlpHeaders(foreignProject),
+				body: JSON.stringify(validOtlp()),
 			}),
 		);
 
 		expect(res.status).toBe(404);
-		expect(assertTenantProjectAccess.mock.calls.at(-1)?.[2]).toBe(
-			foreignProject,
-		);
+		expect(resolveTenantProject.mock.calls.at(-1)?.[2]).toBe(foreignProject);
 		expect(insertTraces).not.toHaveBeenCalled();
 		expect(insertObservations).not.toHaveBeenCalled();
 	});
@@ -376,11 +406,7 @@ describe("API integration: OTLP ingest", () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: {
-					authorization: AUTH,
-					"content-type": "application/json",
-					"x-astraea-project-id": TEST_SCOPE.projectId,
-				},
+				headers: otlpHeaders(),
 				body: JSON.stringify(
 					validOtlp({}, [
 						{
@@ -405,7 +431,7 @@ describe("API integration: OTLP ingest", () => {
 			const res = await apiApp.fetch(
 				new Request("http://x/v1/otel/v1/traces", {
 					method: "POST",
-					headers: { authorization: AUTH, "content-type": "application/json" },
+					headers: otlpHeaders(),
 					body: JSON.stringify(
 						validOtlp({
 							attributes: [
@@ -435,7 +461,7 @@ describe("API integration: OTLP ingest", () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/otel/v1/traces", {
 				method: "POST",
-				headers: { authorization: AUTH, "content-type": "application/json" },
+				headers: otlpHeaders(),
 				body: JSON.stringify(validOtlp()),
 			}),
 		);
