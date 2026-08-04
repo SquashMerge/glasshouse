@@ -5,6 +5,12 @@ BEGIN
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
 		RAISE EXCEPTION 'governance persistence is incomplete';
 	END IF;
+	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 10 THEN
+		RAISE EXCEPTION 'governance tenant fields must be not null';
+	END IF;
+	IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('governance_policies_project_organization_fkey', 'governance_policy_versions_project_organization_fkey', 'governance_policy_approvals_version_tenant_fkey', 'governance_audit_events_version_tenant_fkey', 'governance_retention_runs_version_tenant_fkey')) <> 5 THEN
+		RAISE EXCEPTION 'governance composite ownership constraints are incomplete';
+	END IF;
 	IF NOT EXISTS (
 		SELECT 1 FROM information_schema.columns
 		WHERE table_schema = 'public' AND table_name = 'scores' AND column_name = 'observation_id'
@@ -708,6 +714,32 @@ BEGIN
         RAISE EXCEPTION 'authorization audit accepted a delete';
     EXCEPTION WHEN SQLSTATE '55000' THEN
         NULL;
+    END;
+END
+$$;
+
+DO $$
+DECLARE
+    version_id UUID := '99999999-0000-4000-8000-000000000001';
+BEGIN
+    INSERT INTO organizations (id, name, slug) VALUES ('99999999-0000-4000-8000-000000000010', 'Governance Test Organization', 'governance-test') ON CONFLICT DO NOTHING;
+    INSERT INTO projects (id, name, slug, organization_id) VALUES ('99999999-0000-4000-8000-000000000011', 'Governance Test Project', 'governance-test', '99999999-0000-4000-8000-000000000010') ON CONFLICT DO NOTHING;
+    INSERT INTO governance_policies (id, organization_id, project_id) VALUES ('99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111') ON CONFLICT DO NOTHING;
+    INSERT INTO governance_policy_versions (id, policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) VALUES (version_id, '99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 1, '{}', '{"mode":"none","keys":[]}', repeat('a', 64), 'migration-test') ON CONFLICT DO NOTHING;
+    BEGIN
+        INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES (version_id, '99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', 'migration-test');
+        RAISE EXCEPTION 'governance approval provenance mismatch was accepted';
+    EXCEPTION WHEN foreign_key_violation THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'policy_created');
+        RAISE EXCEPTION 'governance audit provenance mismatch was accepted';
+    EXCEPTION WHEN foreign_key_violation THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running');
+        RAISE EXCEPTION 'governance retention provenance mismatch was accepted';
+    EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
 END
 $$;

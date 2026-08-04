@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import {
 	policyHash,
+	deleteTraceRetentionBatch,
 	retentionCounts,
 	validatePolicy,
 } from "../db/governance.js";
@@ -13,6 +14,7 @@ import {
 	PolicyMutation,
 	ProjectQuery,
 	RetentionSummary,
+	RetentionRunHistory,
 } from "../schemas/governance.js";
 import { trustedTenant } from "../tenancy.js";
 import { logger } from "../lib/logger.js";
@@ -84,6 +86,14 @@ export const runRetention = createRoute({
 	security: [{ basicAuth: [] }],
 	request: { body: { content: { "application/json": { schema: runBody } } } },
 	responses: ok(RetentionSummary),
+});
+export const listRetentionRuns = createRoute({
+	method: "get",
+	path: "/v1/governance/retention/runs",
+	tags: ["governance"],
+	security: [{ basicAuth: [] }],
+	request: { query: ProjectQuery },
+	responses: ok(RetentionRunHistory),
 });
 
 type VersionRow = {
@@ -174,25 +184,51 @@ export async function handleCreatePolicyDraft(c: Context) {
 		const tenant = await manager(c, project_id);
 		const policy = validatePolicy(input);
 		const hash = policyHash(policy);
-		const db = pgPool();
-		const existing = await db.query<VersionRow>(
-			"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE p.project_id = $1 AND p.organization_id = $2 AND v.content_hash = $3",
-			[project_id, tenant.organizationId, hash],
-		);
-		if (existing.rows[0])
-			return c.json({ policy: output(existing.rows[0]) }, 201);
-		const created = await db.query<VersionRow>(
-			"WITH p AS (INSERT INTO governance_policies (organization_id, project_id) VALUES ($1, $2) ON CONFLICT (project_id) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id), v AS (INSERT INTO governance_policy_versions (policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) SELECT p.id, $1, $2, COALESCE((SELECT max(version) + 1 FROM governance_policy_versions WHERE policy_id = p.id), 1), $3::jsonb, $4::jsonb, $5, $6 FROM p RETURNING *) INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) SELECT $1, $2, v.id, $6, 'policy_created' FROM v RETURNING (SELECT id FROM v) AS id, (SELECT version FROM v) AS version, $3::jsonb AS retention, $4::jsonb AS redaction, $5 AS content_hash, $6 AS created_by, now() AS created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at",
-			[
-				tenant.organizationId,
-				project_id,
-				JSON.stringify(policy.retention),
-				JSON.stringify(policy.redaction),
-				hash,
-				tenant.actor,
-			],
-		);
-		return c.json({ policy: output(created.rows[0]!) }, 201);
+		const client = await pgPool().connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				"INSERT INTO governance_policies (organization_id, project_id) VALUES ($1, $2) ON CONFLICT (project_id) DO NOTHING",
+				[tenant.organizationId, project_id],
+			);
+			const policyRow = await client.query<{ id: string }>(
+				"SELECT id FROM governance_policies WHERE organization_id = $1 AND project_id = $2 FOR UPDATE",
+				[tenant.organizationId, project_id],
+			);
+			const policyId = policyRow.rows[0]?.id;
+			if (!policyId) throw new Error("Not found");
+			const existing = await client.query<VersionRow>(
+				"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at FROM governance_policy_versions v WHERE v.policy_id = $1 AND v.content_hash = $2",
+				[policyId, hash],
+			);
+			if (existing.rows[0]) {
+				await client.query("COMMIT");
+				return c.json({ policy: output(existing.rows[0]) }, 201);
+			}
+			const created = await client.query<VersionRow>(
+				"INSERT INTO governance_policy_versions (policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) SELECT $1, $2, $3, COALESCE(max(version) + 1, 1), $4::jsonb, $5::jsonb, $6, $7 FROM governance_policy_versions WHERE policy_id = $1 RETURNING id, version, retention, redaction, content_hash, created_by, created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at",
+				[
+					policyId,
+					tenant.organizationId,
+					project_id,
+					JSON.stringify(policy.retention),
+					JSON.stringify(policy.redaction),
+					hash,
+					tenant.actor,
+				],
+			);
+			await client.query(
+				"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ($1, $2, $3, $4, 'policy_created')",
+				[tenant.organizationId, project_id, created.rows[0]!.id, tenant.actor],
+			);
+			await client.query("COMMIT");
+			return c.json({ policy: output(created.rows[0]!) }, 201);
+		} catch (cause) {
+			await client.query("ROLLBACK").catch(() => {});
+			throw cause;
+		} finally {
+			client.release();
+		}
 	} catch (cause) {
 		return failure(c, cause);
 	}
@@ -263,6 +299,33 @@ export async function handlePreviewRetention(c: Context) {
 		return failure(c, cause);
 	}
 }
+export async function handleListRetentionRuns(c: Context) {
+	try {
+		const { project_id } = (c.req as any).valid("query");
+		const tenant = await manager(c, project_id);
+		const result = await pgPool().query<{
+			id: string;
+			policy_version_id: string;
+			status: "running" | "completed" | "failed";
+			counts: Record<string, number>;
+			started_at: Date;
+			completed_at: Date | null;
+			duration_ms: number | null;
+		}>(
+			"SELECT id, policy_version_id, status, counts, started_at, completed_at, CASE WHEN completed_at IS NULL THEN NULL ELSE GREATEST(0, round(EXTRACT(epoch FROM completed_at - started_at) * 1000)::integer) END AS duration_ms FROM governance_retention_runs WHERE organization_id = $1 AND project_id = $2 ORDER BY started_at DESC, id DESC LIMIT 50",
+			[tenant.organizationId, project_id],
+		);
+		return c.json({
+			items: result.rows.map((run) => ({
+				...run,
+				started_at: run.started_at.toISOString(),
+				completed_at: run.completed_at?.toISOString() ?? null,
+			})),
+		});
+	} catch (cause) {
+		return failure(c, cause);
+	}
+}
 export async function handleRunRetention(c: Context) {
 	try {
 		const { project_id, batch_size } = (c.req as any).valid("json");
@@ -274,72 +337,90 @@ export async function handleRunRetention(c: Context) {
 			[tenant.organizationId, project_id, version.id, tenant.actor],
 		);
 		const counts: Record<string, number> = {};
-		for (const [dataClass, days] of Object.entries(version.retention)) {
-			const cutoff = new Date(Date.now() - days * 86_400_000);
-			if (dataClass === "datasets") {
-				const result = await db.query<{ id: string }>(
-					"DELETE FROM datasets WHERE id IN (SELECT id FROM datasets WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING id",
-					[project_id, cutoff, batch_size],
-				);
-				counts.datasets = result.rows.length;
+		const runId = run.rows[0]!.id;
+		try {
+			await db.query(
+				"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ($1, $2, $3, $4, 'retention_started')",
+				[tenant.organizationId, project_id, version.id, tenant.actor],
+			);
+			for (const [dataClass, days] of Object.entries(version.retention)) {
+				const cutoff = new Date(Date.now() - days * 86_400_000);
+				if (dataClass === "datasets") {
+					const result = await db.query<{ id: string }>(
+						"DELETE FROM datasets WHERE id IN (SELECT id FROM datasets WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING id",
+						[project_id, cutoff, batch_size],
+					);
+					counts.datasets = result.rows.length;
+				}
+				if (dataClass === "feedback") {
+					const result = await db.query<{ score_id: string }>(
+						"DELETE FROM feedback_reviews WHERE score_id IN (SELECT score_id FROM feedback_reviews WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING score_id",
+						[project_id, cutoff, batch_size],
+					);
+					counts.feedback = result.rows.length;
+				}
+				if (dataClass === "traces") {
+					counts.traces = await deleteTraceRetentionBatch(
+						tenant.organizationId,
+						project_id,
+						cutoff,
+						batch_size,
+					);
+				}
 			}
-			if (dataClass === "feedback") {
-				const result = await db.query<{ score_id: string }>(
-					"DELETE FROM feedback_reviews WHERE score_id IN (SELECT score_id FROM feedback_reviews WHERE project_id = $1 AND created_at < $2 ORDER BY created_at LIMIT $3) RETURNING score_id",
-					[project_id, cutoff, batch_size],
-				);
-				counts.feedback = result.rows.length;
-			}
-			if (dataClass === "traces") {
-				await (await import("../db/clickhouse.js")).ch().command({
-					query:
-						"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND start_time < {cutoff:DateTime64(3)} SETTINGS mutations_sync = 1",
-					query_params: {
-						organizationId: tenant.organizationId,
-						projectId: project_id,
-						cutoff: cutoff.toISOString(),
-					},
-				});
-				await (await import("../db/clickhouse.js")).ch().command({
-					query:
-						"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND start_time < {cutoff:DateTime64(3)} SETTINGS mutations_sync = 1",
-					query_params: {
-						organizationId: tenant.organizationId,
-						projectId: project_id,
-						cutoff: cutoff.toISOString(),
-					},
-				});
-				counts.traces = 0;
-			}
-		}
-		const duration = Math.round(performance.now() - started);
-		await db.query(
-			"UPDATE governance_retention_runs SET status = 'completed', counts = $2::jsonb, completed_at = now() WHERE id = $1",
-			[run.rows[0]!.id, JSON.stringify(counts)],
-		);
-		await db.query(
-			"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) VALUES ($1, $2, $3, $4, 'retention_completed', $5::jsonb, $6)",
-			[
-				tenant.organizationId,
+			const duration = Math.round(performance.now() - started);
+			await db.query(
+				"UPDATE governance_retention_runs SET status = 'completed', counts = $2::jsonb, completed_at = now() WHERE id = $1",
+				[runId, JSON.stringify(counts)],
+			);
+			await db.query(
+				"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) VALUES ($1, $2, $3, $4, 'retention_completed', $5::jsonb, $6)",
+				[
+					tenant.organizationId,
+					project_id,
+					version.id,
+					tenant.actor,
+					JSON.stringify(counts),
+					duration,
+				],
+			);
+			logger.info("governance.retention_completed", {
 				project_id,
-				version.id,
-				tenant.actor,
-				JSON.stringify(counts),
-				duration,
-			],
-		);
-		logger.info("governance.retention_completed", {
-			project_id,
-			run_id: run.rows[0]!.id,
-			duration_ms: duration,
-			counts,
-		});
-		return c.json({
-			policy_version_id: version.id,
-			counts,
-			run_id: run.rows[0]!.id,
-			status: "completed",
-		});
+				run_id: runId,
+				duration_ms: duration,
+				counts,
+			});
+			return c.json({
+				policy_version_id: version.id,
+				counts,
+				run_id: runId,
+				status: "completed",
+			});
+		} catch (cause) {
+			const duration = Math.round(performance.now() - started);
+			await db.query(
+				"UPDATE governance_retention_runs SET status = 'failed', counts = $2::jsonb, completed_at = now() WHERE id = $1 AND status = 'running'",
+				[runId, JSON.stringify(counts)],
+			);
+			await db.query(
+				"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) VALUES ($1, $2, $3, $4, 'retention_failed', $5::jsonb, $6)",
+				[
+					tenant.organizationId,
+					project_id,
+					version.id,
+					tenant.actor,
+					JSON.stringify(counts),
+					duration,
+				],
+			);
+			logger.error("governance.retention_failed", cause, {
+				project_id,
+				run_id: runId,
+				duration_ms: duration,
+				counts,
+			});
+			return failure(c, cause);
+		}
 	} catch (cause) {
 		return failure(c, cause);
 	}

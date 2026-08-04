@@ -156,8 +156,10 @@ import {
 	handleCreatePolicyDraft,
 	handleGetEffectivePolicy,
 	handleListPolicyHistory,
+	handleListRetentionRuns,
 	handlePreviewRetention,
 	handleRunRetention,
+	listRetentionRuns,
 	listPolicyHistory,
 	previewRetention,
 	runRetention,
@@ -290,6 +292,7 @@ register(createPolicyDraft, handleCreatePolicyDraft);
 register(approvePolicy, handleApprovePolicy);
 register(previewRetention, handlePreviewRetention);
 register(runRetention, handleRunRetention);
+register(listRetentionRuns, handleListRetentionRuns);
 
 openapiApp.doc("/openapi.json", {
 	openapi: "3.1.0",

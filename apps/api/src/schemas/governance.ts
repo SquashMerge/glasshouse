@@ -41,6 +41,16 @@ export const RetentionSummary = z.object({
 	run_id: z.string().uuid().optional(),
 	status: z.enum(["completed", "failed"]).optional(),
 });
+export const RetentionRun = z.object({
+	id: z.string().uuid(),
+	policy_version_id: z.string().uuid(),
+	status: z.enum(["running", "completed", "failed"]),
+	counts: z.record(z.string(), z.number().int().nonnegative()),
+	started_at: z.string(),
+	completed_at: z.string().nullable(),
+	duration_ms: z.number().int().nonnegative().nullable(),
+});
+export const RetentionRunHistory = z.object({ items: z.array(RetentionRun) });
 export const GovernanceErrors = {
 	400: {
 		description: "Invalid request",

@@ -15,6 +15,7 @@ import {
 	createGovernancePolicyDraft,
 	getEffectiveGovernancePolicy,
 	listGovernancePolicyHistory,
+	listGovernanceRetentionRuns,
 	previewGovernanceRetention,
 	runGovernanceRetention,
 } from "../lib/api";
@@ -41,12 +42,20 @@ export function GovernancePage() {
 		queryFn: () => listGovernancePolicyHistory(selectedProjectId!),
 		enabled: Boolean(selectedProjectId),
 	});
+	const retentionRuns = useQuery({
+		queryKey: ["governance-retention-runs", selectedProjectId],
+		queryFn: () => listGovernanceRetentionRuns(selectedProjectId!),
+		enabled: Boolean(selectedProjectId),
+	});
 	const refresh = () => {
 		void queryClient.invalidateQueries({
 			queryKey: ["governance-policy", selectedProjectId],
 		});
 		void queryClient.invalidateQueries({
 			queryKey: ["governance-history", selectedProjectId],
+		});
+		void queryClient.invalidateQueries({
+			queryKey: ["governance-retention-runs", selectedProjectId],
 		});
 	};
 	const draft = useMutation({
@@ -63,7 +72,10 @@ export function GovernancePage() {
 	});
 	const run = useMutation({
 		mutationFn: runGovernanceRetention,
-		onSuccess: (result) => setPreview(result.counts),
+		onSuccess: (result) => {
+			setPreview(result.counts);
+			refresh();
+		},
 	});
 	if (!selectedProjectId)
 		return (
@@ -71,11 +83,11 @@ export function GovernancePage() {
 				Select a project to manage its governed retention policy.
 			</PageMessage>
 		);
-	if (effective.isLoading || history.isLoading)
+	if (effective.isLoading || history.isLoading || retentionRuns.isLoading)
 		return (
 			<PageMessage title="Governance">Loading governance policy...</PageMessage>
 		);
-	if (effective.isError || history.isError)
+	if (effective.isError || history.isError || retentionRuns.isError)
 		return (
 			<PageMessage title="Governance">
 				Governance policy could not be loaded.
@@ -209,9 +221,9 @@ export function GovernancePage() {
 				</CardHeader>
 				<CardContent className="space-y-3">
 					<p className="text-sm text-muted-foreground">
-						Preview reports counts only. A run deletes at most 100 records per
-						PostgreSQL class and only data older than the approved policy
-						interval.
+						Preview reports counts only. A run deletes at most 100 trace roots
+						(including their observations), datasets, or feedback records per
+						class and only data older than the approved policy interval.
 					</p>
 					<div className="flex flex-wrap gap-2">
 						<Button
@@ -238,6 +250,41 @@ export function GovernancePage() {
 							{Object.entries(preview)
 								.map(([name, count]) => `${name}: ${count}`)
 								.join(", ") || "No eligible data."}
+						</p>
+					)}
+				</CardContent>
+			</Card>
+			<Card>
+				<CardHeader>
+					<CardTitle>Retention run summaries</CardTitle>
+				</CardHeader>
+				<CardContent>
+					{retentionRuns.data?.items.length ? (
+						<ul className="space-y-3 text-sm">
+							{retentionRuns.data.items.map((retentionRun) => (
+								<li
+									key={retentionRun.id}
+									className="border-b border-border pb-3 last:border-0 last:pb-0"
+								>
+									<p className="font-medium capitalize">
+										{retentionRun.status}
+									</p>
+									<p className="text-muted-foreground">
+										Started {new Date(retentionRun.started_at).toLocaleString()}
+										{retentionRun.duration_ms !== null
+											? `, ${retentionRun.duration_ms} ms`
+											: ""}
+										.{" "}
+										{Object.entries(retentionRun.counts)
+											.map(([name, count]) => `${name}: ${count}`)
+											.join(", ") || "No records deleted."}
+									</p>
+								</li>
+							))}
+						</ul>
+					) : (
+						<p className="text-sm text-muted-foreground">
+							No retention runs have been recorded for this project.
 						</p>
 					)}
 				</CardContent>

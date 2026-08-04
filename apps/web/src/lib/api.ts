@@ -387,6 +387,25 @@ export async function runGovernanceRetention(input: {
 		"runGovernanceRetention",
 	);
 }
+export interface GovernanceRetentionRun {
+	id: string;
+	policy_version_id: string;
+	status: "running" | "completed" | "failed";
+	counts: Record<string, number>;
+	started_at: string;
+	completed_at: string | null;
+	duration_ms: number | null;
+}
+export async function listGovernanceRetentionRuns(
+	project_id: string,
+): Promise<{ items: GovernanceRetentionRun[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/governance/retention/runs${buildQs({ project_id })}`,
+		),
+		"listGovernanceRetentionRuns",
+	);
+}
 
 export interface Project {
 	id: string;

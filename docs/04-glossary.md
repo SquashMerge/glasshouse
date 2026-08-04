@@ -63,7 +63,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 - **Feedback** — immutable `human.feedback` Score plus mutable project-scoped review state; negative `new` feedback appears in `/feedback` Needs review. API: `/v1/feedback`.
 - **Governance policy version** — immutable project-scoped retention and ingress-redaction configuration. It has no effect until one version is explicitly approved; equivalent content is hash-idempotent. API/UI: `apps/api/src/routes/governance.ts`, `/governance`.
-- **Retention run** — one bounded, project-scoped application of an approved governance policy. Its stored evidence has IDs, safe counts, status, and timings only; it never includes deleted source data. See `infra/db/migrations/0029_governance_policies.sql`.
+- **Retention run** — one bounded, project-scoped application of an approved governance policy. Its stored evidence has IDs, safe counts, status, and timings only; it never includes deleted source data. Summaries are available through `/v1/governance/retention/runs` and `/governance`. See `infra/db/migrations/0029_governance_policies.sql`.
 
 ## Storage roles
 
