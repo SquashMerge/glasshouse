@@ -39,6 +39,7 @@ const apiApp = createApiApp({
 		insertObservations,
 		insertTraces,
 		publishSync: () => undefined,
+		approvedRedaction: async () => null,
 		withActiveAuthorizedProjectLock,
 	}),
 	assertTenantProjectAccess,

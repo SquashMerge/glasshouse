@@ -66,6 +66,7 @@ describe("evaluation MVP", () => {
 			publishSync: (event, payload) => {
 				published.push({ event, payload: payload as Record<string, unknown> });
 			},
+			approvedRedaction: async () => null,
 			withActiveAuthorizedProjectLock: async (_tenant, callback) => callback(),
 		});
 		const response = await handler(

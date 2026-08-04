@@ -23,6 +23,7 @@ const rawHandleOtlpIngest = createOtlpIngestHandler({
 	insertObservations,
 	insertTraces,
 	publishSync,
+	approvedRedaction: async () => null,
 	withActiveAuthorizedProjectLock,
 });
 
@@ -85,6 +86,7 @@ describe("OTLP ingest publishes events", () => {
 				insertObservations,
 				insertTraces,
 				publishSync,
+				approvedRedaction: async () => null,
 				withActiveAuthorizedProjectLock: async () => {
 					throw new TenantScopeError(`Project is ${unavailable}`);
 				},
@@ -650,6 +652,7 @@ describe("OTLP ingest publishes events", () => {
 				observationTokens.add(token);
 			},
 			publishSync,
+			approvedRedaction: async () => null,
 			withActiveAuthorizedProjectLock,
 		});
 		const payload = validOtlp([

@@ -7,10 +7,11 @@ import {
 } from "../schemas/otlp.js";
 import { normalizeSpan, resourceProjectId } from "../db/gen-ai-attrs.js";
 import {
-	loadRedactionOptions,
+	policyRedactionOptions,
 	redactMetadata,
 	redactTraceText,
 } from "../db/redact.js";
+import { approvedRedaction } from "../db/governance.js";
 import {
 	insertObservations,
 	insertTraces,
@@ -74,6 +75,7 @@ export type OtlpIngestDependencies = {
 	insertObservations: typeof insertObservations;
 	insertTraces: typeof insertTraces;
 	publishSync: typeof publishSync;
+	approvedRedaction: typeof approvedRedaction;
 	withActiveAuthorizedProjectLock: <T>(
 		tenant: TenantScope,
 		callback: () => Promise<T>,
@@ -112,6 +114,7 @@ const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 	insertObservations,
 	insertTraces,
 	publishSync,
+	approvedRedaction,
 	withActiveAuthorizedProjectLock: (tenant, callback) =>
 		lockActiveAuthorizedProject(pgPool(), tenant, callback),
 };
@@ -163,7 +166,16 @@ export function createOtlpIngestHandler(
 
 		const request = parsed.data;
 		const deduplicationTokens = otlpDeduplicationTokens(request, tenant);
-		const redaction = loadRedactionOptions();
+		// Only an approved immutable version can affect ingress. This happens before
+		// writer, event-bus, audit, or logger paths can observe span content.
+		const policy = await resolvedDependencies.approvedRedaction(
+			pgPool(),
+			tenant.organizationId,
+			tenant.projectId,
+		);
+		const redaction = policy
+			? policyRedactionOptions(policy)
+			: { redactInput: false, redactKeys: [] };
 
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];

@@ -23,6 +23,16 @@ export interface RedactionOptions {
 	redactKeys: string[];
 }
 
+export function policyRedactionOptions(policy: {
+	mode: "none" | "all_text";
+	keys: string[];
+}): RedactionOptions {
+	return {
+		redactInput: policy.mode === "all_text",
+		redactKeys: policy.keys,
+	};
+}
+
 export function loadRedactionOptions(): RedactionOptions {
 	return {
 		redactInput: shouldRedactInput(),
