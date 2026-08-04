@@ -89,7 +89,7 @@ describe("GovernancePage project-scoped mutations", () => {
 			() => delayed.promise,
 		);
 		const page = renderPage();
-		await screen.findByText("Approved version 1");
+		await screen.findByText(/Approved version\s+1/);
 		fireEvent.click(
 			screen.getByRole("button", { name: "Preview eligible counts" }),
 		);
@@ -104,7 +104,7 @@ describe("GovernancePage project-scoped mutations", () => {
 				<GovernancePage />
 			</QueryClientProvider>,
 		);
-		await screen.findByText("Approved version 1");
+		await screen.findByText(/Approved version\s+1/);
 		delayed.resolve({ policy_version_id: POLICY_A, counts: { traces: 91 } });
 		await act(async () => {
 			await Promise.resolve();
