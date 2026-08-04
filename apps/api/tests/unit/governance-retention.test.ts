@@ -59,37 +59,69 @@ describe("governance retention", () => {
 
 	it("terminalizes only expired leases and emits content-free failure evidence", async () => {
 		const calls: string[] = [];
-		const pool = {
+		const client = {
 			query: async (statement: string) => {
 				calls.push(statement);
 				return { rows: [{ id: "run", project_id: "project" }] };
 			},
+			release() {},
+		};
+		const pool = {
+			connect: async () => client,
 		};
 		expect(await failInterruptedRetentionRuns(pool)).toEqual([
 			{ id: "run", project_id: "project" },
 		]);
-		expect(calls[0]).toContain("SET status = 'failed'");
-		expect(calls[0]).toContain("lease_expires_at < now()");
-		expect(calls[0]).toContain("'retention_failed'");
-		expect(calls[0]).not.toContain("p.status = 'active'");
-		expect(calls[0]).not.toContain("cursor");
+		expect(calls[1]).toContain("SET status = 'failed'");
+		expect(calls[1]).toContain("lease_expires_at < now()");
+		expect(calls[1]).toContain("FOR UPDATE OF p, r");
+		expect(calls[1]).toContain("'retention_failed'");
+		expect(calls[1]).not.toContain("p.status = 'active'");
+		expect(calls[1]).not.toContain("cursor");
 	});
 
 	it("leaves an active lease untouched during startup recovery", async () => {
 		const calls: string[] = [];
 		await failInterruptedRetentionRuns({
-			query: async (statement: string) => {
-				calls.push(statement);
-				return { rows: [] };
-			},
+			connect: async () => ({
+				query: async (statement: string) => {
+					calls.push(statement);
+					return { rows: [] };
+				},
+				release() {},
+			}),
 		});
-		expect(calls[0]).toContain(
-			"status = 'running' AND lease_expires_at < now()",
+		expect(calls[1]).toContain(
+			"r.status = 'running' AND r.lease_expires_at < now()",
 		);
-		expect(calls[0]).toContain("RETURNING id");
+		expect(calls[1]).toContain("RETURNING r.id");
 	});
 
-	it("skips datasets whose linked feedback is disabled or not yet eligible", async () => {
+	it("waits for the project lock before terminalizing an expired run", async () => {
+		let releaseLock!: () => void;
+		const lockHeld = new Promise<void>((resolve) => {
+			releaseLock = resolve;
+		});
+		let settled = false;
+		const recovery = failInterruptedRetentionRuns({
+			connect: async () => ({
+				query: async (statement: string) => {
+					if (statement.startsWith("WITH expired")) await lockHeld;
+					return { rows: [] };
+				},
+				release() {},
+			}),
+		}).then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		releaseLock();
+		await recovery;
+		expect(settled).toBe(true);
+	});
+
+	it("skips datasets whenever linked feedback remains after the bounded feedback cleanup", async () => {
 		const statements: string[] = [];
 		const result = await deleteSafeDatasetRetentionBatch(
 			{
@@ -104,7 +136,11 @@ describe("governance retention", () => {
 		);
 		expect(result).toEqual({ deleted: 1, skipped: 2 });
 		expect(statements[0]).not.toContain("DELETE FROM feedback_reviews");
-		expect(statements[0]).toContain("f.created_at >= $4");
+		expect(statements[0]).toContain(
+			"NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id)",
+		);
+		expect(statements[0]).not.toContain("f.created_at >=");
+		expect(statements).toHaveLength(1);
 		expect(statements[0]).toContain("NOT EXISTS (SELECT 1 FROM experiments");
 		expect(statements[0]).toContain(
 			"NOT EXISTS (SELECT 1 FROM benchmark_suites",

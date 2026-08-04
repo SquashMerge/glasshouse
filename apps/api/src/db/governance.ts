@@ -66,13 +66,9 @@ export async function retentionCounts(
 	for (const [dataClass, days] of Object.entries(retention)) {
 		const cutoff = new Date(Date.now() - days! * 86_400_000);
 		if (dataClass === "datasets") {
-			const feedbackDays = retention.feedback;
-			const feedbackCutoff = feedbackDays
-				? new Date(Date.now() - feedbackDays * 86_400_000)
-				: null;
 			const result = await pool.query<{ eligible: string; skipped: string }>(
-				"SELECT count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($3::timestamptz IS NULL OR f.created_at >= $3)))::text AS eligible, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($3::timestamptz IS NULL OR f.created_at >= $3)))::text AS skipped FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2",
-				[projectId, cutoff, feedbackCutoff],
+				"SELECT count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id))::text AS eligible, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id))::text AS skipped FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2",
+				[projectId, cutoff],
 			);
 			counts.datasets = Number(result.rows[0]?.eligible ?? 0);
 			counts.datasets_skipped = Number(result.rows[0]?.skipped ?? 0);
@@ -108,11 +104,10 @@ export async function deleteSafeDatasetRetentionBatch(
 	projectId: string,
 	cutoff: Date,
 	batchSize: number,
-	feedbackCutoff?: Date,
 ): Promise<{ deleted: number; skipped: number }> {
 	const result = await pool.query<{ id: string | null; skipped: string }>(
-		"WITH candidates AS MATERIALIZED (SELECT d.id FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($4::timestamptz IS NULL OR f.created_at >= $4)) ORDER BY d.created_at, d.id LIMIT $3 FOR UPDATE), deleted AS (DELETE FROM datasets d USING candidates c WHERE d.id = c.id RETURNING d.id), skipped AS (SELECT count(*)::text AS count FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND (EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id AND ($4::timestamptz IS NULL OR f.created_at >= $4)))) SELECT id, (SELECT count FROM skipped) AS skipped FROM deleted UNION ALL SELECT NULL::uuid AS id, count AS skipped FROM skipped WHERE NOT EXISTS (SELECT 1 FROM deleted)",
-		[projectId, cutoff, batchSize, feedbackCutoff ?? null],
+		"WITH candidates AS MATERIALIZED (SELECT d.id FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id) ORDER BY d.created_at, d.id LIMIT $3 FOR UPDATE), deleted AS (DELETE FROM datasets d USING candidates c WHERE d.id = c.id RETURNING d.id), skipped AS (SELECT count(*)::text AS count FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND (EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id))) SELECT id, (SELECT count FROM skipped) AS skipped FROM deleted UNION ALL SELECT NULL::uuid AS id, count AS skipped FROM skipped WHERE NOT EXISTS (SELECT 1 FROM deleted)",
+		[projectId, cutoff, batchSize],
 	);
 	return {
 		deleted: result.rows.filter((row) => row.id !== null).length,
@@ -199,10 +194,20 @@ export async function deleteTraces(
 }
 
 export async function failInterruptedRetentionRuns(
-	pool: Pick<Pool, "query">,
+	pool: Pick<Pool, "connect">,
 ): Promise<Array<{ id: string; project_id: string }>> {
-	const failed = await pool.query<{ id: string; project_id: string }>(
-		"WITH failed AS (UPDATE governance_retention_runs SET status = 'failed', completed_at = now(), lease_expires_at = NULL WHERE status = 'running' AND lease_expires_at < now() RETURNING id, organization_id, project_id, policy_version_id, requested_by, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT id, project_id FROM failed",
-	);
-	return failed.rows;
+	const client = await pool.connect();
+	try {
+		await client.query("BEGIN");
+		const failed = await client.query<{ id: string; project_id: string }>(
+			"WITH expired AS MATERIALIZED (SELECT r.id, r.organization_id, r.project_id, r.policy_version_id, r.requested_by, r.counts, r.started_at FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id WHERE r.status = 'running' AND r.lease_expires_at < now() FOR UPDATE OF p, r), failed AS (UPDATE governance_retention_runs r SET status = 'failed', completed_at = now(), lease_expires_at = NULL FROM expired e WHERE r.id = e.id AND r.status = 'running' AND r.lease_expires_at < now() RETURNING r.id, r.organization_id, r.project_id, r.policy_version_id, r.requested_by, r.counts, r.started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT id, project_id FROM failed",
+		);
+		await client.query("COMMIT");
+		return failed.rows;
+	} catch (cause) {
+		await client.query("ROLLBACK").catch(() => {});
+		throw cause;
+	} finally {
+		client.release();
+	}
 }

@@ -13,6 +13,9 @@ BEGIN
 		OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'governance_retention_runs_expired_lease') THEN
 		RAISE EXCEPTION 'retention lease ownership fields are incomplete';
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'governance_retention_runs'::regclass AND conname = 'governance_retention_runs_running_lease') THEN
+		RAISE EXCEPTION 'retention running lease invariant is incomplete';
+	END IF;
 	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 10 THEN
 		RAISE EXCEPTION 'governance tenant fields must be not null';
 	END IF;
@@ -745,7 +748,7 @@ BEGIN
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
     BEGIN
-        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running');
+        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status, owner_token, heartbeat_at, lease_expires_at) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running', gen_random_uuid(), now(), now() + interval '5 minutes');
         RAISE EXCEPTION 'governance retention provenance mismatch was accepted';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;

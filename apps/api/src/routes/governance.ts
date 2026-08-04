@@ -515,7 +515,6 @@ export async function handleRunRetention(c: Context) {
 							project_id,
 							cutoff,
 							batch_size,
-							feedbackCutoff,
 						);
 						counts.datasets = deleted.deleted;
 						counts.datasets_skipped = deleted.skipped;
@@ -530,14 +529,6 @@ export async function handleRunRetention(c: Context) {
 				const cutoff = new Date(
 					Date.now() - version.retention.traces * 86_400_000,
 				);
-				await validateRunStage(
-					db,
-					tenant,
-					project_id,
-					version,
-					runId,
-					ownerToken,
-				);
 				const selected = await selectTraceRetentionBatch(
 					tenant.organizationId,
 					project_id,
@@ -546,29 +537,56 @@ export async function handleRunRetention(c: Context) {
 				);
 				counts.traces_selected_groups = selected.traceIds.length;
 				counts.traces_selected_physical_units = selected.physicalUnits;
-				await checkpointRun(db, runId, ownerToken, counts, "traces_intent");
-				await deleteTraceObservations(
-					tenant.organizationId,
-					project_id,
-					cutoff,
-					selected.traceIds,
-				);
-				counts.traces_observations_deleted_groups = selected.traceIds.length;
-				await checkpointRun(
+				await destructiveStage(
 					db,
+					tenant,
+					project_id,
+					version,
 					runId,
 					ownerToken,
+					"traces_intent",
+					async () => undefined,
 					counts,
-					"traces_observations_deleted",
 				);
-				await deleteTraces(
-					tenant.organizationId,
+				await destructiveStage(
+					db,
+					tenant,
 					project_id,
-					cutoff,
-					selected.traceIds,
+					version,
+					runId,
+					ownerToken,
+					"traces_observations_deleted",
+					async () => {
+						await deleteTraceObservations(
+							tenant.organizationId,
+							project_id,
+							cutoff,
+							selected.traceIds,
+						);
+						counts.traces_observations_deleted_groups =
+							selected.traceIds.length;
+					},
+					counts,
 				);
-				counts.traces = selected.traceIds.length;
-				await checkpointRun(db, runId, ownerToken, counts, "traces_deleted");
+				await destructiveStage(
+					db,
+					tenant,
+					project_id,
+					version,
+					runId,
+					ownerToken,
+					"traces_deleted",
+					async () => {
+						await deleteTraces(
+							tenant.organizationId,
+							project_id,
+							cutoff,
+							selected.traceIds,
+						);
+						counts.traces = selected.traceIds.length;
+					},
+					counts,
+				);
 			}
 			const duration = Math.round(performance.now() - started);
 			const terminal = await terminalizeRun(
@@ -698,7 +716,7 @@ async function renewRunLease(
 	ownerToken: string,
 ) {
 	const renewed = await client.query(
-		"UPDATE governance_retention_runs SET heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' AND lease_expires_at > now() RETURNING id",
+		"UPDATE governance_retention_runs SET heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING id",
 		[runId, ownerToken],
 	);
 	if (!renewed.rows[0]) throw new Error("Retention run ownership was lost");
@@ -712,43 +730,10 @@ async function persistRunProgress(
 	stage: string,
 ) {
 	const result = await client.query(
-		"UPDATE governance_retention_runs SET counts = $3::jsonb, cursor = jsonb_build_object('stage', $4, 'counts', $3::jsonb), heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' AND lease_expires_at > now() RETURNING id",
+		"UPDATE governance_retention_runs SET counts = $3::jsonb, cursor = jsonb_build_object('stage', $4, 'counts', $3::jsonb), heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING id",
 		[runId, ownerToken, JSON.stringify(counts), stage],
 	);
 	if (!result.rows[0]) throw new Error("Retention run ownership was lost");
-}
-
-async function validateRunStage(
-	db: Pick<Pool, "connect">,
-	tenant: { organizationId: string; actor: string },
-	projectId: string,
-	version: VersionRow,
-	runId: string,
-	ownerToken: string,
-) {
-	await withRunTransaction(db, async (client) => {
-		const current = await activeManagerAndVersion(
-			client,
-			tenant.organizationId,
-			projectId,
-			tenant.actor,
-		);
-		if (current.id !== version.id)
-			throw new Error("Policy is stale before destructive stage");
-		await renewRunLease(client, runId, ownerToken);
-	});
-}
-
-async function checkpointRun(
-	db: Pick<Pool, "connect">,
-	runId: string,
-	ownerToken: string,
-	counts: Record<string, number>,
-	stage: string,
-) {
-	await withRunTransaction(db, (client) =>
-		persistRunProgress(client, runId, ownerToken, counts, stage),
-	);
 }
 
 async function terminalizeRun(
@@ -760,11 +745,16 @@ async function terminalizeRun(
 	duration: number,
 ): Promise<{ status: "completed" | "failed"; counts: Record<string, number> }> {
 	return withRunTransaction(db, async (client) => {
+		const owned = await client.query(
+			"SELECT r.id FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id WHERE r.id = $1 AND r.owner_token = $2::uuid AND r.status = 'running' FOR UPDATE OF p, r",
+			[runId, ownerToken],
+		);
+		if (!owned.rows[0]) throw new Error("Retention run ownership was lost");
 		const transitioned = await client.query<{
 			status: "completed" | "failed";
 			counts: Record<string, number>;
 		}>(
-			"WITH changed AS (UPDATE governance_retention_runs SET status = $3, counts = $4::jsonb, cursor = jsonb_build_object('stage', $3, 'counts', $4::jsonb), completed_at = now(), lease_expires_at = NULL WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' AND lease_expires_at > now() RETURNING organization_id, project_id, policy_version_id, requested_by, status, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, CASE WHEN status = 'completed' THEN 'retention_completed' ELSE 'retention_failed' END, counts, $5 FROM changed) SELECT status, counts FROM changed",
+			"WITH changed AS (UPDATE governance_retention_runs SET status = $3, counts = $4::jsonb, cursor = jsonb_build_object('stage', $3, 'counts', $4::jsonb), completed_at = now(), lease_expires_at = NULL WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING organization_id, project_id, policy_version_id, requested_by, status, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, CASE WHEN status = 'completed' THEN 'retention_completed' ELSE 'retention_failed' END, counts, $5 FROM changed) SELECT status, counts FROM changed",
 			[runId, ownerToken, status, JSON.stringify(counts), duration],
 		);
 		if (transitioned.rows[0]) return transitioned.rows[0];
