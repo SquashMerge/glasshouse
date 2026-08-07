@@ -10,6 +10,7 @@ type RecoveryDependencies = {
 	pool: () => unknown;
 	recoverExperiments: (pool: unknown) => Promise<RecoverableExperiment[]>;
 	failOptimizations: (pool: unknown) => Promise<InterruptedWork[]>;
+	failRetentionRuns: (pool: unknown) => Promise<InterruptedWork[]>;
 	resumeExperiment: (experiment: RecoverableExperiment) => Promise<void>;
 	log: (event: string, fields: Record<string, unknown>) => void;
 };
@@ -18,9 +19,10 @@ export async function recoverInterruptedWork(
 	dependencies: RecoveryDependencies,
 ): Promise<void> {
 	const pool = dependencies.pool();
-	const [experiments, optimizations] = await Promise.all([
+	const [experiments, optimizations, retentionRuns] = await Promise.all([
 		dependencies.recoverExperiments(pool),
 		dependencies.failOptimizations(pool),
+		dependencies.failRetentionRuns(pool),
 	]);
 	await Promise.all(
 		experiments.map((experiment) => dependencies.resumeExperiment(experiment)),
@@ -28,5 +30,6 @@ export async function recoverInterruptedWork(
 	dependencies.log("work.recovered_after_restart", {
 		experiments_resumed: experiments.length,
 		optimizations_failed: optimizations.length,
+		retention_runs_failed: retentionRuns.length,
 	});
 }

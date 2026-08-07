@@ -8,6 +8,7 @@ import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { pgPool } from "./db/postgres.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
 import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
+import { failInterruptedRetentionRuns } from "./db/governance.js";
 import {
 	executeExperiment,
 	production as evaluationProduction,
@@ -232,6 +233,7 @@ if (import.meta.main) {
 		pool: pgPool,
 		recoverExperiments: () => listRecoverableExperiments(pgPool()),
 		failOptimizations: () => failInterruptedOptimizationJobs(pgPool()),
+		failRetentionRuns: () => failInterruptedRetentionRuns(pgPool()),
 		resumeExperiment: async (experiment) => {
 			void executeExperiment(evaluationProduction, {
 				project_id: experiment.project_id,

@@ -148,6 +148,22 @@ import {
 	reviewFeedbackRoute,
 	handleReviewFeedback,
 } from "./routes/feedback.js";
+import {
+	approvePolicy,
+	createPolicyDraft,
+	getEffectivePolicy,
+	handleApprovePolicy,
+	handleCreatePolicyDraft,
+	handleGetEffectivePolicy,
+	handleListPolicyHistory,
+	handleListRetentionRuns,
+	handlePreviewRetention,
+	handleRunRetention,
+	listRetentionRuns,
+	listPolicyHistory,
+	previewRetention,
+	runRetention,
+} from "./routes/governance.js";
 
 export const openapiApp = new OpenAPIHono({
 	defaultHook: (result, c) => {
@@ -269,6 +285,14 @@ register(createFeedbackRoute, handleCreateFeedback);
 register(listFeedbackRoute, handleListFeedback);
 register(promoteFeedbackRoute, handlePromoteFeedback);
 register(reviewFeedbackRoute, handleReviewFeedback);
+
+register(getEffectivePolicy, handleGetEffectivePolicy);
+register(listPolicyHistory, handleListPolicyHistory);
+register(createPolicyDraft, handleCreatePolicyDraft);
+register(approvePolicy, handleApprovePolicy);
+register(previewRetention, handlePreviewRetention);
+register(runRetention, handleRunRetention);
+register(listRetentionRuns, handleListRetentionRuns);
 
 openapiApp.doc("/openapi.json", {
 	openapi: "3.1.0",

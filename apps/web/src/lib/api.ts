@@ -311,6 +311,107 @@ export async function reviewFeedback(input: {
 	);
 }
 
+export interface GovernancePolicyVersion {
+	id: string;
+	version: number;
+	retention: Partial<Record<"traces" | "datasets" | "feedback", number>>;
+	redaction: { mode: "none" | "all_text"; keys: string[] };
+	content_hash: string;
+	created_by: string;
+	created_at: string;
+	approved_by: string | null;
+	approved_at: string | null;
+}
+export async function getEffectiveGovernancePolicy(
+	project_id: string,
+): Promise<{ policy: GovernancePolicyVersion | null }> {
+	return responseJson(
+		await authedFetch(`/v1/governance/policy${buildQs({ project_id })}`),
+		"getEffectiveGovernancePolicy",
+	);
+}
+export async function listGovernancePolicyHistory(
+	project_id: string,
+): Promise<{ items: GovernancePolicyVersion[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/governance/policy/history${buildQs({ project_id })}`,
+		),
+		"listGovernancePolicyHistory",
+	);
+}
+export async function createGovernancePolicyDraft(input: {
+	project_id: string;
+	retention: GovernancePolicyVersion["retention"];
+	redaction: GovernancePolicyVersion["redaction"];
+}): Promise<{ policy: GovernancePolicyVersion }> {
+	return responseJson(
+		await authedFetch("/v1/governance/policy/drafts", jsonRequest(input)),
+		"createGovernancePolicyDraft",
+	);
+}
+export async function approveGovernancePolicy(input: {
+	project_id: string;
+	id: string;
+}): Promise<{ policy: GovernancePolicyVersion }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/governance/policy/${encodeURIComponent(input.id)}/approve${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"approveGovernancePolicy",
+	);
+}
+export async function previewGovernanceRetention(project_id: string): Promise<{
+	policy_version_id: string;
+	counts: Record<string, number>;
+	preview_id: string;
+	preview_expires_at: string;
+}> {
+	return responseJson(
+		await authedFetch(
+			"/v1/governance/retention/preview",
+			jsonRequest({ project_id }),
+		),
+		"previewGovernanceRetention",
+	);
+}
+export async function runGovernanceRetention(input: {
+	project_id: string;
+	policy_version_id: string;
+	preview_id: string;
+	batch_size: number;
+}): Promise<{
+	policy_version_id: string;
+	counts: Record<string, number>;
+	run_id: string;
+	status: "completed";
+}> {
+	return responseJson(
+		await authedFetch("/v1/governance/retention/runs", jsonRequest(input)),
+		"runGovernanceRetention",
+	);
+}
+export interface GovernanceRetentionRun {
+	id: string;
+	policy_version_id: string;
+	status: "running" | "completed" | "failed";
+	counts: Record<string, number>;
+	started_at: string;
+	completed_at: string | null;
+	duration_ms: number | null;
+}
+export async function listGovernanceRetentionRuns(
+	project_id: string,
+): Promise<{ items: GovernanceRetentionRun[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/governance/retention/runs${buildQs({ project_id })}`,
+		),
+		"listGovernanceRetentionRuns",
+	);
+}
+
 export interface Project {
 	id: string;
 	name: string;

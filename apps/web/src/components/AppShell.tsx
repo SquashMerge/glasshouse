@@ -247,6 +247,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						collapsed={collapsed}
 					/>
 					<SidebarLink
+						to="/governance"
+						label="Governance"
+						icon={<LuSettings className="h-4 w-4" />}
+						active={isActive("/governance")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
 						to="/projects"
 						label={
 							organizationRole === "owner"
@@ -464,6 +471,7 @@ function SidebarLink({
 		| "/datasets"
 		| "/evaluations"
 		| "/feedback"
+		| "/governance"
 		| "/projects";
 	label: string;
 	icon: React.ReactNode;
