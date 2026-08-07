@@ -401,6 +401,36 @@ describe("project authorization routes", () => {
 		expect(put.status).toBe(404);
 		expect(remove.status).toBe(404);
 	});
+	it("freezes organization membership PUT and DELETE after a failed deletion", async () => {
+		command.mockImplementationOnce(async () => {
+			throw new Error("ClickHouse mutation failed");
+		});
+		const failedDeletion = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+		expect(failedDeletion.status).toBe(409);
+
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			expect(sql).toContain("unfrozen AS MATERIALIZED");
+			expect(sql).toContain(
+				"FROM projects WHERE organization_id = $1 FOR UPDATE",
+			);
+			expect(sql).toContain("locked_projects WHERE status = 'deleting'");
+			expect(values[0]).toBe(ORGANIZATION);
+			return { rows: [] };
+		});
+		const put = await request("owner", "/v1/organization/members/member", {
+			method: "PUT",
+			body: JSON.stringify({ actor_subject: "member", role: "owner" }),
+		});
+		const remove = await request("owner", "/v1/organization/members/member", {
+			method: "DELETE",
+		});
+
+		expect(put.status).toBe(403);
+		expect(remove.status).toBe(403);
+	});
 	it("checkpoints ClickHouse cleanup before ordered relational finalization", async () => {
 		const response = await request("owner", `/v1/projects/${PROJECT}`, {
 			method: "DELETE",

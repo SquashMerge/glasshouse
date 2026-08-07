@@ -12,7 +12,7 @@ BEGIN
         WHERE organization.id = archived_organization_id
           AND project.status = 'active'
           AND project.name = 'Default Project'
-          AND project.slug = 'default-00330000000040008000000000000001'
+          AND project.slug = 'default-00330000000040008000000000000001-3'
     ) THEN
         RAISE EXCEPTION '0033 did not provision a same-organization active default project';
     END IF;
@@ -23,6 +23,19 @@ BEGIN
           AND status = 'archived'
     ) THEN
         RAISE EXCEPTION '0033 reactivated archived project data';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM projects
+        WHERE organization_id = archived_organization_id
+          AND slug IN (
+              'default',
+              'default-00330000000040008000000000000001',
+              'default-00330000000040008000000000000001-2'
+          )
+          AND status <> 'archived'
+    ) THEN
+        RAISE EXCEPTION '0033 changed archived collision data';
     END IF;
     IF NOT EXISTS (
         SELECT 1

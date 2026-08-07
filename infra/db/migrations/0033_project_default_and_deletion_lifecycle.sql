@@ -3,7 +3,7 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS default_project_id UUID;
 
 -- Do not revive archived data merely to satisfy the new default invariant.
 -- Organizations with no active project receive a deterministic new default instead.
-WITH missing_active_project AS (
+WITH RECURSIVE missing_active_project AS (
     SELECT organization.id
     FROM organizations AS organization
     WHERE NOT EXISTS (
@@ -12,20 +12,39 @@ WITH missing_active_project AS (
         WHERE project.organization_id = organization.id
           AND project.status = 'active'
     )
+), slug_candidates AS (
+    SELECT id AS organization_id, 0 AS attempt, 'default'::text AS slug
+    FROM missing_active_project
+    UNION ALL
+    SELECT
+        candidate.organization_id,
+        candidate.attempt + 1,
+        'default-' || replace(candidate.organization_id::text, '-', '') ||
+            CASE
+                WHEN candidate.attempt = 0 THEN ''
+                ELSE '-' || (candidate.attempt + 1)::text
+            END
+    FROM slug_candidates AS candidate
+    WHERE EXISTS (
+        SELECT 1
+        FROM projects AS project
+        WHERE project.organization_id = candidate.organization_id
+          AND project.slug = candidate.slug
+    )
 ), provisioned AS (
     INSERT INTO projects (name, slug, organization_id, status)
     SELECT
         'Default Project',
-        CASE WHEN EXISTS (
-            SELECT 1 FROM projects AS project
-            WHERE project.organization_id = missing_active_project.id
-              AND project.slug = 'default'
-        ) THEN 'default-' || replace(missing_active_project.id::text, '-', '')
-        ELSE 'default'
-        END,
-        missing_active_project.id,
+        candidate.slug,
+        candidate.organization_id,
         'active'
-    FROM missing_active_project
+    FROM slug_candidates AS candidate
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM projects AS project
+        WHERE project.organization_id = candidate.organization_id
+          AND project.slug = candidate.slug
+    )
     RETURNING id, organization_id
 )
 INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
