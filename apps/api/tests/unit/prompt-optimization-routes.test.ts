@@ -269,8 +269,12 @@ describe("prompt optimization status routes", () => {
 					dataset: {
 						version: 1,
 						rubric: "Preserve concise summaries.",
-						training_examples: [{ input: "training input", answer: "training answer" }],
-						validation_examples: [{ input: "held-out input", answer: "held-out answer" }],
+						training_examples: [
+							{ input: "training input", answer: "training answer" },
+						],
+						validation_examples: [
+							{ input: "held-out input", answer: "held-out answer" },
+						],
 					},
 					model_config: {
 						task_lm: "local-model",

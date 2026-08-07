@@ -23,18 +23,12 @@ import {
 } from "../db/prompt-optimizations.js";
 import { PromptRepositoryError, type JsonObject } from "../db/prompts.js";
 import {
-	MAX_OPTIMIZATION_CANDIDATE_BYTES,
-	runGepaWorker,
-	type GepaWorker,
-} from "../lib/gepa-worker.js";
-import {
 	automaticPromotionReason,
 	hasOverlappingOptimizationInputs,
 	type OptimizationDataset,
 	type OptimizationEvidence,
 	type OptimizationLeakage,
 } from "../lib/optimization-dataset.js";
-import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
 import {
 	GepaConfigurationError,
 	MAX_GEPA_METRIC_CALLS,

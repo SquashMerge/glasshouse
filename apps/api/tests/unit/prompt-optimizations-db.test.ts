@@ -307,8 +307,9 @@ describe("prompt optimization repository", () => {
 		});
 		expect(calls[0]?.text).toContain("worker_lease_expires_at >= now()");
 		expect(calls[0]?.text).toContain(
-			"GREATEST(COALESCE(metric_calls_used,0),$3)",
+			"GREATEST(COALESCE(j.metric_calls_used,0),$3)",
 		);
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 		expect(calls[0]?.values).toEqual([JOB, WORKER, 3]);
 	});
 
@@ -378,7 +379,8 @@ describe("prompt optimization repository", () => {
 				updated_at: CREATED,
 			},
 		]);
-		expect(calls[0]?.text).toContain("DISTINCT ON (prompt_id)");
+		expect(calls[0]?.text).toContain("DISTINCT ON (j.prompt_id)");
+		expect(calls[0]?.text).toContain("p.status = 'active'");
 		expect(calls[0]?.values).toEqual([PROJECT]);
 
 		await expect(
@@ -387,7 +389,8 @@ describe("prompt optimization repository", () => {
 				slug: "support-agent",
 			}),
 		).resolves.toMatchObject({ id: JOB, metric_calls_used: null });
-		expect(calls[1]?.text).toContain("project_id=$1 AND prompt_slug=$2");
+		expect(calls[1]?.text).toContain("j.project_id=$1 AND j.prompt_slug=$2");
+		expect(calls[1]?.text).toContain("p.status = 'active'");
 		expect(calls[1]?.values).toEqual([PROJECT, "support-agent"]);
 	});
 

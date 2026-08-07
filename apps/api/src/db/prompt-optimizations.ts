@@ -469,7 +469,7 @@ export async function getLatestOptimizationJob(
 	const row = (
 		await rows(
 			pool,
-			"SELECT * FROM prompt_optimization_jobs WHERE project_id=$1 AND prompt_slug=$2 ORDER BY CASE WHEN status IN ('queued','preparing','optimizing','evaluating') THEN 0 ELSE 1 END, updated_at DESC, id DESC LIMIT 1",
+			"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND j.prompt_slug=$2 ORDER BY CASE WHEN j.status IN ('queued','preparing','optimizing','evaluating') THEN 0 ELSE 1 END, j.updated_at DESC, j.id DESC LIMIT 1",
 			[input.project_id, input.slug],
 		)
 	)[0];
@@ -482,7 +482,7 @@ export async function listActiveOptimizationActivities(
 	return (
 		await rows(
 			pool,
-			"SELECT DISTINCT ON (prompt_id) * FROM prompt_optimization_jobs WHERE project_id=$1 AND status IN ('queued','preparing','optimizing','evaluating') ORDER BY prompt_id, updated_at DESC, id DESC",
+			"SELECT DISTINCT ON (j.prompt_id) j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id = j.project_id AND p.status = 'active' WHERE j.project_id=$1 AND j.status IN ('queued','preparing','optimizing','evaluating') ORDER BY j.prompt_id, j.updated_at DESC, j.id DESC",
 			[input.project_id],
 		)
 	).map((row) => {
@@ -529,7 +529,7 @@ export async function recordOptimizationMetricCalls(
 ): Promise<void> {
 	const recorded = await rows(
 		pool,
-		"UPDATE prompt_optimization_jobs SET metric_calls_used=GREATEST(COALESCE(metric_calls_used,0),$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
+		"UPDATE prompt_optimization_jobs j SET metric_calls_used=GREATEST(COALESCE(j.metric_calls_used,0),$3),updated_at=now() FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$2 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() RETURNING j.id",
 		[input.id, input.worker_id, input.metric_calls_used],
 	);
 	if (!recorded.length)
@@ -674,7 +674,7 @@ export async function completeOptimizationResult(
 		const row = (
 			await rows(
 				client,
-				"UPDATE prompt_optimization_jobs SET status='completed', candidate_content=$2, evidence=$3::jsonb, promotion_status=$4, promotion_reason=$5, updated_at=now(), completed_at=now() WHERE id=$1 AND worker_claim_id=$6 AND worker_lease_expires_at >= now() AND status NOT IN ('completed','stopped','failed') RETURNING *",
+				"UPDATE prompt_optimization_jobs j SET status='completed', candidate_content=$2, evidence=$3::jsonb, promotion_status=$4, promotion_reason=$5, updated_at=now(), completed_at=now() FROM projects p WHERE j.id=$1 AND j.worker_claim_id=$6 AND p.id=j.project_id AND p.status = 'active' AND j.worker_lease_expires_at >= now() AND j.status NOT IN ('completed','stopped','failed') RETURNING j.*",
 				[
 					input.id,
 					input.candidate_content,
@@ -794,7 +794,7 @@ export async function promoteOptimizationDraft(
 		const jobRow = (
 			await rows(
 				client,
-				"SELECT * FROM prompt_optimization_jobs WHERE id=$1 AND project_id=$2 FOR UPDATE",
+				"SELECT j.* FROM prompt_optimization_jobs j JOIN projects p ON p.id=j.project_id AND p.status='active' WHERE j.id=$1 AND j.project_id=$2 FOR UPDATE OF j, p",
 				[input.id, input.project_id],
 			)
 		)[0];
