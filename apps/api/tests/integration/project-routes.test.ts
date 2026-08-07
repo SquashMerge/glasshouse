@@ -536,9 +536,38 @@ describe("project authorization routes", () => {
 				([sql, values]) =>
 					sql.includes("SET name = COALESCE") &&
 					values.includes("renamed-project") &&
-					sql.includes("'project_updated'"),
+					sql.includes("'project_updated'") &&
+					sql.includes("p.id = o.default_project_id AS is_default"),
 			),
 		).toBe(true);
+	});
+
+	it("returns the canonical default flag when renaming the default project", async () => {
+		query.mockImplementationOnce(async (sql: string) => {
+			expect(sql).toContain("JOIN organizations o ON o.id = $4");
+			return {
+				rows: [
+					{
+						id: PROJECT,
+						name: "Renamed",
+						slug: "project",
+						status: "active",
+						created_at: createdAt,
+						archived_at: null,
+						project_role: "owner",
+						is_default: true,
+					},
+				],
+			};
+		});
+
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ name: "Renamed" }),
+		});
+
+		expect(response.status).toBe(200);
+		expect((await response.json()).is_default).toBe(true);
 	});
 
 	it("lists actor roles and archived projects only in management mode", async () => {

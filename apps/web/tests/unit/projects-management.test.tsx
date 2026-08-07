@@ -150,6 +150,27 @@ describe("ProjectsPage", () => {
 		);
 	});
 
+	it("keeps the default badge and hides Delete after replacing the renamed project", async () => {
+		api.updateProject.mockResolvedValue({
+			...PROJECT,
+			name: "Renamed",
+			slug: "renamed-project",
+			is_default: true,
+		});
+		renderPage();
+
+		await screen.findByText("Project One");
+		fireEvent.click(screen.getByRole("button", { name: "Rename Project One" }));
+		fireEvent.change(screen.getByLabelText("New name for Project One"), {
+			target: { value: "Renamed" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+
+		await screen.findByText("Renamed");
+		expect(screen.getByText("Default")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Delete Renamed" })).toBeNull();
+	});
+
 	it("loads persisted archived projects and manages members for managers", async () => {
 		api.listProjects.mockResolvedValue({
 			items: [
