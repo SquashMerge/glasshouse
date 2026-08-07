@@ -31,7 +31,7 @@
     "config": "4.4.2",
     "dotenv": "17.4.2",
     "dotenv-expand": "1000.0.0",
-    "hono": "4.12.32",
+    "hono": "4.12.34",
     "ioredis": "5.11.1",
     "js-yaml": "5.2.2",
     "mustache": "4.2.0",
