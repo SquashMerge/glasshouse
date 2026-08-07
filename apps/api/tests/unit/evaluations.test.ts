@@ -397,9 +397,12 @@ describe("evaluation MVP", () => {
 		const statuses: string[] = [];
 		const results: Array<{ status: string }> = [];
 		let claimed = false;
-		const warnings: Array<{ event: string; fields: Record<string, unknown> }> =
-			[];
-		const trace = createProductionTrace(
+		const warnings: Array<{
+			event: string;
+			cause: unknown;
+			fields: Record<string, unknown>;
+		}> = [];
+		const productionTrace = createProductionTrace(
 			async () => new Response("provider config: secret", { status: 500 }),
 			() =>
 				({
@@ -407,7 +410,7 @@ describe("evaluation MVP", () => {
 				}) as never,
 		);
 		await expect(
-			trace({
+			productionTrace({
 				project_id: projectId,
 				experiment_id: experimentId,
 				item_id: "44444444-4444-4444-8444-444444444444",
@@ -417,8 +420,18 @@ describe("evaluation MVP", () => {
 				duration_ms: 25,
 			}),
 		).rejects.toThrow("OTLP trace ingestion failed");
+		const trace = async () => {
+			const error = new Error("trace failure");
+			Object.defineProperty(error, "name", {
+				get() {
+					throw new Error("untrusted-name-getter");
+				},
+			});
+			throw error;
+		};
 		const originalWarn = logger.warn;
-		logger.warn = (event, fields = {}) => warnings.push({ event, fields });
+		logger.warn = (event, cause, fields = {}) =>
+			warnings.push({ event, cause, fields });
 		try {
 			const deps = {
 				pool: () => ({}) as never,
@@ -480,14 +493,14 @@ describe("evaluation MVP", () => {
 		expect(statuses).toEqual(["running", "completed"]);
 		expect(results[0]).toMatchObject({ status: "completed" });
 		expect(warnings).toEqual([
-			{
+			expect.objectContaining({
 				event: "evaluation.trace_failed",
+				cause: expect.any(Error),
 				fields: {
 					experiment_id: experimentId,
 					dataset_item_id: "44444444-4444-4444-8444-444444444444",
-					error_type: "Error",
 				},
-			},
+			}),
 		]);
 	});
 
