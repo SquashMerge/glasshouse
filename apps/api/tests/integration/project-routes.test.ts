@@ -730,6 +730,10 @@ describe("project authorization routes", () => {
 			ownerAudit,
 		])
 			expect(response.ok).toBe(true);
+		const [auditSql] = query.mock.calls.find(([sql]) =>
+			sql.startsWith("SELECT e.id, e.actor_subject, e.event_type"),
+		)!;
+		expect(auditSql).toContain("e.organization_id = $3");
 		expect((await audit.json()).items).toEqual([
 			{
 				id: "33333333-3333-4333-8333-333333333333",

@@ -31,7 +31,8 @@ BEGIN
 		SELECT 1 FROM pg_constraint
 		WHERE conrelid = 'governance_audit_events'::regclass
 			AND conname = 'governance_audit_events_policy_version_fkey'
-			AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL%'
+			AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (policy_version_id, organization_id, project_id)%'
+			AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL (policy_version_id)%'
 	) OR EXISTS (
 		SELECT 1 FROM information_schema.columns
 		WHERE table_schema = 'public' AND table_name = 'governance_audit_events'
@@ -50,6 +51,16 @@ BEGIN
 			AND conname = 'project_authorization_audit_events_project_organization_fkey'
 	) THEN
 		RAISE EXCEPTION 'project deletion audit provenance constraints are incomplete';
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_trigger
+		WHERE tgrelid = 'projects'::regclass
+			AND tgname = 'projects_audit_uuid_reuse_guard'
+			AND NOT tgisinternal
+	) OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%project_authorization_audit_events%'
+		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%project_lifecycle_audit_events%'
+		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%governance_audit_events%' THEN
+		RAISE EXCEPTION 'retained audit provenance does not prevent project UUID reuse';
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
 		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'projects'::regclass AND conname = 'projects_status_check' AND pg_get_constraintdef(oid) LIKE '%deleting%')
@@ -849,6 +860,22 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'project deletion did not retain authorization audit provenance';
     END IF;
+    ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;
+    INSERT INTO organizations (id, name, slug)
+    VALUES ('88888888-8888-4888-8888-888888888888', 'UUID Reuse Test Organization', 'uuid-reuse-test');
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES ('88888888-8888-4888-8888-888888888889', 'UUID Reuse Default Project', 'default', '88888888-8888-4888-8888-888888888888');
+    UPDATE organizations
+    SET default_project_id = '88888888-8888-4888-8888-888888888889'
+    WHERE id = '88888888-8888-4888-8888-888888888888';
+    ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
+    BEGIN
+        INSERT INTO projects (id, name, slug, organization_id)
+        VALUES (deletion_project_id, 'Reused Project', 'reused-project', '88888888-8888-4888-8888-888888888888');
+        RAISE EXCEPTION 'retained audit provenance allowed project UUID reuse in another organization';
+    EXCEPTION WHEN unique_violation THEN
+        NULL;
+    END;
 END
 $$;
 
@@ -856,24 +883,36 @@ DO $$
 DECLARE
     version_id UUID := '99999999-0000-4000-8000-000000000001';
 BEGIN
-    INSERT INTO organizations (id, name, slug) VALUES ('99999999-0000-4000-8000-000000000010', 'Governance Test Organization', 'governance-test') ON CONFLICT DO NOTHING;
-    INSERT INTO projects (id, name, slug, organization_id) VALUES ('99999999-0000-4000-8000-000000000011', 'Governance Test Project', 'governance-test', '99999999-0000-4000-8000-000000000010') ON CONFLICT DO NOTHING;
+    INSERT INTO projects (id, name, slug, organization_id) VALUES ('99999999-0000-4000-8000-000000000011', 'Governance Test Project', 'governance-test', '88888888-8888-4888-8888-888888888888') ON CONFLICT DO NOTHING;
     INSERT INTO governance_policies (id, organization_id, project_id) VALUES ('99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111') ON CONFLICT DO NOTHING;
     INSERT INTO governance_policy_versions (id, policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) VALUES (version_id, '99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 1, '{}', '{"mode":"none","keys":[]}', repeat('a', 64), 'migration-test') ON CONFLICT DO NOTHING;
     BEGIN
-        INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES (version_id, '99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', 'migration-test');
+        INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES (version_id, '88888888-8888-4888-8888-888888888888', '99999999-0000-4000-8000-000000000011', 'migration-test');
         RAISE EXCEPTION 'governance approval provenance mismatch was accepted';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
     BEGIN
-        INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'policy_created');
+        INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ('88888888-8888-4888-8888-888888888888', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'policy_created');
         RAISE EXCEPTION 'governance audit provenance mismatch was accepted';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
     BEGIN
-        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status, owner_token, heartbeat_at, lease_expires_at) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running', gen_random_uuid(), now(), now() + interval '5 minutes');
+        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status, owner_token, heartbeat_at, lease_expires_at) VALUES ('88888888-8888-4888-8888-888888888888', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running', gen_random_uuid(), now(), now() + interval '5 minutes');
         RAISE EXCEPTION 'governance retention provenance mismatch was accepted';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
+    INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type)
+    VALUES ('00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', version_id, 'migration-test', 'policy_created');
+    PERFORM set_config('astraea.project_deletion_id', '11111111-1111-1111-1111-111111111111', true);
+    DELETE FROM governance_policy_versions WHERE id = version_id;
+    IF NOT EXISTS (
+        SELECT 1 FROM governance_audit_events
+        WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+            AND project_id = '11111111-1111-1111-1111-111111111111'
+            AND policy_version_id IS NULL
+            AND actor_subject = 'migration-test'
+    ) THEN
+        RAISE EXCEPTION 'policy version deletion did not retain governance audit tenant provenance';
+    END IF;
 END
 $$;

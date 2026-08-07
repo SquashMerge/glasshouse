@@ -251,7 +251,6 @@ const deletionCleanupSql = [
 	"DELETE FROM governance_retention_previews WHERE project_id = $1",
 	"DELETE FROM governance_retention_runs WHERE project_id = $1",
 	"DELETE FROM governance_policy_approvals WHERE project_id = $1",
-	"UPDATE governance_audit_events SET policy_version_id = NULL WHERE project_id = $1",
 	"DELETE FROM governance_policy_versions WHERE project_id = $1",
 	"DELETE FROM governance_policies WHERE project_id = $1",
 	"DELETE FROM project_memberships WHERE project_id = $1",
@@ -692,7 +691,7 @@ export async function handleGetProjectAuditEvents(c: Context) {
 			event_type: string;
 			created_at: Date;
 		}>(
-			"SELECT e.id, e.actor_subject, e.event_type, e.created_at FROM project_authorization_audit_events e WHERE e.project_id = $1 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND actor_pm.actor_subject = $2 WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY e.created_at, e.id",
+			"SELECT e.id, e.actor_subject, e.event_type, e.created_at FROM project_authorization_audit_events e WHERE e.project_id = $1 AND e.organization_id = $3 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND actor_pm.actor_subject = $2 WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY e.created_at, e.id",
 			[id, tenant.actor, tenant.organizationId],
 		);
 		return c.json({
