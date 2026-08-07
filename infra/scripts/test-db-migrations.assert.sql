@@ -59,8 +59,25 @@ BEGIN
 			AND NOT tgisinternal
 	) OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%project_authorization_audit_events%'
 		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%project_lifecycle_audit_events%'
-		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%governance_audit_events%' THEN
-		RAISE EXCEPTION 'retained audit provenance does not prevent project UUID reuse';
+		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%governance_audit_events%'
+		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%lock_project_audit_provenance%'
+		OR pg_get_functiondef('lock_project_audit_provenance'::regproc) NOT LIKE '%pg_advisory_xact_lock%'
+		OR pg_get_functiondef('enforce_retained_audit_project_provenance'::regproc) NOT LIKE '%lock_project_audit_provenance%'
+		OR EXISTS (
+			SELECT 1
+			FROM (VALUES
+				('project_authorization_audit_events'::regclass, 'project_authorization_audit_events_00_provenance_lock'),
+				('project_lifecycle_audit_events'::regclass, 'project_lifecycle_audit_events_00_provenance_lock'),
+				('governance_audit_events'::regclass, 'governance_audit_events_00_provenance_lock')
+			) AS expected(tgrelid, tgname)
+			WHERE NOT EXISTS (
+				SELECT 1 FROM pg_trigger
+				WHERE pg_trigger.tgrelid = expected.tgrelid
+					AND pg_trigger.tgname = expected.tgname
+					AND NOT pg_trigger.tgisinternal
+			)
+		) THEN
+		RAISE EXCEPTION 'retained audit provenance serialization is incomplete';
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
 		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'projects'::regclass AND conname = 'projects_status_check' AND pg_get_constraintdef(oid) LIKE '%deleting%')
