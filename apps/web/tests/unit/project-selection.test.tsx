@@ -7,6 +7,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	act,
 } from "@testing-library/react";
 
 const { getCurrentActor, listPrompts } = vi.hoisted(() => ({
@@ -38,7 +39,7 @@ function wrapper(children: React.ReactNode) {
 }
 
 function SelectionProbe() {
-	const { selectedProjectId, selectedProject, projects, selectProject } =
+	const { selectedProjectId, selectedProject, projects, selectProject, retry } =
 		useProjectSelection();
 	return (
 		<>
@@ -54,6 +55,9 @@ function SelectionProbe() {
 					Select {project.name}
 				</button>
 			))}
+			<button type="button" onClick={retry}>
+				Refetch actor
+			</button>
 		</>
 	);
 }
@@ -121,6 +125,108 @@ describe("ProjectProvider", () => {
 		await screen.findByText("Select a project to manage its prompts.");
 		expect(window.localStorage.getItem(selectionKey)).toBeNull();
 		expect(listPrompts).not.toHaveBeenCalled();
+	});
+
+	it("falls back to the organization default when the stored selection is stale", async () => {
+		const defaultProjectId = "33333333-3333-4333-8333-333333333333";
+		window.localStorage.setItem(selectionKey, STALE_PROJECT_ID);
+		getCurrentActor.mockResolvedValue({
+			actor_subject: ACTOR,
+			organization_id: ORGANIZATION,
+			organization_role: "owner",
+			default_project_id: defaultProjectId,
+			projects: [
+				{
+					id: PROJECT_ID,
+					name: "Project One",
+					slug: "project-one",
+					status: "active",
+					created_at: "2026-07-15T10:00:00.000Z",
+					archived_at: null,
+				},
+				{
+					id: defaultProjectId,
+					name: "Default Project",
+					slug: "default-project",
+					status: "active",
+					created_at: "2026-07-16T10:00:00.000Z",
+					archived_at: null,
+				},
+			],
+		});
+
+		render(
+			wrapper(
+				<ProjectProvider>
+					<SelectionProbe />
+				</ProjectProvider>,
+			),
+		);
+
+		await waitFor(() =>
+			expect(screen.getByTestId("selection")).toHaveTextContent(
+				defaultProjectId,
+			),
+		);
+		expect(window.localStorage.getItem(selectionKey)).toBe(defaultProjectId);
+	});
+
+	it("retains an explicit selection when the current actor refetches", async () => {
+		const selectedProjectId = "33333333-3333-4333-8333-333333333333";
+		const actor = {
+			actor_subject: ACTOR,
+			organization_id: ORGANIZATION,
+			organization_role: "owner",
+			default_project_id: PROJECT_ID,
+			projects: [
+				{
+					id: PROJECT_ID,
+					name: "Default Project",
+					slug: "default-project",
+					status: "active",
+					created_at: "2026-07-15T10:00:00.000Z",
+					archived_at: null,
+				},
+				{
+					id: selectedProjectId,
+					name: "E2E Project",
+					slug: "e2e-project",
+					status: "active",
+					created_at: "2026-07-16T10:00:00.000Z",
+					archived_at: null,
+				},
+			],
+		};
+		let resolveRefetch!: () => void;
+		getCurrentActor.mockResolvedValueOnce(actor).mockImplementationOnce(() =>
+			new Promise<void>((resolve) => {
+				resolveRefetch = resolve;
+			}).then(() => actor),
+		);
+
+		render(
+			wrapper(
+				<ProjectProvider>
+					<SelectionProbe />
+				</ProjectProvider>,
+			),
+		);
+
+		await screen.findByRole("button", { name: "Select E2E Project" });
+		fireEvent.click(screen.getByRole("button", { name: "Select E2E Project" }));
+		await waitFor(() =>
+			expect(screen.getByTestId("selection")).toHaveTextContent(
+				selectedProjectId,
+			),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Refetch actor" }));
+		await waitFor(() => expect(getCurrentActor).toHaveBeenCalledTimes(2));
+		await act(async () => resolveRefetch());
+		expect(screen.getByTestId("selection")).toHaveTextContent(
+			selectedProjectId,
+		);
+		expect(window.localStorage.getItem(selectionKey)).toBe(selectedProjectId);
 	});
 
 	it("removes all cached data for the prior project when switching", async () => {

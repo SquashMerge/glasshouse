@@ -58,9 +58,12 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 		);
 		const key = `${SELECTED_PROJECT_KEY}:${projectsQuery.data.organization_id}:${projectsQuery.data.actor_subject}`;
 		const defaultProjectId = projectsQuery.data.default_project_id;
-		const selected = projects.some((project) => project.id === defaultProjectId)
-			? defaultProjectId
-			: null;
+		const storedProjectId = window.localStorage.getItem(key);
+		const selected = projects.some((project) => project.id === storedProjectId)
+			? storedProjectId
+			: projects.some((project) => project.id === defaultProjectId)
+				? defaultProjectId
+				: null;
 
 		if (!selected) {
 			window.localStorage.removeItem(key);
