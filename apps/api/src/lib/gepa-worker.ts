@@ -12,7 +12,7 @@ export type GepaWorkerInput = {
 
 export type GepaWorkerResult = {
 	candidate: string;
-	training_score: number;
+	training_score: number | null;
 	validation_score: number;
 	baseline_validation_score: number;
 	metric_calls_used: number | null;
@@ -83,17 +83,20 @@ export function parseWorkerResult(
 		if (
 			!parsed ||
 			typeof parsed.candidate !== "string" ||
-			typeof parsed.training_score !== "number" ||
-			!Number.isFinite(parsed.training_score) ||
+			(parsed.training_score !== null &&
+				(typeof parsed.training_score !== "number" ||
+					!Number.isFinite(parsed.training_score))) ||
 			typeof parsed.validation_score !== "number" ||
 			!Number.isFinite(parsed.validation_score) ||
 			typeof parsed.baseline_validation_score !== "number" ||
 			!Number.isFinite(parsed.baseline_validation_score) ||
-			(metricCallsUsed !== null &&
-				(!Number.isSafeInteger(metricCallsUsed) || metricCallsUsed < 0)) ||
 			typeof maxMetricCalls !== "number" ||
 			!Number.isSafeInteger(maxMetricCalls) ||
 			maxMetricCalls < 0 ||
+			(metricCallsUsed !== null &&
+				(!Number.isSafeInteger(metricCallsUsed) ||
+					metricCallsUsed < 0 ||
+					metricCallsUsed > maxMetricCalls)) ||
 			new TextEncoder().encode(parsed.candidate).byteLength >
 				MAX_OPTIMIZATION_CANDIDATE_BYTES
 		)

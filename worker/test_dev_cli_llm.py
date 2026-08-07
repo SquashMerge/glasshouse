@@ -365,12 +365,70 @@ class DevCliLlmTests(unittest.TestCase):
                     "training_score": 0.5,
                     "validation_score": 0.75,
                     "baseline_validation_score": 0.25,
-                    "metric_calls_used": 3,
+                    "metric_calls_used": 2,
                 },
             )
             self.assertNotIn(training_answer, output["candidate"])
             self.assertNotIn(held_out_answer, output["candidate"])
             self.assertIn('ASTRAEA_GEPA_PROGRESS {"metric_calls_used": 1}', result.stderr)
+
+    def test_cli_mode_omits_training_score_when_it_exceeds_remaining_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gepa_directory = Path(directory) / "gepa"
+            default_adapter_directory = gepa_directory / "adapters" / "default_adapter"
+            default_adapter_directory.mkdir(parents=True)
+            (gepa_directory / "__init__.py").write_text(
+                "from types import SimpleNamespace\n"
+                "def optimize(*, adapter, trainset, valset, **kwargs):\n"
+                "    adapter.evaluate(valset, {'system_prompt': 'candidate'})\n"
+                "    return SimpleNamespace(best_candidate={'system_prompt': 'candidate'}, best_idx=1, val_aggregate_scores=[0.25, 0.75], total_metric_calls=1)\n"
+            )
+            (gepa_directory / "adapters" / "__init__.py").write_text("")
+            (default_adapter_directory / "__init__.py").write_text("")
+            (default_adapter_directory / "default_adapter.py").write_text(
+                "class DefaultAdapter:\n"
+                "    def __init__(self, model): self.model = model\n"
+                "    def evaluate(self, batch, candidate, capture_traces=False):\n"
+                "        return type('Evaluation', (), {'scores': [0.75] * len(batch), 'outputs': [{}] * len(batch)})()\n"
+            )
+            request = {
+                "source": "Summarize {{tasks}}",
+                "target": "system",
+                "evaluator": {"type": "default_adapter"},
+                "dataset": optimization_dataset(
+                    [
+                        {"input": "training task one", "answer": "Training answer one"},
+                        {"input": "training task two", "answer": "Training answer two"},
+                    ],
+                    [{"input": "validation task", "answer": "Validation answer"}],
+                ),
+                "model_config": {"task_lm": "task-model", "reflection_lm": "reflection-model"},
+                "budget": {"max_metric_calls": 2},
+            }
+            worker = Path(__file__).with_name("gepa_worker.py")
+            result = subprocess.run(
+                [sys.executable, worker],
+                input=json.dumps(request),
+                text=True,
+                capture_output=True,
+                env={
+                    "GEPA_WORKER_MODE": "cli",
+                    "GEPA_ALLOWED_MODELS": "task-model,reflection-model",
+                    "PYTHONPATH": directory,
+                },
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                json.loads(result.stdout),
+                {
+                    "candidate": "candidate",
+                    "training_score": None,
+                    "validation_score": 0.75,
+                    "baseline_validation_score": 0.25,
+                    "metric_calls_used": 1,
+                },
+            )
 
 
 if __name__ == "__main__":

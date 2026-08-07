@@ -59,7 +59,7 @@ function job(validationExamples = 2): OptimizationJob {
 function dependencies(input: {
 	result: {
 		candidate: string;
-		training_score: number;
+		training_score: number | null;
 		validation_score: number;
 		baseline_validation_score: number;
 		metric_calls_used: number | null;
@@ -145,6 +145,27 @@ describe("optimization completion policy", () => {
 		expect(input.published[0]).toMatchObject({
 			evidence: {
 				training: { sample_count: 1, score: 1 },
+				validation: { sample_count: 2, score: 0.75, baseline_score: 0.5 },
+			},
+		});
+	});
+
+	it("retains held-out promotion evidence when the training score is unavailable", async () => {
+		const input = dependencies({
+			result: {
+				candidate: "Summarize {{tasks}} by urgency and timing.",
+				training_score: null,
+				validation_score: 0.75,
+				baseline_validation_score: 0.5,
+				metric_calls_used: 5,
+			},
+		});
+		await runOptimizationJob(job(), input.d);
+
+		expect(input.published).toHaveLength(1);
+		expect(input.published[0]).toMatchObject({
+			evidence: {
+				training: { sample_count: 1, score: null },
 				validation: { sample_count: 2, score: 0.75, baseline_score: 0.5 },
 			},
 		});

@@ -176,7 +176,6 @@ const PublicJob = Job.pick({
 	prompt_slug: true,
 	source_version: true,
 	target: true,
-	dataset_hash: true,
 	budget: true,
 	status: true,
 	result_version: true,
@@ -250,7 +249,12 @@ export const startOptimization = createRoute({
 	tags: [tag],
 	summary: "Start a GEPA prompt optimization",
 	security: [{ basicAuth: [] }],
-	request: { body: { content: { "application/json": { schema: Start } } } },
+	request: {
+		body: {
+			required: true,
+			content: { "application/json": { schema: Start } },
+		},
+	},
 	responses: {
 		202: {
 			description: "Queued",
@@ -852,7 +856,6 @@ function publicJob(job: OptimizationJob) {
 			training_example_count: job.dataset.training_examples.length,
 			validation_example_count: job.dataset.validation_examples.length,
 		},
-		dataset_hash: job.dataset_hash,
 		budget: job.budget,
 		status: job.status,
 		result_version: job.result_version,

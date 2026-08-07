@@ -50,18 +50,26 @@ class StderrLogger:
 
 
 class ProgressReportingAdapter:
-    def __init__(self, base_adapter, logger):
+    def __init__(self, base_adapter, logger, max_metric_calls):
         self._base_adapter = base_adapter
         self._logger = logger
+        self._max_metric_calls = max_metric_calls
         self.model = base_adapter.model
         self.propose_new_texts = getattr(base_adapter, "propose_new_texts", None)
         self.metric_calls_used = 0
 
     def evaluate(self, *args, **kwargs):
+        metric_calls = len(args[0])
+        if metric_calls > self.remaining_metric_calls:
+            raise ValueError("GEPA evaluation would exceed the metric-call budget")
         evaluation = self._base_adapter.evaluate(*args, **kwargs)
-        self.metric_calls_used += len(evaluation.scores)
+        self.metric_calls_used += metric_calls
         self._logger.progress(self.metric_calls_used)
         return evaluation
+
+    @property
+    def remaining_metric_calls(self):
+        return self._max_metric_calls - self.metric_calls_used
 
     def make_reflective_dataset(self, *args, **kwargs):
         return self._base_adapter.make_reflective_dataset(*args, **kwargs)
@@ -193,11 +201,6 @@ def fake_optimize(source):
     }
 
 
-def metric_calls_used(result):
-    value = getattr(result, "total_metric_calls", None)
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-
-
 def cli_mode_is_allowed():
     # This explicitly prevents a locally authenticated developer CLI in production.
     return os.environ.get("NODE_ENV") != "production" or os.environ.get("ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION") == "true"
@@ -281,7 +284,9 @@ class AstraeaDefaultAdapter(DefaultAdapter):
 
 try:
     logger = StderrLogger()
-    adapter = ProgressReportingAdapter(AstraeaDefaultAdapter(model=task_lm, rubric=rubric), logger)
+    adapter = ProgressReportingAdapter(
+        AstraeaDefaultAdapter(model=task_lm, rubric=rubric), logger, max_metric_calls
+    )
     result = gepa.optimize(
         seed_candidate={"system_prompt": source},
         trainset=trainset,
@@ -296,9 +301,13 @@ try:
     candidate = result.best_candidate["system_prompt"]
     validation_score = average([result.val_aggregate_scores[best_idx]], "validation score")
     baseline_validation_score = average([result.val_aggregate_scores[0]], "baseline validation score")
-    training_score = average(
-        adapter.evaluate(trainset, {"system_prompt": candidate}).scores,
-        "training score",
+    training_score = (
+        average(
+            adapter.evaluate(trainset, {"system_prompt": candidate}).scores,
+            "training score",
+        )
+        if len(trainset) <= adapter.remaining_metric_calls
+        else None
     )
     print(
         json.dumps(
@@ -307,7 +316,7 @@ try:
                 "training_score": training_score,
                 "validation_score": validation_score,
                 "baseline_validation_score": baseline_validation_score,
-                "metric_calls_used": metric_calls_used(result),
+                "metric_calls_used": adapter.metric_calls_used,
             }
         )
     )

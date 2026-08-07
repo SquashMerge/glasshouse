@@ -197,6 +197,7 @@ describe("prompt optimization status routes", () => {
 			candidate_content: "Safe candidate {{tasks}}",
 		});
 		const serialized = JSON.stringify(body);
+		expect(body).not.toHaveProperty("dataset_hash");
 		expect(serialized).not.toContain("private training input");
 		expect(serialized).not.toContain("private training answer");
 		expect(serialized).not.toContain(
@@ -209,6 +210,19 @@ describe("prompt optimization status routes", () => {
 			project_id: PROJECT,
 			id: "33333333-3333-4333-8333-333333333333",
 		});
+	});
+
+	it("documents a required optimization request body", () => {
+		const api = new OpenAPIHono();
+		api.openapi(startOptimization, async (c) => c.json({}, 202));
+		const document = api.getOpenAPIDocument({
+			openapi: "3.1.0",
+			info: { title: "test", version: "1" },
+		});
+
+		expect(
+			document.paths?.["/v1/prompt-optimizations"]?.post?.requestBody?.required,
+		).toBe(true);
 	});
 
 	it("hides legacy candidates that copy protected example material", async () => {

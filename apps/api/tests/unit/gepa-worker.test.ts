@@ -49,8 +49,8 @@ describe("GEPA worker adapter", () => {
 		});
 	});
 
-	it("keeps GEPA's actual metric-call total when a batch crosses its soft stop threshold", () => {
-		expect(
+	it("rejects a worker result that exceeds the strict metric-call budget", () => {
+		expect(() =>
 			parseWorkerResult(
 				JSON.stringify({
 					candidate: "candidate",
@@ -61,13 +61,22 @@ describe("GEPA worker adapter", () => {
 				}),
 				5,
 			),
-		).toEqual({
-			candidate: "candidate",
-			training_score: 1,
-			validation_score: 1,
-			baseline_validation_score: 0,
-			metric_calls_used: 7,
-		});
+		).toThrow("invalid result");
+	});
+
+	it("accepts an omitted training score when the strict metric budget is exhausted", () => {
+		expect(
+			parseWorkerResult(
+				JSON.stringify({
+					candidate: "candidate",
+					training_score: null,
+					validation_score: 1,
+					baseline_validation_score: 0,
+					metric_calls_used: 5,
+				}),
+				5,
+			),
+		).toMatchObject({ training_score: null, metric_calls_used: 5 });
 	});
 
 	it("reports structured metric progress without retaining it in diagnostics", async () => {
