@@ -4,7 +4,7 @@ import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization";
 const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 
 describe("bootstrap authorization", () => {
-	it("grants the configured owner manager membership for every project", async () => {
+	it("grants the configured owner manager membership for every non-deleting project", async () => {
 		const queries: Array<{ sql: string; values?: unknown[] }> = [];
 		const client = {
 			async query(sql: string, values?: unknown[]) {
@@ -51,6 +51,13 @@ describe("bootstrap authorization", () => {
 		expect(
 			queries.some(({ sql }) =>
 				sql.includes("SELECT id, $1, $2, 'manager' FROM projects"),
+			),
+		).toBe(true);
+		expect(
+			queries.some(
+				({ sql }) =>
+					sql.includes("bootstrap_manager_added") &&
+					sql.includes("status <> 'deleting'"),
 			),
 		).toBe(true);
 		expect(

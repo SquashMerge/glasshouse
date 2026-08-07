@@ -7,6 +7,7 @@ import {
 	createProject,
 	deleteProjectMember,
 	deleteProject,
+	getProjectDeletionStatus,
 	listProjectMembers,
 	listProjects,
 	putProjectMember,
@@ -163,6 +164,10 @@ export function ProjectsPage() {
 		projectsQuery.data?.items.filter(
 			(project) => project.status === "archived",
 		) ?? [];
+	const deletingProjects =
+		projectsQuery.data?.items.filter(
+			(project) => project.status === "deleting",
+		) ?? [];
 
 	return (
 		<div className="space-y-6">
@@ -293,6 +298,29 @@ export function ProjectsPage() {
 						onSetDefault={() => {}}
 						onDelete={() => {}}
 					/>
+				</section>
+			)}
+			{deletingProjects.length > 0 && (
+				<section className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 p-4">
+					<div>
+						<h2 className="text-lg font-semibold">Deletion recovery</h2>
+						<p className="text-sm text-muted-foreground">
+							These projects are unavailable while their permanent deletion is
+							completed or retried.
+						</p>
+					</div>
+					{deletingProjects.map((project) => (
+						<DeletingProjectRecovery
+							key={project.id}
+							project={project}
+							canManage={canManage(project)}
+							onFailure={failed}
+							onRecovered={() => {
+								void queryClient.invalidateQueries({ queryKey: ["projects"] });
+								refreshSelector();
+							}}
+						/>
+					))}
 				</section>
 			)}
 			{membersProject && (
@@ -453,6 +481,77 @@ export function ProjectsPage() {
 					</form>
 				</div>
 			)}
+		</div>
+	);
+}
+
+function DeletingProjectRecovery({
+	project,
+	canManage,
+	onFailure,
+	onRecovered,
+}: {
+	project: Project;
+	canManage: boolean;
+	onFailure: () => void;
+	onRecovered: () => void;
+}) {
+	const [confirmationName, setConfirmationName] = React.useState("");
+	const statusQuery = useQuery({
+		queryKey: ["project-deletion", project.id],
+		queryFn: () => getProjectDeletionStatus(project.id),
+		enabled: canManage,
+	});
+	const retryMutation = useMutation({
+		mutationFn: deleteProject,
+		onSuccess: onRecovered,
+		onError: onFailure,
+	});
+	const stage = statusQuery.data?.status ?? "pending";
+
+	return (
+		<div className="space-y-3 rounded-md border border-border bg-background p-3">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<span className="font-medium">{project.name}</span>
+				<span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium">
+					Deletion {stage.replaceAll("_", " ")}
+				</span>
+			</div>
+			{statusQuery.isError ? (
+				<p className="text-sm text-destructive" role="alert">
+					Deletion status could not be loaded.
+				</p>
+			) : canManage ? (
+				<form
+					className="flex flex-wrap items-end gap-2"
+					onSubmit={(event) => {
+						event.preventDefault();
+						retryMutation.mutate({
+							id: project.id,
+							confirmation_name: confirmationName,
+						});
+					}}
+				>
+					<label className="grid gap-1 text-sm">
+						Type {project.name} to retry
+						<input
+							aria-label={`Deletion confirmation for ${project.name}`}
+							value={confirmationName}
+							onChange={(event) => setConfirmationName(event.target.value)}
+							className="h-9 rounded-md border border-input bg-background px-2"
+						/>
+					</label>
+					<Button
+						type="submit"
+						variant="destructive"
+						disabled={
+							confirmationName !== project.name || retryMutation.isPending
+						}
+					>
+						Retry deletion
+					</Button>
+				</form>
+			) : null}
 		</div>
 	);
 }

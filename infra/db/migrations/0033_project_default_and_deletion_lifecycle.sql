@@ -1,6 +1,41 @@
 -- The default is organization-owned and must always name a project in that organization.
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS default_project_id UUID;
 
+-- Do not revive archived data merely to satisfy the new default invariant.
+-- Organizations with no active project receive a deterministic new default instead.
+WITH missing_active_project AS (
+    SELECT organization.id
+    FROM organizations AS organization
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM projects AS project
+        WHERE project.organization_id = organization.id
+          AND project.status = 'active'
+    )
+), provisioned AS (
+    INSERT INTO projects (name, slug, organization_id, status)
+    SELECT
+        'Default Project',
+        CASE WHEN EXISTS (
+            SELECT 1 FROM projects AS project
+            WHERE project.organization_id = missing_active_project.id
+              AND project.slug = 'default'
+        ) THEN 'default-' || replace(missing_active_project.id::text, '-', '')
+        ELSE 'default'
+        END,
+        missing_active_project.id,
+        'active'
+    FROM missing_active_project
+    RETURNING id, organization_id
+)
+INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
+SELECT provisioned.id, provisioned.organization_id, membership.actor_subject, 'manager'
+FROM provisioned
+JOIN organization_memberships AS membership
+  ON membership.organization_id = provisioned.organization_id
+ AND membership.role = 'owner'
+ON CONFLICT (project_id, actor_subject) DO NOTHING;
+
 UPDATE organizations AS organization
 SET default_project_id = selected.id
 FROM LATERAL (

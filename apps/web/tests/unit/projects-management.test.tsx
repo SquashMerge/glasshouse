@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
 	archiveProject: vi.fn(),
 	restoreProject: vi.fn(),
 	deleteProject: vi.fn(),
+	getProjectDeletionStatus: vi.fn(),
 	setDefaultProject: vi.fn(),
 	listProjectMembers: vi.fn(),
 	putProjectMember: vi.fn(),
@@ -244,5 +245,47 @@ describe("ProjectsPage", () => {
 			"Project operation could not be completed.",
 		);
 		expect(screen.getByRole("alert")).not.toHaveTextContent("Forbidden");
+	});
+
+	it("shows a failed deletion after reload and retries only after exact confirmation", async () => {
+		const deletingProject = {
+			...PROJECT,
+			status: "deleting" as const,
+			is_default: false,
+		};
+		api.listProjects.mockResolvedValue({
+			items: [deletingProject],
+			total: 1,
+		});
+		api.getProjectDeletionStatus.mockResolvedValue({
+			status: "failed",
+			traces_cleaned_at: null,
+			observations_cleaned_at: null,
+			completed_at: null,
+			attempt_count: 1,
+		});
+		api.deleteProject.mockRejectedValue(new Error("internal details"));
+		renderPage();
+
+		await screen.findByText("Deletion recovery");
+		await screen.findByText("Deletion failed");
+		const retry = screen.getByRole("button", { name: "Retry deletion" });
+		expect(retry).toBeDisabled();
+		fireEvent.change(
+			screen.getByLabelText("Deletion confirmation for Project One"),
+			{ target: { value: "Project One" } },
+		);
+		fireEvent.click(retry);
+		await waitFor(() =>
+			expect(api.deleteProject).toHaveBeenCalledWith({
+				id: PROJECT.id,
+				confirmation_name: "Project One",
+			}),
+		);
+		await screen.findByRole("alert");
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"Project operation could not be completed.",
+		);
+		expect(screen.getByRole("alert")).not.toHaveTextContent("internal details");
 	});
 });

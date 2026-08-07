@@ -35,7 +35,7 @@ export async function bootstrapAuthorization(
 			[credential.organizationId, credential.username],
 		);
 		await client.query(
-			"WITH memberships AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $1, $2, 'manager' FROM projects WHERE organization_id = $1 ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = 'manager', updated_at = now() WHERE project_memberships.role <> 'manager' RETURNING project_id) INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, project_id, $2, 'bootstrap_manager_added' FROM memberships RETURNING project_id",
+			"WITH memberships AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $1, $2, 'manager' FROM projects WHERE organization_id = $1 AND status <> 'deleting' ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = 'manager', updated_at = now() WHERE project_memberships.role <> 'manager' RETURNING project_id) INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, project_id, $2, 'bootstrap_manager_added' FROM memberships RETURNING project_id",
 			[credential.organizationId, credential.username],
 		);
 		if (owner.rowCount)

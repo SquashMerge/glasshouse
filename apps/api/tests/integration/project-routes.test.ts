@@ -7,7 +7,7 @@ const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 const createdAt = new Date("2026-07-15T10:00:00.000Z");
-const query = mock(async (sql: string, values: string[] = []) => {
+const defaultQuery = async (sql: string, values: string[] = []) => {
 	if (sql.startsWith("SELECT p.name, p.status FROM projects"))
 		return { rows: [{ name: "Project One", status: "active" }] };
 	if (sql.startsWith("SELECT default_project_id FROM organizations"))
@@ -172,7 +172,8 @@ const query = mock(async (sql: string, values: string[] = []) => {
 		};
 	if (sql.startsWith("WITH deleted AS (DELETE")) return { rows: [{}] };
 	return { rows: [], rowCount: 1 };
-});
+};
+const query = mock(defaultQuery);
 
 const postgres = await import("../../src/db/postgres");
 mock.module("../../src/db/postgres", () => ({
@@ -265,7 +266,8 @@ function request(actor: string, path: string, init?: RequestInit) {
 }
 
 beforeEach(() => {
-	query.mockClear();
+	query.mockReset();
+	query.mockImplementation(defaultQuery);
 	command.mockClear();
 	command.mockImplementation(async () => undefined);
 });
@@ -344,6 +346,60 @@ describe("project authorization routes", () => {
 				sql.startsWith("INSERT INTO project_deletion_jobs"),
 			).length,
 		).toBe(2);
+	});
+	it("allows only an organization owner to start permanent deletion", async () => {
+		query.mockImplementation(async (sql: string, values: string[] = []) =>
+			sql.startsWith("SELECT p.name, p.status FROM projects")
+				? { rows: [] }
+				: defaultQuery(sql, values),
+		);
+		const response = await request("manager", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+
+		expect(response.status).toBe(404);
+		const [sql] = query.mock.calls.find(([sql]) =>
+			(sql as string).startsWith("SELECT p.name, p.status FROM projects"),
+		)!;
+		expect(sql).toContain("p.status = 'deleting'");
+		expect(sql).toContain("p.status <> 'deleting' AND om.role = 'owner'");
+	});
+
+	it("blocks membership writes after a failed deletion attempt", async () => {
+		command.mockImplementationOnce(async () => {
+			throw new Error("ClickHouse mutation failed");
+		});
+		const failedDeletion = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+		expect(failedDeletion.status).toBe(409);
+
+		query.mockImplementationOnce(async (sql: string) => {
+			expect(sql).toContain("p.status <> 'deleting'");
+			return { rows: [] };
+		});
+		const put = await request(
+			"owner",
+			`/v1/projects/${PROJECT}/members/member`,
+			{
+				method: "PUT",
+				body: JSON.stringify({ actor_subject: "member", role: "member" }),
+			},
+		);
+		query.mockImplementationOnce(async (sql: string) => {
+			expect(sql).toContain("p.status <> 'deleting'");
+			return { rows: [] };
+		});
+		const remove = await request(
+			"owner",
+			`/v1/projects/${PROJECT}/members/member`,
+			{ method: "DELETE" },
+		);
+
+		expect(put.status).toBe(404);
+		expect(remove.status).toBe(404);
 	});
 	it("checkpoints ClickHouse cleanup before ordered relational finalization", async () => {
 		const response = await request("owner", `/v1/projects/${PROJECT}`, {

@@ -416,7 +416,7 @@ export interface Project {
 	id: string;
 	name: string;
 	slug: string;
-	status: "active" | "archived";
+	status: "active" | "archived" | "deleting";
 	created_at: string;
 	archived_at: string | null;
 	project_role: "owner" | "manager" | "member";
@@ -499,6 +499,26 @@ export async function deleteProject(input: {
 		},
 	);
 	if (!response.ok) await responseJson<never>(response, "deleteProject");
+}
+export interface ProjectDeletionStatus {
+	status:
+		| "pending"
+		| "traces_cleaned"
+		| "clickhouse_cleaned"
+		| "failed"
+		| "completed";
+	traces_cleaned_at: string | null;
+	observations_cleaned_at: string | null;
+	completed_at: string | null;
+	attempt_count: number;
+}
+export async function getProjectDeletionStatus(
+	projectId: string,
+): Promise<ProjectDeletionStatus> {
+	return responseJson(
+		await authedFetch(`/v1/projects/${encodeURIComponent(projectId)}/deletion`),
+		"getProjectDeletionStatus",
+	);
 }
 export async function listProjectMembers(
 	projectId: string,

@@ -82,6 +82,23 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0028.assert.sql"
 
+UPGRADE_0033_DATABASE="${POSTGRES_DB}_0033_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0033_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0033_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0033_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0033_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0033.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0033_DATABASE" \
+  < "$ROOT/infra/db/migrations/0033_project_default_and_deletion_lifecycle.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0033_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0033.assert.sql"
+
 run_fail_closed_case() {
   local database="$1"
   local fixture="$2"
