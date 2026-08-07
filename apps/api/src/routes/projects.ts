@@ -12,6 +12,7 @@ import {
 	OrganizationMemberInput,
 	Project,
 	ProjectAuditEvent,
+	ProjectDeletionStatus,
 	ProjectErrorResponses,
 	ProjectList,
 	ProjectMember,
@@ -93,6 +94,14 @@ export const deleteProject = createRoute({
 		},
 	},
 	responses: { 204: { description: "Deleted" }, ...ProjectErrorResponses },
+});
+export const getProjectDeletionStatus = createRoute({
+	method: "get",
+	path: "/v1/projects/{id}/deletion",
+	tags: ["projects"],
+	security: [{ basicAuth: [] }],
+	request: { params: projectParams },
+	responses: ok(ProjectDeletionStatus),
 });
 export const updateProject = createRoute({
 	method: "patch",
@@ -189,7 +198,7 @@ type Row = {
 	id: string;
 	name: string;
 	slug: string;
-	status: "active" | "archived";
+	status: "active" | "archived" | "deleting";
 	created_at: Date;
 	archived_at: Date | null;
 	project_role: "owner" | "manager" | "member";
@@ -201,6 +210,52 @@ const project = (row: Row) => ({
 	created_at: row.created_at.toISOString(),
 	archived_at: row.archived_at?.toISOString() ?? null,
 });
+type DeletionJob = {
+	status:
+		| "pending"
+		| "traces_cleaned"
+		| "clickhouse_cleaned"
+		| "failed"
+		| "completed";
+	traces_cleaned_at: Date | null;
+	observations_cleaned_at: Date | null;
+	completed_at: Date | null;
+	attempt_count: number;
+};
+const deletionStatus = (job: DeletionJob) => ({
+	status: job.status,
+	traces_cleaned_at: job.traces_cleaned_at?.toISOString() ?? null,
+	observations_cleaned_at: job.observations_cleaned_at?.toISOString() ?? null,
+	completed_at: job.completed_at?.toISOString() ?? null,
+	attempt_count: job.attempt_count,
+});
+const deletionCleanupSql = [
+	"DELETE FROM prompt_optimization_events WHERE job_id IN (SELECT id FROM prompt_optimization_jobs WHERE project_id = $1)",
+	"DELETE FROM prompt_optimization_jobs WHERE project_id = $1",
+	"DELETE FROM prompt_tombstones WHERE project_id = $1",
+	"DELETE FROM prompt_deletion_audit WHERE project_id = $1",
+	"DELETE FROM prompt_label_quarantine WHERE original_project_id = $1",
+	"DELETE FROM prompt_labels WHERE project_id = $1",
+	"DELETE FROM prompts WHERE project_id = $1",
+	"DELETE FROM benchmark_runs WHERE project_id = $1",
+	"DELETE FROM benchmark_suites WHERE project_id = $1",
+	"DELETE FROM feedback_idempotency WHERE project_id = $1",
+	"DELETE FROM feedback_reviews WHERE project_id = $1",
+	"DELETE FROM experiment_tasks WHERE experiment_id IN (SELECT id FROM experiments WHERE project_id = $1)",
+	"DELETE FROM experiment_results WHERE experiment_id IN (SELECT id FROM experiments WHERE project_id = $1)",
+	"DELETE FROM experiments WHERE project_id = $1",
+	"DELETE FROM dataset_items WHERE dataset_id IN (SELECT id FROM datasets WHERE project_id = $1)",
+	"DELETE FROM scores WHERE project_id = $1",
+	"DELETE FROM datasets WHERE project_id = $1",
+	"DELETE FROM agents WHERE project_id = $1",
+	"DELETE FROM governance_retention_previews WHERE project_id = $1",
+	"DELETE FROM governance_retention_runs WHERE project_id = $1",
+	"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+	"UPDATE governance_audit_events SET project_id = NULL, policy_version_id = NULL WHERE project_id = $1",
+	"DELETE FROM governance_policy_versions WHERE project_id = $1",
+	"DELETE FROM governance_policies WHERE project_id = $1",
+	"DELETE FROM project_memberships WHERE project_id = $1",
+];
 function failure(c: Context, error: unknown): Response {
 	const message =
 		error instanceof Error ? error.message : "Project operation failed";
@@ -226,7 +281,8 @@ function failure(c: Context, error: unknown): Response {
 		message.includes("cannot restore") ||
 		message.includes("Default project") ||
 		message.includes("default project") ||
-		message.includes("Confirmation name")
+		message.includes("Confirmation name") ||
+		message.includes("deletion is incomplete")
 	)
 		return c.json({ code: "CONFLICT", message }, 409);
 	if (message === "Forbidden")
@@ -365,11 +421,16 @@ export async function handleDeleteProject(c: Context) {
 		const id = (c.req as any).valid("param").id;
 		const { confirmation_name } = (c.req as any).valid("json");
 		const tenant = trustedTenant(c);
-		const client = await pgPool().connect();
+		const pool = pgPool();
+		const client = await pool.connect();
+		let job: DeletionJob;
 		try {
 			await client.query("BEGIN");
-			const target = await client.query<{ name: string }>(
-				"SELECT p.name FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND om.role = 'owner' FOR UPDATE OF p, om",
+			const target = await client.query<{
+				name: string;
+				status: Row["status"];
+			}>(
+				"SELECT p.name, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
 				[id, tenant.organizationId, tenant.actor],
 			);
 			if (!target.rows[0]) throw new Error("Not found");
@@ -381,105 +442,121 @@ export async function handleDeleteProject(c: Context) {
 			);
 			if (organization.rows[0]?.default_project_id === id)
 				throw new Error("Default project cannot be deleted");
+			if (target.rows[0].status === "archived")
+				throw new Error("Archived project cannot be permanently deleted");
+			await client.query(
+				"UPDATE projects SET status = 'deleting', updated_at = now() WHERE id = $1 AND organization_id = $2",
+				[id, tenant.organizationId],
+			);
+			const created = await client.query<DeletionJob>(
+				"INSERT INTO project_deletion_jobs (organization_id, project_id, requested_by, status, attempt_count) VALUES ($1, $2, $3, 'pending', 1) ON CONFLICT (organization_id, project_id) DO UPDATE SET requested_by = EXCLUDED.requested_by, attempt_count = project_deletion_jobs.attempt_count + 1, updated_at = now() RETURNING status, traces_cleaned_at, observations_cleaned_at, completed_at, attempt_count",
+				[tenant.organizationId, id, tenant.actor],
+			);
+			job = created.rows[0]!;
 			await client.query(
 				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'deletion_attempted')",
 				[tenant.organizationId, id, tenant.actor],
 			);
-			await client.query(
-				"SELECT set_config('astraea.project_deletion_id', $1, true)",
-				[id],
-			);
-			await Promise.all([
-				ch().command({
-					query:
-						"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} SETTINGS mutations_sync = 1",
-					query_params: {
-						organizationId: tenant.organizationId,
-						projectId: id,
-					},
-				}),
-				ch().command({
-					query:
-						"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} SETTINGS mutations_sync = 1",
-					query_params: {
-						organizationId: tenant.organizationId,
-						projectId: id,
-					},
-				}),
-			]);
-			await client.query(
-				"DELETE FROM prompt_tombstones WHERE project_id = $1",
-				[id],
-			);
-			await client.query(
-				"DELETE FROM prompt_deletion_audit WHERE project_id = $1",
-				[id],
-			);
-			await client.query(
-				"DELETE FROM prompt_label_quarantine WHERE original_project_id = $1",
-				[id],
-			);
-			await client.query("DELETE FROM prompt_labels WHERE project_id = $1", [
-				id,
-			]);
-			await client.query("DELETE FROM prompts WHERE project_id = $1", [id]);
-			await client.query(
-				"DELETE FROM prompt_optimization_events WHERE job_id IN (SELECT id FROM prompt_optimization_jobs WHERE project_id = $1)",
-				[id],
-			);
-			await client.query(
-				"DELETE FROM prompt_optimization_jobs WHERE project_id = $1",
-				[id],
-			);
-			await client.query("DELETE FROM scores WHERE project_id = $1", [id]);
-			await client.query("DELETE FROM experiments WHERE project_id = $1", [id]);
-			await client.query("DELETE FROM datasets WHERE project_id = $1", [id]);
-			await client.query("DELETE FROM agents WHERE project_id = $1", [id]);
-			await client.query(
-				"DELETE FROM governance_retention_previews WHERE project_id = $1",
-				[id],
-			);
-			await client.query(
-				"DELETE FROM governance_retention_runs WHERE project_id = $1",
-				[id],
-			);
-			await client.query(
-				"DELETE FROM governance_policy_approvals WHERE project_id = $1",
-				[id],
-			);
-			await client.query(
-				"UPDATE governance_audit_events SET project_id = NULL, policy_version_id = NULL WHERE project_id = $1",
-				[id],
-			);
-			await client.query(
-				"DELETE FROM governance_policy_versions WHERE project_id = $1",
-				[id],
-			);
-			await client.query(
-				"DELETE FROM governance_policies WHERE project_id = $1",
-				[id],
-			);
-			const deleted = await client.query(
-				"DELETE FROM projects WHERE id = $1 AND organization_id = $2",
-				[id, tenant.organizationId],
-			);
-			if (!deleted.rowCount) throw new Error("Not found");
-			await client.query(
-				"UPDATE project_lifecycle_audit_events SET project_id = NULL WHERE organization_id = $1 AND project_id = $2",
-				[tenant.organizationId, id],
-			);
-			await client.query(
-				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, NULL, $2, 'deletion_completed')",
-				[tenant.organizationId, tenant.actor],
-			);
 			await client.query("COMMIT");
-			return c.body(null, 204);
 		} catch (cause) {
 			await client.query("ROLLBACK");
 			throw cause;
 		} finally {
 			client.release();
 		}
+		try {
+			if (!job.traces_cleaned_at) {
+				await ch().command({
+					query:
+						"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} SETTINGS mutations_sync = 1",
+					query_params: {
+						organizationId: tenant.organizationId,
+						projectId: id,
+					},
+				});
+				await pool.query(
+					"UPDATE project_deletion_jobs SET status = 'traces_cleaned', traces_cleaned_at = now(), updated_at = now() WHERE organization_id = $1 AND project_id = $2 AND traces_cleaned_at IS NULL",
+					[tenant.organizationId, id],
+				);
+			}
+			if (!job.observations_cleaned_at) {
+				await ch().command({
+					query:
+						"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} SETTINGS mutations_sync = 1",
+					query_params: {
+						organizationId: tenant.organizationId,
+						projectId: id,
+					},
+				});
+				await pool.query(
+					"UPDATE project_deletion_jobs SET status = 'clickhouse_cleaned', observations_cleaned_at = now(), updated_at = now() WHERE organization_id = $1 AND project_id = $2 AND observations_cleaned_at IS NULL",
+					[tenant.organizationId, id],
+				);
+			}
+			const finalize = await pool.connect();
+			try {
+				await finalize.query("BEGIN");
+				await finalize.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[id],
+				);
+				for (const sql of deletionCleanupSql) await finalize.query(sql, [id]);
+				await finalize.query(
+					"UPDATE project_authorization_audit_events SET project_id = NULL WHERE organization_id = $1 AND project_id = $2",
+					[tenant.organizationId, id],
+				);
+				await finalize.query(
+					"UPDATE project_lifecycle_audit_events SET project_id = NULL WHERE organization_id = $1 AND project_id = $2",
+					[tenant.organizationId, id],
+				);
+				const deleted = await finalize.query(
+					"DELETE FROM projects WHERE id = $1 AND organization_id = $2 AND status = 'deleting'",
+					[id, tenant.organizationId],
+				);
+				if (!deleted.rowCount) throw new Error("Not found");
+				await finalize.query(
+					"UPDATE project_deletion_jobs SET status = 'completed', completed_at = now(), updated_at = now() WHERE organization_id = $1 AND project_id = $2",
+					[tenant.organizationId, id],
+				);
+				await finalize.query(
+					"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result) VALUES ($1, NULL, $2, 'deletion_completed', '{\"stage\":\"completed\"}')",
+					[tenant.organizationId, tenant.actor],
+				);
+				await finalize.query("COMMIT");
+			} catch (cause) {
+				await finalize.query("ROLLBACK");
+				throw cause;
+			} finally {
+				finalize.release();
+			}
+			return c.body(null, 204);
+		} catch {
+			await pool.query(
+				"UPDATE project_deletion_jobs SET status = 'failed', updated_at = now() WHERE organization_id = $1 AND project_id = $2 AND status <> 'completed'",
+				[tenant.organizationId, id],
+			);
+			await pool.query(
+				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result) VALUES ($1, $2, $3, 'deletion_failed', '{\"stage\":\"retry_required\"}')",
+				[tenant.organizationId, id, tenant.actor],
+			);
+			throw new Error(
+				"Project deletion is incomplete; retry the deletion request",
+			);
+		}
+	} catch (error) {
+		return failure(c, error);
+	}
+}
+export async function handleGetProjectDeletionStatus(c: Context) {
+	try {
+		const id = (c.req as any).valid("param").id;
+		const tenant = trustedTenant(c);
+		const result = await pgPool().query<DeletionJob>(
+			"SELECT j.status, j.traces_cleaned_at, j.observations_cleaned_at, j.completed_at, j.attempt_count FROM project_deletion_jobs j JOIN projects p ON p.id = j.project_id AND p.organization_id = j.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE j.project_id = $1 AND j.organization_id = $2 AND p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')",
+			[id, tenant.organizationId, tenant.actor],
+		);
+		if (!result.rows[0]) throw new Error("Not found");
+		return c.json(deletionStatus(result.rows[0]));
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -504,7 +581,7 @@ export async function handleUpdateProject(c: Context) {
 		const tenant = trustedTenant(c);
 		const input = (c.req as any).valid("json");
 		const rows = await pgPool().query<Row>(
-			"WITH authorization AS MATERIALIZED (SELECT p.id, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $5 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $5 FOR UPDATE) pm ON true WHERE p.id = $3 AND p.organization_id = $4 AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om), p AS (UPDATE projects SET name = COALESCE($1, name), slug = COALESCE($2, slug), updated_at = now() FROM authorization WHERE projects.id = authorization.id RETURNING projects.id, projects.name, projects.slug, projects.status, projects.created_at, projects.archived_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $5, 'project_updated' FROM p) SELECT p.*, authorization.project_role FROM p JOIN authorization ON true",
+			"WITH authorization AS MATERIALIZED (SELECT p.id, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $5 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $5 FOR UPDATE) pm ON true WHERE p.id = $3 AND p.organization_id = $4 AND p.status <> 'deleting' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om), p AS (UPDATE projects SET name = COALESCE($1, name), slug = COALESCE($2, slug), updated_at = now() FROM authorization WHERE projects.id = authorization.id RETURNING projects.id, projects.name, projects.slug, projects.status, projects.created_at, projects.archived_at), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $4, id, $5, 'project_updated' FROM p) SELECT p.*, authorization.project_role FROM p JOIN authorization ON true",
 			[
 				input.name ?? null,
 				input.slug ?? null,
@@ -529,7 +606,7 @@ async function serializedLifecycle(c: Context, status: "active" | "archived") {
 			const authorized = await client.query<{
 				project_role: Row["project_role"];
 			}>(
-				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status <> 'deleting' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
 				[id, tenant.actor, tenant.organizationId],
 			);
 			if (!authorized.rows[0]) throw new Error("Not found");

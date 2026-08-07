@@ -4,7 +4,7 @@ import { ErrorEnvelope } from "./common.js";
 export const ProjectRole = z.enum(["manager", "member"]);
 export const ActorProjectRole = z.enum(["owner", "manager", "member"]);
 export const OrganizationRole = z.enum(["owner", "member"]);
-export const ProjectStatus = z.enum(["active", "archived"]);
+export const ProjectStatus = z.enum(["active", "archived", "deleting"]);
 export const Project = z
 	.object({
 		id: z.string().uuid(),
@@ -43,6 +43,22 @@ export const ProjectAuditEvent = z
 	})
 	.strict()
 	.openapi("ProjectAuditEvent");
+export const ProjectDeletionStatus = z
+	.object({
+		status: z.enum([
+			"pending",
+			"traces_cleaned",
+			"clickhouse_cleaned",
+			"failed",
+			"completed",
+		]),
+		traces_cleaned_at: z.string().datetime().nullable(),
+		observations_cleaned_at: z.string().datetime().nullable(),
+		completed_at: z.string().datetime().nullable(),
+		attempt_count: z.number().int().nonnegative(),
+	})
+	.strict()
+	.openapi("ProjectDeletionStatus");
 export const ProjectList = z
 	.object({ items: z.array(Project), total: z.number().int().nonnegative() })
 	.strict()

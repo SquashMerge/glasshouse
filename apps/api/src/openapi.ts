@@ -67,6 +67,7 @@ import {
 	archiveProject,
 	createProject,
 	deleteProject,
+	getProjectDeletionStatus,
 	deleteOrganizationMember,
 	deleteProjectMember,
 	getMe,
@@ -74,6 +75,7 @@ import {
 	handleArchiveProject,
 	handleCreateProject,
 	handleDeleteProject,
+	handleGetProjectDeletionStatus,
 	handleDeleteOrganizationMember,
 	handleDeleteProjectMember,
 	handleGetMe,
@@ -251,6 +253,7 @@ register(listProjects, handleListProjects);
 register(createProject, handleCreateProject);
 register(setDefaultProject, handleSetDefaultProject);
 register(deleteProject, handleDeleteProject);
+register(getProjectDeletionStatus, handleGetProjectDeletionStatus);
 register(getProject, handleGetProject);
 register(updateProject, handleUpdateProject);
 register(archiveProject, handleArchiveProject);

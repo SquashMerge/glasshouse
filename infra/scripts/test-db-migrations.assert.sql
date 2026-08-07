@@ -43,6 +43,16 @@ BEGIN
 	) THEN
 		RAISE EXCEPTION 'project deletion audit detachment constraints are incomplete';
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'projects'::regclass AND conname = 'projects_status_check' AND pg_get_constraintdef(oid) LIKE '%deleting%')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'project_deletion_jobs'::regclass AND conname LIKE '%project_id_key%') THEN
+		RAISE EXCEPTION 'durable project deletion saga persistence is incomplete';
+	END IF;
+	INSERT INTO project_deletion_jobs (organization_id, project_id, requested_by, status)
+	VALUES ('00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'migration-test', 'pending');
+	IF NOT EXISTS (SELECT 1 FROM project_deletion_jobs WHERE project_id = '11111111-1111-1111-1111-111111111111' AND status = 'pending') THEN
+		RAISE EXCEPTION 'project deletion job fixture was not retained';
+	END IF;
 	IF pg_get_functiondef('prevent_prompt_tombstone_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_prompt_deletion_audit_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_human_feedback_score_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
@@ -583,9 +593,46 @@ BEGIN
     EXCEPTION WHEN foreign_key_violation THEN
         NULL;
     END;
-    INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
-    VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
-    BEGIN
+	INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
+	VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
+	INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+	VALUES (
+		'c1000000-0000-4000-8000-000000000001',
+		'11111111-1111-1111-1111-111111111111',
+		'added_to_dataset',
+		'a1000000-0000-4000-8000-000000000001',
+		'a1000000-0000-4000-8000-000000000002'
+	);
+	UPDATE dataset_items
+	SET feedback_score_id = 'c1000000-0000-4000-8000-000000000001'
+	WHERE id = 'a1000000-0000-4000-8000-000000000002';
+	INSERT INTO benchmark_suites (id, project_id, dataset_id, name)
+	VALUES (
+		'd1000000-0000-4000-8000-000000000001',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000001',
+		'deletion-order-suite'
+	);
+	INSERT INTO benchmark_runs (id, project_id, suite_id, experiment_id, label)
+	VALUES (
+		'd2000000-0000-4000-8000-000000000001',
+		'11111111-1111-1111-1111-111111111111',
+		'd1000000-0000-4000-8000-000000000001',
+		'a6000000-0000-4000-8000-000000000001',
+		'deletion-order-run'
+	);
+	IF NOT EXISTS (
+		SELECT 1 FROM feedback_reviews review
+		JOIN dataset_items item ON item.feedback_score_id = review.score_id
+		WHERE review.status = 'added_to_dataset'
+	) OR NOT EXISTS (
+		SELECT 1 FROM benchmark_runs run
+		JOIN benchmark_suites suite ON suite.id = run.suite_id
+		WHERE suite.name = 'deletion-order-suite'
+	) THEN
+		RAISE EXCEPTION 'deletion dependency fixtures for promoted feedback or benchmark suites are incomplete';
+	END IF;
+	BEGIN
         UPDATE scores SET value = 1 WHERE id = '99999999-9999-4999-8999-999999999999';
         RAISE EXCEPTION 'human feedback score accepted a mutation';
     EXCEPTION WHEN OTHERS THEN

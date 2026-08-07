@@ -8,10 +8,22 @@ const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 const createdAt = new Date("2026-07-15T10:00:00.000Z");
 const query = mock(async (sql: string, values: string[] = []) => {
-	if (sql.startsWith("SELECT p.name FROM projects"))
-		return { rows: [{ name: "Project One" }] };
+	if (sql.startsWith("SELECT p.name, p.status FROM projects"))
+		return { rows: [{ name: "Project One", status: "active" }] };
 	if (sql.startsWith("SELECT default_project_id FROM organizations"))
 		return { rows: [{ default_project_id: OTHER_PROJECT }] };
+	if (sql.startsWith("INSERT INTO project_deletion_jobs"))
+		return {
+			rows: [
+				{
+					status: "pending",
+					traces_cleaned_at: null,
+					observations_cleaned_at: null,
+					completed_at: null,
+					attempt_count: 1,
+				},
+			],
+		};
 	if (values.includes(OTHER_PROJECT)) return { rows: [] };
 	if (sql.startsWith("WITH authorization AS MATERIALIZED")) {
 		if (values.at(-1) === "member") return { rows: [] };
@@ -179,11 +191,13 @@ const {
 	archiveProject,
 	deleteOrganizationMember,
 	deleteProject,
+	getProjectDeletionStatus,
 	deleteProjectMember,
 	handleArchiveProject,
 	handleCreateProject,
 	handleDeleteOrganizationMember,
 	handleDeleteProject,
+	handleGetProjectDeletionStatus,
 	handleDeleteProjectMember,
 	handleGetProjectAuditEvents,
 	handleGetMe,
@@ -225,6 +239,7 @@ api.use("/v1/*", async (c, next) => {
 api.openapi(createProject, handleCreateProject);
 api.openapi(setDefaultProject, handleSetDefaultProject);
 api.openapi(deleteProject, handleDeleteProject);
+api.openapi(getProjectDeletionStatus, handleGetProjectDeletionStatus);
 api.openapi(getMe, handleGetMe);
 api.openapi(listProjects, handleListProjects);
 api.openapi(updateProject, handleUpdateProject);
@@ -310,10 +325,69 @@ describe("project authorization routes", () => {
 			body: JSON.stringify({ confirmation_name: "Project One" }),
 		});
 
-		expect(response.status).toBe(500);
+		expect(response.status).toBe(409);
 		expect(
 			query.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM projects")),
 		).toBe(false);
+		expect(
+			query.mock.calls.some(([sql]) =>
+				sql.startsWith("UPDATE project_deletion_jobs SET status = 'failed'"),
+			),
+		).toBe(true);
+		const retried = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+		expect(retried.status).toBe(204);
+		expect(
+			query.mock.calls.filter(([sql]) =>
+				sql.startsWith("INSERT INTO project_deletion_jobs"),
+			).length,
+		).toBe(2);
+	});
+	it("checkpoints ClickHouse cleanup before ordered relational finalization", async () => {
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+
+		expect(response.status).toBe(204);
+		const sql = query.mock.calls.map(([statement]) => statement as string);
+		const index = (prefix: string) =>
+			sql.findIndex((statement) => statement.startsWith(prefix));
+		expect(
+			index("UPDATE project_deletion_jobs SET status = 'traces_cleaned'"),
+		).toBeGreaterThan(index("INSERT INTO project_deletion_jobs"));
+		expect(
+			index("UPDATE project_deletion_jobs SET status = 'clickhouse_cleaned'"),
+		).toBeGreaterThan(
+			index("UPDATE project_deletion_jobs SET status = 'traces_cleaned'"),
+		);
+		expect(index("DELETE FROM prompt_optimization_events")).toBeLessThan(
+			index("DELETE FROM prompt_optimization_jobs"),
+		);
+		expect(index("DELETE FROM prompt_optimization_jobs")).toBeLessThan(
+			index("DELETE FROM prompts"),
+		);
+		expect(index("DELETE FROM benchmark_runs")).toBeLessThan(
+			index("DELETE FROM benchmark_suites"),
+		);
+		expect(index("DELETE FROM benchmark_suites")).toBeLessThan(
+			index("DELETE FROM datasets"),
+		);
+		expect(index("DELETE FROM feedback_reviews")).toBeLessThan(
+			index("DELETE FROM dataset_items"),
+		);
+		expect(index("DELETE FROM dataset_items")).toBeLessThan(
+			index("DELETE FROM scores"),
+		);
+		expect(
+			index("UPDATE project_deletion_jobs SET status = 'completed'"),
+		).toBeGreaterThan(index("DELETE FROM projects"));
+		expect(command.mock.calls.map(([input]) => input.query)).toEqual([
+			expect.stringContaining("ALTER TABLE traces DELETE"),
+			expect.stringContaining("ALTER TABLE observations DELETE"),
+		]);
 	});
 	it("rejects members from creating projects or changing organization roles", async () => {
 		const create = await request("member", "/v1/projects", {
