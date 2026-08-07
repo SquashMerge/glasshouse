@@ -218,6 +218,9 @@ export async function handleCreatePolicyDraft(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
+			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
+				project_id,
+			]);
 			await lockActiveManager(
 				client,
 				tenant.organizationId,
@@ -278,6 +281,9 @@ export async function handleApprovePolicy(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
+			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
+				project_id,
+			]);
 			const authorized = await client.query(
 				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
 				[project_id, tenant.organizationId, tenant.actor],
@@ -338,6 +344,9 @@ export async function handlePreviewRetention(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
+			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
+				project_id,
+			]);
 			const current = await activeManagerAndVersion(
 				client,
 				tenant.organizationId,
@@ -425,6 +434,9 @@ export async function handleRunRetention(c: Context) {
 		const counts: Record<string, number> = {};
 		try {
 			await client.query("BEGIN");
+			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
+				project_id,
+			]);
 			version = await activeManagerAndVersion(
 				client,
 				tenant.organizationId,
@@ -745,6 +757,15 @@ async function terminalizeRun(
 	duration: number,
 ): Promise<{ status: "completed" | "failed"; counts: Record<string, number> }> {
 	return withRunTransaction(db, async (client) => {
+		const run = await client.query<{ project_id: string }>(
+			"SELECT project_id FROM governance_retention_runs WHERE id = $1 AND owner_token = $2::uuid AND status = 'running'",
+			[runId, ownerToken],
+		);
+		const projectId = run.rows[0]?.project_id;
+		if (!projectId) throw new Error("Retention run ownership was lost");
+		await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
+			projectId,
+		]);
 		const owned = await client.query(
 			"SELECT r.id FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id WHERE r.id = $1 AND r.owner_token = $2::uuid AND r.status = 'running' FOR UPDATE OF p, r",
 			[runId, ownerToken],

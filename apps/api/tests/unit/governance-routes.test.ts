@@ -168,6 +168,14 @@ describe("governance route guards", () => {
 			{ method: "POST" },
 		);
 		expect(response.status).toBe(200);
+		const index = (prefix: string) =>
+			calls.findIndex((statement) => statement.startsWith(prefix));
+		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
+			index("BEGIN"),
+		);
+		expect(index("SELECT lock_project_audit_provenance")).toBeLessThan(
+			index("SELECT p.id FROM projects"),
+		);
 		expect(calls).toEqual(
 			expect.arrayContaining([
 				"BEGIN",

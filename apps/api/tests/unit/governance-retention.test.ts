@@ -72,12 +72,13 @@ describe("governance retention", () => {
 		expect(await failInterruptedRetentionRuns(pool)).toEqual([
 			{ id: "run", project_id: "project" },
 		]);
-		expect(calls[1]).toContain("SET status = 'failed'");
 		expect(calls[1]).toContain("lease_expires_at < now()");
-		expect(calls[1]).toContain("FOR UPDATE OF p, r");
-		expect(calls[1]).toContain("'retention_failed'");
-		expect(calls[1]).not.toContain("p.status = 'active'");
-		expect(calls[1]).not.toContain("cursor");
+		expect(calls[2]).toContain("lock_project_audit_provenance");
+		expect(calls[3]).toContain("SET status = 'failed'");
+		expect(calls[3]).toContain("FOR UPDATE OF p, r");
+		expect(calls[3]).toContain("'retention_failed'");
+		expect(calls[3]).not.toContain("p.status = 'active'");
+		expect(calls[3]).not.toContain("cursor");
 	});
 
 	it("leaves an active lease untouched during startup recovery", async () => {
@@ -94,7 +95,7 @@ describe("governance retention", () => {
 		expect(calls[1]).toContain(
 			"r.status = 'running' AND r.lease_expires_at < now()",
 		);
-		expect(calls[1]).toContain("RETURNING r.id");
+		expect(calls).toHaveLength(3);
 	});
 
 	it("waits for the project lock before terminalizing an expired run", async () => {
@@ -106,7 +107,7 @@ describe("governance retention", () => {
 		const recovery = failInterruptedRetentionRuns({
 			connect: async () => ({
 				query: async (statement: string) => {
-					if (statement.startsWith("WITH expired")) await lockHeld;
+					if (statement.startsWith("SELECT lock_project")) await lockHeld;
 					return { rows: [] };
 				},
 				release() {},

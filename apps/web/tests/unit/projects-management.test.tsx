@@ -14,6 +14,9 @@ const api = vi.hoisted(() => ({
 	updateProject: vi.fn(),
 	archiveProject: vi.fn(),
 	restoreProject: vi.fn(),
+	deleteProject: vi.fn(),
+	getProjectDeletionStatus: vi.fn(),
+	setDefaultProject: vi.fn(),
 	listProjectMembers: vi.fn(),
 	putProjectMember: vi.fn(),
 	deleteProjectMember: vi.fn(),
@@ -37,6 +40,7 @@ const PROJECT = {
 	created_at: "2026-07-15T10:00:00.000Z",
 	archived_at: null,
 	project_role: "manager" as const,
+	is_default: true,
 };
 
 function renderPage() {
@@ -119,6 +123,52 @@ describe("ProjectsPage", () => {
 		await waitFor(() =>
 			expect(api.restoreProject.mock.calls[0]?.[0]).toBe(PROJECT.id),
 		);
+	});
+
+	it("lets owners set another active project as the default", async () => {
+		const otherProject = {
+			...PROJECT,
+			id: "22222222-2222-4222-8222-222222222222",
+			name: "Project Two",
+			slug: "project-two",
+			is_default: false,
+		};
+		api.listProjects.mockResolvedValue({
+			items: [PROJECT, otherProject],
+			total: 2,
+		});
+		api.setDefaultProject.mockResolvedValue({
+			...otherProject,
+			is_default: true,
+		});
+		renderPage();
+
+		await screen.findByText("Project Two");
+		fireEvent.click(screen.getByRole("button", { name: "Set as default" }));
+		await waitFor(() =>
+			expect(api.setDefaultProject.mock.calls[0]?.[0]).toBe(otherProject.id),
+		);
+	});
+
+	it("keeps the default badge and hides Delete after replacing the renamed project", async () => {
+		api.updateProject.mockResolvedValue({
+			...PROJECT,
+			name: "Renamed",
+			slug: "renamed-project",
+			is_default: true,
+		});
+		renderPage();
+
+		await screen.findByText("Project One");
+		fireEvent.click(screen.getByRole("button", { name: "Rename Project One" }));
+		fireEvent.change(screen.getByLabelText("New name for Project One"), {
+			target: { value: "Renamed" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+
+		await screen.findByText("Renamed");
+		expect(screen.getByText("Default")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Delete Renamed" })).toBeNull();
 	});
 
 	it("loads persisted archived projects and manages members for managers", async () => {
@@ -216,5 +266,47 @@ describe("ProjectsPage", () => {
 			"Project operation could not be completed.",
 		);
 		expect(screen.getByRole("alert")).not.toHaveTextContent("Forbidden");
+	});
+
+	it("shows a failed deletion after reload and retries only after exact confirmation", async () => {
+		const deletingProject = {
+			...PROJECT,
+			status: "deleting" as const,
+			is_default: false,
+		};
+		api.listProjects.mockResolvedValue({
+			items: [deletingProject],
+			total: 1,
+		});
+		api.getProjectDeletionStatus.mockResolvedValue({
+			status: "failed",
+			traces_cleaned_at: null,
+			observations_cleaned_at: null,
+			completed_at: null,
+			attempt_count: 1,
+		});
+		api.deleteProject.mockRejectedValue(new Error("internal details"));
+		renderPage();
+
+		await screen.findByText("Deletion recovery");
+		await screen.findByText("Deletion failed");
+		const retry = screen.getByRole("button", { name: "Retry deletion" });
+		expect(retry).toBeDisabled();
+		fireEvent.change(
+			screen.getByLabelText("Deletion confirmation for Project One"),
+			{ target: { value: "Project One" } },
+		);
+		fireEvent.click(retry);
+		await waitFor(() =>
+			expect(api.deleteProject.mock.calls[0]?.[0]).toEqual({
+				id: PROJECT.id,
+				confirmation_name: "Project One",
+			}),
+		);
+		await screen.findByRole("alert");
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"Project operation could not be completed.",
+		);
+		expect(screen.getByRole("alert")).not.toHaveTextContent("internal details");
 	});
 });

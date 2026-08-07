@@ -416,10 +416,11 @@ export interface Project {
 	id: string;
 	name: string;
 	slug: string;
-	status: "active" | "archived";
+	status: "active" | "archived" | "deleting";
 	created_at: string;
 	archived_at: string | null;
 	project_role: "owner" | "manager" | "member";
+	is_default: boolean;
 }
 
 export interface ProjectMember {
@@ -432,6 +433,7 @@ export interface CurrentActor {
 	actor_subject: string;
 	organization_id: string;
 	organization_role: "owner" | "member";
+	default_project_id: string;
 	projects: Project[];
 }
 
@@ -472,6 +474,50 @@ export async function updateProject(input: {
 			body: JSON.stringify(body),
 		}),
 		"updateProject",
+	);
+}
+export async function setDefaultProject(project_id: string): Promise<Project> {
+	return responseJson(
+		await authedFetch("/v1/organizations/current/default-project", {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ project_id }),
+		}),
+		"setDefaultProject",
+	);
+}
+export async function deleteProject(input: {
+	id: string;
+	confirmation_name: string;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/projects/${encodeURIComponent(input.id)}`,
+		{
+			method: "DELETE",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ confirmation_name: input.confirmation_name }),
+		},
+	);
+	if (!response.ok) await responseJson<never>(response, "deleteProject");
+}
+export interface ProjectDeletionStatus {
+	status:
+		| "pending"
+		| "traces_cleaned"
+		| "clickhouse_cleaned"
+		| "failed"
+		| "completed";
+	traces_cleaned_at: string | null;
+	observations_cleaned_at: string | null;
+	completed_at: string | null;
+	attempt_count: number;
+}
+export async function getProjectDeletionStatus(
+	projectId: string,
+): Promise<ProjectDeletionStatus> {
+	return responseJson(
+		await authedFetch(`/v1/projects/${encodeURIComponent(projectId)}/deletion`),
+		"getProjectDeletionStatus",
 	);
 }
 export async function listProjectMembers(

@@ -4,7 +4,7 @@ import { ErrorEnvelope } from "./common.js";
 export const ProjectRole = z.enum(["manager", "member"]);
 export const ActorProjectRole = z.enum(["owner", "manager", "member"]);
 export const OrganizationRole = z.enum(["owner", "member"]);
-export const ProjectStatus = z.enum(["active", "archived"]);
+export const ProjectStatus = z.enum(["active", "archived", "deleting"]);
 export const Project = z
 	.object({
 		id: z.string().uuid(),
@@ -14,6 +14,7 @@ export const Project = z
 		created_at: z.string().datetime(),
 		archived_at: z.string().datetime().nullable(),
 		project_role: ActorProjectRole,
+		is_default: z.boolean(),
 	})
 	.strict()
 	.openapi("Project");
@@ -42,6 +43,22 @@ export const ProjectAuditEvent = z
 	})
 	.strict()
 	.openapi("ProjectAuditEvent");
+export const ProjectDeletionStatus = z
+	.object({
+		status: z.enum([
+			"pending",
+			"traces_cleaned",
+			"clickhouse_cleaned",
+			"failed",
+			"completed",
+		]),
+		traces_cleaned_at: z.string().datetime().nullable(),
+		observations_cleaned_at: z.string().datetime().nullable(),
+		completed_at: z.string().datetime().nullable(),
+		attempt_count: z.number().int().nonnegative(),
+	})
+	.strict()
+	.openapi("ProjectDeletionStatus");
 export const ProjectList = z
 	.object({ items: z.array(Project), total: z.number().int().nonnegative() })
 	.strict()
@@ -54,6 +71,7 @@ export const Me = z
 		actor_subject: z.string(),
 		organization_id: z.string().uuid(),
 		organization_role: OrganizationRole,
+		default_project_id: z.string().uuid(),
 		projects: z.array(Project),
 	})
 	.strict()
@@ -77,6 +95,12 @@ export const UpdateProjectInput = z
 	.refine((value) => value.name !== undefined || value.slug !== undefined, {
 		message: "At least one project field is required",
 	});
+export const SetDefaultProjectInput = z
+	.object({ project_id: z.string().uuid() })
+	.strict();
+export const DeleteProjectInput = z
+	.object({ confirmation_name: z.string().min(1).max(200) })
+	.strict();
 export const MemberInput = z
 	.object({
 		actor_subject: z.string().trim().min(1).max(200),
