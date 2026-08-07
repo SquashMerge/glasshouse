@@ -21,11 +21,36 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'governance_retention_runs'::regclass AND conname = 'governance_retention_runs_running_lease') THEN
 		RAISE EXCEPTION 'retention running lease invariant is incomplete';
 	END IF;
-	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 10 THEN
+	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 9 THEN
 		RAISE EXCEPTION 'governance tenant fields must be not null';
 	END IF;
-	IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('governance_policies_project_organization_fkey', 'governance_policy_versions_project_organization_fkey', 'governance_policy_approvals_version_tenant_fkey', 'governance_audit_events_version_tenant_fkey', 'governance_retention_runs_version_tenant_fkey')) <> 5 THEN
+	IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('governance_policies_project_organization_fkey', 'governance_policy_versions_project_organization_fkey', 'governance_policy_approvals_version_tenant_fkey', 'governance_retention_runs_version_tenant_fkey')) <> 4 THEN
 		RAISE EXCEPTION 'governance composite ownership constraints are incomplete';
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conrelid = 'governance_audit_events'::regclass
+			AND conname = 'governance_audit_events_policy_version_fkey'
+			AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL%'
+	) OR EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'governance_audit_events'
+			AND column_name IN ('project_id', 'policy_version_id') AND is_nullable = 'NO'
+	) OR EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'project_lifecycle_audit_events'
+			AND column_name = 'project_id' AND is_nullable = 'NO'
+	) THEN
+		RAISE EXCEPTION 'project deletion audit detachment constraints are incomplete';
+	END IF;
+	IF pg_get_functiondef('prevent_prompt_tombstone_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_prompt_deletion_audit_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_human_feedback_score_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_prompt_optimization_event_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_governance_immutable_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_project_authorization_audit_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_final_workspace_role_removal'::regproc) NOT LIKE '%project_deletion_is_authorized%' THEN
+		RAISE EXCEPTION 'immutable records do not have a project-scoped deletion escape';
 	END IF;
 	IF NOT EXISTS (
 		SELECT 1 FROM information_schema.columns
@@ -731,6 +756,34 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '55000' THEN
         NULL;
     END;
+END
+$$;
+
+DO $$
+DECLARE
+    deletion_project_id UUID := '77777777-7777-4777-8777-777777777777';
+BEGIN
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES (
+        deletion_project_id,
+        'Permanent Deletion Fixture',
+        'permanent-deletion-fixture',
+        '00000000-0000-4000-8000-000000000001'
+    );
+    INSERT INTO prompt_tombstones (project_id, slug)
+    VALUES (deletion_project_id, 'permanent-deletion-fixture');
+    BEGIN
+        DELETE FROM prompt_tombstones WHERE project_id = deletion_project_id;
+        RAISE EXCEPTION 'project deletion escape was available without transaction-local authorization';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    PERFORM set_config('astraea.project_deletion_id', deletion_project_id::text, true);
+    DELETE FROM prompt_tombstones WHERE project_id = deletion_project_id;
+    IF EXISTS (SELECT 1 FROM prompt_tombstones WHERE project_id = deletion_project_id) THEN
+        RAISE EXCEPTION 'project deletion escape did not remove the scoped tombstone';
+    END IF;
+    DELETE FROM projects WHERE id = deletion_project_id;
 END
 $$;
 

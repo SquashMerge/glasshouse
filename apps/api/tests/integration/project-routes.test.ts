@@ -249,7 +249,11 @@ function request(actor: string, path: string, init?: RequestInit) {
 	});
 }
 
-beforeEach(() => query.mockClear());
+beforeEach(() => {
+	query.mockClear();
+	command.mockClear();
+	command.mockImplementation(async () => undefined);
+});
 
 describe("project authorization routes", () => {
 	it("sets an active same-organization default and permanently deletes only a confirmed non-default project", async () => {
@@ -284,6 +288,32 @@ describe("project authorization routes", () => {
 			query.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM projects")),
 		).toBe(true);
 		expect(command).toHaveBeenCalledTimes(2);
+		for (const [input] of command.mock.calls)
+			expect(input.query).toContain("SETTINGS mutations_sync = 1");
+		expect(
+			query.mock.calls.some(([sql]) =>
+				sql.startsWith("SELECT set_config('astraea.project_deletion_id'"),
+			),
+		).toBe(true);
+		expect(
+			query.mock.calls.some(([sql]) =>
+				sql.startsWith("DELETE FROM governance_policy_versions"),
+			),
+		).toBe(true);
+	});
+	it("does not delete the PostgreSQL project when ClickHouse cleanup fails", async () => {
+		command.mockImplementationOnce(async () => {
+			throw new Error("ClickHouse mutation failed");
+		});
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+
+		expect(response.status).toBe(500);
+		expect(
+			query.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM projects")),
+		).toBe(false);
 	});
 	it("rejects members from creating projects or changing organization roles", async () => {
 		const create = await request("member", "/v1/projects", {

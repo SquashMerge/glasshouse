@@ -74,6 +74,7 @@ export const setDefaultProject = createRoute({
 	security: [{ basicAuth: [] }],
 	request: {
 		body: {
+			required: true,
 			content: { "application/json": { schema: SetDefaultProjectInput } },
 		},
 	},
@@ -86,7 +87,10 @@ export const deleteProject = createRoute({
 	security: [{ basicAuth: [] }],
 	request: {
 		params: projectParams,
-		body: { content: { "application/json": { schema: DeleteProjectInput } } },
+		body: {
+			required: true,
+			content: { "application/json": { schema: DeleteProjectInput } },
+		},
 	},
 	responses: { 204: { description: "Deleted" }, ...ProjectErrorResponses },
 });
@@ -381,10 +385,14 @@ export async function handleDeleteProject(c: Context) {
 				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'deletion_attempted')",
 				[tenant.organizationId, id, tenant.actor],
 			);
+			await client.query(
+				"SELECT set_config('astraea.project_deletion_id', $1, true)",
+				[id],
+			);
 			await Promise.all([
 				ch().command({
 					query:
-						"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+						"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} SETTINGS mutations_sync = 1",
 					query_params: {
 						organizationId: tenant.organizationId,
 						projectId: id,
@@ -392,21 +400,77 @@ export async function handleDeleteProject(c: Context) {
 				}),
 				ch().command({
 					query:
-						"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+						"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} SETTINGS mutations_sync = 1",
 					query_params: {
 						organizationId: tenant.organizationId,
 						projectId: id,
 					},
 				}),
 			]);
+			await client.query(
+				"DELETE FROM prompt_tombstones WHERE project_id = $1",
+				[id],
+			);
+			await client.query(
+				"DELETE FROM prompt_deletion_audit WHERE project_id = $1",
+				[id],
+			);
+			await client.query(
+				"DELETE FROM prompt_label_quarantine WHERE original_project_id = $1",
+				[id],
+			);
+			await client.query("DELETE FROM prompt_labels WHERE project_id = $1", [
+				id,
+			]);
+			await client.query("DELETE FROM prompts WHERE project_id = $1", [id]);
+			await client.query(
+				"DELETE FROM prompt_optimization_events WHERE job_id IN (SELECT id FROM prompt_optimization_jobs WHERE project_id = $1)",
+				[id],
+			);
+			await client.query(
+				"DELETE FROM prompt_optimization_jobs WHERE project_id = $1",
+				[id],
+			);
+			await client.query("DELETE FROM scores WHERE project_id = $1", [id]);
+			await client.query("DELETE FROM experiments WHERE project_id = $1", [id]);
+			await client.query("DELETE FROM datasets WHERE project_id = $1", [id]);
+			await client.query("DELETE FROM agents WHERE project_id = $1", [id]);
+			await client.query(
+				"DELETE FROM governance_retention_previews WHERE project_id = $1",
+				[id],
+			);
+			await client.query(
+				"DELETE FROM governance_retention_runs WHERE project_id = $1",
+				[id],
+			);
+			await client.query(
+				"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+				[id],
+			);
+			await client.query(
+				"UPDATE governance_audit_events SET project_id = NULL, policy_version_id = NULL WHERE project_id = $1",
+				[id],
+			);
+			await client.query(
+				"DELETE FROM governance_policy_versions WHERE project_id = $1",
+				[id],
+			);
+			await client.query(
+				"DELETE FROM governance_policies WHERE project_id = $1",
+				[id],
+			);
 			const deleted = await client.query(
 				"DELETE FROM projects WHERE id = $1 AND organization_id = $2",
 				[id, tenant.organizationId],
 			);
 			if (!deleted.rowCount) throw new Error("Not found");
 			await client.query(
-				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'deletion_completed')",
-				[tenant.organizationId, id, tenant.actor],
+				"UPDATE project_lifecycle_audit_events SET project_id = NULL WHERE organization_id = $1 AND project_id = $2",
+				[tenant.organizationId, id],
+			);
+			await client.query(
+				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, NULL, $2, 'deletion_completed')",
+				[tenant.organizationId, tenant.actor],
 			);
 			await client.query("COMMIT");
 			return c.body(null, 204);
