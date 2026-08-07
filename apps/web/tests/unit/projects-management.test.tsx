@@ -277,7 +277,7 @@ describe("ProjectsPage", () => {
 		);
 		fireEvent.click(retry);
 		await waitFor(() =>
-			expect(api.deleteProject).toHaveBeenCalledWith({
+			expect(api.deleteProject.mock.calls[0]?.[0]).toEqual({
 				id: PROJECT.id,
 				confirmation_name: "Project One",
 			}),
