@@ -758,7 +758,7 @@ export async function startPromptOptimization(input: {
 	project_id: string;
 	slug: string;
 	source_version: number;
-	target: PromptRole;
+	target: "system";
 	evaluator: JsonObject;
 	dataset: OptimizationDataset;
 	model_config: JsonObject;

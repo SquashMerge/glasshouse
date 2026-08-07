@@ -346,10 +346,12 @@ describe("PromptDetailPage", () => {
 			screen.getByRole("heading", { name: "Start optimization" }),
 		).toBeInTheDocument();
 
-		const systemRadio = screen.getByRole("radio", { name: "System prompt" });
-		const userRadio = screen.getByRole("radio", { name: "User prompt" });
-		expect(systemRadio).toBeChecked();
-		expect(userRadio).not.toBeChecked();
+		expect(
+			screen.queryByRole("radio", { name: "System prompt" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("radio", { name: "User prompt" }),
+		).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Scoring rubric / objective")).toHaveAttribute(
 			"placeholder",
 			"e.g. Prioritize urgent work, preserve deadlines, and use concise grouped headings",
@@ -793,7 +795,7 @@ describe("PromptDetailPage", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("submits the selected historical version and target role", async () => {
+	it("submits the selected historical version for system-prompt optimization", async () => {
 		router.location.searchStr = "?version=2";
 		getPrompt.mockImplementation(({ version }: { version?: number }) =>
 			Promise.resolve(version === 2 ? prompt(2) : prompt()),
@@ -803,7 +805,7 @@ describe("PromptDetailPage", () => {
 		fireEvent.click(
 			await screen.findByRole("button", { name: "Optimize prompt" }),
 		);
-		fireEvent.click(screen.getByRole("radio", { name: "User prompt" }));
+
 		fireEvent.change(screen.getByLabelText("Scoring rubric / objective"), {
 			target: { value: "Answer with a concise, accurate explanation." },
 		});
@@ -830,7 +832,7 @@ describe("PromptDetailPage", () => {
 
 		await waitFor(() =>
 			expect(startPromptOptimization).toHaveBeenCalledWith(
-				expect.objectContaining({ source_version: 2, target: "user" }),
+				expect.objectContaining({ source_version: 2, target: "system" }),
 			),
 		);
 	});

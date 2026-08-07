@@ -38,15 +38,57 @@ DEFAULT_IGNORABLE_RANGES = (
 class StderrLogger:
     """Keep GEPA progress off stdout, which is the worker's JSON protocol."""
 
-    def log(self, message):
-        print(message, file=sys.stderr, flush=True)
+    def __init__(self, stream):
+        self._stream = stream
+
+    def log(self, _message):
+        # GEPA's free-form messages can contain candidates, examples, and provider output.
+        return None
 
     def progress(self, metric_calls_used):
         print(
             "ASTRAEA_GEPA_PROGRESS " + json.dumps({"metric_calls_used": metric_calls_used}),
-            file=sys.stderr,
+            file=self._stream,
             flush=True,
         )
+
+
+class GepaBudgetProgressCallback:
+    def __init__(self, logger):
+        self._logger = logger
+        self._last_metric_calls_used = 0
+
+    def on_budget_updated(self, event):
+        metric_calls_used = event.get("metric_calls_used")
+        if (
+            isinstance(metric_calls_used, int)
+            and not isinstance(metric_calls_used, bool)
+            and metric_calls_used > self._last_metric_calls_used
+        ):
+            self._last_metric_calls_used = metric_calls_used
+            self._logger.progress(metric_calls_used)
+
+
+class SuppressThirdPartyOutput:
+    """Redirect both Python- and fd-level third-party output to /dev/null."""
+
+    def __enter__(self):
+        self._stdout = os.dup(1)
+        self._stderr = os.dup(2)
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null, 1)
+            os.dup2(null, 2)
+        finally:
+            os.close(null)
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        try:
+            os.dup2(self._stdout, 1)
+            os.dup2(self._stderr, 2)
+        finally:
+            os.close(self._stdout)
+            os.close(self._stderr)
 
 
 class ProgressReportingAdapter:
@@ -66,6 +108,7 @@ class ProgressReportingAdapter:
         self.metric_calls_used += metric_calls
         self._logger.progress(self.metric_calls_used)
         return evaluation
+
 
     @property
     def remaining_metric_calls(self):
@@ -164,8 +207,8 @@ def examples(dataset, name):
 def validate_request(request):
     source = request_value(request, "source", str)
     target = request_value(request, "target", str)
-    if target not in {"system", "user"}:
-        raise ValueError("target must be system or user")
+    if target != "system":
+        raise ValueError("target must be system")
     evaluator = request_value(request, "evaluator", dict)
     if evaluator != {"type": "default_adapter"}:
         raise ValueError("evaluator must be the default_adapter")
@@ -294,37 +337,43 @@ class AstraeaDefaultAdapter(DefaultAdapter):
 
 
 try:
-    logger = StderrLogger()
+    progress_stream = os.fdopen(
+        os.dup(2), "w", encoding=sys.stderr.encoding or "utf-8", buffering=1
+    )
+    logger = StderrLogger(progress_stream)
     adapter = ProgressReportingAdapter(
         AstraeaDefaultAdapter(model=task_lm, rubric=rubric), logger, max_metric_calls
     )
     reflection_minibatch_size = min(3, len(trainset))
-    result = gepa.optimize(
-        seed_candidate={"system_prompt": source},
-        trainset=trainset,
-        valset=valset,
-        adapter=adapter,
-        task_lm=None,
-        reflection_lm=reflection_lm,
-        max_metric_calls=max_metric_calls,
-        reflection_minibatch_size=reflection_minibatch_size,
-        stop_callbacks=RemainingMetricCallsStopper(
-            adapter, reflection_minibatch_size, len(valset)
-        ),
-        logger=logger,
-    )
+    with SuppressThirdPartyOutput():
+        result = gepa.optimize(
+            seed_candidate={"system_prompt": source},
+            trainset=trainset,
+            valset=valset,
+            adapter=adapter,
+            task_lm=None,
+            reflection_lm=reflection_lm,
+            max_metric_calls=max_metric_calls,
+            reflection_minibatch_size=reflection_minibatch_size,
+            stop_callbacks=RemainingMetricCallsStopper(
+                adapter, reflection_minibatch_size, len(valset)
+            ),
+            callbacks=[GepaBudgetProgressCallback(logger)],
+            track_best_outputs=False,
+            logger=logger,
+        )
     best_idx = result.best_idx
     candidate = result.best_candidate["system_prompt"]
     validation_score = average([result.val_aggregate_scores[best_idx]], "validation score")
     baseline_validation_score = average([result.val_aggregate_scores[0]], "baseline validation score")
-    training_score = (
-        average(
-            adapter.evaluate(trainset, {"system_prompt": candidate}).scores,
-            "training score",
-        )
-        if len(trainset) <= adapter.remaining_metric_calls
-        else None
-    )
+    if len(trainset) <= adapter.remaining_metric_calls:
+        with SuppressThirdPartyOutput():
+            training_score = average(
+                adapter.evaluate(trainset, {"system_prompt": candidate}).scores,
+                "training score",
+            )
+    else:
+        training_score = None
     print(
         json.dumps(
             {
@@ -336,9 +385,9 @@ try:
             }
         )
     )
-except DevCliLlmError as error:
-    sys.stderr.write(f"GEPA development CLI failed: {error}")
+except DevCliLlmError:
+    sys.stderr.write("GEPA development CLI failed")
     sys.exit(1)
-except Exception as error:
-    sys.stderr.write(f"GEPA optimization failed: {error}")
+except Exception:
+    sys.stderr.write("GEPA optimization failed")
     sys.exit(1)
