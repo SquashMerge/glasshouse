@@ -21,7 +21,7 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'governance_retention_runs'::regclass AND conname = 'governance_retention_runs_running_lease') THEN
 		RAISE EXCEPTION 'retention running lease invariant is incomplete';
 	END IF;
-	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 9 THEN
+	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 10 THEN
 		RAISE EXCEPTION 'governance tenant fields must be not null';
 	END IF;
 	IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('governance_policies_project_organization_fkey', 'governance_policy_versions_project_organization_fkey', 'governance_policy_approvals_version_tenant_fkey', 'governance_retention_runs_version_tenant_fkey')) <> 4 THEN
