@@ -495,6 +495,9 @@ export async function handleDeleteProject(c: Context) {
 			const finalize = await pool.connect();
 			try {
 				await finalize.query("BEGIN");
+				await finalize.query("SELECT lock_project_audit_provenance($1::uuid)", [
+					id,
+				]);
 				await finalize.query(
 					"SELECT set_config('astraea.project_deletion_id', $1, true)",
 					[id],

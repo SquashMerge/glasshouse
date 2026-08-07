@@ -444,6 +444,12 @@ describe("project authorization routes", () => {
 		const sql = query.mock.calls.map(([statement]) => statement as string);
 		const index = (prefix: string) =>
 			sql.findIndex((statement) => statement.startsWith(prefix));
+		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
+			index("BEGIN"),
+		);
+		expect(index("DELETE FROM projects")).toBeGreaterThan(
+			index("SELECT lock_project_audit_provenance"),
+		);
 		expect(
 			index("UPDATE project_deletion_jobs SET status = 'traces_cleaned'"),
 		).toBeGreaterThan(index("INSERT INTO project_deletion_jobs"));

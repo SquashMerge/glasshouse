@@ -52,31 +52,25 @@ BEGIN
 	) THEN
 		RAISE EXCEPTION 'project deletion audit provenance constraints are incomplete';
 	END IF;
-	IF NOT EXISTS (
-		SELECT 1 FROM pg_trigger
-		WHERE tgrelid = 'projects'::regclass
-			AND tgname = 'projects_audit_uuid_reuse_guard'
-			AND NOT tgisinternal
-	) OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%project_authorization_audit_events%'
-		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%project_lifecycle_audit_events%'
-		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%governance_audit_events%'
-		OR pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc) NOT LIKE '%lock_project_audit_provenance%'
-		OR pg_get_functiondef('lock_project_audit_provenance'::regproc) NOT LIKE '%pg_advisory_xact_lock%'
-		OR pg_get_functiondef('enforce_retained_audit_project_provenance'::regproc) NOT LIKE '%lock_project_audit_provenance%'
-		OR EXISTS (
-			SELECT 1
-			FROM (VALUES
-				('project_authorization_audit_events'::regclass, 'project_authorization_audit_events_00_provenance_lock'),
-				('project_lifecycle_audit_events'::regclass, 'project_lifecycle_audit_events_00_provenance_lock'),
-				('governance_audit_events'::regclass, 'governance_audit_events_00_provenance_lock')
-			) AS expected(tgrelid, tgname)
-			WHERE NOT EXISTS (
-				SELECT 1 FROM pg_trigger
-				WHERE pg_trigger.tgrelid = expected.tgrelid
-					AND pg_trigger.tgname = expected.tgname
-					AND NOT pg_trigger.tgisinternal
-			)
-		) THEN
+	IF EXISTS (
+		SELECT 1
+		FROM (VALUES
+			('projects'::regclass, 'projects_audit_uuid_reuse_guard', 'prevent_project_audit_uuid_reuse'::regproc, 23::smallint),
+			('project_authorization_audit_events'::regclass, 'project_authorization_audit_events_00_provenance_lock', 'enforce_retained_audit_project_provenance'::regproc, 23::smallint),
+			('project_lifecycle_audit_events'::regclass, 'project_lifecycle_audit_events_00_provenance_lock', 'enforce_retained_audit_project_provenance'::regproc, 23::smallint),
+			('governance_audit_events'::regclass, 'governance_audit_events_00_provenance_lock', 'enforce_retained_audit_project_provenance'::regproc, 23::smallint),
+			('project_lifecycle_audit_events'::regclass, 'project_lifecycle_audit_events_immutable', 'prevent_project_lifecycle_audit_mutation'::regproc, 27::smallint)
+		) AS expected(tgrelid, tgname, tgfoid, tgtype)
+		WHERE NOT EXISTS (
+			SELECT 1 FROM pg_trigger
+			WHERE pg_trigger.tgrelid = expected.tgrelid
+				AND pg_trigger.tgname = expected.tgname
+				AND pg_trigger.tgfoid = expected.tgfoid
+				AND pg_trigger.tgtype = expected.tgtype
+				AND pg_trigger.tgenabled = 'O'
+				AND NOT pg_trigger.tgisinternal
+		)
+	) THEN
 		RAISE EXCEPTION 'retained audit provenance serialization is incomplete';
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
@@ -831,13 +825,36 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '55000' THEN
         NULL;
     END;
-    BEGIN
-        DELETE FROM project_authorization_audit_events
-        WHERE project_id = '33333333-3333-4333-8333-333333333333';
-        RAISE EXCEPTION 'authorization audit accepted a delete';
-    EXCEPTION WHEN SQLSTATE '55000' THEN
-        NULL;
-    END;
+	BEGIN
+		DELETE FROM project_authorization_audit_events
+		WHERE project_id = '33333333-3333-4333-8333-333333333333';
+		RAISE EXCEPTION 'authorization audit accepted a delete';
+	EXCEPTION WHEN SQLSTATE '55000' THEN
+		NULL;
+	END;
+	INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result)
+	VALUES (
+		'00000000-0000-4000-8000-000000000002',
+		'33333333-3333-4333-8333-333333333333',
+		'migration-owner',
+		'deletion_attempted',
+		'{"stage":"started"}'
+	);
+	BEGIN
+		UPDATE project_lifecycle_audit_events
+		SET event_type = 'deletion_failed', result = '{"stage":"changed"}'
+		WHERE project_id = '33333333-3333-4333-8333-333333333333';
+		RAISE EXCEPTION 'lifecycle audit accepted an update';
+	EXCEPTION WHEN SQLSTATE '55000' THEN
+		NULL;
+	END;
+	BEGIN
+		DELETE FROM project_lifecycle_audit_events
+		WHERE project_id = '33333333-3333-4333-8333-333333333333';
+		RAISE EXCEPTION 'lifecycle audit accepted a delete';
+	EXCEPTION WHEN SQLSTATE '55000' THEN
+		NULL;
+	END;
 END
 $$;
 
@@ -868,6 +885,14 @@ BEGIN
         RAISE EXCEPTION 'project deletion escape did not remove the scoped tombstone';
     END IF;
     DELETE FROM projects WHERE id = deletion_project_id;
+	INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result)
+	VALUES (
+		'00000000-0000-4000-8000-000000000001',
+		deletion_project_id,
+		'migration-deletion',
+		'deletion_completed',
+		'{"stage":"completed"}'
+	);
     IF NOT EXISTS (
         SELECT 1
         FROM project_authorization_audit_events
@@ -877,6 +902,15 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'project deletion did not retain authorization audit provenance';
     END IF;
+	IF NOT EXISTS (
+		SELECT 1
+		FROM project_lifecycle_audit_events
+		WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+			AND project_id = deletion_project_id
+			AND event_type = 'deletion_completed'
+	) THEN
+		RAISE EXCEPTION 'project deletion did not retain lifecycle audit provenance';
+	END IF;
     ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;
     INSERT INTO organizations (id, name, slug)
     VALUES ('88888888-8888-4888-8888-888888888888', 'UUID Reuse Test Organization', 'uuid-reuse-test');

@@ -9,6 +9,10 @@ POSTGRES_PASSWORD="astraea_migrations"
 POSTGRES_DB="astraea_migrations"
 
 cleanup() {
+  [[ -n "${UUID_LOCK_PID:-}" ]] && kill "$UUID_LOCK_PID" >/dev/null 2>&1 || true
+  [[ -n "${UUID_INSERT_PID:-}" ]] && kill "$UUID_INSERT_PID" >/dev/null 2>&1 || true
+  exec 3>&- || true
+  rm -f "${UUID_LOCK_INPUT:-}" "${UUID_LOCK_OUTPUT:-}" "${UUID_INSERT_OUTPUT:-}"
   docker rm --force "$CONTAINER" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -60,6 +64,65 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
   UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun run --cwd "$ROOT/apps/api" db:migrate
+
+run_uuid_advisory_serialization_check() {
+  local project_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+  local organization_id="00000000-0000-4000-8000-000000000001"
+  local lock_state= lock_waited=
+  UUID_LOCK_INPUT="$(mktemp)"
+  UUID_LOCK_OUTPUT="$(mktemp)"
+  UUID_INSERT_OUTPUT="$(mktemp)"
+  rm "$UUID_LOCK_INPUT"
+  mkfifo "$UUID_LOCK_INPUT"
+
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+    < "$UUID_LOCK_INPUT" > "$UUID_LOCK_OUTPUT" 2>&1 &
+  UUID_LOCK_PID=$!
+  exec 3>"$UUID_LOCK_INPUT"
+  printf "BEGIN; SELECT lock_project_audit_provenance('%s');\n" "$project_id" >&3
+
+  for _ in {1..50}; do
+    lock_state="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT pg_try_advisory_xact_lock(hashtextextended('$project_id', 0))")"
+    [[ "$lock_state" == "f" ]] && break
+    sleep 0.1
+  done
+  if [[ "$lock_state" != "f" ]]; then
+    echo "advisory lock holder did not acquire the project UUID lock" >&2
+    exit 1
+  fi
+
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+    --command "INSERT INTO projects (id, name, slug, organization_id) VALUES ('$project_id', 'UUID Lock Serialization', 'uuid-lock-serialization', '$organization_id')" \
+    > "$UUID_INSERT_OUTPUT" 2>&1 &
+  UUID_INSERT_PID=$!
+  for _ in {1..50}; do
+    lock_waited="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'INSERT INTO projects (id, name, slug, organization_id)%')")"
+    [[ "$lock_waited" == "t" ]] && break
+    sleep 0.1
+  done
+  if [[ "$lock_waited" != "t" ]]; then
+    echo "same-UUID project insert did not wait for the advisory lock" >&2
+    exit 1
+  fi
+
+  printf 'COMMIT;\n' >&3
+  exec 3>&-
+  wait "$UUID_LOCK_PID"
+  wait "$UUID_INSERT_PID"
+  docker exec "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+    --command "DELETE FROM projects WHERE id = '$project_id'"
+  rm -f "$UUID_LOCK_INPUT" "$UUID_LOCK_OUTPUT" "$UUID_INSERT_OUTPUT"
+  UUID_LOCK_PID=
+  UUID_INSERT_PID=
+  UUID_LOCK_INPUT=
+  UUID_LOCK_OUTPUT=
+  UUID_INSERT_OUTPUT=
+}
+
+run_uuid_advisory_serialization_check
 
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
