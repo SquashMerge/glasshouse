@@ -83,6 +83,13 @@ docker exec --interactive "$CONTAINER" \
   < "$ROOT/infra/scripts/test-db-migrations-0028.assert.sql"
 
 UPGRADE_0033_DATABASE="${POSTGRES_DB}_0033_upgrade"
+MIGRATION_0033="$(<"$ROOT/infra/db/migrations/0033_project_default_and_deletion_lifecycle.sql")"
+if [[ "$MIGRATION_0033" != *$'SET default_project_id = (\n    SELECT project.id\n    FROM projects AS project\n    WHERE project.organization_id = organization.id\n      AND project.status = \'active\'\n    ORDER BY (project.slug = \'default\') DESC, project.created_at, project.id\n    LIMIT 1\n)'* \
+  || "$MIGRATION_0033" != *$'WHERE organization.default_project_id IS NULL\n  AND EXISTS (\n      SELECT 1\n      FROM projects AS project\n      WHERE project.organization_id = organization.id\n        AND project.status = \'active\'\n  );'* \
+  || "$MIGRATION_0033" == *"FROM LATERAL"* ]]; then
+  echo "0033 must use a correlated, active-project default backfill without LATERAL" >&2
+  exit 1
+fi
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0033_DATABASE"
 for migration in "$ROOT"/infra/db/migrations/*.sql; do
   [[ "$migration" == *"/0033_"* ]] && break

@@ -56,15 +56,21 @@ JOIN organization_memberships AS membership
 ON CONFLICT (project_id, actor_subject) DO NOTHING;
 
 UPDATE organizations AS organization
-SET default_project_id = selected.id
-FROM LATERAL (
+SET default_project_id = (
     SELECT project.id
     FROM projects AS project
-    WHERE project.organization_id = organization.id AND project.status = 'active'
+    WHERE project.organization_id = organization.id
+      AND project.status = 'active'
     ORDER BY (project.slug = 'default') DESC, project.created_at, project.id
     LIMIT 1
-) AS selected
-WHERE organization.default_project_id IS NULL;
+)
+WHERE organization.default_project_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM projects AS project
+      WHERE project.organization_id = organization.id
+        AND project.status = 'active'
+  );
 
 ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
 ALTER TABLE organizations DROP CONSTRAINT IF EXISTS organizations_default_project_organization_fkey;

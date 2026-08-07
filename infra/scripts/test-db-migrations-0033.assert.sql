@@ -2,7 +2,17 @@ DO $$
 DECLARE
     archived_organization_id UUID := '00330000-0000-4000-8000-000000000001';
     archived_project_id UUID := '00330000-0000-4000-8000-000000000002';
+    active_organization_id UUID := '00330000-0000-4000-8000-000000000005';
+    preferred_default_project_id UUID := '00330000-0000-4000-8000-000000000007';
 BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM organizations
+        WHERE id = active_organization_id
+          AND default_project_id = preferred_default_project_id
+    ) THEN
+        RAISE EXCEPTION '0033 did not deterministically select the same-organization active default project';
+    END IF;
     IF NOT EXISTS (
         SELECT 1
         FROM organizations organization
