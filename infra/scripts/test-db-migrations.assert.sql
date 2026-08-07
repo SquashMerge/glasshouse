@@ -505,6 +505,7 @@ BEGIN
         NULL;
     END;
 
+    ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;
     INSERT INTO organizations (id, name, slug)
     VALUES ('00000000-0000-4000-8000-000000000002', 'Second Organization', 'second')
     ON CONFLICT (id) DO NOTHING;
@@ -515,6 +516,10 @@ BEGIN
         'default',
         '00000000-0000-4000-8000-000000000002'
     );
+    UPDATE organizations
+    SET default_project_id = '33333333-3333-4333-8333-333333333333'
+    WHERE id = '00000000-0000-4000-8000-000000000002';
+    ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
     IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 2 THEN
         RAISE EXCEPTION 'project slugs are not organization-scoped';
     END IF;
