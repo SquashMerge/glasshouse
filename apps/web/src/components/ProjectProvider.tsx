@@ -40,15 +40,6 @@ function hasProjectId(value: unknown, projectId: string): boolean {
 	return false;
 }
 
-function storedProjectId(key: string): string | null {
-	const value = window.localStorage.getItem(key);
-	if (value && !UUID_PATTERN.test(value)) {
-		window.localStorage.removeItem(key);
-		return null;
-	}
-	return value;
-}
-
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
 	const projectsQuery = useQuery({
 		queryKey: ["me"],
@@ -66,10 +57,12 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			UUID_PATTERN.test(project.id),
 		);
 		const key = `${SELECTED_PROJECT_KEY}:${projectsQuery.data.organization_id}:${projectsQuery.data.actor_subject}`;
-		const stored = storedProjectId(key);
-		const selected =
-			stored && projects.some((project) => project.id === stored)
-				? stored
+		const defaultProjectId = projectsQuery.data.default_project_id;
+		const storedProjectId = window.localStorage.getItem(key);
+		const selected = projects.some((project) => project.id === storedProjectId)
+			? storedProjectId
+			: projects.some((project) => project.id === defaultProjectId)
+				? defaultProjectId
 				: null;
 
 		if (!selected) {

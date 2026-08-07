@@ -9,7 +9,7 @@ export type AuthorizedProjectScope = TrustedTenantContext & {
 	projectId: string;
 	organizationRole: "owner" | "member";
 	projectRole: "manager" | "member";
-	projectStatus: "active" | "archived";
+	projectStatus: "active" | "archived" | "deleting";
 };
 export type TenantScope = AuthorizedProjectScope;
 type Transactional = Pick<Pool, "connect">;
@@ -39,7 +39,7 @@ export async function resolveAuthorizedProjectScope(
 	const result = await pool.query<{
 		organization_role: "owner" | "member";
 		project_role: "manager" | "member";
-		status: "active" | "archived";
+		status: "active" | "archived" | "deleting";
 	}>(
 		"SELECT om.role AS organization_role, CASE WHEN om.role = 'owner' THEN 'manager' ELSE pm.role END AS project_role, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
 		[projectId, tenant.organizationId, tenant.actor],

@@ -6,10 +6,13 @@ import {
 	archiveProject,
 	createProject,
 	deleteProjectMember,
+	deleteProject,
+	getProjectDeletionStatus,
 	listProjectMembers,
 	listProjects,
 	putProjectMember,
 	restoreProject,
+	setDefaultProject,
 	updateProject,
 	type Project,
 } from "../lib/api";
@@ -17,7 +20,7 @@ import { PageMessage } from "./prompts";
 
 export function ProjectsPage() {
 	const queryClient = useQueryClient();
-	const { organizationRole } = useProjectSelection();
+	const { organizationRole, selectProject } = useProjectSelection();
 	const projectsQuery = useQuery({
 		queryKey: ["projects", "management"],
 		queryFn: () => listProjects(true),
@@ -35,6 +38,8 @@ export function ProjectsPage() {
 		"member",
 	);
 	const [operationFailed, setOperationFailed] = React.useState(false);
+	const [deleting, setDeleting] = React.useState<Project | null>(null);
+	const [confirmationName, setConfirmationName] = React.useState("");
 	const isOwner = organizationRole === "owner";
 	const canManage = (project: Project) => project.project_role !== "member";
 	const membersQuery = useQuery({
@@ -100,6 +105,31 @@ export function ProjectsPage() {
 		},
 		onError: failed,
 	});
+	const defaultMutation = useMutation({
+		mutationFn: setDefaultProject,
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["projects"] });
+			refreshSelector();
+		},
+		onError: failed,
+	});
+	const deleteMutation = useMutation({
+		mutationFn: deleteProject,
+		onSuccess: (_, input) => {
+			queryClient.removeQueries({
+				predicate: (query) => JSON.stringify(query.queryKey).includes(input.id),
+			});
+			setDeleting(null);
+			setConfirmationName("");
+			void queryClient.invalidateQueries({ queryKey: ["projects"] });
+			refreshSelector();
+			selectProject(
+				projectsQuery.data?.items.find((project) => project.is_default)?.id ??
+					"",
+			);
+		},
+		onError: failed,
+	});
 	const putMemberMutation = useMutation({
 		mutationFn: putProjectMember,
 		onSuccess: () => {
@@ -133,6 +163,10 @@ export function ProjectsPage() {
 	const archived =
 		projectsQuery.data?.items.filter(
 			(project) => project.status === "archived",
+		) ?? [];
+	const deletingProjects =
+		projectsQuery.data?.items.filter(
+			(project) => project.status === "deleting",
 		) ?? [];
 
 	return (
@@ -189,6 +223,7 @@ export function ProjectsPage() {
 				editedName={editedName}
 				editedSlug={editedSlug}
 				canManage={canManage}
+				isOwner={isOwner}
 				onEdit={(project) => {
 					setEditing(project);
 					setEditedName(project.name);
@@ -216,6 +251,15 @@ export function ProjectsPage() {
 					setMembersProject(project);
 					setOperationFailed(false);
 				}}
+				onSetDefault={(project) => {
+					setOperationFailed(false);
+					defaultMutation.mutate(project.id);
+				}}
+				onDelete={(project) => {
+					setDeleting(project);
+					setConfirmationName("");
+					setOperationFailed(false);
+				}}
 			/>
 			{archived.length > 0 && (
 				<section className="space-y-3">
@@ -226,6 +270,7 @@ export function ProjectsPage() {
 						editedName={editedName}
 						editedSlug={editedSlug}
 						canManage={canManage}
+						isOwner={isOwner}
 						onEdit={(project) => {
 							setEditing(project);
 							setEditedName(project.name);
@@ -250,7 +295,32 @@ export function ProjectsPage() {
 							setMembersProject(project);
 							setOperationFailed(false);
 						}}
+						onSetDefault={() => {}}
+						onDelete={() => {}}
 					/>
+				</section>
+			)}
+			{deletingProjects.length > 0 && (
+				<section className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 p-4">
+					<div>
+						<h2 className="text-lg font-semibold">Deletion recovery</h2>
+						<p className="text-sm text-muted-foreground">
+							These projects are unavailable while their permanent deletion is
+							completed or retried.
+						</p>
+					</div>
+					{deletingProjects.map((project) => (
+						<DeletingProjectRecovery
+							key={project.id}
+							project={project}
+							canManage={canManage(project)}
+							onFailure={failed}
+							onRecovered={() => {
+								void queryClient.invalidateQueries({ queryKey: ["projects"] });
+								refreshSelector();
+							}}
+						/>
+					))}
 				</section>
 			)}
 			{membersProject && (
@@ -353,6 +423,135 @@ export function ProjectsPage() {
 					)}
 				</section>
 			)}
+			{deleting && (
+				<div
+					className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="delete-project-title"
+				>
+					<form
+						className="w-full max-w-md space-y-4 rounded-lg border border-border bg-background p-6 shadow-lg"
+						onSubmit={(event) => {
+							event.preventDefault();
+							setOperationFailed(false);
+							deleteMutation.mutate({
+								id: deleting.id,
+								confirmation_name: confirmationName,
+							});
+						}}
+					>
+						<div>
+							<h2 id="delete-project-title" className="text-lg font-semibold">
+								Delete {deleting.name}?
+							</h2>
+							<p className="mt-2 text-sm text-muted-foreground">
+								This permanently deletes this Project and its project-owned
+								data. This cannot be undone.
+							</p>
+						</div>
+						<label className="grid gap-2 text-sm font-medium">
+							Type {deleting.name} to confirm
+							<input
+								aria-label="Project deletion confirmation"
+								autoFocus
+								value={confirmationName}
+								onChange={(event) => setConfirmationName(event.target.value)}
+								className="h-9 rounded-md border border-input bg-background px-2 font-normal"
+							/>
+						</label>
+						<div className="flex justify-end gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								onClick={() => setDeleting(null)}
+							>
+								Cancel
+							</Button>
+							<Button
+								type="submit"
+								variant="destructive"
+								disabled={
+									confirmationName !== deleting.name || deleteMutation.isPending
+								}
+							>
+								Delete project
+							</Button>
+						</div>
+					</form>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function DeletingProjectRecovery({
+	project,
+	canManage,
+	onFailure,
+	onRecovered,
+}: {
+	project: Project;
+	canManage: boolean;
+	onFailure: () => void;
+	onRecovered: () => void;
+}) {
+	const [confirmationName, setConfirmationName] = React.useState("");
+	const statusQuery = useQuery({
+		queryKey: ["project-deletion", project.id],
+		queryFn: () => getProjectDeletionStatus(project.id),
+		enabled: canManage,
+	});
+	const retryMutation = useMutation({
+		mutationFn: deleteProject,
+		onSuccess: onRecovered,
+		onError: onFailure,
+	});
+	const stage = statusQuery.data?.status ?? "pending";
+
+	return (
+		<div className="space-y-3 rounded-md border border-border bg-background p-3">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<span className="font-medium">{project.name}</span>
+				<span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium">
+					Deletion {stage.replaceAll("_", " ")}
+				</span>
+			</div>
+			{statusQuery.isError ? (
+				<p className="text-sm text-destructive" role="alert">
+					Deletion status could not be loaded.
+				</p>
+			) : canManage ? (
+				<form
+					className="flex flex-wrap items-end gap-2"
+					onSubmit={(event) => {
+						event.preventDefault();
+						retryMutation.mutate({
+							id: project.id,
+							confirmation_name: confirmationName,
+						});
+					}}
+				>
+					<label className="grid gap-1 text-sm">
+						Type {project.name} to retry
+						<input
+							aria-label={`Deletion confirmation for ${project.name}`}
+							value={confirmationName}
+							onChange={(event) => setConfirmationName(event.target.value)}
+							className="h-9 rounded-md border border-input bg-background px-2"
+						/>
+					</label>
+					<Button
+						type="submit"
+						variant="destructive"
+						disabled={
+							confirmationName !== project.name || retryMutation.isPending
+						}
+					>
+						Retry deletion
+					</Button>
+				</form>
+			) : null}
 		</div>
 	);
 }
@@ -363,6 +562,7 @@ function ProjectList({
 	editedName,
 	editedSlug,
 	canManage,
+	isOwner,
 	onEdit,
 	onEditedName,
 	onEditedSlug,
@@ -370,12 +570,15 @@ function ProjectList({
 	onArchive,
 	onRestore,
 	onMembers,
+	onSetDefault,
+	onDelete,
 }: {
 	projects: Project[];
 	editing: Project | null;
 	editedName: string;
 	editedSlug: string;
 	canManage: (project: Project) => boolean;
+	isOwner: boolean;
 	onEdit: (project: Project) => void;
 	onEditedName: (value: string) => void;
 	onEditedSlug: (value: string) => void;
@@ -383,6 +586,8 @@ function ProjectList({
 	onArchive: (project: Project) => void;
 	onRestore: (project: Project) => void;
 	onMembers: (project: Project) => void;
+	onSetDefault: (project: Project) => void;
+	onDelete: (project: Project) => void;
 }) {
 	return (
 		<div className="space-y-3">
@@ -419,7 +624,14 @@ function ProjectList({
 							</Button>
 						</form>
 					) : (
-						<span className="font-medium">{project.name}</span>
+						<span className="font-medium">
+							{project.name}{" "}
+							{project.is_default && (
+								<span className="ml-2 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium">
+									Default
+								</span>
+							)}
+						</span>
 					)}
 					{canManage(project) && (
 						<div className="flex gap-2">
@@ -432,6 +644,29 @@ function ProjectList({
 							>
 								Rename
 							</Button>
+							{!project.is_default &&
+								project.status === "active" &&
+								isOwner && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={() => onSetDefault(project)}
+									>
+										Set as default
+									</Button>
+								)}
+							{!project.is_default && isOwner && (
+								<Button
+									type="button"
+									variant="destructive"
+									size="sm"
+									onClick={() => onDelete(project)}
+									aria-label={`Delete ${project.name}`}
+								>
+									Delete
+								</Button>
+							)}
 							<Button
 								type="button"
 								variant="outline"

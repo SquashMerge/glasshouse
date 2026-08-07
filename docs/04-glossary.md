@@ -42,8 +42,9 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 
 ## Core entities
 
-- **Organization** — top-level authenticated tenancy boundary. Basic-auth credentials resolve to an immutable actor subject and one organization. Organization owners manage organization membership and may create Projects.
-- **Project** — organization-owned workspace and data boundary (`project_id` on stored application and observability data). A Project is `active` or non-destructively `archived`; product access requires explicit active Project membership. Its UUID is immutable; its validated slug is unique within its organization.
+- **Organization** — top-level authenticated tenancy boundary. Basic-auth credentials resolve to an immutable actor subject and one organization. Its server-authoritative `default_project_id` names one active Project in that organization. Organization owners manage organization membership and may create Projects.
+- **Project** — organization-owned workspace and data boundary (`project_id` on stored application and observability data). A Project is `active` or non-destructively `archived`; product access requires explicit active Project membership. Its UUID is immutable; its validated slug is unique within its organization. Non-default Projects may be permanently deleted with exact typed-name confirmation; lifecycle evidence is retained without content.
+- **Project lifecycle audit event** — content-free durable evidence of Project creation, organization-default changes, and permanent-deletion attempts/results. It keeps the deleted Project UUID without retaining Project content. See `infra/db/migrations/0033_project_default_and_deletion_lifecycle.sql`.
 - **Project membership** — an actor's `manager` or `member` role within one Project. Managers govern membership and lifecycle; members use product data. Organization owners manage the organization membership directory and override Project-manager authorization.
 - **Authorization audit event** — append-only, content-free PostgreSQL evidence for workspace bootstrap, membership, and lifecycle actions. `GET /v1/projects/{id}/audit-events` is visible only to organization owners and managers authorized for that Project.
 - **Agent** — versioned, typed entity. Multi-tenant, versioned, has a version history.

@@ -5,6 +5,11 @@ BEGIN
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
 		RAISE EXCEPTION 'governance persistence is incomplete';
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'default_project_id' AND is_nullable = 'NO')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'organizations_default_project_organization_fkey')
+		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_lifecycle_audit_events') THEN
+		RAISE EXCEPTION 'organization default project lifecycle persistence is incomplete';
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_previews')
 		OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'governance_retention_runs_one_running_per_project' AND indexdef LIKE '%WHERE (status = ''running''::text)%') THEN
 		RAISE EXCEPTION 'retention preview authorization or single-running-run constraint is incomplete';
@@ -19,8 +24,72 @@ BEGIN
 	IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('governance_policies', 'governance_policy_versions', 'governance_policy_approvals', 'governance_audit_events', 'governance_retention_runs') AND column_name IN ('organization_id', 'project_id') AND is_nullable = 'NO') <> 10 THEN
 		RAISE EXCEPTION 'governance tenant fields must be not null';
 	END IF;
-	IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('governance_policies_project_organization_fkey', 'governance_policy_versions_project_organization_fkey', 'governance_policy_approvals_version_tenant_fkey', 'governance_audit_events_version_tenant_fkey', 'governance_retention_runs_version_tenant_fkey')) <> 5 THEN
+	IF (SELECT count(*) FROM pg_constraint WHERE conname IN ('governance_policies_project_organization_fkey', 'governance_policy_versions_project_organization_fkey', 'governance_policy_approvals_version_tenant_fkey', 'governance_retention_runs_version_tenant_fkey')) <> 4 THEN
 		RAISE EXCEPTION 'governance composite ownership constraints are incomplete';
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conrelid = 'governance_audit_events'::regclass
+			AND conname = 'governance_audit_events_policy_version_fkey'
+			AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (policy_version_id, organization_id, project_id)%'
+			AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL (policy_version_id)%'
+	) OR EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'governance_audit_events'
+			AND column_name = 'project_id' AND is_nullable <> 'NO'
+	) OR NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'governance_audit_events'
+			AND column_name = 'policy_version_id' AND is_nullable = 'YES'
+	) OR EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name IN ('project_authorization_audit_events', 'project_lifecycle_audit_events')
+			AND column_name = 'project_id' AND is_nullable <> 'NO'
+	) OR EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conrelid = 'project_authorization_audit_events'::regclass
+			AND conname = 'project_authorization_audit_events_project_organization_fkey'
+	) THEN
+		RAISE EXCEPTION 'project deletion audit provenance constraints are incomplete';
+	END IF;
+	IF EXISTS (
+		SELECT 1
+		FROM (VALUES
+			('projects'::regclass, 'projects_audit_uuid_reuse_guard', 'prevent_project_audit_uuid_reuse'::regproc, 23::smallint),
+			('project_authorization_audit_events'::regclass, 'project_authorization_audit_events_00_provenance_lock', 'enforce_retained_audit_project_provenance'::regproc, 23::smallint),
+			('project_lifecycle_audit_events'::regclass, 'project_lifecycle_audit_events_00_provenance_lock', 'enforce_retained_audit_project_provenance'::regproc, 23::smallint),
+			('governance_audit_events'::regclass, 'governance_audit_events_00_provenance_lock', 'enforce_retained_audit_project_provenance'::regproc, 23::smallint),
+			('project_lifecycle_audit_events'::regclass, 'project_lifecycle_audit_events_immutable', 'prevent_project_lifecycle_audit_mutation'::regproc, 27::smallint)
+		) AS expected(tgrelid, tgname, tgfoid, tgtype)
+		WHERE NOT EXISTS (
+			SELECT 1 FROM pg_trigger
+			WHERE pg_trigger.tgrelid = expected.tgrelid
+				AND pg_trigger.tgname = expected.tgname
+				AND pg_trigger.tgfoid = expected.tgfoid
+				AND pg_trigger.tgtype = expected.tgtype
+				AND pg_trigger.tgenabled = 'O'
+				AND NOT pg_trigger.tgisinternal
+		)
+	) THEN
+		RAISE EXCEPTION 'retained audit provenance serialization is incomplete';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'projects'::regclass AND conname = 'projects_status_check' AND pg_get_constraintdef(oid) LIKE '%deleting%')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'project_deletion_jobs'::regclass AND conname LIKE '%project_id_key%') THEN
+		RAISE EXCEPTION 'durable project deletion saga persistence is incomplete';
+	END IF;
+	INSERT INTO project_deletion_jobs (organization_id, project_id, requested_by, status)
+	VALUES ('00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'migration-test', 'pending');
+	IF NOT EXISTS (SELECT 1 FROM project_deletion_jobs WHERE project_id = '11111111-1111-1111-1111-111111111111' AND status = 'pending') THEN
+		RAISE EXCEPTION 'project deletion job fixture was not retained';
+	END IF;
+	IF pg_get_functiondef('prevent_prompt_tombstone_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_prompt_deletion_audit_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_human_feedback_score_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_prompt_optimization_event_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_governance_immutable_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
+		OR pg_get_functiondef('prevent_final_workspace_role_removal'::regproc) NOT LIKE '%project_deletion_is_authorized%' THEN
+		RAISE EXCEPTION 'immutable records do not have a project-scoped deletion escape';
 	END IF;
 	IF NOT EXISTS (
 		SELECT 1 FROM information_schema.columns
@@ -436,6 +505,7 @@ BEGIN
         NULL;
     END;
 
+    ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;
     INSERT INTO organizations (id, name, slug)
     VALUES ('00000000-0000-4000-8000-000000000002', 'Second Organization', 'second')
     ON CONFLICT (id) DO NOTHING;
@@ -446,6 +516,10 @@ BEGIN
         'default',
         '00000000-0000-4000-8000-000000000002'
     );
+    UPDATE organizations
+    SET default_project_id = '33333333-3333-4333-8333-333333333333'
+    WHERE id = '00000000-0000-4000-8000-000000000002';
+    ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
     IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 2 THEN
         RAISE EXCEPTION 'project slugs are not organization-scoped';
     END IF;
@@ -553,9 +627,46 @@ BEGIN
     EXCEPTION WHEN foreign_key_violation THEN
         NULL;
     END;
-    INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
-    VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
-    BEGIN
+	INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
+	VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
+	INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+	VALUES (
+		'c1000000-0000-4000-8000-000000000001',
+		'11111111-1111-1111-1111-111111111111',
+		'added_to_dataset',
+		'a1000000-0000-4000-8000-000000000001',
+		'a1000000-0000-4000-8000-000000000002'
+	);
+	UPDATE dataset_items
+	SET feedback_score_id = 'c1000000-0000-4000-8000-000000000001'
+	WHERE id = 'a1000000-0000-4000-8000-000000000002';
+	INSERT INTO benchmark_suites (id, project_id, dataset_id, name)
+	VALUES (
+		'd1000000-0000-4000-8000-000000000001',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000001',
+		'deletion-order-suite'
+	);
+	INSERT INTO benchmark_runs (id, project_id, suite_id, experiment_id, label)
+	VALUES (
+		'd2000000-0000-4000-8000-000000000001',
+		'11111111-1111-1111-1111-111111111111',
+		'd1000000-0000-4000-8000-000000000001',
+		'a6000000-0000-4000-8000-000000000001',
+		'deletion-order-run'
+	);
+	IF NOT EXISTS (
+		SELECT 1 FROM feedback_reviews review
+		JOIN dataset_items item ON item.feedback_score_id = review.score_id
+		WHERE review.status = 'added_to_dataset'
+	) OR NOT EXISTS (
+		SELECT 1 FROM benchmark_runs run
+		JOIN benchmark_suites suite ON suite.id = run.suite_id
+		WHERE suite.name = 'deletion-order-suite'
+	) THEN
+		RAISE EXCEPTION 'deletion dependency fixtures for promoted feedback or benchmark suites are incomplete';
+	END IF;
+	BEGIN
         UPDATE scores SET value = 1 WHERE id = '99999999-9999-4999-8999-999999999999';
         RAISE EXCEPTION 'human feedback score accepted a mutation';
     EXCEPTION WHEN OTHERS THEN
@@ -719,11 +830,106 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '55000' THEN
         NULL;
     END;
+	BEGIN
+		DELETE FROM project_authorization_audit_events
+		WHERE project_id = '33333333-3333-4333-8333-333333333333';
+		RAISE EXCEPTION 'authorization audit accepted a delete';
+	EXCEPTION WHEN SQLSTATE '55000' THEN
+		NULL;
+	END;
+	INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result)
+	VALUES (
+		'00000000-0000-4000-8000-000000000002',
+		'33333333-3333-4333-8333-333333333333',
+		'migration-owner',
+		'deletion_attempted',
+		'{"stage":"started"}'
+	);
+	BEGIN
+		UPDATE project_lifecycle_audit_events
+		SET event_type = 'deletion_failed', result = '{"stage":"changed"}'
+		WHERE project_id = '33333333-3333-4333-8333-333333333333';
+		RAISE EXCEPTION 'lifecycle audit accepted an update';
+	EXCEPTION WHEN SQLSTATE '55000' THEN
+		NULL;
+	END;
+	BEGIN
+		DELETE FROM project_lifecycle_audit_events
+		WHERE project_id = '33333333-3333-4333-8333-333333333333';
+		RAISE EXCEPTION 'lifecycle audit accepted a delete';
+	EXCEPTION WHEN SQLSTATE '55000' THEN
+		NULL;
+	END;
+END
+$$;
+
+DO $$
+DECLARE
+    deletion_project_id UUID := '77777777-7777-4777-8777-777777777777';
+BEGIN
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES (
+        deletion_project_id,
+        'Permanent Deletion Fixture',
+        'permanent-deletion-fixture',
+        '00000000-0000-4000-8000-000000000001'
+    );
+    INSERT INTO prompt_tombstones (project_id, slug)
+    VALUES (deletion_project_id, 'permanent-deletion-fixture');
+    INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+    VALUES ('00000000-0000-4000-8000-000000000001', deletion_project_id, 'migration-deletion', 'project_created');
     BEGIN
-        DELETE FROM project_authorization_audit_events
-        WHERE project_id = '33333333-3333-4333-8333-333333333333';
-        RAISE EXCEPTION 'authorization audit accepted a delete';
+        DELETE FROM prompt_tombstones WHERE project_id = deletion_project_id;
+        RAISE EXCEPTION 'project deletion escape was available without transaction-local authorization';
     EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    PERFORM set_config('astraea.project_deletion_id', deletion_project_id::text, true);
+    DELETE FROM prompt_tombstones WHERE project_id = deletion_project_id;
+    IF EXISTS (SELECT 1 FROM prompt_tombstones WHERE project_id = deletion_project_id) THEN
+        RAISE EXCEPTION 'project deletion escape did not remove the scoped tombstone';
+    END IF;
+    DELETE FROM projects WHERE id = deletion_project_id;
+	INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result)
+	VALUES (
+		'00000000-0000-4000-8000-000000000001',
+		deletion_project_id,
+		'migration-deletion',
+		'deletion_completed',
+		'{"stage":"completed"}'
+	);
+    IF NOT EXISTS (
+        SELECT 1
+        FROM project_authorization_audit_events
+        WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+            AND project_id = deletion_project_id
+            AND actor_subject = 'migration-deletion'
+    ) THEN
+        RAISE EXCEPTION 'project deletion did not retain authorization audit provenance';
+    END IF;
+	IF NOT EXISTS (
+		SELECT 1
+		FROM project_lifecycle_audit_events
+		WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+			AND project_id = deletion_project_id
+			AND event_type = 'deletion_completed'
+	) THEN
+		RAISE EXCEPTION 'project deletion did not retain lifecycle audit provenance';
+	END IF;
+    ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;
+    INSERT INTO organizations (id, name, slug)
+    VALUES ('88888888-8888-4888-8888-888888888888', 'UUID Reuse Test Organization', 'uuid-reuse-test');
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES ('88888888-8888-4888-8888-888888888889', 'UUID Reuse Default Project', 'default', '88888888-8888-4888-8888-888888888888');
+    UPDATE organizations
+    SET default_project_id = '88888888-8888-4888-8888-888888888889'
+    WHERE id = '88888888-8888-4888-8888-888888888888';
+    ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
+    BEGIN
+        INSERT INTO projects (id, name, slug, organization_id)
+        VALUES (deletion_project_id, 'Reused Project', 'reused-project', '88888888-8888-4888-8888-888888888888');
+        RAISE EXCEPTION 'retained audit provenance allowed project UUID reuse in another organization';
+    EXCEPTION WHEN unique_violation THEN
         NULL;
     END;
 END
@@ -733,24 +939,36 @@ DO $$
 DECLARE
     version_id UUID := '99999999-0000-4000-8000-000000000001';
 BEGIN
-    INSERT INTO organizations (id, name, slug) VALUES ('99999999-0000-4000-8000-000000000010', 'Governance Test Organization', 'governance-test') ON CONFLICT DO NOTHING;
-    INSERT INTO projects (id, name, slug, organization_id) VALUES ('99999999-0000-4000-8000-000000000011', 'Governance Test Project', 'governance-test', '99999999-0000-4000-8000-000000000010') ON CONFLICT DO NOTHING;
+    INSERT INTO projects (id, name, slug, organization_id) VALUES ('99999999-0000-4000-8000-000000000011', 'Governance Test Project', 'governance-test', '88888888-8888-4888-8888-888888888888') ON CONFLICT DO NOTHING;
     INSERT INTO governance_policies (id, organization_id, project_id) VALUES ('99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111') ON CONFLICT DO NOTHING;
     INSERT INTO governance_policy_versions (id, policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) VALUES (version_id, '99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 1, '{}', '{"mode":"none","keys":[]}', repeat('a', 64), 'migration-test') ON CONFLICT DO NOTHING;
     BEGIN
-        INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES (version_id, '99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', 'migration-test');
+        INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES (version_id, '88888888-8888-4888-8888-888888888888', '99999999-0000-4000-8000-000000000011', 'migration-test');
         RAISE EXCEPTION 'governance approval provenance mismatch was accepted';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
     BEGIN
-        INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'policy_created');
+        INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ('88888888-8888-4888-8888-888888888888', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'policy_created');
         RAISE EXCEPTION 'governance audit provenance mismatch was accepted';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
     BEGIN
-        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status, owner_token, heartbeat_at, lease_expires_at) VALUES ('99999999-0000-4000-8000-000000000010', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running', gen_random_uuid(), now(), now() + interval '5 minutes');
+        INSERT INTO governance_retention_runs (organization_id, project_id, policy_version_id, requested_by, status, owner_token, heartbeat_at, lease_expires_at) VALUES ('88888888-8888-4888-8888-888888888888', '99999999-0000-4000-8000-000000000011', version_id, 'migration-test', 'running', gen_random_uuid(), now(), now() + interval '5 minutes');
         RAISE EXCEPTION 'governance retention provenance mismatch was accepted';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
+    INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type)
+    VALUES ('00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', version_id, 'migration-test', 'policy_created');
+    PERFORM set_config('astraea.project_deletion_id', '11111111-1111-1111-1111-111111111111', true);
+    DELETE FROM governance_policy_versions WHERE id = version_id;
+    IF NOT EXISTS (
+        SELECT 1 FROM governance_audit_events
+        WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+            AND project_id = '11111111-1111-1111-1111-111111111111'
+            AND policy_version_id IS NULL
+            AND actor_subject = 'migration-test'
+    ) THEN
+        RAISE EXCEPTION 'policy version deletion did not retain governance audit tenant provenance';
+    END IF;
 END
 $$;

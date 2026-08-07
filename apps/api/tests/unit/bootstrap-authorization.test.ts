@@ -4,7 +4,7 @@ import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization";
 const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 
 describe("bootstrap authorization", () => {
-	it("grants the configured owner manager membership for every project", async () => {
+	it("grants the configured owner manager membership for every non-deleting project", async () => {
 		const queries: Array<{ sql: string; values?: unknown[] }> = [];
 		const client = {
 			async query(sql: string, values?: unknown[]) {
@@ -56,11 +56,60 @@ describe("bootstrap authorization", () => {
 		expect(
 			queries.some(
 				({ sql }) =>
+					sql.includes("bootstrap_manager_added") &&
+					sql.includes("status <> 'deleting'"),
+			),
+		).toBe(true);
+		expect(
+			queries.some(
+				({ sql }) =>
 					sql.includes("bootstrap_owner_added") &&
 					sql.includes("project_id") &&
 					sql.includes("WHERE organization_id = $1"),
 			),
 		).toBe(true);
 		expect(ended).toBe(true);
+	});
+
+	it("does not grant recovery authority while any project is deleting", async () => {
+		const queries: Array<{ sql: string; values?: unknown[] }> = [];
+		const client = {
+			async query(sql: string, values?: unknown[]) {
+				queries.push({ sql, values });
+				if (sql.includes("SELECT id FROM organizations"))
+					return { rows: [{ id: ORGANIZATION }], rowCount: 1 };
+				if (sql.includes("SELECT id FROM projects"))
+					return { rows: [{ id: "deleting-project" }], rowCount: 1 };
+				return { rows: [], rowCount: 0 };
+			},
+			release() {},
+		};
+		const pool = { connect: async () => client, end: async () => {} };
+
+		await bootstrapAuthorization(
+			{
+				ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
+				ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+					{
+						username: "owner",
+						password: "secret",
+						organization_id: ORGANIZATION,
+					},
+				]),
+			},
+			pool as never,
+		);
+
+		const authorityWrites = queries.filter(
+			({ sql }) =>
+				sql.includes("INSERT INTO organization_memberships") ||
+				sql.includes("INSERT INTO project_memberships"),
+		);
+		expect(authorityWrites).toHaveLength(2);
+		for (const { sql, values } of authorityWrites) {
+			expect(sql).toContain("organization_id = $1 AND status = 'deleting'");
+			expect(sql).toContain("unfrozen");
+			expect(values).toEqual([ORGANIZATION, "owner"]);
+		}
 	});
 });
