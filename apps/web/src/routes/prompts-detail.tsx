@@ -43,7 +43,7 @@ import { formatDate, PageMessage } from "./prompts";
 
 const DEV_OPTIMIZATION_EXAMPLE_ENV = "true";
 const MIN_OPTIMIZATION_METRIC_CALLS = 2;
-const MAX_OPTIMIZATION_METRIC_CALLS = 20;
+const MAX_OPTIMIZATION_METRIC_CALLS = 100;
 
 export function PromptDetailPage() {
 	const { slug } = useParams({ from: "/protected/prompts/$slug" });
@@ -662,6 +662,7 @@ function OptimizationConfirmDialog({
 			reflectionModel.trim() &&
 			Number.isSafeInteger(Number(maxMetricCalls)) &&
 			Number(maxMetricCalls) >= MIN_OPTIMIZATION_METRIC_CALLS &&
+			Number(maxMetricCalls) >= validationExamples.length &&
 			Number(maxMetricCalls) <= MAX_OPTIMIZATION_METRIC_CALLS,
 	);
 	return (
@@ -814,13 +815,19 @@ function OptimizationConfirmDialog({
 						Metric-call budget
 						<Input
 							type="number"
-							min={MIN_OPTIMIZATION_METRIC_CALLS}
+							min={Math.max(
+								MIN_OPTIMIZATION_METRIC_CALLS,
+								validationExamples.length,
+							)}
 							max={MAX_OPTIMIZATION_METRIC_CALLS}
 							placeholder="e.g. 5"
 							value={maxMetricCalls}
 							onChange={(event) => setMaxMetricCalls(event.target.value)}
 						/>
 					</label>
+					<p className="text-sm text-muted-foreground">
+						The budget must cover every held-out validation example.
+					</p>
 				</div>
 				{error && (
 					<p className="mt-3 text-sm text-destructive" role="alert">

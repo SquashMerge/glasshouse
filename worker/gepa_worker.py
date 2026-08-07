@@ -197,6 +197,8 @@ def validate_request(request):
     max_metric_calls = budget.get("max_metric_calls")
     if not isinstance(max_metric_calls, int) or isinstance(max_metric_calls, bool) or not MIN_METRIC_CALLS <= max_metric_calls <= MAX_METRIC_CALLS:
         raise ValueError(f"budget.max_metric_calls must be between {MIN_METRIC_CALLS} and {MAX_METRIC_CALLS}")
+    if max_metric_calls < len(valset):
+        raise ValueError("budget.max_metric_calls must be at least the number of held-out validation examples")
     return source, rubric.strip(), trainset, valset, task_lm, reflection_lm, max_metric_calls
 
 

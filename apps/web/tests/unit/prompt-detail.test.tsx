@@ -379,8 +379,59 @@ describe("PromptDetailPage", () => {
 		);
 		expect(screen.getByLabelText("Metric-call budget")).toHaveAttribute(
 			"max",
-			"20",
+			"100",
 		);
+		expect(
+			screen.getByText(
+				"The budget must cover every held-out validation example.",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("requires the budget to cover every held-out validation example", async () => {
+		renderDetail();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Optimize prompt" }),
+		);
+		const addExampleButtons = screen.getAllByRole("button", {
+			name: "Add example",
+		});
+		fireEvent.click(addExampleButtons[1]!);
+		fireEvent.click(addExampleButtons[1]!);
+		fireEvent.change(screen.getByLabelText("Scoring rubric / objective"), {
+			target: { value: "Preserve concise summaries." },
+		});
+		for (const [label, value] of [
+			["Training 1 input", "delta"],
+			["Training 1 expected answer", "training answer"],
+			["Held-out validation 1 input", "alpha"],
+			["Held-out validation 1 expected answer", "validation answer one"],
+			["Held-out validation 2 input", "bravo"],
+			["Held-out validation 2 expected answer", "validation answer two"],
+			["Held-out validation 3 input", "charlie"],
+			["Held-out validation 3 expected answer", "validation answer three"],
+			["Task model", "task-model"],
+			["Reflection model", "reflection-model"],
+		] as const)
+			fireEvent.change(screen.getByLabelText(label), { target: { value } });
+		fireEvent.change(screen.getByLabelText("Metric-call budget"), {
+			target: { value: "2" },
+		});
+
+		expect(screen.getByLabelText("Metric-call budget")).toHaveAttribute(
+			"min",
+			"3",
+		);
+		expect(
+			screen.getByRole("button", { name: "Start optimization" }),
+		).toBeDisabled();
+
+		fireEvent.change(screen.getByLabelText("Metric-call budget"), {
+			target: { value: "3" },
+		});
+		expect(
+			screen.getByRole("button", { name: "Start optimization" }),
+		).toBeEnabled();
 	});
 
 	it("rejects materially overlapping training and held-out inputs", async () => {

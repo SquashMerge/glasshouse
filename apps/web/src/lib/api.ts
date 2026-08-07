@@ -716,7 +716,7 @@ export async function startPromptOptimization(input: {
 	evaluator: JsonObject;
 	dataset: OptimizationDataset;
 	model_config: JsonObject;
-	budget: JsonObject;
+	budget: { max_metric_calls: number };
 }): Promise<OptimizationJob> {
 	return responseJson<OptimizationJob>(
 		await authedFetch("/v1/prompt-optimizations", jsonRequest(input)),

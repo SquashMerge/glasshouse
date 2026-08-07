@@ -131,7 +131,11 @@ const Budget = z
 			.number()
 			.int()
 			.min(MIN_GEPA_METRIC_CALLS)
-			.max(MAX_GEPA_METRIC_CALLS),
+			.max(MAX_GEPA_METRIC_CALLS)
+			.openapi({
+				description:
+					"Must be at least the number of held-out validation examples.",
+			}),
 	})
 	.strict();
 const Job = z
@@ -1168,12 +1172,18 @@ export function createOptimizationHandlers(
 						"BAD_REQUEST",
 						"Training and held-out validation inputs must be unique and non-overlapping",
 					);
+				const budget = body.budget as { max_metric_calls: number };
+				if (budget.max_metric_calls < body.dataset.validation_examples.length)
+					throw new PromptRepositoryError(
+						"BAD_REQUEST",
+						"budget.max_metric_calls must be at least the number of held-out validation examples",
+					);
 				validateGepaConfiguration({
 					model_config: body.model_config as {
 						task_lm: string;
 						reflection_lm: string;
 					},
-					budget: body.budget as { max_metric_calls: number },
+					budget,
 				});
 				const job = await d.create(d.pool(), { ...body, actor: actor(c) });
 				logger.info("optimization.accepted", {

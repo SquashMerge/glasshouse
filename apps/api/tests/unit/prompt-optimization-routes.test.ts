@@ -102,6 +102,70 @@ function app() {
 }
 
 describe("prompt optimization status routes", () => {
+	it("rejects an impossible metric-call budget before creating a job", async () => {
+		const create = mock(async () => privateJob());
+		const handlers = createOptimizationHandlers({
+			pool: () => ({}) as never,
+			create,
+		} as unknown as OptimizationDependencies);
+		const api = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		api.use("*", async (c, next) => {
+			c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+			await next();
+		});
+		api.openapi(startOptimization, handlers.handleStart);
+		const originalModels = process.env.GEPA_ALLOWED_MODELS;
+		process.env.GEPA_ALLOWED_MODELS = "local-model";
+		try {
+			const response = await api.request("/v1/prompt-optimizations", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					project_id: PROJECT,
+					slug: "daily-summary",
+					source_version: 1,
+					target: "system",
+					evaluator: { type: "default_adapter" },
+					dataset: {
+						version: 1,
+						rubric: "Preserve concise summaries.",
+						training_examples: [
+							{ input: "training input", answer: "training answer" },
+						],
+						validation_examples: [
+							{ input: "alpha", answer: "held-out answer" },
+							{ input: "bravo", answer: "held-out answer" },
+							{ input: "charlie", answer: "held-out answer" },
+						],
+					},
+					model_config: {
+						task_lm: "local-model",
+						reflection_lm: "local-model",
+					},
+					budget: { max_metric_calls: 2 },
+				}),
+			});
+
+			expect(response.status).toBe(400);
+			expect(await response.json()).toEqual({
+				code: "BAD_REQUEST",
+				message:
+					"budget.max_metric_calls must be at least the number of held-out validation examples",
+			});
+			expect(create).not.toHaveBeenCalled();
+		} finally {
+			process.env.GEPA_ALLOWED_MODELS = originalModels;
+		}
+	});
+
 	it("returns only minimal active activity for the requested project", async () => {
 		listActivities.mockClear();
 		const response = await app().request(
