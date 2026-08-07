@@ -21,13 +21,16 @@ import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	deletePrompt,
 	getPrompt,
+	getPromptOptimization,
 	listPromptVersions,
 	promptOptimizationEventsUrl,
+	promotePromptOptimization,
 	rollbackLatestPromptVersion,
 	startPromptOptimization,
 	stopPromptOptimization,
 	type OptimizationEvent,
 	type OptimizationJob,
+	type OptimizationDataset,
 	type Prompt,
 	type PromptVersion,
 } from "../lib/api";
@@ -40,7 +43,7 @@ import { formatDate, PageMessage } from "./prompts";
 
 const DEV_OPTIMIZATION_EXAMPLE_ENV = "true";
 const MIN_OPTIMIZATION_METRIC_CALLS = 2;
-const MAX_OPTIMIZATION_METRIC_CALLS = 20;
+const MAX_OPTIMIZATION_METRIC_CALLS = 100;
 
 export function PromptDetailPage() {
 	const { slug } = useParams({ from: "/protected/prompts/$slug" });
@@ -156,8 +159,7 @@ export function PromptDetailPage() {
 	const optimizeMutation = useMutation({
 		mutationFn: (input: {
 			target: "system" | "user";
-			exampleInput: string;
-			exampleAnswer: string;
+			dataset: OptimizationDataset;
 			taskModel: string;
 			reflectionModel: string;
 			maxMetricCalls: number;
@@ -170,7 +172,7 @@ export function PromptDetailPage() {
 					: currentQuery.data!.version,
 				target: input.target,
 				evaluator: { type: "default_adapter" },
-				examples: [{ input: input.exampleInput, answer: input.exampleAnswer }],
+				dataset: input.dataset,
 				model_config: {
 					task_lm: input.taskModel,
 					reflection_lm: input.reflectionModel,
@@ -183,8 +185,49 @@ export function PromptDetailPage() {
 			setOptimizationPanelOpen(true);
 		},
 	});
+	const promoteMutation = useMutation({
+		mutationFn: (id: string) =>
+			promotePromptOptimization({ project_id: selectedProjectId!, id }),
+		onSuccess: async (job) => {
+			optimizationStatus.adopt(job);
+			queryClient.setQueryData(
+				["prompt-optimization-detail", selectedProjectId, job.id],
+				job,
+			);
+			await Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: ["prompt", selectedProjectId, slug, "current"],
+				}),
+				queryClient.invalidateQueries({
+					queryKey: ["prompt-versions", selectedProjectId, slug],
+				}),
+				queryClient.invalidateQueries({
+					queryKey: ["prompts", selectedProjectId],
+				}),
+			]);
+		},
+	});
 	const activeOptimization = optimizationStatus.job;
 	const optimizationActive = isOptimizationActive(activeOptimization?.status);
+	const optimizationDetailQuery = useQuery({
+		queryKey: [
+			"prompt-optimization-detail",
+			selectedProjectId,
+			activeOptimization?.id,
+		],
+		queryFn: () =>
+			getPromptOptimization({
+				project_id: selectedProjectId!,
+				id: activeOptimization!.id,
+			}),
+		enabled: Boolean(
+			activeOptimization && selectedProjectId && !optimizationActive,
+		),
+	});
+	const displayedOptimization =
+		optimizationDetailQuery.data?.id === activeOptimization?.id
+			? optimizationDetailQuery.data
+			: activeOptimization;
 	const optimizationStream = useEventSource<OptimizationEvent>(
 		activeOptimization && selectedProjectId && optimizationActive
 			? promptOptimizationEventsUrl({
@@ -504,9 +547,9 @@ export function PromptDetailPage() {
 					}
 				/>
 			)}
-			{activeOptimization && optimizationPanelOpen && (
+			{displayedOptimization && optimizationPanelOpen && (
 				<OptimizationStatus
-					job={activeOptimization}
+					job={displayedOptimization}
 					latestEvent={optimizationEvent}
 					versions={historyQuery.data?.items}
 					promptName={prompt.name}
@@ -523,6 +566,13 @@ export function PromptDetailPage() {
 						setStopError(null);
 						stopMutation.mutate();
 					}}
+					onPromote={() => promoteMutation.mutate(displayedOptimization.id)}
+					promotionPending={promoteMutation.isPending}
+					promotionError={
+						promoteMutation.error instanceof Error
+							? promoteMutation.error.message
+							: null
+					}
 				/>
 			)}
 		</div>
@@ -547,15 +597,19 @@ function OptimizationConfirmDialog({
 	error: string | null;
 	onClose: () => void;
 	onConfirm: (input: {
-		exampleInput: string;
-		exampleAnswer: string;
+		dataset: OptimizationDataset;
 		taskModel: string;
 		reflectionModel: string;
 		maxMetricCalls: number;
 	}) => void;
 }) {
-	const [exampleInput, setExampleInput] = React.useState("");
-	const [exampleAnswer, setExampleAnswer] = React.useState("");
+	const [rubric, setRubric] = React.useState("");
+	const [trainingExamples, setTrainingExamples] = React.useState([
+		{ input: "", answer: "" },
+	]);
+	const [validationExamples, setValidationExamples] = React.useState([
+		{ input: "", answer: "" },
+	]);
 	const [taskModel, setTaskModel] = React.useState("");
 	const [reflectionModel, setReflectionModel] = React.useState("");
 	const [maxMetricCalls, setMaxMetricCalls] = React.useState("20");
@@ -564,23 +618,51 @@ function OptimizationConfirmDialog({
 		import.meta.env.VITE_SHOW_DEV_OPTIMIZATION_EXAMPLE ===
 			DEV_OPTIMIZATION_EXAMPLE_ENV;
 	const fillDevExample = () => {
-		setExampleInput(
-			"Here is my task list for today:\n\n- Finish the quarterly status report and send it to the team by 2:00 PM.\n- Pick up groceries after work.\n- Review and approve the open pull request for the API changes.\n- Call the dentist to schedule a cleaning.\n- Take the dog for a 30-minute walk in the evening.",
+		setRubric(
+			"Produce a concise daily summary that prioritizes deadlines, preserves task details, groups work by urgency or timing, and does not invent tasks.",
 		);
-		setExampleAnswer(
-			"**Today’s priorities:** Finish and send the quarterly status report by 2:00 PM, then review and approve the API pull request.  \n**After work:** Pick up groceries, schedule a dental cleaning, and take the dog for a 30-minute walk.",
-		);
+		setTrainingExamples([
+			{
+				input:
+					"Here is my task list for today:\n\n- Finish the quarterly status report and send it to the team by 2:00 PM.\n- Pick up groceries after work.\n- Review and approve the open pull request for the API changes.\n- Call the dentist to schedule a cleaning.\n- Take the dog for a 30-minute walk in the evening.",
+				answer:
+					"**Today’s priorities:** Finish and send the quarterly status report by 2:00 PM, then review and approve the API pull request.  \n**After work:** Pick up groceries, schedule a dental cleaning, and take the dog for a 30-minute walk.",
+			},
+		]);
+		setValidationExamples([
+			{
+				input:
+					"Tasks for today:\n\n- Send the customer renewal proposal before 11:00 AM.\n- Prepare notes for the 3:00 PM planning meeting.\n- Refill the prescription on the way home.\n- Water the plants tonight.",
+				answer:
+					"**Before noon:** Send the customer renewal proposal before 11:00 AM.\n**This afternoon:** Prepare notes for the 3:00 PM planning meeting.\n**Later:** Refill the prescription on the way home and water the plants tonight.",
+			},
+			{
+				input:
+					"My list:\n\n- Book travel for next week’s conference.\n- Respond to the security review comments by end of day.\n- Make dinner.\n- Return the library books before they are due tomorrow.",
+				answer:
+					"**Priority work:** Respond to the security review comments by end of day and book travel for next week’s conference.\n**Personal:** Return the library books before tomorrow’s due date, then make dinner.",
+			},
+		]);
 		setTaskModel("gpt-5.6-terra");
 		setReflectionModel("gpt-5.6-terra");
 		setMaxMetricCalls("5");
 	};
+	const overlaps = hasOverlappingOptimizationInputs(
+		trainingExamples,
+		validationExamples,
+	);
+	const complete = (examples: Array<{ input: string; answer: string }>) =>
+		examples.every((example) => example.input.trim() && example.answer.trim());
 	const valid = Boolean(
-		exampleInput.trim() &&
-			exampleAnswer.trim() &&
+		rubric.trim() &&
+			complete(trainingExamples) &&
+			complete(validationExamples) &&
+			!overlaps &&
 			taskModel.trim() &&
 			reflectionModel.trim() &&
 			Number.isSafeInteger(Number(maxMetricCalls)) &&
 			Number(maxMetricCalls) >= MIN_OPTIMIZATION_METRIC_CALLS &&
+			Number(maxMetricCalls) >= validationExamples.length &&
 			Number(maxMetricCalls) <= MAX_OPTIMIZATION_METRIC_CALLS,
 	);
 	return (
@@ -589,14 +671,14 @@ function OptimizationConfirmDialog({
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="optimization-title"
-				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+				className="max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto rounded-lg border border-border bg-background p-6 shadow-lg"
 			>
 				<h2 id="optimization-title" className="text-lg font-semibold">
 					Start optimization
 				</h2>
 				<p className="mt-3 text-sm text-muted-foreground">
-					GEPA optimizes one prompt role per run. Choose the role to optimize,
-					then provide a representative input and expected answer.
+					GEPA optimizes one prompt role per run. Expected answers are evaluator
+					labels: they are never inserted into the production prompt.
 				</p>
 				{showDevExample && (
 					<Button
@@ -641,23 +723,78 @@ function OptimizationConfirmDialog({
 						</div>
 					</fieldset>
 					<label className="block text-sm font-medium">
-						Representative input
+						Scoring rubric / objective
 						<textarea
 							className="mt-1 min-h-20 w-full rounded-md border p-2"
-							placeholder="e.g. A customer asks how to reset their password"
-							value={exampleInput}
-							onChange={(event) => setExampleInput(event.target.value)}
+							placeholder="e.g. Prioritize urgent work, preserve deadlines, and use concise grouped headings"
+							value={rubric}
+							onChange={(event) => setRubric(event.target.value)}
 						/>
 					</label>
-					<label className="block text-sm font-medium">
-						Expected answer
-						<textarea
-							className="mt-1 min-h-20 w-full rounded-md border p-2"
-							placeholder="e.g. Explain the steps clearly and include the support link"
-							value={exampleAnswer}
-							onChange={(event) => setExampleAnswer(event.target.value)}
-						/>
-					</label>
+					<OptimizationExampleList
+						idPrefix="training"
+						title="Training examples"
+						examples={trainingExamples}
+						disabled={pending}
+						onAdd={() =>
+							setTrainingExamples((examples) => [
+								...examples,
+								{ input: "", answer: "" },
+							])
+						}
+						onRemove={(index) =>
+							setTrainingExamples((examples) =>
+								examples.filter((_, itemIndex) => itemIndex !== index),
+							)
+						}
+						onUpdate={(index, field, value) =>
+							setTrainingExamples((examples) =>
+								examples.map((example, itemIndex) =>
+									itemIndex === index
+										? { ...example, [field]: value }
+										: example,
+								),
+							)
+						}
+					/>
+					<OptimizationExampleList
+						idPrefix="validation"
+						title="Held-out validation examples"
+						examples={validationExamples}
+						disabled={pending}
+						onAdd={() =>
+							setValidationExamples((examples) => [
+								...examples,
+								{ input: "", answer: "" },
+							])
+						}
+						onRemove={(index) =>
+							setValidationExamples((examples) =>
+								examples.filter((_, itemIndex) => itemIndex !== index),
+							)
+						}
+						onUpdate={(index, field, value) =>
+							setValidationExamples((examples) =>
+								examples.map((example, itemIndex) =>
+									itemIndex === index
+										? { ...example, [field]: value }
+										: example,
+								),
+							)
+						}
+					/>
+					{overlaps && (
+						<p className="text-sm text-destructive" role="alert">
+							Training and held-out validation inputs must be unique and not
+							materially overlap.
+						</p>
+					)}
+					{validationExamples.length < 2 && (
+						<p className="text-sm text-muted-foreground">
+							One held-out sample requires manual review. Add at least two for
+							automatic-promotion eligibility.
+						</p>
+					)}
 					<label className="block text-sm font-medium">
 						Task model
 						<Input
@@ -678,13 +815,19 @@ function OptimizationConfirmDialog({
 						Metric-call budget
 						<Input
 							type="number"
-							min={MIN_OPTIMIZATION_METRIC_CALLS}
+							min={Math.max(
+								MIN_OPTIMIZATION_METRIC_CALLS,
+								validationExamples.length,
+							)}
 							max={MAX_OPTIMIZATION_METRIC_CALLS}
 							placeholder="e.g. 5"
 							value={maxMetricCalls}
 							onChange={(event) => setMaxMetricCalls(event.target.value)}
 						/>
 					</label>
+					<p className="text-sm text-muted-foreground">
+						The budget must cover every held-out validation example.
+					</p>
 				</div>
 				{error && (
 					<p className="mt-3 text-sm text-destructive" role="alert">
@@ -698,8 +841,18 @@ function OptimizationConfirmDialog({
 					<Button
 						onClick={() =>
 							onConfirm({
-								exampleInput: exampleInput.trim(),
-								exampleAnswer: exampleAnswer.trim(),
+								dataset: {
+									version: 1,
+									rubric: rubric.trim(),
+									training_examples: trainingExamples.map((example) => ({
+										input: example.input.trim(),
+										answer: example.answer.trim(),
+									})),
+									validation_examples: validationExamples.map((example) => ({
+										input: example.input.trim(),
+										answer: example.answer.trim(),
+									})),
+								},
 								taskModel: taskModel.trim(),
 								reflectionModel: reflectionModel.trim(),
 								maxMetricCalls: Number(maxMetricCalls),
@@ -715,6 +868,134 @@ function OptimizationConfirmDialog({
 	);
 }
 
+function normalizeOptimizationInput(value: string): string {
+	return value
+		.normalize("NFKD")
+		.toLowerCase()
+		.replace(/[\p{Cc}\p{Cf}\p{M}\p{Default_Ignorable_Code_Point}]/gu, "")
+		.trim()
+		.replace(/\s+/gu, " ");
+}
+
+function hasOverlappingOptimizationInputs(
+	trainingExamples: Array<{ input: string }>,
+	validationExamples: Array<{ input: string }>,
+): boolean {
+	const trainingInputs = trainingExamples.map((example) =>
+		normalizeOptimizationInput(example.input),
+	);
+	const validationInputs = validationExamples.map((example) =>
+		normalizeOptimizationInput(example.input),
+	);
+	const inputs = [...trainingInputs, ...validationInputs];
+	return inputs.some((input, index) =>
+		inputs
+			.slice(0, index)
+			.some((prior) => inputsMateriallyOverlap(input, prior)),
+	);
+}
+
+function inputsMateriallyOverlap(left: string, right: string): boolean {
+	if (left === right) return true;
+	const leftTokens = left.match(/[\p{L}\p{N}]+/gu) ?? [];
+	const rightTokens = right.match(/[\p{L}\p{N}]+/gu) ?? [];
+	const [shorter, longer] =
+		leftTokens.length <= rightTokens.length
+			? [leftTokens, rightTokens]
+			: [rightTokens, leftTokens];
+	if (shorter.length === 0) return false;
+	if (` ${longer.join(" ")} `.includes(` ${shorter.join(" ")} `)) return true;
+	const longerCounts = new Map<string, number>();
+	for (const token of longer)
+		longerCounts.set(token, (longerCounts.get(token) ?? 0) + 1);
+	let shared = 0;
+	for (const token of shorter) {
+		const remaining = longerCounts.get(token) ?? 0;
+		if (remaining === 0) continue;
+		shared += 1;
+		longerCounts.set(token, remaining - 1);
+	}
+	return shared / shorter.length >= 0.7;
+}
+
+function OptimizationExampleList({
+	idPrefix,
+	title,
+	examples,
+	disabled,
+	onAdd,
+	onRemove,
+	onUpdate,
+}: {
+	idPrefix: string;
+	title: string;
+	examples: Array<{ input: string; answer: string }>;
+	disabled: boolean;
+	onAdd: () => void;
+	onRemove: (index: number) => void;
+	onUpdate: (index: number, field: "input" | "answer", value: string) => void;
+}) {
+	return (
+		<fieldset className="space-y-2 rounded-md border p-3">
+			<div className="flex items-center justify-between gap-3">
+				<legend className="text-sm font-medium">
+					{title} ({examples.length})
+				</legend>
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					onClick={onAdd}
+					disabled={disabled}
+				>
+					Add example
+				</Button>
+			</div>
+			{examples.map((example, index) => (
+				<div
+					key={`${idPrefix}-${index}`}
+					className="space-y-2 rounded-md bg-muted/50 p-2"
+				>
+					<div className="flex items-center justify-between gap-3">
+						<p className="text-xs font-medium">
+							{title.replace(" examples", "")} {index + 1}
+						</p>
+						<Button
+							type="button"
+							size="sm"
+							variant="ghost"
+							onClick={() => onRemove(index)}
+							disabled={disabled || examples.length === 1}
+						>
+							Remove
+						</Button>
+					</div>
+					<label className="block text-sm">
+						{title.replace(" examples", "")} {index + 1} input
+						<textarea
+							className="mt-1 min-h-20 w-full rounded-md border bg-background p-2"
+							value={example.input}
+							onChange={(event) => onUpdate(index, "input", event.target.value)}
+							disabled={disabled}
+						/>
+					</label>
+					<label className="block text-sm">
+						{title.replace(" examples", "")} {index + 1} expected answer
+						<textarea
+							className="mt-1 min-h-20 w-full rounded-md border bg-background p-2"
+							value={example.answer}
+							onChange={(event) =>
+								onUpdate(index, "answer", event.target.value)
+							}
+							disabled={disabled}
+						/>
+					</label>
+				</div>
+			))}
+		</fieldset>
+	);
+}
+
 function OptimizationStatus({
 	job,
 	latestEvent,
@@ -727,6 +1008,9 @@ function OptimizationStatus({
 	onClose,
 	onRetry,
 	onStop,
+	onPromote,
+	promotionPending,
+	promotionError,
 }: {
 	job: OptimizationJob;
 	latestEvent: OptimizationEvent | null;
@@ -739,6 +1023,9 @@ function OptimizationStatus({
 	onClose: () => void;
 	onRetry: () => void;
 	onStop: () => void;
+	onPromote: () => void;
+	promotionPending: boolean;
+	promotionError: string | null;
 }) {
 	const active = isOptimizationActive(job.status);
 	const elapsed = useElapsedTime(
@@ -748,6 +1035,8 @@ function OptimizationStatus({
 	);
 	const score = progressScore(latestEvent);
 	const diff = optimizationDiff(job, versions);
+	const evidence = job.evidence ?? null;
+	const rubric = evidence?.rubric ?? job.dataset?.rubric;
 	return (
 		<div
 			className="fixed bottom-4 right-4 z-40 w-[min(28rem,calc(100vw-2rem))] rounded-lg border border-border bg-background p-4 shadow-lg"
@@ -763,13 +1052,14 @@ function OptimizationStatus({
 				</Button>
 			</div>
 			<p className="mt-1 text-sm text-muted-foreground">
-				{job.result_version
-					? `Published as v${job.result_version}.`
-					: (job.error_message ??
-						"The source version and configuration are pinned.")}
+				{promotionSummary(job)}
 			</p>
 			<dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
 				<ProgressField label="Phase" value={job.status} />
+				<ProgressField
+					label="Dataset"
+					value={job.dataset ? `v${job.dataset.version}` : "Not reported"}
+				/>
 				<ProgressField
 					label="Prompt role"
 					value={job.target ?? "Not reported"}
@@ -781,9 +1071,41 @@ function OptimizationStatus({
 				<ProgressField label="Elapsed" value={elapsed} />
 				<ProgressField label="Metric calls" value={metricCallsLabel(job)} />
 				<ProgressField
-					label="Latest score"
+					label="Latest progress score"
 					value={score === null ? "Not reported" : String(score)}
 				/>
+				<ProgressField
+					label="Promotion"
+					value={promotionStatusLabel(job.promotion_status)}
+				/>
+				{evidence && (
+					<>
+						<ProgressField
+							label="Training score (diagnostic)"
+							value={formatScore(evidence.training.score)}
+						/>
+						<ProgressField
+							label="Training examples"
+							value={String(evidence.training.sample_count)}
+						/>
+						<ProgressField
+							label="Held-out validation score"
+							value={formatScore(evidence.validation.score)}
+						/>
+						<ProgressField
+							label="Held-out baseline"
+							value={formatScore(evidence.validation.baseline_score)}
+						/>
+						<ProgressField
+							label="Held-out examples"
+							value={String(evidence.validation.sample_count)}
+						/>
+						<ProgressField
+							label="Leakage check"
+							value={leakageLabel(evidence.leakage.status)}
+						/>
+					</>
+				)}
 			</dl>
 			{active && streamStatus !== "open" && (
 				<div className="mt-3 flex items-center justify-between gap-3 rounded-md bg-muted px-3 py-2 text-sm">
@@ -798,9 +1120,17 @@ function OptimizationStatus({
 					</Button>
 				</div>
 			)}
+			{rubric && (
+				<div className="mt-3 border-t pt-3 text-sm">
+					<p className="font-medium">Scoring rubric / objective</p>
+					<p className="mt-1 whitespace-pre-wrap text-muted-foreground">
+						{rubric}
+					</p>
+				</div>
+			)}
 			{diff && (
 				<div className="mt-4 space-y-2 border-t pt-3 text-sm">
-					<p className="font-medium">Candidate improvement</p>
+					<p className="font-medium">Candidate review</p>
 					<p className="text-muted-foreground">{diff.summary}</p>
 					<p className="font-medium">Before / after</p>
 					<div className="grid gap-2 sm:grid-cols-2">
@@ -830,6 +1160,23 @@ function OptimizationStatus({
 					{stopError}
 				</p>
 			)}
+			{job.status === "completed" &&
+				job.promotion_status === "review_required" &&
+				job.candidate_content && (
+					<Button
+						className="mt-3"
+						size="sm"
+						onClick={onPromote}
+						disabled={promotionPending}
+					>
+						{promotionPending ? "Promoting…" : "Promote reviewed draft"}
+					</Button>
+				)}
+			{promotionError && (
+				<p className="mt-2 text-sm text-destructive" role="alert">
+					{promotionError}
+				</p>
+			)}
 		</div>
 	);
 }
@@ -841,6 +1188,70 @@ function metricCallsLabel(job: OptimizationJob): string {
 			? `${job.metric_calls_used} / ${budget}`
 			: String(job.metric_calls_used);
 	return budget ? `Telemetry unavailable / ${budget}` : "Telemetry unavailable";
+}
+
+function formatScore(score: number | null): string {
+	return score === null ? "Not reported" : String(score);
+}
+
+function leakageLabel(status: "not_run" | "passed" | "failed"): string {
+	return status === "passed"
+		? "Passed"
+		: status === "failed"
+			? "Blocked"
+			: "Not run";
+}
+
+function promotionStatusLabel(
+	status: OptimizationJob["promotion_status"],
+): string {
+	return status === "auto_promoted"
+		? "Automatically promoted"
+		: status === "reviewed_promoted"
+			? "Promoted after review"
+			: status === "review_required"
+				? "Review required"
+				: status === "blocked"
+					? "Blocked"
+					: status === "legacy"
+						? "Legacy result"
+						: "Pending";
+}
+
+function promotionSummary(job: OptimizationJob): string {
+	if (job.result_version && job.promotion_status === undefined)
+		return `Published as v${job.result_version}.`;
+	if (job.promotion_status === "auto_promoted" && job.result_version)
+		return `Automatically promoted as v${job.result_version} using held-out validation evidence.`;
+	if (job.promotion_status === "reviewed_promoted" && job.result_version)
+		return `Promoted as v${job.result_version} after authenticated review.`;
+	if (job.promotion_status === "review_required")
+		return `Draft only: ${promotionReason(job.promotion_reason)}.`;
+	if (job.promotion_status === "blocked")
+		return `Publication blocked: ${promotionReason(job.promotion_reason)}.`;
+	if (job.promotion_status === "legacy")
+		return "Legacy result: held-out validation evidence was not recorded.";
+	return (
+		job.error_message ?? "The source version and configuration are pinned."
+	);
+}
+
+function promotionReason(reason: string | null | undefined): string {
+	if (reason === "insufficient_held_out_validation")
+		return "fewer than two independent held-out examples";
+	if (reason === "held_out_score_unavailable")
+		return "held-out validation evidence is unavailable";
+	if (reason === "held_out_score_did_not_improve")
+		return "the held-out score did not improve on the source prompt";
+	if (reason === "source_version_is_stale")
+		return "the source prompt changed before publication";
+	if (reason === "expected_answer_full_match")
+		return "the candidate copied a full expected answer";
+	if (reason === "expected_answer_material_span")
+		return "the candidate copied material expected-answer text";
+	if (reason === "candidate_validation_failed")
+		return "the candidate failed prompt validation";
+	return "review is required";
 }
 
 function ProgressField({ label, value }: { label: string; value: string }) {

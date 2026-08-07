@@ -176,6 +176,16 @@ OPENAI_API_KEY=your-proxy-key
 
 The current UI exposes model names and the metric-call budget, but not provider credentials, proxy administration, connection testing, or model discovery. Never commit these credentials or store them in prompt/job records. For Docker Compose, place them in the gitignored `infra/.env`; for production, use the deployment secret mechanism. `GEPA_WORKER_MODE=fake` is only for deterministic tests and does not perform LLM calls.
 
+#### Held-out optimization datasets and promotion
+
+Every new optimization pins an embedded `dataset.version: 1` snapshot containing a human-readable scoring rubric/objective, one or more training examples, and one or more held-out validation examples. The raw examples remain server and worker data; job responses expose only the rubric, split counts, and version. Candidates that copy example input material are blocked, including for legacy drafts at read time. Training and validation inputs must be unique and must not materially overlap, contain one another, or use reordered near-identical token sets after Unicode normalization, whitespace collapsing, and lowercasing.
+
+The default adapter executes candidates against expected-answer labels. Training score is a diagnostic only. GEPA ranks candidates by held-out validation score, and automatic publication requires at least two independent held-out examples, a finite candidate validation score that strictly improves on the source prompt's held-out score, and a passed leakage check. A one-example validation score, including `1`, is not evidence of general quality and produces a review-required draft instead of a new prompt version.
+
+Expected answers are evaluation labels, not few-shot prompt material. Astraea's reflection adapter does not put them in proposal feedback, and the API blocks normalized full expected-answer token multisets and copied material spans of at least eight normalized tokens and 48 characters, including reordered copies. The check removes control, format, and combining Unicode characters before comparison. Blocked candidates are never stored as drafts or published. Intentional few-shot prompt authoring is a separate reviewed authoring concern and is not created by optimization.
+
+Review-required drafts retain the safe candidate, source/candidate diff, rubric, split counts, baseline and candidate held-out metrics, and leakage outcome. An authenticated actor scoped to the same project may promote a safe draft through `POST /v1/prompt-optimizations/{id}/promote`; promotion fails if the source version is no longer current. This preserves an explicit human review boundary without putting credentials, worker diagnostics, or expected-answer text in lifecycle events.
+
 #### Development-only local CLI authentication
 
 For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenticated LLM CLI instead of a provider API key. The complete Codex setup is:

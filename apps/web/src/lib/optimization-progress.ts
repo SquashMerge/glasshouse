@@ -43,19 +43,19 @@ export function optimizationDiff(
 	job: OptimizationJob,
 	versions: PromptVersion[] | undefined,
 ): { summary: string; before: string; after: string } | null {
-	if (!job.result_version || !job.source_version || !job.target) return null;
+	if (!job.source_version || !job.target) return null;
 	const before = versions?.find(
 		(version) => version.version === job.source_version,
 	);
-	const after = versions?.find(
-		(version) => version.version === job.result_version,
-	);
+	const after = job.result_version
+		? versions?.find((version) => version.version === job.result_version)
+		: undefined;
 	const beforeContent = before?.messages.find(
 		(message) => message.role === job.target,
 	)?.content;
-	const afterContent = after?.messages.find(
-		(message) => message.role === job.target,
-	)?.content;
+	const afterContent =
+		job.candidate_content ??
+		after?.messages.find((message) => message.role === job.target)?.content;
 	if (beforeContent === undefined || afterContent === undefined) return null;
 	return {
 		summary:

@@ -1,17 +1,20 @@
+import type { OptimizationDataset } from "./optimization-dataset.js";
 import { logger } from "./logger.js";
 
 export type GepaWorkerInput = {
 	target: "system" | "user";
 	source: string;
 	evaluator: Record<string, unknown>;
-	examples: unknown[];
+	dataset: OptimizationDataset;
 	model_config: Record<string, unknown>;
 	budget: Record<string, unknown>;
 };
 
 export type GepaWorkerResult = {
 	candidate: string;
-	score?: number;
+	training_score: number | null;
+	validation_score: number;
+	baseline_validation_score: number;
 	metric_calls_used: number | null;
 };
 export const MAX_OPTIMIZATION_CANDIDATE_BYTES = 64 * 1024;
@@ -49,16 +52,14 @@ export const runGepaWorker: GepaWorker = async (input, signal, onProgress) => {
 		child.exited,
 	]);
 	if (exitCode !== 0) {
-		const diagnostic = stderr.trim();
 		logger.error(
 			"optimization.worker_failed",
-			new Error(`GEPA worker exited with code ${exitCode}`),
+			new Error("GEPA worker failed"),
 			{
 				exit_code: exitCode,
-				...(diagnostic ? { diagnostic } : {}),
+				diagnostic_bytes: new TextEncoder().encode(stderr).byteLength,
 			},
 		);
-		// Worker diagnostics stay in server logs; never surface them through jobs or SSE.
 		throw new Error("GEPA worker failed");
 	}
 	return parseWorkerResult(stdout, input.budget.max_metric_calls);
@@ -69,10 +70,9 @@ export function parseWorkerResult(
 	maxMetricCalls: unknown,
 ): GepaWorkerResult {
 	try {
-		const parsed = JSON.parse(stdout) as Omit<
-			GepaWorkerResult,
-			"metric_calls_used"
-		> & { metric_calls_used?: unknown };
+		const parsed = JSON.parse(stdout) as Partial<GepaWorkerResult> & {
+			metric_calls_used?: unknown;
+		};
 		const metricCallsUsed: number | null =
 			parsed.metric_calls_used === undefined ||
 			parsed.metric_calls_used === null
@@ -83,18 +83,31 @@ export function parseWorkerResult(
 		if (
 			!parsed ||
 			typeof parsed.candidate !== "string" ||
-			(parsed.score !== undefined &&
-				(typeof parsed.score !== "number" || !Number.isFinite(parsed.score))) ||
-			(metricCallsUsed !== null &&
-				(!Number.isSafeInteger(metricCallsUsed) || metricCallsUsed < 0)) ||
+			(parsed.training_score !== null &&
+				(typeof parsed.training_score !== "number" ||
+					!Number.isFinite(parsed.training_score))) ||
+			typeof parsed.validation_score !== "number" ||
+			!Number.isFinite(parsed.validation_score) ||
+			typeof parsed.baseline_validation_score !== "number" ||
+			!Number.isFinite(parsed.baseline_validation_score) ||
 			typeof maxMetricCalls !== "number" ||
 			!Number.isSafeInteger(maxMetricCalls) ||
 			maxMetricCalls < 0 ||
+			(metricCallsUsed !== null &&
+				(!Number.isSafeInteger(metricCallsUsed) ||
+					metricCallsUsed < 0 ||
+					metricCallsUsed > maxMetricCalls)) ||
 			new TextEncoder().encode(parsed.candidate).byteLength >
 				MAX_OPTIMIZATION_CANDIDATE_BYTES
 		)
 			throw new Error("invalid result");
-		return { ...parsed, metric_calls_used: metricCallsUsed };
+		return {
+			candidate: parsed.candidate,
+			training_score: parsed.training_score,
+			validation_score: parsed.validation_score,
+			baseline_validation_score: parsed.baseline_validation_score,
+			metric_calls_used: metricCallsUsed,
+		};
 	} catch {
 		throw new Error("GEPA worker returned an invalid result");
 	}

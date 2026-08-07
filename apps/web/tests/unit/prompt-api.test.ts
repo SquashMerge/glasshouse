@@ -12,6 +12,7 @@ import {
 	listActivePromptOptimizationActivities,
 	listPrompts,
 	previewPrompt,
+	promotePromptOptimization,
 	renderPrompt,
 	rollbackLatestPromptVersion,
 	startPromptOptimization,
@@ -204,7 +205,7 @@ describe("prompt management API client", () => {
 		]);
 	});
 
-	it("submits the selected historical version for optimization", async () => {
+	it("submits the pinned train and held-out validation dataset for optimization", async () => {
 		fetchMock.mockResolvedValueOnce(
 			jsonResponse({
 				id: "22222222-2222-4222-8222-222222222222",
@@ -219,7 +220,14 @@ describe("prompt management API client", () => {
 			source_version: 2,
 			target: "system",
 			evaluator: { type: "default_adapter" },
-			examples: [{ input: "Question", answer: "Answer" }],
+			dataset: {
+				version: 1,
+				rubric: "Answer accurately and concisely.",
+				training_examples: [{ input: "Question", answer: "Answer" }],
+				validation_examples: [
+					{ input: "Held-out question", answer: "Held-out answer" },
+				],
+			},
 			model_config: { task_lm: "task", reflection_lm: "reflection" },
 			budget: { max_metric_calls: 1 },
 		});
@@ -261,5 +269,24 @@ describe("prompt management API client", () => {
 		]);
 		for (const [, init] of fetchMock.mock.calls)
 			expect(init.signal).toBe(controller.signal);
+	});
+
+	it("promotes a reviewed draft through the scoped promotion endpoint", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				id: "22222222-2222-4222-8222-222222222222",
+				status: "completed",
+				result_version: 4,
+				error_message: null,
+			}),
+		);
+		await promotePromptOptimization({
+			project_id: PROJECT_ID,
+			id: "22222222-2222-4222-8222-222222222222",
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			`/v1/prompt-optimizations/22222222-2222-4222-8222-222222222222/promote?project_id=${PROJECT_ID}`,
+			expect.objectContaining({ method: "POST" }),
+		);
 	});
 });

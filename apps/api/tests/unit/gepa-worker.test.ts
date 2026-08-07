@@ -24,7 +24,14 @@ describe("GEPA worker adapter", () => {
 				target: "system",
 				source: "Hello {{name}}",
 				evaluator: { type: "default_adapter" },
-				examples: [{ input: "Hello", answer: "Hello" }],
+				dataset: {
+					version: 1,
+					rubric: "Greet the caller clearly.",
+					training_examples: [{ input: "Hello", answer: "Hello" }],
+					validation_examples: [
+						{ input: "Welcome Ada", answer: "Welcome Ada" },
+					],
+				},
 				model_config: {
 					task_lm: "openai/gpt-4.1-mini",
 					reflection_lm: "openai/gpt-4.1-mini",
@@ -35,15 +42,41 @@ describe("GEPA worker adapter", () => {
 		);
 		expect(result.candidate).toContain("Hello {{name}}");
 		expect(result.metric_calls_used).toBe(0);
+		expect(result).toMatchObject({
+			training_score: 1,
+			validation_score: 1,
+			baseline_validation_score: 0,
+		});
 	});
 
-	it("keeps GEPA's actual metric-call total when a batch crosses its soft stop threshold", () => {
-		expect(
+	it("rejects a worker result that exceeds the strict metric-call budget", () => {
+		expect(() =>
 			parseWorkerResult(
-				JSON.stringify({ candidate: "candidate", metric_calls_used: 7 }),
+				JSON.stringify({
+					candidate: "candidate",
+					training_score: 1,
+					validation_score: 1,
+					baseline_validation_score: 0,
+					metric_calls_used: 7,
+				}),
 				5,
 			),
-		).toEqual({ candidate: "candidate", metric_calls_used: 7 });
+		).toThrow("invalid result");
+	});
+
+	it("accepts an omitted training score when the strict metric budget is exhausted", () => {
+		expect(
+			parseWorkerResult(
+				JSON.stringify({
+					candidate: "candidate",
+					training_score: null,
+					validation_score: 1,
+					baseline_validation_score: 0,
+					metric_calls_used: 5,
+				}),
+				5,
+			),
+		).toMatchObject({ training_score: null, metric_calls_used: 5 });
 	});
 
 	it("reports structured metric progress without retaining it in diagnostics", async () => {
@@ -84,7 +117,7 @@ describe("GEPA worker adapter", () => {
 		).rejects.toThrow("telemetry persistence failed");
 	});
 
-	it("writes bounded worker diagnostics to the structured log on worker failure", async () => {
+	it("logs only bounded worker diagnostic metadata on failure", async () => {
 		process.env.GEPA_WORKER_MODE = "fake";
 		process.env.GEPA_ALLOWED_MODELS = "openai/gpt-4.1-mini";
 		const originalLogger = logger.error;
@@ -99,7 +132,14 @@ describe("GEPA worker adapter", () => {
 						target: "system",
 						source: "Hello",
 						evaluator: { type: "unsupported" },
-						examples: [{ input: "Hello", answer: "Hello" }],
+						dataset: {
+							version: 1,
+							rubric: "Greet the caller clearly.",
+							training_examples: [{ input: "Hello", answer: "Hello" }],
+							validation_examples: [
+								{ input: "Welcome Ada", answer: "Welcome Ada" },
+							],
+						},
 						model_config: {
 							task_lm: "openai/gpt-4.1-mini",
 							reflection_lm: "openai/gpt-4.1-mini",
@@ -112,12 +152,10 @@ describe("GEPA worker adapter", () => {
 			expect(errors).toEqual([
 				{
 					event: "optimization.worker_failed",
-					cause: expect.objectContaining({
-						message: "GEPA worker exited with code 2",
-					}),
+					cause: expect.objectContaining({ message: "GEPA worker failed" }),
 					fields: {
 						exit_code: 2,
-						diagnostic: "evaluator must be the default_adapter",
+						diagnostic_bytes: 37,
 					},
 				},
 			]);

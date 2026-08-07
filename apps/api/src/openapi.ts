@@ -119,6 +119,7 @@ import {
 	getLatestOptimization,
 	listOptimizationActivities,
 	getOptimization,
+	promoteOptimization,
 	stopOptimization,
 	optimizationEvents,
 	handleStart,
@@ -126,6 +127,7 @@ import {
 	handleGetLatest,
 	handleListActivities,
 	handleGet,
+	handlePromote,
 	handleStop,
 	handleEvents,
 } from "./routes/prompt-optimizations.js";
@@ -280,6 +282,7 @@ register(getActiveOptimization, handleGetActive);
 register(getLatestOptimization, handleGetLatest);
 register(listOptimizationActivities, handleListActivities);
 register(optimizationEvents, handleEvents);
+register(promoteOptimization, handlePromote);
 register(stopOptimization, handleStop);
 register(getOptimization, handleGet);
 
