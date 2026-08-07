@@ -68,6 +68,7 @@ MIT core. Sealed `enterprise/` wheel under a custom EULA for premium features (S
 
 - Docker (with Compose v2.13+ for `depends_on condition: service_healthy`)
 - Bun 1.3.14+ (replaces both the package manager and the runtime; install from [bun.sh](https://bun.sh))
+- Node.js 22.12+ (required by local migration tooling; install from [nodejs.org](https://nodejs.org/))
 - uv (for the Python codegen client; install from [docs.astral.sh/uv](https://docs.astral.sh/uv/))
 
 On Apple Silicon (M-series) the ClickHouse image is pinned to `platform: linux/amd64` for compatibility.
@@ -112,7 +113,7 @@ Bun resolves newly added direct and transitive npm packages only after they have
 
 ### `make dev`
 
-Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. The API applies its ordered PostgreSQL and ClickHouse schema migrations before it starts, so a healthy API has both data stores ready for requests. Bootstraps the control plane at `.opencode/factory/`.
+Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. The API applies its ordered PostgreSQL and ClickHouse schema migrations before it starts, so a healthy API has both data stores ready for requests.
 
 ### Local dev (deps in Docker, api + web via bun)
 
@@ -129,7 +130,14 @@ make dev-backend
 make dev-frontend
 ```
 
-The local api connects to Postgres / ClickHouse / Valkey on `localhost` (the ports docker compose maps to the host). Before starting the local API against a fresh ClickHouse instance, run `make ch-schema`; it uses the same ordered migration runner as the production image. The Vite dev server proxies `/v1/*`, `/openapi.json`, `/reference`, and `/health` to `localhost:3000`.
+The local api connects to Postgres / ClickHouse / Valkey on `localhost` (the ports docker compose maps to the host). Before starting the local API against fresh data services, run both host-local migration commands below. They use the same migration runners as the production image and can reach the separate `deps-up` Compose project:
+
+```sh
+bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run db:migrate'
+bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run ch:migrate'
+```
+
+The Vite dev server proxies `/v1/*`, `/openapi.json`, `/reference`, and `/health` to `localhost:3000`.
 
 Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 
@@ -199,34 +207,43 @@ For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenti
    # and choose “Sign in with ChatGPT”.
    ```
 
-2. Add the development settings to the gitignored `infra/.env` file:
+2. Create the local Python environment used by the GEPA worker:
+
+   ```sh
+   uv venv worker/.venv
+   uv pip install --python worker/.venv/bin/python -r worker/requirements.txt
+   ```
+
+3. Add the development settings to the gitignored `infra/.env` file:
 
    ```env
    GEPA_WORKER_MODE=cli
-   GEPA_ALLOWED_MODELS=gpt-5.3-codex
+   GEPA_ALLOWED_MODELS=gpt-5.6-terra,gpt-5.6-luna
    ASTRAEA_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
+   GEPA_PYTHON="$PWD/worker/.venv/bin/python"
    ```
 
-3. Start the local data services and backend:
+4. Start the local data services and backend:
 
    ```sh
    make deps-up
    make dev-backend
    ```
 
-4. In the GEPA optimization dialog, enter `gpt-5.3-codex` for both the task model and reflection model. The value must be present in `GEPA_ALLOWED_MODELS`.
+5. In the GEPA optimization dialog, enter either `gpt-5.6-terra` or `gpt-5.6-luna` for both the task model and reflection model. The value must be present in `GEPA_ALLOWED_MODELS`.
 
-The `{model}` placeholder is replaced only within argv elements; Astraea sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
+`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. The `{model}` placeholder is replaced only within argv elements; Astraea sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
 
 Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Astraea. This mode is development-only: it is rejected when `NODE_ENV=production` unless `ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION=true` is explicitly set. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `ASTRAEA_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 1800) and `ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
 
 ### Sending traces from your agent
 
-Set these four env vars on your instrumented agent:
+Set these five env vars on your instrumented agent. `ASTRAEA_PROJECT_ID` must be the UUID of a project that belongs to the authenticated user's organization:
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(echo -n 'astraea:YOUR_PASSWORD' | base64)"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel"
+export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'astraea:YOUR_PASSWORD' | base64),x-astraea-project-id=$ASTRAEA_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```

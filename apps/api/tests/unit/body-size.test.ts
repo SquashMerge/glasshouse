@@ -1,6 +1,9 @@
 import { describe, it, expect } from "bun:test";
 import { Hono } from "hono";
-import { bodySizeLimit } from "../../src/middleware/body-size";
+import {
+	bodySizeLimit,
+	parseBodySizeLimit,
+} from "../../src/middleware/body-size";
 
 describe("bodySizeLimit", () => {
 	const SMALL_LIMIT = 100; // bytes
@@ -11,6 +14,10 @@ describe("bodySizeLimit", () => {
 		app.post("/x", (c) => c.json({ received: true }));
 		return app;
 	}
+
+	it("falls back to the default limit for malformed environment values", () => {
+		expect(parseBodySizeLimit("not-a-number")).toBe(1_048_576);
+	});
 
 	it("accepts bodies under the limit", async () => {
 		const app = buildApp();

@@ -26,8 +26,11 @@
 
 ### Tier 1 — Zero-config OTLP (60 seconds)
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.hermes.dev/v1/traces"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer $HERMES_API_KEY"
+# Current Astraea receiver configuration; replace these placeholders for your deployment.
+AUTH=$(printf '%s:%s' "$UI_USERNAME" "$UI_PASSWORD" | base64)
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
+export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
 python my_agent.py    # works for any framework that emits OTel
 ```
 

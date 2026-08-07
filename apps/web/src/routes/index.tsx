@@ -10,7 +10,8 @@ import { copyText } from "../lib/clipboard";
 import { listTraces } from "../lib/api";
 
 const OTLP_SETUP = `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000/v1/otel
-export OTEL_EXPORTER_OTLP_HEADERS='authorization=Basic <base64(username:password)>'
+export ASTRAEA_PROJECT_ID="<project-uuid>"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic <base64(username:password)>,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
 export OTEL_SERVICE_NAME=my-agent`;
 
 export function DashboardPage() {

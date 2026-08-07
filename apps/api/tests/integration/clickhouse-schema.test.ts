@@ -1,10 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { createClient } from "@clickhouse/client";
+import { clickhouseUrl } from "../../src/db/clickhouse";
 
 const client = createClient({
-	url:
-		process.env.CLICKHOUSE_URL ??
-		`http://${process.env.CLICKHOUSE_HOST ?? "localhost"}:8123`,
+	url: clickhouseUrl(),
 	database: process.env.CLICKHOUSE_DB ?? "astraea",
 	username: process.env.CLICKHOUSE_USER ?? "astraea",
 	password: process.env.CLICKHOUSE_PASSWORD ?? "",
