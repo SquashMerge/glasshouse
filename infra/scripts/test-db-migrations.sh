@@ -11,8 +11,11 @@ POSTGRES_DB="astraea_migrations"
 cleanup() {
   [[ -n "${UUID_LOCK_PID:-}" ]] && kill "$UUID_LOCK_PID" >/dev/null 2>&1 || true
   [[ -n "${UUID_INSERT_PID:-}" ]] && kill "$UUID_INSERT_PID" >/dev/null 2>&1 || true
+	[[ -n "${ORDER_HOLDER_PID:-}" ]] && kill "$ORDER_HOLDER_PID" >/dev/null 2>&1 || true
+	[[ -n "${ORDER_CONTENDER_PID:-}" ]] && kill "$ORDER_CONTENDER_PID" >/dev/null 2>&1 || true
   exec 3>&- || true
-  rm -f "${UUID_LOCK_INPUT:-}" "${UUID_LOCK_OUTPUT:-}" "${UUID_INSERT_OUTPUT:-}"
+	exec 4>&- || true
+  rm -f "${UUID_LOCK_INPUT:-}" "${UUID_LOCK_OUTPUT:-}" "${UUID_INSERT_OUTPUT:-}" "${ORDER_HOLDER_INPUT:-}" "${ORDER_HOLDER_OUTPUT:-}" "${ORDER_CONTENDER_OUTPUT:-}"
   docker rm --force "$CONTAINER" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -123,6 +126,64 @@ run_uuid_advisory_serialization_check() {
 }
 
 run_uuid_advisory_serialization_check
+
+run_audit_lock_order_serialization_check() {
+	local project_id="11111111-1111-1111-1111-111111111111"
+	local holder_ready= contender_waiting=
+	ORDER_HOLDER_INPUT="$(mktemp)"
+	ORDER_HOLDER_OUTPUT="$(mktemp)"
+	ORDER_CONTENDER_OUTPUT="$(mktemp)"
+	rm "$ORDER_HOLDER_INPUT"
+	mkfifo "$ORDER_HOLDER_INPUT"
+
+	docker exec --interactive "$CONTAINER" \
+		psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+		< "$ORDER_HOLDER_INPUT" > "$ORDER_HOLDER_OUTPUT" 2>&1 &
+	ORDER_HOLDER_PID=$!
+	exec 4>"$ORDER_HOLDER_INPUT"
+	printf "BEGIN; SELECT lock_project_audit_provenance('%s'); SELECT id FROM projects WHERE id = '%s' FOR UPDATE; SELECT id FROM governance_retention_runs WHERE project_id = '%s' FOR UPDATE;\n" "$project_id" "$project_id" "$project_id" >&4
+
+	for _ in {1..50}; do
+		holder_ready="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT pg_try_advisory_xact_lock(hashtextextended('$project_id', 0))")"
+		[[ "$holder_ready" == "f" ]] && break
+		sleep 0.1
+	done
+	if [[ "$holder_ready" != "f" ]]; then
+		echo "finalizer-style audit lock holder did not acquire the project lock" >&2
+		exit 1
+	fi
+
+	# The retry/retention path must take A before either project or run row locks.
+	docker exec --interactive "$CONTAINER" \
+		psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+		--command "BEGIN; SELECT lock_project_audit_provenance('$project_id'); SELECT id FROM projects WHERE id = '$project_id' FOR UPDATE; SELECT id FROM governance_retention_runs WHERE project_id = '$project_id' FOR UPDATE; COMMIT;" \
+		> "$ORDER_CONTENDER_OUTPUT" 2>&1 &
+	ORDER_CONTENDER_PID=$!
+	for _ in {1..50}; do
+		contender_waiting="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'BEGIN; SELECT lock_project_audit_provenance%')")"
+		[[ "$contender_waiting" == "t" ]] && break
+		sleep 0.1
+	done
+	if [[ "$contender_waiting" != "t" ]]; then
+		echo "retry/retention contender did not serialize behind the audit lock" >&2
+		exit 1
+	fi
+
+	printf 'COMMIT;\n' >&4
+	exec 4>&-
+	timeout 10s bash -c "while kill -0 '$ORDER_HOLDER_PID' 2>/dev/null; do sleep 0.1; done"
+	timeout 10s bash -c "while kill -0 '$ORDER_CONTENDER_PID' 2>/dev/null; do sleep 0.1; done"
+	wait "$ORDER_HOLDER_PID"
+	wait "$ORDER_CONTENDER_PID"
+	rm -f "$ORDER_HOLDER_INPUT" "$ORDER_HOLDER_OUTPUT" "$ORDER_CONTENDER_OUTPUT"
+	ORDER_HOLDER_PID=
+	ORDER_CONTENDER_PID=
+	ORDER_HOLDER_INPUT=
+	ORDER_HOLDER_OUTPUT=
+	ORDER_CONTENDER_OUTPUT=
+}
+
+run_audit_lock_order_serialization_check
 
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \

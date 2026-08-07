@@ -25,7 +25,10 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 			],
 		};
 	if (values.includes(OTHER_PROJECT)) return { rows: [] };
-	if (sql.startsWith("WITH authorization AS MATERIALIZED")) {
+	if (
+		sql.startsWith("WITH authorization AS MATERIALIZED") ||
+		sql.startsWith("WITH provenance AS MATERIALIZED")
+	) {
 		if (values.at(-1) === "member") return { rows: [] };
 		if (values.includes(OTHER_PROJECT)) return { rows: [] };
 		if (sql.includes("UPDATE projects"))
@@ -379,9 +382,9 @@ describe("project authorization routes", () => {
 		});
 		expect(failedDeletion.status).toBe(409);
 
-		query.mockImplementationOnce(async (sql: string) => {
-			expect(sql).toContain("p.status <> 'deleting'");
-			return { rows: [] };
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (sql.includes("p.status <> 'deleting'")) return { rows: [] };
+			return defaultQuery(sql, values);
 		});
 		const put = await request(
 			"owner",
@@ -391,10 +394,6 @@ describe("project authorization routes", () => {
 				body: JSON.stringify({ actor_subject: "member", role: "member" }),
 			},
 		);
-		query.mockImplementationOnce(async (sql: string) => {
-			expect(sql).toContain("p.status <> 'deleting'");
-			return { rows: [] };
-		});
 		const remove = await request(
 			"owner",
 			`/v1/projects/${PROJECT}/members/member`,
@@ -415,6 +414,14 @@ describe("project authorization routes", () => {
 		expect(failedDeletion.status).toBe(409);
 
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (
+				sql.startsWith("BEGIN") ||
+				sql.startsWith("COMMIT") ||
+				sql.startsWith("ROLLBACK") ||
+				sql.startsWith("SELECT id FROM projects") ||
+				sql.startsWith("SELECT lock_project_audit_provenance")
+			)
+				return { rows: [] };
 			expect(sql).toContain("unfrozen AS MATERIALIZED");
 			expect(sql).toContain(
 				"FROM projects WHERE organization_id = $1 FOR UPDATE",
@@ -444,6 +451,9 @@ describe("project authorization routes", () => {
 		const sql = query.mock.calls.map(([statement]) => statement as string);
 		const index = (prefix: string) =>
 			sql.findIndex((statement) => statement.startsWith(prefix));
+		expect(index("SELECT lock_project_audit_provenance")).toBeLessThan(
+			index("SELECT p.name, p.status FROM projects"),
+		);
 		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
 			index("BEGIN"),
 		);
@@ -552,8 +562,9 @@ describe("project authorization routes", () => {
 	});
 
 	it("returns the canonical default flag when renaming the default project", async () => {
-		query.mockImplementationOnce(async (sql: string) => {
-			expect(sql).toContain("JOIN organizations o ON o.id = $4");
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (!sql.includes("JOIN organizations o ON o.id = $4"))
+				return defaultQuery(sql, values);
 			return {
 				rows: [
 					{
@@ -778,7 +789,7 @@ describe("project authorization routes", () => {
 
 		const mutations = query.mock.calls
 			.map(([sql]) => sql)
-			.filter((sql) => sql.startsWith("WITH authorization AS MATERIALIZED"));
+			.filter((sql) => sql.includes("authorization AS MATERIALIZED"));
 		expect(mutations.length).toBeGreaterThanOrEqual(5);
 		for (const sql of mutations) {
 			expect(sql).toContain("authorization AS MATERIALIZED");

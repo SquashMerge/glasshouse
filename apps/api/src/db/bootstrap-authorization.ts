@@ -26,6 +26,14 @@ export async function bootstrapAuthorization(
 		);
 		if (!organization.rows[0])
 			throw new Error("Bootstrap organization does not exist");
+		const projects = await client.query<{ id: string }>(
+			"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id",
+			[credential.organizationId],
+		);
+		await client.query(
+			"SELECT lock_project_audit_provenance(id::uuid) FROM unnest($1::uuid[]) AS projects(id) ORDER BY id",
+			[projects.rows.map((project) => project.id)],
+		);
 		await client.query<{ id: string }>(
 			"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
 			[credential.organizationId],
