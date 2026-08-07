@@ -420,6 +420,7 @@ export interface Project {
 	created_at: string;
 	archived_at: string | null;
 	project_role: "owner" | "manager" | "member";
+	is_default: boolean;
 }
 
 export interface ProjectMember {
@@ -432,6 +433,7 @@ export interface CurrentActor {
 	actor_subject: string;
 	organization_id: string;
 	organization_role: "owner" | "member";
+	default_project_id: string;
 	projects: Project[];
 }
 
@@ -473,6 +475,30 @@ export async function updateProject(input: {
 		}),
 		"updateProject",
 	);
+}
+export async function setDefaultProject(project_id: string): Promise<Project> {
+	return responseJson(
+		await authedFetch("/v1/organizations/current/default-project", {
+			method: "PATCH",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ project_id }),
+		}),
+		"setDefaultProject",
+	);
+}
+export async function deleteProject(input: {
+	id: string;
+	confirmation_name: string;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/projects/${encodeURIComponent(input.id)}`,
+		{
+			method: "DELETE",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ confirmation_name: input.confirmation_name }),
+		},
+	);
+	if (!response.ok) await responseJson<never>(response, "deleteProject");
 }
 export async function listProjectMembers(
 	projectId: string,

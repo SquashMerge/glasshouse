@@ -66,12 +66,14 @@ import {
 import {
 	archiveProject,
 	createProject,
+	deleteProject,
 	deleteOrganizationMember,
 	deleteProjectMember,
 	getMe,
 	getProject,
 	handleArchiveProject,
 	handleCreateProject,
+	handleDeleteProject,
 	handleDeleteOrganizationMember,
 	handleDeleteProjectMember,
 	handleGetMe,
@@ -84,6 +86,7 @@ import {
 	handlePutProjectMember,
 	handleRestoreProject,
 	handleUpdateProject,
+	handleSetDefaultProject,
 	listProjectMembers,
 	listOrganizationMembers,
 	listProjectAuditEvents,
@@ -91,6 +94,7 @@ import {
 	putOrganizationMember,
 	putProjectMember,
 	restoreProject,
+	setDefaultProject,
 	updateProject,
 } from "./routes/projects.js";
 import {
@@ -245,6 +249,8 @@ register(streamTraceDetailEvents, handleStreamTraceDetailEvents);
 register(getMe, handleGetMe);
 register(listProjects, handleListProjects);
 register(createProject, handleCreateProject);
+register(setDefaultProject, handleSetDefaultProject);
+register(deleteProject, handleDeleteProject);
 register(getProject, handleGetProject);
 register(updateProject, handleUpdateProject);
 register(archiveProject, handleArchiveProject);

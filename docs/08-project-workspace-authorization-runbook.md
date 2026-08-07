@@ -16,11 +16,17 @@ then rerun `bun run db:migrate`.
 
 ## Operations
 
-Use organization owners to create Projects and organization members. Project
-managers may rename, archive/restore, and grant Project membership. The final
+Use organization owners to create Projects, change the organization default, permanently
+delete non-default Projects, and manage organization members. Project managers may rename,
+archive/restore, and grant Project membership. The final
 organization owner and final manager of an active Project cannot be removed or
 demoted. Archive is non-destructive and blocks product reads, writes, subscriptions,
 and direct OTLP. Restore does not resume old jobs.
+
+The default Project is server-authoritative. A stale browser selection never overrides it at
+login. To delete a Project, first select another active same-organization Project as default,
+then submit the exact current Project name. The API serializes the default/delete decision,
+cascades Project-owned relational rows, and preserves only content-free lifecycle audit facts.
 
 ## OTLP
 

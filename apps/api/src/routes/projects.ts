@@ -1,8 +1,10 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
+import { ch } from "../db/clickhouse.js";
 import {
 	CreateProjectInput,
+	DeleteProjectInput,
 	ListProjectsQuery,
 	Me,
 	MemberInput,
@@ -13,6 +15,7 @@ import {
 	ProjectErrorResponses,
 	ProjectList,
 	ProjectMember,
+	SetDefaultProjectInput,
 	UpdateProjectInput,
 } from "../schemas/projects.js";
 import { trustedTenant } from "../tenancy.js";
@@ -63,6 +66,29 @@ export const getProject = createRoute({
 	security: [{ basicAuth: [] }],
 	request: { params: projectParams },
 	responses: ok(Project),
+});
+export const setDefaultProject = createRoute({
+	method: "patch",
+	path: "/v1/organizations/current/default-project",
+	tags: ["projects"],
+	security: [{ basicAuth: [] }],
+	request: {
+		body: {
+			content: { "application/json": { schema: SetDefaultProjectInput } },
+		},
+	},
+	responses: ok(Project),
+});
+export const deleteProject = createRoute({
+	method: "delete",
+	path: "/v1/projects/{id}",
+	tags: ["projects"],
+	security: [{ basicAuth: [] }],
+	request: {
+		params: projectParams,
+		body: { content: { "application/json": { schema: DeleteProjectInput } } },
+	},
+	responses: { 204: { description: "Deleted" }, ...ProjectErrorResponses },
 });
 export const updateProject = createRoute({
 	method: "patch",
@@ -163,9 +189,11 @@ type Row = {
 	created_at: Date;
 	archived_at: Date | null;
 	project_role: "owner" | "manager" | "member";
+	is_default?: boolean;
 };
 const project = (row: Row) => ({
 	...row,
+	is_default: row.is_default ?? false,
 	created_at: row.created_at.toISOString(),
 	archived_at: row.archived_at?.toISOString() ?? null,
 });
@@ -189,7 +217,13 @@ function failure(c: Context, error: unknown): Response {
 			},
 			409,
 		);
-	if (message.includes("final") || message.includes("cannot restore"))
+	if (
+		message.includes("final") ||
+		message.includes("cannot restore") ||
+		message.includes("Default project") ||
+		message.includes("default project") ||
+		message.includes("Confirmation name")
+	)
 		return c.json({ code: "CONFLICT", message }, 409);
 	if (message === "Forbidden")
 		return c.json({ code: "FORBIDDEN", message }, 403);
@@ -228,8 +262,11 @@ export async function handleGetMe(c: Context) {
 	try {
 		const tenant = trustedTenant(c);
 		const pool = pgPool();
-		const membership = await pool.query<{ role: "owner" | "member" }>(
-			"SELECT role FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
+		const membership = await pool.query<{
+			role: "owner" | "member";
+			default_project_id: string;
+		}>(
+			"SELECT om.role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id WHERE om.organization_id = $1 AND om.actor_subject = $2",
 			[tenant.organizationId, tenant.actor],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
@@ -238,6 +275,7 @@ export async function handleGetMe(c: Context) {
 			actor_subject: tenant.actor,
 			organization_id: tenant.organizationId,
 			organization_role: membership.rows[0].role,
+			default_project_id: membership.rows[0].default_project_id,
 			projects: rows.rows.map(project),
 		});
 	} catch (error) {
@@ -272,7 +310,7 @@ async function listAccessibleProjects(
 	includeArchived: boolean,
 ) {
 	return pool.query<Row>(
-		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $2 WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($3::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
+		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $2 WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($3::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
 		[tenant.organizationId, tenant.actor, includeArchived],
 	);
 }
@@ -281,12 +319,103 @@ export async function handleCreateProject(c: Context) {
 		const tenant = trustedTenant(c);
 		const input = (c.req as any).valid("json");
 		const row = await pgPool().query<Row>(
-			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $3 AND actor_subject = $4 AND role = 'owner' FOR UPDATE), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
+			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $3 AND actor_subject = $4 AND role = 'owner' FOR UPDATE), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p), lifecycle AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
 			[input.name, input.slug, tenant.organizationId, tenant.actor],
 		);
 		const value = row.rows[0];
 		if (!value) throw new Error("Forbidden");
-		return c.json(project({ ...value, project_role: "owner" }), 201);
+		return c.json(
+			project({ ...value, project_role: "owner", is_default: false }),
+			201,
+		);
+	} catch (error) {
+		return failure(c, error);
+	}
+}
+export async function handleSetDefaultProject(c: Context) {
+	try {
+		const tenant = trustedTenant(c);
+		const { project_id } = (c.req as any).valid("json");
+		const client = await pgPool().connect();
+		try {
+			await client.query("BEGIN");
+			const updated = await client.query<Row>(
+				"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $3 AND role = 'owner' FOR UPDATE), selected AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $2 AND p.organization_id = $1 AND p.status = 'active' FOR UPDATE), changed AS (UPDATE organizations SET default_project_id = $2, updated_at = now() WHERE id = $1 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM selected) RETURNING id), audit AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'default_changed' FROM changed) SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, true AS is_default, 'owner'::text AS project_role FROM projects p WHERE p.id = $2 AND EXISTS (SELECT 1 FROM changed)",
+				[tenant.organizationId, project_id, tenant.actor],
+			);
+			if (!updated.rows[0]) throw new Error("Not found");
+			await client.query("COMMIT");
+			return c.json(project(updated.rows[0]));
+		} catch (cause) {
+			await client.query("ROLLBACK");
+			throw cause;
+		} finally {
+			client.release();
+		}
+	} catch (error) {
+		return failure(c, error);
+	}
+}
+export async function handleDeleteProject(c: Context) {
+	try {
+		const id = (c.req as any).valid("param").id;
+		const { confirmation_name } = (c.req as any).valid("json");
+		const tenant = trustedTenant(c);
+		const client = await pgPool().connect();
+		try {
+			await client.query("BEGIN");
+			const target = await client.query<{ name: string }>(
+				"SELECT p.name FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND om.role = 'owner' FOR UPDATE OF p, om",
+				[id, tenant.organizationId, tenant.actor],
+			);
+			if (!target.rows[0]) throw new Error("Not found");
+			if (target.rows[0].name !== confirmation_name)
+				throw new Error("Confirmation name does not match this project");
+			const organization = await client.query<{ default_project_id: string }>(
+				"SELECT default_project_id FROM organizations WHERE id = $1 FOR UPDATE",
+				[tenant.organizationId],
+			);
+			if (organization.rows[0]?.default_project_id === id)
+				throw new Error("Default project cannot be deleted");
+			await client.query(
+				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'deletion_attempted')",
+				[tenant.organizationId, id, tenant.actor],
+			);
+			await Promise.all([
+				ch().command({
+					query:
+						"ALTER TABLE traces DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+					query_params: {
+						organizationId: tenant.organizationId,
+						projectId: id,
+					},
+				}),
+				ch().command({
+					query:
+						"ALTER TABLE observations DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+					query_params: {
+						organizationId: tenant.organizationId,
+						projectId: id,
+					},
+				}),
+			]);
+			const deleted = await client.query(
+				"DELETE FROM projects WHERE id = $1 AND organization_id = $2",
+				[id, tenant.organizationId],
+			);
+			if (!deleted.rowCount) throw new Error("Not found");
+			await client.query(
+				"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'deletion_completed')",
+				[tenant.organizationId, id, tenant.actor],
+			);
+			await client.query("COMMIT");
+			return c.body(null, 204);
+		} catch (cause) {
+			await client.query("ROLLBACK");
+			throw cause;
+		} finally {
+			client.release();
+		}
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -296,7 +425,7 @@ export async function handleGetProject(c: Context) {
 		const params = (c.req as any).valid("param");
 		const tenant = await role(c, params.id);
 		const rows = await pgPool().query<Row>(
-			"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
+			"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
 			[params.id, tenant.organizationId, tenant.actor],
 		);
 		if (!rows.rows[0]) throw new Error("Not found");

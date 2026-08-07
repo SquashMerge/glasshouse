@@ -8,6 +8,10 @@ const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 const createdAt = new Date("2026-07-15T10:00:00.000Z");
 const query = mock(async (sql: string, values: string[] = []) => {
+	if (sql.startsWith("SELECT p.name FROM projects"))
+		return { rows: [{ name: "Project One" }] };
+	if (sql.startsWith("SELECT default_project_id FROM organizations"))
+		return { rows: [{ default_project_id: OTHER_PROJECT }] };
 	if (values.includes(OTHER_PROJECT)) return { rows: [] };
 	if (sql.startsWith("WITH authorization AS MATERIALIZED")) {
 		if (values.at(-1) === "member") return { rows: [] };
@@ -22,6 +26,21 @@ const query = mock(async (sql: string, values: string[] = []) => {
 						status: "active",
 						created_at: createdAt,
 						archived_at: null,
+						project_role: "owner",
+					},
+				],
+			};
+		if (sql.includes("UPDATE organizations"))
+			return {
+				rows: [
+					{
+						id: PROJECT,
+						name: "Project One",
+						slug: "project-one",
+						status: "active",
+						created_at: createdAt,
+						archived_at: null,
+						is_default: true,
 						project_role: "owner",
 					},
 				],
@@ -148,15 +167,23 @@ mock.module("../../src/db/postgres", () => ({
 	...postgres,
 	pgPool: () => ({ query, connect: async () => ({ query, release() {} }) }),
 }));
+const clickhouse = await import("../../src/db/clickhouse");
+const command = mock(async () => undefined);
+mock.module("../../src/db/clickhouse", () => ({
+	...clickhouse,
+	ch: () => ({ command }),
+}));
 
 const {
 	createProject,
 	archiveProject,
 	deleteOrganizationMember,
+	deleteProject,
 	deleteProjectMember,
 	handleArchiveProject,
 	handleCreateProject,
 	handleDeleteOrganizationMember,
+	handleDeleteProject,
 	handleDeleteProjectMember,
 	handleGetProjectAuditEvents,
 	handleGetMe,
@@ -166,6 +193,7 @@ const {
 	handlePutOrganizationMember,
 	handlePutProjectMember,
 	handleRestoreProject,
+	handleSetDefaultProject,
 	handleUpdateProject,
 	getMe,
 	listOrganizationMembers,
@@ -175,6 +203,7 @@ const {
 	putOrganizationMember,
 	putProjectMember,
 	restoreProject,
+	setDefaultProject,
 	updateProject,
 } = await import("../../src/routes/projects");
 
@@ -194,6 +223,8 @@ api.use("/v1/*", async (c, next) => {
 	await next();
 });
 api.openapi(createProject, handleCreateProject);
+api.openapi(setDefaultProject, handleSetDefaultProject);
+api.openapi(deleteProject, handleDeleteProject);
 api.openapi(getMe, handleGetMe);
 api.openapi(listProjects, handleListProjects);
 api.openapi(updateProject, handleUpdateProject);
@@ -221,6 +252,39 @@ function request(actor: string, path: string, init?: RequestInit) {
 beforeEach(() => query.mockClear());
 
 describe("project authorization routes", () => {
+	it("sets an active same-organization default and permanently deletes only a confirmed non-default project", async () => {
+		const setDefault = await request(
+			"owner",
+			"/v1/organizations/current/default-project",
+			{
+				method: "PATCH",
+				body: JSON.stringify({ project_id: PROJECT }),
+			},
+		);
+		const rejectedConfirmation = await request(
+			"owner",
+			`/v1/projects/${PROJECT}`,
+			{
+				method: "DELETE",
+				body: JSON.stringify({ confirmation_name: "wrong" }),
+			},
+		);
+		const deleted = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+
+		expect(setDefault.status).toBe(200);
+		expect(rejectedConfirmation.status).toBe(409);
+		expect(deleted.status).toBe(204);
+		expect(
+			query.mock.calls.some(([sql]) => sql.includes("deletion_attempted")),
+		).toBe(true);
+		expect(
+			query.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM projects")),
+		).toBe(true);
+		expect(command).toHaveBeenCalledTimes(2);
+	});
 	it("rejects members from creating projects or changing organization roles", async () => {
 		const create = await request("member", "/v1/projects", {
 			method: "POST",
@@ -482,7 +546,7 @@ describe("project authorization routes", () => {
 
 		const mutations = query.mock.calls
 			.map(([sql]) => sql)
-			.filter((sql) => sql.startsWith("WITH "));
+			.filter((sql) => sql.startsWith("WITH authorization AS MATERIALIZED"));
 		expect(mutations.length).toBeGreaterThanOrEqual(5);
 		for (const sql of mutations) {
 			expect(sql).toContain("authorization AS MATERIALIZED");

@@ -5,6 +5,11 @@ BEGIN
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
 		RAISE EXCEPTION 'governance persistence is incomplete';
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'default_project_id' AND is_nullable = 'NO')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'organizations_default_project_organization_fkey')
+		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_lifecycle_audit_events') THEN
+		RAISE EXCEPTION 'organization default project lifecycle persistence is incomplete';
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_previews')
 		OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'governance_retention_runs_one_running_per_project' AND indexdef LIKE '%WHERE (status = ''running''::text)%') THEN
 		RAISE EXCEPTION 'retention preview authorization or single-running-run constraint is incomplete';
