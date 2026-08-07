@@ -1,9 +1,8 @@
--- A permanent project deletion removes project content and work, but retains only
--- organization-scoped, content-free audit facts with their project reference removed.
+-- A permanent project deletion removes project content and work, while immutable
+-- audit facts retain their tenant and project UUID provenance.
 ALTER TABLE governance_audit_events
     DISABLE TRIGGER governance_audit_events_immutable;
 ALTER TABLE governance_audit_events
-    ALTER COLUMN project_id DROP NOT NULL,
     ALTER COLUMN policy_version_id DROP NOT NULL;
 ALTER TABLE governance_audit_events
     DROP CONSTRAINT IF EXISTS governance_audit_events_version_tenant_fkey;
@@ -14,9 +13,6 @@ ALTER TABLE governance_audit_events
     ON DELETE SET NULL;
 ALTER TABLE governance_audit_events
     ENABLE TRIGGER governance_audit_events_immutable;
-
-ALTER TABLE project_lifecycle_audit_events
-    ALTER COLUMN project_id DROP NOT NULL;
 
 CREATE OR REPLACE FUNCTION project_deletion_is_authorized(target_project_id UUID)
 RETURNS BOOLEAN
@@ -93,8 +89,14 @@ BEGIN
     IF TG_TABLE_NAME = 'governance_audit_events'
         AND TG_OP = 'UPDATE'
         AND project_deletion_is_authorized(OLD.project_id)
-        AND NEW.project_id IS NULL
-        AND NEW.policy_version_id IS NULL THEN
+        AND NEW.project_id = OLD.project_id
+        AND NEW.policy_version_id IS NULL
+        AND NEW.organization_id = OLD.organization_id
+        AND NEW.actor_subject = OLD.actor_subject
+        AND NEW.event_type = OLD.event_type
+        AND NEW.counts = OLD.counts
+        AND NEW.duration_ms IS NOT DISTINCT FROM OLD.duration_ms
+        AND NEW.created_at = OLD.created_at THEN
         RETURN NEW;
     END IF;
     RAISE EXCEPTION 'governance records are immutable';
@@ -106,15 +108,6 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF TG_OP = 'UPDATE'
-        AND project_deletion_is_authorized(OLD.project_id)
-        AND NEW.project_id IS NULL
-        AND NEW.organization_id = OLD.organization_id
-        AND NEW.actor_subject = OLD.actor_subject
-        AND NEW.event_type = OLD.event_type
-        AND NEW.created_at = OLD.created_at THEN
-        RETURN NEW;
-    END IF;
     RAISE EXCEPTION 'project authorization audit events are append-only'
         USING ERRCODE = '55000';
 END

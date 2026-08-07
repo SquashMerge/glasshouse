@@ -109,17 +109,30 @@ ALTER TABLE prompt_optimization_jobs
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
 
 ALTER TABLE project_authorization_audit_events
-    DISABLE TRIGGER project_authorization_audit_events_immutable;
-ALTER TABLE project_authorization_audit_events
-    ALTER COLUMN project_id DROP NOT NULL;
-ALTER TABLE project_authorization_audit_events
     DROP CONSTRAINT IF EXISTS project_authorization_audit_events_project_organization_fkey;
-ALTER TABLE project_authorization_audit_events
-    ADD CONSTRAINT project_authorization_audit_events_project_organization_fkey
-    FOREIGN KEY (project_id, organization_id)
-    REFERENCES projects(id, organization_id) ON DELETE SET NULL;
-ALTER TABLE project_authorization_audit_events
-    ENABLE TRIGGER project_authorization_audit_events_immutable;
+
+CREATE OR REPLACE FUNCTION enforce_project_authorization_audit_tenant_scope()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM projects
+        WHERE id = NEW.project_id
+          AND organization_id <> NEW.organization_id
+    ) THEN
+        RAISE EXCEPTION 'authorization audit project belongs to another organization'
+            USING ERRCODE = '23503';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS project_authorization_audit_events_tenant_scope ON project_authorization_audit_events;
+CREATE TRIGGER project_authorization_audit_events_tenant_scope
+BEFORE INSERT ON project_authorization_audit_events
+FOR EACH ROW EXECUTE FUNCTION enforce_project_authorization_audit_tenant_scope();
 
 CREATE TABLE IF NOT EXISTS project_lifecycle_audit_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

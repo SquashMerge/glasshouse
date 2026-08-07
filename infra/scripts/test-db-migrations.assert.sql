@@ -35,13 +35,21 @@ BEGIN
 	) OR EXISTS (
 		SELECT 1 FROM information_schema.columns
 		WHERE table_schema = 'public' AND table_name = 'governance_audit_events'
-			AND column_name IN ('project_id', 'policy_version_id') AND is_nullable = 'NO'
+			AND column_name = 'project_id' AND is_nullable <> 'NO'
+	) OR NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'governance_audit_events'
+			AND column_name = 'policy_version_id' AND is_nullable = 'YES'
 	) OR EXISTS (
 		SELECT 1 FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = 'project_lifecycle_audit_events'
-			AND column_name = 'project_id' AND is_nullable = 'NO'
+		WHERE table_schema = 'public' AND table_name IN ('project_authorization_audit_events', 'project_lifecycle_audit_events')
+			AND column_name = 'project_id' AND is_nullable <> 'NO'
+	) OR EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conrelid = 'project_authorization_audit_events'::regclass
+			AND conname = 'project_authorization_audit_events_project_organization_fkey'
 	) THEN
-		RAISE EXCEPTION 'project deletion audit detachment constraints are incomplete';
+		RAISE EXCEPTION 'project deletion audit provenance constraints are incomplete';
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
 		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'projects'::regclass AND conname = 'projects_status_check' AND pg_get_constraintdef(oid) LIKE '%deleting%')
@@ -58,7 +66,6 @@ BEGIN
 		OR pg_get_functiondef('prevent_human_feedback_score_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_prompt_optimization_event_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_governance_immutable_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
-		OR pg_get_functiondef('prevent_project_authorization_audit_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_final_workspace_role_removal'::regproc) NOT LIKE '%project_deletion_is_authorized%' THEN
 		RAISE EXCEPTION 'immutable records do not have a project-scoped deletion escape';
 	END IF;
@@ -819,6 +826,8 @@ BEGIN
     );
     INSERT INTO prompt_tombstones (project_id, slug)
     VALUES (deletion_project_id, 'permanent-deletion-fixture');
+    INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type)
+    VALUES ('00000000-0000-4000-8000-000000000001', deletion_project_id, 'migration-deletion', 'project_created');
     BEGIN
         DELETE FROM prompt_tombstones WHERE project_id = deletion_project_id;
         RAISE EXCEPTION 'project deletion escape was available without transaction-local authorization';
@@ -831,6 +840,15 @@ BEGIN
         RAISE EXCEPTION 'project deletion escape did not remove the scoped tombstone';
     END IF;
     DELETE FROM projects WHERE id = deletion_project_id;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM project_authorization_audit_events
+        WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+            AND project_id = deletion_project_id
+            AND actor_subject = 'migration-deletion'
+    ) THEN
+        RAISE EXCEPTION 'project deletion did not retain authorization audit provenance';
+    END IF;
 END
 $$;
 

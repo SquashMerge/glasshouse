@@ -317,6 +317,9 @@ describe("project authorization routes", () => {
 				sql.startsWith("DELETE FROM governance_policy_versions"),
 			),
 		).toBe(true);
+		expect(
+			query.mock.calls.some(([sql]) => sql.includes("SET project_id = NULL")),
+		).toBe(false);
 	});
 	it("does not delete the PostgreSQL project when ClickHouse cleanup fails", async () => {
 		command.mockImplementationOnce(async () => {

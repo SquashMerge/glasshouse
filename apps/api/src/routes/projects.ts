@@ -251,7 +251,7 @@ const deletionCleanupSql = [
 	"DELETE FROM governance_retention_previews WHERE project_id = $1",
 	"DELETE FROM governance_retention_runs WHERE project_id = $1",
 	"DELETE FROM governance_policy_approvals WHERE project_id = $1",
-	"UPDATE governance_audit_events SET project_id = NULL, policy_version_id = NULL WHERE project_id = $1",
+	"UPDATE governance_audit_events SET policy_version_id = NULL WHERE project_id = $1",
 	"DELETE FROM governance_policy_versions WHERE project_id = $1",
 	"DELETE FROM governance_policies WHERE project_id = $1",
 	"DELETE FROM project_memberships WHERE project_id = $1",
@@ -501,14 +501,6 @@ export async function handleDeleteProject(c: Context) {
 					[id],
 				);
 				for (const sql of deletionCleanupSql) await finalize.query(sql, [id]);
-				await finalize.query(
-					"UPDATE project_authorization_audit_events SET project_id = NULL WHERE organization_id = $1 AND project_id = $2",
-					[tenant.organizationId, id],
-				);
-				await finalize.query(
-					"UPDATE project_lifecycle_audit_events SET project_id = NULL WHERE organization_id = $1 AND project_id = $2",
-					[tenant.organizationId, id],
-				);
 				const deleted = await finalize.query(
 					"DELETE FROM projects WHERE id = $1 AND organization_id = $2 AND status = 'deleting'",
 					[id, tenant.organizationId],
@@ -519,8 +511,8 @@ export async function handleDeleteProject(c: Context) {
 					[tenant.organizationId, id],
 				);
 				await finalize.query(
-					"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result) VALUES ($1, NULL, $2, 'deletion_completed', '{\"stage\":\"completed\"}')",
-					[tenant.organizationId, tenant.actor],
+					"INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result) VALUES ($1, $2, $3, 'deletion_completed', '{\"stage\":\"completed\"}')",
+					[tenant.organizationId, id, tenant.actor],
 				);
 				await finalize.query("COMMIT");
 			} catch (cause) {
