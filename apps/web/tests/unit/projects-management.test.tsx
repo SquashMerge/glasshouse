@@ -14,6 +14,8 @@ const api = vi.hoisted(() => ({
 	updateProject: vi.fn(),
 	archiveProject: vi.fn(),
 	restoreProject: vi.fn(),
+	deleteProject: vi.fn(),
+	setDefaultProject: vi.fn(),
 	listProjectMembers: vi.fn(),
 	putProjectMember: vi.fn(),
 	deleteProjectMember: vi.fn(),
@@ -37,6 +39,7 @@ const PROJECT = {
 	created_at: "2026-07-15T10:00:00.000Z",
 	archived_at: null,
 	project_role: "manager" as const,
+	is_default: true,
 };
 
 function renderPage() {
@@ -118,6 +121,31 @@ describe("ProjectsPage", () => {
 		);
 		await waitFor(() =>
 			expect(api.restoreProject.mock.calls[0]?.[0]).toBe(PROJECT.id),
+		);
+	});
+
+	it("lets owners set another active project as the default", async () => {
+		const otherProject = {
+			...PROJECT,
+			id: "22222222-2222-4222-8222-222222222222",
+			name: "Project Two",
+			slug: "project-two",
+			is_default: false,
+		};
+		api.listProjects.mockResolvedValue({
+			items: [PROJECT, otherProject],
+			total: 2,
+		});
+		api.setDefaultProject.mockResolvedValue({
+			...otherProject,
+			is_default: true,
+		});
+		renderPage();
+
+		await screen.findByText("Project Two");
+		fireEvent.click(screen.getByRole("button", { name: "Set as default" }));
+		await waitFor(() =>
+			expect(api.setDefaultProject.mock.calls[0]?.[0]).toBe(otherProject.id),
 		);
 	});
 

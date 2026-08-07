@@ -130,6 +130,7 @@ describe("ProjectProvider", () => {
 			actor_subject: ACTOR,
 			organization_id: ORGANIZATION,
 			organization_role: "owner",
+			default_project_id: PROJECT_ID,
 			projects: [
 				{
 					id: PROJECT_ID,
