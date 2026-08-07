@@ -620,7 +620,6 @@ export interface OptimizationJob {
 	target?: PromptRole;
 	budget?: { max_metric_calls?: number };
 	dataset?: OptimizationDatasetSummary;
-	dataset_hash?: string;
 	candidate_content?: string | null;
 	evidence?: OptimizationEvidence | null;
 	promotion_status?: OptimizationPromotionStatus;

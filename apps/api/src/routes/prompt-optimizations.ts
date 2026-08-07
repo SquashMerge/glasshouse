@@ -144,7 +144,6 @@ const Job = z
 		target: z.enum(["system", "user"]),
 		evaluator: JsonObject,
 		dataset: z.union([Dataset, LegacyDataset]),
-		dataset_hash: z.string().regex(/^[a-f0-9]{64}$/),
 		model_config: JsonObject,
 		budget: JsonObject,
 		status: Status,

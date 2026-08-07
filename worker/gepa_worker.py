@@ -75,6 +75,15 @@ class ProgressReportingAdapter:
         return self._base_adapter.make_reflective_dataset(*args, **kwargs)
 
 
+class RemainingMetricCallsStopper:
+    def __init__(self, adapter, reflection_minibatch_size, validation_size):
+        self._adapter = adapter
+        self._minimum_iteration_calls = 2 * reflection_minibatch_size + validation_size
+
+    def __call__(self, _state):
+        return self._adapter.remaining_metric_calls < self._minimum_iteration_calls
+
+
 def allowed_models():
     models = [model.strip() for model in os.environ.get("GEPA_ALLOWED_MODELS", "").split(",") if model.strip()]
     if not models:
@@ -287,6 +296,7 @@ try:
     adapter = ProgressReportingAdapter(
         AstraeaDefaultAdapter(model=task_lm, rubric=rubric), logger, max_metric_calls
     )
+    reflection_minibatch_size = min(3, len(trainset))
     result = gepa.optimize(
         seed_candidate={"system_prompt": source},
         trainset=trainset,
@@ -295,6 +305,10 @@ try:
         task_lm=None,
         reflection_lm=reflection_lm,
         max_metric_calls=max_metric_calls,
+        reflection_minibatch_size=reflection_minibatch_size,
+        stop_callbacks=RemainingMetricCallsStopper(
+            adapter, reflection_minibatch_size, len(valset)
+        ),
         logger=logger,
     )
     best_idx = result.best_idx

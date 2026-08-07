@@ -430,6 +430,86 @@ class DevCliLlmTests(unittest.TestCase):
                 },
             )
 
+    def test_real_gepa_minimum_dataset_stops_within_metric_budget(self):
+        runtime = os.environ.get("GEPA_PYTHON", sys.executable)
+        installed = subprocess.run(
+            [
+                runtime,
+                "-c",
+                "import importlib.metadata; assert importlib.metadata.version('gepa') == '0.0.19'",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if installed.returncode:
+            self.skipTest("requires the pinned gepa==0.0.19 worker runtime")
+
+        with tempfile.TemporaryDirectory() as directory:
+            cli = Path(directory) / "fake_gepa_cli.py"
+            cli.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "model = sys.argv[1]\n"
+                "prompt = sys.stdin.read()\n"
+                "if model == 'task-model':\n"
+                "    print('expected answer' if 'Optimized {{item}}' in prompt else 'incorrect')\n"
+                "else:\n"
+                "    print('```Optimized {{item}}```')\n"
+            )
+            cli.chmod(cli.stat().st_mode | stat.S_IXUSR)
+            request = {
+                "source": "Answer {{item}}",
+                "target": "system",
+                "evaluator": {"type": "default_adapter"},
+                "dataset": optimization_dataset(
+                    [{"input": "training input", "answer": "expected answer"}],
+                    [{"input": "heldout input", "answer": "expected answer"}],
+                ),
+                "model_config": {
+                    "task_lm": "task-model",
+                    "reflection_lm": "reflection-model",
+                },
+                "budget": {"max_metric_calls": 5},
+            }
+            result = subprocess.run(
+                [runtime, Path(__file__).with_name("gepa_worker.py")],
+                input=json.dumps(request),
+                text=True,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "GEPA_WORKER_MODE": "cli",
+                    "GEPA_ALLOWED_MODELS": "task-model,reflection-model",
+                    "ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "{{model}}"]',
+                    "NODE_ENV": "production",
+                    "ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION": "true",
+                },
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "candidate": "Optimized {{item}}",
+                "training_score": 1.0,
+                "validation_score": 1.0,
+                "baseline_validation_score": 0.0,
+                "metric_calls_used": 5,
+            },
+        )
+        self.assertEqual(
+            [
+                json.loads(line.removeprefix("ASTRAEA_GEPA_PROGRESS "))[
+                    "metric_calls_used"
+                ]
+                for line in result.stderr.splitlines()
+                if line.startswith("ASTRAEA_GEPA_PROGRESS ")
+            ],
+            [1, 2, 3, 4, 5],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

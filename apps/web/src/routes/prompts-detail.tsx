@@ -1051,11 +1051,7 @@ function OptimizationStatus({
 				<ProgressField label="Phase" value={job.status} />
 				<ProgressField
 					label="Dataset"
-					value={
-						job.dataset
-							? `v${job.dataset.version} (${job.dataset_hash?.slice(0, 12) ?? "unpinned"})`
-							: "Not reported"
-					}
+					value={job.dataset ? `v${job.dataset.version}` : "Not reported"}
 				/>
 				<ProgressField
 					label="Prompt role"
