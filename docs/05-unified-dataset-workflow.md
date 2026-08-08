@@ -1,13 +1,13 @@
 # Unified Dataset Workflow
 
-**Status:** proposed implementation contract
+**Status:** proposed implementation contract for roadmap P2/P3; it deliberately precedes the planned Agent Registry.
 **Scope:** one project-scoped dataset system for dashboard-authored and SDK/API-authored evaluations.
 
 ## Decision summary
 
-Astraea datasets work like prompts: a stable, named resource has immutable versions. A **Dataset** is the reusable logical collection; a **Dataset version** is the exact immutable item snapshot consumed by an evaluation. An **Evaluation definition** is a reusable, versioned recipe that binds an agent target, one dataset selector, mappings, evaluators, and execution defaults. An **Evaluation run** is one execution of a definition revision against resolved immutable versions.
+Astraea datasets work like prompts: a stable, named resource has immutable versions. A **Dataset** is the reusable logical collection; a **Dataset version** is the exact immutable item snapshot consumed by an evaluation. An **Evaluation definition** is a reusable, versioned recipe that binds one target selector, one dataset selector, mappings, evaluators, and execution defaults. An **Evaluation run** is one execution of a definition revision against resolved immutable versions.
 
-The dashboard and SDK use the same API and entities. There is no separate “UI dataset” or “SDK dataset,” and no eval may execute a mutable draft.
+The target selector deliberately supports the current configured-LLM execution target before the Agent Registry exists. A future Agent/Manifest target uses the same selector and resolution boundary rather than creating a second Evaluation model. The dashboard and SDK use the same API and entities. There is no separate “UI dataset” or “SDK dataset,” and no eval may execute a mutable draft.
 
 ### Opinionated defaults
 
@@ -19,7 +19,7 @@ The dashboard and SDK use the same API and entities. There is no separate “UI 
 | Dataset item shape | Canonical `input`, optional `expected_output`, optional `metadata`; schema records field meaning/validation | Supports generic agents while keeping evaluator mapping explicit. |
 | Dataset identity | Project-local immutable `slug`, human-editable `name`; a deleted slug is tombstoned | Stable code references and no accidental identity reuse. |
 | Authoring provenance | Each version records `created_via` (`ui`, `api`, `sdk`, `trace_import`, `csv_import`) and actor/source metadata | Makes ownership and change origin visible without splitting products. |
-| Execution | A definition revision resolves exactly one agent/manifest version and one dataset version before queueing | This is the unit compared in results/CI. |
+| Execution | A definition revision resolves exactly one immutable target snapshot and one Dataset version before queueing; the target may be the current configured-LLM contract or, later, an Agent/Manifest version | This is the unit compared in results/CI. |
 | Existing terminology | UI calls the reusable object **Evaluation** and its execution **Run**; current `/v1/experiments` remains a compatibility alias for a run during migration | Avoids breaking MVP clients while giving users one consistent vocabulary. |
 
 ## Jobs to be done
@@ -38,15 +38,17 @@ Project
  │   ├─ Dataset draft (private working state)
  │   └─ Dataset version 1..n (published immutable snapshot)
  │       └─ Dataset item snapshot 1..n
- ├─ Agent → Manifest version
+ ├─ Evaluation target
+ │   ├─ configured-LLM target snapshot (P3)
+ │   └─ Agent → Manifest version (P4; planned)
  ├─ Evaluation (stable reusable definition)
  │   └─ Evaluation definition version 1..n (immutable recipe)
- │       ├─ target selector → resolved Manifest version at run time
+ │       ├─ target selector → resolved target snapshot at run time
  │       └─ dataset selector → resolved Dataset version at run time
  └─ Evaluation run (formerly Experiment)
      ├─ resolved evaluation-definition version
      ├─ resolved dataset version
-     ├─ resolved manifest version
+     ├─ resolved target snapshot (and manifest version when applicable)
      └─ Run item results, scores, trace links
 ```
 
@@ -70,7 +72,7 @@ Project
 4. User adds/edits cases in the draft. Validation errors are per-cell and publishing is disabled until all rows meet the saved schema.
 5. User selects **Publish v1**. The confirmation states item count, validation state, and that published versions cannot be edited. Astraea creates `dataset@1` and returns to its Overview.
 6. User selects **Run evaluation**. If no evaluation exists, the inline wizard creates one with: selected dataset pinned to `@1`, selected target, evaluator(s), and a name. If one exists, the picker shows whether it pins a version or follows latest published.
-7. The review screen shows the resolved agent manifest, dataset version, evaluator versions/settings, estimated case count, and sample rate. **Start run** queues an immutable run.
+7. The review screen shows the resolved target snapshot, Dataset version, evaluator versions/settings, estimated case count, and sample rate. **Start run** queues an immutable run.
 8. Results link every failed case to its input, expected output, output, scores, generated trace, and source production trace when available.
 
 ### 2. Capture a production failure into an existing suite
@@ -112,7 +114,7 @@ The schema may use copy-on-write/item-link storage internally, but the API contr
 | `dataset_version_items` | `dataset_version_id`, `item_key`, `position`, payload, provenance | Immutable; `position` unique per version; payload is a snapshot, not a live reference. |
 | `evaluations` | `id`, `project_id`, `slug`, `name`, description/tags, `latest_published_version` | Same stable-ID/tombstone behavior as datasets. |
 | `evaluation_versions` | `id`, `evaluation_id`, integer `version`, `target_selector`, `dataset_binding`, `evaluators`, `mappings`, `run_defaults`, `content_hash` | Immutable; all referenced resources must be project scoped. |
-| `evaluation_runs` | IDs for evaluation/version, dataset/version, agent/manifest version, status, trigger/audit metadata | Resolved references are non-null after validation and cannot change. |
+| `evaluation_runs` | IDs for evaluation/version, Dataset/version, resolved target snapshot, optional Agent/Manifest version, status, trigger/audit metadata | Resolved references are non-null after validation and cannot change; Agent/Manifest fields are populated only for a P4 Agent target. |
 | `evaluation_run_items` | run item ID, dataset item snapshot key, output, scores, status, `trace_id` | One result per sampled dataset item; trace provenance is separate from generated trace link. |
 
 ### Payload contract
@@ -141,8 +143,22 @@ type DatasetBinding =
   | { mode: "pinned"; dataset_slug: string; version: number }
   | { mode: "latest_published"; dataset_slug: string };
 
+type EvaluationTarget =
+  | {
+      kind: "configured_llm";
+      provider: "openai_compatible" | "codex_cli";
+      model: string;
+      system_prompt?: string;
+      settings: Record<string, unknown>;
+    }
+  | {
+      kind: "agent_manifest"; // P4; unavailable until the Agent Registry ships.
+      agent_id: string;
+      manifest: { mode: "pinned"; version: string };
+    };
+
 type EvaluationDefinition = {
-  target: { agent_id: string; manifest: { mode: "pinned"; version: string } | { mode: "environment"; name: "development" | "staging" | "production" } };
+  target: EvaluationTarget;
   dataset: DatasetBinding;
   mappings: {
     invocation_input: Record<string, string>; // target field -> JSON Pointer in item.input
@@ -156,7 +172,7 @@ type EvaluationDefinition = {
 ### Required behavior
 
 - **Publish is atomic:** validation, hash generation, version allocation, snapshot creation, and `latest_published_version` update commit together.
-- **Run resolution is atomic:** a transaction resolves the evaluation version, dataset selector, target manifest, evaluator versions, and deterministic sample. The resolved values are written before work is queued.
+- **Run resolution is atomic:** a transaction resolves the Evaluation version, Dataset selector, target snapshot, evaluator versions, and deterministic sample. The resolved values are written before work is queued. A Manifest version is required only after the P4 Agent target is selected.
 - **Ordering is data:** item order is preserved in a dataset version and used for deterministic sampling/reporting; it is not incidental database insertion order.
 - **Draft collision default:** one shared draft per dataset. Save uses an ETag/revision; conflicting edits require refresh/merge. V2 may add personal drafts, but not before conflict visibility works.
 - **External-key upsert:** API/SDK upserts match `item_key` only. The server never deduplicates cases by JSON equality or model output.
@@ -215,7 +231,7 @@ GET    /v1/experiments/{id}                   # alias/read model for EvaluationR
 {
   "definition_version": 3,
   "dataset_override": { "mode": "pinned", "dataset_slug": "checkout-regression", "version": 8 },
-  "target_override": { "agent_id": "...", "manifest_version": "sha256:..." },
+  "target_override": { "kind": "configured_llm", "provider": "openai_compatible", "model": "gpt-4.1", "settings": {} },
   "run_overrides": { "sample": { "mode": "count", "count": 25, "seed": 42 } }
 }
 ```
@@ -258,7 +274,7 @@ evaluation = client.evaluations.ensure(
     name="Support quality gate",
 )
 evaluation.publish({
-    "target": {"agent_id": agent.id, "manifest": {"mode": "pinned", "version": agent.manifest_version}},
+    "target": {"kind": "configured_llm", "provider": "openai_compatible", "model": "gpt-4.1", "settings": {}},
     "dataset": {"mode": "pinned", "dataset_slug": dataset.slug, "version": version.number},
     "mappings": {"invocation_input": {"message": "/question"}, "expected_output": "/answer"},
     "evaluators": [{"evaluator_id": "exact_match", "config": {}, "required": True}],
@@ -279,7 +295,7 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 
 - **Datasets** — catalog, curation, provenance, version history, and entry point to runs.
 - **Evaluations** — reusable definitions, their version history, schedules/gates, and run history.
-- **Runs** — cross-evaluation run list; deep links from definition, dataset, agent, and CI.
+- **Runs** — cross-evaluation run list; deep links from definition, Dataset, target, and CI.
 - Existing **Observability** trace/observation pages get **Add to dataset** as a contextual action, not a separate workflow.
 
 ### Dataset screens
@@ -298,7 +314,7 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 |---|---|---|
 | `/evaluations` | Find reusable recipes | target, dataset binding, evaluator count, latest version, last run, gate/schedule status. |
 | `/evaluations/new` | Build definition | stepper: target → dataset → mappings → evaluators → defaults/review. |
-| `/evaluations/:slug` | Definition overview | resolved/declared binding, Used dataset/agent cards, version history, Run now, runs table. |
+| `/evaluations/:slug` | Definition overview | resolved/declared binding, used Dataset/target cards, version history, Run now, runs table. |
 | `/evaluations/:slug/edit` | New definition draft | structured editor; changes never mutate published revision. |
 | `/evaluation-runs/:id` | Investigate an execution | immutable provenance header, live progress, result table, filters, side-by-side baseline comparison. |
 
@@ -307,7 +323,7 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 - The primary action is precise: **Publish v4**, **Run v3**, and **Run evaluation**; never generic “Save” where publication/execution matters.
 - Every picker displays `slug@version`, item count, last published time, and whether it is **Pinned** or **Follow latest**.
 - “Follow latest” has an amber nondeterminism warning and cannot be selected for release-gate/CI definitions.
-- The run review header always states: “This run will use `agent@hash`, `dataset@N`, `evaluation@N`.”
+- The run review header always states the resolved target, `dataset@N`, and `evaluation@N`; an Agent target includes `agent@hash` only after P4.
 - Draft changes are visible but not conflated with published data. A source-trace import adds a badge “Unpublished; not used by runs.”
 - Published versions are read-only. **Fork to draft** is the only editing affordance from a version page.
 - Trace provenance is a link/chip with an access-aware empty state (“source expired or unavailable”), never a copied hidden payload.
@@ -317,7 +333,7 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 
 1. **Preserve reads:** existing `datasets`/`dataset_items` remain readable. Backfill each existing dataset as `dataset@1`, preserving item UUID as `item_key`, order by `created_at, id`, and existing trace provenance.
 2. **Add snapshot tables:** introduce dataset/evaluation version and draft tables in a new migration; do not alter past migrations. Add `slug`, `latest_published_version`, audit/provenance fields, and tombstones.
-3. **Adapt experiments:** add `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, `manifest_version_id`, and resolved config/hash fields to experiments. Backfill legacy experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
+3. **Adapt experiments:** add `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, a resolved target snapshot, and optional future `manifest_version_id` fields to experiments. Backfill legacy experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
 4. **API compatibility:** retain UUID-based current routes for one minor version. Return `dataset_version` when known. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
 5. **UI rollout:** ship datasets/versioning first; then evaluation definitions; then switch “Run experiment” labels to “Run evaluation.” Keep `Experiment` only in technical compatibility/API deprecation notices.
 
