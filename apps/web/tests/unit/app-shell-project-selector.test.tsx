@@ -9,7 +9,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const selection = vi.hoisted(() => ({ selectProject: vi.fn() }));
+const selection = vi.hoisted(() => ({
+	isLoading: false,
+	selectProject: vi.fn(),
+}));
 
 const projects = [
 	{
@@ -43,7 +46,7 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 		projects,
 		selectedProjectId: "11111111-1111-4111-8111-111111111111",
 		selectedProject: projects[0],
-		isLoading: false,
+		isLoading: selection.isLoading,
 		error: null,
 		selectProject: selection.selectProject,
 		retry: vi.fn(),
@@ -60,6 +63,7 @@ import { DashboardPage } from "../../src/routes/index";
 describe("AppShell project selector", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
+		selection.isLoading = false;
 		selection.selectProject.mockReset();
 	});
 
@@ -131,6 +135,24 @@ describe("AppShell project selector", () => {
 		fireEvent.mouseDown(document.body);
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 		expect(trigger).toHaveFocus();
+	});
+
+	it("uses a layout-shaped skeleton while the project switcher is initially loading", () => {
+		selection.isLoading = true;
+		render(
+			<AppShell currentPath="/">
+				<div>Page</div>
+			</AppShell>,
+		);
+
+		expect(screen.getByTestId("project-selector-skeleton")).toHaveAttribute(
+			"aria-label",
+			"Loading projects",
+		);
+		expect(
+			screen.getByTestId("compact-project-selector-skeleton"),
+		).toHaveAttribute("aria-label", "Loading projects");
+		expect(screen.queryByText("Loading projects...")).not.toBeInTheDocument();
 	});
 
 	it("uses compact square controls below the expanded sidebar breakpoint", () => {

@@ -5,6 +5,7 @@ import { LuCopy, LuExternalLink } from "react-icons/lu";
 import { HealthBadge } from "../components/HealthBadge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
+import { Skeleton } from "../components/ui/skeleton";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { copyText } from "../lib/clipboard";
 import { listTraces } from "../lib/api";
@@ -63,9 +64,13 @@ export function DashboardPage() {
 						<p className="text-sm font-medium text-muted-foreground">
 							Recent traces
 						</p>
-						<p className="mt-2 text-2xl font-semibold">
-							{recent.isPending ? "Loading…" : (recent.data?.total ?? 0)}
-						</p>
+						<div className="mt-2 text-2xl font-semibold">
+							{recent.isPending ? (
+								<Skeleton className="h-7 w-12" />
+							) : (
+								(recent.data?.total ?? 0)
+							)}
+						</div>
 						<p className="mt-1 text-sm text-muted-foreground">
 							Open observability
 						</p>
@@ -80,9 +85,13 @@ export function DashboardPage() {
 						<p className="text-sm font-medium text-muted-foreground">
 							Failures
 						</p>
-						<p className="mt-2 text-2xl font-semibold text-destructive">
-							{failures.isPending ? "Loading…" : `${failedCount} failed traces`}
-						</p>
+						<div className="mt-2 text-2xl font-semibold text-destructive">
+							{failures.isPending ? (
+								<Skeleton className="h-7 w-28" />
+							) : (
+								`${failedCount} failed traces`
+							)}
+						</div>
 						<p className="mt-1 text-sm text-muted-foreground">
 							Investigate errors
 						</p>
@@ -115,7 +124,13 @@ export function DashboardPage() {
 								View all
 							</Link>
 						</div>
-						{recent.isError ? (
+						{recent.isPending ? (
+							<div className="mt-3 space-y-3" aria-busy="true">
+								<Skeleton className="h-4 w-3/4" />
+								<Skeleton className="h-4 w-1/2" />
+								<Skeleton className="h-4 w-2/3" />
+							</div>
+						) : recent.isError ? (
 							<p className="mt-4 text-sm text-destructive">
 								Could not load recent traces.
 							</p>

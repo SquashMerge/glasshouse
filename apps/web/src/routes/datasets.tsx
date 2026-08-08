@@ -12,6 +12,10 @@ import {
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import {
+	DetailLoadingSkeleton,
+	ListLoadingSkeleton,
+} from "../components/LoadingSkeletons";
 import { PageMessage } from "./prompts";
 
 export function DatasetsPage() {
@@ -92,8 +96,8 @@ export function DatasetsPage() {
 					{error}
 				</p>
 			)}
-			{query.isLoading && (
-				<PageMessage title="Datasets">Loading datasets...</PageMessage>
+			{query.isLoading && !query.data && (
+				<ListLoadingSkeleton testId="dataset-list-skeleton" />
 			)}
 			{query.isError && (
 				<PageMessage title="Datasets">
@@ -213,8 +217,8 @@ export function DatasetDetailPage() {
 	}
 	if (!selectedProjectId)
 		return <PageMessage title="Dataset">Select a project.</PageMessage>;
-	if (dataset.isLoading || items.isLoading)
-		return <PageMessage title="Dataset">Loading dataset...</PageMessage>;
+	if ((dataset.isLoading && !dataset.data) || (items.isLoading && !items.data))
+		return <DetailLoadingSkeleton testId="dataset-detail-skeleton" />;
 	if (dataset.isError || items.isError)
 		return (
 			<PageMessage title="Dataset">

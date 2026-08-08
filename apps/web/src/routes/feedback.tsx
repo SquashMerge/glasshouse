@@ -13,6 +13,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { PageMessage } from "./prompts";
+import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
 export function FeedbackPage() {
 	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const client = useQueryClient();
@@ -36,21 +37,6 @@ export function FeedbackPage() {
 		return (
 			<PageMessage title="Feedback">
 				Select a project to review feedback.
-			</PageMessage>
-		);
-	if (feedback.isLoading)
-		return <PageMessage title="Feedback">Loading feedback...</PageMessage>;
-	if (feedback.isError)
-		return (
-			<PageMessage title="Feedback">
-				Unable to load feedback.{" "}
-				<Button
-					size="sm"
-					variant="outline"
-					onClick={() => void feedback.refetch()}
-				>
-					Retry
-				</Button>
 			</PageMessage>
 		);
 	return (
@@ -119,6 +105,21 @@ export function FeedbackPage() {
 						<option value="observation">Observation</option>
 					</Select>
 				</div>
+			)}
+			{feedback.isError && (
+				<PageMessage title="Feedback">
+					Unable to load feedback.{" "}
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={() => void feedback.refetch()}
+					>
+						Retry
+					</Button>
+				</PageMessage>
+			)}
+			{feedback.isLoading && !feedback.data && (
+				<ListLoadingSkeleton testId="feedback-list-skeleton" />
 			)}
 			{feedback.data?.items.length === 0 && (
 				<PageMessage title="Feedback">
