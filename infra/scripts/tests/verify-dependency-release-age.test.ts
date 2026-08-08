@@ -87,6 +87,29 @@ describe("assertReleaseAges", () => {
 			),
 		).resolves.toBeUndefined();
 	});
+
+	it("accepts the nanoid CVE-2026-67213 patch only until its normal age threshold", async () => {
+		const securityPatch = [{ name: "nanoid", version: "3.3.17" }];
+		const publishedAt = async () => new Date("2026-08-03T10:39:22.487Z");
+
+		await expect(
+			assertReleaseAges(
+				securityPatch,
+				7,
+				new Date("2026-08-08T14:24:10.000Z"),
+				publishedAt,
+			),
+		).resolves.toBeUndefined();
+
+		await expect(
+			assertReleaseAges(
+				securityPatch,
+				7,
+				new Date("2026-08-10T10:39:22.487Z"),
+				publishedAt,
+			),
+		).resolves.toBeUndefined();
+	});
 });
 
 describe("release-age CLI", () => {

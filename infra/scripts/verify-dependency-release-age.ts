@@ -9,8 +9,12 @@ const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
 // CVE-2026-69152 is a high-severity denial-of-service vulnerability in the
 // transitive migration dependency. The exception ends at the exact point where
 // the normal seven-day policy accepts the upstream 5.0.9 security patch.
+// CVE-2026-67213 is a high-severity infinite-loop vulnerability in the
+// transitive PostCSS dependency. The exception ends when the normal policy
+// accepts nanoid 3.3.17.
 const TEMPORARY_SECURITY_RELEASE_AGE_EXCEPTIONS = new Map([
 	["brace-expansion@5.0.9", new Date("2026-08-06T10:00:32.762Z")],
+	["nanoid@3.3.17", new Date("2026-08-10T10:39:22.487Z")],
 ]);
 const packageName = String.raw`(?:@[^/]+/[^@]+|[^@]+)`;
 const version = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`;
