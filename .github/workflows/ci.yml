@@ -29,6 +29,8 @@ jobs:
             command: bun run typecheck
           - check: test
             command: bun run test
+          - check: worker-test
+            command: python3 -m pip install --user --disable-pip-version-check -r worker/requirements.txt && python3 -m unittest worker.test_dev_cli_llm
           - check: build
             command: bun run build
           - check: compose-paths

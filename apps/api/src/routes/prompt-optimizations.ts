@@ -238,7 +238,7 @@ const Start = z
 		project_id: z.string().uuid(),
 		slug: PromptId,
 		source_version: z.number().int().positive(),
-		target: z.enum(["system", "user"]),
+		target: z.literal("system"),
 		evaluator: Evaluator,
 		dataset: Dataset,
 		model_config: ModelConfig,
@@ -948,6 +948,11 @@ export async function runOptimizationJob(
 				"BAD_REQUEST",
 				"Legacy optimization jobs cannot be resumed",
 			);
+		if (job.target !== "system")
+			throw new PromptRepositoryError(
+				"BAD_REQUEST",
+				"Only system-prompt optimization jobs can be resumed",
+			);
 		await d.transition(d.pool(), {
 			id: job.id,
 			worker_id: workerId,
@@ -1161,7 +1166,7 @@ export function createOptimizationHandlers(
 					project_id: string;
 					slug: string;
 					source_version: number;
-					target: "system" | "user";
+					target: "system";
 					evaluator: JsonObject;
 					dataset: OptimizationDataset;
 					model_config: JsonObject;
@@ -1205,7 +1210,7 @@ export function createOptimizationHandlers(
 					project_id: string;
 					slug: string;
 					source_version: number;
-					target: "system" | "user";
+					target: "system";
 				};
 				return error(c, cause, {
 					project_id: body.project_id,
@@ -1282,7 +1287,11 @@ export function createOptimizationHandlers(
 					id: (c.req.valid("param") as { id: string }).id,
 				};
 				const job = await d.get(d.pool(), input);
-				if (job.dataset.version !== 1 || job.candidate_content === null)
+				if (
+					job.target !== "system" ||
+					job.dataset.version !== 1 ||
+					job.candidate_content === null
+				)
 					throw new PromptRepositoryError(
 						"CONFLICT",
 						"Optimization draft is not eligible for promotion",

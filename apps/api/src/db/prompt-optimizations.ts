@@ -800,6 +800,11 @@ export async function promoteOptimizationDraft(
 		)[0];
 		if (!jobRow) throw fail("NOT_FOUND", "Optimization job not found");
 		const job = mapJob(jobRow);
+		if (job.target !== "system")
+			throw fail(
+				"CONFLICT",
+				"Optimization draft is not eligible for promotion",
+			);
 		if (job.result_version !== null) return job;
 		if (
 			job.status !== "completed" ||
