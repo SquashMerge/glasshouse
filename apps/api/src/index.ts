@@ -3,7 +3,7 @@ import { openapiApp } from "./openapi.js";
 import { handleHealth } from "./routes/health.js";
 import { basicAuthMiddleware } from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
-import { bodySizeLimit } from "./middleware/body-size.js";
+import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { pgPool } from "./db/postgres.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
@@ -23,7 +23,7 @@ import {
 import { logger } from "./lib/logger.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
-const MAX_BODY_BYTES = Number(process.env.API_MAX_BODY_BYTES ?? 1_048_576);
+const MAX_BODY_BYTES = parseBodySizeLimit(process.env.API_MAX_BODY_BYTES);
 
 export type ApiDependencies = {
 	handleHealth: typeof handleHealth;
