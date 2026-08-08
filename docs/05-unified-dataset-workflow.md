@@ -413,11 +413,11 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 
 ### UX and quality
 
-16. A first-time authorized User can create a Dataset, publish it, create an Evaluation, and start a run without raw JSON. Advanced mappings remain available without changing the canonical stored shape.
-17. Every destructive or irreversible boundary is explicit: discard draft, archive resource, publish version, and start run each state its effect and target version.
-18. Dataset/Evaluation list pages remain usable at 10,000 items/100 versions: server pagination/filtering and virtualized item grids; loading, empty, permission, conflict, and unavailable-provenance states are specified and tested.
-19. Generated OpenAPI schemas, Python/TypeScript SDK types, REST handlers, and UI fixtures use the same Dataset-version/Evaluation-definition contract and mandatory Project selector; no UI-only field or SDK-only payload is required for core workflows.
-20. Migration tests prove legacy Dataset items and Experiments remain visible and that new immutable snapshots do not alter historic result rendering.
+17. A first-time authorized User can create a Dataset, publish it, create an Evaluation, and start a run without raw JSON. Advanced mappings remain available without changing the canonical stored shape.
+18. Every destructive or irreversible boundary is explicit: discard draft, archive resource, publish version, and start run each state its effect and target version.
+19. Dataset/Evaluation list pages remain usable at 10,000 items/100 versions: server pagination/filtering and virtualized item grids; loading, empty, permission, conflict, and unavailable-provenance states are specified and tested.
+20. Generated OpenAPI schemas, Python/TypeScript SDK types, REST handlers, and UI fixtures use the same Dataset-version/Evaluation-definition contract and mandatory Project selector; no UI-only field or SDK-only payload is required for core workflows.
+21. Migration tests prove legacy Dataset items and Experiments remain visible and that new immutable snapshots do not alter historic result rendering.
 
 ## Open questions deliberately deferred
 
