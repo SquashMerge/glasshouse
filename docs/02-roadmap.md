@@ -136,10 +136,15 @@ Read-only access is granted per Project. This avoids a misleading “user can se
 the whole organization” default while keeping the product model simple.
 
 The current `owner` / `manager` / `member` implementation is a compatibility
-baseline. P1 defines an explicit, tested migration to the target vocabulary and
-permissions; it must not silently widen anyone's access. A temporary
-server-side compatibility mapping is acceptable only while every response,
-policy check, audit record, and UI explains the effective target role.
+baseline, and its Basic Auth username is a compatibility subject—not a durable
+User record. P1 first introduces an immutable internal actor ID and a durable
+provider-subject linkage, then maps the compatibility username through that
+actor while Basic Auth remains enabled. The explicit, tested migration to the
+target vocabulary and permissions must preserve audit and membership continuity
+across username or IdP changes and must not silently widen anyone's access. A
+temporary server-side compatibility mapping is acceptable only while every
+response, policy check, audit record, and UI explains the effective target
+role.
 
 #### BYO IdP / SSO contract
 
@@ -151,7 +156,8 @@ customers using their own identity provider—not an Astraea-hosted directory.
 Required behavior:
 
 - authenticate an external subject into a stable internal actor identity;
-  do not use mutable email alone as identity;
+  P1 persists the immutable actor ID and provider-subject linkage, and does not
+  use a mutable email or Basic Auth username alone as identity;
 - bind each IdP connection to exactly one organization and validate issuer,
   audience/client, redirect URI, signature/key rotation, nonce, state, PKCE,
   and session lifetime;
@@ -184,8 +190,9 @@ audit contract has real production use.
 - SAML support uses the same actor and authorization model rather than a
   parallel login/membership implementation.
 - Existing Basic Auth deployments migrate safely and remain explicitly supported
-  only as the documented compatibility/bootstrap mechanism until an operator
-  enables SSO enforcement.
+  only as the documented compatibility/bootstrap mechanism. They resolve
+  through the durable actor mapping until an operator enables SSO enforcement,
+  preserving prior membership and audit continuity.
 
 ### P2 — Dataset lifecycle: durable regression assets
 

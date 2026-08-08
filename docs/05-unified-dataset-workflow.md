@@ -55,12 +55,31 @@ Project
 ### Canonical terms
 
 - **Dataset:** project-scoped named collection with a stable slug, description, tags, and version history. It is not itself a runnable snapshot.
-- **Dataset draft:** editable working copy of the next dataset version. Only editors can change it. A draft can be discarded; it is never selected by a run.
+- **Dataset draft:** editable working copy of the next dataset version. An Admin, or a User with access to the Project, can change it; a Read-only user cannot. A draft can be discarded; it is never selected by a run.
 - **Dataset version:** immutable ordered snapshot of items plus its schema/mapping contract. Displayed as `support-regression@12`.
 - **Dataset item:** one test case. `input` is sent to the target; `expected_output` and `metadata` are evaluator inputs. Item identity remains stable across versions when carried forward.
 - **Evaluation:** stable reusable definition, for example “Support quality gate.” It has a version history just as a prompt does.
 - **Evaluation definition version:** immutable target selector, dataset selector, evaluator configuration, mappings, and run defaults. Displayed as `support-quality-gate@4`.
 - **Evaluation run:** an execution and its results. It records all resolved IDs/hashes; it is the thing called an `experiment` by the existing MVP API/database.
+
+### P1 authorization prerequisites
+
+The P2/P3 contract depends on the P1 Admin/User/Read-only model. Every request
+must carry exactly one mandatory `project_id` selector. The server validates
+that selector against the authenticated internal actor's organization and
+Project membership, then applies every resource predicate with that same
+Project. A slug or run ID alone never establishes scope or authorization.
+
+| Operation | Admin | User with Project access | Read-only with Project access |
+|---|---|---|---|
+| View Datasets, Evaluations, Runs, and safe provenance | Allowed | Allowed | Allowed |
+| Create/import/edit/discard Dataset drafts; validate/publish Dataset versions | Allowed | Allowed | Denied |
+| Create/edit/publish Evaluation definitions; start/cancel ordinary runs | Allowed | Allowed | Denied |
+| Archive/delete Dataset or Evaluation resources; configure protected gates/schedules | Allowed | Denied | Denied |
+
+The API, worker, SSE subscription, and UI must all enforce this matrix. A
+Read-only client must receive a server-side authorization failure for every
+mutation or execution attempt, including a stale or hand-crafted request.
 
 ## User journeys
 
@@ -181,51 +200,51 @@ type EvaluationDefinition = {
 
 ## API and SDK surface
 
-All operations use the existing `/v1` auth/project conventions and generated OpenAPI clients. The current dataset endpoints remain available during migration; new endpoints make draft/version semantics explicit.
+All operations use the existing `/v1` auth/project conventions and generated OpenAPI clients. **Every endpoint below requires exactly one `?project_id=<UUID>` selector, including POST, detail, SSE, cancel, and compatibility routes.** The SDK supplies that selector from its explicit Project configuration; the server still verifies membership and applies Project-scoped resource predicates. The current dataset endpoints remain available during migration; new endpoints make draft/version semantics explicit.
 
 ### REST
 
 ```http
 # Dataset catalog and versions
 GET    /v1/datasets?project_id=&q=&tag=
-POST   /v1/datasets                         # create logical dataset + empty draft
+POST   /v1/datasets?project_id=              # create logical dataset + empty draft
 GET    /v1/datasets/{slug}?project_id=
-PATCH  /v1/datasets/{slug}                  # metadata only
-GET    /v1/datasets/{slug}/versions
-GET    /v1/datasets/{slug}/versions/{version}
-POST   /v1/datasets/{slug}/drafts            # optional explicit fork; default creates from latest
-GET    /v1/datasets/{slug}/draft
-PUT    /v1/datasets/{slug}/draft/items/{itemKey}  # upsert; If-Match draft revision
-DELETE /v1/datasets/{slug}/draft/items/{itemKey}
-POST   /v1/datasets/{slug}/draft/import      # CSV/JSONL/trace selections; async for large input
-POST   /v1/datasets/{slug}/draft/validate
-POST   /v1/datasets/{slug}/draft/publish
-POST   /v1/datasets/{slug}/draft/discard
+PATCH  /v1/datasets/{slug}?project_id=       # metadata only
+GET    /v1/datasets/{slug}/versions?project_id=
+GET    /v1/datasets/{slug}/versions/{version}?project_id=
+POST   /v1/datasets/{slug}/drafts?project_id= # optional explicit fork; default creates from latest
+GET    /v1/datasets/{slug}/draft?project_id=
+PUT    /v1/datasets/{slug}/draft/items/{itemKey}?project_id=  # upsert; If-Match draft revision
+DELETE /v1/datasets/{slug}/draft/items/{itemKey}?project_id=
+POST   /v1/datasets/{slug}/draft/import?project_id= # CSV/JSONL/trace selections; async for large input
+POST   /v1/datasets/{slug}/draft/validate?project_id=
+POST   /v1/datasets/{slug}/draft/publish?project_id=
+POST   /v1/datasets/{slug}/draft/discard?project_id=
 
 # Evaluations (reusable definitions) and runs
 GET    /v1/evaluations?project_id=
-POST   /v1/evaluations                       # create logical evaluation + draft definition
+POST   /v1/evaluations?project_id=            # create logical evaluation + draft definition
 GET    /v1/evaluations/{slug}?project_id=
-PATCH  /v1/evaluations/{slug}                # metadata only
-GET    /v1/evaluations/{slug}/versions
-GET    /v1/evaluations/{slug}/draft
-PUT    /v1/evaluations/{slug}/draft
-POST   /v1/evaluations/{slug}/draft/validate
-POST   /v1/evaluations/{slug}/draft/publish
-POST   /v1/evaluations/{slug}/runs            # body may choose definition version and run overrides
-GET    /v1/evaluation-runs/{id}
-GET    /v1/evaluation-runs/{id}/results
-GET    /v1/evaluation-runs/{id}/events        # SSE
-POST   /v1/evaluation-runs/{id}/cancel
+PATCH  /v1/evaluations/{slug}?project_id=      # metadata only
+GET    /v1/evaluations/{slug}/versions?project_id=
+GET    /v1/evaluations/{slug}/draft?project_id=
+PUT    /v1/evaluations/{slug}/draft?project_id=
+POST   /v1/evaluations/{slug}/draft/validate?project_id=
+POST   /v1/evaluations/{slug}/draft/publish?project_id=
+POST   /v1/evaluations/{slug}/runs?project_id= # body may choose definition version and run overrides
+GET    /v1/evaluation-runs/{id}?project_id=
+GET    /v1/evaluation-runs/{id}/results?project_id=
+GET    /v1/evaluation-runs/{id}/events?project_id= # SSE
+POST   /v1/evaluation-runs/{id}/cancel?project_id=
 
 # Compatibility phase
-POST   /v1/experiments                        # maps a fully specified request to one Evaluation + Run
-GET    /v1/experiments/{id}                   # alias/read model for EvaluationRun
+POST   /v1/experiments?project_id=             # maps a fully specified request to one Evaluation + Run
+GET    /v1/experiments/{id}?project_id=        # alias/read model for EvaluationRun
 ```
 
-`POST /v1/datasets` accepts `slug` optionally; server derives and reserves a normalized slug otherwise. `POST /draft/publish` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
+`POST /v1/datasets?project_id=<UUID>` accepts `slug` optionally; the server derives and reserves a normalized slug otherwise. `POST /v1/datasets/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
 
-`POST /v1/evaluations/{slug}/runs` accepts:
+`POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
 
 ```json
 {
@@ -348,23 +367,25 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 5. Editing a dataset after publication changes only a draft. A completed past run continues to render the original dataset version and contents.
 6. A UI or SDK item upsert with the same `item_key` updates one draft item; JSON-equal items with different keys remain distinct.
 7. Deleting/archive behavior never removes a version or item snapshot referenced by an evaluation run.
+8. For every Dataset route, Admin and Project-granted User requests succeed only inside their authorized Project; Read-only mutation/import/publish/archive requests are denied server-side, and same-slug cross-Project requests return the same non-disclosing not-found result as absent resources.
 
 ### Evaluation attachment and execution
 
-8. A published evaluation definition can attach a dataset by pinned version. The definition page shows the exact `dataset@version`, target manifest selector, evaluators, and mappings.
-9. Starting a run records immutable resolved IDs/hashes for evaluation definition, dataset version, agent/manifest, evaluator versions, and deterministic sample before queueing work.
-10. A run launched from the UI, SDK, or REST against the same definition version produces the same resolved provenance header and executes through the same runner.
-11. `latest_published` resolves once at run creation and persists the resulting dataset version. It cannot be used by a CI-gate token or definition marked as a release gate.
-12. Manual run overrides are recorded and visually labeled; gate/CI credentials reject undeclared target/dataset overrides with a clear `403`/validation error.
-13. Each run result links its dataset item snapshot, generated trace, scores, output, and source production trace (when available) without exposing unavailable source data.
+9. A published evaluation definition can attach a Dataset by pinned version. The definition page shows the exact `dataset@version`, resolved target selector, evaluators, and mappings.
+10. Starting a run records immutable resolved IDs/hashes for Evaluation definition, Dataset version, target snapshot, optional Agent/Manifest version, evaluator versions, and deterministic sample before queueing work.
+11. A run launched from the UI, SDK, or REST against the same definition version produces the same resolved provenance header and executes through the same runner.
+12. `latest_published` resolves once at run creation and persists the resulting Dataset version. It cannot be used by a CI-gate token or definition marked as a release gate.
+13. Manual run overrides are recorded and visually labeled; gate/CI credentials reject undeclared target/Dataset overrides with a clear `403`/validation error.
+14. Each run result links its Dataset item snapshot, generated trace, scores, output, and source production trace (when available) without exposing unavailable source data.
+15. Every Evaluation, Run, result, SSE, cancellation, and `/v1/experiments` compatibility request requires the explicit Project selector and applies the same Admin/User/Read-only authorization matrix; Read-only execution attempts fail before work is queued.
 
 ### UX and quality
 
-14. A first-time UI user can create a dataset, publish it, create an evaluation, and start a run without raw JSON. Advanced mappings remain available without changing the canonical stored shape.
-15. Every destructive or irreversible boundary is explicit: discard draft, archive resource, publish version, and start run each state its effect and target version.
-16. Dataset/evaluation list pages remain usable at 10,000 items/100 versions: server pagination/filtering and virtualized item grids; loading, empty, permission, conflict, and unavailable-provenance states are specified and tested.
-17. Generated OpenAPI schemas, Python/TypeScript SDK types, REST handlers, and UI fixtures use the same dataset-version/evaluation-definition contract; no UI-only field or SDK-only payload is required for core workflows.
-18. Migration tests prove legacy dataset items and experiments remain visible and that new immutable snapshots do not alter historic result rendering.
+16. A first-time authorized User can create a Dataset, publish it, create an Evaluation, and start a run without raw JSON. Advanced mappings remain available without changing the canonical stored shape.
+17. Every destructive or irreversible boundary is explicit: discard draft, archive resource, publish version, and start run each state its effect and target version.
+18. Dataset/Evaluation list pages remain usable at 10,000 items/100 versions: server pagination/filtering and virtualized item grids; loading, empty, permission, conflict, and unavailable-provenance states are specified and tested.
+19. Generated OpenAPI schemas, Python/TypeScript SDK types, REST handlers, and UI fixtures use the same Dataset-version/Evaluation-definition contract and mandatory Project selector; no UI-only field or SDK-only payload is required for core workflows.
+20. Migration tests prove legacy Dataset items and Experiments remain visible and that new immutable snapshots do not alter historic result rendering.
 
 ## Open questions deliberately deferred
 
