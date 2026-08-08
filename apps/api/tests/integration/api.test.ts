@@ -287,7 +287,10 @@ describe("API integration: OTLP ingest", () => {
 		).toBe(TEST_SCOPE.projectId);
 		expect(resolveTenantProject).toHaveBeenCalledWith(
 			expect.anything(),
-			TEST_TENANT,
+			expect.objectContaining({
+				...TEST_TENANT,
+				actorId: expect.any(String),
+			}),
 			TEST_SCOPE.projectId,
 		);
 		expect(assertTenantProjectAccess).not.toHaveBeenCalled();
