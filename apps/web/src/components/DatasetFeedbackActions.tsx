@@ -7,6 +7,7 @@ import {
 } from "../lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Skeleton } from "./ui/skeleton";
 
 function jsonObject(value: string, label: string): JsonObject {
 	let parsed: unknown;
@@ -192,7 +193,14 @@ export function AddToDatasetDialog({
 								))}
 							</select>
 						</label>
-						{datasetLoading && <p role="status">Loading datasets...</p>}
+						{datasetLoading && (
+							<Skeleton
+								className="h-4 w-32"
+								data-testid="dataset-options-skeleton"
+								role="status"
+								aria-label="Loading choices"
+							/>
+						)}
 						{datasetLoadError && (
 							<div className="flex items-center gap-2" role="alert">
 								<span>{datasetLoadError}</span>

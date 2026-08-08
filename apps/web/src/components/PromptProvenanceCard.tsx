@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useProjectSelection } from "./ProjectProvider";
 import { Badge } from "./ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Skeleton } from "./ui/skeleton";
 import { getPromptProvenance, type PromptProvenance } from "../lib/api";
 
 export function PromptProvenanceCard({
@@ -60,7 +61,15 @@ export function PromptProvenanceCard({
 					</p>
 				)}
 				{provenance && selectedProjectId && statusQuery.isLoading && (
-					<p className="text-muted-foreground">Checking prompt status…</p>
+					<div className="flex items-center gap-2" aria-live="polite">
+						<span className="text-muted-foreground">Status</span>
+						<Skeleton
+							className="h-5 w-16"
+							data-testid="provenance-status-skeleton"
+							role="status"
+							aria-label="Loading prompt status"
+						/>
+					</div>
 				)}
 				{provenance && selectedProjectId && statusQuery.isError && (
 					<p className="text-destructive" role="alert" aria-live="assertive">

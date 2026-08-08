@@ -1,116 +1,170 @@
-# Astraea — opencode + feature-factory setup
+# Astraea — developer and coding-agent setup
 
-**Configured:** 2026-07-11
+**Last refreshed:** 2026-08-07
 
-## What's installed
+This is the concise operational guide for a clean Astraea checkout. Treat the checked-in files as the source of truth when this guide and the implementation diverge:
 
-- **opencode CLI** v1.17.18 → `~/.opencode/bin/opencode`
-- **opencode-feature-factory** v0.2.0 → `/home/hermes/.hermes/node/lib/node_modules/opencode-feature-factory` (symlink to `/tmp/opencode-feature-factory` for live dev)
-- **opencode config** → `~/.config/opencode/opencode.json` (also `opencode.jsonc` — doctor checks both)
-- **provider auth** → `~/.local/share/opencode/auth.json` (mode `0600`)
+1. `AGENTS.md` for repository rules and coding-agent behavior.
+2. `infra/.env.example` for supported runtime configuration.
+3. `Makefile`, `infra/compose*.yaml`, and package scripts for executable commands.
+4. `README.md` for the broader product and local-development reference.
 
-## Provider
+Do not put real credentials, local paths, auth-state locations, copied diagnostic output, or private infrastructure details in this file.
 
-- **ID:** `minimax-coding-plan`
-- **Endpoint:** `https://api.minimax.io/anthropic/v1` (Anthropic-compatible)
-- **API key env var:** `MINIMAX_API_KEY` (sourced from `/home/hermes/.hermes/.env`)
+## Runtime architecture
 
-## Model profile (13 agents)
+- Bun workspace: Hono API in `apps/api` and React/Vite web app in `apps/web`.
+- PostgreSQL stores transactional data; ClickHouse stores trace/OLAP data; Valkey is the Redis-compatible queue/cache service.
+- Production runs the ordered PostgreSQL and ClickHouse migration runners before the API starts. They remain separate schema systems and local host development invokes their runners explicitly.
+- Python is isolated to compute-heavy integrations such as the GEPA worker; keep credentials at the worker/deployment boundary.
 
-### High-strength (M3 flagship — planning + validation)
-- `feature-factory` → MiniMax-M3 @ xhigh
-- `spec-writer` → MiniMax-M3 @ xhigh
-- `work-decomposer` → MiniMax-M3 @ xhigh
-- `implementation-validator` → MiniMax-M3 @ xhigh
-- `security-reviewer` → MiniMax-M3 @ xhigh
+## Prerequisites
 
-### Standard (M3 — building, designing, reviewing)
-- `backend-builder` → MiniMax-M3 @ high
-- `frontend-builder` → MiniMax-M3 @ high
-- `design-interpreter` → MiniMax-M3 @ high
-- `codebase-researcher` → MiniMax-M3 @ high
-- `test-verifier` → MiniMax-M3 @ high
-- `work-reviewer` → MiniMax-M3 @ high
+- Docker with Compose v2.13+.
+- GNU Make (every documented runtime, migration, and verification target is a Makefile target).
+- Bun `1.3.14+`; Node `22.12+` is also pinned for supporting tooling.
+- `uv` when running Python code generation or worker tooling.
+- The repository's `.tool-versions` can be installed through `make setup-tools` when using asdf.
+- A locally authenticated OpenAI Codex CLI only when testing the development-only GEPA CLI adapter.
 
-### Cheap (M2.7-highspeed — non-critical reads)
-- `story-reader` → MiniMax-M2.7-highspeed @ medium
-- `story-writer` → MiniMax-M2.7-highspeed @ high
+```sh
+make setup-tools
+# Installs the repository's asdf-pinned development tools.
 
-## Verifying
-
-```bash
-cd ~/code/astraea
-PATH=/home/hermes/.hermes/node/bin:$PATH feature-factory doctor --provider-smoke
-# Should show: "ok: provider minimax-coding-plan smoke (smoke passed)"
+bun install --frozen-lockfile
+# Installs exactly the dependency graph committed in bun.lock.
 ```
 
-## Known quirks
+## Bootstrap configuration
 
-- `minimax` and `minimax-coding-plan` are functionally identical providers (same endpoint, same env, same models). Using `minimax-coding-plan` for the friendly provider label.
-- All seven MiniMax models on this endpoint have `reasoning: true`, which maps to the "Thinking" toggle in the chat UI. The `variant` field is harmless if ignored — Gemini/OpenAI providers honor it, but MiniMax's `variant` shape is unknown.
-- The M3.7-highspeed model is the cheapest option (~$0 input / $0 output listed in models.dev pricing, but actual costs depend on subscription plan).
+Copy the template before starting any Compose target. `make doctor` checks the required environment values and rejects placeholder values, so replace every required `CHANGE_ME` value rather than committing an edited file. `make dev` remains the final Compose-level readiness check.
 
-## Git identity
+```sh
+cp infra/.env.example infra/.env
+# Creates the gitignored local runtime configuration from the reviewed template.
 
-- Commits must be authored by `Daniel Sarlo <16106087+dsarlo@users.noreply.github.com>` (the GitHub noreply address). This is pinned via `git config user.email` in the local repo.
-- Always verify with `gh api repos/dsarlo/astraea/commits` after any push — every commit's `author.login` should be `dsarlo`. If anything looks wrong, re-author with the procedure in the Hermes session log (do not document it in this repo).
-
-## Local clone
-
-- `~/code/astraea/` is the work tree
-- Branch: `main` (renamed from default during first push)
-- Push: `git push origin main` (auth via `gh auth status`, 403 on repo creation but works for clone/push)
-
-## Next steps (when ready to start a feature)
-
-```bash
-cd ~/code/astraea
-PATH=/home/hermes/.hermes/node/bin:$PATH opencode          # launch TUI
-# or
-PATH=/home/hermes/.hermes/node/bin:$PATH feature-factory start "description of feature"
+make doctor
+# Checks the local tools and required configuration before the Compose-level startup check.
 ```
 
-## Context7 MCP (added 2026-07-11)
+The local template configures:
 
-The platform's build agent has live access to up-to-date library docs via Context7 MCP. Agents are auto-instructed via `AGENTS.md` at the repo root to reach for context7 whenever a task touches a library — without needing `use context7` typed manually.
+- API and web ports (`API_PORT`, `WEB_PORT`) and `LOG_LEVEL`.
+- PostgreSQL, ClickHouse, and Valkey credentials/ports plus their local URLs.
+- Basic-auth credentials and the bootstrap owner. Multi-organization Basic Auth is supported by `ASTRAEA_BASIC_AUTH_CREDENTIALS`; keep the JSON and all passwords in `infra/.env` or deployment secrets.
+- Optional trace redaction and API body-size limits.
+- GEPA provider allowlisting and credentials. The UI sends model identifiers only; provider credentials never belong in job records, prompts, logs, or browser state.
 
-**Config (`~/.config/opencode/opencode.json`):**
+## Running Astraea
 
-```json
-"mcp": {
-  "context7": {
-    "type": "remote",
-    "url": "https://mcp.context7.com/mcp",
-    "headers": {}
-  }
-}
+### Full Docker stack
+
+```sh
+make dev
+# Builds and starts PostgreSQL, ClickHouse, Valkey, API, and web, waiting for health checks.
+
+make ps
+# Confirms the Compose services are running and healthy.
+
+make down
+# Stops the full local stack when finished.
 ```
 
-**What it gives you:**
-- Latest API docs for any library (React, Hono, FastAPI, ClickHouse, OpenTelemetry, all the frameworks in our design doc)
-- Version-specific code examples (so we get Hono 4.x patterns, not 3.x)
-- Server-side instructs the agent to use context7 *even when it thinks it knows the answer* — kills hallucinated APIs
+The dashboard is available at `http://localhost:5173`; API documentation is at `http://localhost:3000/reference` unless ports were changed in `infra/.env`.
 
-**Smoke test (verified working):**
+### Fast local API and frontend iteration
 
-```bash
-cd ~/code/astraea
-PATH=/home/hermes/.hermes/node/bin:$PATH opencode run --model "minimax-coding-plan/MiniMax-M2.7-highspeed" \
-  "use context7 to fetch the current docs for Hono's Hono() factory function. After fetching, respond with exactly the version number and one line of the doc content."
+Use this mode for Bun/Vite hot reload. Do not run `make dev` at the same time because it uses the same ports.
+
+```sh
+make deps-up
+# Starts only PostgreSQL, ClickHouse, and Valkey in Docker.
+
+make dev-backend
+# Runs the Hono API on the host using infra/.env and the Docker data services.
+
+make dev-frontend
+# Runs the Vite app on the host and proxies API routes to the local backend.
 ```
 
-Output observed:
+Before starting a local API against fresh `deps-up` data services, apply both schema systems from the host process. `make dev-backend` does not run either migration runner:
 
-```
-⚙ context7_resolve-library-id {"query":"Hono factory function","libraryName":"Hono"}
-⚙ context7_query-docs {"libraryId":"/websites/hono_dev","query":"Hono() factory function constructor"}
-⚙ context7_query-docs {"libraryId":"/websites/hono_dev","query":"new Hono() constructor"}
-⚙ context7_query-docs {"libraryId":"/websites/hono_dev","query":"Hono version number"}
-% WebFetch https://hono.dev/docs/api/hono
-% WebFetch https://hono.dev
-% WebFetch https://hono.dev/docs
-% WebFetch https://cdn.jsdelivr.net/npm/hono/package.json
-**4.12.29** | The Hono object is the primary entry point for any Hono application.
+```sh
+bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run db:migrate'
+# Applies idempotent PostgreSQL migrations and required bootstrap data to the localhost data service.
+
+bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run ch:migrate'
+# Runs the ordered, idempotent ClickHouse migration runner against the localhost data service.
 ```
 
-**Optional upgrade:** get an API key from https://context7.com/dashboard for higher rate limits + private libraries, then add `"CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"` to the `headers` block and export the key.
+## Schema and seed-data work
+
+- PostgreSQL changes and required bootstrap data use a new monotonically numbered file in `infra/db/migrations/`; never edit an applied migration.
+- ClickHouse changes live under `infra/db/clickhouse/` and are applied with `make ch-schema`.
+- Run the migration fixture coverage when changing PostgreSQL migrations.
+- OTLP seeders resolve the authenticated organization's `default` project unless a target project is explicitly supplied. Keep every seeded request project-scoped.
+
+```sh
+make db-migrate
+# Applies the production PostgreSQL migration command to the local Compose API image.
+
+make test-db-migrations
+# Replays and validates PostgreSQL migrations against the repository's migration fixtures.
+```
+
+## GEPA local Codex adapter
+
+`GEPA_WORKER_MODE=cli` is for deliberate local development only. The API and a locally authenticated Codex CLI must run on the same host; do not enable it in Docker or production.
+
+Add the following to the gitignored `infra/.env` after authenticating Codex locally:
+
+```env
+GEPA_WORKER_MODE=cli
+GEPA_ALLOWED_MODELS=gpt-5.6-terra,gpt-5.6-luna
+ASTRAEA_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
+GEPA_PYTHON="$PWD/worker/.venv/bin/python"
+```
+
+Create that local worker environment before starting the API:
+
+```sh
+uv venv worker/.venv
+uv pip install --python worker/.venv/bin/python -r worker/requirements.txt
+# Installs the GEPA worker dependency into the interpreter used by the local API.
+```
+
+`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. Use the exact allowlisted model value in both GEPA model-role fields. Astraea replaces `{model}` only inside argv elements, sends the prompt on standard input, and never reads or persists Codex OAuth credentials. The CLI adapter is rejected under `NODE_ENV=production` unless a deliberate emergency override is configured.
+
+For autonomous coding or review work, use the locally authenticated OpenAI Codex workflow with GPT-5.6 Terra/Luna. Do not use MiniMax or silently fall back to another provider.
+
+## Verification ladder
+
+Use the narrowest relevant check first, then the broader checks that cover the changed component. `make format` rewrites files; use the check script during verification.
+
+```sh
+bun run format:check
+# Confirms formatting without changing the working tree.
+
+make lint && make typecheck
+# Runs the workspace lint and TypeScript checks.
+
+make test
+# Runs the API and web unit-test suites.
+
+make test-api-integration
+# Runs API integration tests after deps-up plus PostgreSQL and ClickHouse migrations are ready.
+
+make test-e2e
+# Runs Playwright after deps-up, dev-backend, and dev-frontend are running.
+```
+
+For Bun changes, begin from a clean worktree and run `bun install --frozen-lockfile` before relying on test results. Report unavailable Docker, provider, or browser checks as unverified rather than assuming they passed.
+
+## Documentation maintenance for every PR
+
+Documentation currency is part of the implementation contract:
+
+- Assess `.opencode/SETUP-NOTES.md` in every PR. Update it whenever a change affects developer prerequisites, configuration/env vars, service topology, startup/migrations, model/provider workflow, generated clients, test commands, or known operational constraints.
+- Update `AGENTS.md` in the same PR only when the change creates or changes a durable instruction a coding agent needs to make correct, safe changes. Keep it concise and repository-wide; do not copy feature-specific implementation notes into it.
+- Update the glossary when terminology changes, and update public README/docs when their documented user-facing behavior changes.
+- In the PR description, state which documentation was updated or why no documentation change was needed. Do not merge an implementation PR with stale setup guidance.

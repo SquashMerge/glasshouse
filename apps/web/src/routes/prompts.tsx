@@ -10,6 +10,7 @@ import {
 	CardTitle,
 } from "../components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	listActivePromptOptimizationActivities,
@@ -44,7 +45,7 @@ export function PromptsPage() {
 	});
 
 	if (projectsLoading) {
-		return <PageMessage title="Prompts">Loading projects…</PageMessage>;
+		return <ListLoadingSkeleton testId="prompts-project-skeleton" />;
 	}
 
 	if (!selectedProject) {
@@ -76,8 +77,8 @@ export function PromptsPage() {
 				</Link>
 			</div>
 
-			{promptsQuery.isLoading && (
-				<PageMessage title="Prompts">Loading prompts…</PageMessage>
+			{promptsQuery.isLoading && !promptsQuery.data && (
+				<ListLoadingSkeleton testId="prompt-list-skeleton" />
 			)}
 			{promptsQuery.isError && (
 				<Alert variant="destructive" aria-live="assertive">
@@ -128,7 +129,11 @@ export function PromptsPage() {
 							<span>Updated</span>
 							<span>Optimization</span>
 						</div>
-						<ul className="divide-y divide-border" aria-label="Project prompts">
+						<ul
+							className="divide-y divide-border"
+							aria-label="Project prompts"
+							aria-busy={promptsQuery.isFetching}
+						>
 							{promptsQuery.data.items.map((prompt) => {
 								const activeOptimization =
 									activitiesQuery.data?.items.find(

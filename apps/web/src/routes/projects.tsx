@@ -16,6 +16,7 @@ import {
 	updateProject,
 	type Project,
 } from "../lib/api";
+import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
 import { PageMessage } from "./prompts";
 
 export function ProjectsPage() {
@@ -150,8 +151,8 @@ export function ProjectsPage() {
 		onError: failed,
 	});
 
-	if (projectsQuery.isLoading)
-		return <PageMessage title="Projects">Loading projects...</PageMessage>;
+	if (projectsQuery.isLoading && !projectsQuery.data)
+		return <ListLoadingSkeleton testId="projects-list-skeleton" />;
 	if (projectsQuery.isError)
 		return (
 			<PageMessage title="Projects">Projects could not be loaded.</PageMessage>

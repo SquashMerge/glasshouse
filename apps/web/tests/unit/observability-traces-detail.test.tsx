@@ -624,7 +624,7 @@ describe("TraceDetailPage — span detail tabs", () => {
 		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"x"/);
 	});
 
-	it("persists the keyboard-accessible split and closes the inspector with Escape", async () => {
+	it("persists the keyboard-accessible split and moves the closed inspector trigger into a distinct rail", async () => {
 		window.localStorage.setItem("astraea.trace-detail.workspace-width", "44");
 		renderAt(VALID_ID);
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
@@ -647,6 +647,10 @@ describe("TraceDetailPage — span detail tabs", () => {
 			key: "Escape",
 		});
 		expect(screen.queryByTestId("observation-detail")).not.toBeInTheDocument();
+		const inspectorRail = screen.getByRole("complementary", {
+			name: "Inspector",
+		});
+		expect(inspectorRail).toHaveClass("xl:border-l", "xl:bg-muted/20");
 		expect(screen.getByTestId("show-inspector")).toBeInTheDocument();
 		await waitFor(() =>
 			expect(document.activeElement).toHaveAttribute(
@@ -654,6 +658,12 @@ describe("TraceDetailPage — span detail tabs", () => {
 				"obs-1",
 			),
 		);
+
+		fireEvent.click(screen.getByTestId("show-inspector"));
+		expect(screen.getByTestId("observation-detail")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("complementary", { name: "Inspector" }),
+		).not.toBeInTheDocument();
 	});
 });
 

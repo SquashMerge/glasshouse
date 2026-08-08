@@ -2,16 +2,17 @@
 
 This page explains how to point an OpenTelemetry-instrumented agent at Astraea's `/v1/otel/v1/traces` endpoint.
 
-## TL;DR — set these four env vars on your agent
+## TL;DR — set these five env vars on your agent
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000"      # no trailing path
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(echo -n 'astraea:YOUR_PASSWORD' | base64)"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel" # receiver mount; no trailing /v1/traces
+export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'astraea:YOUR_PASSWORD' | base64),x-astraea-project-id=$ASTRAEA_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-`OTEL_EXPORTER_OTLP_ENDPOINT` should point at the **root** of the API (no `/v1/otel/v1/traces` suffix). The OTel SDK appends `/v1/traces` by default; Astraea's mount point accepts at `/v1/otel/v1/traces` (the standard OTLP HTTP path). If your SDK uses a non-standard path, see [Custom path](#custom-path) below.
+`OTEL_EXPORTER_OTLP_ENDPOINT` should point at Astraea's **receiver mount** (`/v1/otel`), without the final `/v1/traces` suffix. The OTel SDK appends `/v1/traces` by default, producing Astraea's `POST /v1/otel/v1/traces` endpoint. If your SDK uses a non-standard path, see [Custom path](#custom-path) below.
 
 ## Authentication
 
@@ -20,7 +21,8 @@ The endpoint requires HTTP Basic Auth using the same `UI_USERNAME` / `UI_PASSWOR
 ```sh
 # macOS / Linux
 AUTH=$(printf '%s:%s' "$UI_USERNAME" "$UI_PASSWORD" | base64)
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH"
+export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
 ```
 
 The credentials are the same ones you'd use to log in at `http://localhost:5173/login`.
@@ -140,7 +142,7 @@ Astraea accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normaliz
 
 ## Ingestion and query bounds
 
-A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit), 128 resource spans/scopes/attributes, and 128 events or links per span. Requests over these structural limits are rejected before normalization and persistence. The 10 MiB HTTP body cap still applies independently.
+A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit), 128 resource spans/scopes/attributes, and 128 events or links per span. Requests over these structural limits are rejected before normalization and persistence. The HTTP body cap independently defaults to 1 MiB; operators may raise it with `API_MAX_BODY_BYTES`.
 
 OTLP retries reuse table-namespaced ClickHouse insert-deduplication tokens derived from the validated batch and trusted organization/project scope. This avoids duplicate trace rows when an earlier attempt writes `traces` but fails before writing `observations`. Deduplication is deliberately bounded by ClickHouse's 100,000-block history per table, not a permanent uniqueness guarantee; retries after that history has rolled over can insert duplicates.
 
@@ -148,9 +150,9 @@ Trace-detail reads are capped at 5,000 observations, ordered by start time, so a
 
 ## Custom path
 
-If your OTel SDK appends a different path (e.g. some SDKs use `/v1/traces` while the OTLP spec says it should), set `OTEL_EXPORTER_OTLP_TRACES_PATH` (or the SDK's equivalent) to override the default `/v1/traces`.
+If your OTel SDK needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or the SDK's equivalent) to the complete receiver URL, for example `https://api.example.com/v1/otel/v1/traces`.
 
-If you're sending spans to Astraea behind a reverse proxy that mounts the receiver at a different path, configure both `OTEL_EXPORTER_OTLP_ENDPOINT` (point at the proxy root) and the SDK's path-override option.
+If you're sending spans to Astraea behind a reverse proxy with a different receiver mount, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to that proxy's complete trace URL.
 
 ## After sending — where do traces go?
 
@@ -159,6 +161,6 @@ Traces appear in the dashboard at `http://localhost:5173/observability`. Click a
 ## Production hardening (post-MVP)
 
 - Replace Basic Auth with mTLS or signed JWT (the OTel SDKs support custom exporters / headers).
-- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://...`).
+- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com/v1/otel`).
 - Configure tenant routing with server-managed Basic credentials and select an authorized project with `x-astraea-project-id`.
 - Enable trace sampling at the agent side for high-volume services (see OTel SDK samplers).

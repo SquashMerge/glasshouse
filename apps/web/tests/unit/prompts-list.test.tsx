@@ -46,6 +46,28 @@ import { PromptsPage } from "../../src/routes/prompts";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("PromptsPage", () => {
+	it("keeps the prompts shell and new-prompt action visible while the initial list loads", () => {
+		listPrompts.mockReturnValue(new Promise(() => undefined));
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+
+		render(
+			<QueryClientProvider client={client}>
+				<PromptsPage />
+			</QueryClientProvider>,
+		);
+
+		expect(
+			screen.getByRole("heading", { name: "Prompts", level: 1 }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "New prompt" }),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("prompt-list-skeleton")).toBeInTheDocument();
+		expect(screen.queryByText("Loading prompts…")).not.toBeInTheDocument();
+	});
+
 	beforeEach(() => {
 		listPrompts.mockReset();
 		listActivePromptOptimizationActivities.mockReset();
@@ -54,6 +76,52 @@ describe("PromptsPage", () => {
 	afterEach(() => {
 		cleanup();
 		vi.useRealTimers();
+	});
+
+	it("keeps loaded prompts visible and marks the list busy during a refetch", async () => {
+		let resolveRefetch: (() => void) | undefined;
+		const refetch = new Promise<{ items: []; total: number }>((resolve) => {
+			resolveRefetch = () => resolve({ items: [], total: 0 });
+		});
+		listPrompts
+			.mockResolvedValueOnce({
+				items: [
+					{
+						id: "support-agent",
+						project_id: PROJECT_ID,
+						name: "Support Agent",
+						version: 4,
+						created_at: "2026-07-15T10:00:00.000Z",
+					},
+				],
+				total: 1,
+			})
+			.mockReturnValueOnce(refetch);
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+
+		render(
+			<QueryClientProvider client={client}>
+				<PromptsPage />
+			</QueryClientProvider>,
+		);
+
+		await screen.findByTestId("prompt-row");
+		act(() => {
+			void client.invalidateQueries({ queryKey: ["prompts", PROJECT_ID] });
+		});
+		await waitFor(() => expect(listPrompts).toHaveBeenCalledTimes(2));
+		expect(screen.getByTestId("prompt-row")).toHaveTextContent("Support Agent");
+		expect(
+			screen.queryByTestId("prompt-list-skeleton"),
+		).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Project prompts")).toHaveAttribute(
+			"aria-busy",
+			"true",
+		);
+
+		resolveRefetch?.();
 	});
 
 	it("lists the selected project's name, canonical ID, latest version, and time", async () => {
