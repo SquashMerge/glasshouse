@@ -47,6 +47,22 @@ describe("PromptProvenanceCard", () => {
 		expect(getPromptProvenance).not.toHaveBeenCalled();
 	});
 
+	it("keeps provenance details visible while the status uses a compact skeleton", () => {
+		selection.projectId = PROJECT_ID;
+		getPromptProvenance.mockReturnValue(new Promise(() => undefined));
+
+		renderCard();
+
+		expect(screen.getByText("support-agent")).toBeInTheDocument();
+		expect(screen.getByTestId("provenance-status-skeleton")).toHaveAttribute(
+			"aria-label",
+			"Loading prompt status",
+		);
+		expect(
+			screen.queryByText("Checking prompt status…"),
+		).not.toBeInTheDocument();
+	});
+
 	it.each(["active", "deleted", "unknown"] as const)(
 		"renders the server's %s provenance status",
 		async (status) => {

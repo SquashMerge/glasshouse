@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LuLoaderCircle } from "react-icons/lu";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { DetailLoadingSkeleton } from "../components/LoadingSkeletons";
 import { Button } from "../components/ui/button";
 import {
 	Card,
@@ -308,11 +309,11 @@ export function PromptDetailPage() {
 	}
 
 	if (
-		currentQuery.isLoading ||
-		(selectedVersion && selectedQuery.isLoading) ||
-		historyQuery.isLoading
+		(currentQuery.isLoading && !currentQuery.data) ||
+		(selectedVersion && selectedQuery.isLoading && !selectedQuery.data) ||
+		(historyQuery.isLoading && !historyQuery.data)
 	) {
-		return <PageMessage title="Prompt">Loading prompt…</PageMessage>;
+		return <DetailLoadingSkeleton testId="prompt-detail-skeleton" />;
 	}
 
 	const error = currentQuery.error ?? selectedQuery.error ?? historyQuery.error;

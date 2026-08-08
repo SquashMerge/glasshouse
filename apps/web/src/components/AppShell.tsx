@@ -18,6 +18,7 @@ import {
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
+import { Skeleton } from "./ui/skeleton";
 import {
 	DropdownMenu,
 	DropdownMenuTrigger,
@@ -144,27 +145,36 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 					)}
 					data-testid="expanded-project-selector"
 				>
-					<label htmlFor="selected-project" className="sr-only">
-						Selected project
-					</label>
-					<select
-						id="selected-project"
-						aria-label="Selected project"
-						value={selectedProjectId ?? ""}
-						disabled={projectsLoading || projects.length === 0}
-						onChange={(event) => selectProject(event.target.value)}
-						className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-						data-testid="project-selector"
-					>
-						<option value="">
-							{projectsLoading ? "Loading projects…" : "Select a project"}
-						</option>
-						{projects.map((project) => (
-							<option key={project.id} value={project.id}>
-								{project.name}
-							</option>
-						))}
-					</select>
+					{projectsLoading ? (
+						<Skeleton
+							className="h-9 w-full"
+							data-testid="project-selector-skeleton"
+							role="status"
+							aria-label="Loading projects"
+						/>
+					) : (
+						<>
+							<label htmlFor="selected-project" className="sr-only">
+								Selected project
+							</label>
+							<select
+								id="selected-project"
+								aria-label="Selected project"
+								value={selectedProjectId ?? ""}
+								disabled={projects.length === 0}
+								onChange={(event) => selectProject(event.target.value)}
+								className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+								data-testid="project-selector"
+							>
+								<option value="">Select a project</option>
+								{projects.map((project) => (
+									<option key={project.id} value={project.id}>
+										{project.name}
+									</option>
+								))}
+							</select>
+						</>
+					)}
 					{projectsError && (
 						<div
 							className="mt-2 flex items-center justify-between gap-2 text-xs text-destructive"
@@ -391,6 +401,15 @@ function CompactProjectSelector({
 }) {
 	const projectName = selectedProject?.name ?? "No project selected";
 	const label = `Current project: ${projectName}. Switch project`;
+	if (isLoading)
+		return (
+			<Skeleton
+				className="h-9 w-9"
+				data-testid="compact-project-selector-skeleton"
+				role="status"
+				aria-label="Loading projects"
+			/>
+		);
 
 	return (
 		<DropdownMenu>
@@ -421,8 +440,6 @@ function CompactProjectSelector({
 							Retry loading projects
 						</DropdownMenuItem>
 					</>
-				) : isLoading ? (
-					<DropdownMenuLabel>Loading projects...</DropdownMenuLabel>
 				) : projects.length === 0 ? (
 					<DropdownMenuLabel>No projects available</DropdownMenuLabel>
 				) : (

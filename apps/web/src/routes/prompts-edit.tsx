@@ -8,6 +8,7 @@ import {
 	stopPromptOptimization,
 } from "../lib/api";
 import { PageMessage } from "./prompts";
+import { FormLoadingSkeleton } from "../components/LoadingSkeletons";
 import { PromptComposer } from "./prompts-new";
 
 export function EditPromptPage() {
@@ -58,10 +59,11 @@ export function EditPromptPage() {
 		);
 	}
 
-	if (currentQuery.isLoading || (fromVersion && selectedQuery.isLoading)) {
-		return (
-			<PageMessage title="New prompt version">Loading prompt…</PageMessage>
-		);
+	if (
+		(currentQuery.isLoading && !currentQuery.data) ||
+		(fromVersion && selectedQuery.isLoading && !selectedQuery.data)
+	) {
+		return <FormLoadingSkeleton testId="prompt-edit-skeleton" />;
 	}
 	if (activeOptimizationQuery.data) {
 		return (
