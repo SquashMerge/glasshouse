@@ -392,11 +392,9 @@ export async function executeExperiment(
 					duration_ms,
 				});
 			} catch (traceError) {
-				logger.warn("evaluation.trace_failed", {
+				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
 					dataset_item_id: task.dataset_item_id,
-					error_type:
-						traceError instanceof Error ? traceError.name : typeof traceError,
 				});
 			}
 		} catch {
@@ -435,11 +433,9 @@ export async function executeExperiment(
 					duration_ms,
 				});
 			} catch (traceError) {
-				logger.warn("evaluation.trace_failed", {
+				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
 					dataset_item_id: task.dataset_item_id,
-					error_type:
-						traceError instanceof Error ? traceError.name : typeof traceError,
 				});
 			}
 		}

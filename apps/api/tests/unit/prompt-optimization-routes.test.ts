@@ -1,7 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { PromptRepositoryError } from "../../src/db/prompts";
-import { logger } from "../../src/lib/logger";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
 import {
 	createOptimizationHandlers,
@@ -362,19 +361,19 @@ describe("prompt optimization status routes", () => {
 		expect(JSON.stringify(body)).not.toContain("confidential rnerno");
 	});
 
-	it("logs the exception when an optimization start returns an internal error", async () => {
+	it("emits a safe structured record with correlation fields when optimization start returns an internal error", async () => {
 		const originalModels = process.env.GEPA_ALLOWED_MODELS;
-		const originalLogger = logger.error;
-		const errors: Array<{ event: string; cause: unknown; fields: unknown }> =
-			[];
+		const originalConsoleError = console.error;
+		const records: Array<Record<string, unknown>> = [];
 		process.env.GEPA_ALLOWED_MODELS = "local-model";
-		logger.error = (event, cause, fields = {}) =>
-			errors.push({ event, cause, fields });
+		console.error = (line: string) => records.push(JSON.parse(line));
 		try {
 			const handlers = createOptimizationHandlers({
 				pool: () => ({}) as never,
 				create: async () => {
-					throw new Error("database connection lost");
+					throw new Error(
+						"database password=private prompt=customer instruction",
+					);
 				},
 			} as unknown as OptimizationDependencies);
 			const api = new OpenAPIHono({
@@ -420,22 +419,20 @@ describe("prompt optimization status routes", () => {
 			});
 
 			expect(response.status).toBe(500);
-			expect(errors).toEqual([
-				{
+			expect(records).toEqual([
+				expect.objectContaining({
 					event: "optimization.request_failed",
-					cause: expect.objectContaining({
-						message: "database connection lost",
-					}),
-					fields: {
-						project_id: PROJECT,
-						prompt_slug: "daily-summary",
-						source_version: 1,
-						target: "system",
-					},
-				},
+					error_type: "Error",
+					project_id: PROJECT,
+					prompt_slug: "daily-summary",
+					source_version: 1,
+					target: "system",
+				}),
 			]);
+			expect(JSON.stringify(records)).not.toContain("password=private");
+			expect(JSON.stringify(records)).not.toContain("customer instruction");
 		} finally {
-			logger.error = originalLogger;
+			console.error = originalConsoleError;
 			process.env.GEPA_ALLOWED_MODELS = originalModels;
 		}
 	});

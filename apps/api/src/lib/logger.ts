@@ -18,21 +18,79 @@ function configuredLevel(): LogLevel {
 		: "info";
 }
 
-const MAX_ERROR_DETAIL_CHARS = 16_384;
+const MAX_ERROR_STACK_SCAN_CHARS = 4_096;
+const MAX_ERROR_STACK_FRAMES = 16;
 const MAX_ERROR_CAUSE_DEPTH = 5;
+const SAFE_ERROR_TYPES = new Set([
+	"AggregateError",
+	"BenchmarkRepositoryError",
+	"DatasetRepositoryError",
+	"Error",
+	"EvalError",
+	"ExperimentRepositoryError",
+	"FeedbackRepositoryError",
+	"GepaConfigurationError",
+	"OtlpConflictError",
+	"PromptRepositoryError",
+	"PromptTemplateError",
+	"RangeError",
+	"ReferenceError",
+	"SyntaxError",
+	"TenantScopeError",
+	"TypeError",
+	"URIError",
+]);
+const SAFE_ERROR_CODES = new Set([
+	"BAD_REQUEST",
+	"CONFLICT",
+	"FORBIDDEN",
+	"INTERNAL",
+	"NOT_FOUND",
+	"NOT_IMPLEMENTED",
+	"PAYLOAD_TOO_LARGE",
+	"UNAUTHORIZED",
+]);
 
-function truncateErrorDetail(value: string): string {
-	return value.length <= MAX_ERROR_DETAIL_CHARS
-		? value
-		: `${value.slice(0, MAX_ERROR_DETAIL_CHARS)}… [truncated]`;
+function isError(error: unknown): error is Error {
+	try {
+		return error instanceof Error;
+	} catch {
+		return false;
+	}
 }
 
-function stringifyError(error: unknown): string {
+function safelyRead<T>(read: () => T): T | undefined {
 	try {
-		return truncateErrorDetail(String(error));
+		return read();
 	} catch {
-		return "[error could not be stringified]";
+		return undefined;
 	}
+}
+
+function errorType(error: unknown): string {
+	if (!isError(error)) return error === null ? "null" : typeof error;
+	const name = safelyRead(() => error.name);
+	return typeof name === "string" && SAFE_ERROR_TYPES.has(name)
+		? name
+		: "Error";
+}
+
+function safeErrorCode(error: Error): string | undefined {
+	const code = safelyRead(() => (error as Error & { code?: unknown }).code);
+	return typeof code === "string" && SAFE_ERROR_CODES.has(code)
+		? code
+		: undefined;
+}
+
+function stackFrameCount(error: Error): number | undefined {
+	const stack = safelyRead(() => error.stack);
+	if (typeof stack !== "string") return undefined;
+	const count = stack
+		.slice(0, MAX_ERROR_STACK_SCAN_CHARS)
+		.split("\n")
+		.slice(1)
+		.filter((line) => /^\s*at\s+\S/u.test(line)).length;
+	return count ? Math.min(count, MAX_ERROR_STACK_FRAMES) : undefined;
 }
 
 function serializeError(
@@ -40,18 +98,21 @@ function serializeError(
 	seen = new Set<unknown>(),
 	depth = 0,
 ): LogFields {
-	if (!(error instanceof Error)) return { error: stringifyError(error) };
-	if (seen.has(error)) return { error: "[circular error cause]" };
+	if (!isError(error)) return { error_type: errorType(error) };
+	if (seen.has(error))
+		return { error_type: errorType(error), error_cause: "[circular]" };
 	seen.add(error);
-	const cause = error.cause;
+	const cause = safelyRead(() => error.cause);
+	const code = safeErrorCode(error);
+	const frames = stackFrameCount(error);
 	return {
-		error: truncateErrorDetail(error.message),
-		error_type: error.name,
-		...(error.stack ? { error_stack: truncateErrorDetail(error.stack) } : {}),
+		error_type: errorType(error),
+		...(code ? { error_code: code } : {}),
+		...(frames ? { error_stack_frames: frames } : {}),
 		...(cause === undefined
 			? {}
 			: depth >= MAX_ERROR_CAUSE_DEPTH
-				? { error_cause: "[error cause depth exceeded]" }
+				? { error_cause: "[depth exceeded]" }
 				: { error_cause: serializeError(cause, seen, depth + 1) }),
 	};
 }
@@ -77,11 +138,17 @@ export const logger = {
 	info(event: string, fields?: LogFields) {
 		write("info", event, fields);
 	},
-	warn(event: string, errorOrFields?: unknown, fields: LogFields = {}) {
+	warn(event: string, errorOrFields?: unknown, fields?: LogFields) {
+		const isCaughtError =
+			errorOrFields !== undefined &&
+			(fields !== undefined ||
+				isError(errorOrFields) ||
+				errorOrFields === null ||
+				typeof errorOrFields !== "object");
 		write(
 			"warn",
 			event,
-			errorOrFields instanceof Error
+			isCaughtError
 				? { ...fields, ...serializeError(errorOrFields) }
 				: (errorOrFields as LogFields | undefined),
 		);
