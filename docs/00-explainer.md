@@ -1,6 +1,8 @@
-# Hermes — General Explainer
+# Astraea — Future Agent Registry Explainer
 
-## The 30-second pitch
+> **Archived research, not an implementation commitment:** This pre-roadmap document preserves historical Agent Registry exploration only. Its detailed framework, HTTP, CI, promotion, drift, and rollback examples are superseded by `docs/02-roadmap.md`; they do not describe current behavior or an accepted P4/P5 contract. Current Astraea provides the foundation-first project-scoped observability, mutable Dataset, configured-LLM Experiment, feedback-review, and governance loop described in `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
+
+## The 30-second future pitch
 
 Hermes is an open-source evaluation platform for AI agents and LLM workflows. You point it at your agent — any agent, any framework, any language — and it tells you whether that agent is actually working the way you think it is, lets you replay real conversations against new prompt versions, and stops bad changes from reaching production.
 

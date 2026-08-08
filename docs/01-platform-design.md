@@ -1,7 +1,7 @@
-# Hermes Agent + LLM Evaluation Platform — Consolidated Design
+# Astraea Agent + LLM Evaluation Platform — Future Agent Registry Design
 
 **Date:** July 4, 2026
-**Status:** Working design doc across all 9 design surfaces we've built in this thread.
+**Status:** Archived pre-roadmap research, not an implementation commitment. The detailed Agent Registry, framework, HTTP, CI/GitOps, drift, and rollback examples below are superseded by `docs/02-roadmap.md`; they do not define P4/P5 scope. Current Astraea ships the foundation-first configured-LLM Experiment and observability loop; see `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
 
 ---
 

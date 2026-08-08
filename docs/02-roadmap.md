@@ -32,7 +32,11 @@ that give an agent version meaning.
    configuration, and access scope produced this result?*
 5. **Humans retain control.** Feedback is evidence, not ground truth. No raw
    feedback, judge score, optimization candidate, or draft may automatically
-   change a dataset, evaluation gate, prompt, model, agent, or deployment.
+   change a Dataset, Evaluation gate, model, Agent, or deployment. The shipped
+   GEPA **system-prompt-only** path is the deliberately narrow exception: only a
+   candidate that passes configured held-out validation, leakage checks, and the
+   source-version guard may publish a new prompt version; all other prompt
+   candidates remain review-required or blocked.
 6. **Security and tenancy are intrinsic.** Every product record, query, event,
    and background task is bound to an authorized organization and Project.
    Client-selected IDs, browser cache, telemetry attributes, and IdP claims are
@@ -57,9 +61,26 @@ Shipped does **not** mean finished. The next roadmap deliberately hardens the
 first-pass Dataset, Evaluation, identity, and authorization contracts before
 adding Agent Registry breadth.
 
-## Current product definition
+## Target P2/P3 product definition (not yet shipped)
 
-The core Astraea loop is:
+The current product is the first-pass loop: project-scoped mutable Datasets,
+configured-LLM Experiment runs, and human-feedback review. The following is the
+target loop for P2/P3; immutable Dataset versions and reusable Evaluation
+definitions do not exist in the shipped product yet.
+
+```text
+Authorized user in an organization / Project
+        ↓
+Observe production traces and human feedback
+        ↓
+Curate a project-scoped mutable Dataset
+        ↓
+Run a configured-LLM Experiment
+        ↓
+Inspect evidence and deliberately improve a prompt or Dataset, repeat
+```
+
+The target P2/P3 Astraea loop is:
 
 ```text
 Authorized user in an organization / Project
@@ -312,7 +333,9 @@ artifacts for export, audit, or GitOps—not user-authored YAML required at setu
 After P4 proves useful with production users:
 
 - additional framework adapters and HTTP endpoint registration;
-- version comparison, environment binding, and drift detection;
+- version comparison, environment binding, and drift detection, only after
+  immutable artifact/environment-binding revisions, trace provenance, explicit
+  fail-closed uncertainty behavior, and gate authorization are implemented;
 - protected environment promotion and organization-approved CI gates;
 - a GitHub Action and API/SDK ergonomics built on pinned Evaluation definitions;
 - SCIM provisioning if P1's identity/membership operations show that manual
@@ -325,8 +348,8 @@ Only after the evidence loop is reliable:
 - evaluator library growth, LLM-as-judge calibration, and transparent scoring;
 - failure discovery/clustering and regression-candidate workflows;
 - closed-loop optimization proposals with explicit human review/promotion;
-- voice-agent support, broader enterprise controls, and packaging/release
-  polish driven by demonstrated user demand.
+- atomic manifest rollback, voice-agent support, broader enterprise controls, and
+  packaging/release polish driven by demonstrated user demand.
 
 ---
 
@@ -339,7 +362,7 @@ Only after the evidence loop is reliable:
 | Build Evaluation Definitions/Runs before Agent Registry. | Astraea needs a dependable place to bind and evaluate a future Agent version; configured-LLM targets let us prove the execution model now. |
 | Introduce Agents before framework breadth. | A small immutable Agent identity/version contract is more valuable than many shallow adapters. |
 | Add SCIM, complex RBAC, and broad IdP catalogs later. | The three-role, Project-scoped model must prove secure and usable before automating administration. |
-| Defer automatic dataset/prompt/model/deployment changes. | Astraea should make evidence and decisions stronger before it automates consequential changes. |
+| Defer automatic Dataset/model/deployment changes and unguarded prompt promotion. | Astraea should make evidence and decisions stronger before it automates consequential changes; the existing held-out-validation, leakage-checked, source-version-guarded GEPA prompt exception remains deliberately narrow. |
 
 ## Measures that tell us the roadmap is working
 
@@ -358,8 +381,8 @@ Only after the evidence loop is reliable:
 
 The following remain strategically valuable but are **not** prerequisites for
 P1–P4: broad framework coverage, generic custom-code evaluators, evaluator
-marketplaces, semantic feedback clustering, automatic prompt/model changes,
-SCIM, custom role builders, enterprise billing, GitHub Actions, manifest drift
+marketplaces, semantic feedback clustering, unguarded automatic prompt/model
+changes, SCIM, custom role builders, enterprise billing, GitHub Actions, manifest drift
 detection, and voice support.
 
 Deferral is a focus decision—not abandonment. Each deferred area must consume
