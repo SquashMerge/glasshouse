@@ -254,6 +254,10 @@ export async function deleteDatasetItem(
 		);
 		if (!active.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await client.query(
+			`UPDATE feedback_reviews SET status = CASE WHEN status = 'added_to_dataset' THEN 'reviewed' ELSE status END, dataset_id = NULL, dataset_item_id = NULL, updated_at = now() WHERE project_id = $1 AND dataset_id = $2 AND dataset_item_id = $3`,
+			[input.project_id, input.dataset_id, input.item_id],
+		);
 		const result = await client.query(
 			`DELETE FROM dataset_items i USING datasets d, projects p WHERE i.id = $1 AND i.dataset_id = $2 AND d.id = i.dataset_id AND d.project_id = $3 AND p.id = d.project_id AND p.status = 'active'`,
 			[input.item_id, input.dataset_id, input.project_id],

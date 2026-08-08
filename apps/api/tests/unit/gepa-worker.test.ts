@@ -152,16 +152,32 @@ describe("GEPA worker adapter", () => {
 			expect(errors).toEqual([
 				{
 					event: "optimization.worker_failed",
-					cause: expect.objectContaining({ message: "GEPA worker failed" }),
+					cause: expect.objectContaining({
+						message: "GEPA worker exited with code 2",
+					}),
 					fields: {
 						exit_code: 2,
 						diagnostic_bytes: 37,
+						diagnostic_lines: 1,
 					},
 				},
 			]);
+			expect(JSON.stringify(errors)).not.toContain(
+				"evaluator must be the default_adapter",
+			);
 		} finally {
 			logger.error = originalLogger;
 		}
+	});
+
+	it("rejects oversized worker diagnostics before retaining their content", async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("x".repeat(16 * 1024 + 1)));
+				controller.close();
+			},
+		});
+		await expect(readWorkerDiagnostics(stream)).rejects.toThrow("size limit");
 	});
 
 	it("rejects oversized worker output before buffering it", async () => {

@@ -27,7 +27,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 - The repository is a Bun workspace. The user-facing API is TypeScript/Hono, the web app is TypeScript/React/Vite, PostgreSQL stores transactional application data, and ClickHouse stores trace/OLAP data.
 - Python is intentionally isolated to compute-heavy integrations such as the GEPA worker. Keep the TypeScript API boundary and Python worker boundary explicit; do not move GEPA/provider credentials into API request bodies, job records, logs, or SSE payloads.
-- The production API image runs PostgreSQL migrations before starting the server: `bun run db:migrate && bun run src/index.ts`. Local `make dev-backend` runs the API directly and does not apply migrations automatically; run the migration command separately when the schema may be behind.
+- The production API image runs PostgreSQL and ClickHouse migrations before starting the server: `bun run db:migrate && bun run ch:migrate && bun run src/index.ts`. Local `make dev-backend` runs the API directly and does not apply migrations automatically; run the relevant migration command separately when a schema may be behind.
 - Docker Compose is invoked with the repository root as its project directory. Preserve root-relative build contexts and ensure every runtime dependency used by startup commands is present in the production image.
 
 ## Database migrations and seeded data
@@ -61,6 +61,13 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 - Review the exact PR head, not a stale local branch or an author's fix comment. Map every blocker to code and regression coverage before declaring it addressed.
 - For Bun changes, use a clean checkout/worktree and `bun install --frozen-lockfile` before relying on tests. Run format, lint, typecheck, build, API tests, web tests, and worker tests as applicable; report unavailable Docker/provider checks as unverified rather than passing them by assumption.
+
+## Coding-agent and documentation currency
+
+- For autonomous implementation or review, use the locally authenticated OpenAI Codex workflow with GPT-5.6 Terra/Luna. Do not use MiniMax or silently downgrade to another provider.
+- Treat documentation as part of every PR's implementation contract. Assess `.opencode/SETUP-NOTES.md` for every PR and update it whenever developer prerequisites, environment/configuration, service topology, migrations/startup, model/provider workflow, generated clients, test commands, or operational constraints change.
+- Update this `AGENTS.md` in the same PR only for new or changed durable repository-wide instructions a coding agent needs. Keep it concise and do not duplicate feature-specific notes.
+- Update the glossary and public documentation when terminology or user-facing behavior changes. The PR description must state which documentation was updated, or why no documentation update was needed.
 
 ## UI design and quality bar
 

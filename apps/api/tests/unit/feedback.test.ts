@@ -107,6 +107,43 @@ describe("feedback review persistence", () => {
 		expect(result.project_id).toBe(base.project_id);
 	});
 
+	it("returns feedback after its dataset item association is cleared", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const row = {
+			id: "33333333-3333-4333-8333-333333333333",
+			project_id: base.project_id,
+			trace_id: base.trace_id,
+			observation_id: null,
+			value: -1,
+			metadata: base.metadata,
+			created_at: now,
+			status: "reviewed",
+			note: null,
+			dataset_id: null,
+			dataset_item_id: null,
+			updated_at: now,
+		};
+		const result = await listFeedback(
+			{
+				query: async (sql: string) =>
+					sql.includes("COUNT(*)") ? { rows: [{ total: 1 }] } : { rows: [row] },
+			} as never,
+			{ ...base, limit: 10, offset: 0 },
+		);
+
+		expect(result).toMatchObject({
+			total: 1,
+			items: [
+				{
+					id: row.id,
+					status: "reviewed",
+					dataset_id: null,
+					dataset_item_id: null,
+				},
+			],
+		});
+	});
+
 	it("rejects promotion until feedback has been reviewed", async () => {
 		const now = new Date("2026-07-29T12:00:00.000Z");
 		const queries: string[] = [];

@@ -22,4 +22,26 @@ describe("Compose API database configuration", () => {
 			"POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in infra/.env}",
 		);
 	});
+
+	it("passes runtime safety and observability controls into the API container", () => {
+		const compose = readFileSync(
+			resolve(import.meta.dir, "../../../../infra/compose.yaml"),
+			"utf8",
+		);
+		const apiEnvironment = compose.slice(
+			compose.indexOf("  api:\n"),
+			compose.indexOf("  web:\n"),
+		);
+
+		expect(apiEnvironment).toContain("LOG_LEVEL: ${LOG_LEVEL:-info}");
+		expect(apiEnvironment).toContain(
+			"ASTRAEA_REDACT_INPUT: ${ASTRAEA_REDACT_INPUT:-false}",
+		);
+		expect(apiEnvironment).toContain(
+			"ASTRAEA_REDACT_KEYS: ${ASTRAEA_REDACT_KEYS:-}",
+		);
+		expect(apiEnvironment).toContain(
+			"API_MAX_BODY_BYTES: ${API_MAX_BODY_BYTES:-1048576}",
+		);
+	});
 });

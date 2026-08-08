@@ -24,4 +24,17 @@ set -a
 . ./infra/.env
 set +a
 
+# node-pg-migrate and the bootstrap script require DATABASE_URL, while the API
+# itself supports component-variable fallbacks. Derive the same localhost URL
+# for the documented host-local migration workflow when no override was given.
+if [ -z "${DATABASE_URL:-}" ]; then
+  encode_uri_component() {
+    printf %s "$1" | node -e 'process.stdout.write(encodeURIComponent(require("node:fs").readFileSync(0, "utf8")))'
+  }
+  postgres_user="$(encode_uri_component "${POSTGRES_USER:-postgres}")"
+  postgres_password="$(encode_uri_component "${POSTGRES_PASSWORD:-postgres}")"
+  postgres_database="$(encode_uri_component "${POSTGRES_DB:-postgres}")"
+  export DATABASE_URL="postgres://${postgres_user}:${postgres_password}@${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${postgres_database}"
+fi
+
 exec "$@"

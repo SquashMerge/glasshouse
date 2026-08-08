@@ -158,24 +158,56 @@ describe("dataset repository", () => {
 		});
 	});
 
-	it("keeps feedback-linked items immutable and reports a deletion conflict", async () => {
+	it("deletes a feedback-linked item after severing the readable feedback association", async () => {
+		const itemId = "33333333-3333-4333-8333-333333333333";
 		const db = fakeDb([{ rows: [] }, { rows: [{ id: PROJECT }] }]);
 		const query = db.query;
+		const feedback: {
+			status: "added_to_dataset" | "reviewed";
+			dataset_id: string | null;
+			dataset_item_id: string | null;
+		} = {
+			status: "added_to_dataset",
+			dataset_id: DATASET,
+			dataset_item_id: itemId,
+		};
 		db.query = async (text, values) => {
-			if (text.startsWith("DELETE FROM dataset_items")) throw { code: "23503" };
+			if (text.startsWith("UPDATE feedback_reviews")) {
+				db.queries.push({ text, values });
+				feedback.status = "reviewed";
+				feedback.dataset_id = null;
+				feedback.dataset_item_id = null;
+				return { rows: [], rowCount: 1 };
+			}
+			if (text.startsWith("DELETE FROM dataset_items")) {
+				db.queries.push({ text, values });
+				if (feedback.dataset_item_id) throw { code: "23503" };
+				return { rows: [], rowCount: 1 };
+			}
 			return query(text, values);
 		};
+
 		await expect(
 			deleteDatasetItem(db, {
 				project_id: PROJECT,
 				dataset_id: DATASET,
-				item_id: "33333333-3333-4333-8333-333333333333",
+				item_id: itemId,
 			}),
-		).rejects.toMatchObject<DatasetRepositoryError>({
-			code: "CONFLICT",
-			status: 409,
-			message: "Dataset item is retained because feedback links it",
+		).resolves.toBeUndefined();
+		expect(feedback).toEqual({
+			status: "reviewed",
+			dataset_id: null,
+			dataset_item_id: null,
 		});
+		const clearLink = db.queries.findIndex((query) =>
+			query.text.startsWith("UPDATE feedback_reviews"),
+		);
+		const removeItem = db.queries.findIndex((query) =>
+			query.text.startsWith("DELETE FROM dataset_items"),
+		);
+		expect(clearLink).toBeGreaterThan(-1);
+		expect(db.queries[clearLink]?.values).toEqual([PROJECT, DATASET, itemId]);
+		expect(removeItem).toBeGreaterThan(clearLink);
 	});
 
 	it("locks the active project before every dataset mutation", async () => {

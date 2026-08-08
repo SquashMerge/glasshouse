@@ -198,7 +198,7 @@ export function AddToDatasetDialog({
 								className="h-4 w-32"
 								data-testid="dataset-options-skeleton"
 								role="status"
-								aria-label="Loading datasets"
+								aria-label="Loading choices"
 							/>
 						)}
 						{datasetLoadError && (

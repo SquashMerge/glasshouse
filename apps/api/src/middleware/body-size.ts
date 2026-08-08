@@ -1,6 +1,17 @@
 import type { MiddlewareHandler } from "hono";
 
-export function bodySizeLimit(maxBytes: number = 1_048_576): MiddlewareHandler {
+export const DEFAULT_MAX_BODY_BYTES = 1_048_576;
+
+export function parseBodySizeLimit(value: string | undefined): number {
+	const parsed = Number(value);
+	return Number.isSafeInteger(parsed) && parsed > 0
+		? parsed
+		: DEFAULT_MAX_BODY_BYTES;
+}
+
+export function bodySizeLimit(
+	maxBytes: number = DEFAULT_MAX_BODY_BYTES,
+): MiddlewareHandler {
 	return async (c, next) => {
 		const contentLength = c.req.header("content-length");
 		if (contentLength) {
