@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS actor_identities (
 CREATE TABLE IF NOT EXISTS actor_identity_backfill_quarantine (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_table TEXT NOT NULL,
-    organization_id UUID,
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
     legacy_subject TEXT NOT NULL,
     reason TEXT NOT NULL,
     quarantined_at TIMESTAMPTZ NOT NULL DEFAULT now(),

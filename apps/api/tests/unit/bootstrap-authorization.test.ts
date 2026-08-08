@@ -73,6 +73,46 @@ describe("bootstrap authorization", () => {
 		expect(ended).toBe(true);
 	});
 
+	it("uses an unambiguous actor identity upsert assignment", async () => {
+		const queries: string[] = [];
+		const client = {
+			async query(sql: string) {
+				queries.push(sql);
+				if (sql.includes("INSERT INTO actor_identities"))
+					return { rows: [{ actor_id: "actor" }], rowCount: 1 };
+				if (sql.includes("SELECT id FROM organizations"))
+					return { rows: [{ id: ORGANIZATION }], rowCount: 1 };
+				if (sql.includes("SELECT id FROM projects"))
+					return { rows: [], rowCount: 0 };
+				return { rows: [], rowCount: 1 };
+			},
+			release() {},
+		};
+		const pool = { connect: async () => client, end: async () => {} };
+
+		await bootstrapAuthorization(
+			{
+				ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
+				ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+					{
+						username: "owner",
+						password: "secret",
+						organization_id: ORGANIZATION,
+					},
+				]),
+			},
+			pool as never,
+		);
+
+		const identityUpsert = queries.find((sql) =>
+			sql.includes("INSERT INTO actor_identities"),
+		);
+		expect(identityUpsert).toContain(
+			"DO UPDATE SET actor_id = EXCLUDED.actor_id",
+		);
+		expect(identityUpsert).not.toContain("DO UPDATE SET actor_id = actor_id");
+	});
+
 	it("does not grant recovery authority while any project is deleting", async () => {
 		const queries: Array<{ sql: string; values?: unknown[] }> = [];
 		const client = {

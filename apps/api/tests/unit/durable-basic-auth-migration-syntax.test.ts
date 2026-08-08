@@ -20,6 +20,13 @@ const migrationAssertions = readFileSync(
 	),
 	"utf8",
 );
+const migrationFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0039.fixture.sql",
+	),
+	"utf8",
+);
 
 test("uses PostgreSQL Unicode-normalization form keywords", () => {
 	for (const source of [
@@ -30,4 +37,33 @@ test("uses PostgreSQL Unicode-normalization form keywords", () => {
 		expect(source).not.toContain("'NFKC'");
 		expect(source).toContain("NFKC");
 	}
+});
+
+test("keeps backfill quarantine tenant-scoped", () => {
+	const quarantineTable = migration.slice(
+		migration.indexOf(
+			"CREATE TABLE IF NOT EXISTS actor_identity_backfill_quarantine",
+		),
+		migration.indexOf(
+			");",
+			migration.indexOf(
+				"CREATE TABLE IF NOT EXISTS actor_identity_backfill_quarantine",
+			),
+		) + 2,
+	);
+	expect(quarantineTable).toContain(
+		"organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT",
+	);
+});
+
+test("builds the migration fixture organization and default project without bypassing its foreign key", () => {
+	expect(migrationFixture).toContain(
+		"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;",
+	);
+	expect(migrationFixture).toContain(
+		"UPDATE organizations SET default_project_id = '99999999-9999-4999-8999-999999999998'",
+	);
+	expect(migrationFixture).toContain(
+		"ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;",
+	);
 });
