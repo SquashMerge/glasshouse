@@ -102,6 +102,63 @@ function app() {
 }
 
 describe("prompt optimization status routes", () => {
+	it("rejects attempts to optimize a user prompt before creating a job", async () => {
+		const create = mock(async () => privateJob());
+		const handlers = createOptimizationHandlers({
+			pool: () => ({}) as never,
+			create,
+		} as unknown as OptimizationDependencies);
+		const api = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		api.use("*", async (c, next) => {
+			c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+			await next();
+		});
+		api.openapi(startOptimization, handlers.handleStart);
+		const originalModels = process.env.GEPA_ALLOWED_MODELS;
+		process.env.GEPA_ALLOWED_MODELS = "local-model";
+		try {
+			const response = await api.request("/v1/prompt-optimizations", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					project_id: PROJECT,
+					slug: "daily-summary",
+					source_version: 1,
+					target: "user",
+					evaluator: { type: "default_adapter" },
+					dataset: {
+						version: 1,
+						rubric: "Preserve concise summaries.",
+						training_examples: [
+							{ input: "training input", answer: "training answer" },
+						],
+						validation_examples: [
+							{ input: "held-out input", answer: "held-out answer" },
+						],
+					},
+					model_config: {
+						task_lm: "local-model",
+						reflection_lm: "local-model",
+					},
+					budget: { max_metric_calls: 2 },
+				}),
+			});
+
+			expect(response.status).toBe(400);
+			expect(create).not.toHaveBeenCalled();
+		} finally {
+			process.env.GEPA_ALLOWED_MODELS = originalModels;
+		}
+	});
+
 	it("rejects an impossible metric-call budget before creating a job", async () => {
 		const create = mock(async () => privateJob());
 		const handlers = createOptimizationHandlers({

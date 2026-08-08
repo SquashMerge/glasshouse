@@ -293,13 +293,16 @@ class DevCliLlmTests(unittest.TestCase):
             default_adapter_directory = gepa_directory / "adapters" / "default_adapter"
             default_adapter_directory.mkdir(parents=True)
             (gepa_directory / "__init__.py").write_text(
+                "import os\n"
+                "import sys\n"
                 "from types import SimpleNamespace\n"
-                "def optimize(*, adapter, task_lm, reflection_lm, seed_candidate, trainset, valset, **kwargs):\n"
+                "def optimize(*, adapter, task_lm, reflection_lm, seed_candidate, trainset, valset, callbacks, **kwargs):\n"
                 "    assert adapter is not None\n"
                 "    assert callable(adapter.model)\n"
                 "    assert adapter.propose_new_texts is None\n"
                 "    assert task_lm is None\n"
                 "    assert callable(reflection_lm)\n"
+                "    assert kwargs['track_best_outputs'] is False\n"
                 "    assert trainset is not valset\n"
                 "    assert 'quarterly status report' in trainset[0]['input']\n"
                 "    assert 'customer renewal proposal' in valset[0]['input']\n"
@@ -312,13 +315,17 @@ class DevCliLlmTests(unittest.TestCase):
                 "    assert held_out.scores == [0.75]\n"
                 "    assert 'customer renewal proposal' in held_out.outputs[0]['full_assistant_response']\n"
                 "    assert 'quarterly status report' not in held_out.outputs[0]['full_assistant_response']\n"
-                "    kwargs[\"logger\"].log(\"progress\")\n"
+                "    callbacks[0].on_budget_updated({'metric_calls_used': 1, 'metric_calls_delta': 1, 'metric_calls_remaining': 4})\n"
+                "    kwargs[\"logger\"].log(\"candidate: very sensitive prompt text\")\n"
+                "    os.write(2, b\"provider payload: very sensitive prompt text\\n\")\n"
                 "    assert reflection_lm(\"reflection\")\n"
                 "    return SimpleNamespace(best_candidate={'system_prompt': 'Generalized daily-summary instructions for {{tasks}}'}, best_idx=1, val_aggregate_scores=[0.25, 0.75], total_metric_calls=3)\n"
             )
             (gepa_directory / "adapters" / "__init__.py").write_text("")
             (default_adapter_directory / "__init__.py").write_text("")
             (default_adapter_directory / "default_adapter.py").write_text(
+                "import os\n"
+                "import sys\n"
                 "from types import SimpleNamespace\n"
                 "class DefaultAdapter:\n"
                 "    def __init__(self, model):\n"
@@ -328,6 +335,9 @@ class DevCliLlmTests(unittest.TestCase):
                 "        outputs = []\n"
                 "        scores = []\n"
                 "        for data in batch:\n"
+                "            if 'quarterly status report' in data['input']:\n"
+                "                os.write(1, b'training stdout sentinel')\n"
+                "                os.write(2, b'training stderr sentinel')\n"
                 "            if 'customer renewal proposal' in data['input']:\n"
                 "                outputs.append({'full_assistant_response': '**Before noon:** Send the customer renewal proposal before 11:00 AM. **This afternoon:** Prepare notes for the 3:00 PM planning meeting. **Later:** Refill the prescription and water the plants.'})\n"
                 "                scores.append(0.75)\n"
@@ -399,6 +409,16 @@ class DevCliLlmTests(unittest.TestCase):
             self.assertNotIn(training_answer, output["candidate"])
             self.assertNotIn(held_out_answer, output["candidate"])
             self.assertIn('ASTRAEA_GEPA_PROGRESS {"metric_calls_used": 1}', result.stderr)
+            self.assertNotIn("very sensitive prompt text", result.stderr)
+            self.assertNotIn("training stdout sentinel", result.stdout)
+            self.assertNotIn("training stderr sentinel", result.stderr)
+            self.assertTrue(
+                all(
+                    line.startswith("ASTRAEA_GEPA_PROGRESS ")
+                    for line in result.stderr.splitlines()
+                    if line
+                )
+            )
 
     def test_cli_mode_omits_training_score_when_it_exceeds_remaining_budget(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -464,14 +484,14 @@ class DevCliLlmTests(unittest.TestCase):
             [
                 runtime,
                 "-c",
-                "import importlib.metadata; assert importlib.metadata.version('gepa') == '0.0.19'",
+                "import importlib.metadata; assert importlib.metadata.version('gepa') == '0.1.4'",
             ],
             text=True,
             capture_output=True,
             check=False,
         )
         if installed.returncode:
-            self.skipTest("requires the pinned gepa==0.0.19 worker runtime")
+            self.skipTest("requires the pinned gepa==0.1.4 worker runtime")
 
         with tempfile.TemporaryDirectory() as directory:
             cli = Path(directory) / "fake_gepa_cli.py"
