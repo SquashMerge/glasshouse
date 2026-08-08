@@ -53,9 +53,8 @@ export function PromptDetailPage() {
 	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const [deleteOpen, setDeleteOpen] = React.useState(false);
 	const [rollbackOpen, setRollbackOpen] = React.useState(false);
-	const [optimizeTarget, setOptimizeTarget] = React.useState<
-		"system" | "user" | null
-	>(null);
+	const [optimizationDialogOpen, setOptimizationDialogOpen] =
+		React.useState(false);
 	const [optimizationEvent, setOptimizationEvent] =
 		React.useState<OptimizationEvent | null>(null);
 	const [optimizationPanelOpen, setOptimizationPanelOpen] =
@@ -158,7 +157,6 @@ export function PromptDetailPage() {
 	});
 	const optimizeMutation = useMutation({
 		mutationFn: (input: {
-			target: "system" | "user";
 			dataset: OptimizationDataset;
 			taskModel: string;
 			reflectionModel: string;
@@ -170,7 +168,7 @@ export function PromptDetailPage() {
 				source_version: selectedVersion
 					? selectedQuery.data!.version
 					: currentQuery.data!.version,
-				target: input.target,
+				target: "system",
 				evaluator: { type: "default_adapter" },
 				dataset: input.dataset,
 				model_config: {
@@ -360,18 +358,10 @@ export function PromptDetailPage() {
 					>
 						New version
 					</Button>
-					{prompt.messages.some(
-						(message) => message.role === "system" || message.role === "user",
-					) && (
+					{prompt.messages.some((message) => message.role === "system") && (
 						<Button
 							variant="outline"
-							onClick={() =>
-								setOptimizeTarget(
-									prompt.messages.some((message) => message.role === "system")
-										? "system"
-										: "user",
-								)
-							}
+							onClick={() => setOptimizationDialogOpen(true)}
 							disabled={optimizationActive}
 						>
 							Optimize prompt
@@ -522,28 +512,19 @@ export function PromptDetailPage() {
 					onConfirm={() => rollbackMutation.mutate()}
 				/>
 			)}
-			{optimizeTarget && (
+			{optimizationDialogOpen && (
 				<OptimizationConfirmDialog
-					target={optimizeTarget}
-					hasSystem={prompt.messages.some(
-						(message) => message.role === "system",
-					)}
-					hasUser={prompt.messages.some((message) => message.role === "user")}
-					onTargetChange={setOptimizeTarget}
 					pending={optimizeMutation.isPending}
 					error={
 						optimizeMutation.error instanceof Error
 							? optimizeMutation.error.message
 							: null
 					}
-					onClose={() => setOptimizeTarget(null)}
+					onClose={() => setOptimizationDialogOpen(false)}
 					onConfirm={(input) =>
-						optimizeMutation.mutate(
-							{ ...input, target: optimizeTarget },
-							{
-								onSuccess: () => setOptimizeTarget(null),
-							},
-						)
+						optimizeMutation.mutate(input, {
+							onSuccess: () => setOptimizationDialogOpen(false),
+						})
 					}
 				/>
 			)}
@@ -580,19 +561,11 @@ export function PromptDetailPage() {
 }
 
 function OptimizationConfirmDialog({
-	target,
-	hasSystem,
-	hasUser,
-	onTargetChange,
 	pending,
 	error,
 	onClose,
 	onConfirm,
 }: {
-	target: "system" | "user";
-	hasSystem: boolean;
-	hasUser: boolean;
-	onTargetChange: (target: "system" | "user") => void;
 	pending: boolean;
 	error: string | null;
 	onClose: () => void;
@@ -677,7 +650,7 @@ function OptimizationConfirmDialog({
 					Start optimization
 				</h2>
 				<p className="mt-3 text-sm text-muted-foreground">
-					GEPA optimizes one prompt role per run. Expected answers are evaluator
+					GEPA optimizes the system prompt. Expected answers are evaluator
 					labels: they are never inserted into the production prompt.
 				</p>
 				{showDevExample && (
@@ -691,37 +664,6 @@ function OptimizationConfirmDialog({
 					</Button>
 				)}
 				<div className="mt-4 space-y-3">
-					<fieldset>
-						<legend className="text-sm font-medium">Prompt role</legend>
-						<div className="mt-2 flex gap-4">
-							{hasSystem && (
-								<label className="flex items-center gap-2 text-sm">
-									<input
-										type="radio"
-										name="optimization-target"
-										value="system"
-										checked={target === "system"}
-										onChange={() => onTargetChange("system")}
-										disabled={pending}
-									/>
-									System prompt
-								</label>
-							)}
-							{hasUser && (
-								<label className="flex items-center gap-2 text-sm">
-									<input
-										type="radio"
-										name="optimization-target"
-										value="user"
-										checked={target === "user"}
-										onChange={() => onTargetChange("user")}
-										disabled={pending}
-									/>
-									User prompt
-								</label>
-							)}
-						</div>
-					</fieldset>
 					<label className="block text-sm font-medium">
 						Scoring rubric / objective
 						<textarea
