@@ -135,7 +135,10 @@ describe("dataset feedback actions", () => {
 
 		expect(
 			await screen.findByTestId("dataset-options-skeleton"),
-		).toHaveAttribute("aria-label", "Loading datasets");
+		).toHaveAttribute("aria-label", "Loading choices");
+		expect(
+			screen.getByRole("combobox", { name: "Dataset" }),
+		).toBeInTheDocument();
 		expect(screen.queryByText("Loading datasets...")).not.toBeInTheDocument();
 		rejectDatasets(new Error("Dataset service unavailable"));
 		expect(await screen.findByRole("alert")).toHaveTextContent(
