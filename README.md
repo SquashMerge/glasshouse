@@ -156,7 +156,7 @@ Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 
 ### GEPA prompt optimization and LLM providers
 
-Prompt optimization uses the Python GEPA worker and requires access to an LLM for both candidate evaluation (`task_lm`) and reflection/proposal (`reflection_lm`). The dashboard asks for those two model identifiers when optimization starts; it does not collect or persist API keys. The identifiers are pinned into the job configuration and must be present in `GEPA_ALLOWED_MODELS`.
+Prompt optimization uses the isolated Python worker with GEPA `0.1.4` and LiteLLM for normal model-string execution. The dashboard optimizes system prompts only; it does not offer user-prompt optimization. It uses held-out validation, safe GEPA budget callback telemetry, and a strict worker-side metric-call cap; GEPA's best outputs are not retained. The dashboard asks for those two model identifiers when optimization starts; it does not collect or persist API keys. The identifiers are pinned into the job configuration and must be present in `GEPA_ALLOWED_MODELS`.
 
 For direct provider access, inject the provider credential into the API/worker environment and allow the exact model identifiers, for example:
 
