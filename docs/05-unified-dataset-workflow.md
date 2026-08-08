@@ -218,7 +218,7 @@ type EvaluationDefinition = {
 
 ## API and SDK surface
 
-All operations use the existing `/v1` auth/project conventions and generated OpenAPI clients. **Every endpoint below requires exactly one `?project_id=<UUID>` selector, including POST, detail, SSE, cancel, and compatibility routes.** The SDK supplies that selector from its explicit Project configuration; the server still verifies membership and applies Project-scoped resource predicates. The current dataset endpoints remain available during migration; new endpoints make draft/version semantics explicit.
+All operations use the existing `/v1` auth/project conventions and generated OpenAPI clients. **Every new endpoint below requires exactly one `?project_id=<UUID>` selector, including POST, detail, SSE, and cancel.** The SDK supplies that selector from its explicit Project configuration; the server still verifies membership and applies Project-scoped resource predicates. The current Dataset endpoints remain available during migration under the explicit body-scoped compatibility rule below; new endpoints make draft/version semantics explicit.
 
 ### REST
 
@@ -226,18 +226,18 @@ All operations use the existing `/v1` auth/project conventions and generated Ope
 # Dataset catalog and versions
 GET    /v1/datasets?project_id=&q=&tag=
 POST   /v1/datasets?project_id=              # create logical dataset + empty draft
-GET    /v1/datasets/{slug}?project_id=
-PATCH  /v1/datasets/{slug}?project_id=       # metadata only
-GET    /v1/datasets/{slug}/versions?project_id=
-GET    /v1/datasets/{slug}/versions/{version}?project_id=
-POST   /v1/datasets/{slug}/drafts?project_id= # optional explicit fork; default creates from latest
-GET    /v1/datasets/{slug}/draft?project_id=
-PUT    /v1/datasets/{slug}/draft/items/{itemKey}?project_id=  # upsert; If-Match draft revision
-DELETE /v1/datasets/{slug}/draft/items/{itemKey}?project_id=
-POST   /v1/datasets/{slug}/draft/import?project_id= # CSV/JSONL/trace selections; async for large input
-POST   /v1/datasets/{slug}/draft/validate?project_id=
-POST   /v1/datasets/{slug}/draft/publish?project_id=
-POST   /v1/datasets/{slug}/draft/discard?project_id=
+GET    /v1/datasets/by-slug/{slug}?project_id=
+PATCH  /v1/datasets/by-slug/{slug}?project_id=       # metadata only
+GET    /v1/datasets/by-slug/{slug}/versions?project_id=
+GET    /v1/datasets/by-slug/{slug}/versions/{version}?project_id=
+POST   /v1/datasets/by-slug/{slug}/drafts?project_id= # optional explicit fork; default creates from latest
+GET    /v1/datasets/by-slug/{slug}/draft?project_id=
+PUT    /v1/datasets/by-slug/{slug}/draft/items/{itemKey}?project_id=  # upsert; If-Match draft revision
+DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemKey}?project_id=
+POST   /v1/datasets/by-slug/{slug}/draft/import?project_id= # CSV/JSONL/trace selections; async for large input
+POST   /v1/datasets/by-slug/{slug}/draft/validate?project_id=
+POST   /v1/datasets/by-slug/{slug}/draft/publish?project_id=
+POST   /v1/datasets/by-slug/{slug}/draft/discard?project_id=
 
 # Evaluations (reusable definitions) and runs
 GET    /v1/evaluations?project_id=
@@ -260,7 +260,20 @@ POST   /v1/experiments?project_id=             # maps a fully specified request 
 GET    /v1/experiments/{id}?project_id=        # alias/read model for EvaluationRun
 ```
 
-`POST /v1/datasets?project_id=<UUID>` accepts `slug` optionally; the server derives and reserves a normalized slug otherwise. `POST /v1/datasets/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
+`POST /v1/datasets?project_id=<UUID>` accepts `slug` optionally; the server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. `POST /v1/datasets/by-slug/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
+
+#### Legacy POST scope adapter
+
+During the one-minor-version compatibility window, retained `POST /v1/datasets`,
+`POST /v1/datasets/{id}/items`, and `POST /v1/experiments` continue to accept
+the existing JSON-body `project_id` contract. They may also receive the new
+`?project_id=<UUID>` selector: if both are present they must be the same after
+UUID normalization or the server rejects the request as conflicting scope;
+if only the legacy body selector is present, the request remains valid. If
+neither selector is present, it fails before routing. Retained `GET` and
+`DELETE` routes, which have no compatible body selector, require the query
+selector. OpenAPI and generated SDKs expose the legacy body-scoped POST shapes
+as deprecated adapters and the query-scoped shapes as the new contract.
 
 `POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
 
@@ -371,7 +384,7 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 1. **Preserve reads:** existing `datasets`/`dataset_items` remain readable. Backfill each existing dataset as `dataset@1`, preserving item UUID as `item_key`, order by `created_at, id`, and existing trace provenance.
 2. **Add snapshot tables:** introduce Dataset/Evaluation version and draft tables in a new migration; do not alter past migrations. Every tenant-bearing child table gets a non-null `project_id`, composite Project-scoped foreign keys, `slug`, `latest_published_version`, audit/provenance fields, and tombstones. Backfill scope only from validated parents; delete or safely terminalize ambiguous legacy rows rather than assigning a Project by guesswork.
 3. **Adapt experiments:** add `project_id`, `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, a resolved target snapshot, and optional future `manifest_version_id` fields to Experiments. Use composite Project-scoped foreign keys for every resolved attachment. Backfill legacy Experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
-4. **API compatibility:** retain the current UUID routes for one minor version, always with `?project_id=<UUID>`: `GET/POST /v1/datasets`, `GET /v1/datasets/{id}`, `GET/POST /v1/datasets/{id}/items`, and `DELETE /v1/datasets/{id}/items/{itemId}`. Return `dataset_version` when known. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
+4. **API compatibility:** retain the current UUID routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. Retained `POST /v1/datasets`, `POST /v1/datasets/{id}/items`, and `POST /v1/experiments` use the body-scoped adapter above; an optional query selector must match the body selector. Return `dataset_version` when known. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
 5. **UI rollout:** ship datasets/versioning first; then evaluation definitions; then switch “Run experiment” labels to “Run evaluation.” Keep `Experiment` only in technical compatibility/API deprecation notices.
 
 ## Acceptance criteria
