@@ -20,6 +20,18 @@ export async function bootstrapAuthorization(
 	const client = await pool.connect();
 	try {
 		await client.query("BEGIN");
+		await client.query(
+			"INSERT INTO actors (id) VALUES ($1) ON CONFLICT DO NOTHING",
+			[credential.actorId],
+		);
+		const identity = await client.query(
+			"INSERT INTO actor_identities (actor_id, provider_namespace, canonical_subject) VALUES ($1, 'basic:v1', $2) ON CONFLICT (provider_namespace, canonical_subject) DO UPDATE SET actor_id = actor_id WHERE actor_identities.actor_id = EXCLUDED.actor_id RETURNING actor_id",
+			[credential.actorId, credential.canonicalSubject],
+		);
+		if (!identity.rows[0])
+			throw new Error(
+				"Bootstrap Basic Auth identity is already linked to another actor",
+			);
 		const organization = await client.query(
 			"SELECT id FROM organizations WHERE id = $1 FOR UPDATE",
 			[credential.organizationId],

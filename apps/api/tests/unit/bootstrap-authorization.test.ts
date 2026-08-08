@@ -9,6 +9,8 @@ describe("bootstrap authorization", () => {
 		const client = {
 			async query(sql: string, values?: unknown[]) {
 				queries.push({ sql, values });
+				if (sql.includes("INSERT INTO actor_identities"))
+					return { rows: [{ actor_id: values?.[0] }], rowCount: 1 };
 				if (sql.includes("SELECT id FROM organizations"))
 					return { rows: [{ id: ORGANIZATION }], rowCount: 1 };
 				if (sql.includes("SELECT id FROM projects"))
@@ -76,6 +78,8 @@ describe("bootstrap authorization", () => {
 		const client = {
 			async query(sql: string, values?: unknown[]) {
 				queries.push({ sql, values });
+				if (sql.includes("INSERT INTO actor_identities"))
+					return { rows: [{ actor_id: values?.[0] }], rowCount: 1 };
 				if (sql.includes("SELECT id FROM organizations"))
 					return { rows: [{ id: ORGANIZATION }], rowCount: 1 };
 				if (sql.includes("SELECT id FROM projects"))
@@ -111,5 +115,33 @@ describe("bootstrap authorization", () => {
 			expect(sql).toContain("unfrozen");
 			expect(values).toEqual([ORGANIZATION, "owner"]);
 		}
+	});
+
+	it("fails closed when the canonical Basic identity belongs to another actor", async () => {
+		const client = {
+			async query(sql: string) {
+				if (sql.includes("INSERT INTO actor_identities"))
+					return { rows: [], rowCount: 0 };
+				return { rows: [], rowCount: 1 };
+			},
+			release() {},
+		};
+		const pool = { connect: async () => client, end: async () => {} };
+
+		await expect(
+			bootstrapAuthorization(
+				{
+					ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
+					ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+						{
+							username: "owner",
+							password: "secret",
+							organization_id: ORGANIZATION,
+						},
+					]),
+				},
+				pool as never,
+			),
+		).rejects.toThrow(/already linked to another actor/);
 	});
 });

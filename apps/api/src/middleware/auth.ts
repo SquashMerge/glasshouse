@@ -1,13 +1,15 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 
 export const TRUSTED_ACTOR_CONTEXT_KEY = "trustedActor";
 export const TRUSTED_TENANT_CONTEXT_KEY = "trustedTenant";
 
 export const DEFAULT_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
+export const BASIC_AUTH_PROVIDER_NAMESPACE = "basic:v1";
 
 export type TrustedTenantContext = {
 	actor: string;
+	actorId: string;
 	organizationId: string;
 };
 
@@ -15,7 +17,25 @@ export type BasicCredential = {
 	username: string;
 	password: string;
 	organizationId: string;
+	canonicalSubject: string;
+	actorId: string;
 };
+
+export function canonicalBasicAuthSubject(subject: string): string {
+	const canonical = subject.normalize("NFKC").trim().toLowerCase();
+	if (!canonical || !/^[ -~]+$/.test(canonical))
+		throw new Error(
+			"basicAuthMiddleware: Basic Auth usernames must normalize to printable ASCII",
+		);
+	return canonical;
+}
+
+export function durableActorId(canonicalSubject: string): string {
+	const hash = createHash("md5")
+		.update(`${BASIC_AUTH_PROVIDER_NAMESPACE}:${canonicalSubject}`)
+		.digest("hex");
+	return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
 
 function constantTimeEqual(a: string, b: string): boolean {
 	const A = new TextEncoder().encode(a);
@@ -92,19 +112,22 @@ export function basicCredentialsFromEnvironment(
 				"basicAuthMiddleware: ASTRAEA_BASIC_AUTH_CREDENTIALS must be a non-empty array of { username, password, organization_id UUID } credentials",
 			);
 		}
-		const usernames = new Set<string>();
+		const subjects = new Set<string>();
 		for (const credential of parsed) {
-			if (usernames.has(credential.username)) {
+			const canonicalSubject = canonicalBasicAuthSubject(credential.username);
+			if (subjects.has(canonicalSubject)) {
 				throw new Error(
-					"basicAuthMiddleware: ASTRAEA_BASIC_AUTH_CREDENTIALS usernames must be unique",
+					"basicAuthMiddleware: ASTRAEA_BASIC_AUTH_CREDENTIALS canonical usernames must be unique",
 				);
 			}
-			usernames.add(credential.username);
+			subjects.add(canonicalSubject);
 		}
 		return parsed.map((credential) => ({
 			username: credential.username,
 			password: credential.password,
 			organizationId: credential.organization_id,
+			canonicalSubject: canonicalBasicAuthSubject(credential.username),
+			actorId: durableActorId(canonicalBasicAuthSubject(credential.username)),
 		}));
 	}
 
@@ -122,7 +145,16 @@ export function basicCredentialsFromEnvironment(
 			"basicAuthMiddleware: ASTRAEA_DEFAULT_ORGANIZATION_ID must be a UUID",
 		);
 	}
-	return [{ username, password, organizationId }];
+	const canonicalSubject = canonicalBasicAuthSubject(username);
+	return [
+		{
+			username,
+			password,
+			organizationId,
+			canonicalSubject,
+			actorId: durableActorId(canonicalSubject),
+		},
+	];
 }
 
 function verifiedCredential(
@@ -157,6 +189,7 @@ export function basicAuthMiddleware(): MiddlewareHandler {
 		c.set(TRUSTED_ACTOR_CONTEXT_KEY, credential.username);
 		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
 			actor: credential.username,
+			actorId: credential.actorId,
 			organizationId: credential.organizationId,
 		} satisfies TrustedTenantContext);
 		await next();

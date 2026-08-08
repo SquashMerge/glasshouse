@@ -304,12 +304,12 @@ async function role(
 	const pool = pgPool();
 	const result = projectId
 		? await pool.query<{ role: string | null }>(
-				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
-				[projectId, tenant.organizationId, tenant.actor],
+				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 JOIN actor_identities identity ON identity.actor_id = $4 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
+				[projectId, tenant.organizationId, tenant.actor, tenant.actorId],
 			)
 		: await pool.query<{ role: string }>(
-				"SELECT role FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
-				[tenant.organizationId, tenant.actor],
+				"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1 AND om.actor_subject = $2",
+				[tenant.organizationId, tenant.actor, tenant.actorId],
 			);
 	const value = result.rows[0]?.role;
 	if (!value) throw new Error("Not found");
@@ -326,15 +326,17 @@ export async function handleGetMe(c: Context) {
 			role: "owner" | "member";
 			default_project_id: string;
 		}>(
-			"SELECT om.role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id WHERE om.organization_id = $1 AND om.actor_subject = $2",
-			[tenant.organizationId, tenant.actor],
+			"SELECT om.role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1 AND om.actor_subject = $2",
+			[tenant.organizationId, tenant.actor, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
 		const rows = await listAccessibleProjects(pool, tenant, false);
 		return c.json({
 			actor_subject: tenant.actor,
+			actor_id: tenant.actorId,
 			organization_id: tenant.organizationId,
 			organization_role: membership.rows[0].role,
+			effective_organization_role_id: `organization:${membership.rows[0].role}`,
 			default_project_id: membership.rows[0].default_project_id,
 			projects: rows.rows.map(project),
 		});
@@ -346,8 +348,8 @@ export async function handleListProjects(c: Context) {
 	try {
 		const tenant = trustedTenant(c);
 		const membership = await pgPool().query(
-			"SELECT role FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
-			[tenant.organizationId, tenant.actor],
+			"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1 AND om.actor_subject = $2",
+			[tenant.organizationId, tenant.actor, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
 		const includeArchived =
@@ -370,8 +372,8 @@ async function listAccessibleProjects(
 	includeArchived: boolean,
 ) {
 	return pool.query<Row>(
-		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $2 WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($3::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
-		[tenant.organizationId, tenant.actor, includeArchived],
+		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 JOIN actor_identities identity ON identity.actor_id = $4 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $2 WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($3::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
+		[tenant.organizationId, tenant.actor, includeArchived, tenant.actorId],
 	);
 }
 

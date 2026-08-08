@@ -237,7 +237,11 @@ const api = new OpenAPIHono({
 api.use("/v1/*", async (c, next) => {
 	const actor = c.req.header("x-test-actor");
 	if (actor)
-		c.set(TRUSTED_TENANT_CONTEXT_KEY, { actor, organizationId: ORGANIZATION });
+		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+			actor,
+			actorId: "33333333-3333-4333-8333-333333333333",
+			organizationId: ORGANIZATION,
+		});
 	await next();
 });
 api.openapi(createProject, handleCreateProject);
@@ -654,9 +658,12 @@ describe("project authorization routes", () => {
 		const response = await request("member", "/v1/me");
 
 		expect(response.status).toBe(200);
-		expect((await response.json()).projects).toEqual([
+		const body = await response.json();
+		expect(body.projects).toEqual([
 			expect.objectContaining({ id: PROJECT, project_role: "member" }),
 		]);
+		expect(body.actor_id).toMatch(/^[0-9a-f-]{36}$/);
+		expect(body.effective_organization_role_id).toBe("organization:member");
 	});
 
 	it("rejects invalid archived management mode values", async () => {

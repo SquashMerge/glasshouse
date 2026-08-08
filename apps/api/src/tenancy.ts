@@ -41,8 +41,8 @@ export async function resolveAuthorizedProjectScope(
 		project_role: "manager" | "member";
 		status: "active" | "archived" | "deleting";
 	}>(
-		"SELECT om.role AS organization_role, CASE WHEN om.role = 'owner' THEN 'manager' ELSE pm.role END AS project_role, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
-		[projectId, tenant.organizationId, tenant.actor],
+		"SELECT om.role AS organization_role, CASE WHEN om.role = 'owner' THEN 'manager' ELSE pm.role END AS project_role, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 JOIN actor_identities identity ON identity.actor_id = $4 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
+		[projectId, tenant.organizationId, tenant.actor, tenant.actorId],
 	);
 	const row = result.rows[0];
 	if (!row) throw new TenantScopeError("Project is not available");
@@ -115,7 +115,7 @@ export async function withActiveAuthorizedProjectLock<T>(
 
 function lockedActiveProjectAccess(client: PoolClient, tenant: TenantScope) {
 	return client.query(
-		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status = 'active' AND (om.role = 'owner' OR pm.role IS NOT NULL) FOR UPDATE OF p, om",
-		[tenant.projectId, tenant.actor, tenant.organizationId],
+		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 JOIN actor_identities identity ON identity.actor_id = $4 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status = 'active' AND (om.role = 'owner' OR pm.role IS NOT NULL) FOR UPDATE OF p, om",
+		[tenant.projectId, tenant.actor, tenant.organizationId, tenant.actorId],
 	);
 }

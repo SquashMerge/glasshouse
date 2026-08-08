@@ -268,6 +268,7 @@ export function createProductionTrace(
 			}),
 			{
 				actor: "evaluation-worker",
+				actorId: "00000000-0000-5000-8000-000000000001",
 				organizationId,
 				projectId: input.project_id,
 				organizationRole: "member",

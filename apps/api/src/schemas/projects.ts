@@ -69,6 +69,11 @@ export const ListProjectsQuery = z
 export const Me = z
 	.object({
 		actor_subject: z.string(),
+		actor_id: z.string().uuid(),
+		effective_organization_role_id: z.enum([
+			"organization:owner",
+			"organization:member",
+		]),
 		organization_id: z.string().uuid(),
 		organization_role: OrganizationRole,
 		default_project_id: z.string().uuid(),

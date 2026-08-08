@@ -431,8 +431,10 @@ export interface ProjectMember {
 
 export interface CurrentActor {
 	actor_subject: string;
+	actor_id: string;
 	organization_id: string;
 	organization_role: "owner" | "member";
+	effective_organization_role_id: "organization:owner" | "organization:member";
 	default_project_id: string;
 	projects: Project[];
 }
