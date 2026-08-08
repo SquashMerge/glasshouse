@@ -47,8 +47,8 @@ BEGIN
           ON identity.provider_namespace = 'basic:v1'
          AND identity.canonical_subject = CASE
             WHEN btrim(quarantine.legacy_subject) <> ''
-             AND normalize(quarantine.legacy_subject, 'NFKC') ~ '^[ -~]+$'
-            THEN lower(btrim(normalize(quarantine.legacy_subject, 'NFKC')))
+             AND normalize(quarantine.legacy_subject, NFKC) ~ '^[ -~]+$'
+            THEN lower(btrim(normalize(quarantine.legacy_subject, NFKC)))
             ELSE NULL
          END
         WHERE quarantine.source_table = 'organization_memberships'

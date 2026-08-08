@@ -21,7 +21,7 @@ export async function bootstrapAuthorization(
 	try {
 		await client.query("BEGIN");
 		const conflictingIdentity = await client.query<{ blocked: boolean }>(
-			"SELECT EXISTS (SELECT 1 FROM actor_identities WHERE provider_namespace = 'basic:v1' AND canonical_subject = $1 AND (actor_id <> $2 OR organization_id <> $3)) OR EXISTS (SELECT 1 FROM actor_identity_backfill_quarantine WHERE source_table = 'organization_memberships' AND reason IN ('canonical_subject_collision', 'cross_organization_subject') AND CASE WHEN btrim(legacy_subject) <> '' AND normalize(legacy_subject, 'NFKC') ~ '^[ -~]+$' THEN lower(btrim(normalize(legacy_subject, 'NFKC'))) = $1 ELSE false END) AS blocked",
+			"SELECT EXISTS (SELECT 1 FROM actor_identities WHERE provider_namespace = 'basic:v1' AND canonical_subject = $1 AND (actor_id <> $2 OR organization_id <> $3)) OR EXISTS (SELECT 1 FROM actor_identity_backfill_quarantine WHERE source_table = 'organization_memberships' AND reason IN ('canonical_subject_collision', 'cross_organization_subject') AND CASE WHEN btrim(legacy_subject) <> '' AND normalize(legacy_subject, NFKC) ~ '^[ -~]+$' THEN lower(btrim(normalize(legacy_subject, NFKC))) = $1 ELSE false END) AS blocked",
 			[
 				credential.canonicalSubject,
 				credential.actorId,

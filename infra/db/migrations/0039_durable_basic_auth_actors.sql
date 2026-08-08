@@ -34,7 +34,7 @@ AS $$
 DECLARE
     normalized TEXT;
 BEGIN
-    normalized := lower(btrim(normalize(subject, 'NFKC')));
+    normalized := lower(btrim(normalize(subject, NFKC)));
     IF normalized = '' OR normalized !~ '^[ -~]+$' THEN
         RAISE EXCEPTION 'Basic Auth subject must normalize to printable ASCII';
     END IF;
@@ -52,7 +52,7 @@ STABLE
 AS $$
     SELECT CASE
         WHEN btrim(legacy_subject) = ''
-          OR normalize(legacy_subject, 'NFKC') !~ '^[ -~]+$' THEN false
+          OR normalize(legacy_subject, NFKC) !~ '^[ -~]+$' THEN false
         ELSE EXISTS (
             SELECT 1
             FROM actor_identities identity
@@ -98,7 +98,7 @@ WITH candidates AS (
     SELECT organization_id, legacy_subject, 'malformed_subject' AS reason
     FROM candidates
     WHERE btrim(legacy_subject) = ''
-       OR normalize(legacy_subject, 'NFKC') !~ '^[ -~]+$'
+       OR normalize(legacy_subject, NFKC) !~ '^[ -~]+$'
 ), collisions AS (
     SELECT candidate.organization_id, candidate.legacy_subject, 'canonical_subject_collision' AS reason
     FROM candidates candidate
@@ -106,12 +106,12 @@ WITH candidates AS (
         SELECT basic_auth_canonical_subject(legacy_subject) AS canonical_subject
         FROM candidates
         WHERE btrim(legacy_subject) <> ''
-          AND normalize(legacy_subject, 'NFKC') ~ '^[ -~]+$'
+          AND normalize(legacy_subject, NFKC) ~ '^[ -~]+$'
         GROUP BY basic_auth_canonical_subject(legacy_subject)
         HAVING count(DISTINCT legacy_subject) > 1
     ) collided ON basic_auth_canonical_subject(candidate.legacy_subject) = collided.canonical_subject
     WHERE btrim(candidate.legacy_subject) <> ''
-       AND normalize(candidate.legacy_subject, 'NFKC') ~ '^[ -~]+$'
+       AND normalize(candidate.legacy_subject, NFKC) ~ '^[ -~]+$'
 ), cross_organization AS (
     SELECT candidate.organization_id, candidate.legacy_subject, 'cross_organization_subject' AS reason
     FROM candidates candidate
@@ -119,12 +119,12 @@ WITH candidates AS (
         SELECT basic_auth_canonical_subject(legacy_subject) AS canonical_subject
         FROM candidates
         WHERE btrim(legacy_subject) <> ''
-          AND normalize(legacy_subject, 'NFKC') ~ '^[ -~]+$'
+          AND normalize(legacy_subject, NFKC) ~ '^[ -~]+$'
         GROUP BY basic_auth_canonical_subject(legacy_subject)
         HAVING count(DISTINCT organization_id) > 1
     ) collided ON basic_auth_canonical_subject(candidate.legacy_subject) = collided.canonical_subject
     WHERE btrim(candidate.legacy_subject) <> ''
-      AND normalize(candidate.legacy_subject, 'NFKC') ~ '^[ -~]+$'
+      AND normalize(candidate.legacy_subject, NFKC) ~ '^[ -~]+$'
 ), quarantined AS (
     SELECT * FROM invalid
     UNION
@@ -156,7 +156,7 @@ BEGIN
             SELECT basic_auth_canonical_subject(legacy_subject) AS canonical_subject
             FROM candidates
             WHERE btrim(legacy_subject) <> ''
-              AND normalize(legacy_subject, 'NFKC') ~ '^[ -~]+$'
+              AND normalize(legacy_subject, NFKC) ~ '^[ -~]+$'
         )
         SELECT durable_actor_id('basic:v1', canonical_subject)
         FROM valid
@@ -175,7 +175,7 @@ WITH candidates AS (
     SELECT organization_id, legacy_subject, basic_auth_canonical_subject(legacy_subject) AS canonical_subject
     FROM candidates
     WHERE btrim(legacy_subject) <> ''
-      AND normalize(legacy_subject, 'NFKC') ~ '^[ -~]+$'
+      AND normalize(legacy_subject, NFKC) ~ '^[ -~]+$'
 ), unique_subjects AS (
     SELECT canonical_subject
     FROM valid
@@ -196,7 +196,7 @@ WITH candidates AS (
     SELECT organization_id, legacy_subject, basic_auth_canonical_subject(legacy_subject) AS canonical_subject
     FROM candidates
     WHERE btrim(legacy_subject) <> ''
-      AND normalize(legacy_subject, 'NFKC') ~ '^[ -~]+$'
+      AND normalize(legacy_subject, NFKC) ~ '^[ -~]+$'
 ), unique_subjects AS (
     SELECT canonical_subject
     FROM valid
