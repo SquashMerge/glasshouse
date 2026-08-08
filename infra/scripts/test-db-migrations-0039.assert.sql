@@ -71,6 +71,18 @@ BEGIN
         RAISE EXCEPTION 'normalized legacy Basic Auth membership was not preserved';
     END IF;
 
+    IF basic_auth_identity_matches(
+        '99999999-9999-4999-8999-999999999999',
+        'PRESERVED USER',
+        '00000000-0000-4000-8000-000000000000'
+    ) OR basic_auth_identity_matches(
+        '99999999-9999-4999-8999-999999999999',
+        'Legacy User',
+        durable_actor_id('basic:v1', 'legacy user')
+    ) THEN
+        RAISE EXCEPTION 'Basic Auth authorization helper accepted a wrong or quarantined identity';
+    END IF;
+
     IF EXISTS (
         SELECT 1
         FROM information_schema.columns

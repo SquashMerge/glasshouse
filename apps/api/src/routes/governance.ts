@@ -225,7 +225,7 @@ export async function handleCreatePolicyDraft(c: Context) {
 				client,
 				tenant.organizationId,
 				project_id,
-				tenant.actor,
+				tenant.actorId,
 			);
 			await client.query(
 				"INSERT INTO governance_policies (organization_id, project_id) VALUES ($1, $2) ON CONFLICT (project_id) DO NOTHING",
@@ -285,8 +285,8 @@ export async function handleApprovePolicy(c: Context) {
 				project_id,
 			]);
 			const authorized = await client.query(
-				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
-				[project_id, tenant.organizationId, tenant.actor],
+				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $3) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+				[project_id, tenant.organizationId, tenant.actorId],
 			);
 			if (!authorized.rows[0]) throw new Error("Not found");
 			const version = (
@@ -351,7 +351,7 @@ export async function handlePreviewRetention(c: Context) {
 				client,
 				tenant.organizationId,
 				project_id,
-				tenant.actor,
+				tenant.actorId,
 			);
 			if (current.id !== version.id) throw new Error("Policy preview is stale");
 			const preview = await client.query<{ id: string; expires_at: Date }>(
@@ -404,8 +404,8 @@ export async function handleListRetentionRuns(c: Context) {
 			completed_at: Date | null;
 			duration_ms: number | null;
 		}>(
-			"SELECT r.id, r.policy_version_id, r.status, r.counts, r.started_at, r.completed_at, CASE WHEN r.completed_at IS NULL THEN NULL ELSE GREATEST(0, round(EXTRACT(epoch FROM r.completed_at - r.started_at) * 1000)::integer) END AS duration_ms FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id AND p.status = 'active' JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE r.organization_id = $1 AND r.project_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') ORDER BY r.started_at DESC, r.id DESC LIMIT 50",
-			[tenant.organizationId, project_id, tenant.actor],
+			"SELECT r.id, r.policy_version_id, r.status, r.counts, r.started_at, r.completed_at, CASE WHEN r.completed_at IS NULL THEN NULL ELSE GREATEST(0, round(EXTRACT(epoch FROM r.completed_at - r.started_at) * 1000)::integer) END AS duration_ms FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id AND p.status = 'active' JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE r.organization_id = $1 AND r.project_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') ORDER BY r.started_at DESC, r.id DESC LIMIT 50",
+			[tenant.organizationId, project_id, tenant.actorId],
 		);
 		return c.json({
 			items: result.rows.map((run) => ({
@@ -441,12 +441,12 @@ export async function handleRunRetention(c: Context) {
 				client,
 				tenant.organizationId,
 				project_id,
-				tenant.actor,
+				tenant.actorId,
 			);
 			if (version.id !== policy_version_id)
 				throw new Error("Policy preview is stale");
 			const consumed = await client.query(
-				"UPDATE governance_retention_previews SET consumed_at = now() WHERE id = $1 AND organization_id = $2 AND project_id = $3 AND policy_version_id = $4 AND actor_subject = $5 AND consumed_at IS NULL AND expires_at > now() RETURNING id",
+				"UPDATE governance_retention_previews SET consumed_at = now() WHERE id = $1 AND organization_id = $2 AND project_id = $3 AND policy_version_id = $4 AND basic_auth_identity_matches($2, actor_subject, $5) AND consumed_at IS NULL AND expires_at > now() RETURNING id",
 				[
 					preview_id,
 					tenant.organizationId,
@@ -668,9 +668,9 @@ async function activeManagerAndVersion(
 	client: Pick<PoolClient, "query">,
 	organizationId: string,
 	projectId: string,
-	actor: string,
+	actorId: string,
 ): Promise<VersionRow> {
-	await lockActiveManager(client, organizationId, projectId, actor);
+	await lockActiveManager(client, organizationId, projectId, actorId);
 	const latest = await client.query<VersionRow>(
 		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE p.project_id = $1 AND p.organization_id = $2 ORDER BY v.version DESC LIMIT 1",
 		[projectId, organizationId],
@@ -683,11 +683,11 @@ async function lockActiveManager(
 	client: Pick<PoolClient, "query">,
 	organizationId: string,
 	projectId: string,
-	actor: string,
+	actorId: string,
 ) {
 	const authorized = await client.query(
-		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND actor_subject = $3 FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
-		[projectId, organizationId, actor],
+		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $3) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+		[projectId, organizationId, actorId],
 	);
 	if (!authorized.rows[0])
 		throw new Error(
@@ -697,7 +697,7 @@ async function lockActiveManager(
 
 async function destructiveStage<T>(
 	db: Pick<Pool, "connect">,
-	tenant: { organizationId: string; actor: string },
+	tenant: { organizationId: string; actor: string; actorId: string },
 	projectId: string,
 	version: VersionRow,
 	runId: string,
@@ -711,7 +711,7 @@ async function destructiveStage<T>(
 			client,
 			tenant.organizationId,
 			projectId,
-			tenant.actor,
+			tenant.actorId,
 		);
 		if (current.id !== version.id)
 			throw new Error("Policy is stale before destructive stage");

@@ -33,7 +33,7 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 			return { rows: [] };
 		if (
 			sql.includes("INSERT INTO organization_memberships") &&
-			values.at(-1) === "member"
+			values.at(-2) === "member"
 		)
 			return { rows: [] };
 		if (values.includes(OTHER_PROJECT)) return { rows: [] };
@@ -245,7 +245,9 @@ api.use("/v1/*", async (c, next) => {
 	if (actor)
 		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
 			actor,
-			actorId: "33333333-3333-4333-8333-333333333333",
+			actorId:
+				c.req.header("x-test-actor-id") ??
+				"33333333-3333-4333-8333-333333333333",
 			organizationId: ORGANIZATION,
 		});
 	await next();
@@ -550,6 +552,53 @@ describe("project authorization routes", () => {
 
 		expect(update.status).toBe(200);
 		expect(member.status).toBe(200);
+	});
+
+	it("uses the verified actor ID for legacy project memberships", async () => {
+		const verifiedActorId = "33333333-3333-4333-8333-333333333333";
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (sql.includes("authorization AS MATERIALIZED")) {
+				return values.at(-1) === verifiedActorId
+					? defaultQuery(sql, values)
+					: { rows: [] };
+			}
+			return defaultQuery(sql, values);
+		});
+
+		const canonicalEquivalent = await request(
+			" OWNER ",
+			`/v1/projects/${PROJECT}`,
+			{
+				method: "PATCH",
+				headers: { "x-test-actor-id": verifiedActorId },
+				body: JSON.stringify({ name: "Renamed" }),
+			},
+		);
+		const collision = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			headers: { "x-test-actor-id": "44444444-4444-4444-8444-444444444444" },
+			body: JSON.stringify({ name: "Renamed" }),
+		});
+		const quarantined = await request(
+			"legacy user",
+			`/v1/projects/${PROJECT}`,
+			{
+				method: "PATCH",
+				headers: { "x-test-actor-id": "55555555-5555-4555-8555-555555555555" },
+				body: JSON.stringify({ name: "Renamed" }),
+			},
+		);
+
+		expect(canonicalEquivalent.status).toBe(200);
+		expect(collision.status).toBe(404);
+		expect(quarantined.status).toBe(404);
+		const [sql, values] = query.mock.calls.find(([sql]) =>
+			(sql as string).includes("authorization AS MATERIALIZED"),
+		)!;
+		expect(sql).toContain(
+			"basic_auth_identity_matches(p.organization_id, om.actor_subject, $6)",
+		);
+		expect(values).toContain(verifiedActorId);
 	});
 
 	it("updates a project's name and slug without changing its stable id", async () => {
@@ -906,7 +955,7 @@ describe("project authorization routes", () => {
 		for (const [, values] of reads) {
 			expect(values).toEqual([
 				OTHER_PROJECT,
-				"cross-org-manager",
+				"33333333-3333-4333-8333-333333333333",
 				ORGANIZATION,
 			]);
 		}

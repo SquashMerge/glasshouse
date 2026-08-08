@@ -6,8 +6,10 @@ const organizationId = "00000000-0000-4000-8000-000000000001";
 const projectId = "11111111-1111-4111-8111-111111111111";
 const otherProjectId = "22222222-2222-4222-8222-222222222222";
 const policyId = "33333333-3333-4333-8333-333333333333";
+const verifiedActorId = "33333333-3333-4333-8333-333333333333";
 const calls: string[] = [];
 let approvalConflict = false;
+let permittedActorId = verifiedActorId;
 
 const query = mock(async (statement: string, values: string[] = []) => {
 	calls.push(statement);
@@ -22,7 +24,9 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		return { rows: [{ role: values[2] === "member" ? "member" : "manager" }] };
 	}
 	if (statement.startsWith("SELECT p.id FROM projects"))
-		return { rows: [{ id: projectId }] };
+		return values[2] === "manager" || values[2] === permittedActorId
+			? { rows: [{ id: projectId }] }
+			: { rows: [] };
 	if (
 		statement.includes("JOIN governance_policy_approvals a ON") &&
 		!statement.includes("LEFT JOIN governance_policy_approvals")
@@ -97,7 +101,10 @@ const app = new OpenAPIHono({
 app.use("/v1/*", async (c, next) => {
 	c.set(TRUSTED_TENANT_CONTEXT_KEY, {
 		actor: c.req.header("x-test-actor") ?? "manager",
-		actorId: c.req.header("x-test-actor") ?? "manager",
+		actorId:
+			c.req.header("x-test-actor-id") ??
+			c.req.header("x-test-actor") ??
+			"manager",
 		organizationId,
 	});
 	return next();
@@ -111,7 +118,11 @@ app.openapi(listRetentionRuns, handleListRetentionRuns);
 function request(actor: string, path: string, init?: RequestInit) {
 	return app.request(`http://test${path}`, {
 		...init,
-		headers: { "content-type": "application/json", "x-test-actor": actor },
+		headers: {
+			"content-type": "application/json",
+			"x-test-actor": actor,
+			...init?.headers,
+		},
 	});
 }
 
@@ -235,10 +246,52 @@ describe("governance route guards", () => {
 		const consume = calls.find((call) =>
 			call.includes("UPDATE governance_retention_previews SET consumed_at"),
 		);
-		expect(consume).toContain("actor_subject = $5");
+		expect(consume).toContain(
+			"basic_auth_identity_matches($2, actor_subject, $5)",
+		);
 		expect(consume).toContain("consumed_at IS NULL AND expires_at > now()");
 		expect(calls.some((call) => call.includes("retention_started"))).toBe(
 			false,
+		);
+	});
+
+	it("uses verified actor IDs for governance rechecks and preview consumption", async () => {
+		calls.length = 0;
+		const canonicalEquivalent = await request(
+			" MANAGER ",
+			`/v1/governance/policy/${policyId}/approve?project_id=${projectId}`,
+			{
+				method: "POST",
+				headers: { "x-test-actor-id": verifiedActorId },
+			},
+		);
+		const collision = await request(
+			"manager",
+			`/v1/governance/policy/${policyId}/approve?project_id=${projectId}`,
+			{
+				method: "POST",
+				headers: { "x-test-actor-id": "44444444-4444-4444-8444-444444444444" },
+			},
+		);
+		const quarantined = await request(
+			"legacy user",
+			`/v1/governance/policy/${policyId}/approve?project_id=${projectId}`,
+			{
+				method: "POST",
+				headers: { "x-test-actor-id": "55555555-5555-4555-8555-555555555555" },
+			},
+		);
+		expect(canonicalEquivalent.status).toBe(200);
+		expect(collision.status).toBe(404);
+		expect(quarantined.status).toBe(404);
+		const authorization = calls.find((call) =>
+			call.startsWith("SELECT p.id FROM projects"),
+		);
+		expect(authorization).toContain(
+			"basic_auth_identity_matches(p.organization_id, om.actor_subject, $3)",
+		);
+		expect(authorization).toContain(
+			"basic_auth_identity_matches(p.organization_id, actor_subject, $3)",
 		);
 	});
 
