@@ -666,6 +666,36 @@ describe("prompt optimization repository", () => {
 		);
 	});
 
+	it("refuses to promote a legacy user-target optimization draft", async () => {
+		const pool = new MockPool([
+			{ rows: [] },
+			{
+				rows: [
+					job({
+						target_role: "user",
+						source_messages: [{ role: "user", content: "Source {{name}}" }],
+						status: "completed",
+						candidate_content: "Improved {{name}}",
+						evidence: optimizationEvidence(),
+						promotion_status: "review_required",
+					}),
+				],
+			},
+			{ rows: [] },
+		]);
+
+		await expect(
+			promoteOptimizationDraft(transactionPool(pool), {
+				project_id: PROJECT,
+				id: JOB,
+				actor: "reviewer",
+			}),
+		).rejects.toMatchObject({
+			code: "CONFLICT",
+		} satisfies Partial<PromptRepositoryError>);
+		expect(pool.client.calls).toHaveLength(3);
+	});
+
 	it("does not fail archived jobs during restart recovery", async () => {
 		const calls: Call[] = [];
 		const pool = {
