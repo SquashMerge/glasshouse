@@ -1,6 +1,6 @@
 # Astraea
 
-**Astraea** is an open-source evaluation platform for AI agents and LLM workflows. It treats your agent as a versioned contract — the manifest captures not just prompts, but the tools, routing rules, guardrails, and dependencies your agent runs with — so every eval run is bound to a known agent version, every regression is bisectable, and every rollback is atomic.
+**Astraea** is an open-source observability and evaluation platform for AI agents and LLM workflows. The shipped foundation provides project-scoped OTLP observability, immutable prompt versions, mutable Datasets, configured-LLM Experiments, feedback review, and governance. Versioned agent manifests, real-agent execution, and Agent Registry workflows are planned P4 capabilities; CI gates and drift detection are planned P5 capabilities—not current product behavior.
 
 > Named for the Titan goddess of precision: the idea that an agent eval platform should be honest about what your agent actually is, not just optimistic about what it could be.
 
@@ -30,37 +30,39 @@ User message
 
 The LLM call is maybe 30% of the actual behavior. The other 70% is routing, tools, prompts, guardrails, and business logic — all of which change independently and can regress independently.
 
-Most eval platforms measure only the LLM call. **Astraea** measures the whole agent as one versioned unit.
+Most evaluation platforms measure a single LLM call. **Future P4/P5 Astraea** is designed to measure the whole agent as one versioned unit after the foundation-first Dataset, Evaluation, identity, and authorization work is complete.
 
-## What it does (in plain terms)
+## Planned P4/P5 agent-platform vision (not current behavior)
 
-1. **Point Astraea at your agent** — one-line SDK call for any framework (Agno, LangGraph, CrewAI, Pydantic AI, Mastra, Vercel AI SDK, etc.), HTTP endpoint registration for black-box, or hand-authored YAML for governance workflows
-2. **It captures the manifest** — prompts, models, tools, knowledge, storage, routing rules, guardrails, dependencies, all as a versioned artifact
-3. **You run evals** — programmatically via SDK, from CI via GitHub Action, or from the dashboard with no code. Watch results stream live via Server-Sent Events.
-4. **It catches things other platforms miss** — drift between trace and manifest, regressions caused by tool-config changes hidden under prompt changes, atomic rollback of the whole agent unit (not just the prompt)
+1. **P4: add one carefully selected target integration** — a narrow SDK path or generic HTTP target, with the Agent/Manifest contract already established
+2. **P4: capture the manifest** — prompts, models, tools, knowledge, storage, routing rules, guardrails, and dependencies as a versioned artifact
+3. **P5: integrate pinned evaluations with automation** — programmatic and dashboard runs first; CI/GitHub integration only after protected Evaluation definitions exist
+4. **P5: add evidence-based drift detection** — compare trace evidence to resolved manifests; atomic promotion/rollback remains a later P6 decision
 
 ## What makes it different
 
-| | Langfuse | Braintrust | LangSmith | Maxim | Helicone | **Astraea** |
+| | Langfuse | Braintrust | LangSmith | Maxim | Helicone | **Astraea roadmap phase** |
 |---|---|---|---|---|---|---|
-| Real-agent execution (not re-implementation) | ⚠ | ⚠ | ✅ | ✅ | ❌ | ✅ |
-| Agent as typed first-class entity | ❌ | ❌ | ⚠ | ❌ | ❌ | ✅ |
-| Manifest version binding on eval runs | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Multi-tenant Agent registry | ❌ | ⚠ | ⚠ | ⚠ | ❌ | ✅ |
-| Drift detection (trace vs manifest) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Atomic manifest rollback | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Compatible with any framework (OTLP + OpenAI-compat) | ⚠ | ⚠ | ❌ | ⚠ | ⚠ | ✅ |
-| MIT-licensed + single-binary dev mode | ⚠ | ❌ | ❌ | ❌ | ⚠ | ✅ |
+| Narrow real-agent target execution | ⚠ | ⚠ | ✅ | ✅ | ❌ | P4 |
+| Agent as typed first-class entity | ❌ | ❌ | ⚠ | ❌ | ❌ | P4 |
+| Manifest version binding on eval runs | ❌ | ❌ | ❌ | ❌ | ❌ | P4 |
+| Multi-tenant Agent registry | ❌ | ⚠ | ⚠ | ⚠ | ❌ | P4 |
+| Drift detection (trace vs manifest) | ❌ | ❌ | ❌ | ❌ | ❌ | P5 |
+| Atomic manifest rollback | ❌ | ❌ | ❌ | ❌ | ❌ | P6 |
+| Incremental framework integrations | ⚠ | ⚠ | ❌ | ⚠ | ⚠ | P5 |
+| Packaging and release polish | ⚠ | ❌ | ❌ | ❌ | ⚠ | P6 |
 
-**The four pillars nobody else has together:**
-1. Real-agent execution (calls your deployed agent, not a re-implementation)
-2. Version binding (every eval pinned to a specific manifest version with diffs)
-3. Multi-tenant Agent registry (typed entity with versions, environments, history)
-4. Drift detection (manifest as "expected behavior" oracle)
+**The planned roadmap pillars:**
+1. **P4:** narrow real-agent execution and manifest version binding
+2. **P4:** a multi-tenant Agent Registry with versions and history
+3. **P5:** incremental framework integrations and protected CI integration
+4. **P5:** drift detection using the resolved manifest as an evidence boundary
+
+Atomic manifest rollback is deferred to P6, after the access, Dataset, Evaluation, Agent, and promotion contracts have proven safe.
 
 ## License
 
-MIT core. Sealed `enterprise/` wheel under a custom EULA for premium features (SSO, RBAC, AI-assisted eval suggestions, SOC2 evidence packs).
+MIT core. A sealed `enterprise/` wheel for premium features (SSO, RBAC, AI-assisted eval suggestions, SOC2 evidence packs) is a future packaging option; it is not currently distributed.
 
 ## Quick Start
 

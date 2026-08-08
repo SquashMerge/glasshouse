@@ -1,375 +1,390 @@
-# Hermes — 90-Day Roadmap
+# Astraea product roadmap
 
-## Implementation status
+**Status:** Authoritative product sequencing as of `origin/main` at `4fff991`.
 
-| Phase | Window | Status | Notes |
-|---|---|---|---|
-| MVP — Foundation | Day 0–7 | Shipped | Local dev stack (Postgres 16, ClickHouse 24, Valkey 8, Hono API, React dashboard) behind `make dev`. PR: [#1](https://github.com/dsarlo/astraea/pull/1). Factory run: `phase-1-foundation`. |
-| MVP — Ingest + trace viewer | Day 8–14 | Shipped | OTLP receiver, normalized GenAI/OpenInference traces, trace list/detail screens, live SSE updates, and trace-focused regression coverage. PR: [#8](https://github.com/dsarlo/astraea/pull/8). |
-| MVP — Prompt management + optimization | Day 15–21 | Shipped | Immutable prompt versions, labels/provenance, GEPA optimization jobs, structured progress, provider/model guardrails, and prompt-management E2E coverage. PRs: [#9](https://github.com/dsarlo/astraea/pull/9), [#22](https://github.com/dsarlo/astraea/pull/22). |
-| MVP — Datasets, evaluations, and feedback | Day 22–30 | Shipped | Project-scoped Dataset/Feedback dashboard and API workflows, configured-LLM Experiment execution, golden benchmark suites, provenance, cancellation-safe lifecycle handling, and human review are shipped. PRs: [#39](https://github.com/dsarlo/astraea/pull/39), [#44](https://github.com/dsarlo/astraea/pull/44), [#45](https://github.com/dsarlo/astraea/pull/45). Versioned datasets, richer judges, and automation remain deferred in `docs/06-dataset-feedback-future.md`. |
-| MVP — Governed retention and redaction | P0 | Shipped | Project-scoped immutable policy drafts/approval, ingress redaction, safe count previews, and bounded retention for the current governed inventory. See `docs/09-governance-runbook.md`. |
-| MVP — Dev mode + release polish | Follow-up | Not started | `hermes dev` single-binary, 3-tier prompt cache, settings UI, packaging, and public-release polish after the core product loop is validated. |
-| Wedge | Day 30–60 | Not started | Framework expansion (LangGraph / CrewAI / Pydantic AI); HTTP endpoint registration; evaluator library; manifest version binding. |
-| GitOps | Day 60–90 | Not started | GitHub Actions; manifest drift detection; atomic manifest rollback; `enterprise/` wheel. |
-| Moat | Day 90–180 | Not started | Failure radar; judge calibration; closed-loop prompt optimization; voice-agent support. |
+Astraea is an **agent-first observability and evaluation platform**. Its durable
+product promise is not a generic trace dashboard or a prompt playground: teams
+can turn production evidence into governed regression cases, run reproducible
+evaluations, understand the result, and deliberately improve their system.
 
-## Current product state and next sequence
+The Agent Registry remains strategic, but it is **not the next implementation
+slice**. We will first make the Dataset and Evaluation foundations dependable
+for real teams, with a simple user/role model and Bring Your Own Identity
+Provider (BYO IdP) support. An agent is introduced only after Astraea can
+reliably manage the data, evaluation definitions, access controls, and evidence
+that give an agent version meaning.
 
-The foundation, OTLP trace viewer, prompt management, first GEPA optimization workflow, project-scoped Datasets, configured-LLM Experiments, and narrow human feedback workflow are now implemented. Agent registry and broader score/metrics product work remain deferred; the feedback route is intentionally the only supported human-score command surface.
+## Product principles
 
-The next sequence starts only after the shipped core loop is operated and its governance requirements are met:
+1. **Observe → curate → evaluate → learn.** Production traces and human review
+   create candidate evidence; curated datasets turn that evidence into durable
+   regression cases; evaluations produce reproducible results; improvement is
+   deliberate, reviewable, and never an automatic production mutation.
+2. **Foundation before surface area.** A feature is not complete because a page
+   or endpoint exists. It needs durable schema contracts, project isolation,
+   authorization, provenance, lifecycle/recovery behavior, migration coverage,
+   and trustworthy UI state before Astraea expands it.
+3. **One product model across UI, API, and SDK.** A Dataset or Evaluation made
+   in the dashboard is the same resource used by the API and future SDK/CI
+   integrations. There are no separate “UI datasets” or hidden execution paths.
+4. **Reproducibility is a product feature.** A completed run must always answer:
+   *which target, Dataset version, Evaluation definition version, evaluator
+   configuration, and access scope produced this result?*
+5. **Humans retain control.** Feedback is evidence, not ground truth. No raw
+   feedback, judge score, optimization candidate, or draft may automatically
+   change a Dataset, Evaluation gate, model, Agent, or deployment. The shipped
+   GEPA **system-prompt-only** path is the deliberately narrow exception: only a
+   candidate that passes configured held-out validation, leakage checks, and the
+   source-version guard may publish a new prompt version; all other prompt
+   candidates remain review-required or blocked.
+6. **Security and tenancy are intrinsic.** Every product record, query, event,
+   and background task is bound to an authorized organization and Project.
+   Client-selected IDs, browser cache, telemetry attributes, and IdP claims are
+   selectors or inputs—not authorization proof.
+7. **Low-friction integrations remain the destination.** When the Agent
+   Registry arrives, normal adoption will be OTLP configuration or a short SDK
+   registration call. Declarative manifests are an export/GitOps escape hatch,
+   not a prerequisite for ordinary users.
 
-1. **P0 — Operate and govern the first pass:** keep the contract/roadmap current; establish retention/deletion, redaction, and policy-approval workflows before expanding feedback or using it for broader decisions.
-2. **P1 — Agent registry:** implement project-scoped agents with immutable manifest versions and content-hash idempotency.
-3. **P2 — Dataset lifecycle:** add drafts, immutable Dataset versions, protected labels, provenance-preserving revisions, and version-pinned evaluation runs.
-4. **P3 — Evaluation definitions:** evolve one-off Experiments into reusable, versioned definitions with explicit target/dataset bindings; then add schedules, CI gates, and richer evaluators.
-5. **Wedge follow-up:** add framework adapters, HTTP invocation, version comparison, environment binding, and drift detection only after those versioning and governance contracts exist.
+## What is already shipped
 
-### Domain-contract guardrails
+| Capability | Status | Evidence / remaining boundary |
+|---|---|---|
+| Platform foundation and typed API | Shipped | PostgreSQL, ClickHouse, Valkey, Hono, React dashboard, generated OpenAPI clients, migrations, and CI quality gates. |
+| OTLP ingestion and trace viewer | Shipped | Normalized GenAI/OpenInference traces, trace list/detail/search, project-scoped live updates, and trace-focused regression coverage. |
+| Prompt management and optimization | Shipped | Immutable prompt versions, labels/provenance, guarded GEPA workflows, review-required outcomes, and lifecycle/SSE coverage. |
+| Dataset, configured-LLM evaluation, and feedback first pass | Shipped | Project-scoped Dataset and trace/observation provenance, Experiment execution/results, benchmark runs, cancellation/recovery, and human-review workflow. |
+| Project isolation and lifecycle | Shipped | Organization/Project membership, server-authorized Project selection, scoped REST/worker/SSE/telemetry behavior, governed project lifecycle, and deletion safeguards. |
+| Governance | Shipped | Project-scoped policy drafts/approval, ingress redaction, safe previews, bounded retention, and content-free audit evidence. |
 
-- Every agent, dataset, experiment, and result is project-scoped. The current Basic Auth deployment is an administrator-only surface, so dataset requests carry an explicit project ID and SQL enforces that boundary; project-membership authorization is required before exposing this API to non-administrators.
-- Agent manifest versions are immutable. A content hash identifies equivalent manifests; an experiment stores the exact manifest-version identity it used.
-- Dataset items preserve trace provenance rather than copying an untraceable input/output pair.
-- Background jobs carry project and resource identifiers, never provider credentials or raw secrets; SSE exposes lifecycle metadata and sanitized results only.
-- The first evaluator and invocation path should be deterministic in tests, with provider-backed and framework-specific integrations added behind the same contracts later.
+Shipped does **not** mean finished. The next roadmap deliberately hardens the
+first-pass Dataset, Evaluation, identity, and authorization contracts before
+adding Agent Registry breadth.
 
-This sequencing is the product decision behind the roadmap: validate **Agent → Dataset → Experiment** before investing in framework breadth, enterprise packaging, or moat features.
+## Target P2/P3 product definition (not yet shipped)
 
-## Phase overview
+The current product is the first-pass loop: project-scoped mutable Datasets,
+configured-LLM Experiment runs, and human-feedback review. The following is the
+target loop for P2/P3; immutable Dataset versions and reusable Evaluation
+definitions do not exist in the shipped product yet.
 
+```text
+Authorized user in an organization / Project
+        ↓
+Observe production traces and human feedback
+        ↓
+Curate a project-scoped mutable Dataset
+        ↓
+Run a configured-LLM Experiment
+        ↓
+Inspect evidence and deliberately improve a prompt or Dataset, repeat
 ```
-DAY 0────30────60────90────120───180
-│      │      │      │       │
-│ MVP  │WEDGE │GITOPS│ MOAT   │SCALE
-│      │      │      │        │
-└──────┴──────┴──────┴────────┘
+
+The target P2/P3 Astraea loop is:
+
+```text
+Authorized user in an organization / Project
+        ↓
+Observe production traces and human feedback
+        ↓
+Curate a governed, versioned Dataset
+        ↓
+Publish a reusable, versioned Evaluation definition
+        ↓
+Resolve immutable inputs and execute an Evaluation run
+        ↓
+Inspect evidence, promote a deliberate improvement, repeat
 ```
 
-| Phase | Window | Goal | What ships |
-|---|---|---|---|
-| **MVP** | Day 0–30 | "We exist and you can run the core product loop" | OpenAPI + REST, OTLP ingest, trace viewer, prompt/version management, agent registry, trace-backed datasets, one-evaluator experiments |
-| **Wedge** | Day 30–60 | "Eval against your real agent with version binding" | Framework adapters (Agno/LangGraph/CrewAI/Pydantic AI), `hermes.evaluate()`, trace-to-dataset, HTTP endpoint registration (Maxim parity), per-env API keys, protected labels |
-| **GitOps** | Day 60–90 | "Your CI is the eval runner, your PR is the workflow" | GitHub Actions, manifest-bound drift detection, atomic manifest rollback, CLI for HTTP path, sealed `enterprise/` wheel for v0 premium features |
-| **Moat** | Day 90–180 | "We are the failure radar, we are the optimization loop" | Auto-clustering of drift events, judge calibration, closed-loop manifest optimization, voice-agent support, Quickwit for trace search v2 |
+The current configured-LLM execution path remains a supported target while the
+platform matures. It lets teams prove Dataset and Evaluation behavior without
+pretending that an Agent Registry already exists.
+
+## Delivery rule for every roadmap slice
+
+Before a slice is called complete, it must have all of the following where
+applicable:
+
+- project-scoped database, ClickHouse, API, worker, and SSE behavior;
+- authorization at the server-side resource boundary, not only a hidden UI
+  control;
+- append-only or immutable evidence for published/versioned resources;
+- explicit state transitions, cancellation/retry/recovery rules, and idempotency
+  at asynchronous boundaries;
+- safe redaction, retention, and content-free audit behavior;
+- generated OpenAPI/client compatibility and an accessible, loading-safe UI;
+- migration fresh-install and upgrade coverage;
+- focused regression tests plus the repository's format, lint, typecheck, build,
+  test, security, migration, and browser/CI gates.
+
+A release may improve ergonomics in parallel, but it must not make a roadmap
+feature look complete while bypassing these conditions.
 
 ---
 
-## Phase 1 — MVP (Day 0–30)
+## The execution sequence
 
-**Goal:** Stand up the platform end-to-end with the minimum surface needed to show "we have an Agent primitive, you can run this in 60 seconds, you can register an agent, you can see traces in the dashboard."
+### Release hygiene — maintain the shipped baseline
 
-### Week 1 — Foundation (Days 1–7)
+Land and validate narrowly scoped defect/security/UX fixes that protect the
+existing loop. These do not reorder the roadmap, but are release blockers when
+they affect data integrity, disclosure, tenant boundaries, lifecycle recovery,
+or accessibility.
 
-| Task | Owner | Deliverable | Status |
-|---|---|---|---|
-| OpenAPI 3 schema (the contract) | Backend | `openapi.yaml` covering `/v1/agents`, `/v1/experiments`, `/v1/traces`, `/v1/prompts`, `/v1/datasets`, `/v1/scores` | ✅ Shipped (Zod-as-source; remaining agent/experiment/score stubs + `/openapi.json`) |
-| Hono server bootstrap with @hono/zod-openapi | Backend | Generates OpenAPI from Zod schemas automatically; serves at `/reference` via Scalar UI | ✅ Shipped (`Bun.serve()` + Scalar at `/reference`) |
-| Postgres schema (agents, projects, prompts, datasets, experiments, scores) | Backend | SQL migrations; runs on PostgreSQL 16 | ✅ Shipped (15 idempotent migrations; current schema includes prompt-optimization tables) |
-| ClickHouse schema (traces, observations) | Backend | SQL with partitioning + skip indexes + bloom filters + tokenbf_v1 | ✅ Shipped (8 indexes on `traces` + 5 on `observations`) |
-| Redis setup (BullMQ + pub/sub + rate-limit) | Infra | Single Redis instance, persistent volume | ✅ Shipped as Valkey 8 (open-source Redis fork; wire-compatible — `ioredis` clients unchanged). AOF + named volume; BullMQ consumers deferred to a later phase. |
-| React 19 + Vite + TanStack scaffold | Frontend | `npm create vite`, Tailwind, Shadcn/UI, openapi-fetch + openapi-typescript wired | ✅ Shipped (Vite + TanStack Router + Tailwind 3.4 + Shadcn-style; typed client wired in a later slice) |
-| OpenAPI Codegen pipeline (TS + Python) | DevEx | `bun run codegen` regenerates typed clients from `openapi.yaml` | ✅ Shipped (`openapi-typescript` + `openapi-python-client`; byte-stable configs) |
+Current ready maintenance work should be handled independently from the larger
+feature tracks; it must not be bundled into the next foundational PR merely for
+convenience.
 
-### Week 2 — Ingest + trace viewer (Days 8–14)
+### P1 — Identity, roles, and BYO IdP foundation
 
-| Task | Owner | Deliverable |
-|---|---|---|
-| OTLP receiver at `/v1/otel/v1/traces` | Backend | Accepts `gen_ai.*` + OpenInference attributes; validates; writes to ClickHouse + Postgres |
-| Trace list screen | Frontend | TanStack Table; columns: time, name, agent, status, duration, score, input excerpt |
-| Trace detail screen | Frontend | Nested observation tree + agent graph + per-observation I/O + scores; expandable observations |
-| Trace search API | Backend | `GET /v1/traces/search?q=...&filter[...]` backed by ClickHouse; <50ms p95 for filtered, <100ms p95 for full-text |
-| SDK: hermes-sdk (Python) | SDK | `pip install hermes-sdk`; exports the generated typed client |
-| SDK: @hermes/sdk (TypeScript) | SDK | `npm install @hermes/sdk`; exports the generated typed client |
-| OTel env-var integration | DevEx | Docs: "set OTEL_EXPORTER_OTLP_ENDPOINT, you're tracing" |
+**Goal:** make Astraea usable by real organizations without overbuilding an RBAC
+platform, while preserving the existing server-authorized organization/Project
+boundary.
 
-### Week 3 — Agent + Experiment (Days 15–21)
+#### Target access model
 
-> **Superseded planning detail:** this original calendar slice is retained as historical context. The authoritative implementation sequence is the P0/P1/P2/P3 sequence above; the phase-demo claims below are target-state planning, not shipped functionality.
+Astraea will standardize on three understandable roles:
 
-| Task | Owner | Deliverable |
-|---|---|---|
-| Agent resource (REST CRUD) | Backend | `POST /v1/agents`, `GET /v1/agents`, `GET /v1/agents/{id}`, `PATCH /v1/agents/{id}`, `DELETE /v1/agents/{id}` |
-| `hermes.register()` SDK | SDK | Auto-introspects framework Agent objects; uploads manifest to platform; returns handle |
-| Agno adapter | SDK | Calls `agent.to_dict()`, extracts name/model/instructions/tools/knowledge/storage/guardrails |
-| Generic function adapter | SDK | `hermes.register_agent(name=..., invocation=fn, model=..., ...)` |
-| Agent list + detail screens | Frontend | Two new dashboard pages |
-| Experiment resource (REST CRUD) | Backend | `POST /v1/experiments`, `GET /v1/experiments`, etc. |
-| `hermes.evaluate()` SDK | SDK | Wraps POST /v1/experiments; returns Experiment handle with .stream(), .wait(), .summary |
-| Eval runner (Python worker) | Backend | BullMQ consumer; calls agent.invocation; runs evaluators; persists results |
-
-### Week 4 — Polish + dev mode (Days 22–30)
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| SQLite dev mode | Backend | `hermes dev` command; single binary; zero Docker required |
-| 3-tier prompt cache | Backend | L1 in-memory + L2 SQLite + L3 HTTP fetch |
-| Prompt management endpoints | Backend | `GET /v1/prompts`, `POST /v1/prompts`, `POST /v1/prompts/{id}/versions`, `PATCH /v1/prompts/{id}/labels` |
-| `hermes.prompts.get()` SDK | SDK | 5-method API; version pinning; fallback arg; cache TTL config |
-| Experiments screen | Frontend | List, detail with live SSE updates, results table, comparison view |
-| Prompts screen | Frontend | Versioned editor; label promotion UI |
-| Dataset CRUD | Backend | `GET /v1/datasets`, `POST /v1/datasets`, item add/remove |
-| Datasets screen | Frontend | List, items, "Run experiment" button |
-| Settings screen | Frontend | API keys, members, environments, integrations |
-| Show HN post | Marketing | "We built an OSS eval platform that treats your agent as a versioned contract. Here's why." |
-
-**End of phase 1 demo:** A user can `pip install hermes-sdk`, register their Agno agent, run an eval against a sample dataset, see results stream into the dashboard in real time, all in under 5 minutes from `hermes dev`.
-
----
-
-## Phase 2 — Wedge (Day 30–60)
-
-**Goal:** Make the manifest primitive concrete. Expand framework coverage. Hit Maxim's "HTTP endpoint testing" parity. Ship per-environment API keys for the multi-deployment story.
-
-### Week 5–6 — Framework expansion + HTTP path (Days 31–42)
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| LangGraph adapter | SDK | Reads `langgraph.json` + AST-walks graph module; captures nodes, edges, routing, model bindings |
-| CrewAI adapter | SDK | Introspects `Crew.agents[]` + `Crew.tasks[]` + `Crew.process` |
-| Pydantic AI adapter | SDK | Walks `agent.model`, `agent.instructions`, `agent.tools`, `agent.output_type` |
-| HTTP endpoint registration | Backend | `POST /v1/agents` with `invocation.type=http`; stores URL + body template + headers |
-| `hermes.register_endpoint()` SDK | SDK | Convenience wrapper around POST /v1/agents |
-| Eval runner calls HTTP endpoints | Backend | Substitutes `${env:VAR}` secrets; renders body template; POSTs; parses response path |
-| Trace ingestion from HTTP-invoked agents | Backend | Captures OTLP spans if agent emits them; falls back to HTTP request/response logging |
-| OpenAI-compat proxy | Backend | `POST /v1/chat/completions`; minimal pass-through with trace capture |
-| Maxim parity demo | Marketing | "Same HTTP endpoint testing as Maxim, plus Agent-as-typed-entity and version binding" |
-
-### Week 7–8 — Eval runner maturity + SDK depth (Days 43–56)
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| Evaluator library | Backend | Wrap DeepEval + RAGAS metrics; ship 20+ built-in (hallucination, faithfulness, relevance, toxicity, etc.) |
-| LLM-as-judge scorer | Backend | Calls external LLM with structured prompt; returns typed score |
-| Code-eval scorer (sandboxed) | Backend | Firecracker microVM per evaluation; tenant-isolated; timeout + cost limits |
-| Heuristic scorers | Backend | JSON validators, regex matchers, length checks |
-| Custom evaluator registration | Backend | `POST /v1/evaluators` (user uploads Python function for their project) |
-| `hermes.evaluate()` SDK depth | SDK | Streaming results, callbacks, cancel, experiment.wait(timeout) |
-| Experiment comparison | Backend | `hermes.compare(agent=..., baseline=v11, candidate=v12, dataset=...)` |
-| Dataset items from traces | Backend | `POST /v1/datasets/{id}/items` accepts trace_id; auto-fills input/output |
-| `+ Add to dataset` UI | Frontend | Button on trace detail page; modal to map observation → dataset item |
-| `Open in Playground` UI | Frontend | Pre-fills LLM span input; user mutates prompt/model; re-fires single call |
-| Manifest diff viewer | Frontend | Side-by-side v11 vs v12; highlights changed fields |
-
-### Week 9 — Multi-deployment + version binding (Days 57–63)
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| Per-environment API keys | Backend | Dev/staging/prod scoped keys; prod key requires admin role for mutations |
-| Protected labels | Backend | `production`, `staging`, `development` labels only mutable by admin/owner |
-| Version binding on eval runs | Backend | Each `ExperimentRun` snapshots `agent_version` (content hash); immutable per run |
-| Manifest as oracle | Backend | Drift detection: trace's `agent.model` vs manifest's `model`; alert on mismatch |
-| Agent registry UI | Frontend | Multi-agent view; tabs for versions; deployment history; drift events |
-| `hermes.sync()` on startup | SDK | Re-introspects registered agents; pushes new version if content hash changed |
-| `hermes.init(mode="strict")` | SDK | Raises on drift in CI; defaults to "sync silently" in dev |
-
-**End of phase 2 demo:** A user with a LangGraph agent can `hermes.register(graph)` once. On every restart, Hermes auto-syncs the manifest if their code changed. They open a PR changing the routing rule. CI runs evals against the new manifest version with a `min_pass_rate` gate. The dashboard shows manifest v11 vs v12 side-by-side. They merge, prod picks up the new version within cache TTL.
-
----
-
-## Phase 3 — GitOps + Moat (Day 60–90)
-
-**Goal:** Make the GitOps workflow first-class. Ship the `enterprise/` wheel for v0 premium features. Lay groundwork for the moat (drift auto-clustering, judge calibration).
-
-### Week 10 — GitHub Actions + CLI (Days 64–70)
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| `hermes-ai/run-evals@v1` Action | DevEx | GitHub Marketplace; runs `hermes evaluate` against agent + dataset |
-| `hermes-ai/promote@v1` Action | DevEx | Promotes manifest version to env (production / staging) |
-| `hermes-ai/drift-check@v1` Action | DevEx | Returns non-zero if manifest changed and no eval has run against new version |
-| CLI: `hermes agents ...` | CLI | `add`, `list`, `show`, `update`, `delete`, `run`, `sync` |
-| CLI: `hermes experiments ...` | CLI | `create`, `list`, `show`, `cancel`, `compare` |
-| CLI: `hermes prompts ...` | CLI | `push`, `promote`, `rollback`, `list`, `get` |
-| CLI: `hermes eval ...` | CLI | `run`, `compare`, `report` |
-| Bash installer | DevEx | `curl -fsSL https://cli.hermes.ai/install.sh \| bash` |
-| `repository_dispatch` webhook | Backend | Platform fires GH event when prompts change; user workflow listens |
-
-### Week 11 — Manifest drift detection (Days 71–77)
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| Drift detection engine | Backend | Compares trace spans against registered manifest; emits `DriftEvent` records |
-| Drift detection API | Backend | `GET /v1/agents/{id}/drift`, `GET /v1/agents/{id}/drift/stream` (SSE) |
-| Drift dashboard | Frontend | Per-agent drift timeline; severity levels; resolution actions |
-| Atomic manifest rollback | Backend | `git revert` of manifest restores prompt + tools + routing together |
-| Per-PR preview env | Backend | Spin up staging pointer when `agents/` or `prompts/` touched |
-| Webhook: GitHub commit-to-manifest | Backend | User's GH webhook commits manifest YAML to repo on every change |
-
-### Week 12 — Enterprise wheel + v0 premium (Days 78–90)
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| `enterprise/` wheel skeleton | SDK | Sealed Python wheel under custom EULA (LiteLLM + tldraw pattern) |
-| License key validation | SDK | Signed JWT; offline-checkable; air-gap compatible |
-| SSO + SAML | Backend | Enterprise feature; gated by license key |
-| SCIM provisioning | Backend | Enterprise feature |
-| RBAC with audit logs | Backend | Enterprise feature |
-| Multi-project org mode | Backend | Enterprise feature; org → projects → members |
-| Org-level billing | Backend | Cloud feature; usage tracking; Stripe integration |
-| Compliance report generation | Backend | SOC2 evidence packs from traces + evals; HIPAA audit trails |
-| First paying customer | Sales | Land one design partner; transition from "free OSS" to "paid cloud" |
-
-**End of phase 3 demo:** A regulated-industry team runs Hermes in their VPC. Their AI engineers commit `agent.yaml` changes via PR. CI runs evals, drift checks, and gates the PR. Merge auto-promotes to staging. Their compliance officer exports SOC2 evidence packs. They pay for the enterprise wheel.
-
----
-
-## Phase 4 — Moat (Day 90–180)
-
-**Goal:** Build the features nobody else has. The competitive research identified four moat features — we're shipping all four, with the highest-leverage first.
-
-### Week 13–16 — Agent failure radar (Days 91–112)
-
-**Why first:** The research's #1 universal pain point. "I have traces, but I don't know which ones matter."
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| Trace embedding pipeline | Backend | Embed `input_text` for new traces via OpenAI `text-embedding-3-small` |
-| Embedding storage | Backend | Postgres pgvector table; partitioned by project |
-| Auto-clustering engine | Backend | UMAP + HDBSCAN on trace embeddings; nightly batch + on-demand |
-| Failure mode labels | Backend | Initial 8 modes: tool_misuse, retry_loop, goal_drift, timeout, auth_failure, hallucination, schema_violation, off_topic |
-| `failureInbox` API | Backend | `GET /v1/failures?project_id=...&since=...` returns clustered groups |
-| Failure inbox UI | Frontend | "12 new failure modes this week" landing page; one-click "Create regression test" |
-| Alerting | Backend | Slack/email on new high-severity clusters |
-
-**Differentiation:** Braintrust has eval CI but no failure discovery. Datadog has Trace Cluster Map but no AI-specific clustering. Latitude's GEPA auto-generates regression tests but no continuous failure surfacing. We have all three.
-
-### Week 17–20 — Judge calibration (Days 113–140)
-
-**Why second:** The research's #2 universal pain point. LLM-as-judge bias is well-documented (3 papers in 2025 confirm 31% disagreement on rating indeterminacy). No commercial platform ships robust calibration.
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| Bias audit engine | Backend | Per-judge bias report: rating distribution, disagreement rate, score stability on retries |
-| Human-alignment loop | Backend | Sample N traces, collect human scores, compute judge-vs-human correlation |
-| Calibration dashboard | Frontend | Per-judge alignment reports over time; drift detection on judge behavior |
-| Auto-recalibration | Backend | Few-shot example regeneration when human disagreement > threshold |
-| Multi-judge consensus | Backend | Run 3 judges per eval; weighted majority; flags high-disagreement items |
-| Calibration API | Backend | `POST /v1/judges/{id}/calibrate`, `GET /v1/judges/{id}/alignment-report` |
-
-**Differentiation:** Maxim/Braintrust/LangSmith all ship "use GPT-4 as judge" but no systematic calibration. We ship judge bias as a measurable, monitorable, improvable surface.
-
-### Week 21–24 — Closed-loop prompt optimization (Days 141–168)
-
-**Why third:** The research's #10 universal pain point. DSPy/GEPA exist as libraries but no vendor ships "give me eval data, here are 5 candidates, deploy the best."
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| GEPA integration | Backend | Wrap GEPA optimizer; expose as `POST /v1/prompts/{id}/optimize` |
-| Multi-variant experiment runner | Backend | N prompt variants × M dataset items; collect evaluator scores |
-| Pareto frontier analysis | Backend | Score vs cost / latency frontier; pick best by user-defined objective |
-| Auto-deploy on winner | Backend | If configured: promote winning variant to env automatically |
-| Rollback on regression | Backend | If post-deploy eval drops > X%, auto-rollback to previous version |
-| Optimization dashboard | Frontend | Variant comparison view; Pareto chart; one-click promote |
-
-**Differentiation:** DSPy/GEPA are libraries — users have to wire them up. We ship optimization as a UI surface with held-out validation-gated deployment. Braintrust's "AI-assisted optimization" is closest but partial.
-
-### Week 25–28 — Voice agent support (Days 169–196)
-
-**Why fourth:** The research's voice-agent gap is real but smaller. Defer to phase 4 unless user demand is strong.
-
-| Task | Owner | Deliverable |
-|---|---|---|
-| Audio trace ingestion | Backend | OTLP attribute support for audio inputs/outputs |
-| Audio storage | S3 | Raw audio files; ClickHouse stores metadata + duration |
-| ASR/TTS breakdown | Backend | Latency decomposition: ASR / NLU / LLM / TTS per turn |
-| Turn-taking detection | Backend | Identify interruption handling; compute interruption rate |
-| WER per acoustic condition | Backend | Word error rate breakdown by accent/noise level |
-| Voice trace viewer | Frontend | Waveform + transcript side-by-side |
-
-**Differentiation:** Zero competitors have audio-native tracing in their eval platform. Voice-agent startups (Hamming, Cekura) are vertical-specific.
-
----
-
-## Operational milestones
-
-### Day 30 — First public release
-
-- GitHub repo public, MIT-licensed
-- `hermes dev` works in 60 seconds
-- `pip install hermes-sdk` + `npm install @hermes/sdk` work
-- 8 dashboard screens functional
-- Show HN post
-
-### Day 60 — First paying customer (target)
-
-- 5+ design partner teams using Hermes in production
-- 1+ team on paid cloud tier
-- First feedback cycle on framework adapters
-
-### Day 90 — Enterprise wheel GA
-
-- `enterprise/` wheel in production
-- First SOC2-bound customer using sealed wheel
-- Compliance report generation working
-- GitOps workflow documented and battle-tested
-
-### Day 180 — Moat features complete
-
-- Failure radar, judge calibration, prompt optimization all in GA
-- 50+ teams using Hermes
-- 5+ paying enterprise customers
-- Competitive moat established
-
----
-
-## Success metrics
-
-| Metric | Day 30 target | Day 60 target | Day 90 target | Day 180 target |
-|---|---|---|---|---|
-| GitHub stars | 1,000 | 3,000 | 8,000 | 20,000 |
-| Production users | 50 | 500 | 2,000 | 10,000 |
-| Framework adapters | 3 | 6 | 8 | 12 |
-| Dashboard screens | 8 | 10 | 12 | 14 |
-| OSS contributors | 5 | 15 | 40 | 100 |
-| Cloud customers | 0 | 5 | 25 | 100 |
-| Enterprise wheel customers | 0 | 1 | 5 | 20 |
-| Monthly cloud revenue | $0 | $5K | $30K | $150K |
-| p95 trace search latency | <100ms | <80ms | <50ms | <30ms |
-
----
-
-## What could go wrong
-
-| Risk | Mitigation |
+| Role | Scope and intended capability |
 |---|---|
-| Maxim ships Agent-as-typed-entity before we do | The 12-month window is conservative; ship MVP fast (Day 30). The manifest + drift detection compound advantage isn't easily copied. |
-| Langfuse ships HTTP endpoint testing | Likely; they have the resources. But they don't have manifest-as-typed-entity OR drift detection OR GitOps. Three differentiators still. |
-| Phoenix improves dashboard UX | Phoenix's strength is data science; production dashboards are a different audience. Stay focused on production eval. |
-| A framework refuses to expose introspection APIs | Fall back to AST walking (LangGraph pattern). Universal fallback via HTTP endpoint registration. |
-| Self-host is too hard for SMB | Phoenix-style single-binary dev mode lowers the bar. Document the `hermes dev` zero-config path prominently. |
-| Compliance buyers won't touch a new vendor | Enterprise wheel with SOC2 evidence packs + HIPAA + air-gap install. Land a healthcare or finance design partner early. |
-| Pricing backlash | Per-observation pricing (Langfuse model) not per-seat (LangSmith model). Generous free tier. Transparent pricing page. |
-| Open-core resentment | Keep 95% of value in MIT core. Only premium features (SSO, audit, AI-assist) behind paywall. Publish exactly what's gated. |
+| **Admin** | Organization administrator. Manages organization settings, users/role assignments, Project access, identity-provider connections, governed/destructive controls, and all Projects in the organization. At least one active Admin must always remain. |
+| **User** | Normal contributor. Accesses only Projects granted to them; can perform ordinary product work permitted in those Projects, such as curating datasets, creating Evaluation drafts/runs, and participating in review. Cannot manage organization security, users, IdP connections, or protected/governed controls. |
+| **Read-only** | Viewer. Accesses only granted Projects and may inspect allowed traces, Datasets, Evaluations, runs, and audit-safe history. Cannot create, modify, execute, approve, promote, delete, or change membership/security state. |
+
+Organization role establishes administrative authority; Project membership is the
+visibility boundary. An Admin is authorized across the organization. User and
+Read-only access is granted per Project. This avoids a misleading “user can see
+the whole organization” default while keeping the product model simple.
+
+The current `owner` / `manager` / `member` implementation is a compatibility
+baseline, and its Basic Auth username is a compatibility subject—not a durable
+User record. P1 first introduces an immutable internal actor ID and a durable
+provider-subject linkage, then maps the compatibility username through that
+actor while Basic Auth remains enabled. The explicit, tested migration to the
+target vocabulary and permissions must preserve audit and membership continuity
+across username or IdP changes and must not silently widen anyone's access. A
+temporary server-side compatibility mapping is acceptable only while every
+response, policy check, audit record, and UI explains the effective target
+role.
+
+#### BYO IdP / SSO contract
+
+Astraea will support organization-configured SSO, beginning with standard
+**OpenID Connect (OIDC) Authorization Code + PKCE** and a durable provider
+connection model that also accommodates **SAML 2.0** connections. The goal is
+customers using their own identity provider—not an Astraea-hosted directory.
+
+Required behavior:
+
+- authenticate an external subject into a stable internal actor identity;
+  P1 persists the immutable actor ID and provider-subject linkage, and does not
+  use a mutable email or Basic Auth username alone as identity;
+- bind each IdP connection to exactly one organization and validate issuer,
+  audience/client, redirect URI, signature/key rotation, nonce, state, PKCE,
+  and session lifetime;
+- map users to Astraea roles and Project memberships through an explicit,
+  auditable administrator-controlled mapping. An IdP group/claim is never an
+  authorization decision until it is mapped and validated server-side;
+- support a safe bootstrap and break-glass Admin path during rollout, and never
+  let a malformed IdP connection lock an organization out of Astraea;
+- make SSO enforcement an explicit organization setting after connection testing
+  and administrator confirmation, not an implicit behavior change;
+- record content-free audit evidence for provider changes, login/link events,
+  role/membership changes, connection testing, and enforcement changes;
+- preserve the same actor/organization/Project authorization checks for REST,
+  Web, OTLP ingestion credentials, SSE, workers, and recovery paths.
+
+**Not in P1:** SCIM provisioning, just-in-time role escalation, social login,
+custom policy expressions, nested teams, or a broad marketplace of identity
+connectors. SCIM may follow once the stable User, membership, provider, and
+audit contract has real production use.
+
+#### P1 exit criteria
+
+- Admin/User/Read-only permissions are enforced at API, database, UI, SSE, and
+  worker boundaries and are covered by a role × Project × resource test matrix.
+- An organization has a recoverable administrator path and cannot lose its last
+  active Admin through normal APIs or IdP synchronization.
+- An OIDC organization connection is configured, tested, enabled, and disabled
+  safely; its identity/role/membership mapping cannot leak or cross tenant
+  boundaries.
+- SAML support uses the same actor and authorization model rather than a
+  parallel login/membership implementation.
+- Existing Basic Auth deployments migrate safely and remain explicitly supported
+  only as the documented compatibility/bootstrap mechanism. They resolve
+  through the durable actor mapping until an operator enables SSO enforcement,
+  preserving prior membership and audit continuity.
+
+### P2 — Dataset lifecycle: durable regression assets
+
+**Goal:** evolve the shipped first-pass Dataset into the trustworthy shared
+asset at the center of the feedback loop.
+
+#### Scope
+
+1. **Stable Dataset identity.** Project-local slug, editable display metadata,
+   tombstoned identity on deletion/archive, and explicit ownership/audit fields.
+2. **Drafts and immutable published versions.** Editing happens in a draft;
+   publishing atomically validates, snapshots, hashes, allocates a version, and
+   records provenance. Published versions cannot be mutated.
+3. **Dataset-item provenance and revision.** Preserve source trace and
+   observation IDs, sanitized capture context, external source identity, stable
+   item keys, ordered snapshots, and curator/audit metadata. Never turn raw
+   trace output or feedback into unreviewed ground truth.
+4. **Schema and validation.** Explicit input, optional expected-output, and
+   metadata contracts; clear row-level errors; deterministic validation before
+   publish or execution.
+5. **Collaborative safety.** Revision/ETag conflict behavior, idempotent
+   publish/import, intentional archive/delete semantics, and safe handling of
+   items referenced by historical runs.
+6. **First-class dashboard/API parity.** Create/import/edit/curate/publish/diff
+   flows work through the same API for UI, API, and eventual SDK callers.
+
+#### P2 non-goals
+
+Do not add bulk automation that changes a published Dataset without a human
+publication decision. Do not make semantic clustering, model-generated labels,
+training exports, or automatic prompt/agent updates a prerequisite for a strong
+Dataset foundation.
+
+#### P2 exit criteria
+
+- A production trace can become a redacted, reviewable Dataset draft item with
+  preserved provenance, then an immutable published version.
+- Historical Evaluation runs remain explainable after later Dataset edits,
+  archival, or new publication.
+- UI/API/SDK-created changes share the same draft/version/validation/audit
+  contract and Project authorization checks.
+- Dataset-version integrity, conflict, publish/retry, cross-Project access,
+  and retention/deletion behavior have deterministic regression coverage.
+
+### P3 — Evaluation definitions and reproducible execution
+
+**Goal:** turn one-off Experiments into reliable, reusable Evaluation
+Definitions and Runs while continuing to use the current configured-LLM target
+where appropriate.
+
+#### Scope
+
+1. **Separate definition from run.** An Evaluation is a stable named resource;
+   an immutable Evaluation Definition version contains Dataset binding,
+   evaluator settings/mappings, execution defaults, thresholds, and target
+   selector; an Evaluation Run is one resolved execution.
+2. **Atomic resolution.** Before queueing, resolve and persist the exact
+   Evaluation Definition version, Dataset version, target configuration,
+   evaluator versions/settings, deterministic sample, Project, actor, and safe
+   trigger metadata. A queued run never reads a mutable draft.
+3. **Execution integrity.** Define cancellation, retry, lease/recovery,
+   concurrency, idempotency, item-level state, trace linkage, SSE lifecycle,
+   and result retention semantics before expanding evaluator breadth.
+4. **Evaluation evidence.** Show run summary, per-item evidence, source
+   Dataset/provenance, evaluation-emitted trace, score rationale, and explicit
+   run comparison. Failure results remain inspectable rather than being reduced
+   to a single opaque percentage.
+5. **Narrow evaluator growth.** Keep deterministic evaluators and clearly
+   bounded configured-LLM evaluation reliable first. Add each richer evaluator
+   only with typed config, cost/time limits, redaction, reproducibility, and
+   calibration/evidence requirements.
+6. **Approval-aware gates.** A release/CI gate may consume a pinned,
+   administrator-approved Evaluation Definition version only after the access,
+   dataset, and execution contracts above are complete.
+
+#### P3 non-goals
+
+No evaluator marketplace, arbitrary uploaded code, broad multi-judge scoring,
+or automatic production action before baseline definitions and runs are
+trustworthy. Schedules and CI gates follow pinned definitions; they do not
+follow mutable “latest” data by accident.
+
+#### P3 exit criteria
+
+- A team can create a Dataset version and Evaluation Definition version in the
+  UI or API, execute it, inspect immutable evidence, and reproduce the run.
+- A run records non-null resolved Dataset and Evaluation Definition versions;
+  no mutable draft can influence an in-flight or completed result.
+- State/retry/cancellation/recovery, Project/role isolation, SSE, and
+  configured-LLM error paths are verified with deterministic tests and real
+  integration coverage where infrastructure is available.
+- A comparison or gate clearly identifies its pinned evidence and rejects
+  unauthorized or unapproved use.
+
+### P4 — Agent Registry and version-bound targets
+
+**Goal:** introduce Agents only when Astraea has reliable data, evaluation,
+identity, and execution foundations to make a first-class Agent useful.
+
+The Agent Registry remains the differentiated strategic primitive, but it ships
+as a **narrow identity/version contract**, not a framework-integration flood:
+
+- project-scoped stable Agent identity and immutable manifest versions;
+- canonical manifest serialization and content-hash idempotency;
+- source/framework/version metadata and safe manifest summaries;
+- explicit, role-authorized version history and diffing;
+- Evaluation Runs pinned to a resolved Agent/manifest version;
+- a generic/HTTP target or one carefully selected SDK path only after its
+  execution boundary is hardened.
+
+Normal onboarding stays low-friction: OTLP configuration and SDK
+`register(agent)`/introspection are preferred; agent manifests are generated
+artifacts for export, audit, or GitOps—not user-authored YAML required at setup.
+
+### P5 — Integrations, GitOps, and organizational automation
+
+After P4 proves useful with production users:
+
+- additional framework adapters and HTTP endpoint registration;
+- version comparison, environment binding, and drift detection, only after
+  immutable artifact/environment-binding revisions, trace provenance, explicit
+  fail-closed uncertainty behavior, and gate authorization are implemented;
+- protected environment promotion and organization-approved CI gates;
+- a GitHub Action and API/SDK ergonomics built on pinned Evaluation definitions;
+- SCIM provisioning if P1's identity/membership operations show that manual
+  administration is the real scaling bottleneck.
+
+### P6 — Intelligence and scale
+
+Only after the evidence loop is reliable:
+
+- evaluator library growth, LLM-as-judge calibration, and transparent scoring;
+- failure discovery/clustering and regression-candidate workflows;
+- closed-loop optimization proposals with explicit human review/promotion;
+- atomic manifest rollback, voice-agent support, broader enterprise controls, and
+  packaging/release polish driven by demonstrated user demand.
 
 ---
 
-## What we're NOT doing in 90 days
+## Explicit sequencing decisions
 
-- Building an LLM gateway (LiteLLM owns this; we have minimal pass-through for convenience only)
-- Building a no-code agent builder (LangChain, CrewAI, Agno own this)
-- Building a data labeling tool (Labelbox, Scale AI own this)
-- Building a model marketplace (Replicate, Hugging Face own this)
-- Building GPU orchestration (Modal, Replicate own this)
-- Competing on LLM cost tracking alone (Helicone owns this; we have cost as one of many signals)
+| Decision | Why |
+|---|---|
+| Build identity/roles/SSO before expanding Dataset/Evaluation collaboration. | Shared curation, governance, and future release gates require accountable users and enforceable authority. |
+| Build Dataset versions before reusable Evaluation definitions. | An Evaluation cannot be reproducible if its source suite remains mutable. |
+| Build Evaluation Definitions/Runs before Agent Registry. | Astraea needs a dependable place to bind and evaluate a future Agent version; configured-LLM targets let us prove the execution model now. |
+| Introduce Agents before framework breadth. | A small immutable Agent identity/version contract is more valuable than many shallow adapters. |
+| Add SCIM, complex RBAC, and broad IdP catalogs later. | The three-role, Project-scoped model must prove secure and usable before automating administration. |
+| Defer automatic Dataset/model/deployment changes and unguarded prompt promotion. | Astraea should make evidence and decisions stronger before it automates consequential changes; the existing held-out-validation, leakage-checked, source-version-guarded GEPA prompt exception remains deliberately narrow. |
 
-Hermes stays focused on **agent evaluation and observability**. Adjacent features only when they directly serve that mission.
+## Measures that tell us the roadmap is working
 
----
+- A Read-only user cannot mutate or execute anything, even through a direct API
+  call or stale browser state.
+- A User can turn a production failure into a reviewed Dataset version without
+  needing an administrator or an engineer-only path.
+- An Admin can connect their IdP, map access safely, test it, and recover from a
+  bad configuration without tenant leakage or lockout.
+- Any completed Evaluation Run can be reproduced and explained from stored,
+  immutable references.
+- A customer can adopt Astraea's future Agent integration without rewriting an
+  existing framework agent or hand-authoring a manifest.
 
-## Open questions to resolve during build
+## Deferred intentionally
 
-| Question | When to decide | Options |
-|---|---|---|
-| License for `enterprise/` wheel | Day 60 | Custom EULA (LiteLLM pattern) vs BSL (Sentry pattern) |
-| Cloud pricing model | Day 45 | Per-observation (Langfuse) vs per-eval-run vs flat-fee |
-| Default eval thresholds | Day 60 | Conservative (require ≥ baseline) vs aggressive (require ≥ 95% of baseline) |
-| Voice agent depth | Day 90 | Full audio pipeline vs text-with-audio-metadata |
-| Mobile app | Day 180 | Not planned; web dashboard only |
-| Multi-region cloud | Day 180 | US-only first; EU second for compliance |
+The following remain strategically valuable but are **not** prerequisites for
+P1–P4: broad framework coverage, generic custom-code evaluators, evaluator
+marketplaces, semantic feedback clustering, unguarded automatic prompt/model
+changes, SCIM, custom role builders, enterprise billing, GitHub Actions, manifest drift
+detection, and voice support.
 
----
-
-## The single sentence
-
-In 90 days, we ship an MIT-licensed eval platform that registers any agent via a one-line SDK call, runs evals against the real deployed agent with version binding, gates PRs via GitHub Actions, and lets teams roll back atomic manifest units when something regresses. In 180 days, we add the moat — failure radar, judge calibration, closed-loop optimization — that nobody else has.
+Deferral is a focus decision—not abandonment. Each deferred area must consume
+the access, Dataset, Evaluation, and Agent-version contracts established above
+rather than creating a parallel model.
