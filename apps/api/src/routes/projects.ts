@@ -304,12 +304,12 @@ async function role(
 	const pool = pgPool();
 	const result = projectId
 		? await pool.query<{ role: string | null }>(
-				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 JOIN actor_identities identity ON identity.actor_id = $4 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2",
-				[projectId, tenant.organizationId, tenant.actor, tenant.actorId],
+				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.id = $1 AND p.organization_id = $2",
+				[projectId, tenant.organizationId, tenant.actorId],
 			)
 		: await pool.query<{ role: string }>(
-				"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1 AND om.actor_subject = $2",
-				[tenant.organizationId, tenant.actor, tenant.actorId],
+				"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1",
+				[tenant.organizationId, tenant.actorId],
 			);
 	const value = result.rows[0]?.role;
 	if (!value) throw new Error("Not found");
@@ -326,8 +326,8 @@ export async function handleGetMe(c: Context) {
 			role: "owner" | "member";
 			default_project_id: string;
 		}>(
-			"SELECT om.role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1 AND om.actor_subject = $2",
-			[tenant.organizationId, tenant.actor, tenant.actorId],
+			"SELECT om.role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1",
+			[tenant.organizationId, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
 		const rows = await listAccessibleProjects(pool, tenant, false);
@@ -348,8 +348,8 @@ export async function handleListProjects(c: Context) {
 	try {
 		const tenant = trustedTenant(c);
 		const membership = await pgPool().query(
-			"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1 AND om.actor_subject = $2",
-			[tenant.organizationId, tenant.actor, tenant.actorId],
+			"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1",
+			[tenant.organizationId, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
 		const includeArchived =
@@ -372,8 +372,8 @@ async function listAccessibleProjects(
 	includeArchived: boolean,
 ) {
 	return pool.query<Row>(
-		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $2 JOIN actor_identities identity ON identity.actor_id = $4 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $2 WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($3::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
-		[tenant.organizationId, tenant.actor, includeArchived, tenant.actorId],
+		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($2::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
+		[tenant.organizationId, includeArchived, tenant.actorId],
 	);
 }
 
@@ -430,8 +430,14 @@ export async function handleCreateProject(c: Context) {
 		const tenant = trustedTenant(c);
 		const input = (c.req as any).valid("json");
 		const row = await pgPool().query<Row>(
-			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $3 AND actor_subject = $4 AND role = 'owner' FOR UPDATE), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p), lifecycle AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
-			[input.name, input.slug, tenant.organizationId, tenant.actor],
+			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $3 AND basic_auth_identity_matches($3, actor_subject, $5) AND role = 'owner' FOR UPDATE), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p), lifecycle AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
+			[
+				input.name,
+				input.slug,
+				tenant.organizationId,
+				tenant.actor,
+				tenant.actorId,
+			],
 		);
 		const value = row.rows[0];
 		if (!value) throw new Error("Forbidden");
@@ -454,8 +460,8 @@ export async function handleSetDefaultProject(c: Context) {
 				project_id,
 			]);
 			const updated = await client.query<Row>(
-				"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $3 AND role = 'owner' FOR UPDATE), selected AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $2 AND p.organization_id = $1 AND p.status = 'active' FOR UPDATE), changed AS (UPDATE organizations SET default_project_id = $2, updated_at = now() WHERE id = $1 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM selected) RETURNING id), audit AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'default_changed' FROM changed) SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, true AS is_default, 'owner'::text AS project_role FROM projects p WHERE p.id = $2 AND EXISTS (SELECT 1 FROM changed)",
-				[tenant.organizationId, project_id, tenant.actor],
+				"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $4) AND role = 'owner' FOR UPDATE), selected AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $2 AND p.organization_id = $1 AND p.status = 'active' FOR UPDATE), changed AS (UPDATE organizations SET default_project_id = $2, updated_at = now() WHERE id = $1 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM selected) RETURNING id), audit AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'default_changed' FROM changed) SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, true AS is_default, 'owner'::text AS project_role FROM projects p WHERE p.id = $2 AND EXISTS (SELECT 1 FROM changed)",
+				[tenant.organizationId, project_id, tenant.actor, tenant.actorId],
 			);
 			if (!updated.rows[0]) throw new Error("Not found");
 			await client.query("COMMIT");
@@ -487,8 +493,8 @@ export async function handleDeleteProject(c: Context) {
 				name: string;
 				status: Row["status"];
 			}>(
-				"SELECT p.name, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE p.id = $1 AND p.organization_id = $2 AND ((p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')) OR (p.status <> 'deleting' AND om.role = 'owner')) FOR UPDATE OF p, om",
-				[id, tenant.organizationId, tenant.actor],
+				"SELECT p.name, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE p.id = $1 AND p.organization_id = $2 AND ((p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')) OR (p.status <> 'deleting' AND om.role = 'owner')) FOR UPDATE OF p, om",
+				[id, tenant.organizationId, tenant.actorId],
 			);
 			if (!target.rows[0]) throw new Error("Not found");
 			if (target.rows[0].name !== confirmation_name)
@@ -604,8 +610,8 @@ export async function handleGetProjectDeletionStatus(c: Context) {
 		const id = (c.req as any).valid("param").id;
 		const tenant = trustedTenant(c);
 		const result = await pgPool().query<DeletionJob>(
-			"SELECT j.status, j.traces_cleaned_at, j.observations_cleaned_at, j.completed_at, j.attempt_count FROM project_deletion_jobs j JOIN projects p ON p.id = j.project_id AND p.organization_id = j.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND om.actor_subject = $3 LEFT JOIN project_memberships pm ON pm.project_id = p.id AND pm.actor_subject = $3 WHERE j.project_id = $1 AND j.organization_id = $2 AND p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')",
-			[id, tenant.organizationId, tenant.actor],
+			"SELECT j.status, j.traces_cleaned_at, j.observations_cleaned_at, j.completed_at, j.attempt_count FROM project_deletion_jobs j JOIN projects p ON p.id = j.project_id AND p.organization_id = j.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE j.project_id = $1 AND j.organization_id = $2 AND p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')",
+			[id, tenant.organizationId, tenant.actorId],
 		);
 		if (!result.rows[0]) throw new Error("Not found");
 		return c.json(deletionStatus(result.rows[0]));

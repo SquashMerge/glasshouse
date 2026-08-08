@@ -6,6 +6,7 @@ import {
 
 const scope = {
 	actor: "member",
+	actorId: "00000000-0000-4000-8000-000000000003",
 	organizationId: "00000000-0000-4000-8000-000000000001",
 	projectId: "00000000-0000-4000-8000-000000000002",
 	organizationRole: "member" as const,
@@ -34,7 +35,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 		]);
 		expect(query.mock.calls[1]?.[0]).toContain("FOR UPDATE OF p, om");
 		expect(query.mock.calls[1]?.[0]).toContain(
-			"project_memberships WHERE project_id = p.id AND actor_subject = $2 FOR UPDATE",
+			"project_memberships WHERE project_id = p.id AND basic_auth_canonical_subject(actor_subject) = identity.canonical_subject FOR UPDATE",
 		);
 		expect(persisted).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);

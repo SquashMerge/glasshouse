@@ -8,4 +8,7 @@ INSERT INTO organization_memberships (organization_id, actor_subject, role)
 VALUES
     ('99999999-9999-4999-8999-999999999999', 'Legacy User', 'owner'),
     ('00000000-0000-4000-8000-000000000001', ' legacy user ', 'member'),
+    ('99999999-9999-4999-8999-999999999999', ' Preserved User ', 'member'),
+    ('99999999-9999-4999-8999-999999999999', 'Shared User', 'member'),
+    ('00000000-0000-4000-8000-000000000001', 'Shared User', 'member'),
     ('99999999-9999-4999-8999-999999999999', '   ', 'member');

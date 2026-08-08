@@ -28,11 +28,13 @@ These decisions resolve the original Factory story gate and are part of the
 implementation contract.
 
 1. **Basic Auth identity:** each configured Basic Auth credential has a unique,
-   immutable username that is the stable actor subject for this minimal identity
-   model. The server resolves that credential and its configured organization;
-   neither value can be overridden by a client request. A later identity
-   provider maps into this same actor-subject boundary rather than changing
-   product ownership.
+   normalized provider subject and organization-scoped durable actor identity.
+   Authorization resolves legacy membership subjects through that verified
+   identity, so case/NFKC-equivalent configured usernames remain continuous
+   without trusting a client value. A credential cannot select another
+   organization; ambiguous, malformed, or orphaned legacy identities fail
+   closed. A later identity provider maps into this durable boundary rather
+   than changing product ownership.
 2. **Minimal roles and safeguards:** an organization owner may create Projects
    and manage organization-level membership. A Project manager may manage only
    their Project's metadata, archive/restore state, and Project membership. A

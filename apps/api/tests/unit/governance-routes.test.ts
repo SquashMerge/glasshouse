@@ -97,6 +97,7 @@ const app = new OpenAPIHono({
 app.use("/v1/*", async (c, next) => {
 	c.set(TRUSTED_TENANT_CONTEXT_KEY, {
 		actor: c.req.header("x-test-actor") ?? "manager",
+		actorId: c.req.header("x-test-actor") ?? "manager",
 		organizationId,
 	});
 	return next();

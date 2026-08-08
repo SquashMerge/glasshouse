@@ -29,7 +29,13 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 		sql.startsWith("WITH authorization AS MATERIALIZED") ||
 		sql.startsWith("WITH provenance AS MATERIALIZED")
 	) {
-		if (values.at(-1) === "member") return { rows: [] };
+		if (sql.includes("INSERT INTO projects") && values.includes("member"))
+			return { rows: [] };
+		if (
+			sql.includes("INSERT INTO organization_memberships") &&
+			values.at(-1) === "member"
+		)
+			return { rows: [] };
 		if (values.includes(OTHER_PROJECT)) return { rows: [] };
 		if (sql.includes("UPDATE projects"))
 			return {
@@ -624,7 +630,7 @@ describe("project authorization routes", () => {
 			rows: [{ role: "member" }],
 		}));
 		query.mockImplementationOnce(async (sql: string) => {
-			expect(sql).toContain("$3::boolean");
+			expect(sql).toContain("$2::boolean");
 			expect(sql).toContain("IN ('manager', 'owner')");
 			return { rows: [] };
 		});
@@ -975,7 +981,11 @@ describe("project authorization routes", () => {
 
 		const scope = await resolveAuthorizedProjectScope(
 			{ query: scopeQuery } as never,
-			{ actor: "owner", organizationId: ORGANIZATION },
+			{
+				actor: "owner",
+				actorId: "33333333-3333-4333-8333-333333333333",
+				organizationId: ORGANIZATION,
+			},
 			PROJECT,
 		);
 
@@ -991,7 +1001,11 @@ describe("project authorization routes", () => {
 		await expect(
 			resolveAuthorizedProjectScope(
 				{ query: scopeQuery } as never,
-				{ actor: "member", organizationId: ORGANIZATION },
+				{
+					actor: "member",
+					actorId: "33333333-3333-4333-8333-333333333333",
+					organizationId: ORGANIZATION,
+				},
 				OTHER_PROJECT,
 			),
 		).rejects.toThrow("Project is not available");

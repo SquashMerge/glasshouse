@@ -25,8 +25,12 @@ export async function bootstrapAuthorization(
 			[credential.actorId],
 		);
 		const identity = await client.query(
-			"INSERT INTO actor_identities (actor_id, provider_namespace, canonical_subject) VALUES ($1, 'basic:v1', $2) ON CONFLICT (provider_namespace, canonical_subject) DO UPDATE SET actor_id = actor_id WHERE actor_identities.actor_id = EXCLUDED.actor_id RETURNING actor_id",
-			[credential.actorId, credential.canonicalSubject],
+			"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3) ON CONFLICT (provider_namespace, canonical_subject) DO UPDATE SET actor_id = actor_id WHERE actor_identities.actor_id = EXCLUDED.actor_id AND actor_identities.organization_id = EXCLUDED.organization_id RETURNING actor_id",
+			[
+				credential.actorId,
+				credential.organizationId,
+				credential.canonicalSubject,
+			],
 		);
 		if (!identity.rows[0])
 			throw new Error(
