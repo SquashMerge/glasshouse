@@ -2,7 +2,7 @@ import type { OptimizationDataset } from "./optimization-dataset.js";
 import { logger } from "./logger.js";
 
 export type GepaWorkerInput = {
-	target: "system" | "user";
+	target: "system";
 	source: string;
 	evaluator: Record<string, unknown>;
 	dataset: OptimizationDataset;
