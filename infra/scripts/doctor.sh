@@ -18,7 +18,23 @@ set -euo pipefail
 step() { printf '\033[1;34m▶ %s\033[0m\n' "$1"; }
 ok() { printf '  \033[1;32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[1;31m✗\033[0m %s\n' "$1"; exit 1; }
-version_at_least() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
+version_at_least() {
+  local actual="$1" required="$2" actual_part required_part i
+  local IFS=.
+  local -a actual_parts required_parts
+  read -r -a actual_parts <<< "$actual"
+  read -r -a required_parts <<< "$required"
+  for i in 0 1 2; do
+    actual_part="${actual_parts[i]:-0}"
+    required_part="${required_parts[i]:-0}"
+    actual_part="${actual_part%%[^0-9]*}"
+    required_part="${required_part%%[^0-9]*}"
+    [[ "$actual_part" =~ ^[0-9]+$ && "$required_part" =~ ^[0-9]+$ ]] || return 1
+    if (( 10#$actual_part > 10#$required_part )); then return 0; fi
+    if (( 10#$actual_part < 10#$required_part )); then return 1; fi
+  done
+  return 0
+}
 effective_env_value() {
   bash -c 'set -a -u; source "$1"; printf %s "${!2}"' bash infra/.env "$1"
 }
