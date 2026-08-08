@@ -16,6 +16,10 @@ import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
+import {
+	DetailLoadingSkeleton,
+	ListLoadingSkeleton,
+} from "../components/LoadingSkeletons";
 import { PageMessage } from "./prompts";
 import { useEventSource } from "../hooks/useEventSource";
 export function EvaluationsPage() {
@@ -190,22 +194,26 @@ export function EvaluationsPage() {
 					</Button>
 				</PageMessage>
 			)}
-			<ul className="divide-y rounded border">
-				{experiments.data?.items.map((experiment) => (
-					<li key={experiment.id}>
-						<Link
-							className="block p-4 hover:bg-muted/50"
-							to="/evaluations/$id"
-							params={{ id: experiment.id }}
-						>
-							<strong>{experiment.name || "Untitled evaluation"}</strong>
-							<span className="ml-3 text-sm text-muted-foreground">
-								{experiment.status}
-							</span>
-						</Link>
-					</li>
-				))}
-			</ul>
+			{experiments.isLoading && !experiments.data ? (
+				<ListLoadingSkeleton testId="evaluations-list-skeleton" />
+			) : (
+				<ul className="divide-y rounded border">
+					{experiments.data?.items.map((experiment) => (
+						<li key={experiment.id}>
+							<Link
+								className="block p-4 hover:bg-muted/50"
+								to="/evaluations/$id"
+								params={{ id: experiment.id }}
+							>
+								<strong>{experiment.name || "Untitled evaluation"}</strong>
+								<span className="ml-3 text-sm text-muted-foreground">
+									{experiment.status}
+								</span>
+							</Link>
+						</li>
+					))}
+				</ul>
+			)}
 		</div>
 	);
 }
@@ -250,8 +258,8 @@ export function EvaluationDetailPage() {
 	);
 	const [cancelError, setCancelError] = React.useState("");
 	const [cancelling, setCancelling] = React.useState(false);
-	if (experiment.isLoading)
-		return <PageMessage title="Evaluation">Loading evaluation...</PageMessage>;
+	if (experiment.isLoading && !experiment.data)
+		return <DetailLoadingSkeleton testId="evaluation-detail-skeleton" />;
 	if (experiment.isError)
 		return (
 			<PageMessage title="Evaluation">

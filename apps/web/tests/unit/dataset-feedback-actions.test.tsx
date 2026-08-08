@@ -133,9 +133,10 @@ describe("dataset feedback actions", () => {
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
 
-		expect(await screen.findByRole("status")).toHaveTextContent(
-			"Loading datasets...",
-		);
+		expect(
+			await screen.findByTestId("dataset-options-skeleton"),
+		).toHaveAttribute("aria-label", "Loading datasets");
+		expect(screen.queryByText("Loading datasets...")).not.toBeInTheDocument();
 		rejectDatasets(new Error("Dataset service unavailable"));
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"Dataset service unavailable",

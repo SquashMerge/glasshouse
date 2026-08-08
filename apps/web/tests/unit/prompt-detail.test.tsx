@@ -205,6 +205,18 @@ describe("PromptDetailPage", () => {
 		vi.unstubAllEnvs();
 	});
 
+	it("renders a detail-shaped skeleton on the initial prompt load", () => {
+		getPrompt.mockReturnValue(new Promise(() => undefined));
+		listPromptVersions.mockReturnValue(new Promise(() => undefined));
+		getLatestPromptOptimization.mockReturnValue(new Promise(() => undefined));
+		getPromptOptimization.mockReturnValue(new Promise(() => undefined));
+
+		renderDetail();
+
+		expect(screen.getByTestId("prompt-detail-skeleton")).toBeInTheDocument();
+		expect(screen.queryByText("Loading prompt…")).not.toBeInTheDocument();
+	});
+
 	it("shows immutable version details and drives history selection through the version query", async () => {
 		renderDetail();
 

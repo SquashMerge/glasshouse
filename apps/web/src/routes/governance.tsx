@@ -19,6 +19,7 @@ import {
 	previewGovernanceRetention,
 	runGovernanceRetention,
 } from "../lib/api";
+import { FormLoadingSkeleton } from "../components/LoadingSkeletons";
 import { PageMessage } from "./prompts";
 
 export function GovernancePage() {
@@ -118,10 +119,12 @@ export function GovernancePage() {
 				Select a project to manage its governed retention policy.
 			</PageMessage>
 		);
-	if (effective.isLoading || history.isLoading || retentionRuns.isLoading)
-		return (
-			<PageMessage title="Governance">Loading governance policy...</PageMessage>
-		);
+	if (
+		(effective.isLoading && !effective.data) ||
+		(history.isLoading && !history.data) ||
+		(retentionRuns.isLoading && !retentionRuns.data)
+	)
+		return <FormLoadingSkeleton testId="governance-form-skeleton" />;
 	if (effective.isError || history.isError || retentionRuns.isError)
 		return (
 			<PageMessage title="Governance">
