@@ -8,11 +8,16 @@ const otherProjectId = "22222222-2222-4222-8222-222222222222";
 const policyId = "33333333-3333-4333-8333-333333333333";
 const verifiedActorId = "33333333-3333-4333-8333-333333333333";
 const calls: string[] = [];
+const previewConsumeValues: string[][] = [];
 let approvalConflict = false;
 let permittedActorId = verifiedActorId;
 
 const query = mock(async (statement: string, values: string[] = []) => {
 	calls.push(statement);
+	if (
+		statement.includes("UPDATE governance_retention_previews SET consumed_at")
+	)
+		previewConsumeValues.push(values);
 	if (
 		statement === "BEGIN" ||
 		statement === "COMMIT" ||
@@ -233,8 +238,10 @@ describe("governance route guards", () => {
 
 	it("requires a server-issued, actor-bound single-use preview before starting", async () => {
 		calls.length = 0;
+		previewConsumeValues.length = 0;
 		const response = await request("manager", "/v1/governance/retention/runs", {
 			method: "POST",
+			headers: { "x-test-actor-id": verifiedActorId },
 			body: JSON.stringify({
 				project_id: projectId,
 				policy_version_id: policyId,
@@ -250,6 +257,13 @@ describe("governance route guards", () => {
 			"basic_auth_identity_matches($2, actor_subject, $5)",
 		);
 		expect(consume).toContain("consumed_at IS NULL AND expires_at > now()");
+		expect(previewConsumeValues).toContainEqual([
+			"55555555-5555-4555-8555-555555555555",
+			organizationId,
+			projectId,
+			policyId,
+			verifiedActorId,
+		]);
 		expect(calls.some((call) => call.includes("retention_started"))).toBe(
 			false,
 		);

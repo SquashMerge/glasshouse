@@ -452,7 +452,7 @@ export async function handleRunRetention(c: Context) {
 					tenant.organizationId,
 					project_id,
 					version.id,
-					tenant.actor,
+					tenant.actorId,
 				],
 			);
 			if (!consumed.rows[0])
