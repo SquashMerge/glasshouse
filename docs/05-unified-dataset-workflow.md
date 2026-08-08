@@ -127,14 +127,32 @@ The schema may use copy-on-write/item-link storage internally, but the API contr
 | Entity | Required fields | Invariants |
 |---|---|---|
 | `datasets` | `id`, `project_id`, `slug`, `name`, `description`, `tags`, `latest_published_version`, timestamps, deletion audit fields | `(project_id, slug)` unique; `slug` never reused after deletion; name may change. |
-| `dataset_drafts` | `id`, `dataset_id`, `base_version`, `schema`, `created_by`, `created_via`, timestamps | At most one active draft per dataset by default; optimistic `revision` prevents overwrites. |
-| `dataset_draft_items` | `draft_id`, stable `item_key`, `position`, `input`, `expected_output`, `metadata`, provenance | `item_key` unique within draft; position deterministic; item payload validates against draft schema. |
-| `dataset_versions` | `id`, `dataset_id`, integer `version`, `schema`, `item_count`, `content_hash`, publication/audit metadata | `(dataset_id, version)` unique; immutable after publish; content hash covers canonical schema + ordered item snapshot. |
-| `dataset_version_items` | `dataset_version_id`, `item_key`, `position`, payload, provenance | Immutable; `position` unique per version; payload is a snapshot, not a live reference. |
+| `dataset_drafts` | `id`, `project_id`, `dataset_id`, `base_version`, `schema`, `created_by`, `created_via`, timestamps | `project_id` is non-null and must match the Dataset through a composite Project-scoped foreign key; at most one active draft per Dataset by default; optimistic `revision` prevents overwrites. |
+| `dataset_draft_items` | `id`, `project_id`, `draft_id`, stable `item_key`, `position`, `input`, `expected_output`, `metadata`, provenance | `project_id` is non-null and must match the draft; `item_key` unique within draft; position deterministic; item payload validates against draft schema. |
+| `dataset_versions` | `id`, `project_id`, `dataset_id`, integer `version`, `schema`, `item_count`, `content_hash`, publication/audit metadata | `project_id` is non-null and must match the Dataset; `(dataset_id, version)` unique; immutable after publish; content hash covers canonical schema + ordered item snapshot. |
+| `dataset_version_items` | `id`, `project_id`, `dataset_version_id`, `item_key`, `position`, payload, provenance | `project_id` is non-null and must match the Dataset version; immutable; `position` unique per version; payload is a snapshot, not a live reference. |
 | `evaluations` | `id`, `project_id`, `slug`, `name`, description/tags, `latest_published_version` | Same stable-ID/tombstone behavior as datasets. |
-| `evaluation_versions` | `id`, `evaluation_id`, integer `version`, `target_selector`, `dataset_binding`, `evaluators`, `mappings`, `run_defaults`, `content_hash` | Immutable; all referenced resources must be project scoped. |
-| `evaluation_runs` | IDs for evaluation/version, Dataset/version, resolved target snapshot, optional Agent/Manifest version, status, trigger/audit metadata | Resolved references are non-null after validation and cannot change; Agent/Manifest fields are populated only for a P4 Agent target. |
-| `evaluation_run_items` | run item ID, dataset item snapshot key, output, scores, status, `trace_id` | One result per sampled dataset item; trace provenance is separate from generated trace link. |
+| `evaluation_versions` | `id`, `project_id`, `evaluation_id`, integer `version`, `target_selector`, `dataset_binding`, `evaluators`, `mappings`, `run_defaults`, `content_hash` | `project_id` is non-null and must match the Evaluation through a composite Project-scoped foreign key; immutable; all referenced resources must be project scoped. |
+| `evaluation_runs` | `id`, `project_id`, IDs for Evaluation/version, Dataset/version, resolved target snapshot, optional Agent/Manifest version, status, trigger/audit metadata | `project_id` is non-null and composite foreign keys require its Evaluation version, Dataset version, and optional Agent/Manifest version to belong to that same Project. Resolved references cannot change; Agent/Manifest fields are populated only for a P4 Agent target. |
+| `evaluation_run_items` | `id`, `project_id`, `run_id`, `dataset_version_item_id`, output, scores, status, `trace_id` | `project_id` is non-null and must match both the Run and the Dataset version item; one result per sampled Dataset item; trace provenance is separate from generated trace link. |
+
+### Storage tenancy invariant
+
+Every tenant-bearing Dataset/Evaluation table has a non-null `project_id`.
+PostgreSQL records use composite Project-scoped foreign keys—for example,
+`(project_id, dataset_id)` for Dataset children and `(project_id,
+dataset_version_id)` / `(project_id, evaluation_version_id)` for a Run—so a
+valid individual UUID cannot cross a Project boundary. Parent tables expose the
+needed unique `(project_id, id)` keys for those constraints.
+
+A Run writes its Project ID and all resolved references atomically before it is
+queued. Workers, recovery, result persistence, SSE snapshots/live events, and
+all detail/list queries predicate on that persisted Project ID as well as the
+resource ID; they never recover scope from a client request or an unscoped
+parent lookup. The same Project is used for generated trace writes and
+ClickHouse reads. Migration backfills must derive each child Project only from a
+validated parent relationship; ambiguous or unscoped historical rows are not
+attributed by guesswork and must be removed or terminalized safely.
 
 ### Payload contract
 
@@ -351,9 +369,9 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 ## Migration from the current MVP
 
 1. **Preserve reads:** existing `datasets`/`dataset_items` remain readable. Backfill each existing dataset as `dataset@1`, preserving item UUID as `item_key`, order by `created_at, id`, and existing trace provenance.
-2. **Add snapshot tables:** introduce dataset/evaluation version and draft tables in a new migration; do not alter past migrations. Add `slug`, `latest_published_version`, audit/provenance fields, and tombstones.
-3. **Adapt experiments:** add `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, a resolved target snapshot, and optional future `manifest_version_id` fields to experiments. Backfill legacy experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
-4. **API compatibility:** retain UUID-based current routes for one minor version. Return `dataset_version` when known. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
+2. **Add snapshot tables:** introduce Dataset/Evaluation version and draft tables in a new migration; do not alter past migrations. Every tenant-bearing child table gets a non-null `project_id`, composite Project-scoped foreign keys, `slug`, `latest_published_version`, audit/provenance fields, and tombstones. Backfill scope only from validated parents; delete or safely terminalize ambiguous legacy rows rather than assigning a Project by guesswork.
+3. **Adapt experiments:** add `project_id`, `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, a resolved target snapshot, and optional future `manifest_version_id` fields to Experiments. Use composite Project-scoped foreign keys for every resolved attachment. Backfill legacy Experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
+4. **API compatibility:** retain the current UUID routes for one minor version, always with `?project_id=<UUID>`: `GET/POST /v1/datasets`, `GET /v1/datasets/{id}`, `GET/POST /v1/datasets/{id}/items`, and `DELETE /v1/datasets/{id}/items/{itemId}`. Return `dataset_version` when known. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
 5. **UI rollout:** ship datasets/versioning first; then evaluation definitions; then switch “Run experiment” labels to “Run evaluation.” Keep `Experiment` only in technical compatibility/API deprecation notices.
 
 ## Acceptance criteria
@@ -368,16 +386,17 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 6. A UI or SDK item upsert with the same `item_key` updates one draft item; JSON-equal items with different keys remain distinct.
 7. Deleting/archive behavior never removes a version or item snapshot referenced by an evaluation run.
 8. For every Dataset route, Admin and Project-granted User requests succeed only inside their authorized Project; Read-only mutation/import/publish/archive requests are denied server-side, and same-slug cross-Project requests return the same non-disclosing not-found result as absent resources.
+9. Database constraints reject cross-Project draft/version/run attachments even when an application caller bypasses a route guard; worker recovery and SSE use the persisted non-null Project scope and cannot emit or write against another Project.
 
 ### Evaluation attachment and execution
 
-9. A published evaluation definition can attach a Dataset by pinned version. The definition page shows the exact `dataset@version`, resolved target selector, evaluators, and mappings.
-10. Starting a run records immutable resolved IDs/hashes for Evaluation definition, Dataset version, target snapshot, optional Agent/Manifest version, evaluator versions, and deterministic sample before queueing work.
-11. A run launched from the UI, SDK, or REST against the same definition version produces the same resolved provenance header and executes through the same runner.
-12. `latest_published` resolves once at run creation and persists the resulting Dataset version. It cannot be used by a CI-gate token or definition marked as a release gate.
-13. Manual run overrides are recorded and visually labeled; gate/CI credentials reject undeclared target/Dataset overrides with a clear `403`/validation error.
-14. Each run result links its Dataset item snapshot, generated trace, scores, output, and source production trace (when available) without exposing unavailable source data.
-15. Every Evaluation, Run, result, SSE, cancellation, and `/v1/experiments` compatibility request requires the explicit Project selector and applies the same Admin/User/Read-only authorization matrix; Read-only execution attempts fail before work is queued.
+10. A published Evaluation definition can attach a Dataset by pinned version. The definition page shows the exact `dataset@version`, resolved target selector, evaluators, and mappings.
+11. Starting a run records immutable resolved IDs/hashes for Evaluation definition, Dataset version, target snapshot, optional Agent/Manifest version, evaluator versions, and deterministic sample before queueing work.
+12. A run launched from the UI, SDK, or REST against the same definition version produces the same resolved provenance header and executes through the same runner.
+13. `latest_published` resolves once at run creation and persists the resulting Dataset version. It cannot be used by a CI-gate token or definition marked as a release gate.
+14. Manual run overrides are recorded and visually labeled; gate/CI credentials reject undeclared target/Dataset overrides with a clear `403`/validation error.
+15. Each run result links its Dataset item snapshot, generated trace, scores, output, and source production trace (when available) without exposing unavailable source data.
+16. Every Evaluation, Run, result, SSE, cancellation, and `/v1/experiments` compatibility request requires the explicit Project selector and applies the same Admin/User/Read-only authorization matrix; Read-only execution attempts fail before work is queued.
 
 ### UX and quality
 
