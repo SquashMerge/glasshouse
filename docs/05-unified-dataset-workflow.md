@@ -252,12 +252,18 @@ POST   /v1/evaluations/{slug}/draft/publish?project_id=
 POST   /v1/evaluations/{slug}/runs?project_id= # body may choose definition version and run overrides
 GET    /v1/evaluation-runs/{id}?project_id=
 GET    /v1/evaluation-runs/{id}/results?project_id=
+GET    /v1/evaluation-runs/{id}/summary?project_id=
 GET    /v1/evaluation-runs/{id}/events?project_id= # SSE
 POST   /v1/evaluation-runs/{id}/cancel?project_id=
 
-# Compatibility phase
-POST   /v1/experiments?project_id=             # maps a fully specified request to one Evaluation + Run
-GET    /v1/experiments/{id}?project_id=        # alias/read model for EvaluationRun
+# Temporary Experiment compatibility alias/read model (one minor version)
+POST   /v1/experiments?project_id=              # body-scoped legacy adapter maps a fully specified request to one Evaluation + Run
+GET    /v1/experiments?project_id=               # legacy run collection/read model
+GET    /v1/experiments/{id}?project_id=          # alias for EvaluationRun
+GET    /v1/experiments/{id}/results?project_id=  # alias for EvaluationRun results
+GET    /v1/experiments/{id}/summary?project_id=  # alias for EvaluationRun summary
+GET    /v1/experiments/{id}/events?project_id=   # alias for EvaluationRun SSE
+POST   /v1/experiments/{id}/cancel?project_id=   # alias for EvaluationRun cancellation
 ```
 
 `POST /v1/datasets?project_id=<UUID>` accepts `slug` optionally; the server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. `POST /v1/datasets/by-slug/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
@@ -384,7 +390,7 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 1. **Preserve reads:** existing `datasets`/`dataset_items` remain readable. Backfill each existing dataset as `dataset@1`, preserving item UUID as `item_key`, order by `created_at, id`, and existing trace provenance.
 2. **Add snapshot tables:** introduce Dataset/Evaluation version and draft tables in a new migration; do not alter past migrations. Every tenant-bearing child table gets a non-null `project_id`, composite Project-scoped foreign keys, `slug`, `latest_published_version`, audit/provenance fields, and tombstones. Backfill scope only from validated parents; delete or safely terminalize ambiguous legacy rows rather than assigning a Project by guesswork.
 3. **Adapt experiments:** add `project_id`, `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, a resolved target snapshot, and optional future `manifest_version_id` fields to Experiments. Use composite Project-scoped foreign keys for every resolved attachment. Backfill legacy Experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
-4. **API compatibility:** retain the current UUID routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. Retained `POST /v1/datasets`, `POST /v1/datasets/{id}/items`, and `POST /v1/experiments` use the body-scoped adapter above; an optional query selector must match the body selector. Return `dataset_version` when known. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
+4. **API compatibility:** retain the current UUID Dataset routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. Retained `POST /v1/datasets` and `POST /v1/datasets/{id}/items` use the body-scoped adapter above; an optional query selector must match the body selector. For the same window, retain the complete Experiment surface as query-scoped aliases for Evaluation Runs: `GET /v1/experiments?project_id=<UUID>`, `GET /v1/experiments/{id}?project_id=<UUID>`, `GET /v1/experiments/{id}/results?project_id=<UUID>`, `GET /v1/experiments/{id}/summary?project_id=<UUID>`, `GET /v1/experiments/{id}/events?project_id=<UUID>`, and `POST /v1/experiments/{id}/cancel?project_id=<UUID>`; retained `POST /v1/experiments` uses the body-scoped adapter. Return `dataset_version` when known. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
 5. **UI rollout:** ship datasets/versioning first; then evaluation definitions; then switch “Run experiment” labels to “Run evaluation.” Keep `Experiment` only in technical compatibility/API deprecation notices.
 
 ## Acceptance criteria
