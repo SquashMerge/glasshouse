@@ -20,6 +20,16 @@ export async function bootstrapAuthorization(
 	const client = await pool.connect();
 	try {
 		await client.query("BEGIN");
+		const conflictingIdentity = await client.query<{ blocked: boolean }>(
+			"SELECT EXISTS (SELECT 1 FROM actor_identities WHERE provider_namespace = 'basic:v1' AND canonical_subject = $1 AND (actor_id <> $2 OR organization_id <> $3)) OR EXISTS (SELECT 1 FROM actor_identity_backfill_quarantine WHERE source_table = 'organization_memberships' AND reason IN ('canonical_subject_collision', 'cross_organization_subject') AND CASE WHEN btrim(legacy_subject) <> '' AND normalize(legacy_subject, 'NFKC') ~ '^[ -~]+$' THEN lower(btrim(normalize(legacy_subject, 'NFKC'))) = $1 ELSE false END) AS blocked",
+			[
+				credential.canonicalSubject,
+				credential.actorId,
+				credential.organizationId,
+			],
+		);
+		if (conflictingIdentity.rows[0]?.blocked)
+			throw new Error("Bootstrap Basic Auth identity cannot be authorized");
 		await client.query(
 			"INSERT INTO actors (id) VALUES ($1) ON CONFLICT DO NOTHING",
 			[credential.actorId],

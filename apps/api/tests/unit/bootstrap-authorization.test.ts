@@ -144,4 +144,51 @@ describe("bootstrap authorization", () => {
 			),
 		).rejects.toThrow(/already linked to another actor/);
 	});
+
+	it("rejects quarantined canonical collisions and cross-organization subjects before writes", async () => {
+		for (const username of ["Legacy User", "Shared User"]) {
+			const queries: Array<{ sql: string; values?: unknown[] }> = [];
+			const client = {
+				async query(sql: string, values?: unknown[]) {
+					queries.push({ sql, values });
+					if (sql.includes("actor_identity_backfill_quarantine"))
+						return { rows: [{ blocked: true }], rowCount: 1 };
+					return { rows: [], rowCount: 1 };
+				},
+				release() {},
+			};
+			const pool = { connect: async () => client, end: async () => {} };
+
+			await expect(
+				bootstrapAuthorization(
+					{
+						ASTRAEA_BOOTSTRAP_OWNER_USERNAME: username,
+						ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+							{
+								username,
+								password: "secret",
+								organization_id: ORGANIZATION,
+							},
+						]),
+					},
+					pool as never,
+				),
+			).rejects.toThrow("Bootstrap Basic Auth identity cannot be authorized");
+
+			expect(
+				queries.some(
+					({ sql }) =>
+						sql.includes("INSERT INTO actors") ||
+						sql.includes("INSERT INTO actor_identities") ||
+						sql.includes("INSERT INTO organization_memberships") ||
+						sql.includes("INSERT INTO project_memberships"),
+				),
+			).toBe(false);
+			expect(queries.map(({ sql }) => sql)).toEqual([
+				"BEGIN",
+				expect.any(String),
+				"ROLLBACK",
+			]);
+		}
+	});
 });

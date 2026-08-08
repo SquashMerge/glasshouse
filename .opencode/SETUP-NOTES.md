@@ -51,7 +51,7 @@ The local template configures:
 
 - API and web ports (`API_PORT`, `WEB_PORT`) and `LOG_LEVEL`.
 - PostgreSQL, ClickHouse, and Valkey credentials/ports plus their local URLs.
-- Basic-auth credentials and the bootstrap owner. Multi-organization Basic Auth is supported by `ASTRAEA_BASIC_AUTH_CREDENTIALS`; usernames normalize as printable-ASCII `basic:v1` subjects and cannot collide after normalization. Keep the JSON and all passwords in `infra/.env` or deployment secrets.
+- Basic-auth credentials and the bootstrap owner. Multi-organization Basic Auth is supported by `ASTRAEA_BASIC_AUTH_CREDENTIALS`; usernames normalize as printable-ASCII `basic:v1` subjects and cannot collide after normalization. Bootstrap refuses a configured owner whose canonical subject is quarantined for a legacy collision or cross-organization assignment; resolve the legacy authorization data rather than granting recovery authority. Keep the JSON and all passwords in `infra/.env` or deployment secrets.
 - Optional trace redaction and API body-size limits.
 - GEPA provider allowlisting and credentials. The UI sends model identifiers only; provider credentials never belong in job records, prompts, logs, or browser state.
 

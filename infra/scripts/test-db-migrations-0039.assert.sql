@@ -40,6 +40,23 @@ BEGIN
         RAISE EXCEPTION 'cross-organization Basic Auth subject was not rejected';
     END IF;
 
+    IF EXISTS (
+        SELECT 1
+        FROM actor_identity_backfill_quarantine quarantine
+        JOIN actor_identities identity
+          ON identity.provider_namespace = 'basic:v1'
+         AND identity.canonical_subject = CASE
+            WHEN btrim(quarantine.legacy_subject) <> ''
+             AND normalize(quarantine.legacy_subject, 'NFKC') ~ '^[ -~]+$'
+            THEN lower(btrim(normalize(quarantine.legacy_subject, 'NFKC')))
+            ELSE NULL
+         END
+        WHERE quarantine.source_table = 'organization_memberships'
+          AND quarantine.reason IN ('canonical_subject_collision', 'cross_organization_subject')
+    ) THEN
+        RAISE EXCEPTION 'quarantined Basic Auth collision produced an actor identity';
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM actor_identities
         WHERE organization_id = '99999999-9999-4999-8999-999999999999'
