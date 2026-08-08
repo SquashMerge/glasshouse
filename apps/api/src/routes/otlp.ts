@@ -153,7 +153,7 @@ export function createOtlpIngestHandler(
 		try {
 			bodyJson = await req.json();
 		} catch (err) {
-			logger.warn("otlp.body_parse_failed", err);
+			logger.warn("otlp.body_parse_failed", err, {});
 			return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
 		}
 
@@ -275,7 +275,7 @@ export function createOtlpIngestHandler(
 					observation: o,
 				});
 		} catch (err) {
-			logger.warn("otlp.event_publish_failed", err);
+			logger.warn("otlp.event_publish_failed", err, {});
 		}
 
 		return new Response(JSON.stringify({ partial_success: {} }), {

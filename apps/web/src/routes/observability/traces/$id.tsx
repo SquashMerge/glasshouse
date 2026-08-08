@@ -29,6 +29,7 @@ import {
 	upsertLiveObservation,
 	type TraceModel,
 } from "../../../lib/trace-model";
+import { cn } from "../../../lib/utils";
 
 const TRACE_ID_REGEX = /^[0-9a-f]{32}$/;
 const HIGHLIGHT_MS = 1_500;
@@ -352,7 +353,12 @@ function TraceDetailPageContent({
 			)}
 			<div
 				ref={splitContainerRef}
-				className="grid gap-4 xl:gap-0 xl:grid-cols-[minmax(0,var(--trace-workspace-width))_0.5rem_minmax(22rem,1fr)]"
+				className={cn(
+					"grid gap-4",
+					inspectorOpen
+						? "xl:gap-0 xl:grid-cols-[minmax(0,var(--trace-workspace-width))_0.5rem_minmax(22rem,1fr)]"
+						: "xl:grid-cols-[minmax(0,1fr)_auto]",
+				)}
 				style={
 					inspectorOpen
 						? ({
@@ -450,7 +456,10 @@ function TraceDetailPageContent({
 						onClose={closeInspector}
 					/>
 				) : (
-					<div className="mt-4 xl:col-span-2 xl:mt-0">
+					<aside
+						className="mt-4 flex items-start rounded-lg border bg-card p-3 xl:mt-0 xl:self-stretch xl:rounded-none xl:border-y-0 xl:border-r-0 xl:border-l xl:bg-muted/20"
+						aria-label="Inspector"
+					>
 						<Button
 							type="button"
 							variant="outline"
@@ -459,7 +468,7 @@ function TraceDetailPageContent({
 						>
 							Show inspector
 						</Button>
-					</div>
+					</aside>
 				)}
 			</div>
 			<SseDebugOverlay sse={stream} label={`trace/${id.slice(0, 8)}…`} />

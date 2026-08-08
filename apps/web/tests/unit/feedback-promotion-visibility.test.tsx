@@ -36,6 +36,28 @@ afterEach(() => {
 });
 
 describe("FeedbackPage promotion visibility", () => {
+	it("keeps feedback controls visible while the initial list loads", () => {
+		listFeedback.mockReturnValue(new Promise(() => undefined));
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+
+		render(
+			<QueryClientProvider client={client}>
+				<FeedbackPage />
+			</QueryClientProvider>,
+		);
+
+		expect(
+			screen.getByRole("heading", { name: "Feedback" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Needs review" }),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("feedback-list-skeleton")).toBeInTheDocument();
+		expect(screen.queryByText("Loading feedback...")).not.toBeInTheDocument();
+	});
+
 	it("exposes Add to dataset only for reviewed feedback", async () => {
 		listDatasets.mockResolvedValue({ items: [] });
 		listFeedback.mockResolvedValue({

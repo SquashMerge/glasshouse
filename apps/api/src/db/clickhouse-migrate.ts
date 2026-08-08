@@ -1,6 +1,7 @@
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { clickhouseUrl } from "./clickhouse.js";
 import { logger } from "../lib/logger.js";
 
 const migrationsDirectory = fileURLToPath(
@@ -15,9 +16,7 @@ function migrationFiles(): string[] {
 
 export async function applyClickHouseMigrations(
 	client: ClickHouseClient = createClient({
-		url:
-			process.env.CLICKHOUSE_URL ??
-			`http://${process.env.CLICKHOUSE_HOST ?? "localhost"}:8123`,
+		url: clickhouseUrl(),
 		database: process.env.CLICKHOUSE_DB ?? "astraea",
 		username: process.env.CLICKHOUSE_USER ?? "astraea",
 		password: process.env.CLICKHOUSE_PASSWORD ?? "",

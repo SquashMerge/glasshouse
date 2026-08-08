@@ -31,6 +31,14 @@ function workerPath(): string {
 	return new URL("../../../../worker/gepa_worker.py", import.meta.url).pathname;
 }
 
+function diagnosticSummary(diagnostic: string): Record<string, number> {
+	if (!diagnostic) return {};
+	return {
+		diagnostic_bytes: new TextEncoder().encode(diagnostic).byteLength,
+		diagnostic_lines: diagnostic.split("\n").filter(Boolean).length,
+	};
+}
+
 export const runGepaWorker: GepaWorker = async (input, signal, onProgress) => {
 	const payload = JSON.stringify(input);
 	const child = Bun.spawn(
@@ -52,12 +60,13 @@ export const runGepaWorker: GepaWorker = async (input, signal, onProgress) => {
 		child.exited,
 	]);
 	if (exitCode !== 0) {
+		const diagnostic = stderr.trim();
 		logger.error(
 			"optimization.worker_failed",
-			new Error("GEPA worker failed"),
+			new Error(`GEPA worker exited with code ${exitCode}`),
 			{
 				exit_code: exitCode,
-				diagnostic_bytes: new TextEncoder().encode(stderr).byteLength,
+				...diagnosticSummary(diagnostic),
 			},
 		);
 		throw new Error("GEPA worker failed");
