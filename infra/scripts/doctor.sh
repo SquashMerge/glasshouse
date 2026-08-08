@@ -20,6 +20,7 @@ ok() { printf '  \033[1;32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[1;31m✗\033[0m %s\n' "$1"; exit 1; }
 version_at_least() {
   local actual="$1" required="$2" actual_part required_part i
+  [[ "$actual" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$required" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
   local IFS=.
   local -a actual_parts required_parts
   read -r -a actual_parts <<< "$actual"
