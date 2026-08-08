@@ -225,7 +225,7 @@ All operations use the existing `/v1` auth/project conventions and generated Ope
 ```http
 # Dataset catalog and versions
 GET    /v1/datasets?project_id=&q=&tag=
-POST   /v1/datasets?project_id=              # create logical dataset + empty draft
+POST   /v1/datasets                          # new contract supplies ?project_id; legacy JSON-body project_id adapter remains valid
 GET    /v1/datasets/by-slug/{slug}?project_id=
 PATCH  /v1/datasets/by-slug/{slug}?project_id=       # metadata only
 GET    /v1/datasets/by-slug/{slug}/versions?project_id=
@@ -257,7 +257,7 @@ GET    /v1/evaluation-runs/{id}/events?project_id= # SSE
 POST   /v1/evaluation-runs/{id}/cancel?project_id=
 
 # Temporary Experiment compatibility alias/read model (one minor version)
-POST   /v1/experiments?project_id=              # body-scoped legacy adapter maps a fully specified request to one Evaluation + Run
+POST   /v1/experiments                         # legacy JSON-body project_id adapter; optional query must normalize equal
 GET    /v1/experiments?project_id=               # legacy run collection/read model
 GET    /v1/experiments/{id}?project_id=          # alias for EvaluationRun
 GET    /v1/experiments/{id}/results?project_id=  # alias for EvaluationRun results
@@ -266,7 +266,7 @@ GET    /v1/experiments/{id}/events?project_id=   # alias for EvaluationRun SSE
 POST   /v1/experiments/{id}/cancel?project_id=   # alias for EvaluationRun cancellation
 ```
 
-`POST /v1/datasets?project_id=<UUID>` accepts `slug` optionally; the server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. `POST /v1/datasets/by-slug/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
+`POST /v1/datasets` accepts `slug` optionally; new clients supply `?project_id=<UUID>`, while the compatibility adapter accepts the existing body `project_id` and rejects a nonmatching query/body pair. The server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. `POST /v1/datasets/by-slug/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
 
 #### Legacy POST scope adapter
 
