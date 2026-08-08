@@ -35,6 +35,8 @@ jobs:
             command: bun run build
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
+          - check: doctor-version
+            command: bash infra/scripts/test-doctor-version.sh
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

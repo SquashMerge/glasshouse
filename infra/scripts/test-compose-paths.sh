@@ -16,5 +16,3 @@ for value in required:
 if "      context: .." in compose or "      - ./valkey/" in compose:
     raise SystemExit("Compose paths must be relative to the repository project directory")
 PY
-
-bash infra/scripts/test-doctor-version.sh
