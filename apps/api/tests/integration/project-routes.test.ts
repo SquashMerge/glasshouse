@@ -29,7 +29,13 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 		sql.startsWith("WITH authorization AS MATERIALIZED") ||
 		sql.startsWith("WITH provenance AS MATERIALIZED")
 	) {
-		if (values.at(-1) === "member") return { rows: [] };
+		if (sql.includes("INSERT INTO projects") && values.includes("member"))
+			return { rows: [] };
+		if (
+			sql.includes("INSERT INTO organization_memberships") &&
+			values.at(-2) === "member"
+		)
+			return { rows: [] };
 		if (values.includes(OTHER_PROJECT)) return { rows: [] };
 		if (sql.includes("UPDATE projects"))
 			return {
@@ -237,7 +243,13 @@ const api = new OpenAPIHono({
 api.use("/v1/*", async (c, next) => {
 	const actor = c.req.header("x-test-actor");
 	if (actor)
-		c.set(TRUSTED_TENANT_CONTEXT_KEY, { actor, organizationId: ORGANIZATION });
+		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+			actor,
+			actorId:
+				c.req.header("x-test-actor-id") ??
+				"33333333-3333-4333-8333-333333333333",
+			organizationId: ORGANIZATION,
+		});
 	await next();
 });
 api.openapi(createProject, handleCreateProject);
@@ -542,6 +554,53 @@ describe("project authorization routes", () => {
 		expect(member.status).toBe(200);
 	});
 
+	it("uses the verified actor ID for legacy project memberships", async () => {
+		const verifiedActorId = "33333333-3333-4333-8333-333333333333";
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (sql.includes("authorization AS MATERIALIZED")) {
+				return values.at(-1) === verifiedActorId
+					? defaultQuery(sql, values)
+					: { rows: [] };
+			}
+			return defaultQuery(sql, values);
+		});
+
+		const canonicalEquivalent = await request(
+			" OWNER ",
+			`/v1/projects/${PROJECT}`,
+			{
+				method: "PATCH",
+				headers: { "x-test-actor-id": verifiedActorId },
+				body: JSON.stringify({ name: "Renamed" }),
+			},
+		);
+		const collision = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			headers: { "x-test-actor-id": "44444444-4444-4444-8444-444444444444" },
+			body: JSON.stringify({ name: "Renamed" }),
+		});
+		const quarantined = await request(
+			"legacy user",
+			`/v1/projects/${PROJECT}`,
+			{
+				method: "PATCH",
+				headers: { "x-test-actor-id": "55555555-5555-4555-8555-555555555555" },
+				body: JSON.stringify({ name: "Renamed" }),
+			},
+		);
+
+		expect(canonicalEquivalent.status).toBe(200);
+		expect(collision.status).toBe(404);
+		expect(quarantined.status).toBe(404);
+		const [sql, values] = query.mock.calls.find(([sql]) =>
+			(sql as string).includes("authorization AS MATERIALIZED"),
+		)!;
+		expect(sql).toContain(
+			"basic_auth_identity_matches(p.organization_id, om.actor_subject, $6)",
+		);
+		expect(values).toContain(verifiedActorId);
+	});
+
 	it("updates a project's name and slug without changing its stable id", async () => {
 		const response = await request("owner", `/v1/projects/${PROJECT}`, {
 			method: "PATCH",
@@ -620,7 +679,7 @@ describe("project authorization routes", () => {
 			rows: [{ role: "member" }],
 		}));
 		query.mockImplementationOnce(async (sql: string) => {
-			expect(sql).toContain("$3::boolean");
+			expect(sql).toContain("$2::boolean");
 			expect(sql).toContain("IN ('manager', 'owner')");
 			return { rows: [] };
 		});
@@ -654,9 +713,12 @@ describe("project authorization routes", () => {
 		const response = await request("member", "/v1/me");
 
 		expect(response.status).toBe(200);
-		expect((await response.json()).projects).toEqual([
+		const body = await response.json();
+		expect(body.projects).toEqual([
 			expect.objectContaining({ id: PROJECT, project_role: "member" }),
 		]);
+		expect(body.actor_id).toMatch(/^[0-9a-f-]{36}$/);
+		expect(body.effective_organization_role_id).toBe("organization:member");
 	});
 
 	it("rejects invalid archived management mode values", async () => {
@@ -893,7 +955,7 @@ describe("project authorization routes", () => {
 		for (const [, values] of reads) {
 			expect(values).toEqual([
 				OTHER_PROJECT,
-				"cross-org-manager",
+				"33333333-3333-4333-8333-333333333333",
 				ORGANIZATION,
 			]);
 		}
@@ -968,7 +1030,11 @@ describe("project authorization routes", () => {
 
 		const scope = await resolveAuthorizedProjectScope(
 			{ query: scopeQuery } as never,
-			{ actor: "owner", organizationId: ORGANIZATION },
+			{
+				actor: "owner",
+				actorId: "33333333-3333-4333-8333-333333333333",
+				organizationId: ORGANIZATION,
+			},
 			PROJECT,
 		);
 
@@ -984,7 +1050,11 @@ describe("project authorization routes", () => {
 		await expect(
 			resolveAuthorizedProjectScope(
 				{ query: scopeQuery } as never,
-				{ actor: "member", organizationId: ORGANIZATION },
+				{
+					actor: "member",
+					actorId: "33333333-3333-4333-8333-333333333333",
+					organizationId: ORGANIZATION,
+				},
 				OTHER_PROJECT,
 			),
 		).rejects.toThrow("Project is not available");

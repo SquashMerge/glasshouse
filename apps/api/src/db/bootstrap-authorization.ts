@@ -16,10 +16,39 @@ export async function bootstrapAuthorization(
 		throw new Error(
 			"ASTRAEA_BOOTSTRAP_OWNER_USERNAME must match exactly one configured credential",
 		);
-	const credential = matches[0]!;
+	const ownerCredential = matches[0]!;
 	const client = await pool.connect();
 	try {
 		await client.query("BEGIN");
+		for (const credential of credentials) {
+			const conflictingIdentity = await client.query<{ blocked: boolean }>(
+				"SELECT EXISTS (SELECT 1 FROM actor_identities WHERE provider_namespace = 'basic:v1' AND canonical_subject = $1 AND (actor_id <> $2 OR organization_id <> $3)) OR EXISTS (SELECT 1 FROM actor_identity_backfill_quarantine WHERE source_table = 'organization_memberships' AND reason IN ('canonical_subject_collision', 'cross_organization_subject') AND CASE WHEN btrim(legacy_subject) <> '' AND normalize(legacy_subject, NFKC) ~ '^[ -~]+$' THEN lower(btrim(normalize(legacy_subject, NFKC))) = $1 ELSE false END) AS blocked",
+				[
+					credential.canonicalSubject,
+					credential.actorId,
+					credential.organizationId,
+				],
+			);
+			if (conflictingIdentity.rows[0]?.blocked)
+				throw new Error("Bootstrap Basic Auth identity cannot be authorized");
+			await client.query(
+				"INSERT INTO actors (id) VALUES ($1) ON CONFLICT DO NOTHING",
+				[credential.actorId],
+			);
+			const identity = await client.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3) ON CONFLICT (provider_namespace, canonical_subject) DO UPDATE SET actor_id = EXCLUDED.actor_id WHERE actor_identities.actor_id = EXCLUDED.actor_id AND actor_identities.organization_id = EXCLUDED.organization_id RETURNING actor_id",
+				[
+					credential.actorId,
+					credential.organizationId,
+					credential.canonicalSubject,
+				],
+			);
+			if (!identity.rows[0])
+				throw new Error(
+					"Bootstrap Basic Auth identity is already linked to another actor",
+				);
+		}
+		const credential = ownerCredential;
 		const organization = await client.query(
 			"SELECT id FROM organizations WHERE id = $1 FOR UPDATE",
 			[credential.organizationId],

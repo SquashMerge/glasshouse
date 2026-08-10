@@ -28,8 +28,9 @@ import { PromptsPage } from "../../src/routes/prompts";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const STALE_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 const ACTOR = "owner";
+const ACTOR_ID = "33333333-3333-4333-8333-333333333333";
 const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
-const selectionKey = `${SELECTED_PROJECT_KEY}:${ORGANIZATION}:${ACTOR}`;
+const selectionKey = `${SELECTED_PROJECT_KEY}:${ORGANIZATION}:${ACTOR_ID}`;
 
 function wrapper(children: React.ReactNode) {
 	const client = new QueryClient({
@@ -75,6 +76,7 @@ describe("ProjectProvider", () => {
 		window.localStorage.setItem(selectionKey, STALE_PROJECT_ID);
 		getCurrentActor.mockResolvedValue({
 			actor_subject: ACTOR,
+			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
 			organization_role: "owner",
 			projects: [
@@ -109,6 +111,7 @@ describe("ProjectProvider", () => {
 		window.localStorage.setItem(selectionKey, "not-a-uuid");
 		getCurrentActor.mockResolvedValue({
 			actor_subject: ACTOR,
+			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
 			organization_role: "member",
 			projects: [],
@@ -132,6 +135,7 @@ describe("ProjectProvider", () => {
 		window.localStorage.setItem(selectionKey, STALE_PROJECT_ID);
 		getCurrentActor.mockResolvedValue({
 			actor_subject: ACTOR,
+			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
 			organization_role: "owner",
 			default_project_id: defaultProjectId,
@@ -175,6 +179,7 @@ describe("ProjectProvider", () => {
 		const selectedProjectId = "33333333-3333-4333-8333-333333333333";
 		const actor = {
 			actor_subject: ACTOR,
+			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
 			organization_role: "owner",
 			default_project_id: PROJECT_ID,
@@ -234,6 +239,7 @@ describe("ProjectProvider", () => {
 		window.localStorage.setItem(selectionKey, PROJECT_ID);
 		getCurrentActor.mockResolvedValue({
 			actor_subject: ACTOR,
+			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
 			organization_role: "owner",
 			default_project_id: PROJECT_ID,
@@ -298,11 +304,11 @@ describe("ProjectProvider", () => {
 	});
 
 	it("clears cached identity, project data, and selections before a different actor logs in", () => {
-		const otherSelectionKey = `${SELECTED_PROJECT_KEY}:${ORGANIZATION}:member`;
+		const otherSelectionKey = `${SELECTED_PROJECT_KEY}:${ORGANIZATION}:member-id`;
 		window.localStorage.setItem(selectionKey, PROJECT_ID);
 		window.localStorage.setItem(otherSelectionKey, STALE_PROJECT_ID);
 		const client = new QueryClient();
-		client.setQueryData(["me"], { actor_subject: ACTOR });
+		client.setQueryData(["me"], { actor_subject: ACTOR, actor_id: ACTOR_ID });
 		client.setQueryData(["prompts", PROJECT_ID], { items: [] });
 
 		clearWorkspaceSession(client);

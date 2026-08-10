@@ -135,6 +135,7 @@ describe("basicAuthMiddleware", () => {
 		expect(await res.json()).toEqual({
 			tenant: {
 				actor: "astraea",
+				actorId: expect.stringMatching(/^[0-9a-f-]{36}$/),
 				organizationId: "00000000-0000-4000-8000-000000000001",
 			},
 		});
@@ -168,9 +169,33 @@ describe("basicAuthMiddleware", () => {
 			expect(await res.json()).toEqual({
 				tenant: {
 					actor: "org-b-user",
+					actorId: expect.stringMatching(/^[0-9a-f-]{36}$/),
 					organizationId: "00000000-0000-4000-8000-000000000020",
 				},
 			});
+		} finally {
+			if (original === undefined)
+				delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
+			else process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = original;
+		}
+	});
+
+	it("rejects Basic credentials that collide after canonical normalization", () => {
+		const original = process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
+		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+			{
+				username: "Alice",
+				password: "one",
+				organization_id: "00000000-0000-4000-8000-000000000010",
+			},
+			{
+				username: " alice ",
+				password: "two",
+				organization_id: "00000000-0000-4000-8000-000000000020",
+			},
+		]);
+		try {
+			expect(() => basicAuthMiddleware()).toThrow(/canonical usernames/);
 		} finally {
 			if (original === undefined)
 				delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;

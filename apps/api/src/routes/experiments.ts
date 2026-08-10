@@ -16,6 +16,7 @@ import {
 	nextExperimentTaskRetryDelay,
 	updateExperiment,
 } from "../db/experiments.js";
+import { evaluationWorkerActorId } from "../db/actors.js";
 import { pgPool } from "../db/postgres.js";
 import { scoreCase } from "../lib/evaluator.js";
 import { invokeConfiguredLlm } from "../lib/llm.js";
@@ -30,7 +31,11 @@ import {
 	ExperimentResults,
 	ExperimentSummary,
 } from "../schemas/experiments.js";
-import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
+import {
+	assertTenantProjectAccess,
+	trustedTenant,
+	withActiveInternalEvaluationProjectLock,
+} from "../tenancy.js";
 import { createOtlpIngestHandler } from "./otlp.js";
 
 const tag = "experiments";
@@ -250,7 +255,10 @@ export function createEvaluationTracePayload(
 }
 
 export function createProductionTrace(
-	traceResult = createOtlpIngestHandler(),
+	traceResult = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: (tenant, callback) =>
+			withActiveInternalEvaluationProjectLock(pgPool(), tenant, callback),
+	}),
 	pool = pgPool,
 ): ExperimentDependencies["trace"] {
 	return async (input) => {
@@ -267,12 +275,9 @@ export function createProductionTrace(
 				headers: { "content-type": "application/json" },
 			}),
 			{
-				actor: "evaluation-worker",
+				actorId: evaluationWorkerActorId(organizationId),
 				organizationId,
 				projectId: input.project_id,
-				organizationRole: "member",
-				projectRole: "manager",
-				projectStatus: "active",
 			},
 		);
 		if (!response.ok) throw new Error("OTLP trace ingestion failed");

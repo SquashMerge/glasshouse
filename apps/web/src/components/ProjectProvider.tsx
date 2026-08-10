@@ -56,7 +56,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 		const projects = projectsQuery.data.projects.filter((project) =>
 			UUID_PATTERN.test(project.id),
 		);
-		const key = `${SELECTED_PROJECT_KEY}:${projectsQuery.data.organization_id}:${projectsQuery.data.actor_subject}`;
+		const key = `${SELECTED_PROJECT_KEY}:${projectsQuery.data.organization_id}:${projectsQuery.data.actor_id}`;
 		const defaultProjectId = projectsQuery.data.default_project_id;
 		const storedProjectId = window.localStorage.getItem(key);
 		const selected = projects.some((project) => project.id === storedProjectId)
@@ -97,7 +97,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 				});
 			}
 			window.localStorage.setItem(
-				`${SELECTED_PROJECT_KEY}:${identity.organization_id}:${identity.actor_subject}`,
+				`${SELECTED_PROJECT_KEY}:${identity.organization_id}:${identity.actor_id}`,
 				project.id,
 			);
 			setSelectedProjectId(project.id);
