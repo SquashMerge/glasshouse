@@ -119,3 +119,42 @@ function lockedActiveProjectAccess(client: PoolClient, tenant: TenantScope) {
 		[tenant.projectId, tenant.organizationId, tenant.actorId],
 	);
 }
+
+export type InternalEvaluationProjectScope = Pick<
+	TenantScope,
+	"actorId" | "organizationId" | "projectId"
+>;
+
+export async function withActiveInternalEvaluationProjectLock<T>(
+	db: Transactional,
+	tenant: InternalEvaluationProjectScope,
+	callback: () => Promise<T>,
+): Promise<T> {
+	const client = await db.connect();
+	let transactionOpen = false;
+	try {
+		await client.query("BEGIN");
+		transactionOpen = true;
+		const authorized = await client.query(
+			"SELECT p.id FROM projects p JOIN actor_identities worker ON worker.actor_id = $3 AND worker.organization_id = p.organization_id AND worker.provider_namespace = 'internal:evaluation-worker:v1' AND worker.canonical_subject = p.organization_id::text WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' FOR UPDATE OF p",
+			[tenant.projectId, tenant.organizationId, tenant.actorId],
+		);
+		if (!authorized.rows[0])
+			throw new TenantScopeError("Project is not available");
+		const value = await callback();
+		await client.query("COMMIT");
+		transactionOpen = false;
+		return value;
+	} catch (cause) {
+		if (transactionOpen) {
+			try {
+				await client.query("ROLLBACK");
+			} catch {
+				// Preserve the authorization or persistence failure that triggered rollback.
+			}
+		}
+		throw cause;
+	} finally {
+		client.release();
+	}
+}

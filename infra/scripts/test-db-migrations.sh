@@ -206,6 +206,65 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0039_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0039.assert.sql"
 
+UPGRADE_0040_DATABASE="${POSTGRES_DB}_0040_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0040_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0040_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0040.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_DATABASE" \
+  < "$ROOT/infra/db/migrations/0040_internal_evaluation_worker_actors.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0040.assert.sql"
+
+UPGRADE_0040_MISMATCH_DATABASE="${POSTGRES_DB}_0040_mismatch"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0040_MISMATCH_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0040_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_MISMATCH_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_MISMATCH_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0040-mismatch.fixture.sql"
+if migration_error="$(docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_MISMATCH_DATABASE" \
+  < "$ROOT/infra/db/migrations/0040_internal_evaluation_worker_actors.sql" 2>&1)"; then
+  echo "0040 migration accepted a mismatched internal evaluation actor" >&2
+  exit 1
+fi
+if [[ "$migration_error" != *"internal evaluation worker identity does not match organization"* ]]; then
+  echo "0040 migration mismatch preflight failed unexpectedly: $migration_error" >&2
+  exit 1
+fi
+
+UPGRADE_0040_CROSS_PROVIDER_COLLISION_DATABASE="${POSTGRES_DB}_0040_cross_provider_collision"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0040_CROSS_PROVIDER_COLLISION_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0040_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_CROSS_PROVIDER_COLLISION_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_CROSS_PROVIDER_COLLISION_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0040-cross-provider-collision.fixture.sql"
+if migration_error="$(docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_CROSS_PROVIDER_COLLISION_DATABASE" \
+  < "$ROOT/infra/db/migrations/0040_internal_evaluation_worker_actors.sql" 2>&1)"; then
+  echo "0040 migration accepted a cross-provider internal actor ID collision" >&2
+  exit 1
+fi
+if [[ "$migration_error" != *"internal evaluation worker actor ID is already linked or orphaned"* ]]; then
+  echo "0040 cross-provider actor collision preflight failed unexpectedly: $migration_error" >&2
+  exit 1
+fi
+
 UPGRADE_DATABASE="${POSTGRES_DB}_0028_upgrade"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_DATABASE"
 for migration in "$ROOT"/infra/db/migrations/*.sql; do

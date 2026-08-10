@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { updateExperiment } from "../../src/db/experiments";
+import { evaluationWorkerActorId } from "../../src/db/actors";
 import { logger } from "../../src/lib/logger";
 import { createOtlpIngestHandler } from "../../src/routes/otlp";
 import { scoreCase } from "../../src/lib/evaluator";
@@ -140,6 +141,37 @@ describe("evaluation MVP", () => {
 				},
 			},
 		});
+	});
+
+	it("derives the evaluation worker actor from the selected project organization", async () => {
+		let tenant: Record<string, unknown> | undefined;
+		const productionTrace = createProductionTrace(
+			async (_request, receivedTenant) => {
+				tenant = receivedTenant;
+				return new Response(null, { status: 200 });
+			},
+			() =>
+				({
+					query: async () => ({ rows: [{ organization_id: organizationId }] }),
+				}) as never,
+		);
+
+		await productionTrace({
+			project_id: projectId,
+			experiment_id: experimentId,
+			item_id: "44444444-4444-4444-8444-444444444444",
+			model: "test-model",
+			input: { question: "one" },
+			output: JSON.stringify({ value: "answer" }),
+			duration_ms: 25,
+		});
+
+		expect(tenant).toEqual({
+			actorId: evaluationWorkerActorId(organizationId),
+			organizationId,
+			projectId,
+		});
+		expect(tenant?.actorId).not.toBe("00000000-0000-5000-8000-000000000001");
 	});
 
 	it("defaults to the exact-match evaluator and temperature", () => {

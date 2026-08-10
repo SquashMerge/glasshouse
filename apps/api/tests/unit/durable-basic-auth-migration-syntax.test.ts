@@ -27,6 +27,17 @@ const migrationFixture = readFileSync(
 	),
 	"utf8",
 );
+const internalEvaluationMigration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0040_internal_evaluation_worker_actors.sql",
+	),
+	"utf8",
+);
+const internalEvaluationMigrationHarness = readFileSync(
+	resolve(import.meta.dir, "../../../../infra/scripts/test-db-migrations.sh"),
+	"utf8",
+);
 
 test("uses PostgreSQL Unicode-normalization form keywords", () => {
 	for (const source of [
@@ -65,5 +76,32 @@ test("builds the migration fixture organization and default project without bypa
 	);
 	expect(migrationFixture).toContain(
 		"ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;",
+	);
+});
+
+test("provisions and verifies tenant-bound internal evaluation identities", () => {
+	expect(internalEvaluationMigration).toContain(
+		"internal:evaluation-worker:v1",
+	);
+	expect(internalEvaluationMigration).toContain(
+		"durable_actor_id(\n        internal_provider_namespace,\n        target_organization_id::text",
+	);
+	expect(internalEvaluationMigration).toContain(
+		"RAISE EXCEPTION 'internal evaluation worker identity does not match organization'",
+	);
+	expect(internalEvaluationMigration).toContain(
+		"RAISE EXCEPTION 'internal evaluation worker actor ID is already linked or orphaned'",
+	);
+	expect(internalEvaluationMigration).toContain(
+		"AFTER INSERT ON organizations",
+	);
+	expect(internalEvaluationMigrationHarness).toContain(
+		"test-db-migrations-0040.assert.sql",
+	);
+	expect(internalEvaluationMigrationHarness).toContain(
+		"0040 migration accepted a mismatched internal evaluation actor",
+	);
+	expect(internalEvaluationMigrationHarness).toContain(
+		"0040 migration accepted a cross-provider internal actor ID collision",
 	);
 });

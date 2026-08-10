@@ -70,6 +70,11 @@ export const otlpIngestRoute = createRoute({
 	},
 });
 
+export type OtlpIngestTenantScope = Pick<
+	TenantScope,
+	"actorId" | "organizationId" | "projectId"
+>;
+
 export type OtlpIngestDependencies = {
 	defaultClient: typeof defaultClient;
 	insertObservations: typeof insertObservations;
@@ -77,7 +82,7 @@ export type OtlpIngestDependencies = {
 	publishSync: typeof publishSync;
 	approvedRedaction: typeof approvedRedaction;
 	withActiveAuthorizedProjectLock: <T>(
-		tenant: TenantScope,
+		tenant: OtlpIngestTenantScope,
 		callback: () => Promise<T>,
 	) => Promise<T>;
 };
@@ -118,10 +123,13 @@ const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 	publishSync,
 	approvedRedaction,
 	withActiveAuthorizedProjectLock: (tenant, callback) =>
-		lockActiveAuthorizedProject(pgPool(), tenant, callback),
+		lockActiveAuthorizedProject(pgPool(), tenant as TenantScope, callback),
 };
 
-function otlpDeduplicationTokens(request: unknown, tenant: TenantScope) {
+function otlpDeduplicationTokens(
+	request: unknown,
+	tenant: OtlpIngestTenantScope,
+) {
 	const digest = createHash("sha256")
 		.update(
 			JSON.stringify({
@@ -146,7 +154,7 @@ export function createOtlpIngestHandler(
 	};
 	return async function handleOtlpIngest(
 		req: Request,
-		tenant: TenantScope,
+		tenant: OtlpIngestTenantScope,
 		fallbackProjectId = tenant.projectId,
 	): Promise<Response> {
 		let bodyJson: unknown;

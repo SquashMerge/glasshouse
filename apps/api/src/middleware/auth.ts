@@ -1,11 +1,16 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
+import {
+	BASIC_AUTH_PROVIDER_NAMESPACE,
+	deterministicActorId,
+} from "../db/actors.js";
 import type { MiddlewareHandler } from "hono";
+
+export { BASIC_AUTH_PROVIDER_NAMESPACE };
 
 export const TRUSTED_ACTOR_CONTEXT_KEY = "trustedActor";
 export const TRUSTED_TENANT_CONTEXT_KEY = "trustedTenant";
 
 export const DEFAULT_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
-export const BASIC_AUTH_PROVIDER_NAMESPACE = "basic:v1";
 
 export type TrustedTenantContext = {
 	actor: string;
@@ -31,10 +36,7 @@ export function canonicalBasicAuthSubject(subject: string): string {
 }
 
 export function durableActorId(canonicalSubject: string): string {
-	const hash = createHash("md5")
-		.update(`${BASIC_AUTH_PROVIDER_NAMESPACE}:${canonicalSubject}`)
-		.digest("hex");
-	return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+	return deterministicActorId(BASIC_AUTH_PROVIDER_NAMESPACE, canonicalSubject);
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
