@@ -11,11 +11,9 @@ const experimentId = "22222222-2222-4222-8222-222222222222";
 const datasetId = "33333333-3333-4333-8333-333333333333";
 
 describe("benchmark evaluation execution", () => {
-	it("locks the active project before benchmark writes", () => {
+	it("locks and authorizes the active project before benchmark writes", () => {
 		for (const operation of [createBenchmarkSuite, createBenchmarkRun])
-			expect(operation.toString()).toContain(
-				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			);
+			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
 	});
 
 	it("marks the experiment failed when background execution rejects", async () => {

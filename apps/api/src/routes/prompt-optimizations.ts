@@ -44,6 +44,7 @@ import { logger, type LogFields } from "../lib/logger.js";
 import { validatePromptTemplate } from "../lib/prompt-templates.js";
 import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
+import { projectAuthorization } from "../db/project-authorization.js";
 import {
 	ProjectIdQuery,
 	PromptErrorResponses,
@@ -1190,7 +1191,11 @@ export function createOptimizationHandlers(
 					},
 					budget,
 				});
-				const job = await d.create(d.pool(), { ...body, actor: actor(c) });
+				const job = await d.create(d.pool(), {
+					...body,
+					actor: actor(c),
+					authorization: projectAuthorization(trustedTenant(c), "execute"),
+				});
 				logger.info("optimization.accepted", {
 					job_id: job.id,
 					project_id: job.project_id,
@@ -1314,6 +1319,7 @@ export function createOptimizationHandlers(
 				const promoted = await d.promote(d.pool(), {
 					...input,
 					actor: actor(c),
+					authorization: projectAuthorization(trustedTenant(c), "governed"),
 				});
 				logger.info("optimization.promoted", {
 					job_id: promoted.id,
@@ -1334,6 +1340,7 @@ export function createOptimizationHandlers(
 					project_id: (c.req.valid("query") as { project_id: string })
 						.project_id,
 					id: (c.req.valid("param") as { id: string }).id,
+					authorization: projectAuthorization(trustedTenant(c), "execute"),
 				});
 				logger.info("optimization.stop_requested", { job_id: job.id });
 				activeWorkers.get(job.id)?.abort();

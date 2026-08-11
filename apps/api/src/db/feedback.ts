@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
 
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -77,12 +81,12 @@ function present(row: Row) {
 	};
 }
 const SELECT = `SELECT s.id, s.project_id, s.trace_id, s.observation_id, s.value, s.metadata, s.created_at, r.status, r.note, r.dataset_id, r.dataset_item_id, r.updated_at FROM scores s JOIN projects p ON p.id=s.project_id AND p.status='active' JOIN feedback_reviews r ON r.score_id=s.id`;
-async function requireActiveProject(client: PoolClient, projectId: string) {
-	const project = await client.query(
-		"SELECT id FROM projects WHERE id=$1 AND status='active' FOR UPDATE",
-		[projectId],
-	);
-	if (!project.rows[0])
+async function requireActiveProject(
+	client: PoolClient,
+	projectId: string,
+	authorization: ProjectAuthorization,
+) {
+	if (!(await lockActiveAuthorizedProject(client, projectId, authorization)))
 		throw new FeedbackRepositoryError("NOT_FOUND", "Project is not available");
 }
 function normalized(input: {
@@ -113,13 +117,14 @@ export async function createFeedback(
 	input: Parameters<typeof normalized>[0] & {
 		project_id: string;
 		idempotency_key: string;
+		authorization: ProjectAuthorization;
 	},
 ) {
 	const hash = requestHash(input);
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		await requireActiveProject(client, input.project_id);
+		await requireActiveProject(client, input.project_id, input.authorization);
 		const existing = await client.query(
 			`${SELECT} WHERE s.project_id=$1 AND s.id=(SELECT score_id FROM feedback_idempotency WHERE project_id=$1 AND idempotency_key=$2)`,
 			[input.project_id, input.idempotency_key],
@@ -229,12 +234,13 @@ export async function promoteFeedback(
 		input: Record<string, unknown>;
 		expected_output?: Record<string, unknown> | null;
 		metadata?: Record<string, unknown>;
+		authorization: ProjectAuthorization;
 	},
 ) {
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		await requireActiveProject(client, input.project_id);
+		await requireActiveProject(client, input.project_id, input.authorization);
 		const existing = await client.query(
 			`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback' FOR UPDATE`,
 			[input.id, input.project_id],
@@ -316,12 +322,13 @@ export async function reviewFeedback(
 		note?: string;
 		dataset_id?: string;
 		dataset_item_id?: string;
+		authorization: ProjectAuthorization;
 	},
 ) {
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		await requireActiveProject(client, input.project_id);
+		await requireActiveProject(client, input.project_id, input.authorization);
 		const existing = await client.query(
 			`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback' FOR UPDATE`,
 			[input.id, input.project_id],

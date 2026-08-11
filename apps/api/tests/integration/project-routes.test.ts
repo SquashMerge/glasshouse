@@ -52,7 +52,7 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 			],
 		};
 	}
-	if (sql.includes("authorization_allows_organization"))
+	if (sql.startsWith("SELECT authorization_allows_organization"))
 		return { rows: [{ allowed: values[1] === actorIds.owner }] };
 	if (sql.startsWith("SELECT p.name, p.status FROM projects"))
 		return { rows: [{ name: "Project One", status: "active" }] };
@@ -476,7 +476,7 @@ describe("project authorization routes", () => {
 		expect(failedDeletion.status).toBe(409);
 
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
-			if (sql.includes("authorization_allows_organization"))
+			if (sql.startsWith("SELECT authorization_allows_organization"))
 				return { rows: [{ allowed: true }] };
 			if (
 				sql.startsWith("BEGIN") ||

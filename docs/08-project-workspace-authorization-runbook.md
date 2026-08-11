@@ -48,6 +48,15 @@ Strict mode denies invalid/unmapped legacy access and never grants access broade
 than the original valid legacy assignment. Do not remove or demote the final
 Admin; the database serializes and rejects that transition.
 
+Migration `0042_experiment_requester_authorization.sql` records the durable
+requesting Actor for new experiments and cancels pending/running historical
+experiments that have no trustworthy requester. When a User is demoted to
+Read-only or removed from a Project, their queued and in-flight experiments stop
+at the next authorization gate: they cannot be claimed, invoke a provider,
+persist a result, write an evaluation trace, complete, or resume after restart.
+No manual replay is required or supported for these cancelled runs; submit a new
+experiment after restoring appropriate execute access.
+
 ## Operations
 
 In strict mode, use Admins to create Projects, change the organization default,

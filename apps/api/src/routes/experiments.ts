@@ -10,6 +10,7 @@ import {
 	experimentSummary as experimentSummaryRecord,
 	finalizeExperimentTask,
 	getExperiment as getExperimentRecord,
+	isExperimentExecutionAuthorized,
 	insertExperimentResult,
 	listExperimentResults,
 	listExperiments as listExperimentsRecord,
@@ -17,6 +18,7 @@ import {
 	updateExperiment,
 } from "../db/experiments.js";
 import { evaluationWorkerActorId } from "../db/actors.js";
+import { projectAuthorization } from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
 import { scoreCase } from "../lib/evaluator.js";
 import { invokeConfiguredLlm } from "../lib/llm.js";
@@ -187,6 +189,7 @@ export type ExperimentDependencies = {
 	waitForTaskRetry: (delayMs: number, signal?: AbortSignal) => Promise<void>;
 	finalizeTask: typeof finalizeExperimentTask;
 	completeExperiment: typeof completeExperimentIfTasksFinished;
+	assertExecutionAuthorized: typeof isExperimentExecutionAuthorized;
 	summary: typeof experimentSummaryRecord;
 	listDatasetItems: typeof listDatasetItems;
 	getDataset: typeof getDataset;
@@ -316,6 +319,7 @@ export const production: ExperimentDependencies = {
 		}),
 	finalizeTask: finalizeExperimentTask,
 	completeExperiment: completeExperimentIfTasksFinished,
+	assertExecutionAuthorized: isExperimentExecutionAuthorized,
 	summary: experimentSummaryRecord,
 	listDatasetItems,
 	getDataset,
@@ -377,6 +381,13 @@ export async function executeExperiment(
 		}
 		const itemStarted = Date.now();
 		try {
+			if (
+				!(await deps.assertExecutionAuthorized(db, {
+					project_id: input.project_id,
+					id: input.experiment_id,
+				}))
+			)
+				return;
 			const llm = await deps.invokeLlm(task.input, input.config, signal);
 			const scores = scoreCase(evaluator, task.expected_output, llm.output);
 			const duration_ms = Date.now() - itemStarted;
@@ -393,15 +404,21 @@ export async function executeExperiment(
 			});
 			if (!finalized) return;
 			try {
-				await deps.trace({
-					project_id: input.project_id,
-					experiment_id: input.experiment_id,
-					item_id: task.dataset_item_id,
-					model: llm.model,
-					input: task.input,
-					output: JSON.stringify(llm.output),
-					duration_ms,
-				});
+				if (
+					await deps.assertExecutionAuthorized(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+					})
+				)
+					await deps.trace({
+						project_id: input.project_id,
+						experiment_id: input.experiment_id,
+						item_id: task.dataset_item_id,
+						model: llm.model,
+						input: task.input,
+						output: JSON.stringify(llm.output),
+						duration_ms,
+					});
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
@@ -431,18 +448,24 @@ export async function executeExperiment(
 			});
 			if (!finalized) return;
 			try {
-				await deps.trace({
-					project_id: input.project_id,
-					experiment_id: input.experiment_id,
-					item_id: task.dataset_item_id,
-					model:
-						typeof input.config.model === "string"
-							? input.config.model
-							: "configured-model",
-					input: task.input,
-					output: "evaluation_failed",
-					duration_ms,
-				});
+				if (
+					await deps.assertExecutionAuthorized(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+					})
+				)
+					await deps.trace({
+						project_id: input.project_id,
+						experiment_id: input.experiment_id,
+						item_id: task.dataset_item_id,
+						model:
+							typeof input.config.model === "string"
+								? input.config.model
+								: "configured-model",
+						input: task.input,
+						output: "evaluation_failed",
+						duration_ms,
+					});
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
@@ -489,7 +512,10 @@ export function createExperimentHandlers(
 						"CONFLICT",
 						"Every dataset item needs expected output for this evaluator",
 					);
-				const row = await deps.createExperiment(db, body);
+				const row = await deps.createExperiment(db, {
+					...body,
+					authorization: projectAuthorization(trustedTenant(c), "execute"),
+				});
 				const controller = new AbortController();
 				activeExperiments.set(
 					experimentKey(body.project_id, row.id),
@@ -592,6 +618,7 @@ export function createExperimentHandlers(
 				const cancelled = await deps.cancelExperiment(deps.pool(), {
 					id,
 					project_id,
+					authorization: projectAuthorization(trustedTenant(c), "execute"),
 				});
 				activeExperiments.get(experimentKey(project_id, id))?.abort();
 				return c.json(cancelled);

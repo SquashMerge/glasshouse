@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
+import {
 	hasAtMostLines,
 	MAX_DIFF_INPUT_CHARS,
 	MAX_DIFF_INPUT_LINES,
@@ -204,7 +208,19 @@ async function requireProject(
 	client: Queryable,
 	projectId: string,
 	lock = false,
+	authorization?: ProjectAuthorization,
 ): Promise<void> {
+	if (authorization) {
+		if (
+			!(await lockActiveAuthorizedProject(
+				client as PoolClient,
+				projectId,
+				authorization,
+			))
+		)
+			throw error("NOT_FOUND", "Project not found");
+		return;
+	}
 	const rows = await query(
 		client,
 		`SELECT id FROM projects WHERE id = $1 AND status = 'active'${lock ? " FOR UPDATE" : ""}`,
@@ -589,6 +605,7 @@ export type CreatePromptInput = {
 	settings?: JsonObject;
 	change_summary?: string;
 	actor: string;
+	authorization: ProjectAuthorization;
 };
 
 async function selectAvailableSlug(
@@ -699,7 +716,7 @@ export async function createPrompt(
 	const promptId = randomUUID();
 
 	return transaction(pool, async (client) => {
-		await requireProject(client, input.project_id, true);
+		await requireProject(client, input.project_id, true, input.authorization);
 		await advisoryLock(client, input.project_id, baseSlug);
 		const slug = await selectAvailableSlug(client, input.project_id, baseSlug);
 		const promptRows = await query<Row>(
@@ -788,6 +805,7 @@ export type CreatePromptVersionInput = {
 	settings?: JsonObject;
 	change_summary: string;
 	actor: string;
+	authorization: ProjectAuthorization;
 };
 
 export async function createPromptVersion(
@@ -807,7 +825,7 @@ export async function createPromptVersion(
 		: undefined;
 
 	return transaction(pool, async (client) => {
-		await requireProject(client, input.project_id, true);
+		await requireProject(client, input.project_id, true, input.authorization);
 		const promptRows = await query<Row>(
 			client,
 			`SELECT id, slug FROM prompts
@@ -865,10 +883,14 @@ export async function createPromptVersion(
 
 export async function rollbackLatestPromptVersion(
 	pool: Pick<Pool, "connect">,
-	input: { project_id: string; slug: string },
+	input: {
+		project_id: string;
+		slug: string;
+		authorization: ProjectAuthorization;
+	},
 ): Promise<Prompt> {
 	return transaction(pool, async (client) => {
-		await requireProject(client, input.project_id, true);
+		await requireProject(client, input.project_id, true, input.authorization);
 		const rows = await query<Row>(
 			client,
 			`SELECT p.id AS prompt_id, p.project_id, p.name, p.description, ${versionColumns}, v.id AS version_id
@@ -971,13 +993,14 @@ export async function deletePrompt(
 		slug: string;
 		confirmation: string;
 		actor: string;
+		authorization: ProjectAuthorization;
 	},
 ): Promise<void> {
 	if (input.confirmation !== input.slug)
 		throw error("BAD_REQUEST", "confirmation must equal the prompt identifier");
 	const actor = normalizedActor(input.actor);
 	return transaction(pool, async (client) => {
-		await requireProject(client, input.project_id, true);
+		await requireProject(client, input.project_id, true, input.authorization);
 		await advisoryLock(client, input.project_id, input.slug);
 		const tombstoneRows = await query<Row>(
 			client,

@@ -73,7 +73,8 @@ function projectOperationForRequest(
 	if (
 		path.startsWith("/v1/experiments") ||
 		path.startsWith("/v1/prompt-optimizations") ||
-		path.includes("/benchmark-runs")
+		path.includes("/benchmark-runs") ||
+		(path.startsWith("/v1/benchmarks/") && path.endsWith("/runs"))
 	)
 		return "execute";
 	return "product_write";

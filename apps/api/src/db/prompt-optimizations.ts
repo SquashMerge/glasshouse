@@ -10,6 +10,10 @@ import {
 } from "../lib/optimization-dataset.js";
 import type { JsonObject, PromptMessage, PromptRole } from "./prompts.js";
 import { PromptRepositoryError } from "./prompts.js";
+import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
 
 export type OptimizationStatus =
 	| "queued"
@@ -378,6 +382,7 @@ export async function createOptimizationJob(
 		model_config: JsonObject;
 		budget: JsonObject;
 		actor: string;
+		authorization: ProjectAuthorization;
 	},
 ): Promise<OptimizationJob> {
 	if (!input.dataset.training_examples.length)
@@ -386,14 +391,14 @@ export async function createOptimizationJob(
 		throw fail("BAD_REQUEST", "validation examples must not be empty");
 	const datasetHash = hashOptimizationDataset(input.dataset);
 	return tx(pool, async (client) => {
-		const project = (
-			await rows(
+		if (
+			!(await lockActiveAuthorizedProject(
 				client,
-				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-				[input.project_id],
-			)
-		)[0];
-		if (!project) throw fail("NOT_FOUND", "Project is not available");
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw fail("NOT_FOUND", "Project is not available");
 		const source = (
 			await rows(
 				client,
@@ -637,17 +642,21 @@ export async function transitionOptimizationJob(
 
 export async function stopOptimizationJob(
 	pool: Pick<Pool, "connect">,
-	input: { project_id: string; id: string },
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ): Promise<OptimizationJob> {
 	return tx(pool, async (client) => {
-		const project = (
-			await rows(
+		if (
+			!(await lockActiveAuthorizedProject(
 				client,
-				"SELECT id FROM projects WHERE id=$1 AND status='active' FOR UPDATE",
-				[input.project_id],
-			)
-		)[0];
-		if (!project) throw fail("NOT_FOUND", "Project is not available");
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw fail("NOT_FOUND", "Project is not available");
 		const row = (
 			await rows(
 				client,
@@ -806,9 +815,22 @@ export async function publishOptimizationResult(
 
 export async function promoteOptimizationDraft(
 	pool: Pick<Pool, "connect">,
-	input: { project_id: string; id: string; actor: string },
+	input: {
+		project_id: string;
+		id: string;
+		actor: string;
+		authorization: ProjectAuthorization;
+	},
 ): Promise<OptimizationJob> {
 	return tx(pool, async (client) => {
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw fail("NOT_FOUND", "Project is not available");
 		const jobRow = (
 			await rows(
 				client,

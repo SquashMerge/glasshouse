@@ -67,9 +67,11 @@ Project User safeguard inherited from the compatibility manager record.
 6. **Archive and jobs:** authorized actors may read explicit archived-Project
    lifecycle/history detail, but archived Projects are excluded from ordinary
    selection and product-data reads. Archive blocks all new writes immediately.
-   Queued/in-flight jobs must recheck active Project scope before claim and
-   persistence, then cancel/fail safely with content-free lifecycle evidence;
-   restore does not revive old jobs automatically.
+   Queued/in-flight jobs must recheck active Project scope and the durable
+   requesting Actor's current execute authority before claim, provider calls,
+   persistence, tracing, completion, and restart recovery. Revoked, demoted,
+   and historical jobs without a durable requester are cancelled safely with
+   content-free lifecycle evidence; restore does not revive old jobs automatically.
 7. **Audit policy:** lifecycle and membership audit records are append-only,
 content-free PostgreSQL metadata. In strict mode they are visible to an Admin,
 User, or Read-only actor only for an active, explicitly granted Project; archived
@@ -135,7 +137,9 @@ normal selection, and blocks new product-data writes until explicit restore.
 Audit every supported API route, repository query, ClickHouse query, OTLP ingest
 path, SSE subscription, worker claim, and recovery path. Each must authorize an
 explicit Project target before use and bind both organization and Project in the
-underlying data operation. New durable application/telemetry writes require a
+underlying data operation. Transactional mutations recheck the trusted actor's
+current operation authorization while locking the active Project row, rather than
+relying on request admission alone. New durable application/telemetry writes require a
 valid Project ID. Legacy ClickHouse records without ownership remain unscoped
 and are excluded from Project reads, streams, and retention; ownership is never
 guessed.

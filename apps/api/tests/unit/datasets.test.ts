@@ -16,6 +16,11 @@ import {
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const DATASET = "22222222-2222-4222-8222-222222222222";
 const NOW = new Date("2026-07-27T22:00:00.000Z");
+const authorization = {
+	organization_id: "00000000-0000-4000-8000-000000000001",
+	actor_id: "44444444-4444-4444-8444-444444444444",
+	operation: "product_write" as const,
+};
 
 const datasetRow = {
 	id: DATASET,
@@ -132,6 +137,7 @@ describe("dataset repository", () => {
 			input: { question: "hello" },
 			source_trace_id: "a".repeat(32),
 			source_observation_id: "b".repeat(16),
+			authorization,
 		});
 		expect(result.source_trace_id).toBe("a".repeat(32));
 		expect(result.source_observation_id).toBe("b".repeat(16));
@@ -151,7 +157,7 @@ describe("dataset repository", () => {
 			return query(text, values);
 		};
 		await expect(
-			createDataset(db, { project_id: PROJECT, name: "golden" }),
+			createDataset(db, { project_id: PROJECT, name: "golden", authorization }),
 		).rejects.toMatchObject<DatasetRepositoryError>({
 			code: "CONFLICT",
 			status: 409,
@@ -192,6 +198,7 @@ describe("dataset repository", () => {
 				project_id: PROJECT,
 				dataset_id: DATASET,
 				item_id: itemId,
+				authorization,
 			}),
 		).resolves.toBeUndefined();
 		expect(feedback).toEqual({
@@ -210,11 +217,9 @@ describe("dataset repository", () => {
 		expect(removeItem).toBeGreaterThan(clearLink);
 	});
 
-	it("locks the active project before every dataset mutation", async () => {
+	it("locks and authorizes the active project before every dataset mutation", async () => {
 		for (const operation of [createDataset, addDatasetItem, deleteDatasetItem])
-			expect(operation.toString()).toContain(
-				"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			);
+			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
 	});
 
 	it("does not persist provenance copied from another project", async () => {

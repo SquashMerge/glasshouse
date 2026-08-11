@@ -1,7 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { PromptRepositoryError } from "../../src/db/prompts";
-import { TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
+import {
+	TRUSTED_ACTOR_CONTEXT_KEY,
+	TRUSTED_TENANT_CONTEXT_KEY,
+} from "../../src/middleware/auth";
 import {
 	createOptimizationHandlers,
 	getOptimization,
@@ -387,6 +390,11 @@ describe("prompt optimization status routes", () => {
 			});
 			api.use("*", async (c, next) => {
 				c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+				c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+					actor: "test-user",
+					actorId: "33333333-3333-4333-8333-333333333333",
+					organizationId: "44444444-4444-4444-8444-444444444444",
+				});
 				await next();
 			});
 			api.openapi(startOptimization, handlers.handleStart);

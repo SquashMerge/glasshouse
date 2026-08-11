@@ -4,6 +4,7 @@ import { pgPool } from "../db/postgres.js";
 import { ch } from "../db/clickhouse.js";
 import { logger } from "../lib/logger.js";
 import { trustedTenant } from "../tenancy.js";
+import { projectAuthorization } from "../db/project-authorization.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
 	createDataset as createDatasetRecord,
@@ -205,10 +206,13 @@ export function createDatasetRouteHandlers(
 		) => {
 			try {
 				return c.json(
-					await dependencies.createDataset(
-						dependencies.pool(),
-						c.req.valid("json"),
-					),
+					await dependencies.createDataset(dependencies.pool(), {
+						...c.req.valid("json"),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
+					}),
 					201,
 				);
 			} catch (cause) {
@@ -270,6 +274,10 @@ export function createDatasetRouteHandlers(
 					await dependencies.addDatasetItem(dependencies.pool(), {
 						dataset_id: c.req.valid("param").id,
 						...body,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
 					}),
 					201,
 				);
@@ -285,6 +293,10 @@ export function createDatasetRouteHandlers(
 					dataset_id: c.req.valid("param").id,
 					item_id: c.req.valid("param").itemId,
 					project_id: c.req.valid("query").project_id,
+					authorization: projectAuthorization(
+						trustedTenant(c),
+						"product_write",
+					),
 				});
 				return c.body(null, 204);
 			} catch (cause) {

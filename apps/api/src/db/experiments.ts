@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
 
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
+type Transactional = Pick<Pool, "connect">;
 type Row = Record<string, unknown>;
 export type ExperimentStatus =
 	| "pending"
@@ -109,48 +114,89 @@ function result(row: Row) {
 	};
 }
 
+async function withTransaction<T>(
+	db: Transactional,
+	callback: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		const value = await callback(client);
+		await client.query("COMMIT");
+		return value;
+	} catch (cause) {
+		await client.query("ROLLBACK").catch(() => {});
+		throw cause;
+	} finally {
+		client.release();
+	}
+}
+
+async function lockExperimentExecution(
+	client: PoolClient,
+	input: { project_id: string; id: string },
+): Promise<{ row: Row; authorized: boolean } | null> {
+	const r = await client.query(
+		"SELECT e.*, e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') AS authorized FROM experiments e JOIN projects p ON p.id = e.project_id WHERE e.id = $1 AND e.project_id = $2 AND p.status = 'active' FOR UPDATE OF e, p",
+		[input.id, input.project_id],
+	);
+	const row = r.rows[0] as Row | undefined;
+	return row ? { row, authorized: row.authorized === true } : null;
+}
+
+async function cancelRevokedExperiment(client: PoolClient, id: string) {
+	await client.query(
+		"UPDATE experiment_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL, updated_at=now() WHERE experiment_id=$1 AND status IN ('pending','running')",
+		[id],
+	);
+	return client.query(
+		"UPDATE experiments SET status='cancelled', updated_at=now() WHERE id=$1 AND status IN ('pending','running') RETURNING *",
+		[id],
+	);
+}
+
 export async function createExperiment(
-	db: Pick<Pool, "connect">,
+	db: Transactional,
 	input: {
 		project_id: string;
 		dataset_id: string;
 		name?: string | null;
 		config: JsonObject;
 		agent_id?: string | null;
+		authorization: ProjectAuthorization;
 	},
 ) {
-	const client = await db.connect();
 	try {
-		await client.query("BEGIN");
-		const active = await client.query(
-			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			[input.project_id],
-		);
-		if (!active.rows[0])
-			throw new ExperimentRepositoryError(
-				"NOT_FOUND",
-				"Project is not available",
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			const r = await client.query(
+				`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status, requested_by_actor_id) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending',$7 WHERE ($3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2)) AND EXISTS (SELECT 1 FROM datasets WHERE id=$4 AND project_id=$2) RETURNING *`,
+				[
+					randomUUID(),
+					input.project_id,
+					input.agent_id ?? null,
+					input.dataset_id,
+					input.name ?? null,
+					JSON.stringify(input.config),
+					input.authorization.actor_id,
+				],
 			);
-		const r = await client.query(
-			`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending' WHERE $3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2) RETURNING *`,
-			[
-				randomUUID(),
-				input.project_id,
-				input.agent_id ?? null,
-				input.dataset_id,
-				input.name ?? null,
-				JSON.stringify(input.config),
-			],
-		);
-		if (!r.rows[0])
-			throw new ExperimentRepositoryError("NOT_FOUND", "Agent not found");
-		await client.query("COMMIT");
-		return experiment(r.rows[0]);
+			if (!r.rows[0])
+				throw new ExperimentRepositoryError("NOT_FOUND", "Agent not found");
+			return experiment(r.rows[0]);
+		});
 	} catch (cause) {
-		await client.query("ROLLBACK");
 		throw normalize(cause);
-	} finally {
-		client.release();
 	}
 }
 export async function listExperiments(db: Queryable, project_id: string) {
@@ -184,7 +230,7 @@ export async function getExperiment(
 	}
 }
 export async function updateExperiment(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		project_id: string;
 		id: string;
@@ -194,44 +240,63 @@ export async function updateExperiment(
 	},
 ) {
 	try {
-		const expected = input.if_status
-			? Array.isArray(input.if_status)
-				? input.if_status
-				: [input.if_status]
-			: null;
-		const r = await db.query(
-			`UPDATE experiments e SET status=$1, updated_at=now() FROM projects p WHERE e.id=$2 AND e.project_id=$3 AND p.id=e.project_id AND p.status = 'active'${expected ? " AND e.status = ANY($4::text[])" : ""} RETURNING e.*`,
-			expected
-				? [input.status, input.id, input.project_id, expected]
-				: [input.status, input.id, input.project_id],
-		);
-		if (r.rows[0]) return experiment(r.rows[0]);
-		// A conditional transition that lost a race returns the persisted state. This
-		// keeps cancellation terminal rather than turning a concurrent cancel into a
-		// spurious NOT_FOUND or resurrecting the evaluation.
-		if (expected) return getExperiment(db, input);
-		throw new ExperimentRepositoryError("NOT_FOUND", "Experiment not found");
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, input);
+			if (!access)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			if (!access.authorized) {
+				const cancelled = await cancelRevokedExperiment(client, input.id);
+				return experiment(cancelled.rows[0] ?? access.row);
+			}
+			const expected = input.if_status
+				? Array.isArray(input.if_status)
+					? input.if_status
+					: [input.if_status]
+				: null;
+			if (expected && !expected.includes(access.row.status as ExperimentStatus))
+				return experiment(access.row);
+			const r = await client.query(
+				"UPDATE experiments SET status=$1, updated_at=now() WHERE id=$2 RETURNING *",
+				[input.status, input.id],
+			);
+			if (!r.rows[0])
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			return experiment(r.rows[0]);
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
-export async function listRecoverableExperiments(db: Queryable) {
+export async function listRecoverableExperiments(db: Transactional) {
 	try {
-		const result = await db.query(
-			"SELECT e.id, e.project_id, e.dataset_id, e.config FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.status IN ('pending', 'running') AND p.status = 'active' ORDER BY e.created_at ASC",
-		);
-		return result.rows.map((row) => ({
-			id: text(row, "id"),
-			project_id: text(row, "project_id"),
-			dataset_id: text(row, "dataset_id"),
-			config: json(row, "config"),
-		}));
+		return await withTransaction(db, async (client) => {
+			const unsafe = await client.query(
+				"SELECT e.id FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.status IN ('pending','running') AND (e.requested_by_actor_id IS NULL OR NOT authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute')) FOR UPDATE OF e, p",
+			);
+			for (const row of unsafe.rows)
+				await cancelRevokedExperiment(client, text(row, "id"));
+			const result = await client.query(
+				"SELECT e.id, e.project_id, e.dataset_id, e.config FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.status IN ('pending', 'running') AND p.status = 'active' AND e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') ORDER BY e.created_at ASC FOR UPDATE OF e, p",
+			);
+			return result.rows.map((row) => ({
+				id: text(row, "id"),
+				project_id: text(row, "project_id"),
+				dataset_id: text(row, "dataset_id"),
+				config: json(row, "config"),
+			}));
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function claimExperimentTask(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		project_id: string;
 		experiment_id: string;
@@ -240,49 +305,48 @@ export async function claimExperimentTask(
 	},
 ): Promise<ClaimedExperimentTask | null> {
 	try {
-		const lease_token = input.lease_token ?? randomUUID();
-		const r = await db.query(
-			`WITH candidate AS (
-				SELECT t.id
-				FROM experiment_tasks t
-				JOIN experiments e ON e.id = t.experiment_id
-				JOIN projects p ON p.id = e.project_id
-				WHERE t.experiment_id = $1
-					AND e.project_id = $2
-					AND e.status = 'running'
-					AND p.status = 'active'
-					AND (t.status = 'pending' OR (t.status = 'running' AND t.lease_expires_at <= now()))
-				ORDER BY t.created_at ASC
-				FOR UPDATE OF t SKIP LOCKED
-				LIMIT 1
-			), claimed AS (
-				UPDATE experiment_tasks t
-				SET status = 'running', lease_token = $3::uuid,
-					lease_expires_at = now() + ($4::integer * interval '1 second'),
-					claimed_at = coalesce(t.claimed_at, now()), attempt_count = t.attempt_count + 1,
-					updated_at = now()
-				FROM candidate c WHERE t.id = c.id
-				RETURNING t.id, t.dataset_item_id, t.lease_token
-			)
-			SELECT c.id AS task_id, c.dataset_item_id, c.lease_token, i.input, i.expected_output
-			FROM claimed c JOIN dataset_items i ON i.id = c.dataset_item_id`,
-			[
-				input.experiment_id,
-				input.project_id,
-				lease_token,
-				input.lease_seconds ?? 60,
-			],
-		);
-		const row = r.rows[0];
-		return row
-			? {
-					id: text(row, "task_id"),
-					dataset_item_id: text(row, "dataset_item_id"),
-					lease_token: text(row, "lease_token"),
-					input: json(row, "input"),
-					expected_output: row.expected_output,
-				}
-			: null;
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, {
+				id: input.experiment_id,
+				project_id: input.project_id,
+			});
+			if (!access) return null;
+			if (!access.authorized) {
+				await cancelRevokedExperiment(client, input.experiment_id);
+				return null;
+			}
+			if (access.row.status !== "running") return null;
+			const candidate = await client.query(
+				"SELECT t.id, t.dataset_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
+				[input.experiment_id],
+			);
+			const task = candidate.rows[0] as Row | undefined;
+			if (!task) return null;
+			const leaseToken = input.lease_token ?? randomUUID();
+			const claimed = await client.query(
+				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 RETURNING id, dataset_item_id, lease_token",
+				[text(task, "id"), leaseToken, input.lease_seconds ?? 60],
+			);
+			const claimedTask = claimed.rows[0] as Row | undefined;
+			if (!claimedTask) return null;
+			const item = await client.query(
+				"SELECT input, expected_output FROM dataset_items WHERE id=$1",
+				[text(claimedTask, "dataset_item_id")],
+			);
+			const datasetItem = item.rows[0] as Row | undefined;
+			if (!datasetItem)
+				throw new ExperimentRepositoryError(
+					"INTERNAL",
+					"Dataset item not found",
+				);
+			return {
+				id: text(claimedTask, "id"),
+				dataset_item_id: text(claimedTask, "dataset_item_id"),
+				lease_token: text(claimedTask, "lease_token"),
+				input: json(datasetItem, "input"),
+				expected_output: datasetItem.expected_output,
+			};
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
@@ -296,6 +360,7 @@ export async function nextExperimentTaskRetryDelay(
 			`SELECT ceil(extract(epoch FROM min(t.lease_expires_at) - now()) * 1000)::int AS delay_ms
 			FROM experiment_tasks t JOIN experiments e ON e.id = t.experiment_id JOIN projects p ON p.id=e.project_id
 			WHERE t.experiment_id = $1 AND e.project_id = $2 AND e.status = 'running' AND p.status = 'active'
+				AND e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute')
 				AND t.status = 'running' AND t.lease_expires_at > now()`,
 			[input.experiment_id, input.project_id],
 		);
@@ -306,7 +371,7 @@ export async function nextExperimentTaskRetryDelay(
 	}
 }
 export async function finalizeExperimentTask(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		project_id: string;
 		experiment_id: string;
@@ -320,99 +385,107 @@ export async function finalizeExperimentTask(
 	},
 ): Promise<boolean> {
 	try {
-		const r = await db.query(
-			`WITH finalized_task AS (
-				UPDATE experiment_tasks t
-				SET status = $5, lease_token = NULL, lease_expires_at = NULL,
-					completed_at = now(), updated_at = now()
-			FROM experiments e
-			JOIN projects p ON p.id = e.project_id
-				WHERE t.id = $1 AND t.experiment_id = $2 AND e.id = t.experiment_id
-					AND e.project_id = $3 AND t.lease_token = $4::uuid
-					AND t.status = 'running' AND e.status = 'running' AND p.status = 'active'
-				RETURNING t.experiment_id, t.dataset_item_id
-			), inserted_result AS (
-				INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status)
-				SELECT gen_random_uuid(), experiment_id, dataset_item_id, $6, $7::jsonb, $8::jsonb, $9, $5
-				FROM finalized_task
-				ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING
-				RETURNING id
-			)
-			SELECT EXISTS (SELECT 1 FROM finalized_task) AS finalized`,
-			[
-				input.task_id,
-				input.experiment_id,
-				input.project_id,
-				input.lease_token,
-				input.status,
-				input.agent_version ?? null,
-				input.output == null ? null : JSON.stringify(input.output),
-				JSON.stringify(input.scores),
-				input.duration_ms ?? null,
-			],
-		);
-		return r.rows[0]?.finalized === true;
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, {
+				id: input.experiment_id,
+				project_id: input.project_id,
+			});
+			if (!access) return false;
+			if (!access.authorized) {
+				await cancelRevokedExperiment(client, input.experiment_id);
+				return false;
+			}
+			if (access.row.status !== "running") return false;
+			const finalized = await client.query(
+				"UPDATE experiment_tasks SET status=$4, lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id",
+				[input.task_id, input.experiment_id, input.lease_token, input.status],
+			);
+			const task = finalized.rows[0] as Row | undefined;
+			if (!task) return false;
+			await client.query(
+				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),$1,$2,$3,$4::jsonb,$5::jsonb,$6,$7) ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
+				[
+					text(task, "experiment_id"),
+					text(task, "dataset_item_id"),
+					input.agent_version ?? null,
+					input.output == null ? null : JSON.stringify(input.output),
+					JSON.stringify(input.scores),
+					input.duration_ms ?? null,
+					input.status,
+				],
+			);
+			return true;
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function completeExperimentIfTasksFinished(
-	db: Queryable,
+	db: Transactional,
 	input: { project_id: string; id: string },
 ): Promise<boolean> {
 	try {
-		const r = await db.query(
-			`UPDATE experiments e SET status='completed', updated_at=now()
-			FROM projects p WHERE e.id=$1 AND e.project_id=$2 AND p.id=e.project_id AND p.status = 'active' AND e.status='running'
-				AND NOT EXISTS (
-					SELECT 1 FROM experiment_tasks t
-					WHERE t.experiment_id=e.id AND t.status IN ('pending', 'running')
-				)
-			RETURNING e.id`,
-			[input.id, input.project_id],
-		);
-		return Boolean(r.rows[0]);
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, input);
+			if (!access) return false;
+			if (!access.authorized) {
+				await cancelRevokedExperiment(client, input.id);
+				return false;
+			}
+			const r = await client.query(
+				"UPDATE experiments e SET status='completed', updated_at=now() WHERE e.id=$1 AND e.status='running' AND NOT EXISTS (SELECT 1 FROM experiment_tasks t WHERE t.experiment_id=e.id AND t.status IN ('pending','running')) RETURNING e.id",
+				[input.id],
+			);
+			return Boolean(r.rows[0]);
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function cancelExperiment(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		const r = await db.query(
-			`WITH active_project AS MATERIALIZED (
-				SELECT id FROM projects WHERE id=$2 AND status='active' FOR UPDATE
-			), cancelled AS (
-				UPDATE experiments SET status='cancelled', updated_at=now()
-				WHERE id=$1 AND project_id=$2 AND status IN ('pending','running')
-					AND EXISTS (SELECT 1 FROM active_project)
-				RETURNING *
-			), cancelled_tasks AS (
-				UPDATE experiment_tasks t SET status='cancelled', lease_token=NULL,
-					lease_expires_at=NULL, updated_at=now()
-				FROM cancelled e
-				WHERE t.experiment_id=e.id AND t.status IN ('pending','running')
-				RETURNING t.id
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
 			)
-			SELECT * FROM cancelled`,
-			[input.id, input.project_id],
-		);
-		if (!r.rows[0]) {
-			const existing = await getExperiment(db, input);
-			throw new ExperimentRepositoryError(
-				"CONFLICT",
-				`Evaluation is already ${existing.status}`,
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			const r = await client.query(
+				"UPDATE experiments SET status='cancelled', updated_at=now() WHERE id=$1 AND project_id=$2 AND status IN ('pending','running') RETURNING *",
+				[input.id, input.project_id],
 			);
-		}
-		return experiment(r.rows[0]);
+			if (!r.rows[0]) {
+				const existing = await getExperiment(client, input);
+				throw new ExperimentRepositoryError(
+					"CONFLICT",
+					`Evaluation is already ${existing.status}`,
+				);
+			}
+			await client.query(
+				"UPDATE experiment_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL, updated_at=now() WHERE experiment_id=$1 AND status IN ('pending','running')",
+				[input.id],
+			);
+			return experiment(r.rows[0]);
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function insertExperimentResult(
-	db: Queryable,
+	db: Transactional,
 	input: {
 		experiment_id: string;
 		dataset_item_id: string;
@@ -424,20 +497,46 @@ export async function insertExperimentResult(
 	},
 ) {
 	try {
+		return await withTransaction(db, async (client) => {
+			const access = await client.query(
+				"SELECT e.id, e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') AS authorized FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1 AND p.status='active' FOR UPDATE OF e, p",
+				[input.experiment_id],
+			);
+			if (!access.rows[0]?.authorized)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment is not available",
+				);
+			const r = await client.query(
+				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) RETURNING *",
+				[
+					randomUUID(),
+					input.experiment_id,
+					input.dataset_item_id,
+					input.agent_version ?? null,
+					input.output == null ? null : JSON.stringify(input.output),
+					JSON.stringify(input.scores),
+					input.duration_ms ?? null,
+					input.status,
+				],
+			);
+			return result(r.rows[0]!);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function isExperimentExecutionAuthorized(
+	db: Pick<Pool, "query">,
+	input: { project_id: string; id: string },
+): Promise<boolean> {
+	try {
 		const r = await db.query(
-			`INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) RETURNING *`,
-			[
-				randomUUID(),
-				input.experiment_id,
-				input.dataset_item_id,
-				input.agent_version ?? null,
-				input.output == null ? null : JSON.stringify(input.output),
-				JSON.stringify(input.scores),
-				input.duration_ms ?? null,
-				input.status,
-			],
+			"SELECT e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') AS authorized FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1 AND e.project_id=$2 AND e.status='running' AND p.status='active'",
+			[input.id, input.project_id],
 		);
-		return result(r.rows[0]!);
+		return r.rows[0]?.authorized === true;
 	} catch (cause) {
 		throw normalize(cause);
 	}

@@ -91,6 +91,11 @@ const JOB = "22222222-2222-4222-8222-222222222222";
 const WORKER = "11111111-1111-4111-8111-111111111111";
 const PROMPT = "33333333-3333-4333-8333-333333333333";
 const CREATED = "2026-07-15T10:00:00.000Z";
+const authorization = {
+	organization_id: "44444444-4444-4444-8444-444444444444",
+	actor_id: "55555555-5555-4555-8555-555555555555",
+	operation: "execute" as const,
+};
 
 function optimizationDataset() {
 	return {
@@ -528,6 +533,7 @@ describe("prompt optimization repository", () => {
 			model_config: { task_lm: "task", reflection_lm: "reflection" },
 			budget: { max_metric_calls: 1 },
 			actor: "admin",
+			authorization,
 		});
 
 		expect(result.id).toBe(JOB);
@@ -602,6 +608,7 @@ describe("prompt optimization repository", () => {
 		});
 		const pool = new MockPool([
 			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
 			{ rows: [draft] },
 			{
 				rows: [
@@ -636,11 +643,12 @@ describe("prompt optimization repository", () => {
 			project_id: PROJECT,
 			id: JOB,
 			actor: "reviewer",
+			authorization: { ...authorization, operation: "governed" },
 		});
 
 		expect(result.result_version).toBe(4);
 		expect(result.promotion_status).toBe("reviewed_promoted");
-		expect(pool.client.calls[3]?.values[7]).toBe("reviewer");
+		expect(pool.client.calls[4]?.values[7]).toBe("reviewer");
 	});
 
 	it("does not turn a completed optimization into stopped when stop races completion", async () => {
@@ -656,11 +664,14 @@ describe("prompt optimization repository", () => {
 			stopOptimizationJob(transactionPool(pool), {
 				project_id: PROJECT,
 				id: JOB,
+				authorization,
 			}),
 		).rejects.toMatchObject({
 			code: "CONFLICT",
 		} satisfies Partial<PromptRepositoryError>);
-		expect(pool.client.calls[1]?.text).toContain("status='active' FOR UPDATE");
+		expect(pool.client.calls[1]?.text).toContain(
+			"authorization_allows_project",
+		);
 		expect(pool.client.calls.map((call) => call.text)).not.toContain(
 			expect.stringContaining("INSERT INTO prompt_optimization_events"),
 		);
@@ -669,6 +680,7 @@ describe("prompt optimization repository", () => {
 	it("refuses to promote a legacy user-target optimization draft", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
 			{
 				rows: [
 					job({
@@ -689,11 +701,12 @@ describe("prompt optimization repository", () => {
 				project_id: PROJECT,
 				id: JOB,
 				actor: "reviewer",
+				authorization: { ...authorization, operation: "governed" },
 			}),
 		).rejects.toMatchObject({
 			code: "CONFLICT",
 		} satisfies Partial<PromptRepositoryError>);
-		expect(pool.client.calls).toHaveLength(3);
+		expect(pool.client.calls).toHaveLength(4);
 	});
 
 	it("does not fail archived jobs during restart recovery", async () => {

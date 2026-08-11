@@ -75,6 +75,11 @@ const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 const CREATED_AT = "2026-07-15T10:00:00.000Z";
 const HASH = "a".repeat(64);
+const authorization = {
+	organization_id: "33333333-3333-4333-8333-333333333333",
+	actor_id: "44444444-4444-4444-8444-444444444444",
+	operation: "product_write" as const,
+};
 
 const versionRow = {
 	slug: "support-agent",
@@ -200,6 +205,7 @@ describe("prompt repository", () => {
 					{ role: "system", content: "x".repeat(MAX_PROMPT_SOURCE_CHARS + 1) },
 				],
 				actor: "trusted-admin",
+				authorization,
 			}),
 			"BAD_REQUEST",
 		);
@@ -254,6 +260,7 @@ describe("prompt repository", () => {
 				{ role: "user", content: "How can I help {{customer}}?" },
 			],
 			actor: "trusted-admin",
+			authorization,
 		});
 
 		expect(result).toEqual({
@@ -290,9 +297,7 @@ describe("prompt repository", () => {
 		]);
 		expect(pool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
-			expect.stringContaining(
-				"FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			),
+			expect.stringContaining("authorization_allows_project"),
 			expect.stringContaining("pg_advisory_xact_lock"),
 			expect.stringContaining("prompt_tombstones"),
 			expect.stringContaining("FROM prompts"),
@@ -348,6 +353,7 @@ describe("prompt repository", () => {
 			name: "Support Agent",
 			messages: [{ role: "system", content: "source" }],
 			actor: "trusted-admin",
+			authorization,
 		});
 
 		expect(result.id).toBe("support-agent-3");
@@ -400,6 +406,7 @@ describe("prompt repository", () => {
 			name: longName,
 			messages: [{ role: "system", content: "source" }],
 			actor: "trusted-admin",
+			authorization,
 		});
 		expect(longResult.id).toBe(`${"a".repeat(62)}-2`);
 		expect(longResult.id).toHaveLength(64);
@@ -423,14 +430,13 @@ describe("prompt repository", () => {
 				name: "Support Agent",
 				messages: [{ role: "system", content: "source" }],
 				actor: "trusted-admin",
+				authorization,
 			}),
 			"CONFLICT",
 		);
 		expect(pool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
-			expect.stringContaining(
-				"FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			),
+			expect.stringContaining("authorization_allows_project"),
 			expect.stringContaining("pg_advisory_xact_lock"),
 			expect.stringContaining("prompt_tombstones"),
 			"ROLLBACK",
@@ -473,6 +479,7 @@ describe("prompt repository", () => {
 				messages: [{ role: "user", content: "new source" }],
 				change_summary: "Add detail",
 				actor: "trusted-admin",
+				authorization,
 			},
 		);
 
@@ -506,14 +513,13 @@ describe("prompt repository", () => {
 				settings: {},
 				change_summary: "Reset model and settings",
 				actor: "trusted-admin",
+				authorization,
 			}),
 			"CONFLICT",
 		);
 		expect(stalePool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
-			expect.stringContaining(
-				"FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			),
+			expect.stringContaining("authorization_allows_project"),
 			expect.stringContaining("FROM prompts"),
 			expect.stringContaining("prompt_optimization_jobs"),
 			expect.stringContaining("FROM prompt_versions"),
@@ -558,6 +564,7 @@ describe("prompt repository", () => {
 				settings: {},
 				change_summary: "Clear model and settings",
 				actor: "trusted-admin",
+				authorization,
 			},
 		);
 		expect(cleared.model).toBeNull();
@@ -577,6 +584,7 @@ describe("prompt repository", () => {
 				settings: null as never,
 				change_summary: "Reject null settings",
 				actor: "trusted-admin",
+				authorization,
 			}),
 			"BAD_REQUEST",
 		);
@@ -784,6 +792,7 @@ describe("prompt repository", () => {
 				slug: "support-agent",
 				confirmation: "support-agent@2",
 				actor: "trusted-admin",
+				authorization,
 			}),
 			"BAD_REQUEST",
 		);
@@ -811,6 +820,7 @@ describe("prompt repository", () => {
 			slug: "support-agent",
 			confirmation: "support-agent",
 			actor: "trusted-admin",
+			authorization,
 		});
 
 		expect(pool.client.calls[2]?.text).toContain("pg_advisory_xact_lock");
@@ -891,6 +901,7 @@ describe("prompt repository", () => {
 			await rollbackLatestPromptVersion(transactionPool(pool), {
 				project_id: PROJECT,
 				slug: "support-agent",
+				authorization,
 			}),
 		).toMatchObject({ id: "support-agent", version: 1, project_id: PROJECT });
 		expect(pool.client.calls[2]?.text).toContain("FOR UPDATE OF p, v");
@@ -927,6 +938,7 @@ describe("prompt repository", () => {
 			rollbackLatestPromptVersion(transactionPool(firstVersionPool), {
 				project_id: PROJECT,
 				slug: "support-agent",
+				authorization,
 			}),
 			"CONFLICT",
 		);
@@ -962,6 +974,7 @@ describe("prompt repository", () => {
 			rollbackLatestPromptVersion(transactionPool(activePool), {
 				project_id: PROJECT,
 				slug: "support-agent",
+				authorization,
 			}),
 			"CONFLICT",
 		);
@@ -979,6 +992,7 @@ describe("prompt repository", () => {
 			rollbackLatestPromptVersion(transactionPool(isolatedPool), {
 				project_id: OTHER_PROJECT,
 				slug: "support-agent",
+				authorization: { ...authorization, organization_id: OTHER_PROJECT },
 			}),
 			"NOT_FOUND",
 		);
@@ -1001,6 +1015,7 @@ describe("prompt repository", () => {
 				slug: "support-agent",
 				confirmation: "support-agent",
 				actor: "trusted-admin",
+				authorization,
 			}),
 			"CONFLICT",
 		);
