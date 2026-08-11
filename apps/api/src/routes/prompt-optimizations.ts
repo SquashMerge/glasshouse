@@ -10,6 +10,7 @@ import {
 	claimOptimizationExecution,
 	completeOptimizationResult,
 	createOptimizationJob,
+	failUnknownOptimizationProviderDispatch,
 	getActiveOptimizationJob,
 	getLatestOptimizationJob,
 	getOptimizationJob,
@@ -28,6 +29,7 @@ import {
 import {
 	cancelExecutionAdmission,
 	completeExecutionAdmission,
+	providerDispatchKey,
 } from "../db/execution-admissions.js";
 import { PromptRepositoryError, type JsonObject } from "../db/prompts.js";
 import {
@@ -428,6 +430,7 @@ export type OptimizationDependencies = {
 	claim: typeof claimOptimizationJob;
 	admitExecution: typeof admitOptimizationExecution;
 	cancelExecution: typeof cancelOptimizationExecution;
+	failUnknownDispatch: typeof failUnknownOptimizationProviderDispatch;
 	isAdmissionActive: typeof optimizationExecutionAdmissionIsActive;
 	cancelAdmission: typeof cancelExecutionAdmission;
 	completeAdmission: typeof completeExecutionAdmission;
@@ -856,6 +859,7 @@ const production: OptimizationDependencies = {
 	claim: claimOptimizationJob,
 	admitExecution: admitOptimizationExecution,
 	cancelExecution: cancelOptimizationExecution,
+	failUnknownDispatch: failUnknownOptimizationProviderDispatch,
 	isAdmissionActive: optimizationExecutionAdmissionIsActive,
 	cancelAdmission: cancelExecutionAdmission,
 	completeAdmission: completeExecutionAdmission,
@@ -1028,6 +1032,7 @@ export async function runOptimizationJob(
 		});
 		if (!admission) return;
 		admissionId = admission.id;
+		const dispatchKey = providerDispatchKey("optimization", job.id);
 		const provider = await invokeWithExecutionAdmission({
 			parentSignal: controller.signal,
 			isActive: () =>
@@ -1042,7 +1047,7 @@ export async function runOptimizationJob(
 					worker_id: workerId,
 					admission_id: admission.id,
 					effect: "provider_dispatch",
-					effect_key: "provider",
+					effect_key: dispatchKey,
 				}),
 			cancel: () => d.cancelAdmission(d.pool(), admission.id),
 			invoke: (signal) =>
@@ -1054,6 +1059,7 @@ export async function runOptimizationJob(
 						dataset,
 						model_config: job.model_config,
 						budget: job.budget,
+						provider_dispatch_key: dispatchKey,
 					},
 					signal,
 					({ metric_calls_used }) => {
@@ -1065,6 +1071,17 @@ export async function runOptimizationJob(
 				),
 		});
 		if (!provider.admitted) {
+			if (provider.reason === "existing") {
+				await d.failUnknownDispatch(d.pool(), {
+					id: job.id,
+					worker_id: workerId,
+				});
+				logger.warn("optimization.provider_dispatch_unknown", {
+					job_id: job.id,
+					project_id: job.project_id,
+				});
+				return;
+			}
 			await d
 				.cancelExecution(d.pool(), {
 					id: job.id,

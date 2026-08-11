@@ -8,6 +8,7 @@ import {
 import {
 	createExecutionAdmission,
 	claimExecutionAdmission,
+	executionOperationKey,
 	executionAdmissionIsActive,
 	type ExecutionAdmissionClaim,
 	type ExecutionAdmissionEffect,
@@ -469,7 +470,7 @@ export async function finalizeExperimentTask(
 						id: input.admission_id,
 						project_id: access.project_id,
 						effect: "result_write",
-						effect_key: `result:${input.task_id}`,
+						effect_key: executionOperationKey("result_write", 1),
 					})
 				).status !== "created"
 			) {
@@ -493,6 +494,42 @@ export async function finalizeExperimentTask(
 					input.duration_ms ?? null,
 					input.status,
 				],
+			);
+			return true;
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function reconcileUnknownExperimentTaskProviderDispatch(
+	db: Transactional,
+	input: {
+		project_id: string;
+		experiment_id: string;
+		task_id: string;
+		lease_token: string;
+	},
+): Promise<boolean> {
+	try {
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, {
+				id: input.experiment_id,
+				project_id: input.project_id,
+			});
+			if (!access?.authorized) {
+				if (access) await cancelRevokedExperiment(client, input.experiment_id);
+				return false;
+			}
+			const failed = await client.query(
+				"UPDATE experiment_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id",
+				[input.task_id, input.experiment_id, input.lease_token],
+			);
+			const task = failed.rows[0] as Row | undefined;
+			if (!task) return false;
+			await client.query(
+				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, output, scores, status) VALUES (gen_random_uuid(), $1, $2, NULL, '{}'::jsonb, 'failed') ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
+				[text(task, "experiment_id"), text(task, "dataset_item_id")],
 			);
 			return true;
 		});

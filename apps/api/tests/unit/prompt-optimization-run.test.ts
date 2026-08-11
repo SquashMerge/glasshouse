@@ -70,6 +70,7 @@ function dependencies(input: {
 	const published: Array<Record<string, unknown>> = [];
 	const metricCalls: Array<Record<string, unknown>> = [];
 	const workerCalls: Array<Record<string, unknown>> = [];
+	const unknownDispatches: Array<Record<string, unknown>> = [];
 	const d = {
 		pool: () => ({}),
 		worker: async (workerInput: Record<string, unknown>) => {
@@ -97,6 +98,12 @@ function dependencies(input: {
 		cancelAdmission: async () => {},
 		completeAdmission: async () => {},
 		cancelExecution: async () => {},
+		failUnknownDispatch: async (
+			_pool: unknown,
+			unknownDispatch: Record<string, unknown>,
+		) => {
+			unknownDispatches.push(unknownDispatch);
+		},
 		renew: async () => true,
 		sourceMessages: async () => [
 			{ role: "system" as const, content: "Summarize {{tasks}}" },
@@ -120,7 +127,14 @@ function dependencies(input: {
 		},
 		promote: async () => job(),
 	} as unknown as OptimizationDependencies;
-	return { d, completed, published, metricCalls, workerCalls };
+	return {
+		d,
+		completed,
+		published,
+		metricCalls,
+		workerCalls,
+		unknownDispatches,
+	};
 }
 
 describe("optimization completion policy", () => {
@@ -161,6 +175,30 @@ describe("optimization completion policy", () => {
 		expect(input.workerCalls).toHaveLength(0);
 		expect(input.completed).toHaveLength(0);
 		expect(input.published).toHaveLength(0);
+	});
+
+	it("terminalizes an optimization when its durable provider outcome is unknown", async () => {
+		const input = dependencies({
+			result: {
+				candidate: "Summarize {{tasks}} by urgency and timing.",
+				training_score: 1,
+				validation_score: 1,
+				baseline_validation_score: 0,
+				metric_calls_used: 3,
+			},
+		});
+		(
+			input.d as unknown as {
+				claimExecution: () => Promise<{ status: "existing" }>;
+			}
+		).claimExecution = async () => ({ status: "existing" });
+
+		await runOptimizationJob(job(), input.d);
+
+		expect(input.workerCalls).toHaveLength(0);
+		expect(input.unknownDispatches).toEqual([
+			{ id: JOB, worker_id: expect.any(String) },
+		]);
 	});
 
 	it("keeps a one-sample held-out result as a review-required draft", async () => {

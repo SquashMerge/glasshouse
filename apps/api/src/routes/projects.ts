@@ -262,6 +262,9 @@ const deletionStatus = (job: DeletionJob) => ({
 	attempt_count: job.attempt_count,
 });
 const deletionCleanupSql = [
+	"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+	"DELETE FROM execution_effects WHERE project_id = $1",
+	"DELETE FROM execution_admissions WHERE project_id = $1",
 	"DELETE FROM prompt_optimization_events WHERE job_id IN (SELECT id FROM prompt_optimization_jobs WHERE project_id = $1)",
 	"DELETE FROM prompt_optimization_jobs WHERE project_id = $1",
 	"DELETE FROM prompt_tombstones WHERE project_id = $1",

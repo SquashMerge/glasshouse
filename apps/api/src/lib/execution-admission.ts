@@ -35,17 +35,23 @@ export async function invokeWithExecutionAdmission<T>(input: {
 	invoke: (signal: AbortSignal) => Promise<T>;
 	timeoutMs?: number;
 	pollMs?: number;
-}): Promise<{ admitted: true; value: T } | { admitted: false }> {
+}): Promise<
+	| { admitted: true; value: T }
+	| { admitted: false; reason: "unavailable" | "existing" }
+> {
 	if (input.parentSignal?.aborted || !(await input.isActive())) {
 		await input.cancel();
-		return { admitted: false };
+		return { admitted: false, reason: "unavailable" };
 	}
 	// This commit is the remote-dispatch linearization point. It is deliberately
 	// separate from validation so a concurrent revocation can win before invoke.
 	const dispatchClaim = await input.claimDispatch();
 	if (input.parentSignal?.aborted || dispatchClaim.status !== "created") {
 		await input.cancel();
-		return { admitted: false };
+		return {
+			admitted: false,
+			reason: dispatchClaim.status === "existing" ? "existing" : "unavailable",
+		};
 	}
 	const controller = new AbortController();
 	let abort: () => void = () => {};
@@ -83,7 +89,7 @@ export async function invokeWithExecutionAdmission<T>(input: {
 		]);
 		if (result.kind === "aborted" || !(await input.isActive())) {
 			await input.cancel();
-			return { admitted: false };
+			return { admitted: false, reason: "unavailable" };
 		}
 		if (result.kind === "error") throw result.cause;
 		return { admitted: true, value: result.value };

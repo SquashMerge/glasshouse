@@ -39,6 +39,7 @@ const admittedExecution = {
 	}),
 	isAdmissionActive: async () => true,
 	claimExecution: async () => ({ status: "created" as const }),
+	reconcileUnknownProviderDispatch: async () => true,
 	cancelAdmission: async () => {},
 	completeAdmission: async () => {},
 };

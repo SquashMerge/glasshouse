@@ -4,6 +4,7 @@ import { invokeConfiguredLlm } from "../../src/lib/llm";
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalBase = process.env.OPENAI_API_BASE;
+const originalDevCommand = process.env.ASTRAEA_DEV_LLM_COMMAND;
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
@@ -11,9 +12,12 @@ afterEach(() => {
 	else process.env.OPENAI_API_KEY = originalApiKey;
 	if (originalBase === undefined) delete process.env.OPENAI_API_BASE;
 	else process.env.OPENAI_API_BASE = originalBase;
+	if (originalDevCommand === undefined)
+		delete process.env.ASTRAEA_DEV_LLM_COMMAND;
+	else process.env.ASTRAEA_DEV_LLM_COMMAND = originalDevCommand;
 });
 
-test("passes the stable admission effect key to OpenAI idempotency support", async () => {
+test("passes the stable logical dispatch key to OpenAI request and idempotency headers", async () => {
 	let request: RequestInit | undefined;
 	process.env.OPENAI_API_KEY = "test-key";
 	process.env.OPENAI_API_BASE = "https://provider.example/v1";
@@ -32,10 +36,32 @@ test("passes the stable admission effect key to OpenAI idempotency support", asy
 		{ question: "test" },
 		{ model: "test-model" },
 		undefined,
-		"admission-id:provider",
+		"astraea:experiment_task:task-id:provider_dispatch:1",
 	);
 
 	expect(new Headers(request?.headers).get("idempotency-key")).toBe(
-		"admission-id:provider",
+		"astraea:experiment_task:task-id:provider_dispatch:1",
 	);
+	expect(new Headers(request?.headers).get("x-client-request-id")).toBe(
+		"astraea:experiment_task:task-id:provider_dispatch:1",
+	);
+});
+
+test("passes the stable logical dispatch key to the development CLI", async () => {
+	process.env.ASTRAEA_DEV_LLM_COMMAND = JSON.stringify([
+		process.execPath,
+		"-e",
+		"process.stdout.write(process.env.ASTRAEA_PROVIDER_DISPATCH_KEY ?? '')",
+	]);
+
+	const response = await invokeConfiguredLlm(
+		{ question: "test" },
+		{ provider: "codex_cli", model: "test-model" },
+		undefined,
+		"astraea:experiment_task:task-id:provider_dispatch:1",
+	);
+
+	expect(response.output).toEqual({
+		value: "astraea:experiment_task:task-id:provider_dispatch:1",
+	});
 });

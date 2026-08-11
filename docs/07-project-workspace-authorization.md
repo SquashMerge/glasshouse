@@ -74,15 +74,16 @@ Project User safeguard inherited from the compatibility manager record.
     content-free lifecycle evidence; restore does not revive old jobs automatically.
      Provider work is admitted by a short, committed PostgreSQL transaction that
      records the requester, Project authorization epoch, and a bounded expiry.
-     A second durable effect claim commits after validation and before each provider
-     dispatch, trace, metric, result, or lifecycle-event write. The effect-claim
-     commit is the logical linearization point: revocation that wins first permits
-     no call; a claim that wins first is cancelled and locally aborted by later
-     revocation. No Project or membership lock is held while calling a provider.
-     The claim is not physical atomicity with a provider or ClickHouse, so a remote
-     side effect can still occur when its claim committed first; it cannot be rolled
-     back by PostgreSQL. Astraea suppresses every effect that has not won its own
-     claim and cancels local follow-on work.
+      A second durable effect claim commits after validation and before each provider
+      dispatch, trace, metric, result, or lifecycle-event write. Its identity is
+      tenant-scoped by logical work item, effect, and explicit operation sequence,
+      so it survives admission and worker-lease replacement. The effect-claim commit
+      is the logical linearization point: revocation that wins first permits no call;
+      a claim that wins first is cancelled and locally aborted by later revocation.
+      No Project or membership lock is held while calling a provider. The claim is not
+      physical atomicity with a provider or ClickHouse, so a recovery finding an
+      existing provider or trace claim treats its remote outcome as unknown and never
+      replays it; the work terminalizes safely without inventing a provider result.
 7. **Audit policy:** lifecycle and membership audit records are append-only,
 content-free PostgreSQL metadata. In strict mode they are visible to an Admin,
 User, or Read-only actor only for an active, explicitly granted Project; archived

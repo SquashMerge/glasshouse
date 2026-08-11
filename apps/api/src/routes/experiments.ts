@@ -7,6 +7,7 @@ import {
 	claimExperimentTask,
 	claimExperimentExecution,
 	completeExperimentIfTasksFinished,
+	reconcileUnknownExperimentTaskProviderDispatch,
 	admitExperimentExecution,
 	createExperiment as createExperimentRecord,
 	experimentExecutionAdmissionIsActive,
@@ -23,6 +24,8 @@ import {
 import {
 	cancelExecutionAdmission,
 	completeExecutionAdmission,
+	executionOperationKey,
+	providerDispatchKey,
 } from "../db/execution-admissions.js";
 import { evaluationWorkerActorId } from "../db/actors.js";
 import { projectAuthorization } from "../db/project-authorization.js";
@@ -204,6 +207,7 @@ export type ExperimentDependencies = {
 	cancelAdmission: typeof cancelExecutionAdmission;
 	completeAdmission: typeof completeExecutionAdmission;
 	claimExecution: typeof claimExperimentExecution;
+	reconcileUnknownProviderDispatch: typeof reconcileUnknownExperimentTaskProviderDispatch;
 	summary: typeof experimentSummaryRecord;
 	listDatasetItems: typeof listDatasetItems;
 	getDataset: typeof getDataset;
@@ -339,6 +343,8 @@ export const production: ExperimentDependencies = {
 	cancelAdmission: cancelExecutionAdmission,
 	completeAdmission: completeExecutionAdmission,
 	claimExecution: claimExperimentExecution,
+	reconcileUnknownProviderDispatch:
+		reconcileUnknownExperimentTaskProviderDispatch,
 	summary: experimentSummaryRecord,
 	listDatasetItems,
 	getDataset,
@@ -417,6 +423,7 @@ export async function executeExperiment(
 				return;
 			}
 			admissionId = admission.id;
+			const dispatchKey = providerDispatchKey("experiment_task", task.id);
 			const provider = await invokeWithExecutionAdmission({
 				parentSignal: signal,
 				isActive: () =>
@@ -431,18 +438,22 @@ export async function executeExperiment(
 						id: input.experiment_id,
 						admission_id: admission.id,
 						effect: "provider_dispatch",
-						effect_key: "provider",
+						effect_key: dispatchKey,
 					}),
 				cancel: () => deps.cancelAdmission(db, admission.id),
 				invoke: (providerSignal) =>
-					deps.invokeLlm(
-						task.input,
-						input.config,
-						providerSignal,
-						`${admission.id}:provider`,
-					),
+					deps.invokeLlm(task.input, input.config, providerSignal, dispatchKey),
 			});
 			if (!provider.admitted) {
+				if (provider.reason === "existing") {
+					const reconciled = await deps.reconcileUnknownProviderDispatch(db, {
+						project_id: input.project_id,
+						experiment_id: input.experiment_id,
+						task_id: task.id,
+						lease_token: task.lease_token,
+					});
+					if (reconciled) continue;
+				}
 				await deps.updateExperiment(db, {
 					project_id: input.project_id,
 					id: input.experiment_id,
@@ -482,7 +493,7 @@ export async function executeExperiment(
 							id: input.experiment_id,
 							admission_id: admission.id,
 							effect: "trace_write",
-							effect_key: "trace",
+							effect_key: executionOperationKey("trace_write", 1),
 						}),
 					cancel: () => deps.cancelAdmission(db, admission.id),
 					invoke: () =>
@@ -550,7 +561,7 @@ export async function executeExperiment(
 							id: input.experiment_id,
 							admission_id: admissionId!,
 							effect: "trace_write",
-							effect_key: "trace",
+							effect_key: executionOperationKey("trace_write", 1),
 						}),
 					cancel: () => deps.cancelAdmission(db, admissionId!),
 					invoke: () =>

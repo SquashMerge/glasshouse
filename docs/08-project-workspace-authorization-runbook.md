@@ -60,11 +60,13 @@ experiment after restoring appropriate execute access.
 Migrations `0043_authorization_revocation_fence.sql`,
 `0044_execution_admission_cancellation.sql`, and
 `0045_execution_admission_effect_claims.sql` serialize Project and organization
-membership changes with authorization-sensitive work. Authorization paths lock
-the Project fence, then the acting organization and Project memberships, and finally
-make a fresh policy decision. The membership-revocation trigger takes the Project
-fence before it cancels admitted work, so a revocation that wins first denies the
-later authorization transaction without an inverse-order deadlock.
+membership changes with authorization-sensitive work. The global actual lock order
+is membership then Project: authorization paths lock the acting organization and
+Project memberships, then the Project fence, and finally make a fresh policy
+decision. PostgreSQL automatically acquires the target membership-row lock before
+the membership `BEFORE ROW` trigger runs; the trigger then takes the Project fence
+before it cancels admitted work. This gives revocation the same membership-to-Project
+order and avoids an inverse-order deadlock.
 An execution admission is committed under that short fence with the current
 Project epoch, requester, and expiry. After validation, a provider dispatch and
 each trace, metric, result, or lifecycle-event write commits its own bounded
@@ -72,6 +74,17 @@ effect claim under the same fence. That committed claim is the logical admission
 linearization point: if revocation/archive wins first, no provider or writer is
 called; if a claim wins first, revocation cancels the admission, its claims, and
 local work. Do not hold a database authorization lock during a provider call.
+
+Migration `0047_durable_execution_effects.sql` makes an effect identity durable at
+the tenant-scoped logical work-item level, not at the short-lived admission level.
+Provider dispatches use one stable logical key; GEPA/LiteLLM derives deterministic
+per-call sequence keys below it so separate metric/evaluation calls remain distinct.
+OpenAI-compatible calls receive the same stable key in both idempotency and client
+request-ID headers. A recovery that finds a pre-existing provider-dispatch key must
+not call a provider again because the earlier remote outcome is unknown: experiment
+work is terminalized as a failed item with no invented output or score, and an
+optimization job is terminalized as failed. Trace effects use the same no-replay
+rule, so an unknown prior trace is not written twice.
 
 Every authenticated SSE frame, including connection comments, snapshots, data,
 heartbeats, statuses, and errors, takes a new bounded authorization fence through

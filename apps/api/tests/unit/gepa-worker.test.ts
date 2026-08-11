@@ -37,6 +37,8 @@ describe("GEPA worker adapter", () => {
 					reflection_lm: "openai/gpt-4.1-mini",
 				},
 				budget: { max_metric_calls: 2 },
+				provider_dispatch_key:
+					"astraea:optimization:job-id:provider_dispatch:1",
 			},
 			new AbortController().signal,
 		);
@@ -145,6 +147,8 @@ describe("GEPA worker adapter", () => {
 							reflection_lm: "openai/gpt-4.1-mini",
 						},
 						budget: { max_metric_calls: 2 },
+						provider_dispatch_key:
+							"astraea:optimization:job-id:provider_dispatch:1",
 					},
 					new AbortController().signal,
 				),

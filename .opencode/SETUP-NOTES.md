@@ -137,7 +137,7 @@ uv pip install --python worker/.venv/bin/python -r worker/requirements.txt
 # Installs the GEPA worker dependency into the interpreter used by the local API.
 ```
 
-`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. Use the exact allowlisted model value in both GEPA model-role fields. Astraea replaces `{model}` only inside argv elements, sends the prompt on standard input, and never reads or persists Codex OAuth credentials. The CLI adapter is rejected under `NODE_ENV=production` unless a deliberate emergency override is configured.
+`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. Use the exact allowlisted model value in both GEPA model-role fields. Astraea replaces `{model}` only inside argv elements, sends the prompt on standard input, and never reads or persists Codex OAuth credentials. The API supplies a durable provider-dispatch key to each worker; the CLI receives a per-call sequence key only through `ASTRAEA_PROVIDER_DISPATCH_KEY`. The CLI adapter is rejected under `NODE_ENV=production` unless a deliberate emergency override is configured.
 
 For autonomous coding or review work, use the locally authenticated OpenAI Codex workflow with GPT-5.6 Terra/Luna. Do not use MiniMax or silently fall back to another provider.
 

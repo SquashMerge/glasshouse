@@ -24,7 +24,7 @@ describe("execution admission dispatch", () => {
 			},
 		} as never);
 
-		expect(result).toEqual({ admitted: false });
+		expect(result).toEqual({ admitted: false, reason: "unavailable" });
 		expect(claims).toBe(1);
 		expect(providerCalls).toBe(0);
 		expect(cancellations).toBe(1);
@@ -35,7 +35,7 @@ describe("execution admission dispatch", () => {
 		const client = {
 			query: async (statement: string, values: unknown[]) => {
 				calls.push({ statement, values });
-				return { rows: [{ id: "claim-id" }] };
+				return { rows: [{ created: true }] };
 			},
 		};
 
@@ -82,5 +82,21 @@ describe("execution admission dispatch", () => {
 		} as never);
 
 		expect(dispatches).toBe(1);
+	});
+
+	it("reports a prior durable dispatch as unknown without invoking it again", async () => {
+		let providerCalls = 0;
+		const result = await invokeWithExecutionAdmission({
+			isActive: async () => true,
+			claimDispatch: async () => ({ status: "existing" }),
+			cancel: async () => {},
+			invoke: async () => {
+				providerCalls += 1;
+				return "must not run";
+			},
+		} as never);
+
+		expect(result).toEqual({ admitted: false, reason: "existing" });
+		expect(providerCalls).toBe(0);
 	});
 });

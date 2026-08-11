@@ -17,6 +17,7 @@ import {
 import {
 	createExecutionAdmission,
 	claimExecutionAdmission,
+	executionOperationKey,
 	executionAdmissionIsActive,
 	type ExecutionAdmissionClaim,
 	type ExecutionAdmissionEffect,
@@ -674,7 +675,10 @@ export async function recordOptimizationMetricCalls(
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "metric_write",
-				effect_key: `metric:${input.metric_calls_used}`,
+				effect_key: executionOperationKey(
+					"metric_write",
+					input.metric_calls_used,
+				),
 			});
 			if (claim.status === "unavailable")
 				throw fail(
@@ -760,7 +764,7 @@ export async function transitionOptimizationJob(
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "event_write",
-				effect_key: `event:${input.status}`,
+				effect_key: executionOperationKey("event_write", input.status),
 			});
 			if (claim.status === "unavailable")
 				throw fail(
@@ -864,6 +868,27 @@ export async function cancelOptimizationExecution(
 	});
 }
 
+export async function failUnknownOptimizationProviderDispatch(
+	pool: Pick<Pool, "connect">,
+	input: { id: string; worker_id: string },
+): Promise<void> {
+	await tx(pool, async (client) => {
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution) return;
+		const failed = await rows(
+			client,
+			"UPDATE prompt_optimization_jobs SET status='failed', error_message='Optimization provider dispatch outcome is unknown', updated_at=now(), completed_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() AND status IN ('queued', 'preparing', 'optimizing', 'evaluating') RETURNING id",
+			[input.id, input.worker_id],
+		);
+		if (!failed.length) return;
+		await rows(
+			client,
+			"INSERT INTO prompt_optimization_events (job_id, status, detail) VALUES ($1, 'failed', '{\"reason\":\"provider_dispatch_outcome_unknown\"}'::jsonb)",
+			[input.id],
+		);
+	});
+}
+
 export async function completeOptimizationResult(
 	pool: Pick<Pool, "connect">,
 	input: {
@@ -885,7 +910,7 @@ export async function completeOptimizationResult(
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "result_write",
-				effect_key: "result:review",
+				effect_key: executionOperationKey("result_write", "review"),
 			});
 			if (claim.status === "unavailable")
 				throw fail(
@@ -948,7 +973,7 @@ export async function publishOptimizationResult(
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "result_write",
-				effect_key: "result:publish",
+				effect_key: executionOperationKey("result_write", "publish"),
 			});
 			if (claim.status === "unavailable")
 				throw fail(

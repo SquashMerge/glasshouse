@@ -172,6 +172,11 @@ async function seedExecutionExperiment(pool: Pool) {
 				"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
 				[projectId],
 			);
+			await pool
+				.query("DELETE FROM execution_effects WHERE project_id = $1", [
+					projectId,
+				])
+				.catch(() => {});
 			await pool.query(
 				"DELETE FROM execution_admissions WHERE project_id = $1",
 				[projectId],
@@ -1451,6 +1456,9 @@ test.skipIf(!databaseUrl)(
 				"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
 				[projectId],
 			);
+			await pool.query("DELETE FROM execution_effects WHERE project_id = $1", [
+				projectId,
+			]);
 			await pool.query(
 				"DELETE FROM execution_admissions WHERE project_id = $1",
 				[projectId],
@@ -1740,6 +1748,119 @@ test.skipIf(!databaseUrl)(
 			await second.query("ROLLBACK").catch(() => {});
 			first.release();
 			second.release();
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"expired experiment-task lease recovery never redispatches a committed logical provider or trace effect",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedExecutionExperiment(pool);
+		const first = await pool.connect();
+		const recovery = await pool.connect();
+		let providerCalls = 0;
+		let traceWrites = 0;
+		try {
+			const initialTask = await claimExperimentTask(pool, {
+				project_id: fixture.projectId,
+				experiment_id: fixture.experimentId,
+				lease_seconds: 1,
+			});
+			expect(initialTask).not.toBeNull();
+			const initialAdmission = await admitExperimentExecution(pool, {
+				project_id: fixture.projectId,
+				id: fixture.experimentId,
+				work_id: initialTask!.id,
+				timeout_ms: 1_000,
+			});
+			expect(initialAdmission).not.toBeNull();
+
+			await first.query("BEGIN");
+			const firstProvider = await claimExecutionAdmission(first, {
+				id: initialAdmission!.id,
+				project_id: fixture.projectId,
+				effect: "provider_dispatch",
+				effect_key: "provider:1",
+			});
+			const firstTrace = await claimExecutionAdmission(first, {
+				id: initialAdmission!.id,
+				project_id: fixture.projectId,
+				effect: "trace_write",
+				effect_key: "trace:1",
+			});
+			await first.query("COMMIT");
+			if (firstProvider.status === "created") providerCalls += 1;
+			if (firstTrace.status === "created") traceWrites += 1;
+
+			await pool.query(
+				"UPDATE execution_admissions SET expires_at = now() - interval '1 second' WHERE id = $1",
+				[initialAdmission!.id],
+			);
+			await pool.query(
+				"UPDATE experiment_tasks SET lease_expires_at = now() - interval '1 second' WHERE id = $1",
+				[initialTask!.id],
+			);
+			const recoveredTask = await claimExperimentTask(pool, {
+				project_id: fixture.projectId,
+				experiment_id: fixture.experimentId,
+				lease_seconds: 60,
+			});
+			expect(recoveredTask?.id).toBe(initialTask!.id);
+			expect(recoveredTask?.lease_token).not.toBe(initialTask!.lease_token);
+			const recoveryAdmission = await admitExperimentExecution(pool, {
+				project_id: fixture.projectId,
+				id: fixture.experimentId,
+				work_id: recoveredTask!.id,
+				timeout_ms: 1_000,
+			});
+			expect(recoveryAdmission).not.toBeNull();
+
+			await recovery.query("BEGIN");
+			const recoveredProvider = await claimExecutionAdmission(recovery, {
+				id: recoveryAdmission!.id,
+				project_id: fixture.projectId,
+				effect: "provider_dispatch",
+				effect_key: "provider:1",
+			});
+			const recoveredTrace = await claimExecutionAdmission(recovery, {
+				id: recoveryAdmission!.id,
+				project_id: fixture.projectId,
+				effect: "trace_write",
+				effect_key: "trace:1",
+			});
+			await recovery.query("COMMIT");
+			if (recoveredProvider.status === "created") providerCalls += 1;
+			if (recoveredTrace.status === "created") traceWrites += 1;
+
+			const metricOne = await claimExecutionAdmission(pool, {
+				id: recoveryAdmission!.id,
+				project_id: fixture.projectId,
+				effect: "metric_write",
+				effect_key: "metric:1",
+			});
+			const metricTwo = await claimExecutionAdmission(pool, {
+				id: recoveryAdmission!.id,
+				project_id: fixture.projectId,
+				effect: "metric_write",
+				effect_key: "metric:2",
+			});
+
+			expect(firstProvider).toEqual({ status: "created" });
+			expect(firstTrace).toEqual({ status: "created" });
+			expect(recoveredProvider).toEqual({ status: "existing" });
+			expect(recoveredTrace).toEqual({ status: "existing" });
+			expect(providerCalls).toBe(1);
+			expect(traceWrites).toBe(1);
+			expect(metricOne).toEqual({ status: "created" });
+			expect(metricTwo).toEqual({ status: "created" });
+		} finally {
+			await first.query("ROLLBACK").catch(() => {});
+			await recovery.query("ROLLBACK").catch(() => {});
+			first.release();
+			recovery.release();
 			await fixture.cleanup();
 			await pool.end();
 		}

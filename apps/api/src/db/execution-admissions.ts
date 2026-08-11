@@ -97,16 +97,34 @@ export async function claimExecutionAdmission(
 		effect_key: string;
 	},
 ): Promise<ExecutionAdmissionClaim> {
-	const claim = await client.query(
-		"WITH active_admission AS (SELECT admission.id, admission.authorization_epoch, admission.expires_at FROM execution_admissions AS admission JOIN projects AS project ON project.id = admission.project_id AND project.organization_id = admission.organization_id WHERE admission.id = $1 AND admission.project_id = $2 AND admission.status = 'active' AND admission.expires_at > now() AND project.status = 'active' AND project.authorization_epoch = admission.authorization_epoch FOR UPDATE OF admission, project) INSERT INTO execution_admission_claims (id, admission_id, effect, effect_key, authorization_epoch, expires_at) SELECT gen_random_uuid(), id, $3, $4, authorization_epoch, expires_at FROM active_admission ON CONFLICT (admission_id, effect, effect_key) DO NOTHING RETURNING id",
+	const claim = await client.query<{ created: boolean }>(
+		"WITH active_admission AS (SELECT admission.id, admission.organization_id, admission.project_id, admission.work_kind, admission.work_id, admission.authorization_epoch, admission.expires_at FROM execution_admissions AS admission JOIN projects AS project ON project.id = admission.project_id AND project.organization_id = admission.organization_id WHERE admission.id = $1 AND admission.project_id = $2 AND admission.status = 'active' AND admission.expires_at > now() AND project.status = 'active' AND project.authorization_epoch = admission.authorization_epoch FOR UPDATE OF admission, project), durable_effect AS (INSERT INTO execution_effects (organization_id, project_id, work_kind, work_id, effect, operation_key, first_admission_id) SELECT organization_id, project_id, work_kind, work_id, $3, $4, id FROM active_admission ON CONFLICT (organization_id, project_id, work_kind, work_id, effect, operation_key) DO UPDATE SET operation_key = execution_effects.operation_key RETURNING id, (xmax = 0) AS created), admission_claim AS (INSERT INTO execution_admission_claims (id, admission_id, effect, effect_key, execution_effect_id, authorization_epoch, expires_at) SELECT gen_random_uuid(), admission.id, $3, $4, effect.id, admission.authorization_epoch, admission.expires_at FROM active_admission AS admission CROSS JOIN durable_effect AS effect WHERE effect.created ON CONFLICT (admission_id, effect, effect_key) DO NOTHING RETURNING id) SELECT created FROM durable_effect",
 		[input.id, input.project_id, input.effect, input.effect_key],
 	);
-	if (claim.rows[0]) return { status: "created" };
-	const existing = await client.query(
-		"SELECT id FROM execution_admission_claims WHERE admission_id = $1 AND effect = $2 AND effect_key = $3",
-		[input.id, input.effect, input.effect_key],
-	);
-	return { status: existing.rows[0] ? "existing" : "unavailable" };
+	if (claim.rows[0]?.created) return { status: "created" };
+	if (claim.rows[0]) return { status: "existing" };
+	return { status: "unavailable" };
+}
+
+export function executionOperationKey(
+	effect: ExecutionAdmissionEffect,
+	sequence: string | number,
+): string {
+	if (
+		typeof sequence === "number" &&
+		(!Number.isSafeInteger(sequence) || sequence < 1)
+	)
+		throw new Error("execution operation sequence must be a positive integer");
+	if (typeof sequence === "string" && !/^[a-z0-9_-]{1,64}$/.test(sequence))
+		throw new Error("execution operation sequence is invalid");
+	return `${effect}:${sequence}`;
+}
+
+export function providerDispatchKey(
+	workKind: "optimization" | "experiment_task",
+	workId: string,
+): string {
+	return `astraea:${workKind}:${workId}:${executionOperationKey("provider_dispatch", 1)}`;
 }
 
 export async function cancelExecutionAdmission(
