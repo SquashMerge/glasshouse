@@ -108,14 +108,8 @@ export async function lockAuthorizedProject(
 		],
 	);
 	const project = await client.query(
-		"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = ANY($5::text[]) FOR UPDATE OF p",
-		[
-			projectId,
-			authorization.organization_id,
-			authorization.actor_id,
-			authorization.operation,
-			statuses,
-		],
+		"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = ANY($3::text[]) FOR UPDATE OF p",
+		[projectId, authorization.organization_id, statuses],
 	);
 	if (!project.rows[0]) return false;
 	const decision = await client.query<{ allowed: boolean }>(
