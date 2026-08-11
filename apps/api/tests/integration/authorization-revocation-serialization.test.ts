@@ -390,7 +390,7 @@ test.skipIf(!databaseUrl)(
 
 			await demoter.query("BEGIN");
 			await demoter.query(
-				"UPDATE project_memberships SET role = 'member' WHERE project_id = $1 AND actor_subject = $2",
+				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
 				[projectId, subject],
 			);
 			await expect(
