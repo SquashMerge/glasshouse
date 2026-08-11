@@ -79,7 +79,7 @@ export async function lockAuthorizedOrganization(
 	operation: "organization_manage" | "destructive" | "governed",
 ): Promise<boolean> {
 	await client.query(
-		"SELECT om.actor_subject FROM organization_memberships om WHERE om.organization_id = $1 AND basic_auth_identity_matches($1, om.actor_subject, $2) FOR UPDATE",
+		"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $2) FOR UPDATE",
 		[organizationId, actorId],
 	);
 	const decision = await client.query<{ allowed: boolean }>(

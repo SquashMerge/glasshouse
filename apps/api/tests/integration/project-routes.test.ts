@@ -534,6 +534,14 @@ describe("project authorization routes", () => {
 			method: "DELETE",
 		});
 
+		expect(await put.json()).toEqual({
+			code: "FORBIDDEN",
+			message: "Forbidden",
+		});
+		expect(await remove.json()).toEqual({
+			code: "FORBIDDEN",
+			message: "Forbidden",
+		});
 		expect(put.status).toBe(403);
 		expect(remove.status).toBe(403);
 	});
