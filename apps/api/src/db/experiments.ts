@@ -5,6 +5,11 @@ import {
 	lockAuthorizedProject,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
+import {
+	createExecutionAdmission,
+	executionAdmissionIsActive,
+	type ExecutionAdmission,
+} from "./execution-admissions.js";
 
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 type Transactional = Pick<Pool, "connect">;
@@ -136,26 +141,36 @@ async function withTransaction<T>(
 async function lockExperimentExecution(
 	client: PoolClient,
 	input: { project_id?: string; id: string },
-): Promise<{ row: Row; authorized: boolean } | null> {
-	const project = await client.query<{
-		id: string;
-		organization_id: string;
-	}>(
-		"SELECT p.id, p.organization_id FROM projects p JOIN experiments e ON e.project_id = p.id WHERE e.id = $1 AND ($2::uuid IS NULL OR e.project_id = $2) AND p.status = 'active' FOR UPDATE OF p",
+): Promise<{
+	row: Row;
+	authorized: boolean;
+	project_id: string;
+	organization_id: string;
+	requester_actor_id: string | null;
+} | null> {
+	const project = await client.query<
+		Row & {
+			authorization_project_id: string;
+			organization_id: string;
+			requested_by_actor_id: string | null;
+		}
+	>(
+		"SELECT p.id AS authorization_project_id, p.organization_id, e.* FROM projects p JOIN experiments e ON e.project_id = p.id WHERE e.id = $1 AND ($2::uuid IS NULL OR e.project_id = $2) AND p.status = 'active'",
 		[input.id, input.project_id ?? null],
 	);
 	if (!project.rows[0]) return null;
-	const experiment = await client.query(
-		"SELECT e.* FROM experiments e WHERE e.id = $1 AND e.project_id = $2 FOR UPDATE OF e",
-		[input.id, project.rows[0].id],
-	);
-	const row = experiment.rows[0] as Row | undefined;
-	if (!row) return null;
-	const requestedBy = row.requested_by_actor_id;
-	if (typeof requestedBy !== "string") return { row, authorized: false };
+	const requestedBy = project.rows[0].requested_by_actor_id;
+	if (typeof requestedBy !== "string")
+		return {
+			row: project.rows[0],
+			authorized: false,
+			project_id: project.rows[0].authorization_project_id,
+			organization_id: project.rows[0].organization_id,
+			requester_actor_id: null,
+		};
 	const authorized = await lockAuthorizedProject(
 		client,
-		project.rows[0].id,
+		project.rows[0].authorization_project_id,
 		{
 			organization_id: project.rows[0].organization_id,
 			actor_id: requestedBy,
@@ -163,10 +178,26 @@ async function lockExperimentExecution(
 		},
 		["active"],
 	);
-	return { row, authorized };
+	const experiment = await client.query(
+		"SELECT e.* FROM experiments e WHERE e.id = $1 AND e.project_id = $2 FOR UPDATE OF e",
+		[input.id, project.rows[0].authorization_project_id],
+	);
+	const row = experiment.rows[0] as Row | undefined;
+	if (!row) return null;
+	return {
+		row,
+		authorized,
+		project_id: project.rows[0].authorization_project_id,
+		organization_id: project.rows[0].organization_id,
+		requester_actor_id: requestedBy,
+	};
 }
 
 async function cancelRevokedExperiment(client: PoolClient, id: string) {
+	await client.query(
+		"UPDATE execution_admissions SET status = 'cancelled', cancelled_at = now() WHERE work_kind = 'experiment_task' AND status = 'active' AND work_id IN (SELECT id FROM experiment_tasks WHERE experiment_id = $1)",
+		[id],
+	);
 	await client.query(
 		"UPDATE experiment_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL, updated_at=now() WHERE experiment_id=$1 AND status IN ('pending','running')",
 		[id],
@@ -410,6 +441,7 @@ export async function finalizeExperimentTask(
 		task_id: string;
 		lease_token: string;
 		status: Extract<ExperimentTaskStatus, "completed" | "failed">;
+		admission_id?: string;
 		agent_version?: string | null;
 		output?: JsonObject | null;
 		scores: Record<string, number>;
@@ -424,6 +456,16 @@ export async function finalizeExperimentTask(
 			});
 			if (!access) return false;
 			if (!access.authorized) {
+				await cancelRevokedExperiment(client, input.experiment_id);
+				return false;
+			}
+			if (
+				input.admission_id &&
+				!(await executionAdmissionIsActive(client, {
+					id: input.admission_id,
+					project_id: access.project_id,
+				}))
+			) {
 				await cancelRevokedExperiment(client, input.experiment_id);
 				return false;
 			}
@@ -454,13 +496,23 @@ export async function finalizeExperimentTask(
 }
 export async function completeExperimentIfTasksFinished(
 	db: Transactional,
-	input: { project_id: string; id: string },
+	input: { project_id: string; id: string; admission_id?: string },
 ): Promise<boolean> {
 	try {
 		return await withTransaction(db, async (client) => {
 			const access = await lockExperimentExecution(client, input);
 			if (!access) return false;
 			if (!access.authorized) {
+				await cancelRevokedExperiment(client, input.id);
+				return false;
+			}
+			if (
+				input.admission_id &&
+				!(await executionAdmissionIsActive(client, {
+					id: input.admission_id,
+					project_id: access.project_id,
+				}))
+			) {
 				await cancelRevokedExperiment(client, input.id);
 				return false;
 			}
@@ -508,6 +560,10 @@ export async function cancelExperiment(
 			}
 			await client.query(
 				"UPDATE experiment_tasks SET status='cancelled', lease_token=NULL, lease_expires_at=NULL, updated_at=now() WHERE experiment_id=$1 AND status IN ('pending','running')",
+				[input.id],
+			);
+			await client.query(
+				"UPDATE execution_admissions SET status = 'cancelled', cancelled_at = now() WHERE work_kind = 'experiment_task' AND status = 'active' AND work_id IN (SELECT id FROM experiment_tasks WHERE experiment_id = $1)",
 				[input.id],
 			);
 			return experiment(r.rows[0]);
@@ -558,19 +614,52 @@ export async function insertExperimentResult(
 	}
 }
 
-export async function admitExperimentExecution<T>(
+export async function admitExperimentExecution(
 	db: Transactional,
-	input: { project_id?: string; id: string },
-	invoke: () => Promise<T>,
-): Promise<{ admitted: true; value: T } | { admitted: false }> {
+	input: {
+		project_id?: string;
+		id: string;
+		work_id: string;
+		timeout_ms: number;
+	},
+): Promise<ExecutionAdmission | null> {
 	try {
 		return await withTransaction(db, async (client) => {
 			const access = await lockExperimentExecution(client, input);
 			if (!access?.authorized) {
 				if (access) await cancelRevokedExperiment(client, input.id);
-				return { admitted: false };
+				return null;
 			}
-			return { admitted: true, value: await invoke() };
+			if (!access.requester_actor_id) return null;
+			return createExecutionAdmission(client, {
+				organization_id: access.organization_id,
+				project_id: access.project_id,
+				requester_actor_id: access.requester_actor_id,
+				work_kind: "experiment_task",
+				work_id: input.work_id,
+				timeout_ms: input.timeout_ms,
+			});
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function experimentExecutionAdmissionIsActive(
+	db: Transactional,
+	input: { project_id: string; id: string; admission_id: string },
+): Promise<boolean> {
+	try {
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, input);
+			if (!access?.authorized) {
+				if (access) await cancelRevokedExperiment(client, input.id);
+				return false;
+			}
+			return executionAdmissionIsActive(client, {
+				id: input.admission_id,
+				project_id: access.project_id,
+			});
 		});
 	} catch (cause) {
 		throw normalize(cause);

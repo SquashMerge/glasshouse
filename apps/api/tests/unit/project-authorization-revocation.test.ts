@@ -7,7 +7,7 @@ const authorization = {
 	operation: "product_write" as const,
 };
 
-test("revalidates actor membership after acquiring the active project lock", async () => {
+test("takes actor membership locks before the active project lock", async () => {
 	const calls: string[] = [];
 	const responses = [
 		{ rows: [{ id: "project" }] },
@@ -26,12 +26,12 @@ test("revalidates actor membership after acquiring the active project lock", asy
 		lockActiveAuthorizedProject(client as never, "project", authorization),
 	).resolves.toBe(false);
 	expect(calls).toHaveLength(4);
-	expect(calls[0]).toContain("p.status = ANY($5::text[])");
-	expect(calls[0]).toContain("FOR UPDATE OF p");
-	expect(calls[0]).not.toContain("authorization_allows_project");
-	expect(calls[1]).toContain("organization_memberships");
+	expect(calls[0]).toContain("organization_memberships");
+	expect(calls[0]).toContain("FOR UPDATE");
+	expect(calls[1]).toContain("project_memberships");
 	expect(calls[1]).toContain("FOR UPDATE");
-	expect(calls[2]).toContain("project_memberships");
-	expect(calls[2]).toContain("FOR UPDATE");
+	expect(calls[2]).toContain("p.status = ANY($5::text[])");
+	expect(calls[2]).toContain("FOR UPDATE OF p");
+	expect(calls[2]).not.toContain("authorization_allows_project");
 	expect(calls[3]).toContain("authorization_allows_project");
 });

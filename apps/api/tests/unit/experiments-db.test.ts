@@ -24,20 +24,22 @@ function transactionPool(
 	let executionAuthorized = true;
 	const client = {
 		query: async (text: string, values: unknown[] = []) => {
-			if (
-				text.startsWith(
-					"SELECT p.id, p.organization_id FROM projects p JOIN experiments",
-				)
-			) {
+			if (text.startsWith("SELECT p.id AS authorization_project_id")) {
 				calls.push({ text, values });
 				return {
 					rows: [
-						{ id: projectId, organization_id: authorization.organization_id },
+						{
+							authorization_project_id: projectId,
+							organization_id: authorization.organization_id,
+							requested_by_actor_id: authorization.actor_id,
+						},
 					],
 				};
 			}
-			if (text.includes("p.status = ANY($5::text[])"))
+			if (text.includes("p.status = ANY($5::text[])")) {
+				calls.push({ text, values });
 				return { rows: [{ id: projectId }] };
+			}
 			if (text.includes("FROM organization_memberships om"))
 				return { rows: [{ actor_subject: "requester" }] };
 			if (text.includes("FROM project_memberships pm"))

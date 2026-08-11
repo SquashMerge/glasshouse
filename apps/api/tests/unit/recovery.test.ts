@@ -8,6 +8,7 @@ describe("startup recovery", () => {
 		const resumed: string[] = [];
 		await recoverInterruptedWork({
 			pool: () => ({}) as never,
+			cancelAdmissions: async () => 2,
 			recoverExperiments: async () => [
 				{
 					id: "evaluation",
@@ -33,6 +34,7 @@ describe("startup recovery", () => {
 			{
 				event: "work.recovered_after_restart",
 				fields: {
+					execution_admissions_cancelled: 2,
 					experiments_resumed: 1,
 					optimizations_failed: 1,
 					retention_runs_failed: 1,
@@ -45,6 +47,7 @@ describe("startup recovery", () => {
 		const resumed: string[] = [];
 		await recoverInterruptedWork({
 			pool: () => ({}) as never,
+			cancelAdmissions: async () => 0,
 			recoverExperiments: async () => [],
 			failOptimizations: async () => [],
 			failRetentionRuns: async () => [],

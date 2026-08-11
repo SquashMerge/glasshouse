@@ -1,5 +1,6 @@
 import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
+import { streamSSE } from "hono/streaming";
 import { getDataset, listDatasetItems } from "../db/datasets.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
@@ -7,6 +8,7 @@ import {
 	completeExperimentIfTasksFinished,
 	admitExperimentExecution,
 	createExperiment as createExperimentRecord,
+	experimentExecutionAdmissionIsActive,
 	ExperimentRepositoryError,
 	experimentSummary as experimentSummaryRecord,
 	finalizeExperimentTask,
@@ -17,12 +19,21 @@ import {
 	nextExperimentTaskRetryDelay,
 	updateExperiment,
 } from "../db/experiments.js";
+import {
+	cancelExecutionAdmission,
+	completeExecutionAdmission,
+} from "../db/execution-admissions.js";
 import { evaluationWorkerActorId } from "../db/actors.js";
 import { projectAuthorization } from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
 import { scoreCase } from "../lib/evaluator.js";
 import { invokeConfiguredLlm } from "../lib/llm.js";
 import { logger } from "../lib/logger.js";
+import { createAuthorizedSseDelivery } from "../lib/authorized-sse.js";
+import {
+	executionAdmissionTimeoutMs,
+	invokeWithExecutionAdmission,
+} from "../lib/execution-admission.js";
 import {
 	Experiment,
 	ExperimentCreate,
@@ -33,7 +44,7 @@ import {
 	ExperimentResults,
 	ExperimentSummary,
 } from "../schemas/experiments.js";
-import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
+import { trustedTenant } from "../tenancy.js";
 import { createOtlpIngestHandler } from "./otlp.js";
 
 const tag = "experiments";
@@ -169,10 +180,6 @@ export const cancelExperiment = createRoute({
 
 export type ExperimentDependencies = {
 	pool: typeof pgPool;
-	assertProjectAccess: (
-		tenant: ReturnType<typeof trustedTenant>,
-		projectId: string,
-	) => Promise<void>;
 	createExperiment: typeof createExperimentRecord;
 	listExperiments: typeof listExperimentsRecord;
 	getExperiment: typeof getExperimentRecord;
@@ -186,6 +193,9 @@ export type ExperimentDependencies = {
 	finalizeTask: typeof finalizeExperimentTask;
 	completeExperiment: typeof completeExperimentIfTasksFinished;
 	admitExecution: typeof admitExperimentExecution;
+	isAdmissionActive: typeof experimentExecutionAdmissionIsActive;
+	cancelAdmission: typeof cancelExecutionAdmission;
+	completeAdmission: typeof completeExecutionAdmission;
 	summary: typeof experimentSummaryRecord;
 	listDatasetItems: typeof listDatasetItems;
 	getDataset: typeof getDataset;
@@ -288,8 +298,6 @@ export function createProductionTrace(
 
 export const production: ExperimentDependencies = {
 	pool: pgPool,
-	assertProjectAccess: (tenant, projectId) =>
-		assertTenantProjectAccess(pgPool(), tenant, projectId),
 	createExperiment: createExperimentRecord,
 	listExperiments: listExperimentsRecord,
 	getExperiment: getExperimentRecord,
@@ -315,6 +323,9 @@ export const production: ExperimentDependencies = {
 	finalizeTask: finalizeExperimentTask,
 	completeExperiment: completeExperimentIfTasksFinished,
 	admitExecution: admitExperimentExecution,
+	isAdmissionActive: experimentExecutionAdmissionIsActive,
+	cancelAdmission: cancelExecutionAdmission,
+	completeAdmission: completeExecutionAdmission,
 	summary: experimentSummaryRecord,
 	listDatasetItems,
 	getDataset,
@@ -375,14 +386,46 @@ export async function executeExperiment(
 			continue;
 		}
 		const itemStarted = Date.now();
+		let admissionId: string | undefined;
 		try {
-			const admission = await deps.admitExecution(
-				db,
-				{ project_id: input.project_id, id: input.experiment_id },
-				() => deps.invokeLlm(task.input, input.config, signal),
-			);
-			if (!admission.admitted) return;
-			const llm = admission.value;
+			const admission = await deps.admitExecution(db, {
+				project_id: input.project_id,
+				id: input.experiment_id,
+				work_id: task.id,
+				timeout_ms: executionAdmissionTimeoutMs(),
+			});
+			if (!admission) {
+				await deps.updateExperiment(db, {
+					project_id: input.project_id,
+					id: input.experiment_id,
+					status: "cancelled",
+					if_status: ["pending", "running"],
+				});
+				return;
+			}
+			admissionId = admission.id;
+			const provider = await invokeWithExecutionAdmission({
+				parentSignal: signal,
+				isActive: () =>
+					deps.isAdmissionActive(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+						admission_id: admission.id,
+					}),
+				cancel: () => deps.cancelAdmission(db, admission.id),
+				invoke: (providerSignal) =>
+					deps.invokeLlm(task.input, input.config, providerSignal),
+			});
+			if (!provider.admitted) {
+				await deps.updateExperiment(db, {
+					project_id: input.project_id,
+					id: input.experiment_id,
+					status: "cancelled",
+					if_status: ["pending", "running"],
+				});
+				return;
+			}
+			const llm = provider.value;
 			const scores = scoreCase(evaluator, task.expected_output, llm.output);
 			const duration_ms = Date.now() - itemStarted;
 			const finalized = await deps.finalizeTask(db, {
@@ -395,13 +438,20 @@ export async function executeExperiment(
 				duration_ms,
 				status: scores[evaluator] === 1 ? "completed" : "failed",
 				agent_version: llm.model,
+				admission_id: admission.id,
 			});
 			if (!finalized) return;
 			try {
-				const traceAdmission = await deps.admitExecution(
-					db,
-					{ project_id: input.project_id, id: input.experiment_id },
-					() =>
+				const traceAdmission = await invokeWithExecutionAdmission({
+					parentSignal: signal,
+					isActive: () =>
+						deps.isAdmissionActive(db, {
+							project_id: input.project_id,
+							id: input.experiment_id,
+							admission_id: admission.id,
+						}),
+					cancel: () => deps.cancelAdmission(db, admission.id),
+					invoke: () =>
 						deps.trace({
 							project_id: input.project_id,
 							experiment_id: input.experiment_id,
@@ -411,8 +461,16 @@ export async function executeExperiment(
 							output: JSON.stringify(llm.output),
 							duration_ms,
 						}),
-				);
-				if (!traceAdmission.admitted) return;
+				});
+				if (!traceAdmission.admitted) {
+					await deps.updateExperiment(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+						status: "cancelled",
+						if_status: ["pending", "running"],
+					});
+					return;
+				}
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
@@ -439,13 +497,21 @@ export async function executeExperiment(
 				scores: { [evaluator]: 0 },
 				duration_ms,
 				status: "failed",
+				...(admissionId ? { admission_id: admissionId } : {}),
 			});
 			if (!finalized) return;
 			try {
-				const traceAdmission = await deps.admitExecution(
-					db,
-					{ project_id: input.project_id, id: input.experiment_id },
-					() =>
+				if (!admissionId) return;
+				const traceAdmission = await invokeWithExecutionAdmission({
+					parentSignal: signal,
+					isActive: () =>
+						deps.isAdmissionActive(db, {
+							project_id: input.project_id,
+							id: input.experiment_id,
+							admission_id: admissionId!,
+						}),
+					cancel: () => deps.cancelAdmission(db, admissionId!),
+					invoke: () =>
 						deps.trace({
 							project_id: input.project_id,
 							experiment_id: input.experiment_id,
@@ -458,7 +524,7 @@ export async function executeExperiment(
 							output: "evaluation_failed",
 							duration_ms,
 						}),
-				);
+				});
 				if (!traceAdmission.admitted) return;
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
@@ -466,6 +532,9 @@ export async function executeExperiment(
 					dataset_item_id: task.dataset_item_id,
 				});
 			}
+		} finally {
+			if (admissionId)
+				await deps.completeAdmission(db, admissionId).catch(() => {});
 		}
 	}
 	if (signal?.aborted) {
@@ -626,59 +695,68 @@ export function createExperimentHandlers(
 			try {
 				const params = c.req.valid("param");
 				const query = c.req.valid("query");
-				let cancelStream = () => {};
-				const stream = new ReadableStream({
-					start(controller) {
-						let timer: ReturnType<typeof setInterval> | undefined;
-						let closed = false;
-						let polling = false;
-						const close = () => {
-							if (closed) return;
-							closed = true;
-							if (timer) clearInterval(timer);
-							try {
-								controller.close();
-							} catch {
-								// Reader cancellation can close the controller before this callback.
-							}
-						};
-						cancelStream = close;
-						const tick = async () => {
-							if (closed || polling) return;
-							polling = true;
-							try {
-								await deps.assertProjectAccess(
-									trustedTenant(c),
-									query.project_id,
-								);
-								const row = await deps.getExperiment(deps.pool(), {
-									id: params.id,
-									project_id: query.project_id,
-								});
-								if (closed) return;
-								controller.enqueue(
-									`event: experiment\ndata: ${JSON.stringify(row)}\n\n`,
-								);
-								if (["completed", "failed", "cancelled"].includes(row.status))
-									close();
-							} catch {
+				return streamSSE(c, async (stream) => {
+					let timer: ReturnType<typeof setInterval> | undefined;
+					let closed = false;
+					let polling = false;
+					let resolveClose = () => {};
+					const waitForClose = new Promise<void>((resolve) => {
+						resolveClose = resolve;
+					});
+					const close = () => {
+						if (closed) return;
+						closed = true;
+						if (timer) clearInterval(timer);
+						resolveClose();
+					};
+					stream.onAbort(close);
+					const frameDelivery = createAuthorizedSseDelivery({
+						stream,
+						pool: deps.pool,
+						tenant: trustedTenant(c),
+						projectId: query.project_id,
+						onClose: close,
+					});
+					const tick = async () => {
+						if (closed || polling) return;
+						polling = true;
+						try {
+							const row = await deps.getExperiment(deps.pool(), {
+								id: params.id,
+								project_id: query.project_id,
+							});
+							if (
+								!(await frameDelivery.deliver(() =>
+									stream.writeSSE({
+										event: "experiment",
+										data: JSON.stringify(row),
+									}),
+								))
+							)
+								return;
+							if (["completed", "failed", "cancelled"].includes(row.status))
 								close();
-							} finally {
-								polling = false;
-							}
-						};
-						timer = setInterval(() => void tick(), 500);
-						void tick();
-					},
-					cancel() {
-						cancelStream();
-					},
-				});
-				return new Response(stream, {
-					headers: {
-						"content-type": "text/event-stream",
-						"cache-control": "no-cache",
-					},
+						} catch {
+							if (!stream.aborted)
+								await frameDelivery.deliver(() =>
+									stream.writeSSE({
+										event: "error",
+										data: JSON.stringify({
+											code: "INTERNAL",
+											message: "Evaluation event stream failed",
+										}),
+									}),
+								);
+							close();
+						} finally {
+							polling = false;
+						}
+					};
+					if (!(await frameDelivery.deliver(() => stream.write(":ok\n\n"))))
+						return;
+					timer = setInterval(() => void tick(), 500);
+					void tick();
+					await waitForClose;
 				});
 			} catch (cause) {
 				return errorResponse(c, cause);

@@ -222,8 +222,11 @@ test("revocation before claim prevents provider execution", async () => {
 		},
 		admitExecution: async () => {
 			authorizationChecks += 1;
-			return { admitted: false };
+			return null;
 		},
+		isAdmissionActive: async () => false,
+		cancelAdmission: async () => {},
+		completeAdmission: async () => {},
 		finalizeTask: async () => true,
 		completeExperiment: async () => true,
 		invokeLlm: async () => {
@@ -262,7 +265,10 @@ test("revocation observed at execution admission prevents provider invocation an
 				expected_output: { value: "one" },
 			};
 		},
-		admitExecution: async () => ({ admitted: false }),
+		admitExecution: async () => null,
+		isAdmissionActive: async () => false,
+		cancelAdmission: async () => {},
+		completeAdmission: async () => {},
 		finalizeTask: async () => true,
 		completeExperiment: async () => true,
 		invokeLlm: async () => {
@@ -304,14 +310,18 @@ test("revocation during in-flight persistence prevents result and trace writes",
 				expected_output: { value: "one" },
 			};
 		},
-		admitExecution: async (
-			_db: unknown,
-			_input: unknown,
-			invoke: () => Promise<unknown>,
-		) => {
+		admitExecution: async () => {
 			authorizationChecks += 1;
-			return { admitted: true, value: await invoke() };
+			return {
+				id: "77777777-7777-4777-8777-777777777777",
+				project_id: projectId,
+				requester_actor_id: "88888888-8888-4888-8888-888888888888",
+				authorization_epoch: 1,
+			};
 		},
+		isAdmissionActive: async () => true,
+		cancelAdmission: async () => {},
+		completeAdmission: async () => {},
 		finalizeTask: async () => false,
 		completeExperiment: async () => true,
 		invokeLlm: async () => {

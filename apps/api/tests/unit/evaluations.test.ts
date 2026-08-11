@@ -30,6 +30,18 @@ const baseExperiment = {
 	},
 };
 
+const admittedExecution = {
+	admitExecution: async () => ({
+		id: "77777777-7777-4777-8777-777777777777",
+		project_id: projectId,
+		requester_actor_id: "88888888-8888-4888-8888-888888888888",
+		authorization_epoch: 1,
+	}),
+	isAdmissionActive: async () => true,
+	cancelAdmission: async () => {},
+	completeAdmission: async () => {},
+};
+
 describe("evaluation MVP", () => {
 	it("persists and publishes the production evaluation trace with project provenance", async () => {
 		const persistedTraces: Array<Record<string, unknown>> = [];
@@ -198,16 +210,14 @@ describe("evaluation MVP", () => {
 		const client = {
 			query: async (sql: string, values: unknown[]) => {
 				calls.push({ sql, values });
-				if (
-					sql.startsWith(
-						"SELECT p.id, p.organization_id FROM projects p JOIN experiments",
-					)
-				)
+				if (sql.startsWith("SELECT p.id AS authorization_project_id"))
 					return {
 						rows: [
 							{
-								id: projectId,
+								...cancelled,
+								authorization_project_id: projectId,
 								organization_id: "66666666-6666-4666-8666-666666666666",
+								requested_by_actor_id: "77777777-7777-4777-8777-777777777777",
 							},
 						],
 					};
@@ -239,7 +249,9 @@ describe("evaluation MVP", () => {
 			if_status: "running",
 		});
 
-		expect(calls[1]?.sql).toContain("FOR UPDATE OF p");
+		expect(calls.some((call) => call.sql.includes("FOR UPDATE OF p"))).toBe(
+			true,
+		);
 		expect(result.status).toBe("cancelled");
 	});
 
@@ -291,11 +303,7 @@ describe("evaluation MVP", () => {
 		let claims = 0;
 		const deps = {
 			pool: () => ({}) as never,
-			admitExecution: async (
-				_db: unknown,
-				_input: unknown,
-				invoke: () => Promise<unknown>,
-			) => ({ admitted: true as const, value: await invoke() }),
+			...admittedExecution,
 			getExperiment: async () => ({ status: "running" }),
 			getDataset: async () => ({ id: datasetId }),
 			updateExperiment: async (_db: unknown, input: { status: string }) => {
@@ -372,11 +380,7 @@ describe("evaluation MVP", () => {
 		const finalized: unknown[] = [];
 		const deps = {
 			pool: () => ({}) as never,
-			admitExecution: async (
-				_db: unknown,
-				_input: unknown,
-				invoke: () => Promise<unknown>,
-			) => ({ admitted: true as const, value: await invoke() }),
+			...admittedExecution,
 			updateExperiment: async () => ({ status: "running" }) as never,
 			claimTask: async () => {
 				claims += 1;
@@ -423,11 +427,7 @@ describe("evaluation MVP", () => {
 		const statuses: string[] = [];
 		const deps = {
 			pool: () => ({}) as never,
-			admitExecution: async (
-				_db: unknown,
-				_input: unknown,
-				invoke: () => Promise<unknown>,
-			) => ({ admitted: true as const, value: await invoke() }),
+			...admittedExecution,
 			updateExperiment: async (_db: unknown, input: { status: string }) => {
 				statuses.push(input.status);
 				return { status: input.status } as never;
@@ -509,11 +509,7 @@ describe("evaluation MVP", () => {
 		try {
 			const deps = {
 				pool: () => ({}) as never,
-				admitExecution: async (
-					_db: unknown,
-					_input: unknown,
-					invoke: () => Promise<unknown>,
-				) => ({ admitted: true as const, value: await invoke() }),
+				...admittedExecution,
 				getExperiment: async () => ({ status: "running" }),
 				getDataset: async () => ({ id: datasetId }),
 				updateExperiment: async (_db: unknown, input: { status: string }) => {
@@ -589,11 +585,7 @@ describe("evaluation MVP", () => {
 		let claimed = false;
 		const deps = {
 			pool: () => ({}) as never,
-			admitExecution: async (
-				_db: unknown,
-				_input: unknown,
-				invoke: () => Promise<unknown>,
-			) => ({ admitted: true as const, value: await invoke() }),
+			...admittedExecution,
 			getExperiment: async () => ({ status: "running" }),
 			getDataset: async () => ({ id: datasetId }),
 			updateExperiment: async () => ({}) as never,
@@ -648,11 +640,7 @@ describe("evaluation MVP", () => {
 		let listed = false;
 		const deps = {
 			pool: () => ({}) as never,
-			admitExecution: async (
-				_db: unknown,
-				_input: unknown,
-				invoke: () => Promise<unknown>,
-			) => ({ admitted: true as const, value: await invoke() }),
+			...admittedExecution,
 			updateExperiment: async () => ({ status: "cancelled" }) as never,
 			listDatasetItems: async () => {
 				listed = true;
@@ -681,11 +669,7 @@ describe("evaluation MVP", () => {
 		let invoked = false;
 		const deps = {
 			pool: () => ({}) as never,
-			admitExecution: async (
-				_db: unknown,
-				_input: unknown,
-				invoke: () => Promise<unknown>,
-			) => ({ admitted: true as const, value: await invoke() }),
+			...admittedExecution,
 			getExperiment: async () => ({ status: "running" }),
 			getDataset: async () => ({
 				id: datasetId,

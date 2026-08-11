@@ -70,8 +70,19 @@ Project User safeguard inherited from the compatibility manager record.
    Queued/in-flight jobs must recheck active Project scope and the durable
    requesting Actor's current execute authority before claim, provider calls,
    persistence, tracing, completion, and restart recovery. Revoked, demoted,
-   and historical jobs without a durable requester are cancelled safely with
-   content-free lifecycle evidence; restore does not revive old jobs automatically.
+    and historical jobs without a durable requester are cancelled safely with
+    content-free lifecycle evidence; restore does not revive old jobs automatically.
+    Provider work is admitted by a short, committed PostgreSQL transaction that
+    records the requester, Project authorization epoch, and a bounded expiry.
+    Revocation, demotion, and archival increment/invalidate that epoch and cancel
+    matching admissions and work atomically. No Project or membership lock is held
+    while calling a provider. Workers poll and recheck an active admission before
+    dispatch, metrics, result persistence, tracing, finalization, and recovery;
+    cancellation aborts local work within the configured bound and prevents
+    follow-on Astraea writes. A remote provider may still observe an invocation
+    already dispatched before the revocation transaction linearizes. That external
+    side effect cannot be atomically rolled back with PostgreSQL and is the explicit
+    boundary of this guarantee.
 7. **Audit policy:** lifecycle and membership audit records are append-only,
 content-free PostgreSQL metadata. In strict mode they are visible to an Admin,
 User, or Read-only actor only for an active, explicitly granted Project; archived
@@ -85,8 +96,13 @@ Conflicts resolve as `Admin > User > Read-only` through the effective-role query
 Malformed, cross-organization, orphaned, and unmapped legacy data is quarantined
 and denied, never guessed or promoted. Every organization starts in compatibility
 mode, preserving prior Basic Auth effective access; strict enforcement is enabled
-only by the documented, serialized operator action after the readiness query is
-clean. Strict mode never grants access beyond the legacy assignment.
+    only by the documented, serialized operator action after the readiness query is
+    clean. Strict mode never grants access beyond the legacy assignment.
+9. **SSE frame delivery:** every authenticated SSE comment, snapshot, data,
+    heartbeat, status, and error frame is serialized through a bounded current
+    membership/Project revalidation fence. A timeout, write error, backpressure,
+    or client cancellation closes the stream and releases its exact frame fence;
+    a later queued frame always makes a new authorization decision.
 
 ## In scope
 
@@ -138,8 +154,10 @@ Audit every supported API route, repository query, ClickHouse query, OTLP ingest
 path, SSE subscription, worker claim, and recovery path. Each must authorize an
 explicit Project target before use and bind both organization and Project in the
 underlying data operation. Transactional mutations recheck the trusted actor's
-current operation authorization while locking the active Project row, rather than
-relying on request admission alone. New durable application/telemetry writes require a
+current operation authorization while locking organization membership, Project
+membership, and then the active Project row, rather than relying on request admission
+alone. This order matches PostgreSQL membership updates, which necessarily lock their
+row before their trigger can take the Project fence. New durable application/telemetry writes require a
 valid Project ID. Legacy ClickHouse records without ownership remain unscoped
 and are excluded from Project reads, streams, and retention; ownership is never
 guessed.

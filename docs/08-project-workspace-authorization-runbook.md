@@ -57,17 +57,30 @@ persist a result, write an evaluation trace, complete, or resume after restart.
 No manual replay is required or supported for these cancelled runs; submit a new
 experiment after restoring appropriate execute access.
 
-Migration `0043_authorization_revocation_fence.sql` serializes Project and
-organization membership role changes with authorization-sensitive writes. A
-mutation locks its Project before freshly locking and checking the acting
-membership; a demotion or removal takes the same Project fence first. Provider
-admission holds that fence through invocation, and result/trace persistence is
-admitted again, so role revocation waits for an in-progress admission or blocks
-the later action without a write or trace. Each prompt-optimization SSE frame
-uses the same fence through write settlement; subsequent queued frames take a
-fresh authorization decision. A stalled frame aborts after
-`SSE_FRAME_WRITE_TIMEOUT_MS` (default 5000 ms; accepted range 100-60000 ms) to
-release its fence rather than indefinitely delaying a membership change.
+Migrations `0043_authorization_revocation_fence.sql` and
+`0044_execution_admission_cancellation.sql` serialize Project and organization
+membership changes with authorization-sensitive work. Authorization paths lock
+organization membership, Project membership, then the Project row: PostgreSQL
+membership updates necessarily acquire their row lock before trigger code can
+take the Project fence, so this shared order prevents an inverse-order deadlock.
+An execution admission is committed under that short fence with the current
+Project epoch, requester, and expiry. Revocation, demotion, or archive increments
+or invalidates the epoch and atomically cancels affected admissions, tasks, and
+jobs. Workers poll admission state and use `AbortSignal` deadlines for provider
+calls; they recheck it before metrics, results, traces, and finalization. Do not
+hold a database authorization lock during a provider call.
+
+Every authenticated SSE frame, including connection comments, snapshots, data,
+heartbeats, statuses, and errors, takes a new bounded authorization fence through
+write settlement. `SSE_FRAME_WRITE_TIMEOUT_MS` defaults to 5000 ms (accepted
+range 100-60000 ms); a timeout, write error, backpressure, or disconnect closes
+the stream and releases the frame fence. `EXECUTION_ADMISSION_TIMEOUT_MS` defaults
+to 30000 ms (accepted range 1000-300000 ms) and
+`EXECUTION_ADMISSION_POLL_MS` defaults to 250 ms (accepted range 50-5000 ms).
+These limits bound Astraea-side cancellation. A provider invocation already
+dispatched before a membership change commits can still have a remote side effect;
+PostgreSQL cannot atomically undo that remote request. Astraea cancels local work
+and prevents any later results, traces, metrics, or finalization from persisting.
 
 ## Operations
 

@@ -216,27 +216,52 @@ function transactionPool(pool: MockPool): Pick<Pool, "connect"> {
 }
 
 describe("prompt optimization repository", () => {
-	it("holds the authorization fence through an admitted provider invocation", async () => {
+	it("commits an execution admission before the provider boundary", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
 			{ rows: [{ id: JOB }] },
+			{ rows: [{ authorization_epoch: 1 }] },
+			{
+				rows: [
+					{
+						id: "77777777-7777-4777-8777-777777777777",
+						project_id: PROJECT,
+						requester_actor_id: authorization.actor_id,
+						authorization_epoch: 1,
+					},
+				],
+			},
 			{ rows: [] },
 		]);
-		let invoked = false;
 
-		await expect(
-			admitOptimizationExecution(
-				transactionPool(pool),
-				{ id: JOB, worker_id: WORKER },
-				async () => {
-					invoked = true;
-					return "provider-result";
-				},
+		const admission = await admitOptimizationExecution(transactionPool(pool), {
+			id: JOB,
+			worker_id: WORKER,
+			timeout_ms: 30_000,
+		});
+		expect(admission).toMatchObject({
+			id: "77777777-7777-4777-8777-777777777777",
+			project_id: PROJECT,
+		});
+		expect(
+			pool.client.calls.some((call) =>
+				call.text.startsWith("INSERT INTO execution_admissions"),
 			),
-		).resolves.toEqual({ admitted: true, value: "provider-result" });
-		expect(invoked).toBe(true);
+		).toBe(true);
 		expect(pool.client.calls[1]?.text).toContain("worker_claim_id = $2");
 		expect(pool.client.calls[1]?.text).toContain("status = 'optimizing'");
+	});
+
+	it("does not admit a provider after its worker claim is gone", async () => {
+		const pool = new MockPool([{ rows: [] }, { rows: [] }, { rows: [] }]);
+
+		await expect(
+			admitOptimizationExecution(transactionPool(pool), {
+				id: JOB,
+				worker_id: WORKER,
+				timeout_ms: 30_000,
+			}),
+		).resolves.toBeNull();
 	});
 
 	it("publishes a system target with canonical system content and replaces only the target message", async () => {

@@ -7,6 +7,7 @@ import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { pgPool } from "./db/postgres.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
+import { cancelInterruptedExecutionAdmissions } from "./db/execution-admissions.js";
 import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
 import { failInterruptedRetentionRuns } from "./db/governance.js";
 import {
@@ -258,6 +259,7 @@ const apiApp = createApiApp();
 if (import.meta.main) {
 	await recoverInterruptedWork({
 		pool: pgPool,
+		cancelAdmissions: () => cancelInterruptedExecutionAdmissions(pgPool()),
 		recoverExperiments: () => listRecoverableExperiments(pgPool()),
 		failOptimizations: () => failInterruptedOptimizationJobs(pgPool()),
 		failRetentionRuns: () => failInterruptedRetentionRuns(pgPool()),

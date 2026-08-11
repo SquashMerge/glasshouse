@@ -11,9 +11,13 @@ import {
 	getTrace as queryGetTrace,
 } from "../db/traces-query.js";
 import type { TenantScopedObservation } from "../db/traces-writer.js";
-import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
+import { trustedTenant } from "../tenancy.js";
 import { pgPool } from "../db/postgres.js";
 import type { TrustedTenantContext } from "../middleware/auth.js";
+import {
+	createAuthorizedSseDelivery,
+	type AuthorizedSseDelivery,
+} from "../lib/authorized-sse.js";
 import {
 	presentObservationMetadata,
 	type ObservationMetadata,
@@ -143,10 +147,16 @@ function notFoundResponse(traceId: string): Response {
  * frame per `trace.created` bus event. Stays open until the client aborts.
  */
 export type TraceEventRouteDependencies = {
-	assertProjectAccess: (
+	assertProjectAccess?: (
 		tenant: TrustedTenantContext,
 		projectId: string,
 	) => Promise<void>;
+	createFrameDelivery?: (
+		stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+		tenant: TrustedTenantContext,
+		projectId: string,
+		cleanup: () => void,
+	) => AuthorizedSseDelivery;
 	defaultClient: typeof defaultClient;
 	getTrace: typeof queryGetTrace;
 	graceMs: number;
@@ -155,8 +165,14 @@ export type TraceEventRouteDependencies = {
 };
 
 const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
-	assertProjectAccess: (tenant, projectId) =>
-		assertTenantProjectAccess(pgPool(), tenant, projectId),
+	createFrameDelivery: (stream, tenant, projectId, cleanup) =>
+		createAuthorizedSseDelivery({
+			stream,
+			pool: pgPool,
+			tenant,
+			projectId,
+			onClose: cleanup,
+		}),
 	defaultClient,
 	getTrace: queryGetTrace,
 	graceMs: GRACE_MS,
@@ -165,31 +181,39 @@ const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
 };
 
 export function createTraceEventHandlers(
-	dependencies: TraceEventRouteDependencies = productionTraceEventRouteDependencies,
+	dependencies: Partial<TraceEventRouteDependencies> = {},
 ) {
-	const guardStream = (
-		stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
-		tenant: TrustedTenantContext,
-		projectId: string,
-		cleanup: () => void,
-	) => {
-		let closed = false;
-		let pending = Promise.resolve();
-		return (write: () => Promise<unknown>) => {
-			pending = pending.then(async () => {
-				if (closed || stream.aborted) return;
-				try {
-					await dependencies.assertProjectAccess(tenant, projectId);
-				} catch {
-					closed = true;
-					cleanup();
-					return;
+	const d = { ...productionTraceEventRouteDependencies, ...dependencies };
+	const createFrameDelivery =
+		dependencies.createFrameDelivery ??
+		(dependencies.assertProjectAccess
+			? (stream, tenant, projectId, cleanup) => {
+					let closed = false;
+					const close = () => {
+						if (closed) return;
+						closed = true;
+						stream.abort();
+						cleanup();
+					};
+					return {
+						deliver: async (write) => {
+							if (closed || stream.aborted) return false;
+							try {
+								await dependencies.assertProjectAccess!(tenant, projectId);
+								await write();
+								return !closed && !stream.aborted;
+							} catch {
+								close();
+								return false;
+							}
+						},
+						close,
+						get closed() {
+							return closed;
+						},
+					};
 				}
-				if (!closed && !stream.aborted) await write();
-			});
-			return pending;
-		};
-	};
+			: productionTraceEventRouteDependencies.createFrameDelivery!);
 	const streamTraceEventsHandler = async (c: Context): Promise<Response> => {
 		const tenant = trustedTenant(c);
 		const { project_id: expectedProjectId } = (
@@ -215,13 +239,13 @@ export function createTraceEventHandlers(
 				return;
 			}
 
-			const guardedWrite = guardStream(
+			const frameDelivery = createFrameDelivery(
 				stream,
 				tenant,
 				expectedProjectId,
 				cleanup,
 			);
-			unsubscribe = dependencies.subscribe("trace.created", (msg) => {
+			unsubscribe = d.subscribe("trace.created", (msg) => {
 				const trace = msg.payload.trace;
 				if (
 					!trace ||
@@ -229,15 +253,15 @@ export function createTraceEventHandlers(
 					trace.project_id !== expectedProjectId
 				)
 					return;
-				guardedWrite(() =>
+				void frameDelivery.deliver(() =>
 					stream.writeSSE({ event: "trace", data: JSON.stringify({ trace }) }),
 				);
 			});
 			heartbeat = setInterval(() => {
-				guardedWrite(() => stream.write(":heartbeat\n\n"));
-			}, dependencies.heartbeatMs);
+				void frameDelivery.deliver(() => stream.write(":heartbeat\n\n"));
+			}, d.heartbeatMs);
 
-			await guardedWrite(() => stream.write(":ok\n\n"));
+			await frameDelivery.deliver(() => stream.write(":ok\n\n"));
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -270,13 +294,13 @@ export function createTraceEventHandlers(
 				return;
 			}
 
-			const guardedWrite = guardStream(
+			const frameDelivery = createFrameDelivery(
 				stream,
 				tenant,
 				expectedProjectId,
 				cleanup,
 			);
-			unsubscribe = dependencies.subscribe("observation.created", (msg) => {
+			unsubscribe = d.subscribe("observation.created", (msg) => {
 				const observation = msg.payload.observation;
 				if (
 					!observation ||
@@ -285,7 +309,7 @@ export function createTraceEventHandlers(
 				)
 					return;
 				const presented = presentObservation(observation);
-				guardedWrite(() =>
+				void frameDelivery.deliver(() =>
 					stream.writeSSE({
 						event: "observation",
 						data: JSON.stringify({
@@ -296,10 +320,10 @@ export function createTraceEventHandlers(
 				);
 			});
 			heartbeat = setInterval(() => {
-				guardedWrite(() => stream.write(":heartbeat\n\n"));
-			}, dependencies.heartbeatMs);
+				void frameDelivery.deliver(() => stream.write(":heartbeat\n\n"));
+			}, d.heartbeatMs);
 
-			await guardedWrite(() => stream.write(":ok\n\n"));
+			await frameDelivery.deliver(() => stream.write(":ok\n\n"));
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -318,7 +342,7 @@ export function createTraceEventHandlers(
 		let forwardObservation:
 			| ((observation: TenantScopedObservation) => void)
 			| null = null;
-		const unsubscribe = dependencies.subscribe("observation.created", (msg) => {
+		const unsubscribe = d.subscribe("observation.created", (msg) => {
 			const observation = msg.payload.observation;
 			if (
 				!observation ||
@@ -333,8 +357,8 @@ export function createTraceEventHandlers(
 
 		let traceExists: Awaited<ReturnType<typeof queryGetTrace>>;
 		try {
-			traceExists = await dependencies.getTrace(
-				dependencies.defaultClient(),
+			traceExists = await d.getTrace(
+				d.defaultClient(),
 				tenant.organizationId,
 				traceId,
 				projectId,
@@ -388,16 +412,16 @@ export function createTraceEventHandlers(
 				return;
 			}
 
-			const guardedWrite = guardStream(
+			const frameDelivery = createFrameDelivery(
 				stream,
 				tenant,
 				expectedProjectId,
 				cleanup,
 			);
 			heartbeat = setInterval(() => {
-				void guardedWrite(() => stream.write(":heartbeat\n\n"));
-			}, dependencies.heartbeatMs);
-			await guardedWrite(() => stream.write(":ok\n\n"));
+				void frameDelivery.deliver(() => stream.write(":heartbeat\n\n"));
+			}, d.heartbeatMs);
+			await frameDelivery.deliver(() => stream.write(":ok\n\n"));
 			if (stream.aborted) {
 				cleanup();
 				return;
@@ -408,18 +432,20 @@ export function createTraceEventHandlers(
 				graceTimer = setTimeout(() => {
 					if (closed) return;
 					closed = true;
-					void guardedWrite(() =>
-						stream.writeSSE({
-							event: "status",
-							data: JSON.stringify({ status: "complete" }),
-						}),
-					).finally(cleanup);
-				}, dependencies.graceMs);
+					void frameDelivery
+						.deliver(() =>
+							stream.writeSSE({
+								event: "status",
+								data: JSON.stringify({ status: "complete" }),
+							}),
+						)
+						.finally(cleanup);
+				}, d.graceMs);
 			};
 			const sendObservation = (observation: TenantScopedObservation) => {
 				if (closed) return;
 				armGraceTimer();
-				void guardedWrite(() =>
+				void frameDelivery.deliver(() =>
 					stream.writeSSE({
 						event: "observation",
 						data: JSON.stringify({
@@ -429,7 +455,7 @@ export function createTraceEventHandlers(
 				);
 			};
 
-			await guardedWrite(() =>
+			await frameDelivery.deliver(() =>
 				stream.writeSSE({
 					event: "snapshot",
 					data: JSON.stringify({

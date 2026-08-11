@@ -34,11 +34,13 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - `POST /v1/prompts/preview` — authenticated, non-persistent Mustache rendering of system and user draft sources with supplied JSON data. See `apps/api/src/routes/prompts.ts`.
 - `POST /v1/prompts/{id}/versions/rollback` — authenticated, project-scoped removal of only the latest version; restores the immediately previous version and migrates its labels. See `apps/api/src/routes/prompts.ts`.
 
-## SSE endpoints (all in `apps/api/src/routes/trace-events.ts`)
+## SSE endpoints
 
 - `GET /v1/traces/events` → `streamTraceEvents` — broadcasts new traces. Stays open.
 - `GET /v1/observations/events` → `streamObservationEvents` — broadcasts new observations. Stays open.
 - `GET /v1/traces/{id}/events` → `streamTraceDetailEvents` — single trace: snapshot + filtered live observations + closes after `TRACE_COMPLETE_GRACE_MS` of inactivity.
+- `GET /v1/prompt-optimizations/{id}/events` — optimization lifecycle statuses.
+- `GET /v1/experiments/{id}/events` — evaluation lifecycle snapshots.
 
 ## Core entities
 
@@ -51,6 +53,8 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 - **Project membership** — an actor's authorized visibility of one Project. Admins have organization-wide authority while User and Read-only access is granted per Project. Public API values are `user` and `read_only`; legacy persistence records are mapped explicitly and never trusted directly for authorization. See `apps/api/src/schemas/projects.ts`.
 - **Project capability** — a server-authoritative per-Project permission exposed as `can_manage` or `can_govern` alongside the effective role. The dashboard uses it for controls so compatibility-mode legacy managers retain permitted controls while strict-mode Users do not. See `apps/api/src/schemas/projects.ts`.
 - **Authorization audit event** — append-only, content-free PostgreSQL evidence for workspace bootstrap, membership, lifecycle, role, and identity-provider actions. In strict mode, Admin, User, and Read-only actors may read only the permitted active Project's content-free history; archived/deleting lifecycle visibility is Admin-only. See `infra/db/migrations/0041_admin_user_read_only_authorization.sql`.
+- **Execution admission** — a short-lived, durable PostgreSQL authorization record for one optimization or experiment-task provider invocation. It pins the requester and Project authorization epoch, is cancelled by revocation/demotion/archive, and bounds local provider cancellation without holding database locks across the remote call. See `infra/db/execution-admissions.ts` and `infra/db/migrations/0044_execution_admission_cancellation.sql`.
+- **SSE frame fence** — the per-frame current-membership/Project authorization transaction used for every authenticated stream comment, snapshot, data, heartbeat, status, and error delivery. See `apps/api/src/lib/authorized-sse.ts`.
 - **Agent (planned)** — the future project-scoped, versioned, typed evaluation target. It is introduced after the Dataset, Evaluation, identity, and execution foundations are complete.
 - **Manifest (planned)** — serialized form of an Agent (prompts + tools + routing + guardrails + knowledge + deps as one atomic unit). It is a generated/exported artifact for normal SDK onboarding and a GitOps escape hatch, then pinned to Evaluation runs for bisectable regressions and atomic rollback.
 - **Prompt** — immutable collection of up to one system and one user Mustache message, scoped to a Project; its canonical public ID is the Project-local slug, while `slug@version` is display-only. See `apps/api/src/db/prompts.ts`.

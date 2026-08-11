@@ -79,8 +79,10 @@ describe("experiment agent scope", () => {
 				authorization,
 			}),
 		).rejects.toMatchObject<ExperimentRepositoryError>({ code: "NOT_FOUND" });
-		expect(calls[1]?.text).toContain("FROM projects");
-		expect(calls[1]?.text).toContain("p.status = ANY($5::text[])");
-		expect(calls[1]?.text).toContain("FOR UPDATE");
+		const projectLock = calls.find((call) =>
+			call.text.includes("p.status = ANY($5::text[])"),
+		);
+		expect(projectLock?.text).toContain("FROM projects");
+		expect(projectLock?.text).toContain("FOR UPDATE");
 	});
 });

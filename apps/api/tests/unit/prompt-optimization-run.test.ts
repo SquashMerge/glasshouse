@@ -80,14 +80,19 @@ function dependencies(input: {
 		get: async () => job(),
 		getActive: async () => null,
 		claim: async () => true,
-		admitExecution: async (
-			_pool: unknown,
-			_input: Record<string, unknown>,
-			invoke: () => Promise<unknown>,
-		) =>
+		admitExecution: async () =>
 			input.admitted === false
-				? { admitted: false as const }
-				: { admitted: true as const, value: await invoke() },
+				? null
+				: {
+						id: "77777777-7777-4777-8777-777777777777",
+						project_id: PROJECT,
+						requester_actor_id: "admin",
+						authorization_epoch: 1,
+					},
+		isAdmissionActive: async () => input.admitted !== false,
+		cancelAdmission: async () => {},
+		completeAdmission: async () => {},
+		cancelExecution: async () => {},
 		renew: async () => true,
 		sourceMessages: async () => [
 			{ role: "system" as const, content: "Summarize {{tasks}}" },
@@ -148,7 +153,12 @@ describe("optimization completion policy", () => {
 
 		expect(input.published).toHaveLength(0);
 		expect(input.metricCalls).toEqual([
-			{ id: JOB, worker_id: expect.any(String), metric_calls_used: 3 },
+			{
+				id: JOB,
+				worker_id: expect.any(String),
+				metric_calls_used: 3,
+				admission_id: "77777777-7777-4777-8777-777777777777",
+			},
 		]);
 		expect(input.completed).toHaveLength(1);
 		expect(input.completed[0]).toMatchObject({

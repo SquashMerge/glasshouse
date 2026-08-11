@@ -27,8 +27,9 @@ test("rechecks the requesting actor's effective execution access before worker c
 	}
 });
 
-test("holds the requester authorization fence through provider invocation", () => {
+test("commits a bounded requester admission before provider invocation", () => {
 	expect(source).toContain("admitOptimizationExecution");
+	expect(source).toContain("createExecutionAdmission");
 	expect(source).toContain("status = 'optimizing'");
-	expect(source).toContain("value: await invoke()");
+	expect(source).not.toContain("value: await invoke()");
 });

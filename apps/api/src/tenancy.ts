@@ -115,12 +115,15 @@ export async function withActiveAuthorizedProjectLock<T>(
 	tenant: ActiveAuthorizedProjectScope,
 	callback: () => Promise<T>,
 	operation: ProjectOperation = "product_write",
+	lockTimeoutMs?: number,
 ): Promise<T> {
 	const client = await db.connect();
 	let transactionOpen = false;
 	try {
 		await client.query("BEGIN");
 		transactionOpen = true;
+		if (lockTimeoutMs !== undefined)
+			await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
 		if (
 			!(await lockActiveAuthorizedProject(client, tenant.projectId, {
 				organization_id: tenant.organizationId,

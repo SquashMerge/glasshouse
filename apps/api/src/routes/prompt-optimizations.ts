@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { rectifyConfusion } from "unicode-confusables";
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
-import { streamSSE, type SSEStreamingApi } from "hono/streaming";
+import { streamSSE } from "hono/streaming";
 import { pgPool } from "../db/postgres.js";
 import {
 	admitOptimizationExecution,
+	cancelOptimizationExecution,
 	claimOptimizationJob,
 	completeOptimizationResult,
 	createOptimizationJob,
@@ -15,6 +16,7 @@ import {
 	listOptimizationEvents,
 	type OptimizationJob,
 	optimizationSourceMessages,
+	optimizationExecutionAdmissionIsActive,
 	promoteOptimizationDraft,
 	publishOptimizationResult,
 	recordOptimizationMetricCalls,
@@ -22,6 +24,10 @@ import {
 	stopOptimizationJob,
 	transitionOptimizationJob,
 } from "../db/prompt-optimizations.js";
+import {
+	cancelExecutionAdmission,
+	completeExecutionAdmission,
+} from "../db/execution-admissions.js";
 import { PromptRepositoryError, type JsonObject } from "../db/prompts.js";
 import {
 	automaticPromotionReason,
@@ -42,6 +48,11 @@ import {
 	runGepaWorker,
 } from "../lib/gepa-worker.js";
 import { logger, type LogFields } from "../lib/logger.js";
+import { createAuthorizedSseDelivery } from "../lib/authorized-sse.js";
+import {
+	executionAdmissionTimeoutMs,
+	invokeWithExecutionAdmission,
+} from "../lib/execution-admission.js";
 import { validatePromptTemplate } from "../lib/prompt-templates.js";
 import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
@@ -51,12 +62,7 @@ import {
 	PromptErrorResponses,
 	PromptId,
 } from "../schemas/prompts.js";
-import {
-	TenantScopeError,
-	assertTenantProjectAccess,
-	trustedTenant,
-	withActiveAuthorizedProjectLock,
-} from "../tenancy.js";
+import { trustedTenant } from "../tenancy.js";
 
 const tag = "prompt-optimization";
 const Status = z.enum([
@@ -417,6 +423,10 @@ export type OptimizationDependencies = {
 	listActivities: typeof listActiveOptimizationActivities;
 	claim: typeof claimOptimizationJob;
 	admitExecution: typeof admitOptimizationExecution;
+	cancelExecution: typeof cancelOptimizationExecution;
+	isAdmissionActive: typeof optimizationExecutionAdmissionIsActive;
+	cancelAdmission: typeof cancelExecutionAdmission;
+	completeAdmission: typeof completeExecutionAdmission;
 	renew: typeof renewOptimizationJobLease;
 	sourceMessages: typeof optimizationSourceMessages;
 	events: typeof listOptimizationEvents;
@@ -435,38 +445,6 @@ const terminalStatuses = new Set<OptimizationJob["status"]>([
 	"stopped",
 	"failed",
 ]);
-
-function sseFrameWriteTimeoutMs(): number {
-	const configured = Number(process.env.SSE_FRAME_WRITE_TIMEOUT_MS ?? 5_000);
-	return Number.isSafeInteger(configured) &&
-		configured >= 100 &&
-		configured <= 60_000
-		? configured
-		: 5_000;
-}
-
-async function writeAuthorizedOptimizationEvent(
-	stream: Pick<SSEStreamingApi, "abort" | "aborted" | "writeSSE">,
-	d: Pick<OptimizationDependencies, "pool">,
-	tenant: ReturnType<typeof trustedTenant>,
-	projectId: string,
-	message: Parameters<SSEStreamingApi["writeSSE"]>[0],
-): Promise<boolean> {
-	const timeout = setTimeout(() => stream.abort(), sseFrameWriteTimeoutMs());
-	try {
-		await withActiveAuthorizedProjectLock(
-			d.pool(),
-			{ ...tenant, projectId },
-			async () => {
-				if (!stream.aborted) await stream.writeSSE(message);
-			},
-			"product_read",
-		);
-		return !stream.aborted;
-	} finally {
-		clearTimeout(timeout);
-	}
-}
 
 export function nextOptimizationEvents(
 	events: Awaited<ReturnType<typeof listOptimizationEvents>>,
@@ -872,6 +850,10 @@ const production: OptimizationDependencies = {
 	listActivities: listActiveOptimizationActivities,
 	claim: claimOptimizationJob,
 	admitExecution: admitOptimizationExecution,
+	cancelExecution: cancelOptimizationExecution,
+	isAdmissionActive: optimizationExecutionAdmissionIsActive,
+	cancelAdmission: cancelExecutionAdmission,
+	completeAdmission: completeExecutionAdmission,
 	renew: renewOptimizationJobLease,
 	sourceMessages: optimizationSourceMessages,
 	events: listOptimizationEvents,
@@ -983,6 +965,7 @@ export async function runOptimizationJob(
 			renew: () => d.renew(d.pool(), { id: job.id, worker_id: workerId }),
 		});
 	}, 60_000);
+	let admissionId: string | undefined;
 	try {
 		if (job.dataset.version !== 1)
 			throw new PromptRepositoryError(
@@ -1032,10 +1015,23 @@ export async function runOptimizationJob(
 			max_metric_calls: job.budget,
 		});
 		let reportedMetricCalls: number | null = null;
-		const admission = await d.admitExecution(
-			d.pool(),
-			{ id: job.id, worker_id: workerId },
-			() =>
+		const admission = await d.admitExecution(d.pool(), {
+			id: job.id,
+			worker_id: workerId,
+			timeout_ms: executionAdmissionTimeoutMs(),
+		});
+		if (!admission) return;
+		admissionId = admission.id;
+		const provider = await invokeWithExecutionAdmission({
+			parentSignal: controller.signal,
+			isActive: () =>
+				d.isAdmissionActive(d.pool(), {
+					id: job.id,
+					worker_id: workerId,
+					admission_id: admission.id,
+				}),
+			cancel: () => d.cancelAdmission(d.pool(), admission.id),
+			invoke: (signal) =>
 				d.worker(
 					{
 						target,
@@ -1045,7 +1041,7 @@ export async function runOptimizationJob(
 						model_config: job.model_config,
 						budget: job.budget,
 					},
-					controller.signal,
+					signal,
 					({ metric_calls_used }) => {
 						reportedMetricCalls = Math.max(
 							reportedMetricCalls ?? 0,
@@ -1053,14 +1049,23 @@ export async function runOptimizationJob(
 						);
 					},
 				),
-		);
-		if (!admission.admitted) return;
-		const result = admission.value;
+		});
+		if (!provider.admitted) {
+			await d
+				.cancelExecution(d.pool(), {
+					id: job.id,
+					worker_id: workerId,
+				})
+				.catch(() => {});
+			return;
+		}
+		const result = provider.value;
 		if (reportedMetricCalls !== null)
 			await d.recordMetricCalls(d.pool(), {
 				id: job.id,
 				worker_id: workerId,
 				metric_calls_used: reportedMetricCalls,
+				admission_id: admission.id,
 			});
 		const usedMetricCalls = metricCallsUsed(job, result);
 		if (usedMetricCalls !== null)
@@ -1068,6 +1073,7 @@ export async function runOptimizationJob(
 				id: job.id,
 				worker_id: workerId,
 				metric_calls_used: usedMetricCalls,
+				admission_id: admission.id,
 			});
 		const leakage = checkExpectedAnswerLeakage(
 			result.candidate,
@@ -1087,6 +1093,7 @@ export async function runOptimizationJob(
 			id: job.id,
 			worker_id: workerId,
 			status: "evaluating",
+			admission_id: admission.id,
 			detail: {
 				metric: evidence.metric,
 				training_sample_count: evidence.training.sample_count,
@@ -1113,6 +1120,7 @@ export async function runOptimizationJob(
 				evidence,
 				promotion_status: "blocked",
 				promotion_reason: reason,
+				admission_id: admission.id,
 			});
 			logger.warn("optimization.candidate_blocked", {
 				job_id: job.id,
@@ -1130,6 +1138,7 @@ export async function runOptimizationJob(
 				evidence,
 				promotion_status: "review_required",
 				promotion_reason: promotionReason,
+				admission_id: admission.id,
 			});
 			logger.info("optimization.completed", {
 				job_id: job.id,
@@ -1149,6 +1158,7 @@ export async function runOptimizationJob(
 						? { ...item, content: result.candidate }
 						: item,
 				),
+				admission_id: admission.id,
 			});
 		} catch (cause) {
 			if (
@@ -1163,6 +1173,7 @@ export async function runOptimizationJob(
 					evidence,
 					promotion_status: "review_required",
 					promotion_reason: "source_version_is_stale",
+					admission_id: admission.id,
 				});
 				logger.info("optimization.completed", {
 					job_id: job.id,
@@ -1192,12 +1203,15 @@ export async function runOptimizationJob(
 				worker_id: workerId,
 				status: "failed",
 				error_message: "Optimization worker failed",
+				...(admissionId ? { admission_id: admissionId } : {}),
 			});
 		} catch {
 			// A stopped or completed job is terminal and wins every worker failure race.
 		}
 	} finally {
 		clearInterval(leaseRenewal);
+		if (admissionId)
+			await d.completeAdmission(d.pool(), admissionId).catch(() => {});
 		if (activeWorkers.get(job.id) === controller) activeWorkers.delete(job.id);
 	}
 }
@@ -1409,8 +1423,14 @@ export function createOptimizationHandlers(
 				return streamSSE(c, async (stream) => {
 					let last = 0;
 					const tenant = trustedTenant(c);
+					const frameDelivery = createAuthorizedSseDelivery({
+						stream,
+						pool: d.pool,
+						tenant,
+						projectId: input.project_id,
+						onClose: () => {},
+					});
 					try {
-						await assertTenantProjectAccess(d.pool(), tenant, input.project_id);
 						while (!stream.aborted) {
 							const next = nextOptimizationEvents(
 								await d.events(d.pool(), input),
@@ -1419,16 +1439,12 @@ export function createOptimizationHandlers(
 							last = next.lastId;
 							for (const event of next.events) {
 								if (
-									!(await writeAuthorizedOptimizationEvent(
-										stream,
-										d,
-										tenant,
-										input.project_id,
-										{
+									!(await frameDelivery.deliver(() =>
+										stream.writeSSE({
 											event: "status",
 											id: String(event.id),
 											data: JSON.stringify(event),
-										},
+										}),
 									))
 								)
 									return;
@@ -1436,21 +1452,17 @@ export function createOptimizationHandlers(
 							if (next.terminal) return;
 							await new Promise((resolve) => setTimeout(resolve, 500));
 						}
-					} catch (cause) {
-						if (!stream.aborted && !(cause instanceof TenantScopeError))
+					} catch {
+						if (!stream.aborted)
 							try {
-								await writeAuthorizedOptimizationEvent(
-									stream,
-									d,
-									tenant,
-									input.project_id,
-									{
+								await frameDelivery.deliver(() =>
+									stream.writeSSE({
 										event: "error",
 										data: JSON.stringify({
 											code: "INTERNAL",
 											message: "Optimization event stream failed",
 										}),
-									},
+									}),
 								);
 							} catch {
 								// Do not expose a stream failure after its authorization has changed.

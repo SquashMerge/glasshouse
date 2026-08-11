@@ -14,6 +14,11 @@ import {
 	lockActiveAuthorizedProject,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
+import {
+	createExecutionAdmission,
+	executionAdmissionIsActive,
+	type ExecutionAdmission,
+} from "./execution-admissions.js";
 
 export type OptimizationStatus =
 	| "queued"
@@ -325,24 +330,23 @@ async function tx<T>(
 async function lockOptimizationExecution(
 	client: PoolClient,
 	id: string,
-): Promise<Row | null> {
+): Promise<{
+	job: Row;
+	project_id: string;
+	organization_id: string;
+	requester_actor_id: string;
+} | null> {
 	const project = await client.query<{
 		id: string;
 		organization_id: string;
 	}>(
-		"SELECT p.id, p.organization_id FROM projects p JOIN prompt_optimization_jobs j ON j.project_id = p.id WHERE j.id = $1 AND p.status = 'active' FOR UPDATE OF p",
+		"SELECT p.id, p.organization_id FROM projects p JOIN prompt_optimization_jobs j ON j.project_id = p.id WHERE j.id = $1 AND p.status = 'active'",
 		[id],
 	);
 	if (!project.rows[0]) return null;
-	const job = await rows(
-		client,
-		"SELECT * FROM prompt_optimization_jobs WHERE id = $1 FOR UPDATE",
-		[id],
-	);
-	if (!job[0]) return null;
 	const identity = await client.query<{ actor_id: string }>(
-		"SELECT actor_id FROM actor_identities WHERE organization_id = $1 AND provider_namespace = 'basic:v1' AND canonical_subject = basic_auth_canonical_subject($2)",
-		[project.rows[0].organization_id, String(job[0].requested_by)],
+		"SELECT actor_id FROM actor_identities AS identity JOIN prompt_optimization_jobs AS job ON job.id = $2 WHERE identity.organization_id = $1 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(job.requested_by)",
+		[project.rows[0].organization_id, id],
 	);
 	if (!identity.rows[0]) return null;
 	if (
@@ -353,24 +357,61 @@ async function lockOptimizationExecution(
 		}))
 	)
 		return null;
-	return job[0];
+	const job = await rows(
+		client,
+		"SELECT * FROM prompt_optimization_jobs WHERE id = $1 FOR UPDATE",
+		[id],
+	);
+	if (!job[0]) return null;
+	return {
+		job: job[0],
+		project_id: project.rows[0].id,
+		organization_id: project.rows[0].organization_id,
+		requester_actor_id: identity.rows[0].actor_id,
+	};
 }
 
-export async function admitOptimizationExecution<T>(
+export async function admitOptimizationExecution(
 	pool: Pick<Pool, "connect">,
-	input: { id: string; worker_id: string },
-	invoke: () => Promise<T>,
-): Promise<{ admitted: true; value: T } | { admitted: false }> {
+	input: { id: string; worker_id: string; timeout_ms: number },
+): Promise<ExecutionAdmission | null> {
 	return tx(pool, async (client) => {
-		const job = await lockOptimizationExecution(client, input.id);
-		if (!job) return { admitted: false };
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution) return null;
 		const admitted = await rows(
 			client,
 			"SELECT id FROM prompt_optimization_jobs WHERE id = $1 AND worker_claim_id = $2 AND worker_lease_expires_at >= now() AND status = 'optimizing' FOR UPDATE",
 			[input.id, input.worker_id],
 		);
-		if (!admitted.length) return { admitted: false };
-		return { admitted: true, value: await invoke() };
+		if (!admitted.length) return null;
+		return createExecutionAdmission(client, {
+			organization_id: execution.organization_id,
+			project_id: execution.project_id,
+			requester_actor_id: execution.requester_actor_id,
+			work_kind: "optimization",
+			work_id: input.id,
+			timeout_ms: input.timeout_ms,
+		});
+	});
+}
+
+export async function optimizationExecutionAdmissionIsActive(
+	pool: Pick<Pool, "connect">,
+	input: { id: string; worker_id: string; admission_id: string },
+): Promise<boolean> {
+	return tx(pool, async (client) => {
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution) return false;
+		const claimed = await rows(
+			client,
+			"SELECT id FROM prompt_optimization_jobs WHERE id = $1 AND worker_claim_id = $2 AND worker_lease_expires_at >= now() AND status IN ('optimizing', 'evaluating') FOR UPDATE",
+			[input.id, input.worker_id],
+		);
+		if (!claimed.length) return false;
+		return executionAdmissionIsActive(client, {
+			id: input.admission_id,
+			project_id: execution.project_id,
+		});
 	});
 }
 
@@ -586,11 +627,25 @@ export async function renewOptimizationJobLease(
 }
 export async function recordOptimizationMetricCalls(
 	pool: Pick<Pool, "connect">,
-	input: { id: string; worker_id: string; metric_calls_used: number },
+	input: {
+		id: string;
+		worker_id: string;
+		metric_calls_used: number;
+		admission_id?: string;
+	},
 ): Promise<void> {
 	await tx(pool, async (client) => {
-		if (!(await lockOptimizationExecution(client, input.id)))
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution)
 			throw fail("CONFLICT", "Optimization worker claim was lost");
+		if (
+			input.admission_id &&
+			!(await executionAdmissionIsActive(client, {
+				id: input.admission_id,
+				project_id: execution.project_id,
+			}))
+		)
+			throw fail("CONFLICT", "Optimization execution admission was cancelled");
 		const recorded = await rows(
 			client,
 			"UPDATE prompt_optimization_jobs SET metric_calls_used=GREATEST(COALESCE(metric_calls_used,0),$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
@@ -653,14 +708,24 @@ export async function transitionOptimizationJob(
 		id: string;
 		worker_id: string;
 		status: OptimizationStatus;
+		admission_id?: string;
 		detail?: JsonObject;
 		error_message?: string;
 		metric_calls_used?: number | null;
 	},
 ): Promise<OptimizationJob> {
 	return tx(pool, async (client) => {
-		if (!(await lockOptimizationExecution(client, input.id)))
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution)
 			throw fail("CONFLICT", "Optimization job is no longer active");
+		if (
+			input.admission_id &&
+			!(await executionAdmissionIsActive(client, {
+				id: input.admission_id,
+				project_id: execution.project_id,
+			}))
+		)
+			throw fail("CONFLICT", "Optimization execution admission was cancelled");
 		const row = (
 			await rows(
 				client,
@@ -711,6 +776,11 @@ export async function stopOptimizationJob(
 		if (row) {
 			await rows(
 				client,
+				"UPDATE execution_admissions SET status = 'cancelled', cancelled_at = now() WHERE work_kind = 'optimization' AND work_id = $1 AND status = 'active'",
+				[input.id],
+			);
+			await rows(
+				client,
 				"INSERT INTO prompt_optimization_events (job_id,status) VALUES ($1,'stopped')",
 				[input.id],
 			);
@@ -730,6 +800,27 @@ export async function stopOptimizationJob(
 	});
 }
 
+export async function cancelOptimizationExecution(
+	pool: Pick<Pool, "connect">,
+	input: { id: string; worker_id: string },
+): Promise<void> {
+	await tx(pool, async (client) => {
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution) return;
+		const cancelled = await rows(
+			client,
+			"UPDATE prompt_optimization_jobs SET cancel_requested_at = COALESCE(cancel_requested_at, now()), status = 'stopped', updated_at = now(), completed_at = now() WHERE id = $1 AND worker_claim_id = $2 AND status IN ('queued', 'preparing', 'optimizing', 'evaluating') RETURNING id",
+			[input.id, input.worker_id],
+		);
+		if (!cancelled.length) return;
+		await rows(
+			client,
+			"INSERT INTO prompt_optimization_events (job_id, status, detail) VALUES ($1, 'stopped', '{\"reason\":\"execution_admission_cancelled\"}'::jsonb)",
+			[input.id],
+		);
+	});
+}
+
 export async function completeOptimizationResult(
 	pool: Pick<Pool, "connect">,
 	input: {
@@ -739,11 +830,21 @@ export async function completeOptimizationResult(
 		evidence: OptimizationEvidence;
 		promotion_status: "review_required" | "blocked";
 		promotion_reason: string;
+		admission_id?: string;
 	},
 ): Promise<OptimizationJob> {
 	return tx(pool, async (client) => {
-		if (!(await lockOptimizationExecution(client, input.id)))
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution)
 			throw fail("CONFLICT", "Optimization job is no longer active");
+		if (
+			input.admission_id &&
+			!(await executionAdmissionIsActive(client, {
+				id: input.admission_id,
+				project_id: execution.project_id,
+			}))
+		)
+			throw fail("CONFLICT", "Optimization execution admission was cancelled");
 		const row = (
 			await rows(
 				client,
@@ -786,11 +887,21 @@ export async function publishOptimizationResult(
 		worker_id: string;
 		messages: PromptMessage[];
 		evidence: OptimizationEvidence;
+		admission_id?: string;
 	},
 ): Promise<number> {
 	return tx(pool, async (client) => {
-		if (!(await lockOptimizationExecution(client, input.id)))
+		const execution = await lockOptimizationExecution(client, input.id);
+		if (!execution)
 			throw fail("CONFLICT", "Optimization worker claim was lost");
+		if (
+			input.admission_id &&
+			!(await executionAdmissionIsActive(client, {
+				id: input.admission_id,
+				project_id: execution.project_id,
+			}))
+		)
+			throw fail("CONFLICT", "Optimization execution admission was cancelled");
 		const jobRow = (
 			await rows(
 				client,

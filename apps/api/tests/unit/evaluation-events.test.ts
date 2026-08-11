@@ -12,9 +12,12 @@ describe("evaluation event stream", () => {
 			release = resolve;
 		});
 		const handlers = createExperimentHandlers({
-			assertProjectAccess: async () => undefined,
 			pool: () =>
 				({
+					connect: async () => ({
+						query: async () => ({ rows: [{ id: projectId, allowed: true }] }),
+						release() {},
+					}),
 					query: async () => ({
 						rows: [
 							{
@@ -39,8 +42,14 @@ describe("evaluation event stream", () => {
 			},
 			get: () => ({
 				actor: "owner",
+				actorId: "22222222-2222-4222-8222-222222222222",
 				organizationId: "00000000-0000-4000-8000-000000000001",
 			}),
+			header: () => {},
+			newResponse: (body: BodyInit | null, init?: ResponseInit) =>
+				new Response(body, init),
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
 		} as never);
 		const reader = response.body?.getReader();
 

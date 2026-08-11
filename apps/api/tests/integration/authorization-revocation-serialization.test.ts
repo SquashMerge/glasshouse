@@ -2,11 +2,20 @@ import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { SSEStreamingApi } from "hono/streaming";
+import { StreamingApi } from "hono/utils/stream";
 import { Pool } from "pg";
 import {
+	admitExperimentExecution,
 	claimExperimentTask,
+	completeExperimentIfTasksFinished,
+	experimentExecutionAdmissionIsActive,
 	finalizeExperimentTask,
+	updateExperiment,
 } from "../../src/db/experiments";
+import {
+	cancelExecutionAdmission,
+	completeExecutionAdmission,
+} from "../../src/db/execution-admissions";
 import { lockActiveAuthorizedProject } from "../../src/db/project-authorization";
 import {
 	TRUSTED_ACTOR_CONTEXT_KEY,
@@ -17,6 +26,21 @@ import {
 	optimizationEvents,
 	type OptimizationDependencies,
 } from "../../src/routes/prompt-optimizations";
+import {
+	createTraceEventHandlers,
+	streamTraceEvents,
+} from "../../src/routes/trace-events";
+import { publishSync } from "../../src/lib/event-bus";
+import {
+	executeExperiment,
+	type ExperimentDependencies,
+} from "../../src/routes/experiments";
+import {
+	createExperimentHandlers,
+	getExperimentEvents,
+} from "../../src/routes/experiments";
+import { getExperiment as getExperimentRecord } from "../../src/db/experiments";
+import { createAuthorizedSseDelivery } from "../../src/lib/authorized-sse";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -213,6 +237,94 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
+	"an authorized membership-to-project fence serializes a later revocation without deadlock",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const actorId = randomUUID();
+		const subject = `lock-order-${actorId}`;
+		const writer = await pool.connect();
+		const demoter = await pool.connect();
+		try {
+			await pool.query(
+				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Lock order', $2)",
+				[organizationId, `lock-order-${organizationId}`],
+			);
+			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+			await pool.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+				[actorId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+				[organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Lock order', $3)",
+				[projectId, organizationId, `lock-order-${projectId}`],
+			);
+			await pool.query(
+				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
+				[projectId, organizationId, subject],
+			);
+			await writer.query("BEGIN");
+			await writer.query(
+				"SET application_name = 'astraea-authorized-lock-order'",
+			);
+			expect(
+				await lockActiveAuthorizedProject(writer, projectId, {
+					organization_id: organizationId,
+					actor_id: actorId,
+					operation: "product_write",
+				}),
+			).toBe(true);
+			await demoter.query(
+				"SET application_name = 'astraea-revocation-lock-order'",
+			);
+			const revoke = (async () => {
+				await demoter.query("BEGIN");
+				await demoter.query(
+					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+					[projectId, subject],
+				);
+				await demoter.query("COMMIT");
+			})();
+			await waitForLock(pool, "astraea-revocation-lock-order");
+			await writer.query("COMMIT");
+			await Promise.race([
+				revoke,
+				Bun.sleep(1_000).then(() => {
+					throw new Error("membership/project lock order deadlocked");
+				}),
+			]);
+		} finally {
+			await writer.query("ROLLBACK").catch(() => {});
+			await demoter.query("ROLLBACK").catch(() => {});
+			writer.release();
+			demoter.release();
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
 	"a revoked member cannot receive a queued optimization SSE frame after a backpressured frame settles",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
@@ -335,6 +447,454 @@ test.skipIf(!databaseUrl)(
 			SSEStreamingApi.prototype.writeSSE = originalWriteSSE;
 			await demoter.query("ROLLBACK").catch(() => {});
 			demoter.release();
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revocation fence prevents a queued trace frame after a paused authorized frame settles",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const actorId = randomUUID();
+		const subject = `trace-sse-${actorId}`;
+		const applicationName = "astraea-trace-sse-revocation";
+		const firstWrite = deferred();
+		const releaseFirstWrite = deferred();
+		const demoter = await pool.connect();
+		const originalWrite = StreamingApi.prototype.write;
+		let revoke: Promise<void> | undefined;
+		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		let blocked = false;
+		StreamingApi.prototype.write = async function (data) {
+			if (!blocked && String(data).includes("event: trace")) {
+				blocked = true;
+				firstWrite.resolve();
+				await releaseFirstWrite.promise;
+			}
+			return originalWrite.call(this, data);
+		};
+		try {
+			await pool.query(
+				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Trace SSE revocation', $2)",
+				[organizationId, `trace-sse-${organizationId}`],
+			);
+			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+			await pool.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+				[actorId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+				[organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Trace SSE revocation', $3)",
+				[projectId, organizationId, `trace-sse-${projectId}`],
+			);
+			await pool.query(
+				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
+				[projectId, organizationId, subject],
+			);
+
+			const handlers = createTraceEventHandlers({
+				createFrameDelivery: (stream, tenant, scopedProjectId, cleanup) =>
+					createAuthorizedSseDelivery({
+						stream,
+						pool: () => pool,
+						tenant,
+						projectId: scopedProjectId,
+						onClose: cleanup,
+					}),
+				defaultClient: () => ({}) as never,
+				getTrace: async () => ({ trace: null, observations: [] }),
+				graceMs: 1_000,
+				heartbeatMs: 10_000,
+				subscribe: (await import("../../src/lib/event-bus")).subscribe,
+			});
+			const api = new OpenAPIHono({
+				defaultHook: (result, c) =>
+					result.success
+						? undefined
+						: c.json(
+								{ code: "BAD_REQUEST", message: "Request validation failed" },
+								400,
+							),
+			});
+			api.use("*", async (c, next) => {
+				c.set(TRUSTED_ACTOR_CONTEXT_KEY, subject);
+				c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+					actor: subject,
+					actorId,
+					organizationId,
+				});
+				await next();
+			});
+			api.openapi(streamTraceEvents, handlers.handleStreamTraceEvents);
+			const response = await api.request(
+				`/v1/traces/events?project_id=${projectId}`,
+			);
+			expect(response.status).toBe(200);
+			reader = response.body?.getReader();
+			if (!reader) throw new Error("Trace SSE response has no body");
+			const firstChunk = reader.read();
+			publishSync("trace.created", {
+				trace: { organization_id: organizationId, project_id: projectId },
+			});
+			await firstWrite.promise;
+			await demoter.query(`SET application_name = '${applicationName}'`);
+			revoke = (async () => {
+				await demoter.query("BEGIN");
+				await demoter.query(
+					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+					[projectId, subject],
+				);
+				await demoter.query("COMMIT");
+			})();
+			await waitForLock(pool, applicationName);
+			publishSync("trace.created", {
+				trace: { organization_id: organizationId, project_id: projectId },
+			});
+			releaseFirstWrite.resolve();
+			await firstChunk;
+			await revoke;
+			let body = "";
+			for (;;) {
+				const next = await reader.read();
+				if (next.done) break;
+				body += new TextDecoder().decode(next.value);
+			}
+			expect(body.match(/event: trace/g)).toHaveLength(1);
+		} finally {
+			releaseFirstWrite.resolve();
+			await revoke?.catch(() => {});
+			await reader?.cancel().catch(() => {});
+			StreamingApi.prototype.write = originalWrite;
+			await demoter.query("ROLLBACK").catch(() => {});
+			demoter.release();
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a stalled evaluation provider does not hold the revocation fence",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const actorId = randomUUID();
+		const datasetId = randomUUID();
+		const itemId = randomUUID();
+		const experimentId = randomUUID();
+		const subject = `provider-revocation-${actorId}`;
+		const providerEntered = deferred();
+		const providerRelease = deferred();
+		const controller = new AbortController();
+		const previousTimeout = process.env.EXECUTION_ADMISSION_TIMEOUT_MS;
+		try {
+			process.env.EXECUTION_ADMISSION_TIMEOUT_MS = "1000";
+			await pool.query(
+				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Provider revocation', $2)",
+				[organizationId, `provider-revocation-${organizationId}`],
+			);
+			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+			await pool.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+				[actorId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+				[organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Provider revocation', $3)",
+				[projectId, organizationId, `provider-revocation-${projectId}`],
+			);
+			await pool.query(
+				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
+				[projectId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Provider revocation dataset')",
+				[datasetId, projectId],
+			);
+			await pool.query(
+				"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"input\":true}', '{\"output\":true}')",
+				[itemId, datasetId],
+			);
+			await pool.query(
+				"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
+				[experimentId, projectId, datasetId, actorId],
+			);
+			const deps = {
+				pool: () => pool,
+				updateExperiment,
+				claimTask: claimExperimentTask,
+				completeExperiment: completeExperimentIfTasksFinished,
+				nextTaskRetryDelay: async () => null,
+				waitForTaskRetry: async () => {},
+				finalizeTask: finalizeExperimentTask,
+				admitExecution: admitExperimentExecution,
+				isAdmissionActive: experimentExecutionAdmissionIsActive,
+				cancelAdmission: cancelExecutionAdmission,
+				completeAdmission: completeExecutionAdmission,
+				invokeLlm: async () => {
+					providerEntered.resolve();
+					await providerRelease.promise;
+					return { output: { value: "late" }, model: "test" };
+				},
+				trace: async () => {},
+			} as unknown as ExperimentDependencies;
+			const executing = executeExperiment(
+				deps,
+				{
+					project_id: projectId,
+					experiment_id: experimentId,
+					dataset_id: datasetId,
+					config: {},
+				},
+				controller.signal,
+			);
+			await providerEntered.promise;
+			await Promise.race([
+				pool.query(
+					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+					[projectId, subject],
+				),
+				Bun.sleep(500).then(() => {
+					throw new Error("revocation waited on the stalled provider");
+				}),
+			]);
+			await Promise.race([
+				executing,
+				Bun.sleep(2_000).then(() => {
+					throw new Error("cancelled admission outlived its bounded deadline");
+				}),
+			]);
+			expect(
+				(
+					await pool.query("SELECT status FROM experiments WHERE id = $1", [
+						experimentId,
+					])
+				).rows[0]?.status,
+			).toBe("cancelled");
+			expect(
+				(
+					await pool.query(
+						"SELECT status FROM execution_admissions WHERE work_kind = 'experiment_task' AND work_id IN (SELECT id FROM experiment_tasks WHERE experiment_id = $1)",
+						[experimentId],
+					)
+				).rows[0]?.status,
+			).toBe("cancelled");
+			providerRelease.resolve();
+			await Bun.sleep(50);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM experiment_results WHERE experiment_id = $1",
+						[experimentId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+		} finally {
+			if (previousTimeout === undefined)
+				delete process.env.EXECUTION_ADMISSION_TIMEOUT_MS;
+			else process.env.EXECUTION_ADMISSION_TIMEOUT_MS = previousTimeout;
+			providerRelease.resolve();
+			controller.abort();
+			await pool.query(
+				"DELETE FROM experiment_results WHERE experiment_id = $1",
+				[experimentId],
+			);
+			await pool.query(
+				"DELETE FROM experiment_tasks WHERE experiment_id = $1",
+				[experimentId],
+			);
+			await pool.query("DELETE FROM experiments WHERE id = $1", [experimentId]);
+			await pool.query("DELETE FROM dataset_items WHERE dataset_id = $1", [
+				datasetId,
+			]);
+			await pool.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revoked member cannot receive a queued evaluation SSE snapshot",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const actorId = randomUUID();
+		const datasetId = randomUUID();
+		const experimentId = randomUUID();
+		const subject = `experiment-sse-${actorId}`;
+		const firstWrite = deferred();
+		const releaseFirstWrite = deferred();
+		const demoter = await pool.connect();
+		const originalWrite = StreamingApi.prototype.write;
+		let revoke: Promise<void> | undefined;
+		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		let blocked = false;
+		StreamingApi.prototype.write = async function (data) {
+			if (!blocked && String(data).includes("event: experiment")) {
+				blocked = true;
+				firstWrite.resolve();
+				await releaseFirstWrite.promise;
+			}
+			return originalWrite.call(this, data);
+		};
+		try {
+			await pool.query(
+				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Experiment SSE revocation', $2)",
+				[organizationId, `experiment-sse-${organizationId}`],
+			);
+			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+			await pool.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+				[actorId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+				[organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Experiment SSE revocation', $3)",
+				[projectId, organizationId, `experiment-sse-${projectId}`],
+			);
+			await pool.query(
+				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
+				[projectId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Experiment SSE dataset')",
+				[datasetId, projectId],
+			);
+			await pool.query(
+				"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
+				[experimentId, projectId, datasetId, actorId],
+			);
+			const handlers = createExperimentHandlers({
+				pool: () => pool,
+				getExperiment: getExperimentRecord,
+			} as unknown as ExperimentDependencies);
+			const api = new OpenAPIHono({
+				defaultHook: (result, c) =>
+					result.success
+						? undefined
+						: c.json(
+								{ code: "BAD_REQUEST", message: "Request validation failed" },
+								400,
+							),
+			});
+			api.use("*", async (c, next) => {
+				c.set(TRUSTED_ACTOR_CONTEXT_KEY, subject);
+				c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+					actor: subject,
+					actorId,
+					organizationId,
+				});
+				await next();
+			});
+			api.openapi(getExperimentEvents, handlers.handleGetExperimentEvents);
+			const response = await api.request(
+				`/v1/experiments/${experimentId}/events?project_id=${projectId}`,
+			);
+			expect(response.status).toBe(200);
+			reader = response.body?.getReader();
+			if (!reader) throw new Error("Experiment SSE response has no body");
+			await reader.read();
+			await firstWrite.promise;
+			await demoter.query(
+				"SET application_name = 'astraea-experiment-sse-revocation'",
+			);
+			revoke = (async () => {
+				await demoter.query("BEGIN");
+				await demoter.query(
+					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+					[projectId, subject],
+				);
+				await demoter.query("COMMIT");
+			})();
+			await waitForLock(pool, "astraea-experiment-sse-revocation");
+			releaseFirstWrite.resolve();
+			await revoke;
+			let body = "";
+			for (;;) {
+				const next = await reader.read();
+				if (next.done) break;
+				body += new TextDecoder().decode(next.value);
+			}
+			expect(body.match(/event: experiment/g)).toHaveLength(1);
+		} finally {
+			releaseFirstWrite.resolve();
+			await revoke?.catch(() => {});
+			await reader?.cancel().catch(() => {});
+			StreamingApi.prototype.write = originalWrite;
+			await demoter.query("ROLLBACK").catch(() => {});
+			demoter.release();
+			await pool.query(
+				"DELETE FROM experiment_results WHERE experiment_id = $1",
+				[experimentId],
+			);
+			await pool.query(
+				"DELETE FROM experiment_tasks WHERE experiment_id = $1",
+				[experimentId],
+			);
+			await pool.query("DELETE FROM experiments WHERE id = $1", [experimentId]);
+			await pool.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
 			await pool.query(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
