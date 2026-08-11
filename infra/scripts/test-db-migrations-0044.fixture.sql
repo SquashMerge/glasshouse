@@ -1,5 +1,16 @@
-INSERT INTO organizations (id, name, slug)
-VALUES ('44000000-0000-4000-8000-000000000001', 'Admission Replay', 'admission-replay');
+WITH organization AS (
+    INSERT INTO organizations (id, name, slug, default_project_id)
+    VALUES (
+        '44000000-0000-4000-8000-000000000001',
+        'Admission Replay',
+        'admission-replay',
+        '44000000-0000-4000-8000-000000000012'
+    )
+    RETURNING id
+)
+INSERT INTO projects (id, organization_id, name, slug)
+SELECT '44000000-0000-4000-8000-000000000012', id, 'Default Project', 'default'
+FROM organization;
 INSERT INTO actors (id) VALUES ('44000000-0000-4000-8000-000000000003');
 INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
 VALUES (

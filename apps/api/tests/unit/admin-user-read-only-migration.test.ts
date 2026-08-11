@@ -20,6 +20,27 @@ const revocationFenceMigration = readFileSync(
 	),
 	"utf8",
 );
+const revocationSerializationTest = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../integration/authorization-revocation-serialization.test.ts",
+	),
+	"utf8",
+);
+const executionAdmissionFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0044.fixture.sql",
+	),
+	"utf8",
+);
+const durableEffectsFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0047.fixture.sql",
+	),
+	"utf8",
+);
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
@@ -66,6 +87,23 @@ test("replays the target-role upgrade fixture before accepting strict enforcemen
 	expect(migrationHarness).toContain("UPGRADE_0041_DATABASE");
 	expect(migrationHarness).toContain("test-db-migrations-0041.fixture.sql");
 	expect(migrationHarness).toContain("test-db-migrations-0041.assert.sql");
+});
+
+test("keeps post-default-project authorization seeds valid without weakening historical schemas", () => {
+	for (const source of [
+		revocationSerializationTest,
+		executionAdmissionFixture,
+		durableEffectsFixture,
+	]) {
+		expect(source).toContain(
+			"INSERT INTO organizations (id, name, slug, default_project_id)",
+		);
+		expect(source).toContain("WITH organization AS");
+	}
+	for (const fixture of [executionAdmissionFixture, durableEffectsFixture])
+		expect(fixture).not.toContain(
+			"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;",
+		);
 });
 
 test("initializes future organizations in compatibility mode", () => {

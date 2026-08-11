@@ -23,12 +23,19 @@ INSERT INTO execution_admission_claims (
     now() + interval '1 minute'
 );
 
-INSERT INTO organizations (id, name, slug)
-VALUES (
-    '47000000-0000-4000-8000-000000000003',
-    'Cross-Tenant Admission Replay',
-    'cross-tenant-admission-replay'
-);
+WITH organization AS (
+    INSERT INTO organizations (id, name, slug, default_project_id)
+    VALUES (
+        '47000000-0000-4000-8000-000000000003',
+        'Cross-Tenant Admission Replay',
+        'cross-tenant-admission-replay',
+        '47000000-0000-4000-8000-000000000008'
+    )
+    RETURNING id
+)
+INSERT INTO projects (id, organization_id, name, slug)
+SELECT '47000000-0000-4000-8000-000000000008', id, 'Default Project', 'default'
+FROM organization;
 INSERT INTO actors (id) VALUES ('47000000-0000-4000-8000-000000000004');
 INSERT INTO projects (id, organization_id, name, slug)
 VALUES (

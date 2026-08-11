@@ -113,6 +113,27 @@ function statusEventIds(body: string): string[] {
 		.filter((id): id is string => id !== undefined);
 }
 
+// Organizations retain a mandatory default project, so teardown removes only scenario data.
+async function seedOrganizationWithDefaultProject(
+	pool: Pool,
+	organizationId: string,
+	name: string,
+	slug: string,
+) {
+	const defaultProjectId = randomUUID();
+	await pool.query(
+		`WITH organization AS (
+			INSERT INTO organizations (id, name, slug, default_project_id)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id
+		)
+		INSERT INTO projects (id, organization_id, name, slug)
+		SELECT $4, id, 'Default Project', 'default'
+		FROM organization`,
+		[organizationId, name, slug, defaultProjectId],
+	);
+}
+
 async function seedExecutionExperiment(pool: Pool) {
 	const organizationId = randomUUID();
 	const projectId = randomUUID();
@@ -121,9 +142,11 @@ async function seedExecutionExperiment(pool: Pool) {
 	const itemId = randomUUID();
 	const experimentId = randomUUID();
 	const subject = `dispatch-race-${actorId}`;
-	await pool.query(
-		"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Dispatch race', $2)",
-		[organizationId, `dispatch-race-${organizationId}`],
+	await seedOrganizationWithDefaultProject(
+		pool,
+		organizationId,
+		"Dispatch race",
+		`dispatch-race-${organizationId}`,
 	);
 	await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 	await pool.query(
@@ -214,9 +237,6 @@ async function seedExecutionExperiment(pool: Pool) {
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 		},
 	};
 }
@@ -228,9 +248,11 @@ async function seedProjectAuditLockRace(pool: Pool) {
 	const ownerActorId = randomUUID();
 	const managerSubject = `audit-race-manager-${managerActorId}`;
 	const ownerSubject = `audit-race-owner-${ownerActorId}`;
-	await pool.query(
-		"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Audit lock race', $2)",
-		[organizationId, `audit-lock-race-${organizationId}`],
+	await seedOrganizationWithDefaultProject(
+		pool,
+		organizationId,
+		"Audit lock race",
+		`audit-lock-race-${organizationId}`,
 	);
 	for (const [actorId, subject] of [
 		[managerActorId, managerSubject],
@@ -274,9 +296,6 @@ async function seedProjectAuditLockRace(pool: Pool) {
 			await pool.query("DELETE FROM actors WHERE id = ANY($1::uuid[])", [
 				[managerActorId, ownerActorId],
 			]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 		},
 	};
 }
@@ -295,9 +314,11 @@ test.skipIf(!databaseUrl)(
 		const writer = await pool.connect();
 		const demoter = await pool.connect();
 		try {
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Revocation race', $2)",
-				[organizationId, `revocation-race-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Revocation race",
+				`revocation-race-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -426,9 +447,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
@@ -445,9 +463,11 @@ test.skipIf(!databaseUrl)(
 		const writer = await pool.connect();
 		const demoter = await pool.connect();
 		try {
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Lock order', $2)",
-				[organizationId, `lock-order-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Lock order",
+				`lock-order-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -514,9 +534,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
@@ -732,9 +749,11 @@ test.skipIf(!databaseUrl)(
 			return originalWriteSSE.call(this, message);
 		};
 		try {
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Optimization SSE revocation', $2)",
-				[organizationId, `optimization-sse-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Optimization SSE revocation",
+				`optimization-sse-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -844,9 +863,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
@@ -877,9 +893,11 @@ test.skipIf(!databaseUrl)(
 			return originalWrite.call(this, data);
 		};
 		try {
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Trace SSE revocation', $2)",
-				[organizationId, `trace-sse-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Trace SSE revocation",
+				`trace-sse-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -987,9 +1005,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
@@ -1012,9 +1027,11 @@ test.skipIf(!databaseUrl)(
 		const previousTimeout = process.env.EXECUTION_ADMISSION_TIMEOUT_MS;
 		try {
 			process.env.EXECUTION_ADMISSION_TIMEOUT_MS = "1000";
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Provider revocation', $2)",
-				[organizationId, `provider-revocation-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Provider revocation",
+				`provider-revocation-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -1147,9 +1164,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
@@ -1181,9 +1195,11 @@ test.skipIf(!databaseUrl)(
 			return originalWrite.call(this, data);
 		};
 		try {
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Experiment SSE revocation', $2)",
-				[organizationId, `experiment-sse-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Experiment SSE revocation",
+				`experiment-sse-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -1292,9 +1308,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
@@ -1602,9 +1615,11 @@ test.skipIf(!databaseUrl)(
 			completed_at: null,
 		};
 		try {
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Optimization dispatch race', $2)",
-				[organizationId, `optimization-dispatch-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Optimization dispatch race",
+				`optimization-dispatch-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -1733,9 +1748,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
@@ -1807,9 +1819,11 @@ test.skipIf(!databaseUrl)(
 		const revoker = await pool.connect();
 		const defaultProject = await pool.connect();
 		try {
-			await pool.query(
-				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Default lock race', $2)",
-				[organizationId, `default-lock-race-${organizationId}`],
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Default lock race",
+				`default-lock-race-${organizationId}`,
 			);
 			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
 			await pool.query(
@@ -1875,9 +1889,6 @@ test.skipIf(!databaseUrl)(
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
-			await pool.query("DELETE FROM organizations WHERE id = $1", [
-				organizationId,
-			]);
 			await pool.end();
 		}
 	},
