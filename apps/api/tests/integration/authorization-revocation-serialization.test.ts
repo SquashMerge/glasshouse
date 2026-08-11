@@ -210,7 +210,7 @@ async function seedExecutionExperiment(pool: Pool) {
 }
 
 test.skipIf(!databaseUrl)(
-	"demotion committed while an authorization waits prevents the later write, claim, and finalize",
+	"a revocation that holds the project fence before authorization completes without 40P01 and denies the later write",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 4 });
 		const organizationId = randomUUID();
@@ -270,6 +270,11 @@ test.skipIf(!databaseUrl)(
 				"UPDATE project_memberships SET role = 'member' WHERE project_id = $1 AND actor_subject = $2",
 				[projectId, subject],
 			);
+			await expect(
+				pool.query("SELECT id FROM projects WHERE id = $1 FOR UPDATE NOWAIT", [
+					projectId,
+				]),
+			).rejects.toMatchObject({ code: "55P03" });
 
 			await writer.query("BEGIN");
 			await writer.query("SET application_name = 'astraea-revocation-race'");
@@ -358,7 +363,7 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
-	"an authorized membership-to-project fence serializes a later revocation without deadlock",
+	"an authorized project-to-membership fence serializes a later revocation without deadlock",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 4 });
 		const organizationId = randomUUID();

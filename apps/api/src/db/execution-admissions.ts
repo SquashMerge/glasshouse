@@ -81,8 +81,8 @@ export async function executionAdmissionIsActive(
 }
 
 /**
- * Call only after the caller has locked its requester, membership, and Project
- * fence. The inserted row is the durable logical admission for one effect; it
+ * Call only after the caller has locked its Project fence and requester membership.
+ * The inserted row is the durable logical admission for one effect; it
  * does not make a later remote write physically atomic with PostgreSQL.
  */
 export async function claimExecutionAdmission(

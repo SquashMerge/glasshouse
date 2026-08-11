@@ -99,11 +99,12 @@ mode, preserving prior Basic Auth effective access; strict enforcement is enable
     only by the documented, serialized operator action after the readiness query is
     clean. Strict mode never grants access beyond the legacy assignment.
 9. **SSE frame delivery:** every authenticated SSE comment, snapshot, data,
-    heartbeat, status, and error frame is serialized through a bounded current
-     membership/Project revalidation fence. The active frame plus queued frames are
-     capped by `SSE_MAX_PENDING_FRAMES` (default 32) and `SSE_MAX_PENDING_BYTES`
-     (default 65536); overflow, timeout, write error, backpressure, or client
-     cancellation closes the stream, drops queued frames, and releases its fence.
+     heartbeat, status, and error frame is serialized through a bounded current
+      Project/membership revalidation fence. Detail-trace subscriptions apply the
+      same count and encoded-byte cap while the ClickHouse snapshot is loading, and
+      attach request cancellation before subscribing. Overflow, timeout, write error,
+      backpressure, or client cancellation drops queued frames and closes or declines
+      the stream before a later frame can be emitted.
 
 ## In scope
 

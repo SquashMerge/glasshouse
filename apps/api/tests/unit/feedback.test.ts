@@ -389,7 +389,7 @@ describe("feedback review persistence", () => {
 		for (const mutate of mutations) {
 			const before = calls.length;
 			await expect(mutate()).rejects.toMatchObject({ code: "NOT_FOUND" });
-			expect(calls[before + 3]).toContain("p.status = ANY($5::text[])");
+			expect(calls[before + 1]).toContain("p.status = ANY($5::text[])");
 		}
 
 		const listed = await listFeedback(

@@ -61,9 +61,10 @@ Migrations `0043_authorization_revocation_fence.sql`,
 `0044_execution_admission_cancellation.sql`, and
 `0045_execution_admission_effect_claims.sql` serialize Project and organization
 membership changes with authorization-sensitive work. Authorization paths lock
-organization membership, Project membership, then the Project row: PostgreSQL
-membership updates necessarily acquire their row lock before trigger code can
-take the Project fence, so this shared order prevents an inverse-order deadlock.
+the Project fence, then the acting organization and Project memberships, and finally
+make a fresh policy decision. The membership-revocation trigger takes the Project
+fence before it cancels admitted work, so a revocation that wins first denies the
+later authorization transaction without an inverse-order deadlock.
 An execution admission is committed under that short fence with the current
 Project epoch, requester, and expiry. After validation, a provider dispatch and
 each trace, metric, result, or lifecycle-event write commits its own bounded
@@ -75,10 +76,11 @@ local work. Do not hold a database authorization lock during a provider call.
 Every authenticated SSE frame, including connection comments, snapshots, data,
 heartbeats, statuses, and errors, takes a new bounded authorization fence through
 write settlement. `SSE_FRAME_WRITE_TIMEOUT_MS` defaults to 5000 ms (accepted
-range 100-60000 ms); `SSE_MAX_PENDING_FRAMES` defaults to 32 (1-256), and
-`SSE_MAX_PENDING_BYTES` defaults to 65536 (1024-1048576). The active write counts
-toward both queue limits; overflow, timeout, write error, backpressure, or
-disconnect closes the stream, drops all queued frames, and releases the fence.
+range 100-60000 ms); detail-trace snapshot acquisition uses the same bound.
+`SSE_MAX_PENDING_FRAMES` defaults to 32 (1-256), and `SSE_MAX_PENDING_BYTES`
+defaults to 65536 (1024-1048576). The active write and the pre-snapshot trace-detail
+queue count toward their respective limits; overflow, timeout, write error,
+backpressure, or disconnect drops queued frames and closes or declines the stream.
 `EXECUTION_ADMISSION_TIMEOUT_MS` defaults
 to 30000 ms (accepted range 1000-300000 ms) and
 `EXECUTION_ADMISSION_POLL_MS` defaults to 250 ms (accepted range 50-5000 ms).

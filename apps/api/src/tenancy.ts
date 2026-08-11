@@ -19,6 +19,7 @@ export type AuthorizedProjectScope = TrustedTenantContext & {
 };
 export type TenantScope = AuthorizedProjectScope;
 type Transactional = Pick<Pool, "connect">;
+const AUTHORIZATION_LOCK_ATTEMPTS = 2;
 
 export type ActiveAuthorizedProjectScope = Pick<
 	TrustedTenantContext,
@@ -117,37 +118,53 @@ export async function withActiveAuthorizedProjectLock<T>(
 	operation: ProjectOperation = "product_write",
 	lockTimeoutMs?: number,
 ): Promise<T> {
-	const client = await db.connect();
-	let transactionOpen = false;
-	try {
-		await client.query("BEGIN");
-		transactionOpen = true;
-		if (lockTimeoutMs !== undefined)
-			await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
-		if (
-			!(await lockActiveAuthorizedProject(client, tenant.projectId, {
-				organization_id: tenant.organizationId,
-				actor_id: tenant.actorId,
-				operation,
-			}))
-		)
-			throw new TenantScopeError("Project is not available");
-		const value = await callback();
-		await client.query("COMMIT");
-		transactionOpen = false;
-		return value;
-	} catch (cause) {
-		if (transactionOpen) {
-			try {
-				await client.query("ROLLBACK");
-			} catch {
-				// Preserve the authorization or persistence failure that triggered rollback.
+	for (let attempt = 0; attempt < AUTHORIZATION_LOCK_ATTEMPTS; attempt += 1) {
+		const client = await db.connect();
+		let transactionOpen = false;
+		let callbackStarted = false;
+		try {
+			await client.query("BEGIN");
+			transactionOpen = true;
+			if (lockTimeoutMs !== undefined)
+				await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
+			if (
+				!(await lockActiveAuthorizedProject(client, tenant.projectId, {
+					organization_id: tenant.organizationId,
+					actor_id: tenant.actorId,
+					operation,
+				}))
+			)
+				throw new TenantScopeError("Project is not available");
+			callbackStarted = true;
+			const value = await callback();
+			await client.query("COMMIT");
+			transactionOpen = false;
+			return value;
+		} catch (cause) {
+			if (transactionOpen) {
+				try {
+					await client.query("ROLLBACK");
+				} catch {
+					// Preserve the authorization or persistence failure that triggered rollback.
+				}
 			}
+			if (
+				!callbackStarted &&
+				attempt + 1 < AUTHORIZATION_LOCK_ATTEMPTS &&
+				isRetryableAuthorizationLockError(cause)
+			)
+				continue;
+			throw cause;
+		} finally {
+			client.release();
 		}
-		throw cause;
-	} finally {
-		client.release();
 	}
+	throw new Error("Authorization lock retry attempts were exhausted");
+}
+
+function isRetryableAuthorizationLockError(cause: unknown): boolean {
+	const code = (cause as { code?: unknown } | null)?.code;
+	return code === "40P01" || code === "40001";
 }
 
 export type InternalEvaluationProjectScope = Pick<

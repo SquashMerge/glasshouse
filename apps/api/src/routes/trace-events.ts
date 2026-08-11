@@ -10,23 +10,27 @@ import {
 	defaultClient,
 	getTrace as queryGetTrace,
 } from "../db/traces-query.js";
-import type { TenantScopedObservation } from "../db/traces-writer.js";
 import { trustedTenant } from "../tenancy.js";
 import { pgPool } from "../db/postgres.js";
 import type { TrustedTenantContext } from "../middleware/auth.js";
 import {
 	createAuthorizedSseDelivery,
 	authorizedSseFrame,
+	sseFrameWriteTimeoutMs,
+	sseMaxPendingBytes,
+	sseMaxPendingFrames,
 	type AuthorizedSseDelivery,
 } from "../lib/authorized-sse.js";
 import {
 	presentObservationMetadata,
 	type ObservationMetadata,
 } from "../db/observation-metadata.js";
+import { logger } from "../lib/logger.js";
 
 // Read tunables once at module load so per-event work is allocation-free.
 const HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS ?? 15_000);
 const GRACE_MS = Number(process.env.TRACE_COMPLETE_GRACE_MS ?? 30_000);
+const sseEncoder = new TextEncoder();
 
 const tag = "traces";
 
@@ -139,6 +143,16 @@ function notFoundResponse(traceId: string): Response {
 	);
 }
 
+function snapshotOverflowResponse(): Response {
+	return new Response(
+		JSON.stringify({
+			code: "SERVICE_UNAVAILABLE",
+			message: "Trace snapshot is unavailable",
+		}),
+		{ status: 503, headers: { "content-type": "application/json" } },
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -162,6 +176,9 @@ export type TraceEventRouteDependencies = {
 	getTrace: typeof queryGetTrace;
 	graceMs: number;
 	heartbeatMs: number;
+	maxPendingBytes: number;
+	maxPendingFrames: number;
+	snapshotTimeoutMs: number;
 	subscribe: typeof subscribe;
 };
 
@@ -178,6 +195,9 @@ const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
 	getTrace: queryGetTrace,
 	graceMs: GRACE_MS,
 	heartbeatMs: HEARTBEAT_MS,
+	maxPendingBytes: sseMaxPendingBytes(),
+	maxPendingFrames: sseMaxPendingFrames(),
+	snapshotTimeoutMs: sseFrameWriteTimeoutMs(),
 	subscribe,
 };
 
@@ -354,11 +374,31 @@ export function createTraceEventHandlers(
 			c.req as { valid: (target: "query") => { project_id?: string } }
 		).valid("query");
 		const expectedProjectId = projectId ?? "";
-		const bufferedObservations: TenantScopedObservation[] = [];
-		let forwardObservation:
-			| ((observation: TenantScopedObservation) => void)
-			| null = null;
-		const unsubscribe = d.subscribe("observation.created", (msg) => {
+		const bufferedObservations: Array<{ data: string; bytes: number }> = [];
+		let bufferedObservationBytes = 0;
+		let forwardObservation: ((data: string) => void) | null = null;
+		let unsubscribe: (() => void) | null = null;
+		let preSnapshotClosed: "aborted" | "overflow" | null = null;
+		let resolvePreSnapshotClose: () => void = () => undefined;
+		const preSnapshotClose = new Promise<void>((resolve) => {
+			resolvePreSnapshotClose = resolve;
+		});
+		const cleanupPreSnapshot = (reason: "aborted" | "overflow") => {
+			if (preSnapshotClosed) return;
+			preSnapshotClosed = reason;
+			forwardObservation = null;
+			bufferedObservationBytes = 0;
+			bufferedObservations.length = 0;
+			unsubscribe?.();
+			unsubscribe = null;
+			resolvePreSnapshotClose();
+		};
+		const requestSignal = c.req.raw.signal;
+		const onRequestAbort = () => cleanupPreSnapshot("aborted");
+		requestSignal.addEventListener("abort", onRequestAbort, { once: true });
+		if (requestSignal.aborted) cleanupPreSnapshot("aborted");
+		unsubscribe = d.subscribe("observation.created", (msg) => {
+			if (preSnapshotClosed) return;
 			const observation = msg.payload.observation;
 			if (
 				!observation ||
@@ -367,24 +407,75 @@ export function createTraceEventHandlers(
 				observation.project_id !== expectedProjectId
 			)
 				return;
-			if (forwardObservation) forwardObservation(observation);
-			else bufferedObservations.push(observation);
+			const data = JSON.stringify({
+				observation: presentObservation(observation),
+			});
+			if (forwardObservation) {
+				forwardObservation(data);
+				return;
+			}
+			const bytes = sseEncoder.encode(data).byteLength;
+			if (
+				bufferedObservations.length >= d.maxPendingFrames ||
+				bufferedObservationBytes + bytes > d.maxPendingBytes
+			) {
+				cleanupPreSnapshot("overflow");
+				return;
+			}
+			bufferedObservationBytes += bytes;
+			bufferedObservations.push({ data, bytes });
 		});
 
-		let traceExists: Awaited<ReturnType<typeof queryGetTrace>>;
-		try {
-			traceExists = await d.getTrace(
-				d.defaultClient(),
-				tenant.organizationId,
-				traceId,
-				projectId,
+		if (preSnapshotClosed) {
+			unsubscribe?.();
+			return preSnapshotClosed === "overflow"
+				? snapshotOverflowResponse()
+				: new Response(null, { status: 499 });
+		}
+
+		const snapshot = Promise.resolve().then(() =>
+			d.getTrace(d.defaultClient(), tenant.organizationId, traceId, projectId),
+		);
+		let clearSnapshotTimeout: (() => void) | undefined;
+		const traceExists = await Promise.race([
+			snapshot.then(
+				(value) => ({ kind: "snapshot" as const, value }),
+				(error) => ({ kind: "error" as const, error }),
+			),
+			new Promise<{ kind: "timeout" }>((resolve) => {
+				const timeout = setTimeout(
+					() => resolve({ kind: "timeout" }),
+					d.snapshotTimeoutMs,
+				);
+				clearSnapshotTimeout = () => clearTimeout(timeout);
+			}),
+			preSnapshotClose.then(() => ({ kind: "closed" as const })),
+		]);
+		clearSnapshotTimeout?.();
+		if (traceExists.kind === "closed") {
+			requestSignal.removeEventListener("abort", onRequestAbort);
+			return preSnapshotClosed === "overflow"
+				? snapshotOverflowResponse()
+				: new Response(null, { status: 499 });
+		}
+		if (traceExists.kind === "timeout") {
+			cleanupPreSnapshot("aborted");
+			requestSignal.removeEventListener("abort", onRequestAbort);
+			return new Response(
+				JSON.stringify({
+					code: "GATEWAY_TIMEOUT",
+					message: "Trace snapshot timed out",
+				}),
+				{ status: 504, headers: { "content-type": "application/json" } },
 			);
-		} catch (err) {
-			unsubscribe();
-			console.error(
-				`GET /v1/traces/{id}/events snapshot query failed:`,
-				(err as Error).message,
-			);
+		}
+		if (traceExists.kind === "error") {
+			cleanupPreSnapshot("aborted");
+			requestSignal.removeEventListener("abort", onRequestAbort);
+			logger.error("trace_events.snapshot_query_failed", traceExists.error, {
+				trace_id: traceId,
+				project_id: expectedProjectId,
+			});
 			return new Response(
 				JSON.stringify({
 					code: "INTERNAL",
@@ -393,14 +484,18 @@ export function createTraceEventHandlers(
 				{ status: 500, headers: { "content-type": "application/json" } },
 			);
 		}
-		if (!traceExists.trace) {
-			unsubscribe();
+		requestSignal.removeEventListener("abort", onRequestAbort);
+		const snapshotResult = traceExists.value;
+		if (!snapshotResult.trace) {
+			unsubscribe?.();
+			bufferedObservationBytes = 0;
+			bufferedObservations.length = 0;
 			return notFoundResponse(traceId);
 		}
-		const snapshotTrace = traceExists.trace;
+		const snapshotTrace = snapshotResult.trace;
 
 		const snapshotObservations =
-			traceExists.observations.map(presentObservation);
+			snapshotResult.observations.map(presentObservation);
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let graceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -419,7 +514,10 @@ export function createTraceEventHandlers(
 				if (heartbeat !== null) clearInterval(heartbeat);
 				heartbeat = null;
 				forwardObservation = null;
-				unsubscribe();
+				bufferedObservationBytes = 0;
+				bufferedObservations.length = 0;
+				unsubscribe?.();
+				unsubscribe = null;
 				resolveWait();
 			};
 			stream.onAbort(cleanup);
@@ -464,12 +562,9 @@ export function createTraceEventHandlers(
 						.finally(cleanup);
 				}, d.graceMs);
 			};
-			const sendObservation = (observation: TenantScopedObservation) => {
+			const sendObservation = (data: string) => {
 				if (closed) return;
 				armGraceTimer();
-				const data = JSON.stringify({
-					observation: presentObservation(observation),
-				});
 				void frameDelivery.deliver(
 					authorizedSseFrame(data, () =>
 						stream.writeSSE({ event: "observation", data }),
@@ -486,9 +581,15 @@ export function createTraceEventHandlers(
 					stream.writeSSE({ event: "snapshot", data: snapshotData }),
 				),
 			);
+			if (frameDelivery.closed || stream.aborted) {
+				cleanup();
+				return;
+			}
 			forwardObservation = sendObservation;
-			for (const observation of bufferedObservations.splice(0))
-				sendObservation(observation);
+			for (const observation of bufferedObservations.splice(0)) {
+				bufferedObservationBytes -= observation.bytes;
+				sendObservation(observation.data);
+			}
 			armGraceTimer();
 			await waitForClose;
 		});
