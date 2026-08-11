@@ -401,16 +401,28 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		const rows = page.getByTestId("span-row");
 		const workspace = page.getByTestId("trace-workspace");
 		await expect(rows).toHaveCount(1, { timeout: 10_000 });
-		for (let startIndex = 1; startIndex < 5_000; startIndex += 100) {
+		// Stay below the authorized SSE queue cap and wait for every delivery.
+		const observationsPerChunk = 24;
+		for (
+			let startIndex = 1;
+			startIndex < 5_000;
+			startIndex += observationsPerChunk
+		) {
+			const expectedRows = Math.min(5_000, startIndex + observationsPerChunk);
 			await postTrace(
 				request,
 				buildTracePayload(
 					traceId,
 					rootSpanId,
-					Math.min(100, 5_000 - startIndex),
+					expectedRows - startIndex,
 					traceName,
 					startIndex,
 				),
+			);
+			await expect(workspace).toHaveAttribute(
+				"data-row-count",
+				String(expectedRows),
+				{ timeout: 10_000 },
 			);
 		}
 		await expect(workspace).toHaveAttribute("data-row-count", "5000", {
