@@ -199,18 +199,70 @@ BEGIN
         RAISE EXCEPTION 'a migrated prompt version has a non-canonical content hash';
     END IF;
 
-    IF (SELECT count(*) FROM prompt_label_quarantine) <> 4 THEN
+    IF (
+        SELECT count(*)
+        FROM prompt_label_quarantine
+        WHERE (original_project_id, original_prompt_id, original_version_id, original_label) IN (
+            VALUES
+                ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'invalid!'),
+                ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'latest'),
+                ('22222222-2222-2222-2222-222222222222', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'tenant'),
+                ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000101', 'version-link')
+        )
+    ) <> 4 THEN
         RAISE EXCEPTION 'obsolete label grammar quarantine rows were not restored';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'invalid!' AND reason = 'invalid_label_format')
-        OR NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'latest' AND reason = 'reserved_latest')
-        OR NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'tenant' AND reason = 'prompt_project_mismatch')
-        OR NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'version-link' AND reason = 'version_prompt_mismatch') THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '11111111-1111-1111-1111-111111111111'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND original_label = 'invalid!'
+            AND reason = 'invalid_label_format'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '11111111-1111-1111-1111-111111111111'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND original_label = 'latest'
+            AND reason = 'reserved_latest'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '22222222-2222-2222-2222-222222222222'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND original_label = 'tenant'
+            AND reason = 'prompt_project_mismatch'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '11111111-1111-1111-1111-111111111111'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'bbbbbbbb-0000-0000-0000-000000000101'
+            AND original_label = 'version-link'
+            AND reason = 'version_prompt_mismatch'
+    ) THEN
         RAISE EXCEPTION 'label quarantine reason precedence is incorrect';
     END IF;
-    IF (SELECT count(*) FROM prompt_labels) <> 2
-        OR NOT EXISTS (SELECT 1 FROM prompt_labels WHERE label = 'production')
-        OR NOT EXISTS (SELECT 1 FROM prompt_labels WHERE label = 'team_alpha') THEN
+    IF (
+        SELECT count(*)
+        FROM prompt_labels
+        WHERE project_id = '11111111-1111-1111-1111-111111111111'
+            AND prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND label IN ('production', 'team_alpha')
+    ) <> 2 OR NOT EXISTS (
+        SELECT 1 FROM prompt_labels
+        WHERE project_id = '11111111-1111-1111-1111-111111111111'
+            AND prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND label = 'production'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_labels
+        WHERE project_id = '11111111-1111-1111-1111-111111111111'
+            AND prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND label = 'team_alpha'
+    ) THEN
         RAISE EXCEPTION 'valid labels were not retained and restored exactly';
     END IF;
 
@@ -576,7 +628,12 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM projects
-        WHERE organization_id <> '00000000-0000-4000-8000-000000000001'
+        WHERE id IN (
+            '11111111-1111-1111-1111-111111111111',
+            '22222222-2222-2222-2222-222222222222',
+            '44444444-4444-4444-8444-444444444444'
+        )
+            AND organization_id <> '00000000-0000-4000-8000-000000000001'
     ) THEN
         RAISE EXCEPTION 'legacy projects were not backfilled to the default organization';
     END IF;
@@ -612,7 +669,18 @@ BEGIN
     SET default_project_id = '33333333-3333-4333-8333-333333333333'
     WHERE id = '00000000-0000-4000-8000-000000000002';
     ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
-    IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 2 THEN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM projects
+        WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+            AND slug = 'default'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM projects
+        WHERE id = '33333333-3333-4333-8333-333333333333'
+            AND organization_id = '00000000-0000-4000-8000-000000000002'
+            AND slug = 'default'
+    ) THEN
         RAISE EXCEPTION 'project slugs are not organization-scoped';
     END IF;
 
@@ -801,10 +869,38 @@ BEGIN
         RAISE EXCEPTION 'durable experiment task ledger is incomplete';
     END IF;
 
-    IF (SELECT count(*) FROM project_memberships WHERE organization_id = '00000000-0000-4000-8000-000000000001' AND actor_subject = 'bootstrap-owner' AND role = 'manager') <> 4
+    IF (
+        SELECT count(*)
+        FROM project_memberships AS pm
+        WHERE pm.organization_id = '00000000-0000-4000-8000-000000000001'
+            AND pm.actor_subject = 'bootstrap-owner'
+            AND pm.role = 'manager'
+            AND (
+                pm.project_id IN (
+                    '11111111-1111-1111-1111-111111111111',
+                    '22222222-2222-2222-2222-222222222222',
+                    '44444444-4444-4444-8444-444444444444'
+                ) OR pm.project_id = (
+                    SELECT default_project_id
+                    FROM organizations
+                    WHERE id = '00000000-0000-4000-8000-000000000001'
+                )
+            )
+    ) <> 4
         OR EXISTS (
             SELECT 1 FROM projects p
             WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'
+                AND (
+                    p.id IN (
+                        '11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '44444444-4444-4444-8444-444444444444'
+                    ) OR p.id = (
+                        SELECT default_project_id
+                        FROM organizations
+                        WHERE id = '00000000-0000-4000-8000-000000000001'
+                    )
+                )
                 AND NOT EXISTS (
                     SELECT 1 FROM project_memberships pm
                     WHERE pm.project_id = p.id AND pm.actor_subject = 'bootstrap-owner' AND pm.role = 'manager'
@@ -815,7 +911,24 @@ BEGIN
             WHERE organization_id = '00000000-0000-4000-8000-000000000001'
                 AND actor_subject = 'bootstrap-owner' AND role = 'owner'
         )
-        OR (SELECT count(*) FROM project_authorization_audit_events WHERE actor_subject = 'bootstrap-owner' AND event_type = 'bootstrap_manager_added') <> 4 THEN
+        OR (
+            SELECT count(*)
+            FROM project_authorization_audit_events
+            WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+                AND actor_subject = 'bootstrap-owner'
+                AND event_type = 'bootstrap_manager_added'
+                AND (
+                    project_id IN (
+                        '11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '44444444-4444-4444-8444-444444444444'
+                    ) OR project_id = (
+                        SELECT default_project_id
+                        FROM organizations
+                        WHERE id = '00000000-0000-4000-8000-000000000001'
+                    )
+                )
+        ) <> 4 THEN
         RAISE EXCEPTION 'bootstrap owner was not idempotently granted manager membership for every historical project';
     END IF;
 

@@ -171,6 +171,106 @@ test("scopes the bootstrap default-project assertion to its organization", () =>
 	);
 });
 
+test("scopes historical migration outputs to their fixture rows", () => {
+	const historicalProjectIds = [
+		"11111111-1111-1111-1111-111111111111",
+		"22222222-2222-2222-2222-222222222222",
+		"44444444-4444-4444-8444-444444444444",
+	];
+	const legacyProjectBackfillAssertion = migrationAssertion.slice(
+		migrationAssertion.indexOf("FROM projects\n        WHERE id IN ("),
+		migrationAssertion.indexOf(
+			"legacy projects were not backfilled to the default organization",
+		),
+	);
+	const bootstrapAuthorizationAssertion = migrationAssertion.slice(
+		migrationAssertion.indexOf("FROM project_memberships AS pm"),
+		migrationAssertion.indexOf(
+			"bootstrap owner was not idempotently granted manager membership",
+		),
+	);
+	const promptLabelAssertion = migrationAssertion.slice(
+		migrationAssertion.indexOf(
+			"(original_project_id, original_prompt_id, original_version_id, original_label) IN (",
+		),
+		migrationAssertion.indexOf(
+			"valid labels were not retained and restored exactly",
+		),
+	);
+
+	expect(migrationAssertion).not.toContain(
+		"FROM projects\n        WHERE organization_id <> '00000000-0000-4000-8000-000000000001'",
+	);
+	for (const projectId of historicalProjectIds)
+		expect(legacyProjectBackfillAssertion).toContain(projectId);
+	expect(legacyProjectBackfillAssertion).toContain(
+		"AND organization_id <> '00000000-0000-4000-8000-000000000001'",
+	);
+	expect(migrationAssertion).not.toContain(
+		"IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 2",
+	);
+	expect(migrationAssertion).toContain(
+		"WHERE organization_id = '00000000-0000-4000-8000-000000000001'\n            AND slug = 'default'",
+	);
+	expect(migrationAssertion).toContain(
+		"WHERE id = '33333333-3333-4333-8333-333333333333'\n            AND organization_id = '00000000-0000-4000-8000-000000000002'\n            AND slug = 'default'",
+	);
+
+	expect(bootstrapAuthorizationAssertion).toContain(
+		"pm.project_id IN (\n                    '11111111-1111-1111-1111-111111111111'",
+	);
+	expect(bootstrapAuthorizationAssertion).toContain(
+		"p.id IN (\n                        '11111111-1111-1111-1111-111111111111'",
+	);
+	expect(bootstrapAuthorizationAssertion).toContain(
+		"FROM project_authorization_audit_events\n            WHERE organization_id = '00000000-0000-4000-8000-000000000001'\n                AND actor_subject = 'bootstrap-owner'\n                AND event_type = 'bootstrap_manager_added'\n                AND (\n                    project_id IN (",
+	);
+	expect(bootstrapAuthorizationAssertion).toContain(
+		"SELECT default_project_id\n                    FROM organizations\n                    WHERE id = '00000000-0000-4000-8000-000000000001'",
+	);
+	for (const projectId of historicalProjectIds)
+		expect(bootstrapAuthorizationAssertion.split(projectId)).toHaveLength(4);
+	expect(
+		bootstrapAuthorizationAssertion.split("SELECT default_project_id"),
+	).toHaveLength(4);
+	expect(migrationAssertion).not.toContain(
+		"count(*) FROM project_memberships WHERE organization_id = '00000000-0000-4000-8000-000000000001' AND actor_subject = 'bootstrap-owner' AND role = 'manager'",
+	);
+	expect(migrationAssertion).not.toContain(
+		"WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'\n                AND NOT EXISTS",
+	);
+	expect(migrationAssertion).not.toContain(
+		"count(*) FROM project_authorization_audit_events WHERE actor_subject = 'bootstrap-owner' AND event_type = 'bootstrap_manager_added'",
+	);
+
+	expect(promptLabelAssertion).toContain(
+		"(original_project_id, original_prompt_id, original_version_id, original_label) IN (",
+	);
+	for (const tuple of [
+		"('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'invalid!')",
+		"('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'latest')",
+		"('22222222-2222-2222-2222-222222222222', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'tenant')",
+		"('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000101', 'version-link')",
+	])
+		expect(promptLabelAssertion).toContain(tuple);
+	for (const reason of [
+		"invalid_label_format",
+		"reserved_latest",
+		"prompt_project_mismatch",
+		"version_prompt_mismatch",
+	])
+		expect(promptLabelAssertion).toContain(reason);
+	expect(promptLabelAssertion).toContain(
+		"WHERE project_id = '11111111-1111-1111-1111-111111111111'\n            AND prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'\n            AND version_id = 'aaaaaaaa-0000-0000-0000-000000000101'",
+	);
+	expect(migrationAssertion).not.toContain(
+		"IF (SELECT count(*) FROM prompt_label_quarantine) <> 4",
+	);
+	expect(migrationAssertion).not.toContain(
+		"IF (SELECT count(*) FROM prompt_labels) <> 2",
+	);
+});
+
 test("initializes future organizations in compatibility mode", () => {
 	expect(migration).toContain("AFTER INSERT ON organizations");
 	expect(migration).toContain("authorization_policy_settings");
