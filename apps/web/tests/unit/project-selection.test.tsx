@@ -78,7 +78,7 @@ describe("ProjectProvider", () => {
 			actor_subject: ACTOR,
 			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
-			organization_role: "owner",
+			organization_role: "admin",
 			projects: [
 				{
 					id: PROJECT_ID,
@@ -113,7 +113,7 @@ describe("ProjectProvider", () => {
 			actor_subject: ACTOR,
 			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
-			organization_role: "member",
+			organization_role: "user",
 			projects: [],
 		});
 
@@ -137,7 +137,7 @@ describe("ProjectProvider", () => {
 			actor_subject: ACTOR,
 			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
-			organization_role: "owner",
+			organization_role: "admin",
 			default_project_id: defaultProjectId,
 			projects: [
 				{
@@ -181,7 +181,7 @@ describe("ProjectProvider", () => {
 			actor_subject: ACTOR,
 			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
-			organization_role: "owner",
+			organization_role: "admin",
 			default_project_id: PROJECT_ID,
 			projects: [
 				{
@@ -241,7 +241,7 @@ describe("ProjectProvider", () => {
 			actor_subject: ACTOR,
 			actor_id: ACTOR_ID,
 			organization_id: ORGANIZATION,
-			organization_role: "owner",
+			organization_role: "admin",
 			default_project_id: PROJECT_ID,
 			projects: [
 				{

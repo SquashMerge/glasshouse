@@ -12,14 +12,16 @@ describe("evaluation event stream", () => {
 			release = resolve;
 		});
 		const handlers = createExperimentHandlers({
+			assertProjectAccess: async () => undefined,
 			pool: () =>
 				({
 					query: async () => ({
 						rows: [
 							{
-								organization_role: "owner",
-								project_role: "manager",
-								status: "active",
+								effective_role: "admin",
+								enforcement: "strict",
+								project_status: "active",
+								allowed: true,
 							},
 						],
 					}),

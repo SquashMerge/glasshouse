@@ -20,7 +20,13 @@ import {
 	SetDefaultProjectInput,
 	UpdateProjectInput,
 } from "../schemas/projects.js";
-import { trustedTenant } from "../tenancy.js";
+import {
+	assertOrganizationAccess,
+	assertTenantProjectAccess,
+	TenantScopeError,
+	trustedTenant,
+} from "../tenancy.js";
+import type { ProjectOperation } from "../authorization-policy.js";
 
 const Id = z.string().uuid();
 const projectParams = z.object({ id: Id });
@@ -205,8 +211,23 @@ type Row = {
 	project_role: "owner" | "manager" | "member";
 	is_default?: boolean;
 };
+function publicProjectRole(role: Row["project_role"]) {
+	if (role === "owner") return "admin" as const;
+	if (role === "manager") return "user" as const;
+	return "read_only" as const;
+}
+function publicOrganizationRole(role: "owner" | "member") {
+	return role === "owner" ? ("admin" as const) : ("user" as const);
+}
+function legacyProjectRole(role: "user" | "read_only") {
+	return role === "user" ? ("manager" as const) : ("member" as const);
+}
+function legacyOrganizationRole(role: "admin" | "user") {
+	return role === "admin" ? ("owner" as const) : ("member" as const);
+}
 const project = (row: Row) => ({
 	...row,
+	project_role: publicProjectRole(row.project_role),
 	is_default: row.is_default ?? false,
 	created_at: row.created_at.toISOString(),
 	archived_at: row.archived_at?.toISOString() ?? null,
@@ -294,6 +315,34 @@ function failure(c: Context, error: unknown): Response {
 		);
 	return c.json({ code: "INTERNAL", message: "Project operation failed" }, 500);
 }
+async function requireProjectPolicy(
+	c: Context,
+	projectId: string,
+	operation: ProjectOperation,
+) {
+	try {
+		await assertTenantProjectAccess(
+			pgPool(),
+			trustedTenant(c),
+			projectId,
+			operation,
+		);
+	} catch (cause) {
+		if (cause instanceof TenantScopeError) throw new Error("Not found");
+		throw cause;
+	}
+}
+async function requireOrganizationPolicy(
+	c: Context,
+	operation: "organization_manage" | "destructive" | "governed",
+) {
+	try {
+		await assertOrganizationAccess(pgPool(), trustedTenant(c), operation);
+	} catch (cause) {
+		if (cause instanceof TenantScopeError) throw new Error("Forbidden");
+		throw cause;
+	}
+}
 async function role(
 	c: Context,
 	projectId?: string,
@@ -335,8 +384,8 @@ export async function handleGetMe(c: Context) {
 			actor_subject: tenant.actor,
 			actor_id: tenant.actorId,
 			organization_id: tenant.organizationId,
-			organization_role: membership.rows[0].role,
-			effective_organization_role_id: `organization:${membership.rows[0].role}`,
+			organization_role: publicOrganizationRole(membership.rows[0].role),
+			effective_organization_role_id: `organization:${publicOrganizationRole(membership.rows[0].role)}`,
 			default_project_id: membership.rows[0].default_project_id,
 			projects: rows.rows.map(project),
 		});
@@ -372,7 +421,7 @@ async function listAccessibleProjects(
 	includeArchived: boolean,
 ) {
 	return pool.query<Row>(
-		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($2::boolean AND CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END IN ('manager', 'owner'))) ORDER BY p.created_at",
+		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($2::boolean AND authorization_allows_project(p.organization_id, p.id, $3, 'project_manage'))) ORDER BY p.created_at",
 		[tenant.organizationId, includeArchived, tenant.actorId],
 	);
 }
@@ -427,6 +476,7 @@ async function queryWithOrganizationAuditLocks<T extends QueryResultRow>(
 }
 export async function handleCreateProject(c: Context) {
 	try {
+		await requireOrganizationPolicy(c, "organization_manage");
 		const tenant = trustedTenant(c);
 		const input = (c.req as any).valid("json");
 		const row = await pgPool().query<Row>(
@@ -451,6 +501,7 @@ export async function handleCreateProject(c: Context) {
 }
 export async function handleSetDefaultProject(c: Context) {
 	try {
+		await requireOrganizationPolicy(c, "destructive");
 		const tenant = trustedTenant(c);
 		const { project_id } = (c.req as any).valid("json");
 		const client = await pgPool().connect();
@@ -479,6 +530,7 @@ export async function handleSetDefaultProject(c: Context) {
 export async function handleDeleteProject(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
+		await requireProjectPolicy(c, id, "destructive");
 		const { confirmation_name } = (c.req as any).valid("json");
 		const tenant = trustedTenant(c);
 		const pool = pgPool();
@@ -608,6 +660,7 @@ export async function handleDeleteProject(c: Context) {
 export async function handleGetProjectDeletionStatus(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
+		await requireProjectPolicy(c, id, "destructive");
 		const tenant = trustedTenant(c);
 		const result = await pgPool().query<DeletionJob>(
 			"SELECT j.status, j.traces_cleaned_at, j.observations_cleaned_at, j.completed_at, j.attempt_count FROM project_deletion_jobs j JOIN projects p ON p.id = j.project_id AND p.organization_id = j.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE j.project_id = $1 AND j.organization_id = $2 AND p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')",
@@ -622,6 +675,7 @@ export async function handleGetProjectDeletionStatus(c: Context) {
 export async function handleGetProject(c: Context) {
 	try {
 		const params = (c.req as any).valid("param");
+		await requireProjectPolicy(c, params.id, "product_read");
 		const tenant = await role(c, params.id);
 		const rows = await pgPool().query<Row>(
 			"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
@@ -636,6 +690,7 @@ export async function handleGetProject(c: Context) {
 export async function handleUpdateProject(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
+		await requireProjectPolicy(c, id, "project_manage");
 		const tenant = trustedTenant(c);
 		const input = (c.req as any).valid("json");
 		const rows = await queryWithProjectAuditLock<Row>(
@@ -659,6 +714,7 @@ export async function handleUpdateProject(c: Context) {
 async function serializedLifecycle(c: Context, status: "active" | "archived") {
 	try {
 		const id = (c.req as any).valid("param").id;
+		await requireProjectPolicy(c, id, "project_manage");
 		const tenant = trustedTenant(c);
 		const client = await pgPool().connect();
 		try {
@@ -734,6 +790,7 @@ export const handleRestoreProject = (c: Context) =>
 export async function handleListProjectMembers(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
+		await requireProjectPolicy(c, id, "project_manage");
 		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<{
 			actor_subject: string;
@@ -746,6 +803,7 @@ export async function handleListProjectMembers(c: Context) {
 		return c.json({
 			items: rows.rows.map((row) => ({
 				...row,
+				role: publicProjectRole(row.role),
 				created_at: row.created_at.toISOString(),
 			})),
 		});
@@ -756,6 +814,7 @@ export async function handleListProjectMembers(c: Context) {
 export async function handleGetProjectAuditEvents(c: Context) {
 	try {
 		const id = (c.req as any).valid("param").id;
+		await requireProjectPolicy(c, id, "audit_read");
 		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<{
 			id: string;
@@ -763,7 +822,7 @@ export async function handleGetProjectAuditEvents(c: Context) {
 			event_type: string;
 			created_at: Date;
 		}>(
-			"SELECT e.id, e.actor_subject, e.event_type, e.created_at FROM project_authorization_audit_events e WHERE e.project_id = $1 AND e.organization_id = $3 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $2) LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_pm.actor_subject, $2) WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY e.created_at, e.id",
+			"SELECT e.id, e.actor_subject, e.event_type, e.created_at FROM project_authorization_audit_events e WHERE e.project_id = $1 AND e.organization_id = $3 AND authorization_allows_project($3, $1, $2, 'audit_read') ORDER BY e.created_at, e.id",
 			[id, tenant.actorId, tenant.organizationId],
 		);
 		return c.json({
@@ -780,9 +839,11 @@ export async function handlePutProjectMember(c: Context) {
 	try {
 		const params = (c.req as any).valid("param");
 		const { id } = params;
+		await requireProjectPolicy(c, id, "project_manage");
 		const input = (c.req as any).valid("json");
 		const tenant = trustedTenant(c);
 		if (input.actor_subject !== params.actor) throw new Error("Not found");
+		const targetRole = legacyProjectRole(input.role);
 		const member = await queryWithProjectAuditLock<{
 			actor_subject: string;
 			role: "manager" | "member";
@@ -794,14 +855,18 @@ export async function handlePutProjectMember(c: Context) {
 				id,
 				tenant.organizationId,
 				input.actor_subject,
-				input.role,
+				targetRole,
 				tenant.actor,
 				tenant.actorId,
 			],
 		);
 		if (!member.rows[0]) throw new Error("Not found");
 		const row = member.rows[0];
-		return c.json({ ...row, created_at: row.created_at.toISOString() });
+		return c.json({
+			...row,
+			role: publicProjectRole(row.role),
+			created_at: row.created_at.toISOString(),
+		});
 	} catch (error) {
 		return failure(c, error);
 	}
@@ -809,6 +874,7 @@ export async function handlePutProjectMember(c: Context) {
 export async function handleDeleteProjectMember(c: Context) {
 	try {
 		const { id, actor } = (c.req as any).valid("param");
+		await requireProjectPolicy(c, id, "project_manage");
 		const tenant = trustedTenant(c);
 		const deleted = await queryWithProjectAuditLock(
 			id,
@@ -823,10 +889,12 @@ export async function handleDeleteProjectMember(c: Context) {
 }
 export async function handlePutOrganizationMember(c: Context) {
 	try {
+		await requireOrganizationPolicy(c, "organization_manage");
 		const tenant = trustedTenant(c);
 		const { actor } = (c.req as any).valid("param");
 		const input = (c.req as any).valid("json");
 		if (actor !== input.actor_subject) throw new Error("Not found");
+		const targetRole = legacyOrganizationRole(input.role);
 		const row = await queryWithOrganizationAuditLocks<{
 			actor_subject: string;
 			role: "owner" | "member";
@@ -834,12 +902,13 @@ export async function handlePutOrganizationMember(c: Context) {
 		}>(
 			tenant.organizationId,
 			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $5) AND role = 'owner' FOR UPDATE), locked_projects AS MATERIALIZED (SELECT id, status, slug, created_at FROM projects WHERE organization_id = $1 FOR UPDATE), unfrozen AS MATERIALIZED (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM locked_projects WHERE status = 'deleting')), audit_project AS MATERIALIZED (SELECT id FROM locked_projects ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1), mutation AS (INSERT INTO organization_memberships (organization_id, actor_subject, role) SELECT $1, $2, $3 FROM authorization CROSS JOIN unfrozen WHERE EXISTS (SELECT 1 FROM locked_projects) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE organization_memberships.role IS DISTINCT FROM EXCLUDED.role RETURNING actor_subject, role, created_at, (xmax = 0) AS created), membership AS (SELECT actor_subject, role, created_at FROM mutation UNION ALL SELECT om.actor_subject, om.role, om.created_at FROM organization_memberships om WHERE om.organization_id = $1 AND om.actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM locked_projects) AND EXISTS (SELECT 1 FROM unfrozen) AND NOT EXISTS (SELECT 1 FROM mutation)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, audit_project.id, $4, CASE WHEN created THEN 'organization_membership_created' ELSE 'organization_membership_updated' END FROM mutation CROSS JOIN audit_project) SELECT * FROM membership",
-			[tenant.organizationId, actor, input.role, tenant.actor, tenant.actorId],
+			[tenant.organizationId, actor, targetRole, tenant.actor, tenant.actorId],
 		);
 		const value = row.rows[0];
 		if (!value) throw new Error("Forbidden");
 		return c.json({
 			...value,
+			role: publicOrganizationRole(value.role),
 			created_at: value.created_at.toISOString(),
 		});
 	} catch (error) {
@@ -848,6 +917,7 @@ export async function handlePutOrganizationMember(c: Context) {
 }
 export async function handleListOrganizationMembers(c: Context) {
 	try {
+		await requireOrganizationPolicy(c, "organization_manage");
 		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<{
 			actor_subject: string;
@@ -860,6 +930,7 @@ export async function handleListOrganizationMembers(c: Context) {
 		return c.json({
 			items: rows.rows.map((row) => ({
 				...row,
+				role: publicOrganizationRole(row.role),
 				created_at: row.created_at.toISOString(),
 			})),
 		});
@@ -869,6 +940,7 @@ export async function handleListOrganizationMembers(c: Context) {
 }
 export async function handleDeleteOrganizationMember(c: Context) {
 	try {
+		await requireOrganizationPolicy(c, "organization_manage");
 		const tenant = trustedTenant(c);
 		const { actor } = (c.req as any).valid("param");
 		const deleted = await queryWithOrganizationAuditLocks(

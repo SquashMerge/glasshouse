@@ -7,7 +7,53 @@ const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "22222222-2222-4222-8222-222222222222";
 const createdAt = new Date("2026-07-15T10:00:00.000Z");
+const actorIds = {
+	owner: "33333333-3333-4333-8333-333333333333",
+	manager: "44444444-4444-4444-8444-444444444444",
+	member: "55555555-5555-4555-8555-555555555555",
+	"cross-org-manager": "66666666-6666-4666-8666-666666666666",
+} as const;
 const defaultQuery = async (sql: string, values: string[] = []) => {
+	if (sql.includes("authorization_effective_project_role")) {
+		const [, projectId, actorId, operation] = values;
+		const role =
+			actorId === actorIds.owner
+				? "admin"
+				: actorId === actorIds.manager
+					? "user"
+					: actorId === actorIds.member
+						? "read_only"
+						: null;
+		const allowed =
+			projectId === PROJECT &&
+			(role === "admin" ||
+				(role === "user" &&
+					[
+						"product_read",
+						"product_write",
+						"execute",
+						"ingest",
+						"audit_read",
+						"project_manage",
+						"governed",
+					].includes(operation!)) ||
+				(role === "read_only" &&
+					["product_read", "product_write", "execute", "ingest"].includes(
+						operation!,
+					)));
+		return {
+			rows: [
+				{
+					effective_role: role,
+					enforcement: "compatibility",
+					project_status: "active",
+					allowed,
+				},
+			],
+		};
+	}
+	if (sql.includes("authorization_allows_organization"))
+		return { rows: [{ allowed: values[1] === actorIds.owner }] };
 	if (sql.startsWith("SELECT p.name, p.status FROM projects"))
 		return { rows: [{ name: "Project One", status: "active" }] };
 	if (sql.startsWith("SELECT default_project_id FROM organizations"))
@@ -102,7 +148,15 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 		sql.includes("COALESCE(pm.role, '')") ||
 		sql.includes("CASE WHEN om.role = 'owner' THEN 'owner'")
 	) {
-		const [projectId, , actor] = values;
+		const [projectId, , actorId] = values;
+		const actor =
+			actorId === actorIds.owner
+				? "owner"
+				: actorId === actorIds.manager
+					? "manager"
+					: actorId === actorIds.member
+						? "member"
+						: actorId;
 		if (projectId === OTHER_PROJECT)
 			return { rows: sql.includes("FOR UPDATE OF p") ? [] : [{ role: "" }] };
 		return {
@@ -247,7 +301,8 @@ api.use("/v1/*", async (c, next) => {
 			actor,
 			actorId:
 				c.req.header("x-test-actor-id") ??
-				"33333333-3333-4333-8333-333333333333",
+				actorIds[actor as keyof typeof actorIds] ??
+				actorIds.member,
 			organizationId: ORGANIZATION,
 		});
 	await next();
@@ -377,11 +432,6 @@ describe("project authorization routes", () => {
 		});
 
 		expect(response.status).toBe(404);
-		const [sql] = query.mock.calls.find(([sql]) =>
-			(sql as string).startsWith("SELECT p.name, p.status FROM projects"),
-		)!;
-		expect(sql).toContain("p.status = 'deleting'");
-		expect(sql).toContain("p.status <> 'deleting' AND om.role = 'owner'");
 	});
 
 	it("blocks membership writes after a failed deletion attempt", async () => {
@@ -403,7 +453,7 @@ describe("project authorization routes", () => {
 			`/v1/projects/${PROJECT}/members/member`,
 			{
 				method: "PUT",
-				body: JSON.stringify({ actor_subject: "member", role: "member" }),
+				body: JSON.stringify({ actor_subject: "member", role: "read_only" }),
 			},
 		);
 		const remove = await request(
@@ -426,6 +476,8 @@ describe("project authorization routes", () => {
 		expect(failedDeletion.status).toBe(409);
 
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (sql.includes("authorization_allows_organization"))
+				return { rows: [{ allowed: true }] };
 			if (
 				sql.startsWith("BEGIN") ||
 				sql.startsWith("COMMIT") ||
@@ -444,7 +496,7 @@ describe("project authorization routes", () => {
 		});
 		const put = await request("owner", "/v1/organization/members/member", {
 			method: "PUT",
-			body: JSON.stringify({ actor_subject: "member", role: "owner" }),
+			body: JSON.stringify({ actor_subject: "member", role: "admin" }),
 		});
 		const remove = await request("owner", "/v1/organization/members/member", {
 			method: "DELETE",
@@ -513,7 +565,7 @@ describe("project authorization routes", () => {
 		});
 		const promote = await request("member", "/v1/organization/members/member", {
 			method: "PUT",
-			body: JSON.stringify({ actor_subject: "member", role: "owner" }),
+			body: JSON.stringify({ actor_subject: "member", role: "admin" }),
 		});
 
 		expect(create.status).toBe(403);
@@ -546,7 +598,7 @@ describe("project authorization routes", () => {
 			`/v1/projects/${PROJECT}/members/member`,
 			{
 				method: "PUT",
-				body: JSON.stringify({ actor_subject: "member", role: "member" }),
+				body: JSON.stringify({ actor_subject: "member", role: "read_only" }),
 			},
 		);
 
@@ -673,14 +725,14 @@ describe("project authorization routes", () => {
 		const active = await request("member", "/v1/projects");
 
 		expect(active.status).toBe(200);
-		expect((await active.json()).items[0].project_role).toBe("member");
+		expect((await active.json()).items[0].project_role).toBe("read_only");
 
 		query.mockImplementationOnce(async () => ({
 			rows: [{ role: "member" }],
 		}));
 		query.mockImplementationOnce(async (sql: string) => {
 			expect(sql).toContain("$2::boolean");
-			expect(sql).toContain("IN ('manager', 'owner')");
+			expect(sql).toContain("authorization_allows_project");
 			return { rows: [] };
 		});
 		const management = await request(
@@ -715,10 +767,10 @@ describe("project authorization routes", () => {
 		expect(response.status).toBe(200);
 		const body = await response.json();
 		expect(body.projects).toEqual([
-			expect.objectContaining({ id: PROJECT, project_role: "member" }),
+			expect.objectContaining({ id: PROJECT, project_role: "read_only" }),
 		]);
 		expect(body.actor_id).toMatch(/^[0-9a-f-]{36}$/);
-		expect(body.effective_organization_role_id).toBe("organization:member");
+		expect(body.effective_organization_role_id).toBe("organization:user");
 	});
 
 	it("rejects invalid archived management mode values", async () => {
@@ -780,7 +832,7 @@ describe("project authorization routes", () => {
 			`/v1/projects/${PROJECT}/members/member`,
 			{
 				method: "PUT",
-				body: JSON.stringify({ actor_subject: "member", role: "member" }),
+				body: JSON.stringify({ actor_subject: "member", role: "read_only" }),
 			},
 		);
 		const remove = await request(
@@ -836,14 +888,14 @@ describe("project authorization routes", () => {
 		});
 		await request("manager", `/v1/projects/${PROJECT}/members/member`, {
 			method: "PUT",
-			body: JSON.stringify({ actor_subject: "member", role: "member" }),
+			body: JSON.stringify({ actor_subject: "member", role: "read_only" }),
 		});
 		await request("manager", `/v1/projects/${PROJECT}/members/member`, {
 			method: "DELETE",
 		});
 		await request("owner", "/v1/organization/members/member", {
 			method: "PUT",
-			body: JSON.stringify({ actor_subject: "member", role: "member" }),
+			body: JSON.stringify({ actor_subject: "member", role: "user" }),
 		});
 		await request("owner", "/v1/organization/members/member", {
 			method: "DELETE",
@@ -925,10 +977,8 @@ describe("project authorization routes", () => {
 			});
 		}
 		expect(
-			query.mock.calls.some(
-				([sql]) =>
-					sql.startsWith("SELECT e.id, e.actor_subject") &&
-					sql.includes("actor_pm.role = 'manager'"),
+			query.mock.calls.some(([sql]) =>
+				sql.includes("authorization_effective_project_role"),
 			),
 		).toBe(true);
 		expect(audit.status).toBeLessThan(500);
@@ -945,19 +995,11 @@ describe("project authorization routes", () => {
 		);
 
 		for (const response of [members, audit]) {
-			expect(response.status).toBe(200);
-			expect(await response.json()).toEqual({ items: [] });
-		}
-		const reads = query.mock.calls.filter(([sql]) =>
-			sql.includes("actor_pm.role = 'manager'"),
-		);
-		expect(reads).toHaveLength(2);
-		for (const [, values] of reads) {
-			expect(values).toEqual([
-				OTHER_PROJECT,
-				"33333333-3333-4333-8333-333333333333",
-				ORGANIZATION,
-			]);
+			expect(response.status).toBe(404);
+			expect(await response.json()).toEqual({
+				code: "NOT_FOUND",
+				message: "Project is not available",
+			});
 		}
 	});
 
@@ -979,11 +1021,11 @@ describe("project authorization routes", () => {
 	it("records created membership facts only for inserts and updated facts only for role changes", async () => {
 		await request("owner", `/v1/projects/${PROJECT}/members/member`, {
 			method: "PUT",
-			body: JSON.stringify({ actor_subject: "member", role: "manager" }),
+			body: JSON.stringify({ actor_subject: "member", role: "user" }),
 		});
 		await request("owner", "/v1/organization/members/member", {
 			method: "PUT",
-			body: JSON.stringify({ actor_subject: "member", role: "member" }),
+			body: JSON.stringify({ actor_subject: "member", role: "user" }),
 		});
 
 		const membershipUpserts = query.mock.calls
@@ -1016,13 +1058,14 @@ describe("project authorization routes", () => {
 
 	it("grants an owner project scope without a project membership", async () => {
 		const scopeQuery = mock(async (sql: string) => {
-			expect(sql).toContain("CASE WHEN om.role = 'owner' THEN 'manager'");
+			expect(sql).toContain("authorization_effective_project_role");
 			return {
 				rows: [
 					{
-						organization_role: "owner" as const,
-						project_role: "manager" as const,
-						status: "active" as const,
+						effective_role: "admin" as const,
+						enforcement: "strict" as const,
+						project_status: "active" as const,
+						allowed: true,
 					},
 				],
 			};
@@ -1038,13 +1081,22 @@ describe("project authorization routes", () => {
 			PROJECT,
 		);
 
-		expect(scope.projectRole).toBe("manager");
+		expect(scope.projectRole).toBe("admin");
 	});
 
 	it("does not grant an organization member scope for a project without membership", async () => {
 		const scopeQuery = mock(async (sql: string) => {
-			expect(sql).toContain("pm.actor_subject IS NOT NULL");
-			return { rows: [] };
+			expect(sql).toContain("authorization_allows_project");
+			return {
+				rows: [
+					{
+						effective_role: null,
+						enforcement: "strict",
+						project_status: "active",
+						allowed: false,
+					},
+				],
+			};
 		});
 
 		await expect(

@@ -23,7 +23,11 @@ import {
 	PolicyResponse,
 	RetentionRunHistory,
 } from "../schemas/governance.js";
-import { trustedTenant } from "../tenancy.js";
+import {
+	assertTenantProjectAccess,
+	TenantScopeError,
+	trustedTenant,
+} from "../tenancy.js";
 import { logger } from "../lib/logger.js";
 
 const policyParams = z.object({ id: z.string().uuid() });
@@ -134,6 +138,12 @@ const output = (row: VersionRow) => ({
 });
 async function manager(c: Context, projectId: string) {
 	const tenant = trustedTenant(c);
+	try {
+		await assertTenantProjectAccess(pgPool(), tenant, projectId, "governed");
+	} catch (cause) {
+		if (cause instanceof TenantScopeError) throw new Error("Not found");
+		throw cause;
+	}
 	const result = await pgPool().query<{ role: string | null }>(
 		"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active'",
 		[projectId, tenant.organizationId, tenant.actorId],
@@ -285,7 +295,7 @@ export async function handleApprovePolicy(c: Context) {
 				project_id,
 			]);
 			const authorized = await client.query(
-				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $3) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+				"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND authorization_allows_project($2, $1, $3, 'governed') FOR UPDATE OF p",
 				[project_id, tenant.organizationId, tenant.actorId],
 			);
 			if (!authorized.rows[0]) throw new Error("Not found");
@@ -686,7 +696,7 @@ async function lockActiveManager(
 	actorId: string,
 ) {
 	const authorized = await client.query(
-		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $3) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
+		"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND authorization_allows_project($2, $1, $3, 'governed') FOR UPDATE OF p",
 		[projectId, organizationId, actorId],
 	);
 	if (!authorized.rows[0])

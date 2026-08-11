@@ -171,6 +171,10 @@ export const cancelExperiment = createRoute({
 
 export type ExperimentDependencies = {
 	pool: typeof pgPool;
+	assertProjectAccess: (
+		tenant: ReturnType<typeof trustedTenant>,
+		projectId: string,
+	) => Promise<void>;
 	createExperiment: typeof createExperimentRecord;
 	listExperiments: typeof listExperimentsRecord;
 	getExperiment: typeof getExperimentRecord;
@@ -286,6 +290,8 @@ export function createProductionTrace(
 
 export const production: ExperimentDependencies = {
 	pool: pgPool,
+	assertProjectAccess: (tenant, projectId) =>
+		assertTenantProjectAccess(pgPool(), tenant, projectId),
 	createExperiment: createExperimentRecord,
 	listExperiments: listExperimentsRecord,
 	getExperiment: getExperimentRecord,
@@ -620,8 +626,7 @@ export function createExperimentHandlers(
 							if (closed || polling) return;
 							polling = true;
 							try {
-								await assertTenantProjectAccess(
-									deps.pool(),
+								await deps.assertProjectAccess(
 									trustedTenant(c),
 									query.project_id,
 								);

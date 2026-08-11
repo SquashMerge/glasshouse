@@ -292,6 +292,7 @@ describe("API integration: OTLP ingest", () => {
 				actorId: expect.any(String),
 			}),
 			TEST_SCOPE.projectId,
+			"ingest",
 		);
 		expect(assertTenantProjectAccess).not.toHaveBeenCalled();
 	});

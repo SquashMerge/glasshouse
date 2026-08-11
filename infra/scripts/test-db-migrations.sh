@@ -223,6 +223,23 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0040.assert.sql"
 
+UPGRADE_0041_DATABASE="${POSTGRES_DB}_0041_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0041_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0041_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0041.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" \
+  < "$ROOT/infra/db/migrations/0041_admin_user_read_only_authorization.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0041.assert.sql"
+
 UPGRADE_0040_MISMATCH_DATABASE="${POSTGRES_DB}_0040_mismatch"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0040_MISMATCH_DATABASE"
 for migration in "$ROOT"/infra/db/migrations/*.sql; do

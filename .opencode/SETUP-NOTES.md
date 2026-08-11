@@ -101,6 +101,7 @@ bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run ch:migrate'
 ## Schema and seed-data work
 
 - PostgreSQL changes and required bootstrap data use a new monotonically numbered file in `infra/db/migrations/`; never edit an applied migration.
+- Migration `0041_admin_user_read_only_authorization.sql` adds the additive Admin/User/Read-only policy mapping. It starts organizations in Basic Auth compatibility mode and provisions that mode for future organizations. Before a deliberate strict cutover, run `SELECT * FROM authorization_role_migration_readiness('<organization-uuid>')`, resolve every quarantine record against the underlying legacy data, then run `SELECT enable_admin_user_read_only_enforcement('<organization-uuid>')`. The action is idempotent and fails closed without a valid Admin or with unresolved quarantine rows.
 - ClickHouse changes live under `infra/db/clickhouse/` and are applied with `make ch-schema`.
 - Run the migration fixture coverage when changing PostgreSQL migrations.
 - OTLP seeders resolve the authenticated organization's `default` project unless a target project is explicitly supplied. Keep every seeded request project-scoped.

@@ -4,11 +4,16 @@ import {
 	TRUSTED_TENANT_CONTEXT_KEY,
 	type TrustedTenantContext,
 } from "./middleware/auth.js";
+import type {
+	AuthorizationEnforcement,
+	EffectiveProjectRole,
+	ProjectOperation,
+} from "./authorization-policy.js";
 
 export type AuthorizedProjectScope = TrustedTenantContext & {
 	projectId: string;
-	organizationRole: "owner" | "member";
-	projectRole: "manager" | "member";
+	projectRole: EffectiveProjectRole;
+	enforcement: AuthorizationEnforcement;
 	projectStatus: "active" | "archived" | "deleting";
 };
 export type TenantScope = AuthorizedProjectScope;
@@ -35,23 +40,26 @@ export async function resolveAuthorizedProjectScope(
 	pool: Pick<Pool, "query">,
 	tenant: TrustedTenantContext,
 	projectId: string,
+	operation: ProjectOperation = "product_read",
 ): Promise<AuthorizedProjectScope> {
 	const result = await pool.query<{
-		organization_role: "owner" | "member";
-		project_role: "manager" | "member";
-		status: "active" | "archived" | "deleting";
+		effective_role: EffectiveProjectRole | null;
+		enforcement: AuthorizationEnforcement;
+		project_status: "active" | "archived" | "deleting";
+		allowed: boolean;
 	}>(
-		"SELECT om.role AS organization_role, CASE WHEN om.role = 'owner' THEN 'manager' ELSE pm.role END AS project_role, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
-		[projectId, tenant.organizationId, tenant.actorId],
+		"SELECT decision.effective_role, decision.enforcement, decision.project_status, authorization_allows_project($1, $2, $3, $4) AS allowed FROM authorization_effective_project_role($1, $2, $3) AS decision",
+		[tenant.organizationId, projectId, tenant.actorId, operation],
 	);
 	const row = result.rows[0];
-	if (!row) throw new TenantScopeError("Project is not available");
+	if (!row?.effective_role || !row.allowed)
+		throw new TenantScopeError("Project is not available");
 	return {
 		...tenant,
 		projectId,
-		organizationRole: row.organization_role,
-		projectRole: row.project_role,
-		projectStatus: row.status,
+		projectRole: row.effective_role,
+		enforcement: row.enforcement,
+		projectStatus: row.project_status,
 	};
 }
 
@@ -59,16 +67,16 @@ export async function assertTenantProjectAccess(
 	pool: Pick<Pool, "query">,
 	tenant: TrustedTenantContext,
 	projectId: string,
+	operation: ProjectOperation = "product_read",
 ): Promise<void> {
-	const scope = await resolveAuthorizedProjectScope(pool, tenant, projectId);
-	if (scope.projectStatus !== "active")
-		throw new TenantScopeError("Project is not available");
+	await resolveAuthorizedProjectScope(pool, tenant, projectId, operation);
 }
 
 export async function resolveTenantProject(
 	pool: Pick<Pool, "query">,
 	tenant: TrustedTenantContext,
 	requestedProjectId?: string,
+	operation: ProjectOperation = "product_read",
 ): Promise<TenantScope> {
 	if (!requestedProjectId)
 		throw new TenantScopeError("Project target is required");
@@ -76,23 +84,40 @@ export async function resolveTenantProject(
 		pool,
 		tenant,
 		requestedProjectId,
+		operation,
 	);
-	if (scope.projectStatus !== "active")
-		throw new TenantScopeError("Project is not available");
 	return scope;
+}
+
+export async function assertOrganizationAccess(
+	pool: Pick<Pool, "query">,
+	tenant: TrustedTenantContext,
+	operation: "organization_manage" | "destructive" | "governed",
+): Promise<void> {
+	const result = await pool.query<{ allowed: boolean }>(
+		"SELECT authorization_allows_organization($1, $2, $3) AS allowed",
+		[tenant.organizationId, tenant.actorId, operation],
+	);
+	if (!result.rows[0]?.allowed)
+		throw new TenantScopeError("Organization is not available");
 }
 
 export async function withActiveAuthorizedProjectLock<T>(
 	db: Transactional,
 	tenant: TenantScope,
 	callback: () => Promise<T>,
+	operation: ProjectOperation = "product_write",
 ): Promise<T> {
 	const client = await db.connect();
 	let transactionOpen = false;
 	try {
 		await client.query("BEGIN");
 		transactionOpen = true;
-		const authorized = await lockedActiveProjectAccess(client, tenant);
+		const authorized = await lockedActiveProjectAccess(
+			client,
+			tenant,
+			operation,
+		);
 		if (!authorized.rows[0])
 			throw new TenantScopeError("Project is not available");
 		const value = await callback();
@@ -113,10 +138,14 @@ export async function withActiveAuthorizedProjectLock<T>(
 	}
 }
 
-function lockedActiveProjectAccess(client: PoolClient, tenant: TenantScope) {
+function lockedActiveProjectAccess(
+	client: PoolClient,
+	tenant: TenantScope,
+	operation: ProjectOperation,
+) {
 	return client.query(
-		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_canonical_subject(actor_subject) = identity.canonical_subject FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role IS NOT NULL) FOR UPDATE OF p, om",
-		[tenant.projectId, tenant.organizationId, tenant.actorId],
+		"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND authorization_allows_project($2, $1, $3, $4) FOR UPDATE OF p",
+		[tenant.projectId, tenant.organizationId, tenant.actorId, operation],
 	);
 }
 

@@ -1,6 +1,6 @@
 # Project workspace authorization contract
 
-**Implementation brief for [#51](https://github.com/dsarlo/astraea/issues/51)**
+**Implementation contract for [#51](https://github.com/dsarlo/astraea/issues/51) and [#98](https://github.com/dsarlo/astraea/issues/98)**
 
 ## Purpose
 
@@ -16,11 +16,11 @@ any read, write, query, event subscription, or background recovery action.
 
 ## Existing baseline
 
-The API currently uses Basic Auth and already has organization-owned Projects,
-a `trustedTenant` helper, and a middleware check for selected project IDs.
-Existing product routes commonly accept `project_id`, but the authenticated actor
-and durable Project-membership model, lifecycle APIs, end-to-end authorization
-matrix, and Project-switch cache/SSE guarantees are incomplete.
+The compatibility baseline used Basic Auth with legacy `owner/member`
+organization roles and `manager/member` Project roles. Durable actors bind a
+verified credential to one organization; a browser-selected `project_id` remains
+only a resource target. The Admin/User/Read-only policy below is enforced by the
+same server-side decision for REST, SSE, OTLP, product work, and lifecycle paths.
 
 ## Binding policy decisions
 
@@ -35,13 +35,17 @@ implementation contract.
    organization; ambiguous, malformed, or orphaned legacy identities fail
    closed. A later identity provider maps into this durable boundary rather
    than changing product ownership.
-2. **Minimal roles and safeguards:** an organization owner may create Projects
-   and manage organization-level membership. A Project manager may manage only
-   their Project's metadata, archive/restore state, and Project membership. A
-   Project member can use product data only within that Project. The final
-   organization owner cannot be removed or demoted, and the final active
-   Project manager cannot be removed or demoted while the Project remains
-   active; an owner can add/reassign a manager first.
+2. **Admin/User/Read-only roles and safeguards:** an **Admin** has
+organization-wide authority over active Projects and organization security,
+membership, lifecycle, governed, destructive, and recovery actions. A **User**
+can perform ordinary product work, execute/cancel permitted work, and read
+content-free audit history only in explicitly granted active Projects. A
+**Read-only** actor can inspect evidence, results, and content-free audit history
+only in explicitly granted active Projects. Users and Read-only actors cannot
+manage organization security, lifecycle, membership, governed approvals, or
+destructive/recovery actions. The database serializes transitions and prevents
+removal or demotion of the final Admin; it also preserves the final active
+Project User safeguard inherited from the compatibility manager record.
 3. **No-accessible-Projects UX:** `/v1/me` returns the authenticated actor and
    an empty accessible-Project collection. The web app shows a deliberate empty
    workspace, never a fallback Project or organization-wide data. Only an
@@ -67,10 +71,20 @@ implementation contract.
    persistence, then cancel/fail safely with content-free lifecycle evidence;
    restore does not revive old jobs automatically.
 7. **Audit policy:** lifecycle and membership audit records are append-only,
-   content-free PostgreSQL metadata visible only to organization owners and
-   authorized managers of the relevant Project. They are retained with the
-   Project until the separately designed #49 governance retention policy takes
-   effect; this issue adds no audit deletion/export surface.
+content-free PostgreSQL metadata. In strict mode they are visible to an Admin,
+User, or Read-only actor only for an active, explicitly granted Project; archived
+and deleting Project audit visibility is limited to the Admin lifecycle/recovery
+scope. They are retained with the Project until the separately designed #49
+governance retention policy takes effect; this issue adds no audit
+deletion/export surface.
+8. **Compatibility and strict enforcement:** migration `0041` records the
+explicit mapping `owner -> Admin`, `manager -> User`, and `member -> Read-only`.
+Conflicts resolve as `Admin > User > Read-only` through the effective-role query.
+Malformed, cross-organization, orphaned, and unmapped legacy data is quarantined
+and denied, never guessed or promoted. Every organization starts in compatibility
+mode, preserving prior Basic Auth effective access; strict enforcement is enabled
+only by the documented, serialized operator action after the readiness query is
+clean. Strict mode never grants access beyond the legacy assignment.
 
 ## In scope
 
@@ -83,11 +97,11 @@ implementation contract.
 - Add monotonic PostgreSQL migrations for organization membership, Project
   membership/roles, project lifecycle state, and content-free lifecycle/audit
   records. Preserve organization-scoped composite-FK protections.
-- Bootstrap the configured administrator as organization owner and as a manager
-  of the existing default Project, safely for fresh and existing installations.
-- Implement narrow owner / Project-manager / Project-member authorization
-  helpers. Use safe non-enumerating responses for inaccessible cross-scope
-  resources.
+- Bootstrap the configured administrator as an Admin, safely for fresh and
+  existing installations, while retaining only the legacy persistence mapping
+  needed during compatibility.
+- Implement centralized Admin/User/Read-only authorization helpers. Use safe
+  non-enumerating responses for inaccessible cross-scope resources.
 
 ### 2. Project lifecycle contract
 
@@ -107,7 +121,7 @@ and membership evidence only to organization owners and managers authorized for
 that Project. Unauthorized Project targets return the same non-enumerating
 response as other Project lifecycle routes.
 
-Organization owners manage the organization membership directory through
+Admins manage the organization membership directory through
 `GET /v1/organization/members` and `PUT` or `DELETE
 /v1/organization/members/{actor}`. Deletion preserves the database
 final-owner safeguard and is audited; an actor with Project memberships must be
@@ -142,7 +156,8 @@ loads.
 ### 5. Verification and operator documentation
 
 - Add fresh-install and historical-upgrade migration coverage for bootstrap,
-  constraints, membership, archive state, and idempotency.
+  constraints, membership, archive state, compatibility mapping, quarantine,
+  strict-enforcement readiness, and idempotency.
 - Seed at least two organizations and multiple Projects to prove isolation for
   each supported resource family, SSE, ClickHouse predicates, and job recovery.
 - Add browser coverage for create/select/switch/archive/restore and no data

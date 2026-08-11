@@ -419,13 +419,13 @@ export interface Project {
 	status: "active" | "archived" | "deleting";
 	created_at: string;
 	archived_at: string | null;
-	project_role: "owner" | "manager" | "member";
+	project_role: "admin" | "user" | "read_only";
 	is_default: boolean;
 }
 
 export interface ProjectMember {
 	actor_subject: string;
-	role: "manager" | "member";
+	role: "user" | "read_only";
 	created_at: string;
 }
 
@@ -433,8 +433,8 @@ export interface CurrentActor {
 	actor_subject: string;
 	actor_id: string;
 	organization_id: string;
-	organization_role: "owner" | "member";
-	effective_organization_role_id: "organization:owner" | "organization:member";
+	organization_role: "admin" | "user";
+	effective_organization_role_id: "organization:admin" | "organization:user";
 	default_project_id: string;
 	projects: Project[];
 }

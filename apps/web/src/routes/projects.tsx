@@ -35,14 +35,14 @@ export function ProjectsPage() {
 		null,
 	);
 	const [memberActor, setMemberActor] = React.useState("");
-	const [memberRole, setMemberRole] = React.useState<"manager" | "member">(
-		"member",
+	const [memberRole, setMemberRole] = React.useState<"user" | "read_only">(
+		"read_only",
 	);
 	const [operationFailed, setOperationFailed] = React.useState(false);
 	const [deleting, setDeleting] = React.useState<Project | null>(null);
 	const [confirmationName, setConfirmationName] = React.useState("");
-	const isOwner = organizationRole === "owner";
-	const canManage = (project: Project) => project.project_role !== "member";
+	const isOwner = organizationRole === "admin";
+	const canManage = (project: Project) => project.project_role === "admin";
 	const membersQuery = useQuery({
 		queryKey: ["project-members", membersProject?.id],
 		queryFn: () => listProjectMembers(membersProject!.id),
@@ -363,12 +363,12 @@ export function ProjectsPage() {
 										aria-label="Member role"
 										value={memberRole}
 										onChange={(event) =>
-											setMemberRole(event.target.value as "manager" | "member")
+											setMemberRole(event.target.value as "user" | "read_only")
 										}
 										className="h-9 rounded-md border border-input bg-background px-2"
 									>
-										<option value="member">Member</option>
-										<option value="manager">Manager</option>
+										<option value="read_only">Read-only</option>
+										<option value="user">User</option>
 									</select>
 								</label>
 								<Button
@@ -395,13 +395,13 @@ export function ProjectsPage() {
 											putMemberMutation.mutate({
 												projectId: membersProject.id,
 												actorSubject: member.actor_subject,
-												role: event.target.value as "manager" | "member",
+												role: event.target.value as "user" | "read_only",
 											});
 										}}
 										className="h-9 rounded-md border border-input bg-background px-2"
 									>
-										<option value="member">Member</option>
-										<option value="manager">Manager</option>
+										<option value="read_only">Read-only</option>
+										<option value="user">User</option>
 									</select>
 									<Button
 										type="button"

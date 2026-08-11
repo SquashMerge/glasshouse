@@ -11,13 +11,13 @@ const scope = {
 	actorId: "00000000-0000-4000-8000-000000000003",
 	organizationId: "00000000-0000-4000-8000-000000000001",
 	projectId: "00000000-0000-4000-8000-000000000002",
-	organizationRole: "member" as const,
-	projectRole: "member" as const,
+	projectRole: "read_only" as const,
+	enforcement: "strict" as const,
 	projectStatus: "active" as const,
 };
 
 describe("withActiveAuthorizedProjectLock", () => {
-	it("locks active project and current memberships through persistence", async () => {
+	it("locks active project through the centralized policy decision", async () => {
 		const query = mock(async (statement: string) => {
 			if (statement.startsWith("SELECT")) return { rows: [{ id: "project" }] };
 			return { rows: [] };
@@ -35,9 +35,9 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect.stringContaining("p.status = 'active'"),
 			"COMMIT",
 		]);
-		expect(query.mock.calls[1]?.[0]).toContain("FOR UPDATE OF p, om");
+		expect(query.mock.calls[1]?.[0]).toContain("FOR UPDATE OF p");
 		expect(query.mock.calls[1]?.[0]).toContain(
-			"project_memberships WHERE project_id = p.id AND basic_auth_canonical_subject(actor_subject) = identity.canonical_subject FOR UPDATE",
+			"authorization_allows_project($2, $1, $3, $4)",
 		);
 		expect(persisted).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);

@@ -20,6 +20,7 @@ import {
 	TenantScopeError,
 	trustedTenant,
 } from "./tenancy.js";
+import type { ProjectOperation } from "./authorization-policy.js";
 import { logger } from "./lib/logger.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
@@ -54,6 +55,28 @@ function isJsonContentType(contentType: string | undefined): boolean {
 	return (
 		contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
 	);
+}
+
+function projectOperationForRequest(
+	path: string,
+	method: string,
+): ProjectOperation {
+	if (method === "GET" || method === "HEAD") return "product_read";
+	if (path.startsWith("/v1/governance/")) return "governed";
+	if (path.startsWith("/v1/prompt-optimizations/") && path.endsWith("/promote"))
+		return "governed";
+	if (
+		path.startsWith("/v1/feedback/") &&
+		(path.endsWith("/promote") || path.endsWith("/review"))
+	)
+		return "governed";
+	if (
+		path.startsWith("/v1/experiments") ||
+		path.startsWith("/v1/prompt-optimizations") ||
+		path.includes("/benchmark-runs")
+	)
+		return "execute";
+	return "product_write";
 }
 
 async function requestedProjectIds(c: {
@@ -159,11 +182,13 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				throw new TenantScopeError("Conflicting project selectors");
 			if (projectIds.size === 0)
 				throw new TenantScopeError("Project target is required");
+			const operation = projectOperationForRequest(c.req.path, c.req.method);
 			for (const projectId of projectIds)
 				await resolvedDependencies.assertTenantProjectAccess(
 					resolvedDependencies.pgPool(),
 					trustedTenant(c),
 					projectId,
+					operation,
 				);
 			await next();
 		} catch (cause) {
@@ -198,6 +223,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				resolvedDependencies.pgPool(),
 				tenant,
 				requestedProjectId,
+				"ingest",
 			);
 			if (
 				requestedProjectId &&
