@@ -1220,6 +1220,18 @@ test.skipIf(!databaseUrl)(
 				[experimentId],
 			);
 			await pool.query(
+				"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1 AND work_kind = 'experiment_task' AND work_id IN (SELECT id FROM experiment_tasks WHERE experiment_id = $2))",
+				[projectId, experimentId],
+			);
+			await pool.query(
+				"DELETE FROM execution_effects WHERE project_id = $1 AND work_kind = 'experiment_task' AND work_id IN (SELECT id FROM experiment_tasks WHERE experiment_id = $2)",
+				[projectId, experimentId],
+			);
+			await pool.query(
+				"DELETE FROM execution_admissions WHERE project_id = $1 AND work_kind = 'experiment_task' AND work_id IN (SELECT id FROM experiment_tasks WHERE experiment_id = $2)",
+				[projectId, experimentId],
+			);
+			await pool.query(
 				"DELETE FROM experiment_tasks WHERE experiment_id = $1",
 				[experimentId],
 			);
