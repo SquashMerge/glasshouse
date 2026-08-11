@@ -1022,6 +1022,30 @@ BEGIN
             RAISE;
         END IF;
     END;
+    BEGIN
+        DELETE FROM organization_memberships
+        WHERE organization_id = test_organization_id
+          AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'project deletion context removed the final organization Admin';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final organization Admin' THEN
+            RAISE;
+        END IF;
+    END;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM organization_memberships
+        WHERE organization_id = test_organization_id
+          AND actor_subject = 'migration-owner'
+          AND role = 'owner'
+    ) THEN
+        RAISE EXCEPTION 'final organization Admin guard did not preserve its membership';
+    END IF;
+
+    PERFORM set_config('astraea.project_deletion_id', '', true);
+    IF current_setting('astraea.project_deletion_id', true) IS DISTINCT FROM '' THEN
+        RAISE EXCEPTION 'project deletion context was not cleared before deleting cleanup';
+    END IF;
 
     UPDATE projects
     SET status = 'deleting'

@@ -13,6 +13,13 @@ const migrationHarness = readFileSync(
 	resolve(import.meta.dir, "../../../../infra/scripts/test-db-migrations.sh"),
 	"utf8",
 );
+const migrationAssertion = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations.assert.sql",
+	),
+	"utf8",
+);
 const revocationFenceMigration = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -108,6 +115,31 @@ test("replays the target-role upgrade fixture before accepting strict enforcemen
 	expect(migrationHarness).toContain("UPGRADE_0041_DATABASE");
 	expect(migrationHarness).toContain("test-db-migrations-0041.fixture.sql");
 	expect(migrationHarness).toContain("test-db-migrations-0041.assert.sql");
+});
+
+test("covers deleting project cleanup without its marker and protects the final Admin from it", () => {
+	const lifecycleBlock = migrationAssertion.slice(
+		migrationAssertion.indexOf("Project Deletion Lifecycle Guard"),
+		migrationAssertion.indexOf("Permanent Deletion Fixture"),
+	);
+	const marker =
+		"PERFORM set_config('astraea.project_deletion_id', test_project_id::text, true);";
+	const clearedMarker =
+		"PERFORM set_config('astraea.project_deletion_id', '', true);";
+	const deletingStatus = "SET status = 'deleting'";
+
+	expect(lifecycleBlock).toContain(marker);
+	expect(lifecycleBlock).toContain(clearedMarker);
+	expect(lifecycleBlock.indexOf(clearedMarker)).toBeGreaterThan(
+		lifecycleBlock.indexOf(marker),
+	);
+	expect(lifecycleBlock.indexOf(deletingStatus)).toBeGreaterThan(
+		lifecycleBlock.indexOf(clearedMarker),
+	);
+	expect(lifecycleBlock).toContain("DELETE FROM organization_memberships");
+	expect(lifecycleBlock).toContain(
+		"final organization Admin guard did not preserve its membership",
+	);
 });
 
 test("keeps post-default-project authorization seeds valid without weakening historical schemas", () => {
