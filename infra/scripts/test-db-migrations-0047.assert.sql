@@ -2,6 +2,7 @@ DO $$
 DECLARE
     first_effect UUID;
     second_effect UUID;
+    isolated_effect UUID;
 BEGIN
     IF NOT EXISTS (
         SELECT 1
@@ -33,6 +34,23 @@ BEGIN
     WHERE id = '47000000-0000-4000-8000-000000000002';
     IF first_effect IS NULL OR first_effect <> second_effect THEN
         RAISE EXCEPTION '0047 did not link replayed claims to one durable effect';
+    END IF;
+
+    SELECT execution_effect_id INTO isolated_effect
+    FROM execution_admission_claims
+    WHERE id = '47000000-0000-4000-8000-000000000007';
+    IF isolated_effect IS NULL OR isolated_effect = first_effect OR NOT EXISTS (
+        SELECT 1
+        FROM execution_effects
+        WHERE id = isolated_effect
+          AND organization_id = '47000000-0000-4000-8000-000000000003'
+          AND project_id = '47000000-0000-4000-8000-000000000005'
+          AND work_kind = 'experiment_task'
+          AND work_id = '46000000-0000-4000-8000-000000000002'
+          AND effect = 'provider_dispatch'
+          AND operation_key = '46000000-0000-4000-8000-000000000003'
+    ) THEN
+        RAISE EXCEPTION '0047 did not isolate legacy claim effect backfills by tenant';
     END IF;
 
     BEGIN

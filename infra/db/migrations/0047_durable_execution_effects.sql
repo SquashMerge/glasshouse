@@ -71,15 +71,15 @@ DO NOTHING;
 
 UPDATE execution_admission_claims AS claim
 SET execution_effect_id = effect.id
-FROM execution_admissions AS admission
-JOIN execution_effects AS effect
-    ON effect.organization_id = admission.organization_id
-   AND effect.project_id = admission.project_id
-   AND effect.work_kind = admission.work_kind
-   AND effect.work_id = admission.work_id
-   AND effect.effect = claim.effect
-   AND effect.operation_key = claim.effect_key
+FROM execution_admissions AS admission,
+     execution_effects AS effect
 WHERE claim.admission_id = admission.id
+  AND effect.organization_id = admission.organization_id
+  AND effect.project_id = admission.project_id
+  AND effect.work_kind = admission.work_kind
+  AND effect.work_id = admission.work_id
+  AND effect.effect = claim.effect
+  AND effect.operation_key = claim.effect_key
   AND claim.execution_effect_id IS NULL;
 
 ALTER TABLE execution_admission_claims
