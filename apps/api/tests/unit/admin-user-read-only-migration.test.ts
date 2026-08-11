@@ -159,6 +159,18 @@ test("keeps post-default-project authorization seeds valid without weakening his
 		);
 });
 
+test("scopes the bootstrap default-project assertion to its organization", () => {
+	expect(migrationAssertion).toContain(
+		"FROM organizations AS organization\n\t\tJOIN projects AS project\n\t\t\tON project.id = organization.default_project_id\n\t\t\tAND project.organization_id = organization.id",
+	);
+	expect(migrationAssertion).toContain(
+		"WHERE organization.id = '00000000-0000-4000-8000-000000000001'\n\t\t\tAND organization.slug = 'default'\n\t\t\tAND organization.name = 'Default Organization'\n\t\t\tAND project.slug = 'default'\n\t\t\tAND project.name = 'Default Project'",
+	);
+	expect(migrationAssertion).not.toContain(
+		"IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 1\n        OR (SELECT name FROM projects WHERE slug = 'default') <> 'Default Project'",
+	);
+});
+
 test("initializes future organizations in compatibility mode", () => {
 	expect(migration).toContain("AFTER INSERT ON organizations");
 	expect(migration).toContain("authorization_policy_settings");

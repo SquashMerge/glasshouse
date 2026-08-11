@@ -108,10 +108,20 @@ BEGIN
 	) THEN
 		RAISE EXCEPTION 'feedback first-pass persistence is incomplete';
 	END IF;
-    IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 1
-        OR (SELECT name FROM projects WHERE slug = 'default') <> 'Default Project' THEN
-        RAISE EXCEPTION 'default project was not seeded';
-    END IF;
+	IF NOT EXISTS (
+		SELECT 1
+		FROM organizations AS organization
+		JOIN projects AS project
+			ON project.id = organization.default_project_id
+			AND project.organization_id = organization.id
+		WHERE organization.id = '00000000-0000-4000-8000-000000000001'
+			AND organization.slug = 'default'
+			AND organization.name = 'Default Organization'
+			AND project.slug = 'default'
+			AND project.name = 'Default Project'
+	) THEN
+		RAISE EXCEPTION 'default project was not seeded';
+	END IF;
 
     IF (SELECT slug FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'first-prompt' THEN
         RAISE EXCEPTION 'first prompt slug was not normalized';
