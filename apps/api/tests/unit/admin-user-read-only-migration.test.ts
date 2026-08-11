@@ -41,6 +41,27 @@ const durableEffectsFixture = readFileSync(
 	),
 	"utf8",
 );
+const cancellationIdentityRepairMigration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0049_execution_admission_cancellation_identity_fix.sql",
+	),
+	"utf8",
+);
+const cancellationIdentityRepairFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0049.fixture.sql",
+	),
+	"utf8",
+);
+const cancellationIdentityRepairAssertion = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0049.assert.sql",
+	),
+	"utf8",
+);
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
@@ -125,4 +146,25 @@ test("provides an idempotent operator readiness check before strict enforcement"
 	expect(migration).toContain("authorization_role_migration_readiness");
 	expect(migration).toContain("unresolved_quarantine_count");
 	expect(migration).toContain("has_admin");
+});
+
+test("repairs execution cancellation with the durable Basic Auth actor identity", () => {
+	expect(cancellationIdentityRepairMigration).toContain(
+		"job.requested_by,\n                      target_actor_id",
+	);
+	expect(cancellationIdentityRepairMigration).toContain(
+		"target_actor_id IS NOT NULL AND requester_actor_id = target_actor_id",
+	);
+	expect(cancellationIdentityRepairFixture).toContain(
+		"cancellation-unmapped-user",
+	);
+	expect(cancellationIdentityRepairAssertion).toContain(
+		"unmapped membership revocation cancelled another actor work",
+	);
+	expect(cancellationIdentityRepairAssertion).toContain(
+		"project archive did not cancel all remaining work",
+	);
+	expect(migrationHarness).toContain("UPGRADE_0049_DATABASE");
+	expect(migrationHarness).toContain("test-db-migrations-0049.fixture.sql");
+	expect(migrationHarness).toContain("test-db-migrations-0049.assert.sql");
 });

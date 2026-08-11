@@ -232,7 +232,7 @@ describe("evaluation MVP", () => {
 							},
 						],
 					};
-				if (sql.includes("p.status = ANY($5::text[])"))
+				if (sql.includes("p.status = ANY($3::text[])"))
 					return { rows: [{ id: projectId }] };
 				if (sql.includes("organization_memberships")) return { rows: [{}] };
 				if (sql.includes("project_memberships")) return { rows: [{}] };

@@ -44,10 +44,10 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		if (values[0] === otherProjectId) return { rows: [] };
 		return { rows: [{ role: values[2] === "member" ? "member" : "manager" }] };
 	}
-	if (statement.includes("p.status = ANY($5::text[])"))
-		return values[2] === "manager" || values[2] === permittedActorId
-			? { rows: [{ id: projectId }] }
-			: { rows: [] };
+	if (statement.includes("p.status = ANY($3::text[])"))
+		return values[0] === otherProjectId
+			? { rows: [] }
+			: { rows: [{ id: projectId }] };
 	if (statement.includes("FROM organization_memberships om"))
 		return { rows: [{ actor_subject: "manager" }] };
 	if (statement.includes("FROM project_memberships pm"))
@@ -331,7 +331,7 @@ describe("governance route guards", () => {
 		const authorization = calls.find((call) =>
 			call.startsWith("SELECT p.id FROM projects"),
 		);
-		expect(authorization).toContain("p.status = ANY($5::text[])");
+		expect(authorization).toContain("p.status = ANY($3::text[])");
 	});
 
 	it("rejects a run request without preview authorization", async () => {

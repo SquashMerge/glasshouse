@@ -469,7 +469,7 @@ describe("prompt optimization status routes", () => {
 						},
 					],
 				};
-			if (statement.includes("p.status = ANY($5::text[])"))
+			if (statement.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: PROJECT }] };
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: "test-user" }] };
@@ -591,7 +591,7 @@ describe("prompt optimization status routes", () => {
 						},
 					],
 				};
-			if (statement.includes("p.status = ANY($5::text[])"))
+			if (statement.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: PROJECT }] };
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: "test-user" }] };

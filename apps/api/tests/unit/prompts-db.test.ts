@@ -32,7 +32,7 @@ class MockClient {
 		text: string,
 		values: unknown[] = [],
 	): Promise<{ rows: Record<string, unknown>[] }> {
-		if (text.includes("p.status = ANY($5::text[])")) {
+		if (text.includes("p.status = ANY($3::text[])")) {
 			const reply = this.replies.shift();
 			if (!reply) return { rows: [{ id: PROJECT }] };
 			if ("error" in reply) throw reply.error;

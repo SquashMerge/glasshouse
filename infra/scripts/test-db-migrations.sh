@@ -352,6 +352,26 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0047.assert.sql"
 
+UPGRADE_0049_DATABASE="${POSTGRES_DB}_0049_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0049_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0049_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0049.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/db/migrations/0049_execution_admission_cancellation_identity_fix.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/db/migrations/0049_execution_admission_cancellation_identity_fix.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0049.assert.sql"
+
 UPGRADE_0040_MISMATCH_DATABASE="${POSTGRES_DB}_0040_mismatch"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0040_MISMATCH_DATABASE"
 for migration in "$ROOT"/infra/db/migrations/*.sql; do

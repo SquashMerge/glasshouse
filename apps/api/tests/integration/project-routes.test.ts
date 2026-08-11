@@ -56,9 +56,9 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 		return { rows: [{ allowed: values[1] === actorIds.owner }] };
 	if (sql.startsWith("SELECT id FROM organizations WHERE id = $1 FOR UPDATE"))
 		return { rows: [{ id: values[0] }] };
-	if (sql.includes("p.status = ANY($5::text[])")) {
-		const [projectId, , actorId] = values;
-		return projectId === OTHER_PROJECT || actorId === actorIds.member
+	if (sql.includes("p.status = ANY($3::text[])")) {
+		const [projectId] = values;
+		return projectId === OTHER_PROJECT
 			? { rows: [] }
 			: { rows: [{ id: projectId }] };
 	}

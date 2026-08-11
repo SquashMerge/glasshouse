@@ -18,7 +18,7 @@ describe("experiment agent scope", () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const query = async (text: string, values: unknown[] = []) => {
 			calls.push({ text, values });
-			if (text.includes("p.status = ANY($5::text[])"))
+			if (text.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: project_id }] };
 			if (text.includes("FROM organization_memberships om"))
 				return { rows: [{ actor_subject: "requester" }] };
@@ -57,7 +57,7 @@ describe("experiment agent scope", () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const query = async (text: string, values: unknown[] = []) => {
 			calls.push({ text, values });
-			if (text.includes("p.status = ANY($5::text[])"))
+			if (text.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: project_id }] };
 			if (text.includes("FROM organization_memberships om"))
 				return { rows: [{ actor_subject: "requester" }] };
@@ -80,7 +80,7 @@ describe("experiment agent scope", () => {
 			}),
 		).rejects.toMatchObject<ExperimentRepositoryError>({ code: "NOT_FOUND" });
 		const projectLock = calls.find((call) =>
-			call.text.includes("p.status = ANY($5::text[])"),
+			call.text.includes("p.status = ANY($3::text[])"),
 		);
 		expect(projectLock?.text).toContain("FROM projects");
 		expect(projectLock?.text).toContain("FOR UPDATE");

@@ -1716,38 +1716,55 @@ test.skipIf(!databaseUrl)(
 			releaseClaim.resolve();
 			await revoker.query("ROLLBACK").catch(() => {});
 			revoker.release();
-			await pool.query(
-				"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
-				[projectId],
-			);
-			await pool.query("DELETE FROM execution_effects WHERE project_id = $1", [
-				projectId,
-			]);
-			await pool.query(
-				"DELETE FROM execution_admissions WHERE project_id = $1",
-				[projectId],
-			);
-			await pool.query("DELETE FROM prompt_optimization_jobs WHERE id = $1", [
-				jobId,
-			]);
-			await pool.query("DELETE FROM prompts WHERE id = $1", [promptId]);
-			await pool.query(
-				"UPDATE projects SET status = 'archived' WHERE id = $1",
-				[projectId],
-			);
-			await pool.query(
-				"DELETE FROM project_memberships WHERE project_id = $1",
-				[projectId],
-			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
-			await pool.query(
-				"DELETE FROM organization_memberships WHERE organization_id = $1",
-				[organizationId],
-			);
-			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
-				actorId,
-			]);
-			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				await cleanup.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM execution_effects WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM execution_admissions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM prompt_optimization_jobs WHERE id = $1",
+					[jobId],
+				);
+				await cleanup.query("DELETE FROM prompts WHERE id = $1", [promptId]);
+				await cleanup.query(
+					"UPDATE projects SET status = 'archived' WHERE id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM project_memberships WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query("DELETE FROM projects WHERE id = $1", [projectId]);
+				await cleanup.query(
+					"DELETE FROM organization_memberships WHERE organization_id = $1",
+					[organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM actor_identities WHERE actor_id = $1",
+					[actorId],
+				);
+				await cleanup.query("DELETE FROM actors WHERE id = $1", [actorId]);
+				await cleanup.query("COMMIT");
+			} catch (cause) {
+				await cleanup.query("ROLLBACK").catch(() => {});
+				throw cause;
+			} finally {
+				cleanup.release();
+			}
 			await pool.end();
 		}
 	},

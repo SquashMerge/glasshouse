@@ -36,7 +36,7 @@ function transactionPool(
 					],
 				};
 			}
-			if (text.includes("p.status = ANY($5::text[])")) {
+			if (text.includes("p.status = ANY($3::text[])")) {
 				calls.push({ text, values });
 				return { rows: [{ id: projectId }] };
 			}

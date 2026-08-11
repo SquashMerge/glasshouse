@@ -38,7 +38,7 @@ class MockClient {
 				rows: [{ id: PROJECT, organization_id: authorization.organization_id }],
 			};
 		}
-		if (text.includes("p.status = ANY($5::text[])")) {
+		if (text.includes("p.status = ANY($3::text[])")) {
 			if (this.optimizationFencePending) {
 				this.optimizationFencePending = false;
 				return { rows: [{ id: PROJECT }] };
@@ -200,7 +200,7 @@ function authorizationLockReply(text: string): Reply | null {
 		return { rows: [job()] };
 	if (text.startsWith("SELECT actor_id FROM actor_identities"))
 		return { rows: [{ actor_id: authorization.actor_id }] };
-	if (text.includes("p.status = ANY($5::text[])"))
+	if (text.includes("p.status = ANY($3::text[])"))
 		return { rows: [{ id: PROJECT }] };
 	if (text.includes("FROM organization_memberships om"))
 		return { rows: [{ actor_subject: "admin" }] };
@@ -644,7 +644,7 @@ describe("prompt optimization repository", () => {
 		expect(result.id).toBe(JOB);
 		expect(pool.client.calls).toHaveLength(5);
 		expect(pool.client.calls[1]?.text).toContain("FROM projects");
-		expect(pool.client.calls[1]?.text).toContain("p.status = ANY($5::text[])");
+		expect(pool.client.calls[1]?.text).toContain("p.status = ANY($3::text[])");
 		expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
 		expect(pool.client.calls[3]?.text).toContain("ON CONFLICT");
 	});
@@ -774,7 +774,7 @@ describe("prompt optimization repository", () => {
 		).rejects.toMatchObject({
 			code: "CONFLICT",
 		} satisfies Partial<PromptRepositoryError>);
-		expect(pool.client.calls[1]?.text).toContain("p.status = ANY($5::text[])");
+		expect(pool.client.calls[1]?.text).toContain("p.status = ANY($3::text[])");
 		expect(pool.client.calls.map((call) => call.text)).not.toContain(
 			expect.stringContaining("INSERT INTO prompt_optimization_events"),
 		);

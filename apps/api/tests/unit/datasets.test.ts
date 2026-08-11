@@ -40,7 +40,7 @@ function fakeDb(
 		queries,
 		query: async (text: string, values?: unknown[]) => {
 			queries.push({ text, values });
-			if (text.includes("p.status = ANY($5::text[])"))
+			if (text.includes("p.status = ANY($3::text[])"))
 				return responses.shift() ?? { rows: [{ id: PROJECT }] };
 			if (text.includes("FROM organization_memberships om"))
 				return { rows: [{ actor_subject: "writer" }] };

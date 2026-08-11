@@ -19,7 +19,7 @@ const scope = {
 describe("withActiveAuthorizedProjectLock", () => {
 	it("locks active project through the centralized policy decision", async () => {
 		const query = mock(async (statement: string) => {
-			if (statement.includes("p.status = ANY($5::text[])"))
+			if (statement.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: "project" }] };
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: "member" }] };
@@ -41,7 +41,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 			"BEGIN",
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("project_memberships"),
-			expect.stringContaining("p.status = ANY($5::text[])"),
+			expect.stringContaining("p.status = ANY($3::text[])"),
 			expect.stringContaining("authorization_allows_project"),
 			"COMMIT",
 		]);
@@ -57,9 +57,9 @@ describe("withActiveAuthorizedProjectLock", () => {
 				attempt += 1;
 				return { rows: [] };
 			}
-			if (attempt === 1 && statement.includes("p.status = ANY($5::text[])"))
+			if (attempt === 1 && statement.includes("p.status = ANY($3::text[])"))
 				throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
-			if (statement.includes("p.status = ANY($5::text[])"))
+			if (statement.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: scope.projectId }] };
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: scope.actor }] };
@@ -84,12 +84,12 @@ describe("withActiveAuthorizedProjectLock", () => {
 			"BEGIN",
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("project_memberships"),
-			expect.stringContaining("p.status = ANY($5::text[])"),
+			expect.stringContaining("p.status = ANY($3::text[])"),
 			"ROLLBACK",
 			"BEGIN",
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("project_memberships"),
-			expect.stringContaining("p.status = ANY($5::text[])"),
+			expect.stringContaining("p.status = ANY($3::text[])"),
 			expect.stringContaining("authorization_allows_project"),
 			"COMMIT",
 		]);
@@ -101,7 +101,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 			{ code: "40001" },
 		);
 		const query = mock(async (statement: string) => {
-			if (statement.includes("p.status = ANY($5::text[])"))
+			if (statement.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: scope.projectId }] };
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: scope.actor }] };
@@ -144,7 +144,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 				"BEGIN",
 				expect.stringContaining("organization_memberships"),
 				expect.stringContaining("project_memberships"),
-				expect.stringContaining("p.status = ANY($5::text[])"),
+				expect.stringContaining("p.status = ANY($3::text[])"),
 				"ROLLBACK",
 			]);
 		}
@@ -153,7 +153,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 	it("preserves a persistence failure when rollback fails", async () => {
 		const failure = new Error("ClickHouse failed");
 		const query = mock(async (statement: string) => {
-			if (statement.includes("p.status = ANY($5::text[])"))
+			if (statement.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: "project" }] };
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: "member" }] };
