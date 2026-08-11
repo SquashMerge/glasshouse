@@ -15,9 +15,13 @@ import {
 } from "../../src/db/experiments";
 import {
 	cancelExecutionAdmission,
+	claimExecutionAdmission,
 	completeExecutionAdmission,
 } from "../../src/db/execution-admissions";
-import { lockActiveAuthorizedProject } from "../../src/db/project-authorization";
+import {
+	lockActiveAuthorizedOrganizationProject,
+	lockActiveAuthorizedProject,
+} from "../../src/db/project-authorization";
 import {
 	TRUSTED_ACTOR_CONTEXT_KEY,
 	TRUSTED_TENANT_CONTEXT_KEY,
@@ -1475,6 +1479,268 @@ test.skipIf(!databaseUrl)(
 			await pool.query("DELETE FROM organizations WHERE id = $1", [
 				organizationId,
 			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revocation holding its project membership first serializes project authorization without 40P01 and fails closed",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedExecutionExperiment(pool);
+		const revoker = await pool.connect();
+		const authorizer = await pool.connect();
+		try {
+			await revoker.query("BEGIN");
+			await revoker.query(
+				"SELECT actor_subject FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 FOR UPDATE",
+				[fixture.projectId, fixture.subject],
+			);
+			await authorizer.query("BEGIN");
+			await authorizer.query(
+				"SET application_name = 'astraea-membership-first-project'",
+			);
+			const authorized = lockActiveAuthorizedProject(
+				authorizer,
+				fixture.projectId,
+				{
+					organization_id: fixture.organizationId,
+					actor_id: fixture.actorId,
+					operation: "product_write",
+				},
+			);
+			await waitForLock(pool, "astraea-membership-first-project");
+			const revoke = (async () => {
+				await revoker.query(
+					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+					[fixture.projectId, fixture.subject],
+				);
+				await revoker.query("COMMIT");
+			})();
+			const allowed = await Promise.race([
+				authorized,
+				Bun.sleep(2_000).then(() => {
+					throw new Error("project authorization deadlocked behind revocation");
+				}),
+			]);
+			await revoke;
+			await authorizer.query("COMMIT");
+
+			expect(allowed).toBe(false);
+		} finally {
+			await authorizer.query("ROLLBACK").catch(() => {});
+			await revoker.query("ROLLBACK").catch(() => {});
+			authorizer.release();
+			revoker.release();
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revocation holding its organization membership first serializes the default-project lock without 40P01 and fails closed",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const actorId = randomUUID();
+		const subject = `default-race-${actorId}`;
+		const revoker = await pool.connect();
+		const defaultProject = await pool.connect();
+		try {
+			await pool.query(
+				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Default lock race', $2)",
+				[organizationId, `default-lock-race-${organizationId}`],
+			);
+			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+			await pool.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+				[actorId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'owner'), ($1, 'default-race-other', 'owner')",
+				[organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Default lock race', $3)",
+				[projectId, organizationId, `default-lock-race-${projectId}`],
+			);
+
+			await revoker.query("BEGIN");
+			await revoker.query(
+				"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 FOR UPDATE",
+				[organizationId, subject],
+			);
+			await defaultProject.query("BEGIN");
+			await defaultProject.query(
+				"SET application_name = 'astraea-membership-first-default'",
+			);
+			const authorized = lockActiveAuthorizedOrganizationProject(
+				defaultProject,
+				projectId,
+				organizationId,
+				actorId,
+				"destructive",
+			);
+			await waitForLock(pool, "astraea-membership-first-default");
+			const revoke = (async () => {
+				await revoker.query(
+					"DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
+					[organizationId, subject],
+				);
+				await revoker.query("COMMIT");
+			})();
+			const allowed = await Promise.race([
+				authorized,
+				Bun.sleep(2_000).then(() => {
+					throw new Error(
+						"default-project authorization deadlocked behind revocation",
+					);
+				}),
+			]);
+			await revoke;
+			await defaultProject.query("COMMIT");
+
+			expect(allowed).toBe(false);
+		} finally {
+			await defaultProject.query("ROLLBACK").catch(() => {});
+			await revoker.query("ROLLBACK").catch(() => {});
+			defaultProject.release();
+			revoker.release();
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"stable effect claims make ambiguous commit replay and concurrent callers dispatch provider and trace effects exactly once",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedExecutionExperiment(pool);
+		const first = await pool.connect();
+		const second = await pool.connect();
+		const admissionId = randomUUID();
+		let providerDispatches = 0;
+		let traceWrites = 0;
+		try {
+			const epoch = await pool.query<{ authorization_epoch: number }>(
+				"SELECT authorization_epoch FROM projects WHERE id = $1",
+				[fixture.projectId],
+			);
+			await pool.query(
+				"INSERT INTO execution_admissions (id, organization_id, project_id, requester_actor_id, work_kind, work_id, authorization_epoch, expires_at) VALUES ($1, $2, $3, $4, 'experiment_task', $5, $6, now() + interval '1 minute')",
+				[
+					admissionId,
+					fixture.organizationId,
+					fixture.projectId,
+					fixture.actorId,
+					fixture.itemId,
+					epoch.rows[0]!.authorization_epoch,
+				],
+			);
+
+			await first.query("BEGIN");
+			const created = await claimExecutionAdmission(first, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "provider_dispatch",
+				effect_key: "provider",
+			});
+			await second.query("BEGIN");
+			await second.query(
+				"SET application_name = 'astraea-effect-claim-replay'",
+			);
+			const replay = claimExecutionAdmission(second, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "provider_dispatch",
+				effect_key: "provider",
+			});
+			await waitForLock(pool, "astraea-effect-claim-replay");
+			await first.query("COMMIT");
+			if (created.status === "created") providerDispatches += 1;
+			const existing = await replay;
+			await second.query("COMMIT");
+			if (existing.status === "created") providerDispatches += 1;
+
+			const traceCreated = await claimExecutionAdmission(pool, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "trace_write",
+				effect_key: "trace",
+			});
+			if (traceCreated.status === "created") traceWrites += 1;
+			const traceReplay = await claimExecutionAdmission(pool, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "trace_write",
+				effect_key: "trace",
+			});
+			if (traceReplay.status === "created") traceWrites += 1;
+
+			const metricOne = await claimExecutionAdmission(pool, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "metric_write",
+				effect_key: "metric:1",
+			});
+			const metricTwo = await claimExecutionAdmission(pool, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "metric_write",
+				effect_key: "metric:2",
+			});
+			const eventPreparing = await claimExecutionAdmission(pool, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "event_write",
+				effect_key: "event:preparing",
+			});
+			const eventCompleted = await claimExecutionAdmission(pool, {
+				id: admissionId,
+				project_id: fixture.projectId,
+				effect: "event_write",
+				effect_key: "event:completed",
+			});
+
+			expect(created).toEqual({ status: "created" });
+			expect(existing).toEqual({ status: "existing" });
+			expect(traceCreated).toEqual({ status: "created" });
+			expect(traceReplay).toEqual({ status: "existing" });
+			expect(providerDispatches).toBe(1);
+			expect(traceWrites).toBe(1);
+			expect(metricOne).toEqual({ status: "created" });
+			expect(metricTwo).toEqual({ status: "created" });
+			expect(eventPreparing).toEqual({ status: "created" });
+			expect(eventCompleted).toEqual({ status: "created" });
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_admission_claims WHERE admission_id = $1",
+						[admissionId],
+					)
+				).rows[0]?.count,
+			).toBe(6);
+		} finally {
+			await first.query("ROLLBACK").catch(() => {});
+			await second.query("ROLLBACK").catch(() => {});
+			first.release();
+			second.release();
+			await fixture.cleanup();
 			await pool.end();
 		}
 	},

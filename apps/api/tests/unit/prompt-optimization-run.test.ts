@@ -90,7 +90,10 @@ function dependencies(input: {
 						authorization_epoch: 1,
 					},
 		isAdmissionActive: async () => input.admitted !== false,
-		claimExecution: async () => input.admitted !== false,
+		claimExecution: async () =>
+			input.admitted !== false
+				? { status: "created" as const }
+				: { status: "unavailable" as const },
 		cancelAdmission: async () => {},
 		completeAdmission: async () => {},
 		cancelExecution: async () => {},
@@ -132,8 +135,10 @@ describe("optimization completion policy", () => {
 			},
 		});
 		(
-			input.d as unknown as { claimExecution: () => Promise<boolean> }
-		).claimExecution = async () => false;
+			input.d as unknown as {
+				claimExecution: () => Promise<{ status: "unavailable" }>;
+			}
+		).claimExecution = async () => ({ status: "unavailable" });
 
 		await runOptimizationJob(job(), input.d);
 

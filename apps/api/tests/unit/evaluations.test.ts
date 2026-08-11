@@ -38,7 +38,7 @@ const admittedExecution = {
 		authorization_epoch: 1,
 	}),
 	isAdmissionActive: async () => true,
-	claimExecution: async () => true,
+	claimExecution: async () => ({ status: "created" as const }),
 	cancelAdmission: async () => {},
 	completeAdmission: async () => {},
 };

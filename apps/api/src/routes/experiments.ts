@@ -431,10 +431,16 @@ export async function executeExperiment(
 						id: input.experiment_id,
 						admission_id: admission.id,
 						effect: "provider_dispatch",
+						effect_key: "provider",
 					}),
 				cancel: () => deps.cancelAdmission(db, admission.id),
 				invoke: (providerSignal) =>
-					deps.invokeLlm(task.input, input.config, providerSignal),
+					deps.invokeLlm(
+						task.input,
+						input.config,
+						providerSignal,
+						`${admission.id}:provider`,
+					),
 			});
 			if (!provider.admitted) {
 				await deps.updateExperiment(db, {
@@ -476,6 +482,7 @@ export async function executeExperiment(
 							id: input.experiment_id,
 							admission_id: admission.id,
 							effect: "trace_write",
+							effect_key: "trace",
 						}),
 					cancel: () => deps.cancelAdmission(db, admission.id),
 					invoke: () =>
@@ -543,6 +550,7 @@ export async function executeExperiment(
 							id: input.experiment_id,
 							admission_id: admissionId!,
 							effect: "trace_write",
+							effect_key: "trace",
 						}),
 					cancel: () => deps.cancelAdmission(db, admissionId!),
 					invoke: () =>

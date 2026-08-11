@@ -15,6 +15,10 @@ export type ExecutionAdmissionEffect =
 	| "result_write"
 	| "event_write";
 
+export type ExecutionAdmissionClaim = {
+	status: "created" | "existing" | "unavailable";
+};
+
 type Transactional = Pick<Pool, "connect">;
 
 async function transaction<T>(
@@ -81,9 +85,8 @@ export async function executionAdmissionIsActive(
 }
 
 /**
- * Call only after the caller has locked its Project fence and requester membership.
- * The inserted row is the durable logical admission for one effect; it
- * does not make a later remote write physically atomic with PostgreSQL.
+ * Call only after the caller has locked the requester memberships then Project
+ * fence. An effect key identifies the one replay-safe logical effect.
  */
 export async function claimExecutionAdmission(
 	client: Pick<PoolClient, "query">,
@@ -91,13 +94,19 @@ export async function claimExecutionAdmission(
 		id: string;
 		project_id: string;
 		effect: ExecutionAdmissionEffect;
+		effect_key: string;
 	},
-): Promise<boolean> {
+): Promise<ExecutionAdmissionClaim> {
 	const claim = await client.query(
-		"WITH active_admission AS (SELECT admission.id, admission.authorization_epoch, admission.expires_at FROM execution_admissions AS admission JOIN projects AS project ON project.id = admission.project_id AND project.organization_id = admission.organization_id WHERE admission.id = $1 AND admission.project_id = $2 AND admission.status = 'active' AND admission.expires_at > now() AND project.status = 'active' AND project.authorization_epoch = admission.authorization_epoch FOR UPDATE OF admission, project) INSERT INTO execution_admission_claims (id, admission_id, effect, authorization_epoch, expires_at) SELECT gen_random_uuid(), id, $3, authorization_epoch, expires_at FROM active_admission RETURNING id",
-		[input.id, input.project_id, input.effect],
+		"WITH active_admission AS (SELECT admission.id, admission.authorization_epoch, admission.expires_at FROM execution_admissions AS admission JOIN projects AS project ON project.id = admission.project_id AND project.organization_id = admission.organization_id WHERE admission.id = $1 AND admission.project_id = $2 AND admission.status = 'active' AND admission.expires_at > now() AND project.status = 'active' AND project.authorization_epoch = admission.authorization_epoch FOR UPDATE OF admission, project) INSERT INTO execution_admission_claims (id, admission_id, effect, effect_key, authorization_epoch, expires_at) SELECT gen_random_uuid(), id, $3, $4, authorization_epoch, expires_at FROM active_admission ON CONFLICT (admission_id, effect, effect_key) DO NOTHING RETURNING id",
+		[input.id, input.project_id, input.effect, input.effect_key],
 	);
-	return Boolean(claim.rows[0]);
+	if (claim.rows[0]) return { status: "created" };
+	const existing = await client.query(
+		"SELECT id FROM execution_admission_claims WHERE admission_id = $1 AND effect = $2 AND effect_key = $3",
+		[input.id, input.effect, input.effect_key],
+	);
+	return { status: existing.rows[0] ? "existing" : "unavailable" };
 }
 
 export async function cancelExecutionAdmission(

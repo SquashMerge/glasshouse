@@ -1042,6 +1042,7 @@ export async function runOptimizationJob(
 					worker_id: workerId,
 					admission_id: admission.id,
 					effect: "provider_dispatch",
+					effect_key: "provider",
 				}),
 			cancel: () => d.cancelAdmission(d.pool(), admission.id),
 			invoke: (signal) =>

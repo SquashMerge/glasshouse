@@ -1,3 +1,5 @@
+import type { ExecutionAdmissionClaim } from "../db/execution-admissions.js";
+
 const DEFAULT_EXECUTION_ADMISSION_TIMEOUT_MS = 30_000;
 const DEFAULT_EXECUTION_ADMISSION_POLL_MS = 250;
 
@@ -28,7 +30,7 @@ export function executionAdmissionPollMs(): number {
 export async function invokeWithExecutionAdmission<T>(input: {
 	parentSignal?: AbortSignal;
 	isActive: () => Promise<boolean>;
-	claimDispatch: () => Promise<boolean>;
+	claimDispatch: () => Promise<ExecutionAdmissionClaim>;
 	cancel: () => Promise<void>;
 	invoke: (signal: AbortSignal) => Promise<T>;
 	timeoutMs?: number;
@@ -40,7 +42,8 @@ export async function invokeWithExecutionAdmission<T>(input: {
 	}
 	// This commit is the remote-dispatch linearization point. It is deliberately
 	// separate from validation so a concurrent revocation can win before invoke.
-	if (input.parentSignal?.aborted || !(await input.claimDispatch())) {
+	const dispatchClaim = await input.claimDispatch();
+	if (input.parentSignal?.aborted || dispatchClaim.status !== "created") {
 		await input.cancel();
 		return { admitted: false };
 	}

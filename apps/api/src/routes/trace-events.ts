@@ -378,14 +378,16 @@ export function createTraceEventHandlers(
 		let bufferedObservationBytes = 0;
 		let forwardObservation: ((data: string) => void) | null = null;
 		let unsubscribe: (() => void) | null = null;
-		let preSnapshotClosed: "aborted" | "overflow" | null = null;
+		let preSnapshotClosed: "aborted" | "overflow" | "timeout" | null = null;
+		const snapshotController = new AbortController();
 		let resolvePreSnapshotClose: () => void = () => undefined;
 		const preSnapshotClose = new Promise<void>((resolve) => {
 			resolvePreSnapshotClose = resolve;
 		});
-		const cleanupPreSnapshot = (reason: "aborted" | "overflow") => {
+		const cleanupPreSnapshot = (reason: "aborted" | "overflow" | "timeout") => {
 			if (preSnapshotClosed) return;
 			preSnapshotClosed = reason;
+			snapshotController.abort();
 			forwardObservation = null;
 			bufferedObservationBytes = 0;
 			bufferedObservations.length = 0;
@@ -434,7 +436,13 @@ export function createTraceEventHandlers(
 		}
 
 		const snapshot = Promise.resolve().then(() =>
-			d.getTrace(d.defaultClient(), tenant.organizationId, traceId, projectId),
+			d.getTrace(
+				d.defaultClient(),
+				tenant.organizationId,
+				traceId,
+				projectId,
+				snapshotController.signal,
+			),
 		);
 		let clearSnapshotTimeout: (() => void) | undefined;
 		const traceExists = await Promise.race([
@@ -459,7 +467,7 @@ export function createTraceEventHandlers(
 				: new Response(null, { status: 499 });
 		}
 		if (traceExists.kind === "timeout") {
-			cleanupPreSnapshot("aborted");
+			cleanupPreSnapshot("timeout");
 			requestSignal.removeEventListener("abort", onRequestAbort);
 			return new Response(
 				JSON.stringify({

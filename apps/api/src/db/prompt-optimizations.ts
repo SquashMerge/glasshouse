@@ -18,6 +18,7 @@ import {
 	createExecutionAdmission,
 	claimExecutionAdmission,
 	executionAdmissionIsActive,
+	type ExecutionAdmissionClaim,
 	type ExecutionAdmissionEffect,
 	type ExecutionAdmission,
 } from "./execution-admissions.js";
@@ -424,21 +425,23 @@ export async function claimOptimizationExecution(
 		worker_id: string;
 		admission_id: string;
 		effect: ExecutionAdmissionEffect;
+		effect_key: string;
 	},
-): Promise<boolean> {
+): Promise<ExecutionAdmissionClaim> {
 	return tx(pool, async (client) => {
 		const execution = await lockOptimizationExecution(client, input.id);
-		if (!execution) return false;
+		if (!execution) return { status: "unavailable" };
 		const claimed = await rows(
 			client,
 			"SELECT id FROM prompt_optimization_jobs WHERE id = $1 AND worker_claim_id = $2 AND worker_lease_expires_at >= now() AND status IN ('optimizing', 'evaluating') FOR UPDATE",
 			[input.id, input.worker_id],
 		);
-		if (!claimed.length) return false;
+		if (!claimed.length) return { status: "unavailable" };
 		return claimExecutionAdmission(client, {
 			id: input.admission_id,
 			project_id: execution.project_id,
 			effect: input.effect,
+			effect_key: input.effect_key,
 		});
 	});
 }
@@ -666,15 +669,20 @@ export async function recordOptimizationMetricCalls(
 		const execution = await lockOptimizationExecution(client, input.id);
 		if (!execution)
 			throw fail("CONFLICT", "Optimization worker claim was lost");
-		if (
-			input.admission_id &&
-			!(await claimExecutionAdmission(client, {
+		if (input.admission_id) {
+			const claim = await claimExecutionAdmission(client, {
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "metric_write",
-			}))
-		)
-			throw fail("CONFLICT", "Optimization execution admission was cancelled");
+				effect_key: `metric:${input.metric_calls_used}`,
+			});
+			if (claim.status === "unavailable")
+				throw fail(
+					"CONFLICT",
+					"Optimization execution admission was cancelled",
+				);
+			if (claim.status === "existing") return;
+		}
 		const recorded = await rows(
 			client,
 			"UPDATE prompt_optimization_jobs SET metric_calls_used=GREATEST(COALESCE(metric_calls_used,0),$3),updated_at=now() WHERE id=$1 AND worker_claim_id=$2 AND worker_lease_expires_at >= now() RETURNING id",
@@ -747,15 +755,20 @@ export async function transitionOptimizationJob(
 		const execution = await lockOptimizationExecution(client, input.id);
 		if (!execution)
 			throw fail("CONFLICT", "Optimization job is no longer active");
-		if (
-			input.admission_id &&
-			!(await claimExecutionAdmission(client, {
+		if (input.admission_id) {
+			const claim = await claimExecutionAdmission(client, {
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "event_write",
-			}))
-		)
-			throw fail("CONFLICT", "Optimization execution admission was cancelled");
+				effect_key: `event:${input.status}`,
+			});
+			if (claim.status === "unavailable")
+				throw fail(
+					"CONFLICT",
+					"Optimization execution admission was cancelled",
+				);
+			if (claim.status === "existing") return mapJob(execution.job);
+		}
 		const row = (
 			await rows(
 				client,
@@ -867,15 +880,20 @@ export async function completeOptimizationResult(
 		const execution = await lockOptimizationExecution(client, input.id);
 		if (!execution)
 			throw fail("CONFLICT", "Optimization job is no longer active");
-		if (
-			input.admission_id &&
-			!(await claimExecutionAdmission(client, {
+		if (input.admission_id) {
+			const claim = await claimExecutionAdmission(client, {
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "result_write",
-			}))
-		)
-			throw fail("CONFLICT", "Optimization execution admission was cancelled");
+				effect_key: "result:review",
+			});
+			if (claim.status === "unavailable")
+				throw fail(
+					"CONFLICT",
+					"Optimization execution admission was cancelled",
+				);
+			if (claim.status === "existing") return mapJob(execution.job);
+		}
 		const row = (
 			await rows(
 				client,
@@ -925,15 +943,24 @@ export async function publishOptimizationResult(
 		const execution = await lockOptimizationExecution(client, input.id);
 		if (!execution)
 			throw fail("CONFLICT", "Optimization worker claim was lost");
-		if (
-			input.admission_id &&
-			!(await claimExecutionAdmission(client, {
+		if (input.admission_id) {
+			const claim = await claimExecutionAdmission(client, {
 				id: input.admission_id,
 				project_id: execution.project_id,
 				effect: "result_write",
-			}))
-		)
-			throw fail("CONFLICT", "Optimization execution admission was cancelled");
+				effect_key: "result:publish",
+			});
+			if (claim.status === "unavailable")
+				throw fail(
+					"CONFLICT",
+					"Optimization execution admission was cancelled",
+				);
+			if (claim.status === "existing") {
+				const resultVersion = mapJob(execution.job).result_version;
+				if (resultVersion !== null) return resultVersion;
+				throw fail("CONFLICT", "Optimization result was already claimed");
+			}
+		}
 		const jobRow = (
 			await rows(
 				client,

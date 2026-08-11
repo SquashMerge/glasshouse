@@ -796,6 +796,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			DEFAULT_ORGANIZATION_ID,
 			VALID_TRACE_ID,
 			PROJECT_ID,
+			expect.any(AbortSignal),
 		);
 	});
 
@@ -882,13 +883,15 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			observations: ObservationRow[];
 		}>();
 		const snapshotStarted = deferred<void>();
+		let snapshotSignal: AbortSignal | undefined;
 		const handlers = createTraceEventHandlers({
 			assertProjectAccess: assertProjectAccessMock,
 			defaultClient: defaultClientMock,
-			getTrace: async () => {
+			getTrace: (async (...args: unknown[]) => {
+				snapshotSignal = args[4] as AbortSignal;
 				snapshotStarted.resolve();
 				return snapshot.promise;
-			},
+			}) as never,
 			graceMs: 150,
 			heartbeatMs: 60,
 			maxPendingBytes: 64 * 1024,
@@ -915,6 +918,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 
 		const result = await response;
 		expect(result.status).toBe(503);
+		expect(snapshotSignal?.aborted).toBe(true);
 		expect(unsubscribeCallLog).toEqual(["observation.created"]);
 		snapshot.resolve({ trace: fakeTrace, observations: [] });
 		await Bun.sleep(20);
@@ -970,13 +974,15 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			observations: ObservationRow[];
 		}>();
 		const snapshotStarted = deferred<void>();
+		let snapshotSignal: AbortSignal | undefined;
 		const handlers = createTraceEventHandlers({
 			assertProjectAccess: assertProjectAccessMock,
 			defaultClient: defaultClientMock,
-			getTrace: async () => {
+			getTrace: (async (...args: unknown[]) => {
+				snapshotSignal = args[4] as AbortSignal;
 				snapshotStarted.resolve();
 				return snapshot.promise;
-			},
+			}) as never,
 			graceMs: 150,
 			heartbeatMs: 60,
 			snapshotTimeoutMs: 1_000,
@@ -993,6 +999,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		await snapshotStarted.promise;
 		controller.abort();
 		await waitFor(() => unsubscribeCallLog.includes("observation.created"));
+		expect(snapshotSignal?.aborted).toBe(true);
 		snapshot.resolve({ trace: fakeTrace, observations: [] });
 		const result = await response;
 		expect(result.status).toBe(499);
@@ -1007,10 +1014,14 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			trace: TraceRow | null;
 			observations: ObservationRow[];
 		}>();
+		let snapshotSignal: AbortSignal | undefined;
 		const handlers = createTraceEventHandlers({
 			assertProjectAccess: assertProjectAccessMock,
 			defaultClient: defaultClientMock,
-			getTrace: async () => snapshot.promise,
+			getTrace: (async (...args: unknown[]) => {
+				snapshotSignal = args[4] as AbortSignal;
+				return snapshot.promise;
+			}) as never,
 			graceMs: 150,
 			heartbeatMs: 60,
 			snapshotTimeoutMs: 20,
@@ -1025,6 +1036,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		);
 
 		expect(result.status).toBe(504);
+		expect(snapshotSignal?.aborted).toBe(true);
 		expect(unsubscribeCallLog).toEqual(["observation.created"]);
 		snapshot.resolve({ trace: fakeTrace, observations: [] });
 	});

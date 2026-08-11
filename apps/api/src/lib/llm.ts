@@ -126,6 +126,7 @@ export async function invokeConfiguredLlm(
 	input: Record<string, unknown>,
 	config: Record<string, unknown>,
 	signal?: AbortSignal,
+	idempotencyKey?: string,
 ): Promise<LlmResponse> {
 	const model =
 		typeof config.model === "string" && config.model
@@ -161,6 +162,7 @@ export async function invokeConfiguredLlm(
 		headers: {
 			authorization: `Bearer ${apiKey}`,
 			"content-type": "application/json",
+			...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
 		},
 		body: JSON.stringify({
 			model,

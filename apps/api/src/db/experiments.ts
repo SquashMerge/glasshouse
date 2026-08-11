@@ -9,6 +9,7 @@ import {
 	createExecutionAdmission,
 	claimExecutionAdmission,
 	executionAdmissionIsActive,
+	type ExecutionAdmissionClaim,
 	type ExecutionAdmissionEffect,
 	type ExecutionAdmission,
 } from "./execution-admissions.js";
@@ -463,13 +464,15 @@ export async function finalizeExperimentTask(
 			}
 			if (
 				input.admission_id &&
-				!(await claimExecutionAdmission(client, {
-					id: input.admission_id,
-					project_id: access.project_id,
-					effect: "result_write",
-				}))
+				(
+					await claimExecutionAdmission(client, {
+						id: input.admission_id,
+						project_id: access.project_id,
+						effect: "result_write",
+						effect_key: `result:${input.task_id}`,
+					})
+				).status !== "created"
 			) {
-				await cancelRevokedExperiment(client, input.experiment_id);
 				return false;
 			}
 			if (access.row.status !== "running") return false;
@@ -676,19 +679,21 @@ export async function claimExperimentExecution(
 		id: string;
 		admission_id: string;
 		effect: ExecutionAdmissionEffect;
+		effect_key: string;
 	},
-): Promise<boolean> {
+): Promise<ExecutionAdmissionClaim> {
 	try {
 		return await withTransaction(db, async (client) => {
 			const access = await lockExperimentExecution(client, input);
 			if (!access?.authorized) {
 				if (access) await cancelRevokedExperiment(client, input.id);
-				return false;
+				return { status: "unavailable" };
 			}
 			return claimExecutionAdmission(client, {
 				id: input.admission_id,
 				project_id: access.project_id,
 				effect: input.effect,
+				effect_key: input.effect_key,
 			});
 		});
 	} catch (cause) {

@@ -28,6 +28,8 @@ import {
 } from "../tenancy.js";
 import type { ProjectOperation } from "../authorization-policy.js";
 import {
+	lockActiveAuthorizedOrganizationProject,
+	lockAuthorizedOrganization,
 	lockAuthorizedProject,
 	type AuthorizedProjectStatus,
 } from "../db/project-authorization.js";
@@ -351,26 +353,6 @@ async function requireOrganizationPolicy(
 		throw cause;
 	}
 }
-async function lockAuthorizedOrganization(
-	client: Pick<ReturnType<typeof pgPool>, "query">,
-	tenant: ReturnType<typeof trustedTenant>,
-	operation: "organization_manage" | "destructive" | "governed",
-) {
-	const organization = await client.query(
-		"SELECT id FROM organizations WHERE id = $1 FOR UPDATE",
-		[tenant.organizationId],
-	);
-	if (!organization.rows[0]) return false;
-	await client.query(
-		"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $2) FOR UPDATE",
-		[tenant.organizationId, tenant.actorId],
-	);
-	const decision = await client.query<{ allowed: boolean }>(
-		"SELECT authorization_allows_organization($1, $2, $3) AS allowed",
-		[tenant.organizationId, tenant.actorId, operation],
-	);
-	return decision.rows[0]?.allowed === true;
-}
 async function role(
 	c: Context,
 	projectId?: string,
@@ -461,6 +443,7 @@ async function queryWithProjectAuditLock<T extends QueryResultRow>(
 	sql: string,
 	values: unknown[],
 	statuses: readonly AuthorizedProjectStatus[] = ["active", "archived"],
+	memberSubject?: string,
 ) {
 	const client = await pgPool().connect();
 	try {
@@ -478,6 +461,16 @@ async function queryWithProjectAuditLock<T extends QueryResultRow>(
 					operation,
 				},
 				statuses,
+				memberSubject
+					? {
+							beforeProjectLock: async () => {
+								await client.query(
+									"SELECT actor_subject FROM project_memberships WHERE project_id = $1 AND organization_id = $2 AND actor_subject = $3 FOR UPDATE",
+									[projectId, tenant.organizationId, memberSubject],
+								);
+							},
+						}
+					: {},
 			))
 		)
 			throw new Error("Not found");
@@ -498,10 +491,25 @@ async function queryWithOrganizationAuditLocks<T extends QueryResultRow>(
 	operation: "organization_manage" | "destructive" | "governed",
 	sql: string,
 	values: unknown[],
+	memberSubject?: string,
 ) {
 	const client = await pgPool().connect();
 	try {
 		await client.query("BEGIN");
+		if (
+			!(await lockAuthorizedOrganization(
+				client,
+				tenant.organizationId,
+				tenant.actorId,
+				operation,
+			))
+		)
+			throw new Error("Forbidden");
+		if (memberSubject)
+			await client.query(
+				"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 FOR UPDATE",
+				[organizationId, memberSubject],
+			);
 		const projects = await client.query<{ id: string }>(
 			"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
 			[organizationId],
@@ -510,8 +518,6 @@ async function queryWithOrganizationAuditLocks<T extends QueryResultRow>(
 			"SELECT lock_project_audit_provenance(id::uuid) FROM unnest($1::uuid[]) AS projects(id) ORDER BY id",
 			[projects.rows.map((project) => project.id)],
 		);
-		if (!(await lockAuthorizedOrganization(client, tenant, operation)))
-			throw new Error("Forbidden");
 		const result = await client.query<T>(sql, values);
 		await client.query("COMMIT");
 		return result;
@@ -567,12 +573,15 @@ export async function handleSetDefaultProject(c: Context) {
 			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
 				project_id,
 			]);
-			const selected = await client.query(
-				"SELECT id FROM projects WHERE id = $1 AND organization_id = $2 AND status = 'active' FOR UPDATE",
-				[project_id, tenant.organizationId],
-			);
-			if (!selected.rows[0]) throw new Error("Not found");
-			if (!(await lockAuthorizedOrganization(client, tenant, "destructive")))
+			if (
+				!(await lockActiveAuthorizedOrganizationProject(
+					client,
+					project_id,
+					tenant.organizationId,
+					tenant.actorId,
+					"destructive",
+				))
+			)
 				throw new Error("Forbidden");
 			const updated = await client.query<Row>(
 				"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $4) AND role = 'owner' AND authorization_allows_organization($1, $4, 'destructive') FOR UPDATE), selected AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $2 AND p.organization_id = $1 AND p.status = 'active' FOR UPDATE), changed AS (UPDATE organizations SET default_project_id = $2, updated_at = now() WHERE id = $1 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM selected) RETURNING id), audit AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'default_changed' FROM changed) SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, true AS is_default, 'owner'::text AS project_role FROM projects p WHERE p.id = $2 AND EXISTS (SELECT 1 FROM changed)",
@@ -963,6 +972,7 @@ export async function handlePutProjectMember(c: Context) {
 				tenant.actor,
 				tenant.actorId,
 			],
+			input.actor_subject,
 		);
 		if (!member.rows[0]) throw new Error("Not found");
 		const row = member.rows[0];
@@ -986,6 +996,8 @@ export async function handleDeleteProjectMember(c: Context) {
 			"project_manage",
 			"WITH authorization AS MATERIALIZED (SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $5) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $5) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status <> 'deleting' AND (om.role = 'owner' OR pm.role = 'manager') AND authorization_allows_project($3, $1, $5, 'project_manage') FOR UPDATE OF p, om), deleted AS (DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) RETURNING project_id), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, project_id, $4, 'project_membership_removed' FROM deleted) SELECT * FROM deleted",
 			[id, actor, tenant.organizationId, tenant.actor, tenant.actorId],
+			["active", "archived"],
+			actor,
 		);
 		if (!deleted.rows[0]) throw new Error("Not found");
 		return c.body(null, 204);
@@ -1011,6 +1023,7 @@ export async function handlePutOrganizationMember(c: Context) {
 			"organization_manage",
 			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $5) AND role = 'owner' AND authorization_allows_organization($1, $5, 'organization_manage') FOR UPDATE), locked_projects AS MATERIALIZED (SELECT id, status, slug, created_at FROM projects WHERE organization_id = $1 FOR UPDATE), unfrozen AS MATERIALIZED (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM locked_projects WHERE status = 'deleting')), audit_project AS MATERIALIZED (SELECT id FROM locked_projects ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1), mutation AS (INSERT INTO organization_memberships (organization_id, actor_subject, role) SELECT $1, $2, $3 FROM authorization CROSS JOIN unfrozen WHERE EXISTS (SELECT 1 FROM locked_projects) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE organization_memberships.role IS DISTINCT FROM EXCLUDED.role RETURNING actor_subject, role, created_at, (xmax = 0) AS created), membership AS (SELECT actor_subject, role, created_at FROM mutation UNION ALL SELECT om.actor_subject, om.role, om.created_at FROM organization_memberships om WHERE om.organization_id = $1 AND om.actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM locked_projects) AND EXISTS (SELECT 1 FROM unfrozen) AND NOT EXISTS (SELECT 1 FROM mutation)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, audit_project.id, $4, CASE WHEN created THEN 'organization_membership_created' ELSE 'organization_membership_updated' END FROM mutation CROSS JOIN audit_project) SELECT * FROM membership",
 			[tenant.organizationId, actor, targetRole, tenant.actor, tenant.actorId],
+			actor,
 		);
 		const value = row.rows[0];
 		if (!value) throw new Error("Forbidden");
@@ -1057,6 +1070,7 @@ export async function handleDeleteOrganizationMember(c: Context) {
 			"organization_manage",
 			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $4) AND role = 'owner' AND authorization_allows_organization($1, $4, 'organization_manage') FOR UPDATE), locked_projects AS MATERIALIZED (SELECT id, status, slug, created_at FROM projects WHERE organization_id = $1 FOR UPDATE), unfrozen AS MATERIALIZED (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM locked_projects WHERE status = 'deleting')), audit_project AS MATERIALIZED (SELECT id FROM locked_projects ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1), deleted AS (DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM locked_projects) AND EXISTS (SELECT 1 FROM unfrozen) RETURNING actor_subject), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, audit_project.id, $3, 'organization_membership_removed' FROM deleted CROSS JOIN audit_project) SELECT * FROM deleted",
 			[tenant.organizationId, actor, tenant.actor, tenant.actorId],
+			actor,
 		);
 		if (!deleted.rows[0]) throw new Error("Forbidden");
 		return c.body(null, 204);
