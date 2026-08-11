@@ -710,6 +710,14 @@ describe("project authorization routes", () => {
 					sql.includes("p.id = o.default_project_id AS is_default"),
 			),
 		).toBe(true);
+		const statements = query.mock.calls.map(
+			([statement]) => statement as string,
+		);
+		const index = (prefix: string) =>
+			statements.findIndex((statement) => statement.startsWith(prefix));
+		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
+			index("SELECT p.id FROM projects p"),
+		);
 	});
 
 	it("returns the canonical default flag when renaming the default project", async () => {

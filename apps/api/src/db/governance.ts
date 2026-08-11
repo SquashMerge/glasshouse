@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { ch } from "./clickhouse.js";
+import { lockProjectAuditProvenance } from "./project-authorization.js";
 
 export const RETENTION_CLASSES = ["traces", "datasets", "feedback"] as const;
 export type RetentionClass = (typeof RETENTION_CLASSES)[number];
@@ -200,16 +201,16 @@ export async function failInterruptedRetentionRuns(
 	try {
 		await client.query("BEGIN");
 		const expired = await client.query<{ id: string; project_id: string }>(
-			"SELECT r.id, r.project_id FROM governance_retention_runs r WHERE r.status = 'running' AND r.lease_expires_at < now() ORDER BY r.project_id, r.id",
+			"SELECT r.id, r.project_id FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id WHERE r.status = 'running' AND r.lease_expires_at < now() ORDER BY r.project_id, r.id FOR UPDATE OF p, r",
 		);
 		if (!expired.rows.length) {
 			await client.query("COMMIT");
 			return [];
 		}
-		await client.query(
-			"SELECT lock_project_audit_provenance(project_id::uuid) FROM (SELECT DISTINCT r.project_id FROM unnest($1::uuid[]) AS runs(run_id) JOIN governance_retention_runs r ON r.id = runs.run_id ORDER BY r.project_id) projects",
-			[expired.rows.map((run) => run.id)],
-		);
+		for (const projectId of [
+			...new Set(expired.rows.map((run) => run.project_id)),
+		].sort())
+			await lockProjectAuditProvenance(client, projectId);
 		const failed = await client.query<{ id: string; project_id: string }>(
 			"WITH expired AS MATERIALIZED (SELECT r.id, r.organization_id, r.project_id, r.policy_version_id, r.requested_by, r.counts, r.started_at FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id WHERE r.id = ANY($1::uuid[]) AND r.status = 'running' AND r.lease_expires_at < now() FOR UPDATE OF p, r), failed AS (UPDATE governance_retention_runs r SET status = 'failed', completed_at = now(), lease_expires_at = NULL FROM expired e WHERE r.id = e.id AND r.status = 'running' AND r.lease_expires_at < now() RETURNING r.id, r.organization_id, r.project_id, r.policy_version_id, r.requested_by, r.counts, r.started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, 'retention_failed', counts, GREATEST(0, round(EXTRACT(epoch FROM now() - started_at) * 1000)::integer) FROM failed) SELECT id, project_id FROM failed",
 			[expired.rows.map((run) => run.id)],

@@ -220,7 +220,7 @@ describe("governance route guards", () => {
 		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
 			index("BEGIN"),
 		);
-		expect(index("SELECT lock_project_audit_provenance")).toBeLessThan(
+		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
 			index("SELECT p.id FROM projects"),
 		);
 		expect(calls).toEqual(

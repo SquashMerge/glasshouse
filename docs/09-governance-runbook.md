@@ -22,7 +22,7 @@ The first policy contract is deliberately narrow:
 
 ## Recovery and evidence
 
-Retention commits its `running` run and start audit record before any external mutation. Every destructive stage holds the active-project/manager lock while it rechecks the effective policy and commits stage evidence; approval, archival, and membership changes use the same project lock. Startup deterministically terminalizes every interrupted run with one failure audit record; review its run/audit record, correct infrastructure, then issue a new run. Deletion predicates are time-based and project-scoped, so reruns are idempotent for already-deleted records. Historical ClickHouse rows without ownership are never selected or attributed.
+Retention commits its `running` run and start audit record before any external mutation. Every destructive stage holds the active-project/manager lock while it rechecks the effective policy and commits stage evidence; approval, archival, and membership changes use the same project lock. Any retained-audit operation locks memberships, then Project rows, then the Project audit UUID; startup finalization first locks the Project/run rows before its audit UUID. Startup deterministically terminalizes every interrupted run with one failure audit record; review its run/audit record, correct infrastructure, then issue a new run. Deletion predicates are time-based and project-scoped, so reruns are idempotent for already-deleted records. Historical ClickHouse rows without ownership are never selected or attributed.
 
 ## Inventory
 

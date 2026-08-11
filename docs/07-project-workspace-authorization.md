@@ -158,9 +158,10 @@ path, SSE subscription, worker claim, and recovery path. Each must authorize an
 explicit Project target before use and bind both organization and Project in the
 underlying data operation. Transactional mutations recheck the trusted actor's
 current operation authorization while locking organization membership, Project
-membership, and then the active Project row, rather than relying on request admission
-alone. This order matches PostgreSQL membership updates, which necessarily lock their
-row before their trigger can take the Project fence. New durable application/telemetry writes require a
+membership, the active Project row, and then its retained-audit UUID, rather than
+relying on request admission alone. This order matches PostgreSQL membership updates,
+which necessarily lock their row before their trigger can take the Project and audit
+fences. New durable application/telemetry writes require a
 valid Project ID. Legacy ClickHouse records without ownership remain unscoped
 and are excluded from Project reads, streams, and retention; ownership is never
 guessed.

@@ -57,16 +57,19 @@ persist a result, write an evaluation trace, complete, or resume after restart.
 No manual replay is required or supported for these cancelled runs; submit a new
 experiment after restoring appropriate execute access.
 
-Migrations `0043_authorization_revocation_fence.sql`,
-`0044_execution_admission_cancellation.sql`, and
-`0045_execution_admission_effect_claims.sql` serialize Project and organization
-membership changes with authorization-sensitive work. The global actual lock order
-is membership then Project: authorization paths lock the acting organization and
-Project memberships, then the Project fence, and finally make a fresh policy
-decision. PostgreSQL automatically acquires the target membership-row lock before
-the membership `BEFORE ROW` trigger runs; the trigger then takes the Project fence
-before it cancels admitted work. This gives revocation the same membership-to-Project
-order and avoids an inverse-order deadlock.
+Migrations `0043_authorization_revocation_fence.sql` through
+`0048_project_audit_lock_order.sql` serialize Project and organization membership
+changes with authorization-sensitive work. The global physical order is organization
+membership rows, Project membership rows, Project rows, then Project audit-provenance
+advisory locks, each collection ordered by its stable key. Authorization is decided
+only after its membership and Project rows are locked. PostgreSQL automatically
+acquires the target membership-row lock before the membership `BEFORE ROW` trigger
+runs; that trigger locks every affected Project and its audit UUID before it fences
+admitted work. Default-project, deletion, retention, bootstrap, and audit-trigger
+paths follow the same order; a deleted Project has no row left to lock, so its
+retained audit UUID is the final fence. This prevents advisory/membership inversions.
+Lock-phase `40P01` and `40001` retries run before a route mutation begins; an audit
+insert, provider/effect claim, or other mutation is never replayed by that retry.
 An execution admission is committed under that short fence with the current
 Project epoch, requester, and expiry. After validation, a provider dispatch and
 each trace, metric, result, or lifecycle-event write commits its own bounded

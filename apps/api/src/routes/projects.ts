@@ -31,6 +31,8 @@ import {
 	lockActiveAuthorizedOrganizationProject,
 	lockAuthorizedOrganization,
 	lockAuthorizedProject,
+	lockProjectAuditProvenance,
+	withLockPhaseTransaction,
 	type AuthorizedProjectStatus,
 } from "../db/project-authorization.js";
 
@@ -448,44 +450,31 @@ async function queryWithProjectAuditLock<T extends QueryResultRow>(
 	statuses: readonly AuthorizedProjectStatus[] = ["active", "archived"],
 	memberSubject?: string,
 ) {
-	const client = await pgPool().connect();
-	try {
-		await client.query("BEGIN");
-		await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-			projectId,
-		]);
-		if (
-			!(await lockAuthorizedProject(
-				client,
-				projectId,
-				{
-					organization_id: tenant.organizationId,
-					actor_id: tenant.actorId,
-					operation,
-				},
-				statuses,
-				memberSubject
-					? {
-							beforeProjectLock: async () => {
-								await client.query(
-									"SELECT actor_subject FROM project_memberships WHERE project_id = $1 AND organization_id = $2 AND actor_subject = $3 FOR UPDATE",
-									[projectId, tenant.organizationId, memberSubject],
-								);
-							},
-						}
-					: {},
-			))
-		)
-			throw new Error("Not found");
-		const result = await client.query<T>(sql, values);
-		await client.query("COMMIT");
-		return result;
-	} catch (cause) {
-		await client.query("ROLLBACK").catch(() => {});
-		throw cause;
-	} finally {
-		client.release();
-	}
+	return withLockPhaseTransaction(
+		pgPool(),
+		async (client) => {
+			if (
+				!(await lockAuthorizedProject(
+					client,
+					projectId,
+					{
+						organization_id: tenant.organizationId,
+						actor_id: tenant.actorId,
+						operation,
+					},
+					statuses,
+					memberSubject
+						? {
+								memberSubject,
+							}
+						: {},
+				))
+			)
+				throw new Error("Not found");
+			await lockProjectAuditProvenance(client, projectId);
+		},
+		(client) => client.query<T>(sql, values),
+	);
 }
 
 async function queryWithOrganizationAuditLocks<T extends QueryResultRow>(
@@ -496,40 +485,28 @@ async function queryWithOrganizationAuditLocks<T extends QueryResultRow>(
 	values: unknown[],
 	memberSubject?: string,
 ) {
-	const client = await pgPool().connect();
-	try {
-		await client.query("BEGIN");
-		if (
-			!(await lockAuthorizedOrganization(
-				client,
-				tenant.organizationId,
-				tenant.actorId,
-				operation,
-			))
-		)
-			throw new Error("Forbidden");
-		if (memberSubject)
-			await client.query(
-				"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 FOR UPDATE",
-				[organizationId, memberSubject],
+	return withLockPhaseTransaction(
+		pgPool(),
+		async (client) => {
+			if (
+				!(await lockAuthorizedOrganization(
+					client,
+					tenant.organizationId,
+					tenant.actorId,
+					operation,
+					memberSubject,
+				))
+			)
+				throw new Error("Forbidden");
+			const projects = await client.query<{ id: string }>(
+				"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
+				[organizationId],
 			);
-		const projects = await client.query<{ id: string }>(
-			"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
-			[organizationId],
-		);
-		await client.query(
-			"SELECT lock_project_audit_provenance(id::uuid) FROM unnest($1::uuid[]) AS projects(id) ORDER BY id",
-			[projects.rows.map((project) => project.id)],
-		);
-		const result = await client.query<T>(sql, values);
-		await client.query("COMMIT");
-		return result;
-	} catch (cause) {
-		await client.query("ROLLBACK").catch(() => {});
-		throw cause;
-	} finally {
-		client.release();
-	}
+			for (const project of projects.rows)
+				await lockProjectAuditProvenance(client, project.id);
+		},
+		(client) => client.query<T>(sql, values),
+	);
 }
 export async function handleCreateProject(c: Context) {
 	try {
@@ -573,9 +550,6 @@ export async function handleSetDefaultProject(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
-			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-				project_id,
-			]);
 			if (
 				!(await lockActiveAuthorizedOrganizationProject(
 					client,
@@ -586,6 +560,7 @@ export async function handleSetDefaultProject(c: Context) {
 				))
 			)
 				throw new Error("Forbidden");
+			await lockProjectAuditProvenance(client, project_id);
 			const updated = await client.query<Row>(
 				"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $4) AND role = 'owner' AND authorization_allows_organization($1, $4, 'destructive') FOR UPDATE), selected AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $2 AND p.organization_id = $1 AND p.status = 'active' FOR UPDATE), changed AS (UPDATE organizations SET default_project_id = $2, updated_at = now() WHERE id = $1 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM selected) RETURNING id), audit AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'default_changed' FROM changed) SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, true AS is_default, 'owner'::text AS project_role FROM projects p WHERE p.id = $2 AND EXISTS (SELECT 1 FROM changed)",
 				[tenant.organizationId, project_id, tenant.actor, tenant.actorId],
@@ -616,9 +591,6 @@ export async function handleDeleteProject(c: Context) {
 		let job: DeletionJob;
 		try {
 			await client.query("BEGIN");
-			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-				id,
-			]);
 			if (
 				!(await lockAuthorizedProject(
 					client,
@@ -629,9 +601,11 @@ export async function handleDeleteProject(c: Context) {
 						operation: "destructive",
 					},
 					["active", "deleting"],
+					{ lockAllProjectMembers: true },
 				))
 			)
 				throw new Error("Not found");
+			await lockProjectAuditProvenance(client, id);
 			const target = await client.query<{
 				name: string;
 				status: Row["status"];
@@ -702,9 +676,16 @@ export async function handleDeleteProject(c: Context) {
 			const finalize = await pool.connect();
 			try {
 				await finalize.query("BEGIN");
-				await finalize.query("SELECT lock_project_audit_provenance($1::uuid)", [
-					id,
-				]);
+				await finalize.query(
+					"SELECT actor_subject FROM project_memberships WHERE project_id = $1 AND organization_id = $2 ORDER BY actor_subject FOR UPDATE",
+					[id, tenant.organizationId],
+				);
+				const deletionProject = await finalize.query(
+					"SELECT id FROM projects WHERE id = $1 AND organization_id = $2 AND status = 'deleting' FOR UPDATE",
+					[id, tenant.organizationId],
+				);
+				if (!deletionProject.rows[0]) throw new Error("Not found");
+				await lockProjectAuditProvenance(finalize, id);
 				await finalize.query(
 					"SELECT set_config('astraea.project_deletion_id', $1, true)",
 					[id],
@@ -812,9 +793,6 @@ async function serializedLifecycle(c: Context, status: "active" | "archived") {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
-			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-				id,
-			]);
 			if (
 				!(await lockAuthorizedProject(
 					client,
@@ -828,6 +806,7 @@ async function serializedLifecycle(c: Context, status: "active" | "archived") {
 				))
 			)
 				throw new Error("Not found");
+			await lockProjectAuditProvenance(client, id);
 			const authorized = await client.query<{
 				project_role: Row["project_role"];
 			}>(

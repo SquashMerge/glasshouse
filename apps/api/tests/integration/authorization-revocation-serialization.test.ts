@@ -21,6 +21,9 @@ import {
 import {
 	lockActiveAuthorizedOrganizationProject,
 	lockActiveAuthorizedProject,
+	lockAuthorizedOrganization,
+	lockProjectAuditProvenance,
+	withLockPhaseTransaction,
 } from "../../src/db/project-authorization";
 import {
 	TRUSTED_ACTOR_CONTEXT_KEY,
@@ -211,6 +214,66 @@ async function seedExecutionExperiment(pool: Pool) {
 				actorId,
 			]);
 			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+		},
+	};
+}
+
+async function seedProjectAuditLockRace(pool: Pool) {
+	const organizationId = randomUUID();
+	const projectId = randomUUID();
+	const managerActorId = randomUUID();
+	const ownerActorId = randomUUID();
+	const managerSubject = `audit-race-manager-${managerActorId}`;
+	const ownerSubject = `audit-race-owner-${ownerActorId}`;
+	await pool.query(
+		"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Audit lock race', $2)",
+		[organizationId, `audit-lock-race-${organizationId}`],
+	);
+	for (const [actorId, subject] of [
+		[managerActorId, managerSubject],
+		[ownerActorId, ownerSubject],
+	] as const) {
+		await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+		await pool.query(
+			"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+			[actorId, organizationId, subject],
+		);
+	}
+	await pool.query(
+		"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'owner'), ($1, $3, 'owner')",
+		[organizationId, managerSubject, ownerSubject],
+	);
+	await pool.query(
+		"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Audit lock race', $3)",
+		[projectId, organizationId, `audit-lock-race-${projectId}`],
+	);
+	return {
+		organizationId,
+		projectId,
+		managerActorId,
+		ownerActorId,
+		managerSubject,
+		ownerSubject,
+		cleanup: async () => {
+			await pool.query(
+				"DELETE FROM project_authorization_audit_events WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query(
+				"DELETE FROM actor_identities WHERE actor_id = ANY($1::uuid[])",
+				[[managerActorId, ownerActorId]],
+			);
+			await pool.query("DELETE FROM actors WHERE id = ANY($1::uuid[])", [
+				[managerActorId, ownerActorId],
+			]);
 			await pool.query("DELETE FROM organizations WHERE id = $1", [
 				organizationId,
 			]);
@@ -454,6 +517,192 @@ test.skipIf(!databaseUrl)(
 			await pool.query("DELETE FROM organizations WHERE id = $1", [
 				organizationId,
 			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a manager mutation that wins the membership/audit lock race records one audit before owner demotion",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedProjectAuditLockRace(pool);
+		const demoter = await pool.connect();
+		const mutationStarted = deferred();
+		const releaseMutation = deferred();
+		try {
+			const mutation = withLockPhaseTransaction(
+				pool,
+				async (client) => {
+					await client.query(
+						"SET LOCAL application_name = 'astraea-audit-race-manager-first'",
+					);
+					if (
+						!(await lockActiveAuthorizedProject(client, fixture.projectId, {
+							organization_id: fixture.organizationId,
+							actor_id: fixture.managerActorId,
+							operation: "project_manage",
+						}))
+					)
+						throw new Error("manager authorization was unexpectedly denied");
+					await lockProjectAuditProvenance(client, fixture.projectId);
+				},
+				async (client) => {
+					await client.query(
+						"UPDATE projects SET name = 'manager-won', updated_at = now() WHERE id = $1",
+						[fixture.projectId],
+					);
+					await client.query(
+						"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated')",
+						[fixture.organizationId, fixture.projectId, fixture.managerSubject],
+					);
+					mutationStarted.resolve();
+					await releaseMutation.promise;
+				},
+			);
+			await mutationStarted.promise;
+			await demoter.query("BEGIN");
+			await demoter.query(
+				"SET LOCAL application_name = 'astraea-audit-race-owner-second'",
+			);
+			const demotion = (async () => {
+				if (
+					!(await lockAuthorizedOrganization(
+						demoter,
+						fixture.organizationId,
+						fixture.ownerActorId,
+						"organization_manage",
+						fixture.managerSubject,
+					))
+				)
+					throw new Error("owner authorization was unexpectedly denied");
+				await demoter.query(
+					"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
+					[fixture.organizationId],
+				);
+				await lockProjectAuditProvenance(demoter, fixture.projectId);
+				await demoter.query(
+					"UPDATE organization_memberships SET role = 'member' WHERE organization_id = $1 AND actor_subject = $2",
+					[fixture.organizationId, fixture.managerSubject],
+				);
+				await demoter.query(
+					"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'organization_membership_updated')",
+					[fixture.organizationId, fixture.projectId, fixture.ownerSubject],
+				);
+				await demoter.query("COMMIT");
+			})();
+			await waitForLock(pool, "astraea-audit-race-owner-second");
+			releaseMutation.resolve();
+			await mutation;
+			await Promise.race([
+				demotion,
+				Bun.sleep(2_000).then(() => {
+					throw new Error("manager-first audit/membership order deadlocked");
+				}),
+			]);
+
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM project_authorization_audit_events WHERE project_id = $1 AND event_type = 'project_updated'",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+			expect(
+				(
+					await pool.query(
+						"SELECT role FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
+						[fixture.organizationId, fixture.managerSubject],
+					)
+				).rows[0]?.role,
+			).toBe("member");
+		} finally {
+			releaseMutation.resolve();
+			await demoter.query("ROLLBACK").catch(() => {});
+			demoter.release();
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"an owner demotion that wins the membership/audit lock race prevents a later manager mutation without replay",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedProjectAuditLockRace(pool);
+		const demoter = await pool.connect();
+		const demotionLocked = deferred();
+		let mutations = 0;
+		try {
+			await demoter.query("BEGIN");
+			await demoter.query(
+				"SET LOCAL application_name = 'astraea-audit-race-owner-first'",
+			);
+			if (
+				!(await lockAuthorizedOrganization(
+					demoter,
+					fixture.organizationId,
+					fixture.ownerActorId,
+					"organization_manage",
+					fixture.managerSubject,
+				))
+			)
+				throw new Error("owner authorization was unexpectedly denied");
+			await demoter.query(
+				"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
+				[fixture.organizationId],
+			);
+			await lockProjectAuditProvenance(demoter, fixture.projectId);
+			demotionLocked.resolve();
+
+			const mutation = withLockPhaseTransaction(
+				pool,
+				async (client) => {
+					await client.query(
+						"SET LOCAL application_name = 'astraea-audit-race-manager-second'",
+					);
+					if (
+						!(await lockActiveAuthorizedProject(client, fixture.projectId, {
+							organization_id: fixture.organizationId,
+							actor_id: fixture.managerActorId,
+							operation: "project_manage",
+						}))
+					)
+						throw new Error("manager access was revoked");
+					await lockProjectAuditProvenance(client, fixture.projectId);
+				},
+				async () => {
+					mutations += 1;
+				},
+			);
+			await demotionLocked.promise;
+			await waitForLock(pool, "astraea-audit-race-manager-second");
+			await demoter.query(
+				"UPDATE organization_memberships SET role = 'member' WHERE organization_id = $1 AND actor_subject = $2",
+				[fixture.organizationId, fixture.managerSubject],
+			);
+			await demoter.query(
+				"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'organization_membership_updated')",
+				[fixture.organizationId, fixture.projectId, fixture.ownerSubject],
+			);
+			await demoter.query("COMMIT");
+			await expect(mutation).rejects.toThrow("manager access was revoked");
+
+			expect(mutations).toBe(0);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM project_authorization_audit_events WHERE project_id = $1 AND event_type = 'project_updated'",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+		} finally {
+			await demoter.query("ROLLBACK").catch(() => {});
+			demoter.release();
+			await fixture.cleanup();
 			await pool.end();
 		}
 	},

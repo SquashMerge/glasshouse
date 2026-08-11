@@ -73,6 +73,12 @@ BEGIN
 	) THEN
 		RAISE EXCEPTION 'retained audit provenance serialization is incomplete';
 	END IF;
+	IF pg_get_functiondef('fence_authorization_membership_revocation'::regproc) NOT LIKE '%FOR UPDATE%'
+		OR pg_get_functiondef('fence_authorization_membership_revocation'::regproc) NOT LIKE '%lock_project_audit_provenance%'
+		OR pg_get_functiondef('enforce_retained_audit_project_provenance'::regproc) NOT LIKE '%FOR KEY SHARE%'
+		OR pg_get_functiondef('enforce_retained_audit_project_provenance'::regproc) NOT LIKE '%lock_project_audit_provenance%' THEN
+		RAISE EXCEPTION 'membership, project, and retained-audit lock ordering is incomplete';
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
 		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'projects'::regclass AND conname = 'projects_status_check' AND pg_get_constraintdef(oid) LIKE '%deleting%')
 		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'project_deletion_jobs'::regclass AND conname LIKE '%project_id_key%') THEN

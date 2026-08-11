@@ -1,4 +1,4 @@
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { ProjectOperation } from "../authorization-policy.js";
 import type { TrustedTenantContext } from "../middleware/auth.js";
 
@@ -10,8 +10,13 @@ export type ProjectAuthorization = {
 
 export type AuthorizedProjectStatus = "active" | "archived" | "deleting";
 
+type Transactional = Pick<Pool, "connect">;
+
+const LOCK_PHASE_ATTEMPTS = 2;
+
 type ProjectLockOptions = {
-	beforeProjectLock?: () => Promise<void>;
+	memberSubject?: string;
+	lockAllProjectMembers?: boolean;
 };
 
 export function projectAuthorization(
@@ -23,6 +28,54 @@ export function projectAuthorization(
 		actor_id: tenant.actorId,
 		operation,
 	};
+}
+
+export async function lockProjectAuditProvenance(
+	client: Pick<PoolClient, "query">,
+	projectId: string,
+): Promise<void> {
+	await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
+		projectId,
+	]);
+}
+
+export async function withLockPhaseTransaction<T>(
+	db: Transactional,
+	lock: (client: PoolClient) => Promise<void>,
+	mutate: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+	for (let attempt = 0; attempt < LOCK_PHASE_ATTEMPTS; attempt += 1) {
+		const client = await db.connect();
+		let transactionOpen = false;
+		let mutationStarted = false;
+		try {
+			await client.query("BEGIN");
+			transactionOpen = true;
+			await lock(client);
+			mutationStarted = true;
+			const value = await mutate(client);
+			await client.query("COMMIT");
+			transactionOpen = false;
+			return value;
+		} catch (cause) {
+			if (transactionOpen) await client.query("ROLLBACK").catch(() => {});
+			if (
+				!mutationStarted &&
+				attempt + 1 < LOCK_PHASE_ATTEMPTS &&
+				isRetryableLockError(cause)
+			)
+				continue;
+			throw cause;
+		} finally {
+			client.release();
+		}
+	}
+	throw new Error("Authorization lock retry attempts were exhausted");
+}
+
+function isRetryableLockError(cause: unknown): boolean {
+	const code = (cause as { code?: unknown } | null)?.code;
+	return code === "40P01" || code === "40001";
 }
 
 export async function lockActiveAuthorizedProject(
@@ -45,10 +98,15 @@ export async function lockAuthorizedProject(
 		[authorization.organization_id, authorization.actor_id],
 	);
 	await client.query(
-		"SELECT pm.actor_subject FROM project_memberships pm WHERE pm.project_id = $1 AND pm.organization_id = $2 AND basic_auth_identity_matches($2, pm.actor_subject, $3) FOR UPDATE",
-		[projectId, authorization.organization_id, authorization.actor_id],
+		"SELECT pm.actor_subject FROM project_memberships pm WHERE pm.project_id = $1 AND pm.organization_id = $2 AND ($5::boolean OR basic_auth_identity_matches($2, pm.actor_subject, $3) OR pm.actor_subject = $4) ORDER BY pm.actor_subject FOR UPDATE",
+		[
+			projectId,
+			authorization.organization_id,
+			authorization.actor_id,
+			options.memberSubject ?? null,
+			options.lockAllProjectMembers ?? false,
+		],
 	);
-	await options.beforeProjectLock?.();
 	const project = await client.query(
 		"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = ANY($5::text[]) FOR UPDATE OF p",
 		[
@@ -77,10 +135,15 @@ export async function lockAuthorizedOrganization(
 	organizationId: string,
 	actorId: string,
 	operation: "organization_manage" | "destructive" | "governed",
+	memberSubject?: string,
 ): Promise<boolean> {
 	await client.query(
-		"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $2) FOR UPDATE",
-		[organizationId, actorId],
+		memberSubject
+			? "SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND (basic_auth_identity_matches($1, actor_subject, $2) OR actor_subject = $3) ORDER BY actor_subject FOR UPDATE"
+			: "SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $2) FOR UPDATE",
+		memberSubject
+			? [organizationId, actorId, memberSubject]
+			: [organizationId, actorId],
 	);
 	const decision = await client.query<{ allowed: boolean }>(
 		"SELECT authorization_allows_organization($1, $2, $3) AS allowed",

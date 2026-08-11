@@ -147,7 +147,7 @@ run_audit_lock_order_serialization_check() {
 		< "$ORDER_HOLDER_INPUT" > "$ORDER_HOLDER_OUTPUT" 2>&1 &
 	ORDER_HOLDER_PID=$!
 	exec 4>"$ORDER_HOLDER_INPUT"
-	printf "BEGIN; SELECT lock_project_audit_provenance('%s'); SELECT id FROM projects WHERE id = '%s' FOR UPDATE; SELECT id FROM governance_retention_runs WHERE project_id = '%s' FOR UPDATE;\n" "$project_id" "$project_id" "$project_id" >&4
+	printf "BEGIN; SELECT id FROM projects WHERE id = '%s' FOR UPDATE; SELECT lock_project_audit_provenance('%s'); SELECT id FROM governance_retention_runs WHERE project_id = '%s' FOR UPDATE;\n" "$project_id" "$project_id" "$project_id" >&4
 
 	for _ in {1..50}; do
 		holder_ready="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT pg_try_advisory_xact_lock(hashtextextended('$project_id', 0))")"
@@ -159,19 +159,19 @@ run_audit_lock_order_serialization_check() {
 		exit 1
 	fi
 
-	# The retry/retention path must take A before either project or run row locks.
+	# Retention finalization takes the Project fence before its audit UUID lock.
 	docker exec --interactive "$CONTAINER" \
 		psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-		--command "BEGIN; SELECT lock_project_audit_provenance('$project_id'); SELECT id FROM projects WHERE id = '$project_id' FOR UPDATE; SELECT id FROM governance_retention_runs WHERE project_id = '$project_id' FOR UPDATE; COMMIT;" \
+		--command "BEGIN; SELECT id FROM projects WHERE id = '$project_id' FOR UPDATE; SELECT lock_project_audit_provenance('$project_id'); SELECT id FROM governance_retention_runs WHERE project_id = '$project_id' FOR UPDATE; COMMIT;" \
 		> "$ORDER_CONTENDER_OUTPUT" 2>&1 &
 	ORDER_CONTENDER_PID=$!
 	for _ in {1..50}; do
-		contender_waiting="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'BEGIN; SELECT lock_project_audit_provenance%')")"
+		contender_waiting="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'BEGIN; SELECT id FROM projects WHERE id = ''$project_id'' FOR UPDATE%')")"
 		[[ "$contender_waiting" == "t" ]] && break
 		sleep 0.1
 	done
 	if [[ "$contender_waiting" != "t" ]]; then
-		echo "retry/retention contender did not serialize behind the audit lock" >&2
+		echo "retry/retention contender did not serialize behind the project fence" >&2
 		exit 1
 	fi
 
