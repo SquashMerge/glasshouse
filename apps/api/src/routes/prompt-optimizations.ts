@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rectifyConfusion } from "unicode-confusables";
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
-import { streamSSE } from "hono/streaming";
+import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { pgPool } from "../db/postgres.js";
 import {
 	admitOptimizationExecution,
@@ -51,7 +51,12 @@ import {
 	PromptErrorResponses,
 	PromptId,
 } from "../schemas/prompts.js";
-import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
+import {
+	TenantScopeError,
+	assertTenantProjectAccess,
+	trustedTenant,
+	withActiveAuthorizedProjectLock,
+} from "../tenancy.js";
 
 const tag = "prompt-optimization";
 const Status = z.enum([
@@ -430,6 +435,38 @@ const terminalStatuses = new Set<OptimizationJob["status"]>([
 	"stopped",
 	"failed",
 ]);
+
+function sseFrameWriteTimeoutMs(): number {
+	const configured = Number(process.env.SSE_FRAME_WRITE_TIMEOUT_MS ?? 5_000);
+	return Number.isSafeInteger(configured) &&
+		configured >= 100 &&
+		configured <= 60_000
+		? configured
+		: 5_000;
+}
+
+async function writeAuthorizedOptimizationEvent(
+	stream: Pick<SSEStreamingApi, "abort" | "aborted" | "writeSSE">,
+	d: Pick<OptimizationDependencies, "pool">,
+	tenant: ReturnType<typeof trustedTenant>,
+	projectId: string,
+	message: Parameters<SSEStreamingApi["writeSSE"]>[0],
+): Promise<boolean> {
+	const timeout = setTimeout(() => stream.abort(), sseFrameWriteTimeoutMs());
+	try {
+		await withActiveAuthorizedProjectLock(
+			d.pool(),
+			{ ...tenant, projectId },
+			async () => {
+				if (!stream.aborted) await stream.writeSSE(message);
+			},
+			"product_read",
+		);
+		return !stream.aborted;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
 
 export function nextOptimizationEvents(
 	events: Awaited<ReturnType<typeof listOptimizationEvents>>,
@@ -1371,40 +1408,53 @@ export function createOptimizationHandlers(
 				await d.get(d.pool(), input);
 				return streamSSE(c, async (stream) => {
 					let last = 0;
+					const tenant = trustedTenant(c);
 					try {
+						await assertTenantProjectAccess(d.pool(), tenant, input.project_id);
 						while (!stream.aborted) {
-							await assertTenantProjectAccess(
-								d.pool(),
-								trustedTenant(c),
-								input.project_id,
-							);
 							const next = nextOptimizationEvents(
 								await d.events(d.pool(), input),
 								last,
 							);
 							last = next.lastId;
 							for (const event of next.events) {
-								await stream.writeSSE({
-									event: "status",
-									id: String(event.id),
-									data: JSON.stringify(event),
-								});
+								if (
+									!(await writeAuthorizedOptimizationEvent(
+										stream,
+										d,
+										tenant,
+										input.project_id,
+										{
+											event: "status",
+											id: String(event.id),
+											data: JSON.stringify(event),
+										},
+									))
+								)
+									return;
 							}
 							if (next.terminal) return;
 							await new Promise((resolve) => setTimeout(resolve, 500));
 						}
 					} catch (cause) {
-						if (
-							!stream.aborted &&
-							!(cause instanceof Error && cause.name === "TenantScopeError")
-						)
-							await stream.writeSSE({
-								event: "error",
-								data: JSON.stringify({
-									code: "INTERNAL",
-									message: "Optimization event stream failed",
-								}),
-							});
+						if (!stream.aborted && !(cause instanceof TenantScopeError))
+							try {
+								await writeAuthorizedOptimizationEvent(
+									stream,
+									d,
+									tenant,
+									input.project_id,
+									{
+										event: "error",
+										data: JSON.stringify({
+											code: "INTERNAL",
+											message: "Optimization event stream failed",
+										}),
+									},
+								);
+							} catch {
+								// Do not expose a stream failure after its authorization has changed.
+							}
 					}
 				});
 			} catch (cause) {

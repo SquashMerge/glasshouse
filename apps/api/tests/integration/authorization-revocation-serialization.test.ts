@@ -1,11 +1,22 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { OpenAPIHono } from "@hono/zod-openapi";
+import { SSEStreamingApi } from "hono/streaming";
 import { Pool } from "pg";
 import {
 	claimExperimentTask,
 	finalizeExperimentTask,
 } from "../../src/db/experiments";
 import { lockActiveAuthorizedProject } from "../../src/db/project-authorization";
+import {
+	TRUSTED_ACTOR_CONTEXT_KEY,
+	TRUSTED_TENANT_CONTEXT_KEY,
+} from "../../src/middleware/auth";
+import {
+	createOptimizationHandlers,
+	optimizationEvents,
+	type OptimizationDependencies,
+} from "../../src/routes/prompt-optimizations";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -21,6 +32,44 @@ async function waitForLock(pool: Pool, applicationName: string) {
 	throw new Error(
 		"authorization transaction did not wait for the revocation fence",
 	);
+}
+
+function deferred() {
+	let resolve: () => void = () => undefined;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+async function waitForDemotionProgress(pool: Pool, applicationName: string) {
+	for (let attempt = 0; attempt < 100; attempt += 1) {
+		const result = await pool.query<{
+			state: string;
+			wait_event_type: string | null;
+			query: string;
+		}>(
+			"SELECT state, wait_event_type, query FROM pg_stat_activity WHERE application_name = $1",
+			[applicationName],
+		);
+		const session = result.rows[0];
+		if (
+			session?.wait_event_type === "Lock" ||
+			(session?.state === "idle" && session.query === "COMMIT")
+		)
+			return;
+		await Bun.sleep(20);
+	}
+	throw new Error("membership revocation did not reach its project fence");
+}
+
+function statusEventIds(body: string): string[] {
+	return body
+		.split("\n\n")
+		.map((frame) => frame.split("\n"))
+		.filter((lines) => lines.includes("event: status"))
+		.map((lines) => lines.find((line) => line.startsWith("id: "))?.slice(4))
+		.filter((id): id is string => id !== undefined);
 }
 
 test.skipIf(!databaseUrl)(
@@ -142,6 +191,150 @@ test.skipIf(!databaseUrl)(
 				datasetId,
 			]);
 			await pool.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revoked member cannot receive a queued optimization SSE frame after a backpressured frame settles",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const actorId = randomUUID();
+		const jobId = randomUUID();
+		const subject = `optimization-sse-${actorId}`;
+		const applicationName = "astraea-optimization-sse-revocation";
+		const firstWrite = deferred();
+		const releaseFirstWrite = deferred();
+		const demoter = await pool.connect();
+		const originalWriteSSE = SSEStreamingApi.prototype.writeSSE;
+		let revoke: Promise<void> | undefined;
+		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		SSEStreamingApi.prototype.writeSSE = async function (message) {
+			if (message.event === "status" && message.id === "1") {
+				firstWrite.resolve();
+				await releaseFirstWrite.promise;
+			}
+			return originalWriteSSE.call(this, message);
+		};
+		try {
+			await pool.query(
+				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Optimization SSE revocation', $2)",
+				[organizationId, `optimization-sse-${organizationId}`],
+			);
+			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+			await pool.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+				[actorId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+				[organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Optimization SSE revocation', $3)",
+				[projectId, organizationId, `optimization-sse-${projectId}`],
+			);
+			await pool.query(
+				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
+				[projectId, organizationId, subject],
+			);
+
+			const handlers = createOptimizationHandlers({
+				pool: () => pool,
+				get: async () => ({}) as never,
+				events: async () => [
+					{
+						id: 1,
+						status: "preparing" as const,
+						detail: {},
+						created_at: "2026-08-11T00:00:00.000Z",
+					},
+					{
+						id: 2,
+						status: "completed" as const,
+						detail: {},
+						created_at: "2026-08-11T00:00:01.000Z",
+					},
+				],
+			} as unknown as OptimizationDependencies);
+			const api = new OpenAPIHono({
+				defaultHook: (result, c) =>
+					result.success
+						? undefined
+						: c.json(
+								{ code: "BAD_REQUEST", message: "Request validation failed" },
+								400,
+							),
+			});
+			api.use("*", async (c, next) => {
+				c.set(TRUSTED_ACTOR_CONTEXT_KEY, subject);
+				c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+					actor: subject,
+					actorId,
+					organizationId,
+				});
+				await next();
+			});
+			api.openapi(optimizationEvents, handlers.handleEvents);
+
+			const response = await api.request(
+				`/v1/prompt-optimizations/${jobId}/events?project_id=${projectId}`,
+			);
+			expect(response.status).toBe(200);
+			reader = response.body?.getReader();
+			if (!reader) throw new Error("Optimization SSE response has no body");
+			const firstChunk = reader.read();
+
+			await firstWrite.promise;
+			await demoter.query(`SET application_name = '${applicationName}'`);
+			revoke = (async () => {
+				await demoter.query("BEGIN");
+				await demoter.query(
+					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+					[projectId, subject],
+				);
+				await demoter.query("COMMIT");
+			})();
+			await waitForDemotionProgress(pool, applicationName);
+
+			releaseFirstWrite.resolve();
+			const first = await firstChunk;
+			expect(first.done).toBe(false);
+			await revoke;
+
+			let body = new TextDecoder().decode(first.value);
+			for (;;) {
+				const next = await reader.read();
+				if (next.done) break;
+				body += new TextDecoder().decode(next.value);
+			}
+			expect(statusEventIds(body)).toEqual(["1"]);
+		} finally {
+			releaseFirstWrite.resolve();
+			await revoke?.catch(() => {});
+			await reader?.cancel().catch(() => {});
+			SSEStreamingApi.prototype.writeSSE = originalWriteSSE;
+			await demoter.query("ROLLBACK").catch(() => {});
+			demoter.release();
 			await pool.query(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],

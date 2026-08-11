@@ -63,7 +63,11 @@ mutation locks its Project before freshly locking and checking the acting
 membership; a demotion or removal takes the same Project fence first. Provider
 admission holds that fence through invocation, and result/trace persistence is
 admitted again, so role revocation waits for an in-progress admission or blocks
-the later action without a write or trace.
+the later action without a write or trace. Each prompt-optimization SSE frame
+uses the same fence through write settlement; subsequent queued frames take a
+fresh authorization decision. A stalled frame aborts after
+`SSE_FRAME_WRITE_TIMEOUT_MS` (default 5000 ms; accepted range 100-60000 ms) to
+release its fence rather than indefinitely delaying a membership change.
 
 ## Operations
 

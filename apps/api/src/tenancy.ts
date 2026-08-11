@@ -20,6 +20,13 @@ export type AuthorizedProjectScope = TrustedTenantContext & {
 export type TenantScope = AuthorizedProjectScope;
 type Transactional = Pick<Pool, "connect">;
 
+export type ActiveAuthorizedProjectScope = Pick<
+	TrustedTenantContext,
+	"actorId" | "organizationId"
+> & {
+	projectId: string;
+};
+
 export class TenantScopeError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -105,7 +112,7 @@ export async function assertOrganizationAccess(
 
 export async function withActiveAuthorizedProjectLock<T>(
 	db: Transactional,
-	tenant: TenantScope,
+	tenant: ActiveAuthorizedProjectScope,
 	callback: () => Promise<T>,
 	operation: ProjectOperation = "product_write",
 ): Promise<T> {
