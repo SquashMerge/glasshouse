@@ -40,6 +40,8 @@ const PROJECT = {
 	created_at: "2026-07-15T10:00:00.000Z",
 	archived_at: null,
 	project_role: "admin" as const,
+	can_manage: true,
+	can_govern: true,
 	is_default: true,
 };
 
@@ -242,7 +244,14 @@ describe("ProjectsPage", () => {
 
 	it("hides management controls from ordinary project members", async () => {
 		api.listProjects.mockResolvedValue({
-			items: [{ ...PROJECT, project_role: "read_only" }],
+			items: [
+				{
+					...PROJECT,
+					project_role: "read_only",
+					can_manage: false,
+					can_govern: false,
+				},
+			],
 			total: 1,
 		});
 		renderPage();

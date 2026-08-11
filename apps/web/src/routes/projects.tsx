@@ -42,7 +42,7 @@ export function ProjectsPage() {
 	const [deleting, setDeleting] = React.useState<Project | null>(null);
 	const [confirmationName, setConfirmationName] = React.useState("");
 	const isOwner = organizationRole === "admin";
-	const canManage = (project: Project) => project.project_role === "admin";
+	const canManage = (project: Project) => project.can_manage;
 	const membersQuery = useQuery({
 		queryKey: ["project-members", membersProject?.id],
 		queryFn: () => listProjectMembers(membersProject!.id),

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
 	lockActiveAuthorizedProject,
+	lockAuthorizedProject,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
 
@@ -134,14 +135,35 @@ async function withTransaction<T>(
 
 async function lockExperimentExecution(
 	client: PoolClient,
-	input: { project_id: string; id: string },
+	input: { project_id?: string; id: string },
 ): Promise<{ row: Row; authorized: boolean } | null> {
-	const r = await client.query(
-		"SELECT e.*, e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') AS authorized FROM experiments e JOIN projects p ON p.id = e.project_id WHERE e.id = $1 AND e.project_id = $2 AND p.status = 'active' FOR UPDATE OF e, p",
-		[input.id, input.project_id],
+	const project = await client.query<{
+		id: string;
+		organization_id: string;
+	}>(
+		"SELECT p.id, p.organization_id FROM projects p JOIN experiments e ON e.project_id = p.id WHERE e.id = $1 AND ($2::uuid IS NULL OR e.project_id = $2) AND p.status = 'active' FOR UPDATE OF p",
+		[input.id, input.project_id ?? null],
 	);
-	const row = r.rows[0] as Row | undefined;
-	return row ? { row, authorized: row.authorized === true } : null;
+	if (!project.rows[0]) return null;
+	const experiment = await client.query(
+		"SELECT e.* FROM experiments e WHERE e.id = $1 AND e.project_id = $2 FOR UPDATE OF e",
+		[input.id, project.rows[0].id],
+	);
+	const row = experiment.rows[0] as Row | undefined;
+	if (!row) return null;
+	const requestedBy = row.requested_by_actor_id;
+	if (typeof requestedBy !== "string") return { row, authorized: false };
+	const authorized = await lockAuthorizedProject(
+		client,
+		project.rows[0].id,
+		{
+			organization_id: project.rows[0].organization_id,
+			actor_id: requestedBy,
+			operation: "execute",
+		},
+		["active"],
+	);
+	return { row, authorized };
 }
 
 async function cancelRevokedExperiment(client: PoolClient, id: string) {
@@ -276,20 +298,30 @@ export async function updateExperiment(
 export async function listRecoverableExperiments(db: Transactional) {
 	try {
 		return await withTransaction(db, async (client) => {
-			const unsafe = await client.query(
-				"SELECT e.id FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.status IN ('pending','running') AND (e.requested_by_actor_id IS NULL OR NOT authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute')) FOR UPDATE OF e, p",
+			const candidates = await client.query(
+				"SELECT id, project_id FROM experiments WHERE status IN ('pending', 'running') ORDER BY created_at ASC",
 			);
-			for (const row of unsafe.rows)
-				await cancelRevokedExperiment(client, text(row, "id"));
-			const result = await client.query(
-				"SELECT e.id, e.project_id, e.dataset_id, e.config FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.status IN ('pending', 'running') AND p.status = 'active' AND e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') ORDER BY e.created_at ASC FOR UPDATE OF e, p",
-			);
-			return result.rows.map((row) => ({
-				id: text(row, "id"),
-				project_id: text(row, "project_id"),
-				dataset_id: text(row, "dataset_id"),
-				config: json(row, "config"),
-			}));
+			const recoverable: RecoverableExperiment[] = [];
+			for (const candidate of candidates.rows) {
+				const access = await lockExperimentExecution(client, {
+					id: text(candidate, "id"),
+					project_id: text(candidate, "project_id"),
+				});
+				if (!access?.authorized) {
+					if (access)
+						await cancelRevokedExperiment(client, text(candidate, "id"));
+					continue;
+				}
+				if (!["pending", "running"].includes(text(access.row, "status")))
+					continue;
+				recoverable.push({
+					id: text(access.row, "id"),
+					project_id: text(access.row, "project_id"),
+					dataset_id: text(access.row, "dataset_id"),
+					config: json(access.row, "config"),
+				});
+			}
+			return recoverable;
 		});
 	} catch (cause) {
 		throw normalize(cause);
@@ -498,11 +530,10 @@ export async function insertExperimentResult(
 ) {
 	try {
 		return await withTransaction(db, async (client) => {
-			const access = await client.query(
-				"SELECT e.id, e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') AS authorized FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1 AND p.status='active' FOR UPDATE OF e, p",
-				[input.experiment_id],
-			);
-			if (!access.rows[0]?.authorized)
+			const access = await lockExperimentExecution(client, {
+				id: input.experiment_id,
+			});
+			if (!access?.authorized)
 				throw new ExperimentRepositoryError(
 					"NOT_FOUND",
 					"Experiment is not available",
@@ -527,16 +558,20 @@ export async function insertExperimentResult(
 	}
 }
 
-export async function isExperimentExecutionAuthorized(
-	db: Pick<Pool, "query">,
-	input: { project_id: string; id: string },
-): Promise<boolean> {
+export async function admitExperimentExecution<T>(
+	db: Transactional,
+	input: { project_id?: string; id: string },
+	invoke: () => Promise<T>,
+): Promise<{ admitted: true; value: T } | { admitted: false }> {
 	try {
-		const r = await db.query(
-			"SELECT e.requested_by_actor_id IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, e.requested_by_actor_id, 'execute') AS authorized FROM experiments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1 AND e.project_id=$2 AND e.status='running' AND p.status='active'",
-			[input.id, input.project_id],
-		);
-		return r.rows[0]?.authorized === true;
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, input);
+			if (!access?.authorized) {
+				if (access) await cancelRevokedExperiment(client, input.id);
+				return { admitted: false };
+			}
+			return { admitted: true, value: await invoke() };
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}

@@ -40,6 +40,14 @@ function fakeDb(
 		queries,
 		query: async (text: string, values?: unknown[]) => {
 			queries.push({ text, values });
+			if (text.includes("p.status = ANY($5::text[])"))
+				return responses.shift() ?? { rows: [{ id: PROJECT }] };
+			if (text.includes("FROM organization_memberships om"))
+				return { rows: [{ actor_subject: "writer" }] };
+			if (text.includes("FROM project_memberships pm"))
+				return { rows: [{ actor_subject: "writer" }] };
+			if (text.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
 			return responses.shift() ?? { rows: [], rowCount: 0 };
 		},
 	};

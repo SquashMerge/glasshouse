@@ -27,6 +27,8 @@ test("publishes Admin/User/Read-only roles without accepting raw legacy roles", 
 			created_at: "2026-08-11T00:00:00.000Z",
 			archived_at: null,
 			project_role: "admin",
+			can_manage: true,
+			can_govern: true,
 			is_default: false,
 		}).success,
 	).toBe(true);

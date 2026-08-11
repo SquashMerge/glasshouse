@@ -5,12 +5,12 @@ import {
 	cancelExperiment as cancelExperimentRecord,
 	claimExperimentTask,
 	completeExperimentIfTasksFinished,
+	admitExperimentExecution,
 	createExperiment as createExperimentRecord,
 	ExperimentRepositoryError,
 	experimentSummary as experimentSummaryRecord,
 	finalizeExperimentTask,
 	getExperiment as getExperimentRecord,
-	isExperimentExecutionAuthorized,
 	insertExperimentResult,
 	listExperimentResults,
 	listExperiments as listExperimentsRecord,
@@ -33,11 +33,7 @@ import {
 	ExperimentResults,
 	ExperimentSummary,
 } from "../schemas/experiments.js";
-import {
-	assertTenantProjectAccess,
-	trustedTenant,
-	withActiveInternalEvaluationProjectLock,
-} from "../tenancy.js";
+import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
 import { createOtlpIngestHandler } from "./otlp.js";
 
 const tag = "experiments";
@@ -189,7 +185,7 @@ export type ExperimentDependencies = {
 	waitForTaskRetry: (delayMs: number, signal?: AbortSignal) => Promise<void>;
 	finalizeTask: typeof finalizeExperimentTask;
 	completeExperiment: typeof completeExperimentIfTasksFinished;
-	assertExecutionAuthorized: typeof isExperimentExecutionAuthorized;
+	admitExecution: typeof admitExperimentExecution;
 	summary: typeof experimentSummaryRecord;
 	listDatasetItems: typeof listDatasetItems;
 	getDataset: typeof getDataset;
@@ -263,8 +259,7 @@ export function createEvaluationTracePayload(
 
 export function createProductionTrace(
 	traceResult = createOtlpIngestHandler({
-		withActiveAuthorizedProjectLock: (tenant, callback) =>
-			withActiveInternalEvaluationProjectLock(pgPool(), tenant, callback),
+		withActiveAuthorizedProjectLock: async (_tenant, callback) => callback(),
 	}),
 	pool = pgPool,
 ): ExperimentDependencies["trace"] {
@@ -319,7 +314,7 @@ export const production: ExperimentDependencies = {
 		}),
 	finalizeTask: finalizeExperimentTask,
 	completeExperiment: completeExperimentIfTasksFinished,
-	assertExecutionAuthorized: isExperimentExecutionAuthorized,
+	admitExecution: admitExperimentExecution,
 	summary: experimentSummaryRecord,
 	listDatasetItems,
 	getDataset,
@@ -381,14 +376,13 @@ export async function executeExperiment(
 		}
 		const itemStarted = Date.now();
 		try {
-			if (
-				!(await deps.assertExecutionAuthorized(db, {
-					project_id: input.project_id,
-					id: input.experiment_id,
-				}))
-			)
-				return;
-			const llm = await deps.invokeLlm(task.input, input.config, signal);
+			const admission = await deps.admitExecution(
+				db,
+				{ project_id: input.project_id, id: input.experiment_id },
+				() => deps.invokeLlm(task.input, input.config, signal),
+			);
+			if (!admission.admitted) return;
+			const llm = admission.value;
 			const scores = scoreCase(evaluator, task.expected_output, llm.output);
 			const duration_ms = Date.now() - itemStarted;
 			const finalized = await deps.finalizeTask(db, {
@@ -404,21 +398,21 @@ export async function executeExperiment(
 			});
 			if (!finalized) return;
 			try {
-				if (
-					await deps.assertExecutionAuthorized(db, {
-						project_id: input.project_id,
-						id: input.experiment_id,
-					})
-				)
-					await deps.trace({
-						project_id: input.project_id,
-						experiment_id: input.experiment_id,
-						item_id: task.dataset_item_id,
-						model: llm.model,
-						input: task.input,
-						output: JSON.stringify(llm.output),
-						duration_ms,
-					});
+				const traceAdmission = await deps.admitExecution(
+					db,
+					{ project_id: input.project_id, id: input.experiment_id },
+					() =>
+						deps.trace({
+							project_id: input.project_id,
+							experiment_id: input.experiment_id,
+							item_id: task.dataset_item_id,
+							model: llm.model,
+							input: task.input,
+							output: JSON.stringify(llm.output),
+							duration_ms,
+						}),
+				);
+				if (!traceAdmission.admitted) return;
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
@@ -448,24 +442,24 @@ export async function executeExperiment(
 			});
 			if (!finalized) return;
 			try {
-				if (
-					await deps.assertExecutionAuthorized(db, {
-						project_id: input.project_id,
-						id: input.experiment_id,
-					})
-				)
-					await deps.trace({
-						project_id: input.project_id,
-						experiment_id: input.experiment_id,
-						item_id: task.dataset_item_id,
-						model:
-							typeof input.config.model === "string"
-								? input.config.model
-								: "configured-model",
-						input: task.input,
-						output: "evaluation_failed",
-						duration_ms,
-					});
+				const traceAdmission = await deps.admitExecution(
+					db,
+					{ project_id: input.project_id, id: input.experiment_id },
+					() =>
+						deps.trace({
+							project_id: input.project_id,
+							experiment_id: input.experiment_id,
+							item_id: task.dataset_item_id,
+							model:
+								typeof input.config.model === "string"
+									? input.config.model
+									: "configured-model",
+							input: task.input,
+							output: "evaluation_failed",
+							duration_ms,
+						}),
+				);
+				if (!traceAdmission.admitted) return;
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,

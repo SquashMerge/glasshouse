@@ -19,7 +19,14 @@ const scope = {
 describe("withActiveAuthorizedProjectLock", () => {
 	it("locks active project through the centralized policy decision", async () => {
 		const query = mock(async (statement: string) => {
-			if (statement.startsWith("SELECT")) return { rows: [{ id: "project" }] };
+			if (statement.includes("p.status = ANY($5::text[])"))
+				return { rows: [{ id: "project" }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.includes("project_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
 			return { rows: [] };
 		});
 		const release = mock(() => undefined);
@@ -32,13 +39,13 @@ describe("withActiveAuthorizedProjectLock", () => {
 
 		expect(query.mock.calls.map(([statement]) => statement)).toEqual([
 			"BEGIN",
-			expect.stringContaining("p.status = 'active'"),
+			expect.stringContaining("p.status = ANY($5::text[])"),
+			expect.stringContaining("organization_memberships"),
+			expect.stringContaining("project_memberships"),
+			expect.stringContaining("authorization_allows_project"),
 			"COMMIT",
 		]);
 		expect(query.mock.calls[1]?.[0]).toContain("FOR UPDATE OF p");
-		expect(query.mock.calls[1]?.[0]).toContain(
-			"authorization_allows_project($2, $1, $3, $4)",
-		);
 		expect(persisted).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
 	});
@@ -69,7 +76,14 @@ describe("withActiveAuthorizedProjectLock", () => {
 	it("preserves a persistence failure when rollback fails", async () => {
 		const failure = new Error("ClickHouse failed");
 		const query = mock(async (statement: string) => {
-			if (statement.startsWith("SELECT")) return { rows: [{ id: "project" }] };
+			if (statement.includes("p.status = ANY($5::text[])"))
+				return { rows: [{ id: "project" }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.includes("project_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
 			if (statement === "ROLLBACK") throw new Error("rollback failed");
 			return { rows: [] };
 		});

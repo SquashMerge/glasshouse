@@ -54,6 +54,36 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 	}
 	if (sql.startsWith("SELECT authorization_allows_organization"))
 		return { rows: [{ allowed: values[1] === actorIds.owner }] };
+	if (sql.startsWith("SELECT id FROM organizations WHERE id = $1 FOR UPDATE"))
+		return { rows: [{ id: values[0] }] };
+	if (sql.includes("p.status = ANY($5::text[])")) {
+		const [projectId, , actorId] = values;
+		return projectId === OTHER_PROJECT || actorId === actorIds.member
+			? { rows: [] }
+			: { rows: [{ id: projectId }] };
+	}
+	if (sql.startsWith("SELECT om.actor_subject FROM organization_memberships"))
+		return { rows: [{ actor_subject: "manager" }] };
+	if (sql.startsWith("SELECT pm.actor_subject FROM project_memberships"))
+		return { rows: [{ actor_subject: "manager" }] };
+	if (sql.startsWith("SELECT authorization_allows_project")) {
+		const [, projectId, actorId] = values;
+		return {
+			rows: [
+				{
+					allowed:
+						projectId !== OTHER_PROJECT &&
+						(actorId === actorIds.owner || actorId === actorIds.manager),
+				},
+			],
+		};
+	}
+	if (sql.startsWith("SELECT actor_subject FROM organization_memberships"))
+		return { rows: [{ actor_subject: "owner" }] };
+	if (sql.startsWith("SELECT id FROM projects WHERE organization_id"))
+		return { rows: [{ id: PROJECT }] };
+	if (sql.startsWith("SELECT id FROM projects WHERE id = $1"))
+		return { rows: [{ id: values[0] }] };
 	if (sql.startsWith("SELECT p.name, p.status FROM projects"))
 		return { rows: [{ name: "Project One", status: "active" }] };
 	if (sql.startsWith("SELECT default_project_id FROM organizations"))
@@ -483,6 +513,8 @@ describe("project authorization routes", () => {
 				sql.startsWith("COMMIT") ||
 				sql.startsWith("ROLLBACK") ||
 				sql.startsWith("SELECT id FROM projects") ||
+				sql.startsWith("SELECT id FROM organizations") ||
+				sql.startsWith("SELECT actor_subject FROM organization_memberships") ||
 				sql.startsWith("SELECT lock_project_audit_provenance")
 			)
 				return { rows: [] };

@@ -57,6 +57,14 @@ persist a result, write an evaluation trace, complete, or resume after restart.
 No manual replay is required or supported for these cancelled runs; submit a new
 experiment after restoring appropriate execute access.
 
+Migration `0043_authorization_revocation_fence.sql` serializes Project and
+organization membership role changes with authorization-sensitive writes. A
+mutation locks its Project before freshly locking and checking the acting
+membership; a demotion or removal takes the same Project fence first. Provider
+admission holds that fence through invocation, and result/trace persistence is
+admitted again, so role revocation waits for an in-progress admission or blocks
+the later action without a write or trace.
+
 ## Operations
 
 In strict mode, use Admins to create Projects, change the organization default,
@@ -67,6 +75,12 @@ actors may inspect granted active Project evidence and content-free audit histor
 they cannot write, execute, ingest, cancel, approve, promote, delete, or change
 membership/security state. Archive is non-destructive and blocks product reads,
 writes, subscriptions, and direct OTLP. Restore does not resume old jobs.
+
+Project list and current-actor responses include server-authoritative
+`can_manage` and `can_govern` capabilities. The dashboard must use those fields
+rather than inferring controls from a displayed role: a compatibility-mode
+legacy Project manager is an effective User but retains its legacy management
+and governance controls until strict enforcement is enabled.
 
 The default Project is server-authoritative. A stale browser selection never overrides it at
 login. To delete a Project, first select another active same-organization Project as default,

@@ -9,6 +9,6 @@ const source = readFileSync(
 
 test("rechecks governed authority through the centralized project policy before destructive stages", () => {
 	expect(source).toContain("assertTenantProjectAccess");
-	expect(source).toContain("authorization_allows_project");
-	expect(source).toContain("'governed'");
+	expect(source).toContain("lockActiveAuthorizedProject");
+	expect(source).toContain('"governed"');
 });

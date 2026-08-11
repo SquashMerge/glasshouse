@@ -22,6 +22,10 @@ const experimentsSource = readFileSync(
 	resolve(import.meta.dir, "../../src/db/experiments.ts"),
 	"utf8",
 );
+const optimizationSource = readFileSync(
+	resolve(import.meta.dir, "../../src/db/prompt-optimizations.ts"),
+	"utf8",
+);
 const projectAuthorizationPath = resolve(
 	import.meta.dir,
 	"../../src/db/project-authorization.ts",
@@ -175,8 +179,27 @@ test("experiments retain an organization-scoped requester and revoke unsafe hist
 		recoveryStart + 1,
 	);
 	const recovery = experimentsSource.slice(recoveryStart, recoveryEnd);
-	expect(recovery).toContain("authorization_allows_project");
-	expect(recovery).toContain("requested_by_actor_id");
+	expect(recovery).toContain("lockExperimentExecution");
+	expect(recovery).toContain("cancelRevokedExperiment");
+});
+
+test("optimization worker claims and finalization freshly lock the requester authorization", () => {
+	for (const name of [
+		"claimOptimizationJob",
+		"renewOptimizationJobLease",
+		"recordOptimizationMetricCalls",
+		"transitionOptimizationJob",
+		"completeOptimizationResult",
+		"publishOptimizationResult",
+	]) {
+		const start = optimizationSource.indexOf(`export async function ${name}`);
+		const next = optimizationSource.indexOf("export async function", start + 1);
+		const mutation = optimizationSource.slice(
+			start,
+			next === -1 ? undefined : next,
+		);
+		expect(mutation).toContain("lockOptimizationExecution");
+	}
 });
 
 test("revocation before claim prevents provider execution", async () => {
@@ -197,9 +220,9 @@ test("revocation before claim prevents provider execution", async () => {
 				expected_output: { value: "one" },
 			};
 		},
-		assertExecutionAuthorized: async () => {
+		admitExecution: async () => {
 			authorizationChecks += 1;
-			return false;
+			return { admitted: false };
 		},
 		finalizeTask: async () => true,
 		completeExperiment: async () => true,
@@ -221,6 +244,47 @@ test("revocation before claim prevents provider execution", async () => {
 	expect(providerCalls).toBe(0);
 });
 
+test("revocation observed at execution admission prevents provider invocation and traces", async () => {
+	let providerCalls = 0;
+	let traceCalls = 0;
+	let claimed = false;
+	const dependencies = {
+		pool: () => ({}) as never,
+		updateExperiment: async () => ({ status: "running" }) as never,
+		claimTask: async () => {
+			if (claimed) return null;
+			claimed = true;
+			return {
+				id: "task",
+				dataset_item_id: datasetId,
+				lease_token: "66666666-6666-4666-8666-666666666666",
+				input: { question: "one" },
+				expected_output: { value: "one" },
+			};
+		},
+		admitExecution: async () => ({ admitted: false }),
+		finalizeTask: async () => true,
+		completeExperiment: async () => true,
+		invokeLlm: async () => {
+			providerCalls += 1;
+			return { output: { value: "one" }, model: "test" };
+		},
+		trace: async () => {
+			traceCalls += 1;
+		},
+	} as unknown as ExperimentDependencies;
+
+	await executeExperiment(dependencies, {
+		project_id: projectId,
+		experiment_id: experimentId,
+		dataset_id: datasetId,
+		config: {},
+	});
+
+	expect(providerCalls).toBe(0);
+	expect(traceCalls).toBe(0);
+});
+
 test("revocation during in-flight persistence prevents result and trace writes", async () => {
 	let providerCalls = 0;
 	let traceCalls = 0;
@@ -240,9 +304,13 @@ test("revocation during in-flight persistence prevents result and trace writes",
 				expected_output: { value: "one" },
 			};
 		},
-		assertExecutionAuthorized: async () => {
+		admitExecution: async (
+			_db: unknown,
+			_input: unknown,
+			invoke: () => Promise<unknown>,
+		) => {
 			authorizationChecks += 1;
-			return authorizationChecks === 1;
+			return { admitted: true, value: await invoke() };
 		},
 		finalizeTask: async () => false,
 		completeExperiment: async () => true,

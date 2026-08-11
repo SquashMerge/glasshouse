@@ -16,11 +16,17 @@ const authorization = {
 describe("experiment agent scope", () => {
 	it("rejects an agent that is not owned by the experiment project", async () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
-		let queries = 0;
 		const query = async (text: string, values: unknown[] = []) => {
 			calls.push({ text, values });
-			queries += 1;
-			return { rows: queries === 2 ? [{ id: project_id }] : [] };
+			if (text.includes("p.status = ANY($5::text[])"))
+				return { rows: [{ id: project_id }] };
+			if (text.includes("FROM organization_memberships om"))
+				return { rows: [{ actor_subject: "requester" }] };
+			if (text.includes("FROM project_memberships pm"))
+				return { rows: [{ actor_subject: "requester" }] };
+			if (text.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			return { rows: [] };
 		};
 		const db = {
 			connect: async () => ({ query, release() {} }),
@@ -39,15 +45,26 @@ describe("experiment agent scope", () => {
 			status: 404,
 			message: "Agent not found",
 		});
-		expect(calls[2]?.text).toContain("FROM agents");
-		expect(calls[2]?.text).toContain("project_id");
-		expect(calls[2]?.values).toContain(agent_id);
+		const insert = calls.find((call) =>
+			call.text.includes("INSERT INTO experiments"),
+		);
+		expect(insert?.text).toContain("FROM agents");
+		expect(insert?.text).toContain("project_id");
+		expect(insert?.values).toContain(agent_id);
 	});
 
 	it("locks and rechecks the active project in the insert statement", async () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const query = async (text: string, values: unknown[] = []) => {
 			calls.push({ text, values });
+			if (text.includes("p.status = ANY($5::text[])"))
+				return { rows: [{ id: project_id }] };
+			if (text.includes("FROM organization_memberships om"))
+				return { rows: [{ actor_subject: "requester" }] };
+			if (text.includes("FROM project_memberships pm"))
+				return { rows: [{ actor_subject: "requester" }] };
+			if (text.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
 			return { rows: [] };
 		};
 		const db = {
@@ -63,7 +80,7 @@ describe("experiment agent scope", () => {
 			}),
 		).rejects.toMatchObject<ExperimentRepositoryError>({ code: "NOT_FOUND" });
 		expect(calls[1]?.text).toContain("FROM projects");
-		expect(calls[1]?.text).toContain("authorization_allows_project");
+		expect(calls[1]?.text).toContain("p.status = ANY($5::text[])");
 		expect(calls[1]?.text).toContain("FOR UPDATE");
 	});
 });

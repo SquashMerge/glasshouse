@@ -4,6 +4,7 @@ import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import { streamSSE } from "hono/streaming";
 import { pgPool } from "../db/postgres.js";
 import {
+	admitOptimizationExecution,
 	claimOptimizationJob,
 	completeOptimizationResult,
 	createOptimizationJob,
@@ -410,6 +411,7 @@ export type OptimizationDependencies = {
 	getLatest: typeof getLatestOptimizationJob;
 	listActivities: typeof listActiveOptimizationActivities;
 	claim: typeof claimOptimizationJob;
+	admitExecution: typeof admitOptimizationExecution;
 	renew: typeof renewOptimizationJobLease;
 	sourceMessages: typeof optimizationSourceMessages;
 	events: typeof listOptimizationEvents;
@@ -832,6 +834,7 @@ const production: OptimizationDependencies = {
 	getLatest: getLatestOptimizationJob,
 	listActivities: listActiveOptimizationActivities,
 	claim: claimOptimizationJob,
+	admitExecution: admitOptimizationExecution,
 	renew: renewOptimizationJobLease,
 	sourceMessages: optimizationSourceMessages,
 	events: listOptimizationEvents,
@@ -954,6 +957,8 @@ export async function runOptimizationJob(
 				"BAD_REQUEST",
 				"Only system-prompt optimization jobs can be resumed",
 			);
+		const target = job.target;
+		const dataset = job.dataset;
 		await d.transition(d.pool(), {
 			id: job.id,
 			worker_id: workerId,
@@ -972,11 +977,11 @@ export async function runOptimizationJob(
 			project_id: job.project_id,
 			id: job.id,
 		});
-		const original = sourceMessages.find((item) => item.role === job.target);
+		const original = sourceMessages.find((item) => item.role === target);
 		if (!original)
 			throw new PromptRepositoryError(
 				"BAD_REQUEST",
-				`Source prompt has no ${job.target} message`,
+				`Source prompt has no ${target} message`,
 			);
 		await d.transition(d.pool(), {
 			id: job.id,
@@ -989,32 +994,37 @@ export async function runOptimizationJob(
 			models: job.model_config,
 			max_metric_calls: job.budget,
 		});
-		const result = await d.worker(
-			{
-				target: job.target,
-				source: original.content,
-				evaluator: job.evaluator,
-				dataset: job.dataset,
-				model_config: job.model_config,
-				budget: job.budget,
-			},
-			controller.signal,
-			async ({ metric_calls_used }) => {
-				try {
-					await d.recordMetricCalls(d.pool(), {
-						id: job.id,
-						worker_id: workerId,
-						metric_calls_used,
-					});
-				} catch (cause) {
-					logger.error("optimization.metric_telemetry_failed", cause, {
-						job_id: job.id,
-						project_id: job.project_id,
-						metric_calls_used,
-					});
-				}
-			},
+		let reportedMetricCalls: number | null = null;
+		const admission = await d.admitExecution(
+			d.pool(),
+			{ id: job.id, worker_id: workerId },
+			() =>
+				d.worker(
+					{
+						target,
+						source: original.content,
+						evaluator: job.evaluator,
+						dataset,
+						model_config: job.model_config,
+						budget: job.budget,
+					},
+					controller.signal,
+					({ metric_calls_used }) => {
+						reportedMetricCalls = Math.max(
+							reportedMetricCalls ?? 0,
+							metric_calls_used,
+						);
+					},
+				),
 		);
+		if (!admission.admitted) return;
+		const result = admission.value;
+		if (reportedMetricCalls !== null)
+			await d.recordMetricCalls(d.pool(), {
+				id: job.id,
+				worker_id: workerId,
+				metric_calls_used: reportedMetricCalls,
+			});
 		const usedMetricCalls = metricCallsUsed(job, result);
 		if (usedMetricCalls !== null)
 			await d.recordMetricCalls(d.pool(), {

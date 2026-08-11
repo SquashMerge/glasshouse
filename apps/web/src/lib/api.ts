@@ -420,6 +420,8 @@ export interface Project {
 	created_at: string;
 	archived_at: string | null;
 	project_role: "admin" | "user" | "read_only";
+	can_manage: boolean;
+	can_govern: boolean;
 	is_default: boolean;
 }
 

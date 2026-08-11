@@ -13,6 +13,13 @@ const migrationHarness = readFileSync(
 	resolve(import.meta.dir, "../../../../infra/scripts/test-db-migrations.sh"),
 	"utf8",
 );
+const revocationFenceMigration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0043_authorization_revocation_fence.sql",
+	),
+	"utf8",
+);
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
@@ -64,6 +71,16 @@ test("replays the target-role upgrade fixture before accepting strict enforcemen
 test("initializes future organizations in compatibility mode", () => {
 	expect(migration).toContain("AFTER INSERT ON organizations");
 	expect(migration).toContain("authorization_policy_settings");
+});
+
+test("replays the membership revocation fence before a concurrent authorization can write", () => {
+	expect(revocationFenceMigration).toContain(
+		"fence_authorization_membership_revocation",
+	);
+	expect(revocationFenceMigration).toContain("ORDER BY id");
+	expect(revocationFenceMigration).toContain("FOR UPDATE");
+	expect(migrationHarness).toContain("UPGRADE_0043_DATABASE");
+	expect(migrationHarness).toContain("test-db-migrations-0043.assert.sql");
 });
 
 test("provides an idempotent operator readiness check before strict enforcement", () => {

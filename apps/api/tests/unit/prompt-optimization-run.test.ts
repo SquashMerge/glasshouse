@@ -64,17 +64,30 @@ function dependencies(input: {
 		baseline_validation_score: number;
 		metric_calls_used: number | null;
 	};
+	admitted?: boolean;
 }) {
 	const completed: Array<Record<string, unknown>> = [];
 	const published: Array<Record<string, unknown>> = [];
 	const metricCalls: Array<Record<string, unknown>> = [];
+	const workerCalls: Array<Record<string, unknown>> = [];
 	const d = {
 		pool: () => ({}),
-		worker: async (workerInput: Record<string, unknown>) => input.result,
+		worker: async (workerInput: Record<string, unknown>) => {
+			workerCalls.push(workerInput);
+			return input.result;
+		},
 		create: async () => job(),
 		get: async () => job(),
 		getActive: async () => null,
 		claim: async () => true,
+		admitExecution: async (
+			_pool: unknown,
+			_input: Record<string, unknown>,
+			invoke: () => Promise<unknown>,
+		) =>
+			input.admitted === false
+				? { admitted: false as const }
+				: { admitted: true as const, value: await invoke() },
 		renew: async () => true,
 		sourceMessages: async () => [
 			{ role: "system" as const, content: "Summarize {{tasks}}" },
@@ -98,10 +111,28 @@ function dependencies(input: {
 		},
 		promote: async () => job(),
 	} as unknown as OptimizationDependencies;
-	return { d, completed, published, metricCalls };
+	return { d, completed, published, metricCalls, workerCalls };
 }
 
 describe("optimization completion policy", () => {
+	it("does not invoke the provider when execution admission is revoked", async () => {
+		const input = dependencies({
+			admitted: false,
+			result: {
+				candidate: "Summarize {{tasks}} by urgency and timing.",
+				training_score: 1,
+				validation_score: 1,
+				baseline_validation_score: 0,
+				metric_calls_used: 3,
+			},
+		});
+		await runOptimizationJob(job(), input.d);
+
+		expect(input.workerCalls).toHaveLength(0);
+		expect(input.completed).toHaveLength(0);
+		expect(input.published).toHaveLength(0);
+	});
+
 	it("keeps a one-sample held-out result as a review-required draft", async () => {
 		const input = dependencies({
 			result: {

@@ -8,9 +8,9 @@ const source = readFileSync(
 );
 
 test("rechecks the requesting actor's effective execution access before worker claim and every persistence transition", () => {
-	expect(source).toContain("const requesterExecutionAccess");
-	expect(source).toContain("authorization_allows_project");
-	expect(source).toContain("'execute'");
+	expect(source).toContain("lockOptimizationExecution");
+	expect(source).toContain("lockActiveAuthorizedProject");
+	expect(source).toContain('operation: "execute"');
 	for (const functionName of [
 		"claimOptimizationJob",
 		"renewOptimizationJobLease",
@@ -22,7 +22,13 @@ test("rechecks the requesting actor's effective execution access before worker c
 		const start = source.indexOf(`export async function ${functionName}`);
 		const next = source.indexOf("export async function", start + 1);
 		expect(source.slice(start, next === -1 ? undefined : next)).toContain(
-			"requesterExecutionAccess",
+			"lockOptimizationExecution",
 		);
 	}
+});
+
+test("holds the requester authorization fence through provider invocation", () => {
+	expect(source).toContain("admitOptimizationExecution");
+	expect(source).toContain("status = 'optimizing'");
+	expect(source).toContain("value: await invoke()");
 });

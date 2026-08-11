@@ -92,7 +92,9 @@ describe("feedback review persistence", () => {
 		};
 		const client = {
 			query: async (sql: string) => {
-				if (sql.includes("authorization_allows_project")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($5::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews")) return { rows: [row] };
 				if (sql.includes("SELECT request_hash"))
 					return { rows: [{ request_hash: requestHash(base) }] };
@@ -156,7 +158,9 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("authorization_allows_project")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($5::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
@@ -202,8 +206,9 @@ describe("feedback review persistence", () => {
 			const client = {
 				query: async (sql: string) => {
 					queries.push(sql);
-					if (sql.includes("authorization_allows_project"))
-						return { rows: [{}] };
+					if (sql.includes("p.status = ANY($5::text[])")) return { rows: [{}] };
+					if (sql.startsWith("SELECT authorization_allows_project"))
+						return { rows: [{ allowed: true }] };
 					if (sql.includes("JOIN feedback_reviews"))
 						return {
 							rows: [
@@ -257,7 +262,9 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("authorization_allows_project")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($5::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
@@ -308,7 +315,9 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("authorization_allows_project")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($5::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
@@ -328,6 +337,8 @@ describe("feedback review persistence", () => {
 							},
 						],
 					};
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: false }] };
 				return { rows: [] };
 			},
 			release: () => {},
@@ -378,7 +389,7 @@ describe("feedback review persistence", () => {
 		for (const mutate of mutations) {
 			const before = calls.length;
 			await expect(mutate()).rejects.toMatchObject({ code: "NOT_FOUND" });
-			expect(calls[before + 1]).toContain("authorization_allows_project");
+			expect(calls[before + 1]).toContain("p.status = ANY($5::text[])");
 		}
 
 		const listed = await listFeedback(

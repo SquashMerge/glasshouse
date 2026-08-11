@@ -14,6 +14,8 @@ export const Project = z
 		created_at: z.string().datetime(),
 		archived_at: z.string().datetime().nullable(),
 		project_role: ActorProjectRole,
+		can_manage: z.boolean(),
+		can_govern: z.boolean(),
 		is_default: z.boolean(),
 	})
 	.strict()

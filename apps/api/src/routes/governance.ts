@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { lockActiveAuthorizedProject } from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
 import {
 	policyHash,
@@ -294,11 +295,14 @@ export async function handleApprovePolicy(c: Context) {
 			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
 				project_id,
 			]);
-			const authorized = await client.query(
-				"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND authorization_allows_project($2, $1, $3, 'governed') FOR UPDATE OF p",
-				[project_id, tenant.organizationId, tenant.actorId],
-			);
-			if (!authorized.rows[0]) throw new Error("Not found");
+			if (
+				!(await lockActiveAuthorizedProject(client, project_id, {
+					organization_id: tenant.organizationId,
+					actor_id: tenant.actorId,
+					operation: "governed",
+				}))
+			)
+				throw new Error("Not found");
 			const version = (
 				await client.query<VersionRow>(
 					"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id WHERE v.id = $1 AND p.project_id = $2 AND p.organization_id = $3",
@@ -695,11 +699,13 @@ async function lockActiveManager(
 	projectId: string,
 	actorId: string,
 ) {
-	const authorized = await client.query(
-		"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND authorization_allows_project($2, $1, $3, 'governed') FOR UPDATE OF p",
-		[projectId, organizationId, actorId],
-	);
-	if (!authorized.rows[0])
+	if (
+		!(await lockActiveAuthorizedProject(client as PoolClient, projectId, {
+			organization_id: organizationId,
+			actor_id: actorId,
+			operation: "governed",
+		}))
+	)
 		throw new Error(
 			"Project is no longer active or manager access was revoked",
 		);

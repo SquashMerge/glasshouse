@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 import {
 	TRUSTED_TENANT_CONTEXT_KEY,
 	type TrustedTenantContext,
@@ -9,6 +9,7 @@ import type {
 	EffectiveProjectRole,
 	ProjectOperation,
 } from "./authorization-policy.js";
+import { lockActiveAuthorizedProject } from "./db/project-authorization.js";
 
 export type AuthorizedProjectScope = TrustedTenantContext & {
 	projectId: string;
@@ -113,12 +114,13 @@ export async function withActiveAuthorizedProjectLock<T>(
 	try {
 		await client.query("BEGIN");
 		transactionOpen = true;
-		const authorized = await lockedActiveProjectAccess(
-			client,
-			tenant,
-			operation,
-		);
-		if (!authorized.rows[0])
+		if (
+			!(await lockActiveAuthorizedProject(client, tenant.projectId, {
+				organization_id: tenant.organizationId,
+				actor_id: tenant.actorId,
+				operation,
+			}))
+		)
 			throw new TenantScopeError("Project is not available");
 		const value = await callback();
 		await client.query("COMMIT");
@@ -136,17 +138,6 @@ export async function withActiveAuthorizedProjectLock<T>(
 	} finally {
 		client.release();
 	}
-}
-
-function lockedActiveProjectAccess(
-	client: PoolClient,
-	tenant: TenantScope,
-	operation: ProjectOperation,
-) {
-	return client.query(
-		"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND authorization_allows_project($2, $1, $3, $4) FOR UPDATE OF p",
-		[tenant.projectId, tenant.organizationId, tenant.actorId, operation],
-	);
 }
 
 export type InternalEvaluationProjectScope = Pick<

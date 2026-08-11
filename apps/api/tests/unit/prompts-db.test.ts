@@ -32,6 +32,22 @@ class MockClient {
 		text: string,
 		values: unknown[] = [],
 	): Promise<{ rows: Record<string, unknown>[] }> {
+		if (text.includes("p.status = ANY($5::text[])")) {
+			const reply = this.replies.shift();
+			if (!reply) return { rows: [{ id: PROJECT }] };
+			if ("error" in reply) throw reply.error;
+			this.calls.push({
+				text: "SELECT authorization_allows_project($1, $2, $3, $4)",
+				values,
+			});
+			return reply;
+		}
+		if (text.includes("FROM organization_memberships om"))
+			return { rows: [{ actor_subject: "writer" }] };
+		if (text.includes("FROM project_memberships pm"))
+			return { rows: [{ actor_subject: "writer" }] };
+		if (text.startsWith("SELECT authorization_allows_project"))
+			return { rows: [{ allowed: true }] };
 		this.calls.push({ text, values });
 		const reply = this.replies.shift();
 		if (!reply) throw new Error(`Unexpected query: ${text}`);
