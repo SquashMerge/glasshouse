@@ -93,8 +93,7 @@ BEGIN
 		OR pg_get_functiondef('prevent_prompt_deletion_audit_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_human_feedback_score_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_prompt_optimization_event_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
-		OR pg_get_functiondef('prevent_governance_immutable_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
-		OR pg_get_functiondef('prevent_final_workspace_role_removal'::regproc) NOT LIKE '%project_deletion_is_authorized%' THEN
+		OR pg_get_functiondef('prevent_governance_immutable_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%' THEN
 		RAISE EXCEPTION 'immutable records do not have a project-scoped deletion escape';
 	END IF;
 	IF NOT EXISTS (
@@ -943,6 +942,105 @@ BEGIN
 	EXCEPTION WHEN SQLSTATE '55000' THEN
 		NULL;
 	END;
+END
+$$;
+
+DO $$
+DECLARE
+    test_organization_id CONSTANT UUID := '00000000-0000-4000-8000-000000000002';
+    test_project_id CONSTANT UUID := 'abababab-abab-4bab-8bab-abababababab';
+    test_actor_subject CONSTANT TEXT := 'project-deletion-lifecycle-user';
+BEGIN
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES (test_organization_id, test_actor_subject, 'member');
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES (
+        test_project_id,
+        'Project Deletion Lifecycle Guard',
+        'project-deletion-lifecycle-guard',
+        test_organization_id
+    );
+    INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
+    VALUES (test_project_id, test_organization_id, test_actor_subject, 'manager');
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM projects AS project
+        JOIN organizations AS organization ON organization.id = project.organization_id
+        WHERE project.id = test_project_id
+          AND project.organization_id = test_organization_id
+          AND project.id <> organization.default_project_id
+          AND project.status = 'active'
+    ) OR (
+        SELECT count(*)
+        FROM project_memberships
+        WHERE project_id = test_project_id
+          AND role = 'manager'
+    ) <> 1 THEN
+        RAISE EXCEPTION 'project deletion lifecycle fixture is not an active non-default project with one User';
+    END IF;
+
+    PERFORM set_config('astraea.project_deletion_id', test_project_id::text, true);
+    BEGIN
+        UPDATE project_memberships
+        SET role = 'member'
+        WHERE project_id = test_project_id
+          AND actor_subject = test_actor_subject;
+        RAISE EXCEPTION 'project deletion context demoted the final active project User';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final active project User' THEN
+            RAISE;
+        END IF;
+    END;
+    BEGIN
+        DELETE FROM project_memberships
+        WHERE project_id = test_project_id
+          AND actor_subject = test_actor_subject;
+        RAISE EXCEPTION 'project deletion context removed the final active project User';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final active project User' THEN
+            RAISE;
+        END IF;
+    END;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM project_memberships
+        WHERE project_id = test_project_id
+          AND actor_subject = test_actor_subject
+          AND role = 'manager'
+    ) THEN
+        RAISE EXCEPTION 'active project final User guard did not preserve its membership';
+    END IF;
+    BEGIN
+        UPDATE organization_memberships
+        SET role = 'member'
+        WHERE organization_id = test_organization_id
+          AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'project deletion context demoted the final organization Admin';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final organization Admin' THEN
+            RAISE;
+        END IF;
+    END;
+
+    UPDATE projects
+    SET status = 'deleting'
+    WHERE id = test_project_id;
+    DELETE FROM project_memberships
+    WHERE project_id = test_project_id
+      AND actor_subject = test_actor_subject;
+    IF EXISTS (
+        SELECT 1
+        FROM project_memberships
+        WHERE project_id = test_project_id
+    ) THEN
+        RAISE EXCEPTION 'deleting project did not clean up its User membership';
+    END IF;
+    DELETE FROM projects
+    WHERE id = test_project_id;
+    IF EXISTS (SELECT 1 FROM projects WHERE id = test_project_id) THEN
+        RAISE EXCEPTION 'deleting non-default project was not removed after membership cleanup';
+    END IF;
 END
 $$;
 
