@@ -16,6 +16,7 @@ import { pgPool } from "../db/postgres.js";
 import type { TrustedTenantContext } from "../middleware/auth.js";
 import {
 	createAuthorizedSseDelivery,
+	authorizedSseFrame,
 	type AuthorizedSseDelivery,
 } from "../lib/authorized-sse.js";
 import {
@@ -196,11 +197,11 @@ export function createTraceEventHandlers(
 						cleanup();
 					};
 					return {
-						deliver: async (write) => {
+						deliver: async (frame) => {
 							if (closed || stream.aborted) return false;
 							try {
 								await dependencies.assertProjectAccess!(tenant, projectId);
-								await write();
+								await frame.write();
 								return !closed && !stream.aborted;
 							} catch {
 								close();
@@ -253,15 +254,24 @@ export function createTraceEventHandlers(
 					trace.project_id !== expectedProjectId
 				)
 					return;
-				void frameDelivery.deliver(() =>
-					stream.writeSSE({ event: "trace", data: JSON.stringify({ trace }) }),
+				const data = JSON.stringify({ trace });
+				void frameDelivery.deliver(
+					authorizedSseFrame(data, () =>
+						stream.writeSSE({ event: "trace", data }),
+					),
 				);
 			});
 			heartbeat = setInterval(() => {
-				void frameDelivery.deliver(() => stream.write(":heartbeat\n\n"));
+				void frameDelivery.deliver(
+					authorizedSseFrame(":heartbeat\n\n", () =>
+						stream.write(":heartbeat\n\n"),
+					),
+				);
 			}, d.heartbeatMs);
 
-			await frameDelivery.deliver(() => stream.write(":ok\n\n"));
+			await frameDelivery.deliver(
+				authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+			);
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -309,21 +319,27 @@ export function createTraceEventHandlers(
 				)
 					return;
 				const presented = presentObservation(observation);
-				void frameDelivery.deliver(() =>
-					stream.writeSSE({
-						event: "observation",
-						data: JSON.stringify({
-							observation: presented,
-							metadataParsed: presented.metadata,
-						}),
-					}),
+				const data = JSON.stringify({
+					observation: presented,
+					metadataParsed: presented.metadata,
+				});
+				void frameDelivery.deliver(
+					authorizedSseFrame(data, () =>
+						stream.writeSSE({ event: "observation", data }),
+					),
 				);
 			});
 			heartbeat = setInterval(() => {
-				void frameDelivery.deliver(() => stream.write(":heartbeat\n\n"));
+				void frameDelivery.deliver(
+					authorizedSseFrame(":heartbeat\n\n", () =>
+						stream.write(":heartbeat\n\n"),
+					),
+				);
 			}, d.heartbeatMs);
 
-			await frameDelivery.deliver(() => stream.write(":ok\n\n"));
+			await frameDelivery.deliver(
+				authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+			);
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -419,9 +435,15 @@ export function createTraceEventHandlers(
 				cleanup,
 			);
 			heartbeat = setInterval(() => {
-				void frameDelivery.deliver(() => stream.write(":heartbeat\n\n"));
+				void frameDelivery.deliver(
+					authorizedSseFrame(":heartbeat\n\n", () =>
+						stream.write(":heartbeat\n\n"),
+					),
+				);
 			}, d.heartbeatMs);
-			await frameDelivery.deliver(() => stream.write(":ok\n\n"));
+			await frameDelivery.deliver(
+				authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+			);
 			if (stream.aborted) {
 				cleanup();
 				return;
@@ -432,12 +454,12 @@ export function createTraceEventHandlers(
 				graceTimer = setTimeout(() => {
 					if (closed) return;
 					closed = true;
+					const data = JSON.stringify({ status: "complete" });
 					void frameDelivery
-						.deliver(() =>
-							stream.writeSSE({
-								event: "status",
-								data: JSON.stringify({ status: "complete" }),
-							}),
+						.deliver(
+							authorizedSseFrame(data, () =>
+								stream.writeSSE({ event: "status", data }),
+							),
 						)
 						.finally(cleanup);
 				}, d.graceMs);
@@ -445,24 +467,24 @@ export function createTraceEventHandlers(
 			const sendObservation = (observation: TenantScopedObservation) => {
 				if (closed) return;
 				armGraceTimer();
-				void frameDelivery.deliver(() =>
-					stream.writeSSE({
-						event: "observation",
-						data: JSON.stringify({
-							observation: presentObservation(observation),
-						}),
-					}),
+				const data = JSON.stringify({
+					observation: presentObservation(observation),
+				});
+				void frameDelivery.deliver(
+					authorizedSseFrame(data, () =>
+						stream.writeSSE({ event: "observation", data }),
+					),
 				);
 			};
 
-			await frameDelivery.deliver(() =>
-				stream.writeSSE({
-					event: "snapshot",
-					data: JSON.stringify({
-						trace: snapshotTrace,
-						observations: snapshotObservations,
-					}),
-				}),
+			const snapshotData = JSON.stringify({
+				trace: snapshotTrace,
+				observations: snapshotObservations,
+			});
+			await frameDelivery.deliver(
+				authorizedSseFrame(snapshotData, () =>
+					stream.writeSSE({ event: "snapshot", data: snapshotData }),
+				),
 			);
 			forwardObservation = sendObservation;
 			for (const observation of bufferedObservations.splice(0))

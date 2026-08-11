@@ -38,6 +38,7 @@ const admittedExecution = {
 		authorization_epoch: 1,
 	}),
 	isAdmissionActive: async () => true,
+	claimExecution: async () => true,
 	cancelAdmission: async () => {},
 	completeAdmission: async () => {},
 };

@@ -5,6 +5,7 @@ import { getDataset, listDatasetItems } from "../db/datasets.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
 	claimExperimentTask,
+	claimExperimentExecution,
 	completeExperimentIfTasksFinished,
 	admitExperimentExecution,
 	createExperiment as createExperimentRecord,
@@ -29,7 +30,10 @@ import { pgPool } from "../db/postgres.js";
 import { scoreCase } from "../lib/evaluator.js";
 import { invokeConfiguredLlm } from "../lib/llm.js";
 import { logger } from "../lib/logger.js";
-import { createAuthorizedSseDelivery } from "../lib/authorized-sse.js";
+import {
+	authorizedSseFrame,
+	createAuthorizedSseDelivery,
+} from "../lib/authorized-sse.js";
 import {
 	executionAdmissionTimeoutMs,
 	invokeWithExecutionAdmission,
@@ -44,7 +48,10 @@ import {
 	ExperimentResults,
 	ExperimentSummary,
 } from "../schemas/experiments.js";
-import { trustedTenant } from "../tenancy.js";
+import {
+	trustedTenant,
+	withActiveInternalEvaluationProjectLock,
+} from "../tenancy.js";
 import { createOtlpIngestHandler } from "./otlp.js";
 
 const tag = "experiments";
@@ -196,6 +203,7 @@ export type ExperimentDependencies = {
 	isAdmissionActive: typeof experimentExecutionAdmissionIsActive;
 	cancelAdmission: typeof cancelExecutionAdmission;
 	completeAdmission: typeof completeExecutionAdmission;
+	claimExecution: typeof claimExperimentExecution;
 	summary: typeof experimentSummaryRecord;
 	listDatasetItems: typeof listDatasetItems;
 	getDataset: typeof getDataset;
@@ -268,11 +276,15 @@ export function createEvaluationTracePayload(
 }
 
 export function createProductionTrace(
-	traceResult = createOtlpIngestHandler({
-		withActiveAuthorizedProjectLock: async (_tenant, callback) => callback(),
-	}),
+	traceResult?: ReturnType<typeof createOtlpIngestHandler>,
 	pool = pgPool,
 ): ExperimentDependencies["trace"] {
+	const ingest =
+		traceResult ??
+		createOtlpIngestHandler({
+			withActiveAuthorizedProjectLock: (tenant, callback) =>
+				withActiveInternalEvaluationProjectLock(pool(), tenant, callback),
+		});
 	return async (input) => {
 		const organization = await pool().query<{ organization_id: string }>(
 			"SELECT organization_id FROM projects WHERE id = $1 AND status = 'active'",
@@ -280,7 +292,7 @@ export function createProductionTrace(
 		);
 		const organizationId = organization.rows[0]?.organization_id;
 		if (!organizationId) return;
-		const response = await traceResult(
+		const response = await ingest(
 			new Request("http://internal/v1/otel/v1/traces", {
 				method: "POST",
 				body: JSON.stringify(createEvaluationTracePayload(input)),
@@ -326,6 +338,7 @@ export const production: ExperimentDependencies = {
 	isAdmissionActive: experimentExecutionAdmissionIsActive,
 	cancelAdmission: cancelExecutionAdmission,
 	completeAdmission: completeExecutionAdmission,
+	claimExecution: claimExperimentExecution,
 	summary: experimentSummaryRecord,
 	listDatasetItems,
 	getDataset,
@@ -412,6 +425,13 @@ export async function executeExperiment(
 						id: input.experiment_id,
 						admission_id: admission.id,
 					}),
+				claimDispatch: () =>
+					deps.claimExecution(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+						admission_id: admission.id,
+						effect: "provider_dispatch",
+					}),
 				cancel: () => deps.cancelAdmission(db, admission.id),
 				invoke: (providerSignal) =>
 					deps.invokeLlm(task.input, input.config, providerSignal),
@@ -449,6 +469,13 @@ export async function executeExperiment(
 							project_id: input.project_id,
 							id: input.experiment_id,
 							admission_id: admission.id,
+						}),
+					claimDispatch: () =>
+						deps.claimExecution(db, {
+							project_id: input.project_id,
+							id: input.experiment_id,
+							admission_id: admission.id,
+							effect: "trace_write",
 						}),
 					cancel: () => deps.cancelAdmission(db, admission.id),
 					invoke: () =>
@@ -509,6 +536,13 @@ export async function executeExperiment(
 							project_id: input.project_id,
 							id: input.experiment_id,
 							admission_id: admissionId!,
+						}),
+					claimDispatch: () =>
+						deps.claimExecution(db, {
+							project_id: input.project_id,
+							id: input.experiment_id,
+							admission_id: admissionId!,
+							effect: "trace_write",
 						}),
 					cancel: () => deps.cancelAdmission(db, admissionId!),
 					invoke: () =>
@@ -725,34 +759,39 @@ export function createExperimentHandlers(
 								id: params.id,
 								project_id: query.project_id,
 							});
+							const data = JSON.stringify(row);
 							if (
-								!(await frameDelivery.deliver(() =>
-									stream.writeSSE({
-										event: "experiment",
-										data: JSON.stringify(row),
-									}),
+								!(await frameDelivery.deliver(
+									authorizedSseFrame(data, () =>
+										stream.writeSSE({ event: "experiment", data }),
+									),
 								))
 							)
 								return;
 							if (["completed", "failed", "cancelled"].includes(row.status))
 								close();
 						} catch {
-							if (!stream.aborted)
-								await frameDelivery.deliver(() =>
-									stream.writeSSE({
-										event: "error",
-										data: JSON.stringify({
-											code: "INTERNAL",
-											message: "Evaluation event stream failed",
-										}),
-									}),
+							if (!stream.aborted) {
+								const data = JSON.stringify({
+									code: "INTERNAL",
+									message: "Evaluation event stream failed",
+								});
+								await frameDelivery.deliver(
+									authorizedSseFrame(data, () =>
+										stream.writeSSE({ event: "error", data }),
+									),
 								);
+							}
 							close();
 						} finally {
 							polling = false;
 						}
 					};
-					if (!(await frameDelivery.deliver(() => stream.write(":ok\n\n"))))
+					if (
+						!(await frameDelivery.deliver(
+							authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+						))
+					)
 						return;
 					timer = setInterval(() => void tick(), 500);
 					void tick();

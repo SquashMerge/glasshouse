@@ -7,6 +7,7 @@ import {
 	admitOptimizationExecution,
 	cancelOptimizationExecution,
 	claimOptimizationJob,
+	claimOptimizationExecution,
 	completeOptimizationResult,
 	createOptimizationJob,
 	getActiveOptimizationJob,
@@ -48,7 +49,10 @@ import {
 	runGepaWorker,
 } from "../lib/gepa-worker.js";
 import { logger, type LogFields } from "../lib/logger.js";
-import { createAuthorizedSseDelivery } from "../lib/authorized-sse.js";
+import {
+	authorizedSseFrame,
+	createAuthorizedSseDelivery,
+} from "../lib/authorized-sse.js";
 import {
 	executionAdmissionTimeoutMs,
 	invokeWithExecutionAdmission,
@@ -427,6 +431,7 @@ export type OptimizationDependencies = {
 	isAdmissionActive: typeof optimizationExecutionAdmissionIsActive;
 	cancelAdmission: typeof cancelExecutionAdmission;
 	completeAdmission: typeof completeExecutionAdmission;
+	claimExecution: typeof claimOptimizationExecution;
 	renew: typeof renewOptimizationJobLease;
 	sourceMessages: typeof optimizationSourceMessages;
 	events: typeof listOptimizationEvents;
@@ -854,6 +859,7 @@ const production: OptimizationDependencies = {
 	isAdmissionActive: optimizationExecutionAdmissionIsActive,
 	cancelAdmission: cancelExecutionAdmission,
 	completeAdmission: completeExecutionAdmission,
+	claimExecution: claimOptimizationExecution,
 	renew: renewOptimizationJobLease,
 	sourceMessages: optimizationSourceMessages,
 	events: listOptimizationEvents,
@@ -1029,6 +1035,13 @@ export async function runOptimizationJob(
 					id: job.id,
 					worker_id: workerId,
 					admission_id: admission.id,
+				}),
+			claimDispatch: () =>
+				d.claimExecution(d.pool(), {
+					id: job.id,
+					worker_id: workerId,
+					admission_id: admission.id,
+					effect: "provider_dispatch",
 				}),
 			cancel: () => d.cancelAdmission(d.pool(), admission.id),
 			invoke: (signal) =>
@@ -1438,13 +1451,16 @@ export function createOptimizationHandlers(
 							);
 							last = next.lastId;
 							for (const event of next.events) {
+								const data = JSON.stringify(event);
 								if (
-									!(await frameDelivery.deliver(() =>
-										stream.writeSSE({
-											event: "status",
-											id: String(event.id),
-											data: JSON.stringify(event),
-										}),
+									!(await frameDelivery.deliver(
+										authorizedSseFrame(data, () =>
+											stream.writeSSE({
+												event: "status",
+												id: String(event.id),
+												data,
+											}),
+										),
 									))
 								)
 									return;
@@ -1455,14 +1471,14 @@ export function createOptimizationHandlers(
 					} catch {
 						if (!stream.aborted)
 							try {
-								await frameDelivery.deliver(() =>
-									stream.writeSSE({
-										event: "error",
-										data: JSON.stringify({
-											code: "INTERNAL",
-											message: "Optimization event stream failed",
-										}),
-									}),
+								const data = JSON.stringify({
+									code: "INTERNAL",
+									message: "Optimization event stream failed",
+								});
+								await frameDelivery.deliver(
+									authorizedSseFrame(data, () =>
+										stream.writeSSE({ event: "error", data }),
+									),
 								);
 							} catch {
 								// Do not expose a stream failure after its authorization has changed.

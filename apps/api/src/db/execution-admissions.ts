@@ -8,6 +8,13 @@ export type ExecutionAdmission = {
 	authorization_epoch: number;
 };
 
+export type ExecutionAdmissionEffect =
+	| "provider_dispatch"
+	| "trace_write"
+	| "metric_write"
+	| "result_write"
+	| "event_write";
+
 type Transactional = Pick<Pool, "connect">;
 
 async function transaction<T>(
@@ -71,6 +78,26 @@ export async function executionAdmissionIsActive(
 		[input.id, input.project_id],
 	);
 	return Boolean(active.rows[0]);
+}
+
+/**
+ * Call only after the caller has locked its requester, membership, and Project
+ * fence. The inserted row is the durable logical admission for one effect; it
+ * does not make a later remote write physically atomic with PostgreSQL.
+ */
+export async function claimExecutionAdmission(
+	client: Pick<PoolClient, "query">,
+	input: {
+		id: string;
+		project_id: string;
+		effect: ExecutionAdmissionEffect;
+	},
+): Promise<boolean> {
+	const claim = await client.query(
+		"WITH active_admission AS (SELECT admission.id, admission.authorization_epoch, admission.expires_at FROM execution_admissions AS admission JOIN projects AS project ON project.id = admission.project_id AND project.organization_id = admission.organization_id WHERE admission.id = $1 AND admission.project_id = $2 AND admission.status = 'active' AND admission.expires_at > now() AND project.status = 'active' AND project.authorization_epoch = admission.authorization_epoch FOR UPDATE OF admission, project) INSERT INTO execution_admission_claims (id, admission_id, effect, authorization_epoch, expires_at) SELECT gen_random_uuid(), id, $3, authorization_epoch, expires_at FROM active_admission RETURNING id",
+		[input.id, input.project_id, input.effect],
+	);
+	return Boolean(claim.rows[0]);
 }
 
 export async function cancelExecutionAdmission(

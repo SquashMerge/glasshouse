@@ -90,6 +90,7 @@ function dependencies(input: {
 						authorization_epoch: 1,
 					},
 		isAdmissionActive: async () => input.admitted !== false,
+		claimExecution: async () => input.admitted !== false,
 		cancelAdmission: async () => {},
 		completeAdmission: async () => {},
 		cancelExecution: async () => {},
@@ -120,6 +121,25 @@ function dependencies(input: {
 }
 
 describe("optimization completion policy", () => {
+	it("does not invoke the worker when revocation wins after validation but before dispatch claim", async () => {
+		const input = dependencies({
+			result: {
+				candidate: "Summarize {{tasks}} by urgency and timing.",
+				training_score: 1,
+				validation_score: 1,
+				baseline_validation_score: 0,
+				metric_calls_used: 3,
+			},
+		});
+		(
+			input.d as unknown as { claimExecution: () => Promise<boolean> }
+		).claimExecution = async () => false;
+
+		await runOptimizationJob(job(), input.d);
+
+		expect(input.workerCalls).toHaveLength(0);
+	});
+
 	it("does not invoke the provider when execution admission is revoked", async () => {
 		const input = dependencies({
 			admitted: false,

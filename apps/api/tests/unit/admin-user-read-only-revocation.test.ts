@@ -320,6 +320,7 @@ test("revocation during in-flight persistence prevents result and trace writes",
 			};
 		},
 		isAdmissionActive: async () => true,
+		claimExecution: async () => true,
 		cancelAdmission: async () => {},
 		completeAdmission: async () => {},
 		finalizeTask: async () => false,

@@ -6,6 +6,7 @@ import { StreamingApi } from "hono/utils/stream";
 import { Pool } from "pg";
 import {
 	admitExperimentExecution,
+	claimExperimentExecution,
 	claimExperimentTask,
 	completeExperimentIfTasksFinished,
 	experimentExecutionAdmissionIsActive,
@@ -24,8 +25,17 @@ import {
 import {
 	createOptimizationHandlers,
 	optimizationEvents,
+	runOptimizationJob,
 	type OptimizationDependencies,
 } from "../../src/routes/prompt-optimizations";
+import {
+	admitOptimizationExecution,
+	claimOptimizationExecution,
+	claimOptimizationJob,
+	optimizationExecutionAdmissionIsActive,
+	transitionOptimizationJob,
+	type OptimizationJob,
+} from "../../src/db/prompt-optimizations";
 import {
 	createTraceEventHandlers,
 	streamTraceEvents,
@@ -96,6 +106,109 @@ function statusEventIds(body: string): string[] {
 		.filter((id): id is string => id !== undefined);
 }
 
+async function seedExecutionExperiment(pool: Pool) {
+	const organizationId = randomUUID();
+	const projectId = randomUUID();
+	const actorId = randomUUID();
+	const datasetId = randomUUID();
+	const itemId = randomUUID();
+	const experimentId = randomUUID();
+	const subject = `dispatch-race-${actorId}`;
+	await pool.query(
+		"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Dispatch race', $2)",
+		[organizationId, `dispatch-race-${organizationId}`],
+	);
+	await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+	await pool.query(
+		"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+		[actorId, organizationId, subject],
+	);
+	await pool.query(
+		"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+		[organizationId, subject],
+	);
+	await pool.query(
+		"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, 'dispatch-race-other', 'member')",
+		[organizationId],
+	);
+	await pool.query(
+		"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Dispatch race', $3)",
+		[projectId, organizationId, `dispatch-race-${projectId}`],
+	);
+	await pool.query(
+		"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
+		[projectId, organizationId, subject],
+	);
+	await pool.query(
+		"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, 'dispatch-race-other', 'manager')",
+		[projectId, organizationId],
+	);
+	await pool.query(
+		"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Dispatch race dataset')",
+		[datasetId, projectId],
+	);
+	await pool.query(
+		"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"question\":true}', '{\"answer\":true}')",
+		[itemId, datasetId],
+	);
+	await pool.query(
+		"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
+		[experimentId, projectId, datasetId, actorId],
+	);
+	return {
+		organizationId,
+		projectId,
+		actorId,
+		datasetId,
+		itemId,
+		experimentId,
+		subject,
+		cleanup: async () => {
+			await pool.query(
+				"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+				[projectId],
+			);
+			await pool.query(
+				"DELETE FROM execution_admissions WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query(
+				"DELETE FROM experiment_results WHERE experiment_id = $1",
+				[experimentId],
+			);
+			await pool.query(
+				"DELETE FROM experiment_tasks WHERE experiment_id = $1",
+				[experimentId],
+			);
+			await pool.query("DELETE FROM experiments WHERE id = $1", [experimentId]);
+			await pool.query("DELETE FROM dataset_items WHERE dataset_id = $1", [
+				datasetId,
+			]);
+			await pool.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
+			await pool.query(
+				"UPDATE projects SET status = 'archived' WHERE id = $1",
+				[projectId],
+			);
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+		},
+	};
+}
+
 test.skipIf(!databaseUrl)(
 	"demotion committed while an authorization waits prevents the later write, claim, and finalize",
 	async () => {
@@ -124,12 +237,20 @@ test.skipIf(!databaseUrl)(
 				[organizationId, subject],
 			);
 			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, 'optimization-dispatch-other', 'member')",
+				[organizationId],
+			);
+			await pool.query(
 				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Revocation race', $3)",
 				[projectId, organizationId, `revocation-race-${projectId}`],
 			);
 			await pool.query(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, 'optimization-dispatch-other', 'manager')",
+				[projectId, organizationId],
 			);
 			await pool.query(
 				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Revocation race dataset')",
@@ -895,6 +1016,444 @@ test.skipIf(!databaseUrl)(
 			);
 			await pool.query("DELETE FROM experiments WHERE id = $1", [experimentId]);
 			await pool.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1",
+				[organizationId],
+			);
+			await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
+				actorId,
+			]);
+			await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+			await pool.query("DELETE FROM organizations WHERE id = $1", [
+				organizationId,
+			]);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revocation committed between evaluation validation and dispatch claim prevents provider and ClickHouse writer calls",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const revoker = await pool.connect();
+		const fixture = await seedExecutionExperiment(pool);
+		const validated = deferred();
+		const releaseClaim = deferred();
+		let paused = false;
+		let providerCalls = 0;
+		let traceCalls = 0;
+		try {
+			const deps = {
+				pool: () => pool,
+				updateExperiment,
+				claimTask: claimExperimentTask,
+				completeExperiment: completeExperimentIfTasksFinished,
+				nextTaskRetryDelay: async () => null,
+				waitForTaskRetry: async () => {},
+				finalizeTask: finalizeExperimentTask,
+				admitExecution: admitExperimentExecution,
+				isAdmissionActive: async (
+					db: Parameters<typeof experimentExecutionAdmissionIsActive>[0],
+					input: Parameters<typeof experimentExecutionAdmissionIsActive>[1],
+				) => {
+					const active = await experimentExecutionAdmissionIsActive(db, input);
+					if (!paused) {
+						paused = true;
+						validated.resolve();
+						await releaseClaim.promise;
+					}
+					return active;
+				},
+				claimExecution: claimExperimentExecution,
+				cancelAdmission: cancelExecutionAdmission,
+				completeAdmission: completeExecutionAdmission,
+				invokeLlm: async () => {
+					providerCalls += 1;
+					return { output: { answer: true }, model: "test" };
+				},
+				trace: async () => {
+					traceCalls += 1;
+				},
+			} as unknown as ExperimentDependencies;
+			const executing = executeExperiment(deps, {
+				project_id: fixture.projectId,
+				experiment_id: fixture.experimentId,
+				dataset_id: fixture.datasetId,
+				config: {},
+			});
+			await validated.promise;
+			await revoker.query("BEGIN");
+			await revoker.query(
+				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+				[fixture.projectId, fixture.subject],
+			);
+			await revoker.query("COMMIT");
+			releaseClaim.resolve();
+			await executing;
+
+			expect(providerCalls).toBe(0);
+			expect(traceCalls).toBe(0);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+		} finally {
+			releaseClaim.resolve();
+			await revoker.query("ROLLBACK").catch(() => {});
+			revoker.release();
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"an evaluation dispatch claim that commits first is cancelled after revocation and suppresses later persistence",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedExecutionExperiment(pool);
+		const providerEntered = deferred();
+		const providerAborted = deferred();
+		let aborted = false;
+		try {
+			const deps = {
+				pool: () => pool,
+				updateExperiment,
+				claimTask: claimExperimentTask,
+				completeExperiment: completeExperimentIfTasksFinished,
+				nextTaskRetryDelay: async () => null,
+				waitForTaskRetry: async () => {},
+				finalizeTask: finalizeExperimentTask,
+				admitExecution: admitExperimentExecution,
+				isAdmissionActive: experimentExecutionAdmissionIsActive,
+				claimExecution: claimExperimentExecution,
+				cancelAdmission: cancelExecutionAdmission,
+				completeAdmission: completeExecutionAdmission,
+				invokeLlm: async (
+					_input: unknown,
+					_config: unknown,
+					signal: AbortSignal,
+				) => {
+					providerEntered.resolve();
+					await new Promise<void>((resolve) => {
+						signal.addEventListener(
+							"abort",
+							() => {
+								aborted = true;
+								providerAborted.resolve();
+								resolve();
+							},
+							{ once: true },
+						);
+					});
+					return { output: { answer: "late" }, model: "test" };
+				},
+				trace: async () => {
+					throw new Error("a cancelled provider must not reach tracing");
+				},
+			} as unknown as ExperimentDependencies;
+			const executing = executeExperiment(deps, {
+				project_id: fixture.projectId,
+				experiment_id: fixture.experimentId,
+				dataset_id: fixture.datasetId,
+				config: {},
+			});
+			await providerEntered.promise;
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_admission_claims WHERE effect = 'provider_dispatch' AND admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+			await pool.query(
+				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+				[fixture.projectId, fixture.subject],
+			);
+			await Promise.race([
+				providerAborted.promise,
+				Bun.sleep(1_500).then(() => {
+					throw new Error("revocation did not abort the dispatched provider");
+				}),
+			]);
+			await executing;
+
+			expect(aborted).toBe(true);
+			expect(
+				(
+					await pool.query(
+						"SELECT status FROM execution_admission_claims WHERE effect = 'provider_dispatch' AND admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+						[fixture.projectId],
+					)
+				).rows[0]?.status,
+			).toBe("cancelled");
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM experiment_results WHERE experiment_id = $1",
+						[fixture.experimentId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revocation committed before the trace-write claim suppresses the mocked ClickHouse writer",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const revoker = await pool.connect();
+		const fixture = await seedExecutionExperiment(pool);
+		const traceValidated = deferred();
+		const releaseTraceClaim = deferred();
+		let checks = 0;
+		let traceCalls = 0;
+		try {
+			const deps = {
+				pool: () => pool,
+				updateExperiment,
+				claimTask: claimExperimentTask,
+				completeExperiment: completeExperimentIfTasksFinished,
+				nextTaskRetryDelay: async () => null,
+				waitForTaskRetry: async () => {},
+				finalizeTask: finalizeExperimentTask,
+				admitExecution: admitExperimentExecution,
+				isAdmissionActive: async (
+					db: Parameters<typeof experimentExecutionAdmissionIsActive>[0],
+					input: Parameters<typeof experimentExecutionAdmissionIsActive>[1],
+				) => {
+					const active = await experimentExecutionAdmissionIsActive(db, input);
+					checks += 1;
+					if (checks === 3) {
+						traceValidated.resolve();
+						await releaseTraceClaim.promise;
+					}
+					return active;
+				},
+				claimExecution: claimExperimentExecution,
+				cancelAdmission: cancelExecutionAdmission,
+				completeAdmission: completeExecutionAdmission,
+				invokeLlm: async () => ({
+					output: { answer: true },
+					model: "test",
+				}),
+				trace: async () => {
+					traceCalls += 1;
+				},
+			} as unknown as ExperimentDependencies;
+			const executing = executeExperiment(deps, {
+				project_id: fixture.projectId,
+				experiment_id: fixture.experimentId,
+				dataset_id: fixture.datasetId,
+				config: {},
+			});
+			await traceValidated.promise;
+			await revoker.query("BEGIN");
+			await revoker.query(
+				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+				[fixture.projectId, fixture.subject],
+			);
+			await revoker.query("COMMIT");
+			releaseTraceClaim.resolve();
+			await executing;
+
+			expect(traceCalls).toBe(0);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_admission_claims WHERE effect = 'trace_write' AND admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+		} finally {
+			releaseTraceClaim.resolve();
+			await revoker.query("ROLLBACK").catch(() => {});
+			revoker.release();
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"a revocation committed between optimization validation and dispatch claim prevents worker execution",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const revoker = await pool.connect();
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const actorId = randomUUID();
+		const promptId = randomUUID();
+		const jobId = randomUUID();
+		const subject = `optimization-dispatch-${actorId}`;
+		const validated = deferred();
+		const releaseClaim = deferred();
+		let paused = false;
+		let workerCalls = 0;
+		const job: OptimizationJob = {
+			id: jobId,
+			project_id: projectId,
+			prompt_id: promptId,
+			prompt_slug: "dispatch-race",
+			source_version: 1,
+			target: "system",
+			evaluator: { type: "default_adapter" },
+			dataset: {
+				version: 1,
+				rubric: "race test",
+				training_examples: [{ input: "input", answer: "answer" }],
+				validation_examples: [{ input: "held out", answer: "answer" }],
+			},
+			dataset_hash: "a".repeat(64),
+			model_config: { task_lm: "task", reflection_lm: "reflection" },
+			budget: { max_metric_calls: 1 },
+			status: "queued",
+			requested_by: subject,
+			result_version: null,
+			candidate_content: null,
+			evidence: null,
+			promotion_status: "pending",
+			promotion_reason: null,
+			reviewed_by: null,
+			promoted_at: null,
+			error_message: null,
+			metric_calls_used: null,
+			created_at: "2026-08-11T00:00:00.000Z",
+			updated_at: "2026-08-11T00:00:00.000Z",
+			completed_at: null,
+		};
+		try {
+			await pool.query(
+				"INSERT INTO organizations (id, name, slug) VALUES ($1, 'Optimization dispatch race', $2)",
+				[organizationId, `optimization-dispatch-${organizationId}`],
+			);
+			await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+			await pool.query(
+				"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+				[actorId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+				[organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Optimization dispatch race', $3)",
+				[projectId, organizationId, `optimization-dispatch-${projectId}`],
+			);
+			await pool.query(
+				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
+				[projectId, organizationId, subject],
+			);
+			await pool.query(
+				"INSERT INTO prompts (id, project_id, name, slug) VALUES ($1, $2, 'Dispatch race prompt', 'dispatch-race')",
+				[promptId, projectId],
+			);
+			await pool.query(
+				'INSERT INTO prompt_optimization_jobs (id, project_id, prompt_id, prompt_slug, source_version, target_role, source_messages, evaluator, examples, dataset, dataset_hash, model_config, budget, status, requested_by) VALUES ($1, $2, $3, \'dispatch-race\', 1, \'system\', \'[{"role":"system","content":"Summarize"}]\'::jsonb, \'{}\'::jsonb, \'[]\'::jsonb, $4::jsonb, $5, \'{"task_lm":"task","reflection_lm":"reflection"}\'::jsonb, \'{"max_metric_calls":1}\'::jsonb, \'queued\', $6)',
+				[
+					jobId,
+					projectId,
+					promptId,
+					JSON.stringify(job.dataset),
+					job.dataset_hash,
+					subject,
+				],
+			);
+			const deps = {
+				pool: () => pool,
+				claim: claimOptimizationJob,
+				transition: transitionOptimizationJob,
+				sourceMessages: async () => [
+					{ role: "system" as const, content: "Summarize" },
+				],
+				admitExecution: admitOptimizationExecution,
+				isAdmissionActive: async (
+					db: Parameters<typeof optimizationExecutionAdmissionIsActive>[0],
+					input: Parameters<typeof optimizationExecutionAdmissionIsActive>[1],
+				) => {
+					const active = await optimizationExecutionAdmissionIsActive(
+						db,
+						input,
+					);
+					if (!paused) {
+						paused = true;
+						validated.resolve();
+						await releaseClaim.promise;
+					}
+					return active;
+				},
+				claimExecution: claimOptimizationExecution,
+				cancelAdmission: cancelExecutionAdmission,
+				completeAdmission: completeExecutionAdmission,
+				cancelExecution: async () => {},
+				renew: async () => true,
+				worker: async () => {
+					workerCalls += 1;
+					return {
+						candidate: "Summarize safely.",
+						training_score: 1,
+						validation_score: 1,
+						baseline_validation_score: 0,
+						metric_calls_used: 1,
+					};
+				},
+			} as unknown as OptimizationDependencies;
+			const running = runOptimizationJob(job, deps);
+			await validated.promise;
+			await revoker.query("BEGIN");
+			await revoker.query(
+				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
+				[projectId, subject],
+			);
+			await revoker.query("COMMIT");
+			releaseClaim.resolve();
+			await running;
+
+			expect(workerCalls).toBe(0);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+						[projectId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+		} finally {
+			releaseClaim.resolve();
+			await revoker.query("ROLLBACK").catch(() => {});
+			revoker.release();
+			await pool.query(
+				"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+				[projectId],
+			);
+			await pool.query(
+				"DELETE FROM execution_admissions WHERE project_id = $1",
+				[projectId],
+			);
+			await pool.query("DELETE FROM prompt_optimization_jobs WHERE id = $1", [
+				jobId,
+			]);
+			await pool.query("DELETE FROM prompts WHERE id = $1", [promptId]);
+			await pool.query(
+				"UPDATE projects SET status = 'archived' WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],

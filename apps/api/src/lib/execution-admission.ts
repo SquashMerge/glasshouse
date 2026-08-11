@@ -28,12 +28,19 @@ export function executionAdmissionPollMs(): number {
 export async function invokeWithExecutionAdmission<T>(input: {
 	parentSignal?: AbortSignal;
 	isActive: () => Promise<boolean>;
+	claimDispatch: () => Promise<boolean>;
 	cancel: () => Promise<void>;
 	invoke: (signal: AbortSignal) => Promise<T>;
 	timeoutMs?: number;
 	pollMs?: number;
 }): Promise<{ admitted: true; value: T } | { admitted: false }> {
 	if (input.parentSignal?.aborted || !(await input.isActive())) {
+		await input.cancel();
+		return { admitted: false };
+	}
+	// This commit is the remote-dispatch linearization point. It is deliberately
+	// separate from validation so a concurrent revocation can win before invoke.
+	if (input.parentSignal?.aborted || !(await input.claimDispatch())) {
 		await input.cancel();
 		return { admitted: false };
 	}

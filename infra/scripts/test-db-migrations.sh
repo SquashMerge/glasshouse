@@ -68,6 +68,12 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
   UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun run --cwd "$ROOT/apps/api" db:migrate
 
+# These races require two live PostgreSQL connections. Keeping them here makes
+# the revocation linearization checks mandatory in the Docker-backed CI job.
+DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
+  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+  bun test --cwd "$ROOT/apps/api" tests/integration/authorization-revocation-serialization.test.ts
+
 run_uuid_advisory_serialization_check() {
   local project_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
   local organization_id="00000000-0000-4000-8000-000000000001"
@@ -284,6 +290,9 @@ for migration in "$ROOT"/infra/db/migrations/*.sql; do
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" < "$migration"
 done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0044.fixture.sql"
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" \
   < "$ROOT/infra/db/migrations/0044_execution_admission_cancellation.sql"

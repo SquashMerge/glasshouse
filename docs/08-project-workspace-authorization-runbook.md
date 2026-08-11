@@ -57,30 +57,36 @@ persist a result, write an evaluation trace, complete, or resume after restart.
 No manual replay is required or supported for these cancelled runs; submit a new
 experiment after restoring appropriate execute access.
 
-Migrations `0043_authorization_revocation_fence.sql` and
-`0044_execution_admission_cancellation.sql` serialize Project and organization
+Migrations `0043_authorization_revocation_fence.sql`,
+`0044_execution_admission_cancellation.sql`, and
+`0045_execution_admission_effect_claims.sql` serialize Project and organization
 membership changes with authorization-sensitive work. Authorization paths lock
 organization membership, Project membership, then the Project row: PostgreSQL
 membership updates necessarily acquire their row lock before trigger code can
 take the Project fence, so this shared order prevents an inverse-order deadlock.
 An execution admission is committed under that short fence with the current
-Project epoch, requester, and expiry. Revocation, demotion, or archive increments
-or invalidates the epoch and atomically cancels affected admissions, tasks, and
-jobs. Workers poll admission state and use `AbortSignal` deadlines for provider
-calls; they recheck it before metrics, results, traces, and finalization. Do not
-hold a database authorization lock during a provider call.
+Project epoch, requester, and expiry. After validation, a provider dispatch and
+each trace, metric, result, or lifecycle-event write commits its own bounded
+effect claim under the same fence. That committed claim is the logical admission
+linearization point: if revocation/archive wins first, no provider or writer is
+called; if a claim wins first, revocation cancels the admission, its claims, and
+local work. Do not hold a database authorization lock during a provider call.
 
 Every authenticated SSE frame, including connection comments, snapshots, data,
 heartbeats, statuses, and errors, takes a new bounded authorization fence through
 write settlement. `SSE_FRAME_WRITE_TIMEOUT_MS` defaults to 5000 ms (accepted
-range 100-60000 ms); a timeout, write error, backpressure, or disconnect closes
-the stream and releases the frame fence. `EXECUTION_ADMISSION_TIMEOUT_MS` defaults
+range 100-60000 ms); `SSE_MAX_PENDING_FRAMES` defaults to 32 (1-256), and
+`SSE_MAX_PENDING_BYTES` defaults to 65536 (1024-1048576). The active write counts
+toward both queue limits; overflow, timeout, write error, backpressure, or
+disconnect closes the stream, drops all queued frames, and releases the fence.
+`EXECUTION_ADMISSION_TIMEOUT_MS` defaults
 to 30000 ms (accepted range 1000-300000 ms) and
 `EXECUTION_ADMISSION_POLL_MS` defaults to 250 ms (accepted range 50-5000 ms).
-These limits bound Astraea-side cancellation. A provider invocation already
-dispatched before a membership change commits can still have a remote side effect;
-PostgreSQL cannot atomically undo that remote request. Astraea cancels local work
-and prevents any later results, traces, metrics, or finalization from persisting.
+These limits bound Astraea-side cancellation. The effect claim is a logical
+PostgreSQL decision, not a distributed transaction: a provider or ClickHouse
+write whose claim committed before revocation can still have a remote side effect.
+PostgreSQL cannot undo that request, but Astraea cancels local work and suppresses
+all effects that have not already won their own claim.
 
 ## Operations
 

@@ -7,7 +7,9 @@ import {
 } from "./project-authorization.js";
 import {
 	createExecutionAdmission,
+	claimExecutionAdmission,
 	executionAdmissionIsActive,
+	type ExecutionAdmissionEffect,
 	type ExecutionAdmission,
 } from "./execution-admissions.js";
 
@@ -461,9 +463,10 @@ export async function finalizeExperimentTask(
 			}
 			if (
 				input.admission_id &&
-				!(await executionAdmissionIsActive(client, {
+				!(await claimExecutionAdmission(client, {
 					id: input.admission_id,
 					project_id: access.project_id,
+					effect: "result_write",
 				}))
 			) {
 				await cancelRevokedExperiment(client, input.experiment_id);
@@ -659,6 +662,33 @@ export async function experimentExecutionAdmissionIsActive(
 			return executionAdmissionIsActive(client, {
 				id: input.admission_id,
 				project_id: access.project_id,
+			});
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function claimExperimentExecution(
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		admission_id: string;
+		effect: ExecutionAdmissionEffect;
+	},
+): Promise<boolean> {
+	try {
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, input);
+			if (!access?.authorized) {
+				if (access) await cancelRevokedExperiment(client, input.id);
+				return false;
+			}
+			return claimExecutionAdmission(client, {
+				id: input.admission_id,
+				project_id: access.project_id,
+				effect: input.effect,
 			});
 		});
 	} catch (cause) {

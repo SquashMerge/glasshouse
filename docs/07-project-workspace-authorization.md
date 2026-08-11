@@ -72,17 +72,17 @@ Project User safeguard inherited from the compatibility manager record.
    persistence, tracing, completion, and restart recovery. Revoked, demoted,
     and historical jobs without a durable requester are cancelled safely with
     content-free lifecycle evidence; restore does not revive old jobs automatically.
-    Provider work is admitted by a short, committed PostgreSQL transaction that
-    records the requester, Project authorization epoch, and a bounded expiry.
-    Revocation, demotion, and archival increment/invalidate that epoch and cancel
-    matching admissions and work atomically. No Project or membership lock is held
-    while calling a provider. Workers poll and recheck an active admission before
-    dispatch, metrics, result persistence, tracing, finalization, and recovery;
-    cancellation aborts local work within the configured bound and prevents
-    follow-on Astraea writes. A remote provider may still observe an invocation
-    already dispatched before the revocation transaction linearizes. That external
-    side effect cannot be atomically rolled back with PostgreSQL and is the explicit
-    boundary of this guarantee.
+     Provider work is admitted by a short, committed PostgreSQL transaction that
+     records the requester, Project authorization epoch, and a bounded expiry.
+     A second durable effect claim commits after validation and before each provider
+     dispatch, trace, metric, result, or lifecycle-event write. The effect-claim
+     commit is the logical linearization point: revocation that wins first permits
+     no call; a claim that wins first is cancelled and locally aborted by later
+     revocation. No Project or membership lock is held while calling a provider.
+     The claim is not physical atomicity with a provider or ClickHouse, so a remote
+     side effect can still occur when its claim committed first; it cannot be rolled
+     back by PostgreSQL. Astraea suppresses every effect that has not won its own
+     claim and cancels local follow-on work.
 7. **Audit policy:** lifecycle and membership audit records are append-only,
 content-free PostgreSQL metadata. In strict mode they are visible to an Admin,
 User, or Read-only actor only for an active, explicitly granted Project; archived
@@ -100,9 +100,10 @@ mode, preserving prior Basic Auth effective access; strict enforcement is enable
     clean. Strict mode never grants access beyond the legacy assignment.
 9. **SSE frame delivery:** every authenticated SSE comment, snapshot, data,
     heartbeat, status, and error frame is serialized through a bounded current
-    membership/Project revalidation fence. A timeout, write error, backpressure,
-    or client cancellation closes the stream and releases its exact frame fence;
-    a later queued frame always makes a new authorization decision.
+     membership/Project revalidation fence. The active frame plus queued frames are
+     capped by `SSE_MAX_PENDING_FRAMES` (default 32) and `SSE_MAX_PENDING_BYTES`
+     (default 65536); overflow, timeout, write error, backpressure, or client
+     cancellation closes the stream, drops queued frames, and releases its fence.
 
 ## In scope
 
