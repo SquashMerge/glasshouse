@@ -2,7 +2,7 @@
 //
 // Honest split:
 // - Coverage in unit tests (apps/web/tests/unit/observability-traces-detail.test.tsx): Stream toggle, ?span= deep-link, snapshot→stream merge, invalid-id gate.
-// - Coverage here (e2e): the live ingestion path requires a running apps/api + matched UI_USERNAME/UI_PASSWORD + a seeded dataset. Each case gates on envReady(); see slice brief §Test plan for the manual walkthrough when envReady is false.
+// - Coverage here (e2e): a bounded live detail-SSE probe uses the authenticated API path; the 5k browser stream-consumer/rendering fixture intercepts only its detail SSE response. Each case gates on envReady(); see slice brief §Test plan for the manual walkthrough when envReady is false.
 //
 // When envReady() returns false the test skips with a clear reason rather than passing on a swallowed assertion.
 //
@@ -168,6 +168,13 @@ function eventStreamRequest(pathname: string) {
 	};
 }
 
+function traceDetailEventStreamUrl(traceId: string) {
+	const pathname = `/v1/traces/${traceId}/events`;
+	return (url: URL) =>
+		url.pathname === pathname &&
+		url.searchParams.get("project_id") === E2E_PROJECT_ID;
+}
+
 async function postTrace(
 	request: APIRequestContext,
 	payload: Record<string, unknown>,
@@ -184,6 +191,86 @@ async function postTrace(
 		res.status(),
 		`OTLP ingest should accept payload, got ${res.status()}`,
 	).toBeLessThan(300);
+}
+
+const BROWSER_STREAM_FIXTURE_TRACE_ID = "feedfacefeedfacefeedfacefeedface";
+const BROWSER_STREAM_FIXTURE_ROOT_ID = "browser-fixture-root";
+const BROWSER_STREAM_FIXTURE_ROOT_NAME = "browser fixture root";
+const BROWSER_STREAM_FIXTURE_FIRST_CHILD_ID = "browser-fixture-child-0001";
+const BROWSER_STREAM_FIXTURE_LAST_CHILD_ID = "browser-fixture-child-4999";
+
+function browserStreamFixtureObservation(
+	observationId: string,
+	name: string,
+	parentObservationId: string | null,
+) {
+	return {
+		observation_id: observationId,
+		trace_id: BROWSER_STREAM_FIXTURE_TRACE_ID,
+		project_id: E2E_PROJECT_ID,
+		parent_observation_id: parentObservationId,
+		type: "span" as const,
+		name,
+		start_time: "2026-08-11T00:00:00.000Z",
+		end_time: "2026-08-11T00:00:00.010Z",
+		duration_ms: 10,
+		status: "ok" as const,
+		model: null,
+		input_text: "",
+		output_text: "",
+		metadata: { schema_version: 1, attributes: [], prompt_provenance: null },
+	};
+}
+
+function sseFrame(event: string, data: unknown): string {
+	return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function browserStreamConsumerFixture(): string {
+	const root = browserStreamFixtureObservation(
+		BROWSER_STREAM_FIXTURE_ROOT_ID,
+		BROWSER_STREAM_FIXTURE_ROOT_NAME,
+		null,
+	);
+	const parts = [
+		":ok\n\n",
+		sseFrame("snapshot", {
+			trace: {
+				trace_id: BROWSER_STREAM_FIXTURE_TRACE_ID,
+				project_id: E2E_PROJECT_ID,
+				name: "browser stream-consumer fixture",
+				start_time: "2026-08-11T00:00:00.000Z",
+				end_time: "2026-08-11T00:00:00.010Z",
+				duration_ms: 10,
+				status: "ok",
+				user_id: "",
+				session_id: "",
+				agent_id: "",
+				agent_version: "",
+				env: "test",
+				tags: [],
+				input_text: "",
+				output_text: "",
+				scores_summary: "{}",
+			},
+			observations: [root],
+		}),
+	];
+
+	for (let index = 1; index < 5_000; index += 1) {
+		const suffix = index.toString().padStart(4, "0");
+		parts.push(
+			sseFrame("observation", {
+				observation: browserStreamFixtureObservation(
+					`browser-fixture-child-${suffix}`,
+					`browser fixture child ${suffix}`,
+					BROWSER_STREAM_FIXTURE_ROOT_ID,
+				),
+			}),
+		);
+	}
+	parts.push(sseFrame("status", { status: "complete" }));
+	return parts.join("");
 }
 
 /**
@@ -372,62 +459,39 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		await expect(toggle).toHaveAttribute("aria-checked", "true");
 	});
 
-	test("release gate: browser renders a 5k-observation trace with stable row selectors", async ({
+	test("authenticated detail SSE delivers a live child for selection and collapse", async ({
 		page,
 		request,
 	}) => {
-		test.slow();
 		if (!(await envReady())) {
 			test.skip(
 				true,
-				"Requires live API + seeded browser auth for the 5k trace-detail release gate.",
+				"Requires live API + seeded browser auth for the detail-SSE probe.",
 			);
 			return;
 		}
 
 		const traceId = hex(16);
 		const rootSpanId = hex(8);
-		const traceName = `release-gate-5k-${Date.now()}`;
-		// Keep the snapshot below the 1 MiB SSE-frame limit: open the detail page
-		// after the root span exists, then deliver the other rows as the endpoint's
-		// normal incremental `observation` events.
+		const traceName = `detail-sse-probe-${Date.now()}`;
 		await postTrace(
 			request,
 			buildTracePayload(traceId, rootSpanId, 1, traceName),
 		);
 		await login(page);
+		const detailStream = page.waitForRequest(
+			eventStreamRequest(`/v1/traces/${traceId}/events`),
+		);
 		await page.goto(`/observability/traces/${traceId}`);
+		await detailStream;
 
 		const rows = page.getByTestId("span-row");
-		const workspace = page.getByTestId("trace-workspace");
 		await expect(rows).toHaveCount(1, { timeout: 10_000 });
-		// Stay below the authorized SSE queue cap and wait for every delivery.
-		const observationsPerChunk = 24;
-		for (
-			let startIndex = 1;
-			startIndex < 5_000;
-			startIndex += observationsPerChunk
-		) {
-			const expectedRows = Math.min(5_000, startIndex + observationsPerChunk);
-			await postTrace(
-				request,
-				buildTracePayload(
-					traceId,
-					rootSpanId,
-					expectedRows - startIndex,
-					traceName,
-					startIndex,
-				),
-			);
-			await expect(workspace).toHaveAttribute(
-				"data-row-count",
-				String(expectedRows),
-				{ timeout: 10_000 },
-			);
-		}
-		await expect(workspace).toHaveAttribute("data-row-count", "5000", {
-			timeout: 45_000,
-		});
+		await postTrace(
+			request,
+			buildTracePayload(traceId, rootSpanId, 1, traceName, 1),
+		);
+		await expect(rows).toHaveCount(2, { timeout: 10_000 });
 
 		const root = page.locator(
 			`[data-testid="span-row"][data-observation-id="${rootSpanId}"]`,
@@ -444,8 +508,81 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		await expect(root).toHaveAttribute("aria-expanded", "false", {
 			timeout: 10_000,
 		});
+		await expect(rows).toHaveCount(1);
 
 		await expect(root).toHaveAttribute("data-observation-id", rootSpanId);
 		await expect(page.getByTestId("span-tree")).toHaveAttribute("role", "tree");
+	});
+
+	test("browser stream-consumer/rendering fixture: renders a 5k-observation trace with stable row selectors", async ({
+		page,
+	}) => {
+		test.slow();
+		if (!(await envReady())) {
+			test.skip(
+				true,
+				"Requires live API + browser auth; only the trace-detail SSE response is intercepted.",
+			);
+			return;
+		}
+
+		await login(page);
+		let interceptedDetailRequests = 0;
+		await page.route(
+			traceDetailEventStreamUrl(BROWSER_STREAM_FIXTURE_TRACE_ID),
+			async (route) => {
+				interceptedDetailRequests += 1;
+				await route.fulfill({
+					status: 200,
+					contentType: "text/event-stream",
+					headers: {
+						"cache-control": "no-cache",
+						"x-accel-buffering": "no",
+					},
+					body: browserStreamConsumerFixture(),
+				});
+			},
+		);
+		await page.goto(`/observability/traces/${BROWSER_STREAM_FIXTURE_TRACE_ID}`);
+
+		const rows = page.getByTestId("span-row");
+		const workspace = page.getByTestId("trace-workspace");
+		await expect(workspace).toHaveAttribute("data-row-count", "5000", {
+			timeout: 45_000,
+		});
+
+		const root = page.locator(
+			`[data-testid="span-row"][data-observation-id="${BROWSER_STREAM_FIXTURE_ROOT_ID}"]`,
+		);
+		const firstChild = page.locator(
+			`[data-testid="span-row"][data-observation-id="${BROWSER_STREAM_FIXTURE_FIRST_CHILD_ID}"]`,
+		);
+		const lastChild = page.locator(
+			`[data-testid="span-row"][data-observation-id="${BROWSER_STREAM_FIXTURE_LAST_CHILD_ID}"]`,
+		);
+		await expect(root).toHaveAttribute(
+			"data-observation-id",
+			BROWSER_STREAM_FIXTURE_ROOT_ID,
+		);
+		await expect(lastChild).toHaveAttribute(
+			"data-observation-id",
+			BROWSER_STREAM_FIXTURE_LAST_CHILD_ID,
+		);
+		await firstChild.click({ timeout: 10_000 });
+		await expect(firstChild).toHaveAttribute("data-selected", "true", {
+			timeout: 10_000,
+		});
+
+		await root
+			.getByRole("button", {
+				name: `Collapse ${BROWSER_STREAM_FIXTURE_ROOT_NAME}`,
+			})
+			.click({ timeout: 10_000 });
+		await expect(root).toHaveAttribute("aria-expanded", "false", {
+			timeout: 10_000,
+		});
+		await expect(rows).toHaveCount(1);
+		await expect(page.getByTestId("span-tree")).toHaveAttribute("role", "tree");
+		expect(interceptedDetailRequests).toBe(1);
 	});
 });

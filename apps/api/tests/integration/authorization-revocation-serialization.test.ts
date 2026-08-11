@@ -1148,6 +1148,7 @@ test.skipIf(!databaseUrl)(
 				finalizeTask: finalizeExperimentTask,
 				admitExecution: admitExperimentExecution,
 				isAdmissionActive: experimentExecutionAdmissionIsActive,
+				claimExecution: claimExperimentExecution,
 				cancelAdmission: cancelExecutionAdmission,
 				completeAdmission: completeExecutionAdmission,
 				invokeLlm: async () => {
