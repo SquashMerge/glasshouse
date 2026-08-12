@@ -38,6 +38,29 @@ VALUES
     ('49000000-0000-4000-8000-000000000003', '49000000-0000-4000-8000-000000000001', 'cancellation-matched-user', 'manager'),
     ('49000000-0000-4000-8000-000000000003', '49000000-0000-4000-8000-000000000001', 'cancellation-unmapped-user', 'manager');
 
+INSERT INTO datasets (id, project_id, name)
+VALUES (
+    '49000000-0000-4000-8000-000000000010',
+    '49000000-0000-4000-8000-000000000003',
+    'Cancellation Identity Dataset'
+);
+INSERT INTO dataset_items (id, dataset_id, input, expected_output)
+VALUES (
+    '49000000-0000-4000-8000-000000000011',
+    '49000000-0000-4000-8000-000000000010',
+    '{"input":"cancellation"}'::jsonb,
+    '{"output":"cancellation"}'::jsonb
+);
+INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id)
+VALUES (
+    '49000000-0000-4000-8000-000000000012',
+    '49000000-0000-4000-8000-000000000003',
+    '49000000-0000-4000-8000-000000000010',
+    '{}'::jsonb,
+    'running',
+    '49000000-0000-4000-8000-000000000004'
+);
+
 INSERT INTO prompts (id, project_id, name, slug)
 VALUES (
     '49000000-0000-4000-8000-000000000005',
@@ -78,6 +101,19 @@ INSERT INTO execution_admissions (
     '49000000-0000-4000-8000-000000000004',
     'optimization',
     '49000000-0000-4000-8000-000000000006',
+    1,
+    now() + interval '1 minute'
+);
+INSERT INTO execution_admissions (
+    id, organization_id, project_id, requester_actor_id, work_kind, work_id,
+    authorization_epoch, expires_at
+) VALUES (
+    '49000000-0000-4000-8000-000000000013',
+    '49000000-0000-4000-8000-000000000001',
+    '49000000-0000-4000-8000-000000000003',
+    '49000000-0000-4000-8000-000000000004',
+    'experiment_task',
+    (SELECT id FROM experiment_tasks WHERE experiment_id = '49000000-0000-4000-8000-000000000012'),
     1,
     now() + interval '1 minute'
 );

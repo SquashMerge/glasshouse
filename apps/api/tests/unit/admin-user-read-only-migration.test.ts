@@ -48,6 +48,13 @@ const executionAdmissionFixture = readFileSync(
 	),
 	"utf8",
 );
+const executionAdmissionAssertion = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0044.assert.sql",
+	),
+	"utf8",
+);
 const durableEffectsFixture = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -411,6 +418,28 @@ test("repairs execution cancellation with the durable Basic Auth actor identity"
 	expect(migrationHarness).toContain("UPGRADE_0049_DATABASE");
 	expect(migrationHarness).toContain("test-db-migrations-0049.fixture.sql");
 	expect(migrationHarness).toContain("test-db-migrations-0049.assert.sql");
+});
+
+test("keeps historical 0044 replay free of broken cancellation DML", () => {
+	expect(executionAdmissionAssertion).not.toMatch(
+		/\b(?:INSERT|UPDATE|DELETE|PERFORM)\b/,
+	);
+});
+
+test("covers cancellation behavior after 0049 resolves the requester actor ID", () => {
+	expect(cancellationIdentityRepairMigration).toContain(
+		"target_actor_id IS NOT NULL\n                  AND basic_auth_identity_matches(\n                      target_organization_id,\n                      job.requested_by,\n                      target_actor_id",
+	);
+	for (const message of [
+		"0049 unmapped membership revocation cancelled another actor work",
+		"0049 mapped membership revocation did not cancel matching experiment work",
+		"0049 mapped membership revocation did not cancel matching optimization work",
+		"0049 project archive did not cancel all remaining work",
+	])
+		expect(cancellationIdentityRepairAssertion).toContain(message);
+	expect(cancellationIdentityRepairAssertion).toContain(
+		"FROM experiment_tasks",
+	);
 });
 
 test("preserves only organization-scoped role migration project-null records", () => {

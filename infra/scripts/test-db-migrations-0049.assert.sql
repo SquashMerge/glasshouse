@@ -2,24 +2,51 @@ DO $$
 DECLARE
     repair_organization_id UUID := '49000000-0000-4000-8000-000000000001';
     repair_project_id UUID := '49000000-0000-4000-8000-000000000003';
+    matched_experiment_id UUID := '49000000-0000-4000-8000-000000000012';
     matched_job_id UUID := '49000000-0000-4000-8000-000000000006';
     archive_job_id UUID := '49000000-0000-4000-8000-000000000008';
+    initial_epoch BIGINT;
+    unmapped_epoch BIGINT;
+    mapped_epoch BIGINT;
 BEGIN
+    SELECT authorization_epoch INTO initial_epoch
+    FROM projects
+    WHERE id = repair_project_id;
+
     UPDATE project_memberships
     SET role = 'member'
     WHERE project_id = repair_project_id
       AND actor_subject = 'cancellation-unmapped-user';
 
+    SELECT authorization_epoch INTO unmapped_epoch
+    FROM projects
+    WHERE id = repair_project_id;
+    IF unmapped_epoch <> initial_epoch + 1 THEN
+        RAISE EXCEPTION '0049 unmapped membership revocation did not increment the project authorization epoch';
+    END IF;
     IF EXISTS (
         SELECT 1
         FROM execution_admissions
-        WHERE id = '49000000-0000-4000-8000-000000000007'
+        WHERE id IN (
+            '49000000-0000-4000-8000-000000000007',
+            '49000000-0000-4000-8000-000000000013'
+        )
           AND status <> 'active'
     ) OR EXISTS (
         SELECT 1
         FROM prompt_optimization_jobs
         WHERE id = matched_job_id
           AND status <> 'optimizing'
+    ) OR EXISTS (
+        SELECT 1
+        FROM experiment_tasks
+        WHERE experiment_id = matched_experiment_id
+          AND status <> 'pending'
+    ) OR EXISTS (
+        SELECT 1
+        FROM experiments
+        WHERE id = matched_experiment_id
+          AND status <> 'running'
     ) THEN
         RAISE EXCEPTION '0049 unmapped membership revocation cancelled another actor work';
     END IF;
@@ -29,12 +56,37 @@ BEGIN
     WHERE project_id = repair_project_id
       AND actor_subject = 'cancellation-matched-user';
 
+    SELECT authorization_epoch INTO mapped_epoch
+    FROM projects
+    WHERE id = repair_project_id;
+    IF mapped_epoch <> unmapped_epoch + 1 THEN
+        RAISE EXCEPTION '0049 mapped membership revocation did not increment the project authorization epoch';
+    END IF;
     IF EXISTS (
         SELECT 1
         FROM execution_admissions
-        WHERE id = '49000000-0000-4000-8000-000000000007'
+        WHERE id IN (
+            '49000000-0000-4000-8000-000000000007',
+            '49000000-0000-4000-8000-000000000013'
+        )
           AND status <> 'cancelled'
-    ) OR NOT EXISTS (
+    ) THEN
+        RAISE EXCEPTION '0049 mapped membership revocation did not cancel matching execution admissions';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM experiment_tasks
+        WHERE experiment_id = matched_experiment_id
+          AND status <> 'cancelled'
+    ) OR EXISTS (
+        SELECT 1
+        FROM experiments
+        WHERE id = matched_experiment_id
+          AND status <> 'cancelled'
+    ) THEN
+        RAISE EXCEPTION '0049 mapped membership revocation did not cancel matching experiment work';
+    END IF;
+    IF NOT EXISTS (
         SELECT 1
         FROM prompt_optimization_jobs
         WHERE id = matched_job_id
@@ -47,7 +99,7 @@ BEGIN
           AND status = 'stopped'
           AND detail->>'reason' = 'authorization_revoked'
     ) THEN
-        RAISE EXCEPTION '0049 mapped membership revocation did not cancel matching work';
+        RAISE EXCEPTION '0049 mapped membership revocation did not cancel matching optimization work';
     END IF;
 
     INSERT INTO prompt_optimization_jobs (
@@ -81,7 +133,7 @@ BEGIN
         '49000000-0000-4000-8000-000000000004',
         'optimization',
         archive_job_id,
-        (SELECT authorization_epoch FROM projects WHERE id = repair_project_id),
+        mapped_epoch,
         now() + interval '1 minute'
     );
 
