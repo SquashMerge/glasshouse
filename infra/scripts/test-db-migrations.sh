@@ -338,9 +338,6 @@ docker exec --interactive "$CONTAINER" \
   < "$ROOT/infra/scripts/test-db-migrations-0044.fixture.sql"
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
-  < "$ROOT/infra/scripts/test-db-migrations-0046.fixture.sql"
-docker exec --interactive "$CONTAINER" \
-  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0047.fixture.sql"
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
