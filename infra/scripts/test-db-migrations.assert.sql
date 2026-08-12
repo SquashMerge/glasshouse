@@ -642,6 +642,10 @@ BEGIN
         FROM information_schema.columns
         WHERE table_schema = 'public'
             AND column_name IN ('organization_id', 'project_id')
+            AND (table_name, column_name) NOT IN (
+                ('authorization_role_migration_audit', 'project_id'),
+                ('authorization_role_migration_quarantine', 'project_id')
+            )
             AND is_nullable <> 'NO'
     ) THEN
         RAISE EXCEPTION 'tenant identifier columns must be NOT NULL';

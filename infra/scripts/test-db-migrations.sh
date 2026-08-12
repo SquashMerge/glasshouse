@@ -372,6 +372,47 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0049.assert.sql"
 
+UPGRADE_0050_DATABASE="${POSTGRES_DB}_0050_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0050_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0050.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/db/migrations/0050_authorization_role_migration_quarantine_tenant_scope.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/db/migrations/0050_authorization_role_migration_quarantine_tenant_scope.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0050.assert.sql"
+
+UPGRADE_0050_NULL_ORGANIZATION_DATABASE="${POSTGRES_DB}_0050_null_organization"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0050_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0050-null-organization.fixture.sql"
+if migration_error="$(docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE" \
+  < "$ROOT/infra/db/migrations/0050_authorization_role_migration_quarantine_tenant_scope.sql" 2>&1)"; then
+  echo "0050 migration accepted a quarantine record without organization scope" >&2
+  exit 1
+fi
+if [[ "$migration_error" != *"authorization role migration quarantine rows missing organization scope"* ]]; then
+  echo "0050 quarantine tenant-scope preflight failed unexpectedly: $migration_error" >&2
+  exit 1
+fi
+
 UPGRADE_0040_MISMATCH_DATABASE="${POSTGRES_DB}_0040_mismatch"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0040_MISMATCH_DATABASE"
 for migration in "$ROOT"/infra/db/migrations/*.sql; do

@@ -69,6 +69,27 @@ const cancellationIdentityRepairAssertion = readFileSync(
 	),
 	"utf8",
 );
+const quarantineTenantScopeMigration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0050_authorization_role_migration_quarantine_tenant_scope.sql",
+	),
+	"utf8",
+);
+const quarantineTenantScopeFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0050.fixture.sql",
+	),
+	"utf8",
+);
+const quarantineTenantScopeAssertion = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0050.assert.sql",
+	),
+	"utf8",
+);
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
@@ -343,4 +364,53 @@ test("repairs execution cancellation with the durable Basic Auth actor identity"
 	expect(migrationHarness).toContain("UPGRADE_0049_DATABASE");
 	expect(migrationHarness).toContain("test-db-migrations-0049.fixture.sql");
 	expect(migrationHarness).toContain("test-db-migrations-0049.assert.sql");
+});
+
+test("preserves only organization-scoped role migration project-null records", () => {
+	const tenantIdentifierNullabilityAssertion = migrationAssertion.slice(
+		migrationAssertion.indexOf("FROM information_schema.columns"),
+		migrationAssertion.indexOf("tenant identifier columns must be NOT NULL"),
+	);
+
+	expect(quarantineTenantScopeMigration).toContain(
+		"WHERE organization_id IS NULL",
+	);
+	expect(quarantineTenantScopeMigration).toContain(
+		"authorization role migration quarantine rows missing organization scope",
+	);
+	expect(quarantineTenantScopeMigration).toContain(
+		"ALTER COLUMN organization_id SET NOT NULL",
+	);
+	expect(quarantineTenantScopeMigration).not.toContain(
+		"UPDATE authorization_role_migration_quarantine",
+	);
+	expect(migrationHarness).toContain("UPGRADE_0050_DATABASE");
+	expect(migrationHarness).toContain("UPGRADE_0050_NULL_ORGANIZATION_DATABASE");
+	expect(migrationHarness).toContain(
+		"test-db-migrations-0050-null-organization.fixture.sql",
+	);
+	expect(tenantIdentifierNullabilityAssertion).toContain(
+		"AND (table_name, column_name) NOT IN (\n                ('authorization_role_migration_audit', 'project_id'),\n                ('authorization_role_migration_quarantine', 'project_id')\n            )",
+	);
+	expect(tenantIdentifierNullabilityAssertion).not.toContain(
+		"('authorization_role_migration_audit', 'organization_id')",
+	);
+	expect(tenantIdentifierNullabilityAssertion).not.toContain(
+		"('authorization_role_migration_quarantine', 'organization_id')",
+	);
+	expect(tenantIdentifierNullabilityAssertion).toContain(
+		"column_name IN ('organization_id', 'project_id')",
+	);
+	expect(quarantineTenantScopeFixture).toContain(
+		"project_id,\n    actor_subject",
+	);
+	expect(quarantineTenantScopeFixture).toContain(
+		"NULL,\n    '0050-organization",
+	);
+	expect(quarantineTenantScopeAssertion).toContain(
+		"0050 accepted a quarantine record without organization scope",
+	);
+	expect(quarantineTenantScopeAssertion).toContain(
+		"EXCEPTION WHEN not_null_violation",
+	);
 });
