@@ -911,6 +911,30 @@ BEGIN
             WHERE organization_id = '00000000-0000-4000-8000-000000000001'
                 AND actor_subject = 'bootstrap-owner' AND role = 'owner'
         )
+        OR EXISTS (
+            SELECT 1
+            FROM projects AS p
+            WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'
+                AND (
+                    p.id IN (
+                        '11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '44444444-4444-4444-8444-444444444444'
+                    ) OR p.id = (
+                        SELECT default_project_id
+                        FROM organizations
+                        WHERE id = '00000000-0000-4000-8000-000000000001'
+                    )
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM project_authorization_audit_events AS event
+                    WHERE event.organization_id = '00000000-0000-4000-8000-000000000001'
+                        AND event.project_id = p.id
+                        AND event.actor_subject = 'bootstrap-owner'
+                        AND event.event_type = 'bootstrap_manager_added'
+                )
+        )
         OR (
             SELECT count(*)
             FROM project_authorization_audit_events
