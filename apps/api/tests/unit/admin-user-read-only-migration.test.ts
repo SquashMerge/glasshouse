@@ -34,6 +34,13 @@ const revocationSerializationTest = readFileSync(
 	),
 	"utf8",
 );
+const experimentRequesterFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0042.fixture.sql",
+	),
+	"utf8",
+);
 const executionAdmissionFixture = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -136,6 +143,46 @@ test("replays the target-role upgrade fixture before accepting strict enforcemen
 	expect(migrationHarness).toContain("UPGRADE_0041_DATABASE");
 	expect(migrationHarness).toContain("test-db-migrations-0041.fixture.sql");
 	expect(migrationHarness).toContain("test-db-migrations-0041.assert.sql");
+});
+
+test("makes the 0042 requester-authorization upgrade fixture independent of 0041", () => {
+	expect(experimentRequesterFixture).toContain(
+		"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;",
+	);
+	expect(experimentRequesterFixture).toContain(
+		"INSERT INTO organizations (id, name, slug)",
+	);
+	expect(experimentRequesterFixture).toContain(
+		"INSERT INTO projects (id, name, slug, organization_id)",
+	);
+	expect(experimentRequesterFixture).toContain(
+		"SET default_project_id = '66666666-6666-4666-8666-666666666665'",
+	);
+	expect(experimentRequesterFixture).toContain(
+		"ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;",
+	);
+	expect(experimentRequesterFixture).toContain(
+		"INSERT INTO actors (id)\nVALUES ('66666666-6666-4666-8666-666666666601')",
+	);
+	expect(experimentRequesterFixture).toContain(
+		"'66666666-6666-4666-8666-666666666601',\n    '66666666-6666-4666-8666-666666666666',\n    'basic:v1',\n    'legacy-admin'",
+	);
+	expect(
+		experimentRequesterFixture.split("ON CONFLICT DO NOTHING"),
+	).toHaveLength(3);
+	expect(experimentRequesterFixture).toContain(
+		"'66666666-6666-4666-8666-666666666620'",
+	);
+	expect(experimentRequesterFixture).toContain("Historical unbound experiment");
+	expect(experimentRequesterFixture).not.toContain("0041.fixture");
+	for (const unrelatedFixtureData of [
+		"organization_memberships",
+		"project_memberships",
+		"authorization_role_migration_",
+		"legacy-user",
+		"legacy-reader",
+	])
+		expect(experimentRequesterFixture).not.toContain(unrelatedFixtureData);
 });
 
 test("covers deleting project cleanup without its marker and protects the final Admin from it", () => {
