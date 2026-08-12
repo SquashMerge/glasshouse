@@ -32,11 +32,13 @@ VALUES (
 INSERT INTO organization_memberships (organization_id, actor_subject, role)
 VALUES
     ('49000000-0000-4000-8000-000000000001', 'cancellation-matched-user', 'member'),
-    ('49000000-0000-4000-8000-000000000001', 'cancellation-unmapped-user', 'member');
+    ('49000000-0000-4000-8000-000000000001', 'cancellation-unmapped-user', 'member'),
+    ('49000000-0000-4000-8000-000000000001', 'cancellation-control-user', 'member');
 INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
 VALUES
     ('49000000-0000-4000-8000-000000000003', '49000000-0000-4000-8000-000000000001', 'cancellation-matched-user', 'manager'),
-    ('49000000-0000-4000-8000-000000000003', '49000000-0000-4000-8000-000000000001', 'cancellation-unmapped-user', 'manager');
+    ('49000000-0000-4000-8000-000000000003', '49000000-0000-4000-8000-000000000001', 'cancellation-unmapped-user', 'manager'),
+    ('49000000-0000-4000-8000-000000000003', '49000000-0000-4000-8000-000000000001', 'cancellation-control-user', 'manager');
 
 INSERT INTO datasets (id, project_id, name)
 VALUES (

@@ -420,6 +420,58 @@ test("repairs execution cancellation with the durable Basic Auth actor identity"
 	expect(migrationHarness).toContain("test-db-migrations-0049.assert.sql");
 });
 
+test("keeps the 0049 cancellation fixture legal without bypassing the final User guard", () => {
+	const organizationMemberships = cancellationIdentityRepairFixture.slice(
+		cancellationIdentityRepairFixture.indexOf(
+			"INSERT INTO organization_memberships",
+		),
+		cancellationIdentityRepairFixture.indexOf(
+			"INSERT INTO project_memberships",
+		),
+	);
+	const projectMemberships = cancellationIdentityRepairFixture.slice(
+		cancellationIdentityRepairFixture.indexOf(
+			"INSERT INTO project_memberships",
+		),
+		cancellationIdentityRepairFixture.indexOf("INSERT INTO datasets"),
+	);
+	const mappedRevocation = cancellationIdentityRepairAssertion.slice(
+		cancellationIdentityRepairAssertion.indexOf(
+			"UPDATE project_memberships\n    SET role = 'member'\n    WHERE project_id = repair_project_id\n      AND actor_subject = 'cancellation-matched-user';",
+		),
+		cancellationIdentityRepairAssertion.indexOf(
+			"INSERT INTO prompt_optimization_jobs",
+		),
+	);
+	const finalUserGuard = migration.slice(
+		migration.indexOf(
+			"CREATE OR REPLACE FUNCTION prevent_final_workspace_role_removal",
+		),
+		migration.indexOf("RETURN COALESCE(NEW, OLD);"),
+	);
+
+	for (const memberships of [organizationMemberships, projectMemberships])
+		expect(memberships.match(/cancellation-[a-z-]+-user/g)).toHaveLength(3);
+	expect(organizationMemberships).toContain(
+		"'49000000-0000-4000-8000-000000000001', 'cancellation-control-user', 'member'",
+	);
+	expect(projectMemberships).toContain(
+		"'49000000-0000-4000-8000-000000000003', '49000000-0000-4000-8000-000000000001', 'cancellation-control-user', 'manager'",
+	);
+	expect(mappedRevocation).toContain(
+		"actor_subject = 'cancellation-control-user'\n          AND role = 'manager'",
+	);
+	expect(mappedRevocation).toContain(
+		"0049 fixture did not retain an active project User",
+	);
+	expect(finalUserGuard).toContain(
+		"IF OLD.role = 'manager'\n            AND (TG_OP = 'DELETE' OR NEW.role <> OLD.role)\n            AND EXISTS (SELECT 1 FROM projects WHERE id = OLD.project_id AND status = 'active')\n            AND NOT EXISTS (",
+	);
+	expect(finalUserGuard).toContain(
+		"RAISE EXCEPTION 'cannot remove or demote the final active project User';",
+	);
+});
+
 test("keeps historical 0044 replay free of broken cancellation DML", () => {
 	expect(executionAdmissionAssertion).not.toMatch(
 		/\b(?:INSERT|UPDATE|DELETE|PERFORM)\b/,

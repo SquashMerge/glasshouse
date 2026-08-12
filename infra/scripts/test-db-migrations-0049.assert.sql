@@ -62,6 +62,15 @@ BEGIN
     IF mapped_epoch <> unmapped_epoch + 1 THEN
         RAISE EXCEPTION '0049 mapped membership revocation did not increment the project authorization epoch';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM project_memberships
+        WHERE project_id = repair_project_id
+          AND actor_subject = 'cancellation-control-user'
+          AND role = 'manager'
+    ) THEN
+        RAISE EXCEPTION '0049 fixture did not retain an active project User';
+    END IF;
     IF EXISTS (
         SELECT 1
         FROM execution_admissions
