@@ -50,21 +50,29 @@ export async function bootstrapAuthorization(
 		}
 		const credential = ownerCredential;
 		const organization = await client.query(
-			"SELECT id FROM organizations WHERE id = $1 FOR UPDATE",
+			"SELECT id FROM organizations WHERE id = $1",
 			[credential.organizationId],
 		);
 		if (!organization.rows[0])
 			throw new Error("Bootstrap organization does not exist");
+		await client.query(
+			"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 FOR UPDATE",
+			[credential.organizationId, credential.username],
+		);
+		await client.query(
+			"SELECT pm.actor_subject FROM project_memberships pm JOIN projects p ON p.id = pm.project_id WHERE p.organization_id = $1 AND pm.actor_subject = $2 ORDER BY p.id, pm.actor_subject FOR UPDATE OF pm",
+			[credential.organizationId, credential.username],
+		);
 		const projects = await client.query<{ id: string }>(
-			"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id",
+			"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
 			[credential.organizationId],
 		);
 		await client.query(
 			"SELECT lock_project_audit_provenance(id::uuid) FROM unnest($1::uuid[]) AS projects(id) ORDER BY id",
 			[projects.rows.map((project) => project.id)],
 		);
-		await client.query<{ id: string }>(
-			"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
+		await client.query(
+			"SELECT id FROM organizations WHERE id = $1 FOR UPDATE",
 			[credential.organizationId],
 		);
 		const owner = await client.query(
@@ -72,7 +80,7 @@ export async function bootstrapAuthorization(
 			[credential.organizationId, credential.username],
 		);
 		await client.query(
-			"WITH unfrozen AS (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM projects WHERE organization_id = $1 AND status = 'deleting')), memberships AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $1, $2, 'manager' FROM projects CROSS JOIN unfrozen WHERE organization_id = $1 AND status <> 'deleting' ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = 'manager', updated_at = now() WHERE project_memberships.role <> 'manager' RETURNING project_id) INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, project_id, $2, 'bootstrap_manager_added' FROM memberships RETURNING project_id",
+			"WITH unfrozen AS (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM projects WHERE organization_id = $1 AND status = 'deleting')), memberships AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $1, $2, 'manager' FROM projects CROSS JOIN unfrozen WHERE organization_id = $1 AND status <> 'deleting' ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = 'manager', updated_at = now() WHERE project_memberships.role <> 'manager' RETURNING project_id) INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, project_id, $2, 'bootstrap_manager_added' FROM memberships ORDER BY project_id RETURNING project_id",
 			[credential.organizationId, credential.username],
 		);
 		if (owner.rowCount)

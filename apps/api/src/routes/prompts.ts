@@ -16,6 +16,8 @@ import { pgPool } from "../db/postgres.js";
 import { logger } from "../lib/logger.js";
 import { renderPromptTemplatesWithWarnings } from "../lib/prompt-templates.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
+import { projectAuthorization } from "../db/project-authorization.js";
+import { trustedTenant } from "../tenancy.js";
 import {
 	Prompt,
 	PromptCreate,
@@ -272,6 +274,10 @@ export function createPromptRouteHandlers(
 					await dependencies.createPrompt(dependencies.pool(), {
 						...body,
 						actor: actor(c),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
 					}),
 					201,
 				);
@@ -331,6 +337,10 @@ export function createPromptRouteHandlers(
 						project_id: query.project_id,
 						slug: params.id,
 						actor: actor(c),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
 					}),
 					201,
 				);
@@ -348,6 +358,10 @@ export function createPromptRouteHandlers(
 					await dependencies.rollbackLatestPromptVersion(dependencies.pool(), {
 						project_id: query.project_id,
 						slug: params.id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -403,6 +417,10 @@ export function createPromptRouteHandlers(
 					slug: params.id,
 					confirmation: body.confirmation,
 					actor: actor(c),
+					authorization: projectAuthorization(
+						trustedTenant(c),
+						"product_write",
+					),
 				});
 				return c.body(null, 204);
 			} catch (cause) {

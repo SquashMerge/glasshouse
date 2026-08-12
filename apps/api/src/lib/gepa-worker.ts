@@ -8,6 +8,7 @@ export type GepaWorkerInput = {
 	dataset: OptimizationDataset;
 	model_config: Record<string, unknown>;
 	budget: Record<string, unknown>;
+	provider_dispatch_key: string;
 };
 
 export type GepaWorkerResult = {

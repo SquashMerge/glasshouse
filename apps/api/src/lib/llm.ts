@@ -76,6 +76,7 @@ async function invokeDevelopmentCli(
 	prompt: string,
 	model: string,
 	signal?: AbortSignal,
+	providerDispatchKey?: string,
 ): Promise<string> {
 	if (
 		process.env.NODE_ENV === "production" &&
@@ -96,6 +97,12 @@ async function invokeDevelopmentCli(
 			stdin: new Response(prompt).body,
 			stdout: "pipe",
 			stderr: "pipe",
+			env: {
+				...process.env,
+				...(providerDispatchKey
+					? { ASTRAEA_PROVIDER_DISPATCH_KEY: providerDispatchKey }
+					: {}),
+			},
 		},
 	);
 	const abort = () => killProcessGroup(child.pid);
@@ -126,6 +133,7 @@ export async function invokeConfiguredLlm(
 	input: Record<string, unknown>,
 	config: Record<string, unknown>,
 	signal?: AbortSignal,
+	idempotencyKey?: string,
 ): Promise<LlmResponse> {
 	const model =
 		typeof config.model === "string" && config.model
@@ -145,7 +153,14 @@ export async function invokeConfiguredLlm(
 	]);
 	if (provider === "codex_cli")
 		return {
-			output: { value: await invokeDevelopmentCli(prompt, model, signal) },
+			output: {
+				value: await invokeDevelopmentCli(
+					prompt,
+					model,
+					signal,
+					idempotencyKey,
+				),
+			},
 			model,
 		};
 	if (provider !== "openai") throw new Error("unsupported LLM provider");
@@ -161,6 +176,12 @@ export async function invokeConfiguredLlm(
 		headers: {
 			authorization: `Bearer ${apiKey}`,
 			"content-type": "application/json",
+			...(idempotencyKey
+				? {
+						"idempotency-key": idempotencyKey,
+						"x-client-request-id": idempotencyKey,
+					}
+				: {}),
 		},
 		body: JSON.stringify({
 			model,

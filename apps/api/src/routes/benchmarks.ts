@@ -26,6 +26,8 @@ import {
 	type ExperimentDependencies,
 } from "./experiments.js";
 import { logger } from "../lib/logger.js";
+import { projectAuthorization } from "../db/project-authorization.js";
+import { trustedTenant } from "../tenancy.js";
 
 const tag = "benchmarks";
 const SuiteList = z
@@ -155,7 +157,13 @@ export const handleCreateBenchmarkSuite = async (
 				"BAD_REQUEST",
 				"Golden benchmark datasets require expected_output for every item",
 			);
-		return c.json(await createBenchmarkSuite(pgPool(), body), 201);
+		return c.json(
+			await createBenchmarkSuite(pgPool(), {
+				...body,
+				authorization: projectAuthorization(trustedTenant(c), "product_write"),
+			}),
+			201,
+		);
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}
@@ -186,11 +194,13 @@ export const handleCreateBenchmarkRun = async (
 			id: suite_id,
 		});
 		const config = { ...body.config, model: body.model ?? body.config.model };
+		const authorization = projectAuthorization(trustedTenant(c), "execute");
 		const experiment = await production.createExperiment(pgPool(), {
 			project_id,
 			dataset_id: suite.dataset_id,
 			name: `benchmark:${body.label}`,
 			config,
+			authorization,
 		});
 		const run = await createBenchmarkRun(pgPool(), {
 			project_id,
@@ -199,6 +209,7 @@ export const handleCreateBenchmarkRun = async (
 			label: body.label,
 			model: body.model ?? null,
 			prompt_version: body.prompt_version ?? null,
+			authorization,
 		});
 		void executeBenchmarkExperiment({
 			project_id,

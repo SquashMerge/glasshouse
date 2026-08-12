@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 import {
+	admitOptimizationExecution,
 	claimOptimizationJob,
 	completeOptimizationResult,
 	createOptimizationJob,
@@ -22,10 +23,31 @@ type Call = { text: string; values: unknown[] };
 
 class MockClient {
 	readonly calls: Call[] = [];
+	private optimizationFencePending = false;
 
 	constructor(private readonly replies: Reply[]) {}
 
 	async query(text: string, values: unknown[] = []) {
+		if (
+			text.startsWith(
+				"SELECT p.id, p.organization_id FROM projects p JOIN prompt_optimization_jobs",
+			)
+		) {
+			this.optimizationFencePending = true;
+			return {
+				rows: [{ id: PROJECT, organization_id: authorization.organization_id }],
+			};
+		}
+		if (text.includes("p.status = ANY($3::text[])")) {
+			if (this.optimizationFencePending) {
+				this.optimizationFencePending = false;
+				return { rows: [{ id: PROJECT }] };
+			}
+			this.calls.push({ text, values });
+			return this.replies.shift() ?? { rows: [] };
+		}
+		const lockReply = authorizationLockReply(text);
+		if (lockReply) return lockReply;
 		this.calls.push({ text, values });
 		const reply = this.replies.shift();
 		if (!reply) throw new Error(`Unexpected query: ${text}`);
@@ -54,9 +76,11 @@ class ClaimPool {
 	async connect() {
 		return {
 			query: async (text: string) => {
-				this.calls.push(text);
 				if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK")
 					return { rows: [] };
+				const lockReply = authorizationLockReply(text);
+				if (lockReply) return lockReply;
+				this.calls.push(text);
 				if (!this.claimed) {
 					this.claimed = true;
 					return { rows: [{ id: JOB }] };
@@ -75,9 +99,11 @@ class ReclaimPool {
 	async connect() {
 		return {
 			query: async (text: string) => {
-				this.calls.push(text);
 				if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK")
 					return { rows: [] };
+				const lockReply = authorizationLockReply(text);
+				if (lockReply) return lockReply;
+				this.calls.push(text);
 				this.attempt += 1;
 				return { rows: this.attempt === 1 ? [] : [{ id: JOB }] };
 			},
@@ -91,6 +117,11 @@ const JOB = "22222222-2222-4222-8222-222222222222";
 const WORKER = "11111111-1111-4111-8111-111111111111";
 const PROMPT = "33333333-3333-4333-8333-333333333333";
 const CREATED = "2026-07-15T10:00:00.000Z";
+const authorization = {
+	organization_id: "44444444-4444-4444-8444-444444444444",
+	actor_id: "55555555-5555-4555-8555-555555555555",
+	operation: "execute" as const,
+};
 
 function optimizationDataset() {
 	return {
@@ -154,11 +185,85 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
 	};
 }
 
+function authorizationLockReply(text: string): Reply | null {
+	if (
+		text.startsWith(
+			"SELECT p.id, p.organization_id FROM projects p JOIN prompt_optimization_jobs",
+		)
+	)
+		return {
+			rows: [{ id: PROJECT, organization_id: authorization.organization_id }],
+		};
+	if (
+		text === "SELECT * FROM prompt_optimization_jobs WHERE id = $1 FOR UPDATE"
+	)
+		return { rows: [job()] };
+	if (text.startsWith("SELECT actor_id FROM actor_identities"))
+		return { rows: [{ actor_id: authorization.actor_id }] };
+	if (text.includes("p.status = ANY($3::text[])"))
+		return { rows: [{ id: PROJECT }] };
+	if (text.includes("FROM organization_memberships om"))
+		return { rows: [{ actor_subject: "admin" }] };
+	if (text.includes("FROM project_memberships pm"))
+		return { rows: [{ actor_subject: "admin" }] };
+	if (text.startsWith("SELECT authorization_allows_project"))
+		return { rows: [{ allowed: true }] };
+	return null;
+}
+
 function transactionPool(pool: MockPool): Pick<Pool, "connect"> {
 	return pool as unknown as Pick<Pool, "connect">;
 }
 
 describe("prompt optimization repository", () => {
+	it("commits an execution admission before the provider boundary", async () => {
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [{ id: JOB }] },
+			{ rows: [{ authorization_epoch: 1 }] },
+			{
+				rows: [
+					{
+						id: "77777777-7777-4777-8777-777777777777",
+						project_id: PROJECT,
+						requester_actor_id: authorization.actor_id,
+						authorization_epoch: 1,
+					},
+				],
+			},
+			{ rows: [] },
+		]);
+
+		const admission = await admitOptimizationExecution(transactionPool(pool), {
+			id: JOB,
+			worker_id: WORKER,
+			timeout_ms: 30_000,
+		});
+		expect(admission).toMatchObject({
+			id: "77777777-7777-4777-8777-777777777777",
+			project_id: PROJECT,
+		});
+		expect(
+			pool.client.calls.some((call) =>
+				call.text.startsWith("INSERT INTO execution_admissions"),
+			),
+		).toBe(true);
+		expect(pool.client.calls[1]?.text).toContain("worker_claim_id = $2");
+		expect(pool.client.calls[1]?.text).toContain("status = 'optimizing'");
+	});
+
+	it("does not admit a provider after its worker claim is gone", async () => {
+		const pool = new MockPool([{ rows: [] }, { rows: [] }, { rows: [] }]);
+
+		await expect(
+			admitOptimizationExecution(transactionPool(pool), {
+				id: JOB,
+				worker_id: WORKER,
+				timeout_ms: 30_000,
+			}),
+		).resolves.toBeNull();
+	});
+
 	it("publishes a system target with canonical system content and replaces only the target message", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
@@ -292,25 +397,27 @@ describe("prompt optimization repository", () => {
 	});
 
 	it("records metric-call usage when a stop wins the later lifecycle transition", async () => {
-		const calls: Call[] = [];
-		const pool = {
-			query: async (text: string, values: unknown[] = []) => {
-				calls.push({ text, values });
-				return { rows: [{ id: JOB }] };
-			},
-		};
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [{ id: JOB }] },
+			{ rows: [] },
+		]);
 
-		await recordOptimizationMetricCalls(pool, {
+		await recordOptimizationMetricCalls(transactionPool(pool), {
 			id: JOB,
 			worker_id: WORKER,
 			metric_calls_used: 3,
 		});
-		expect(calls[0]?.text).toContain("worker_lease_expires_at >= now()");
-		expect(calls[0]?.text).toContain(
-			"GREATEST(COALESCE(j.metric_calls_used,0),$3)",
+		const metricCall = pool.client.calls.find((call) =>
+			call.text.startsWith(
+				"UPDATE prompt_optimization_jobs SET metric_calls_used",
+			),
 		);
-		expect(calls[0]?.text).toContain("p.status = 'active'");
-		expect(calls[0]?.values).toEqual([JOB, WORKER, 3]);
+		expect(metricCall?.text).toContain("worker_lease_expires_at >= now()");
+		expect(metricCall?.text).toContain(
+			"GREATEST(COALESCE(metric_calls_used,0),$3)",
+		);
+		expect(metricCall?.values).toEqual([JOB, WORKER, 3]);
 	});
 
 	it("includes persisted metric-call usage in the content-free completion event", async () => {
@@ -445,26 +552,29 @@ describe("prompt optimization repository", () => {
 				call.includes("worker_lease_expires_at < now()"),
 			),
 		).toBe(true);
-		expect(
-			pool.calls.some((call) => call.includes("p.status = 'active'")),
-		).toBe(true);
+		expect(pool.calls.some((call) => call.startsWith("UPDATE"))).toBe(true);
 	});
 
 	it("renews only the current worker lease", async () => {
-		const calls: Call[] = [];
-		const pool = {
-			query: async (text: string, values: unknown[] = []) => {
-				calls.push({ text, values });
-				return { rows: [{ id: JOB }] };
-			},
-		};
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [{ id: JOB }] },
+			{ rows: [] },
+		]);
 
 		expect(
-			await renewOptimizationJobLease(pool, { id: JOB, worker_id: WORKER }),
+			await renewOptimizationJobLease(transactionPool(pool), {
+				id: JOB,
+				worker_id: WORKER,
+			}),
 		).toBe(true);
-		expect(calls[0]?.text).toContain("worker_claim_id=$2");
-		expect(calls[0]?.text).toContain("worker_lease_expires_at >= now()");
-		expect(calls[0]?.text).toContain("p.status = 'active'");
+		const renewal = pool.client.calls.find((call) =>
+			call.text.startsWith(
+				"UPDATE prompt_optimization_jobs SET worker_lease_expires_at",
+			),
+		);
+		expect(renewal?.text).toContain("worker_claim_id=$2");
+		expect(renewal?.text).toContain("worker_lease_expires_at >= now()");
 	});
 
 	it("reclaims an expired lease while preserving one owner per claim attempt", async () => {
@@ -499,7 +609,7 @@ describe("prompt optimization repository", () => {
 		expect(pool.client.calls[1]?.text).toContain(
 			"worker_lease_expires_at >= now()",
 		);
-		expect(pool.client.calls[1]?.text).toContain("p.status = 'active'");
+		expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
 	});
 
 	it("reuses the active start row without recording a second queued event", async () => {
@@ -528,12 +638,13 @@ describe("prompt optimization repository", () => {
 			model_config: { task_lm: "task", reflection_lm: "reflection" },
 			budget: { max_metric_calls: 1 },
 			actor: "admin",
+			authorization,
 		});
 
 		expect(result.id).toBe(JOB);
 		expect(pool.client.calls).toHaveLength(5);
 		expect(pool.client.calls[1]?.text).toContain("FROM projects");
-		expect(pool.client.calls[1]?.text).toContain("status = 'active'");
+		expect(pool.client.calls[1]?.text).toContain("p.status = ANY($3::text[])");
 		expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
 		expect(pool.client.calls[3]?.text).toContain("ON CONFLICT");
 	});
@@ -602,6 +713,7 @@ describe("prompt optimization repository", () => {
 		});
 		const pool = new MockPool([
 			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
 			{ rows: [draft] },
 			{
 				rows: [
@@ -636,11 +748,12 @@ describe("prompt optimization repository", () => {
 			project_id: PROJECT,
 			id: JOB,
 			actor: "reviewer",
+			authorization: { ...authorization, operation: "governed" },
 		});
 
 		expect(result.result_version).toBe(4);
 		expect(result.promotion_status).toBe("reviewed_promoted");
-		expect(pool.client.calls[3]?.values[7]).toBe("reviewer");
+		expect(pool.client.calls[4]?.values[7]).toBe("reviewer");
 	});
 
 	it("does not turn a completed optimization into stopped when stop races completion", async () => {
@@ -656,11 +769,12 @@ describe("prompt optimization repository", () => {
 			stopOptimizationJob(transactionPool(pool), {
 				project_id: PROJECT,
 				id: JOB,
+				authorization,
 			}),
 		).rejects.toMatchObject({
 			code: "CONFLICT",
 		} satisfies Partial<PromptRepositoryError>);
-		expect(pool.client.calls[1]?.text).toContain("status='active' FOR UPDATE");
+		expect(pool.client.calls[1]?.text).toContain("p.status = ANY($3::text[])");
 		expect(pool.client.calls.map((call) => call.text)).not.toContain(
 			expect.stringContaining("INSERT INTO prompt_optimization_events"),
 		);
@@ -669,6 +783,7 @@ describe("prompt optimization repository", () => {
 	it("refuses to promote a legacy user-target optimization draft", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
 			{
 				rows: [
 					job({
@@ -689,11 +804,12 @@ describe("prompt optimization repository", () => {
 				project_id: PROJECT,
 				id: JOB,
 				actor: "reviewer",
+				authorization: { ...authorization, operation: "governed" },
 			}),
 		).rejects.toMatchObject({
 			code: "CONFLICT",
 		} satisfies Partial<PromptRepositoryError>);
-		expect(pool.client.calls).toHaveLength(3);
+		expect(pool.client.calls).toHaveLength(4);
 	});
 
 	it("does not fail archived jobs during restart recovery", async () => {

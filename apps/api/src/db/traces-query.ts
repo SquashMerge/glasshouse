@@ -177,6 +177,7 @@ export async function getTrace(
 	organizationId: string,
 	traceId: string,
 	projectId?: string,
+	signal?: AbortSignal,
 ): Promise<{ trace: TraceRow | null; observations: ObservationRow[] }> {
 	const query_params = {
 		organization_id: organizationId,
@@ -188,6 +189,7 @@ export async function getTrace(
 		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} LIMIT 1`,
 		query_params,
 		format: "JSONEachRow",
+		abort_signal: signal,
 	});
 	const traceRows = (await traceResult.json()) as TraceRow[];
 	const trace = traceRows.length > 0 ? traceRows[0] : null;
@@ -197,6 +199,7 @@ export async function getTrace(
 		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} ORDER BY start_time ASC LIMIT {limit: UInt32}`,
 		query_params,
 		format: "JSONEachRow",
+		abort_signal: signal,
 	});
 	const observations = (await obsResult.json()) as ObservationRow[];
 

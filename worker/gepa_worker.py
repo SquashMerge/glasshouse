@@ -242,7 +242,10 @@ def validate_request(request):
         raise ValueError(f"budget.max_metric_calls must be between {MIN_METRIC_CALLS} and {MAX_METRIC_CALLS}")
     if max_metric_calls < len(valset):
         raise ValueError("budget.max_metric_calls must be at least the number of held-out validation examples")
-    return source, rubric.strip(), trainset, valset, task_lm, reflection_lm, max_metric_calls
+    provider_dispatch_key = request_value(request, "provider_dispatch_key", str)
+    if not re.fullmatch(r"[A-Za-z0-9:_-]{1,256}", provider_dispatch_key):
+        raise ValueError("provider_dispatch_key is invalid")
+    return source, rubric.strip(), trainset, valset, task_lm, reflection_lm, max_metric_calls, provider_dispatch_key
 
 
 def fake_optimize(source):
@@ -253,6 +256,41 @@ def fake_optimize(source):
         "baseline_validation_score": 0.0,
         "metric_calls_used": 0,
     }
+
+
+class ProviderDispatchSequence:
+    def __init__(self, dispatch_key):
+        self._dispatch_key = dispatch_key
+        self._operation = 0
+
+    def next(self, role):
+        self._operation += 1
+        return f"{self._dispatch_key}:{role}:{self._operation}"
+
+
+def litellm_model_for_dispatch(model, dispatches, role):
+    import litellm  # type: ignore # Installed only in the isolated worker image.
+
+    def complete(messages):
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+        key = dispatches.next(role)
+        response = litellm.completion(
+            model=model,
+            messages=messages,
+            custom_headers={
+                "Idempotency-Key": key,
+                "X-Client-Request-Id": key,
+            },
+            request_id=key,
+            num_retries=0,
+        )
+        content = response.choices[0].message.content
+        if not isinstance(content, str):
+            raise ValueError("LiteLLM returned invalid content")
+        return content
+
+    return complete
 
 
 def cli_mode_is_allowed():
@@ -276,7 +314,7 @@ if sys.argv[1:] == ["--smoke"]:
 
 try:
     request = json.loads(sys.stdin.readline())
-    source, rubric, trainset, valset, task_lm, reflection_lm, max_metric_calls = validate_request(request)
+    source, rubric, trainset, valset, task_lm, reflection_lm, max_metric_calls, provider_dispatch_key = validate_request(request)
 except (ValueError, json.JSONDecodeError) as error:
     sys.stderr.write(str(error))
     sys.exit(2)
@@ -290,8 +328,13 @@ if os.environ.get("GEPA_WORKER_MODE") == "cli":
     if not cli_mode_is_allowed():
         sys.stderr.write("GEPA_WORKER_MODE=cli is disabled when NODE_ENV=production")
         sys.exit(2)
-    task_lm = task_lm_for_model(task_lm)
-    reflection_lm = reflection_lm_for_model(reflection_lm)
+    dispatches = ProviderDispatchSequence(provider_dispatch_key)
+    task_lm = task_lm_for_model(task_lm, lambda: dispatches.next("task"))
+    reflection_lm = reflection_lm_for_model(reflection_lm, lambda: dispatches.next("reflection"))
+else:
+    dispatches = ProviderDispatchSequence(provider_dispatch_key)
+    task_lm = litellm_model_for_dispatch(task_lm, dispatches, "task")
+    reflection_lm = litellm_model_for_dispatch(reflection_lm, dispatches, "reflection")
 
 try:
     import gepa  # type: ignore # Installed only in the isolated worker image.

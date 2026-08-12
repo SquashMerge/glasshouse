@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from worker.dev_cli_llm import DevCliLlmError, run_dev_cli
 
+PROVIDER_DISPATCH_KEY = "astraea:optimization:22222222-2222-4222-8222-222222222222:provider_dispatch:1"
+
 
 def optimization_dataset(training_examples=None, validation_examples=None):
     return {
@@ -28,13 +30,14 @@ class DevCliLlmTests(unittest.TestCase):
         script = Path(directory) / "fake_cli.py"
         script.write_text(
             "#!/usr/bin/env python3\n"
-            "import pathlib, subprocess, sys, time\n"
+            "import os, pathlib, subprocess, sys, time\n"
             "mode = sys.argv[1]\n"
             "if mode == 'success': print(sys.stdin.read() + '|' + sys.argv[2])\n"
             "elif mode == 'timeout': time.sleep(10)\n"
             "elif mode == 'failure': sys.exit(7)\n"
             "elif mode == 'large': print('x' * 200)\n"
             "elif mode == 'argv': pathlib.Path(sys.argv[2]).write_text(repr(sys.argv[3:])); print(sys.stdin.read())\n"
+            "elif mode == 'key': pathlib.Path(sys.argv[2]).write_text(os.environ.get('ASTRAEA_PROVIDER_DISPATCH_KEY', '')); print(sys.stdin.read())\n"
             "elif mode == 'timeout-child':\n"
             f"    child = subprocess.Popen([{sys.executable!r}, '-c', 'import time; time.sleep(10)'])\n"
             "    pathlib.Path(sys.argv[2]).write_text(str(child.pid)); time.sleep(10)\n"
@@ -124,6 +127,21 @@ class DevCliLlmTests(unittest.TestCase):
             self.assertEqual(argv_file.read_text(), "['model;$(touch nope)']")
             self.assertFalse((Path(directory) / "should-not-exist").exists())
 
+    def test_provider_dispatch_key_reaches_the_development_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cli = self.fake_cli(directory)
+            key_file = Path(directory) / "provider_dispatch_key.txt"
+            with patch.dict(
+                os.environ,
+                {"ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "key", "{key_file}"]'},
+                clear=True,
+            ):
+                self.assertEqual(
+                    run_dev_cli("hello", "test-model", PROVIDER_DISPATCH_KEY),
+                    "hello\n",
+                )
+            self.assertEqual(key_file.read_text(), PROVIDER_DISPATCH_KEY)
+
     def test_production_rejects_cli_mode_without_override(self):
         request = {
             "source": "Hello",
@@ -134,6 +152,7 @@ class DevCliLlmTests(unittest.TestCase):
                 [{"input": "Separate test", "answer": "Separate test"}],
             ),
             "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
+            "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
             "budget": {"max_metric_calls": 2},
         }
         environment = {
@@ -168,6 +187,7 @@ class DevCliLlmTests(unittest.TestCase):
                 ],
             ),
             "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
+            "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
             "budget": {"max_metric_calls": 2},
         }
         worker = Path(__file__).with_name("gepa_worker.py")
@@ -196,6 +216,7 @@ class DevCliLlmTests(unittest.TestCase):
                 ],
             ),
             "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
+            "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
             "budget": {"max_metric_calls": 2},
         }
         worker = Path(__file__).with_name("gepa_worker.py")
@@ -220,6 +241,7 @@ class DevCliLlmTests(unittest.TestCase):
                 [{"input": "fries with a salad order", "answer": "Held-out label"}],
             ),
             "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
+            "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
             "budget": {"max_metric_calls": 2},
         }
         worker = Path(__file__).with_name("gepa_worker.py")
@@ -248,6 +270,7 @@ class DevCliLlmTests(unittest.TestCase):
                 [{"input": validation_input, "answer": "Held-out label"}],
             ),
             "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
+            "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
             "budget": {"max_metric_calls": 2},
         }
         worker = Path(__file__).with_name("gepa_worker.py")
@@ -272,6 +295,7 @@ class DevCliLlmTests(unittest.TestCase):
                 [{"input": "refund now", "answer": "Held-out label"}],
             ),
             "model_config": {"task_lm": "local-model", "reflection_lm": "local-model"},
+            "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
             "budget": {"max_metric_calls": 2},
         }
         worker = Path(__file__).with_name("gepa_worker.py")
@@ -375,6 +399,7 @@ class DevCliLlmTests(unittest.TestCase):
                     ],
                 ),
                 "model_config": {"task_lm": "task-model", "reflection_lm": "reflection-model"},
+                "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
                 "budget": {"max_metric_calls": 5},
             }
             environment = {
@@ -420,6 +445,82 @@ class DevCliLlmTests(unittest.TestCase):
                 )
             )
 
+    def test_litellm_calls_use_distinct_stable_provider_dispatch_sequences(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gepa_directory = root / "gepa"
+            default_adapter_directory = gepa_directory / "adapters" / "default_adapter"
+            default_adapter_directory.mkdir(parents=True)
+            capture_file = root / "litellm-calls.jsonl"
+            (root / "litellm.py").write_text(
+                "import json, os\n"
+                "from types import SimpleNamespace\n"
+                "def completion(**kwargs):\n"
+                "    with open(os.environ['LITELLM_CAPTURE'], 'a', encoding='utf-8') as capture:\n"
+                "        capture.write(json.dumps({'headers': kwargs['custom_headers'], 'request_id': kwargs['request_id'], 'num_retries': kwargs['num_retries']}) + '\\n')\n"
+                "    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='expected answer'))])\n"
+            )
+            (gepa_directory / "__init__.py").write_text(
+                "from types import SimpleNamespace\n"
+                "def optimize(*, adapter, trainset, valset, reflection_lm, **kwargs):\n"
+                "    adapter.evaluate(valset, {'system_prompt': 'candidate'})\n"
+                "    reflection_lm('reflection')\n"
+                "    return SimpleNamespace(best_candidate={'system_prompt': 'candidate'}, best_idx=1, val_aggregate_scores=[0.25, 0.75])\n"
+            )
+            (gepa_directory / "adapters" / "__init__.py").write_text("")
+            (default_adapter_directory / "__init__.py").write_text("")
+            (default_adapter_directory / "default_adapter.py").write_text(
+                "class DefaultAdapter:\n"
+                "    def __init__(self, model): self.model = model\n"
+                "    def evaluate(self, batch, candidate, capture_traces=False):\n"
+                "        outputs = []\n"
+                "        trajectories = []\n"
+                "        for data in batch:\n"
+                "            response = self.model([{'role': 'user', 'content': data['input']}])\n"
+                "            outputs.append({'full_assistant_response': response})\n"
+                "            trajectories.append({'data': data})\n"
+                "        return type('Evaluation', (), {'scores': [1.0] * len(batch), 'outputs': outputs, 'trajectories': trajectories})()\n"
+            )
+            request = {
+                "source": "Summarize {{tasks}}",
+                "target": "system",
+                "evaluator": {"type": "default_adapter"},
+                "dataset": optimization_dataset(
+                    [{"input": "training task", "answer": "expected answer"}],
+                    [{"input": "validation task", "answer": "expected answer"}],
+                ),
+                "model_config": {"task_lm": "task-model", "reflection_lm": "reflection-model"},
+                "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
+                "budget": {"max_metric_calls": 2},
+            }
+            result = subprocess.run(
+                [sys.executable, Path(__file__).with_name("gepa_worker.py")],
+                input=json.dumps(request),
+                text=True,
+                capture_output=True,
+                env={
+                    "GEPA_ALLOWED_MODELS": "task-model,reflection-model",
+                    "PYTHONPATH": directory,
+                    "LITELLM_CAPTURE": str(capture_file),
+                },
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture_file.read_text().splitlines()]
+            self.assertEqual(
+                [call["request_id"] for call in calls],
+                [
+                    PROVIDER_DISPATCH_KEY + ":task:1",
+                    PROVIDER_DISPATCH_KEY + ":reflection:2",
+                    PROVIDER_DISPATCH_KEY + ":task:3",
+                ],
+            )
+            for call in calls:
+                self.assertEqual(call["headers"]["Idempotency-Key"], call["request_id"])
+                self.assertEqual(call["headers"]["X-Client-Request-Id"], call["request_id"])
+                self.assertEqual(call["num_retries"], 0)
+
     def test_cli_mode_omits_training_score_when_it_exceeds_remaining_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             gepa_directory = Path(directory) / "gepa"
@@ -451,6 +552,7 @@ class DevCliLlmTests(unittest.TestCase):
                     [{"input": "validation task", "answer": "Validation answer"}],
                 ),
                 "model_config": {"task_lm": "task-model", "reflection_lm": "reflection-model"},
+                "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
                 "budget": {"max_metric_calls": 2},
             }
             worker = Path(__file__).with_name("gepa_worker.py")
@@ -518,6 +620,7 @@ class DevCliLlmTests(unittest.TestCase):
                     "task_lm": "task-model",
                     "reflection_lm": "reflection-model",
                 },
+                "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
                 "budget": {"max_metric_calls": 3},
             }
             result = subprocess.run(

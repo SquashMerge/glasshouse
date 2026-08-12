@@ -73,6 +73,12 @@ BEGIN
 	) THEN
 		RAISE EXCEPTION 'retained audit provenance serialization is incomplete';
 	END IF;
+	IF pg_get_functiondef('fence_authorization_membership_revocation'::regproc) NOT LIKE '%FOR UPDATE%'
+		OR pg_get_functiondef('fence_authorization_membership_revocation'::regproc) NOT LIKE '%lock_project_audit_provenance%'
+		OR pg_get_functiondef('enforce_retained_audit_project_provenance'::regproc) NOT LIKE '%FOR KEY SHARE%'
+		OR pg_get_functiondef('enforce_retained_audit_project_provenance'::regproc) NOT LIKE '%lock_project_audit_provenance%' THEN
+		RAISE EXCEPTION 'membership, project, and retained-audit lock ordering is incomplete';
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'project_deletion_jobs')
 		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'projects'::regclass AND conname = 'projects_status_check' AND pg_get_constraintdef(oid) LIKE '%deleting%')
 		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'project_deletion_jobs'::regclass AND conname LIKE '%project_id_key%') THEN
@@ -87,8 +93,7 @@ BEGIN
 		OR pg_get_functiondef('prevent_prompt_deletion_audit_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_human_feedback_score_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
 		OR pg_get_functiondef('prevent_prompt_optimization_event_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
-		OR pg_get_functiondef('prevent_governance_immutable_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%'
-		OR pg_get_functiondef('prevent_final_workspace_role_removal'::regproc) NOT LIKE '%project_deletion_is_authorized%' THEN
+		OR pg_get_functiondef('prevent_governance_immutable_mutation'::regproc) NOT LIKE '%project_deletion_is_authorized%' THEN
 		RAISE EXCEPTION 'immutable records do not have a project-scoped deletion escape';
 	END IF;
 	IF NOT EXISTS (
@@ -103,10 +108,20 @@ BEGIN
 	) THEN
 		RAISE EXCEPTION 'feedback first-pass persistence is incomplete';
 	END IF;
-    IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 1
-        OR (SELECT name FROM projects WHERE slug = 'default') <> 'Default Project' THEN
-        RAISE EXCEPTION 'default project was not seeded';
-    END IF;
+	IF NOT EXISTS (
+		SELECT 1
+		FROM organizations AS organization
+		JOIN projects AS project
+			ON project.id = organization.default_project_id
+			AND project.organization_id = organization.id
+		WHERE organization.id = '00000000-0000-4000-8000-000000000001'
+			AND organization.slug = 'default'
+			AND organization.name = 'Default Organization'
+			AND project.slug = 'default'
+			AND project.name = 'Default Project'
+	) THEN
+		RAISE EXCEPTION 'default project was not seeded';
+	END IF;
 
     IF (SELECT slug FROM prompts WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001') <> 'first-prompt' THEN
         RAISE EXCEPTION 'first prompt slug was not normalized';
@@ -184,18 +199,70 @@ BEGIN
         RAISE EXCEPTION 'a migrated prompt version has a non-canonical content hash';
     END IF;
 
-    IF (SELECT count(*) FROM prompt_label_quarantine) <> 4 THEN
+    IF (
+        SELECT count(*)
+        FROM prompt_label_quarantine
+        WHERE (original_project_id, original_prompt_id, original_version_id, original_label) IN (
+            VALUES
+                ('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'invalid!'),
+                ('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'latest'),
+                ('22222222-2222-2222-2222-222222222222'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'tenant'),
+                ('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'bbbbbbbb-0000-0000-0000-000000000101'::uuid, 'version-link')
+        )
+    ) <> 4 THEN
         RAISE EXCEPTION 'obsolete label grammar quarantine rows were not restored';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'invalid!' AND reason = 'invalid_label_format')
-        OR NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'latest' AND reason = 'reserved_latest')
-        OR NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'tenant' AND reason = 'prompt_project_mismatch')
-        OR NOT EXISTS (SELECT 1 FROM prompt_label_quarantine WHERE original_label = 'version-link' AND reason = 'version_prompt_mismatch') THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '11111111-1111-1111-1111-111111111111'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND original_label = 'invalid!'
+            AND reason = 'invalid_label_format'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '11111111-1111-1111-1111-111111111111'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND original_label = 'latest'
+            AND reason = 'reserved_latest'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '22222222-2222-2222-2222-222222222222'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND original_label = 'tenant'
+            AND reason = 'prompt_project_mismatch'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_label_quarantine
+        WHERE original_project_id = '11111111-1111-1111-1111-111111111111'
+            AND original_prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND original_version_id = 'bbbbbbbb-0000-0000-0000-000000000101'
+            AND original_label = 'version-link'
+            AND reason = 'version_prompt_mismatch'
+    ) THEN
         RAISE EXCEPTION 'label quarantine reason precedence is incorrect';
     END IF;
-    IF (SELECT count(*) FROM prompt_labels) <> 2
-        OR NOT EXISTS (SELECT 1 FROM prompt_labels WHERE label = 'production')
-        OR NOT EXISTS (SELECT 1 FROM prompt_labels WHERE label = 'team_alpha') THEN
+    IF (
+        SELECT count(*)
+        FROM prompt_labels
+        WHERE project_id = '11111111-1111-1111-1111-111111111111'
+            AND prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND label IN ('production', 'team_alpha')
+    ) <> 2 OR NOT EXISTS (
+        SELECT 1 FROM prompt_labels
+        WHERE project_id = '11111111-1111-1111-1111-111111111111'
+            AND prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND label = 'production'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM prompt_labels
+        WHERE project_id = '11111111-1111-1111-1111-111111111111'
+            AND prompt_id = 'aaaaaaaa-0000-0000-0000-000000000001'
+            AND version_id = 'aaaaaaaa-0000-0000-0000-000000000101'
+            AND label = 'team_alpha'
+    ) THEN
         RAISE EXCEPTION 'valid labels were not retained and restored exactly';
     END IF;
 
@@ -561,7 +628,12 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM projects
-        WHERE organization_id <> '00000000-0000-4000-8000-000000000001'
+        WHERE id IN (
+            '11111111-1111-1111-1111-111111111111',
+            '22222222-2222-2222-2222-222222222222',
+            '44444444-4444-4444-8444-444444444444'
+        )
+            AND organization_id <> '00000000-0000-4000-8000-000000000001'
     ) THEN
         RAISE EXCEPTION 'legacy projects were not backfilled to the default organization';
     END IF;
@@ -570,6 +642,10 @@ BEGIN
         FROM information_schema.columns
         WHERE table_schema = 'public'
             AND column_name IN ('organization_id', 'project_id')
+            AND (table_name, column_name) NOT IN (
+                ('authorization_role_migration_audit', 'project_id'),
+                ('authorization_role_migration_quarantine', 'project_id')
+            )
             AND is_nullable <> 'NO'
     ) THEN
         RAISE EXCEPTION 'tenant identifier columns must be NOT NULL';
@@ -597,7 +673,18 @@ BEGIN
     SET default_project_id = '33333333-3333-4333-8333-333333333333'
     WHERE id = '00000000-0000-4000-8000-000000000002';
     ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
-    IF (SELECT count(*) FROM projects WHERE slug = 'default') <> 2 THEN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM projects
+        WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+            AND slug = 'default'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM projects
+        WHERE id = '33333333-3333-4333-8333-333333333333'
+            AND organization_id = '00000000-0000-4000-8000-000000000002'
+            AND slug = 'default'
+    ) THEN
         RAISE EXCEPTION 'project slugs are not organization-scoped';
     END IF;
 
@@ -786,10 +873,38 @@ BEGIN
         RAISE EXCEPTION 'durable experiment task ledger is incomplete';
     END IF;
 
-    IF (SELECT count(*) FROM project_memberships WHERE organization_id = '00000000-0000-4000-8000-000000000001' AND actor_subject = 'bootstrap-owner' AND role = 'manager') <> 4
+    IF (
+        SELECT count(*)
+        FROM project_memberships AS pm
+        WHERE pm.organization_id = '00000000-0000-4000-8000-000000000001'
+            AND pm.actor_subject = 'bootstrap-owner'
+            AND pm.role = 'manager'
+            AND (
+                pm.project_id IN (
+                    '11111111-1111-1111-1111-111111111111',
+                    '22222222-2222-2222-2222-222222222222',
+                    '44444444-4444-4444-8444-444444444444'
+                ) OR pm.project_id = (
+                    SELECT default_project_id
+                    FROM organizations
+                    WHERE id = '00000000-0000-4000-8000-000000000001'
+                )
+            )
+    ) <> 4
         OR EXISTS (
             SELECT 1 FROM projects p
             WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'
+                AND (
+                    p.id IN (
+                        '11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '44444444-4444-4444-8444-444444444444'
+                    ) OR p.id = (
+                        SELECT default_project_id
+                        FROM organizations
+                        WHERE id = '00000000-0000-4000-8000-000000000001'
+                    )
+                )
                 AND NOT EXISTS (
                     SELECT 1 FROM project_memberships pm
                     WHERE pm.project_id = p.id AND pm.actor_subject = 'bootstrap-owner' AND pm.role = 'manager'
@@ -800,7 +915,48 @@ BEGIN
             WHERE organization_id = '00000000-0000-4000-8000-000000000001'
                 AND actor_subject = 'bootstrap-owner' AND role = 'owner'
         )
-        OR (SELECT count(*) FROM project_authorization_audit_events WHERE actor_subject = 'bootstrap-owner' AND event_type = 'bootstrap_manager_added') <> 4 THEN
+        OR EXISTS (
+            SELECT 1
+            FROM projects AS p
+            WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'
+                AND (
+                    p.id IN (
+                        '11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '44444444-4444-4444-8444-444444444444'
+                    ) OR p.id = (
+                        SELECT default_project_id
+                        FROM organizations
+                        WHERE id = '00000000-0000-4000-8000-000000000001'
+                    )
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM project_authorization_audit_events AS event
+                    WHERE event.organization_id = '00000000-0000-4000-8000-000000000001'
+                        AND event.project_id = p.id
+                        AND event.actor_subject = 'bootstrap-owner'
+                        AND event.event_type = 'bootstrap_manager_added'
+                )
+        )
+        OR (
+            SELECT count(*)
+            FROM project_authorization_audit_events
+            WHERE organization_id = '00000000-0000-4000-8000-000000000001'
+                AND actor_subject = 'bootstrap-owner'
+                AND event_type = 'bootstrap_manager_added'
+                AND (
+                    project_id IN (
+                        '11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '44444444-4444-4444-8444-444444444444'
+                    ) OR project_id = (
+                        SELECT default_project_id
+                        FROM organizations
+                        WHERE id = '00000000-0000-4000-8000-000000000001'
+                    )
+                )
+        ) <> 4 THEN
         RAISE EXCEPTION 'bootstrap owner was not idempotently granted manager membership for every historical project';
     END IF;
 
@@ -937,6 +1093,129 @@ BEGIN
 	EXCEPTION WHEN SQLSTATE '55000' THEN
 		NULL;
 	END;
+END
+$$;
+
+DO $$
+DECLARE
+    test_organization_id CONSTANT UUID := '00000000-0000-4000-8000-000000000002';
+    test_project_id CONSTANT UUID := 'abababab-abab-4bab-8bab-abababababab';
+    test_actor_subject CONSTANT TEXT := 'project-deletion-lifecycle-user';
+BEGIN
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES (test_organization_id, test_actor_subject, 'member');
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES (
+        test_project_id,
+        'Project Deletion Lifecycle Guard',
+        'project-deletion-lifecycle-guard',
+        test_organization_id
+    );
+    INSERT INTO project_memberships (project_id, organization_id, actor_subject, role)
+    VALUES (test_project_id, test_organization_id, test_actor_subject, 'manager');
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM projects AS project
+        JOIN organizations AS organization ON organization.id = project.organization_id
+        WHERE project.id = test_project_id
+          AND project.organization_id = test_organization_id
+          AND project.id <> organization.default_project_id
+          AND project.status = 'active'
+    ) OR (
+        SELECT count(*)
+        FROM project_memberships
+        WHERE project_id = test_project_id
+          AND role = 'manager'
+    ) <> 1 THEN
+        RAISE EXCEPTION 'project deletion lifecycle fixture is not an active non-default project with one User';
+    END IF;
+
+    PERFORM set_config('astraea.project_deletion_id', test_project_id::text, true);
+    BEGIN
+        UPDATE project_memberships
+        SET role = 'member'
+        WHERE project_id = test_project_id
+          AND actor_subject = test_actor_subject;
+        RAISE EXCEPTION 'project deletion context demoted the final active project User';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final active project User' THEN
+            RAISE;
+        END IF;
+    END;
+    BEGIN
+        DELETE FROM project_memberships
+        WHERE project_id = test_project_id
+          AND actor_subject = test_actor_subject;
+        RAISE EXCEPTION 'project deletion context removed the final active project User';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final active project User' THEN
+            RAISE;
+        END IF;
+    END;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM project_memberships
+        WHERE project_id = test_project_id
+          AND actor_subject = test_actor_subject
+          AND role = 'manager'
+    ) THEN
+        RAISE EXCEPTION 'active project final User guard did not preserve its membership';
+    END IF;
+    BEGIN
+        UPDATE organization_memberships
+        SET role = 'member'
+        WHERE organization_id = test_organization_id
+          AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'project deletion context demoted the final organization Admin';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final organization Admin' THEN
+            RAISE;
+        END IF;
+    END;
+    BEGIN
+        DELETE FROM organization_memberships
+        WHERE organization_id = test_organization_id
+          AND actor_subject = 'migration-owner';
+        RAISE EXCEPTION 'project deletion context removed the final organization Admin';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'cannot remove or demote the final organization Admin' THEN
+            RAISE;
+        END IF;
+    END;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM organization_memberships
+        WHERE organization_id = test_organization_id
+          AND actor_subject = 'migration-owner'
+          AND role = 'owner'
+    ) THEN
+        RAISE EXCEPTION 'final organization Admin guard did not preserve its membership';
+    END IF;
+
+    PERFORM set_config('astraea.project_deletion_id', '', true);
+    IF current_setting('astraea.project_deletion_id', true) IS DISTINCT FROM '' THEN
+        RAISE EXCEPTION 'project deletion context was not cleared before deleting cleanup';
+    END IF;
+
+    UPDATE projects
+    SET status = 'deleting'
+    WHERE id = test_project_id;
+    DELETE FROM project_memberships
+    WHERE project_id = test_project_id
+      AND actor_subject = test_actor_subject;
+    IF EXISTS (
+        SELECT 1
+        FROM project_memberships
+        WHERE project_id = test_project_id
+    ) THEN
+        RAISE EXCEPTION 'deleting project did not clean up its User membership';
+    END IF;
+    DELETE FROM projects
+    WHERE id = test_project_id;
+    IF EXISTS (SELECT 1 FROM projects WHERE id = test_project_id) THEN
+        RAISE EXCEPTION 'deleting non-default project was not removed after membership cleanup';
+    END IF;
 END
 $$;
 

@@ -1,12 +1,17 @@
 import { describe, expect, it, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { SSEStreamingApi } from "hono/streaming";
 import { PromptRepositoryError } from "../../src/db/prompts";
-import { TRUSTED_ACTOR_CONTEXT_KEY } from "../../src/middleware/auth";
+import {
+	TRUSTED_ACTOR_CONTEXT_KEY,
+	TRUSTED_TENANT_CONTEXT_KEY,
+} from "../../src/middleware/auth";
 import {
 	createOptimizationHandlers,
 	getOptimization,
 	getLatestOptimization,
 	listOptimizationActivities,
+	optimizationEvents,
 	startOptimization,
 	type OptimizationDependencies,
 } from "../../src/routes/prompt-optimizations";
@@ -387,6 +392,11 @@ describe("prompt optimization status routes", () => {
 			});
 			api.use("*", async (c, next) => {
 				c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+				c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+					actor: "test-user",
+					actorId: "33333333-3333-4333-8333-333333333333",
+					organizationId: "44444444-4444-4444-8444-444444444444",
+				});
 				await next();
 			});
 			api.openapi(startOptimization, handlers.handleStart);
@@ -434,6 +444,221 @@ describe("prompt optimization status routes", () => {
 		} finally {
 			console.error = originalConsoleError;
 			process.env.GEPA_ALLOWED_MODELS = originalModels;
+		}
+	});
+
+	it("does not emit queued optimization events after a backpressured stream is revoked", async () => {
+		let accessAllowed = true;
+		let firstWriteEntered: () => void = () => undefined;
+		let releaseFirstWrite: () => void = () => undefined;
+		const firstWrite = new Promise<void>((resolve) => {
+			firstWriteEntered = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseFirstWrite = resolve;
+		});
+		const query = async (statement: string) => {
+			if (statement.startsWith("SELECT decision.effective_role"))
+				return {
+					rows: [
+						{
+							effective_role: "admin",
+							enforcement: "strict",
+							project_status: "active",
+							allowed: accessAllowed,
+						},
+					],
+				};
+			if (statement.includes("p.status = ANY($3::text[])"))
+				return { rows: [{ id: PROJECT }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: "test-user" }] };
+			if (statement.includes("project_memberships"))
+				return {
+					rows: accessAllowed ? [{ actor_subject: "test-user" }] : [],
+				};
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: accessAllowed }] };
+			return { rows: [] };
+		};
+		const db = {
+			query,
+			connect: async () => ({ query, release: () => undefined }),
+		};
+		const handlers = createOptimizationHandlers({
+			pool: () => db as never,
+			get: async () => privateJob(),
+			events: async () => [
+				{
+					id: 1,
+					status: "preparing" as const,
+					detail: {},
+					created_at: "2026-08-11T00:00:00.000Z",
+				},
+				{
+					id: 2,
+					status: "completed" as const,
+					detail: {},
+					created_at: "2026-08-11T00:00:01.000Z",
+				},
+			],
+		} as unknown as OptimizationDependencies);
+		const api = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		api.use("*", async (c, next) => {
+			c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+				actor: "test-user",
+				actorId: "33333333-3333-4333-8333-333333333333",
+				organizationId: "44444444-4444-4444-8444-444444444444",
+			});
+			await next();
+		});
+		api.openapi(optimizationEvents, handlers.handleEvents);
+
+		const originalWriteSSE = SSEStreamingApi.prototype.writeSSE;
+		SSEStreamingApi.prototype.writeSSE = async function (message) {
+			if (message.event === "status" && message.id === "1") {
+				firstWriteEntered();
+				await release;
+			}
+			return originalWriteSSE.call(this, message);
+		};
+		try {
+			const response = await api.request(
+				`/v1/prompt-optimizations/33333333-3333-4333-8333-333333333333/events?project_id=${PROJECT}`,
+			);
+			expect(response.status).toBe(200);
+			const reader = response.body?.getReader();
+			if (!reader) throw new Error("Optimization SSE response has no body");
+			const firstChunk = reader.read();
+
+			await firstWrite;
+			accessAllowed = false;
+			releaseFirstWrite();
+			const first = await firstChunk;
+			expect(first.done).toBe(false);
+
+			let body = new TextDecoder().decode(first.value);
+			for (;;) {
+				const next = await reader.read();
+				if (next.done) break;
+				body += new TextDecoder().decode(next.value);
+			}
+			const ids = body
+				.split("\n\n")
+				.map((frame) => frame.split("\n"))
+				.filter((lines) => lines.includes("event: status"))
+				.map((lines) => lines.find((line) => line.startsWith("id: "))?.slice(4))
+				.filter((id): id is string => id !== undefined);
+			expect(ids).toEqual(["1"]);
+		} finally {
+			releaseFirstWrite();
+			SSEStreamingApi.prototype.writeSSE = originalWriteSSE;
+		}
+	});
+
+	it("aborts a stalled optimization frame and releases its authorization fence", async () => {
+		const originalTimeout = process.env.SSE_FRAME_WRITE_TIMEOUT_MS;
+		process.env.SSE_FRAME_WRITE_TIMEOUT_MS = "100";
+		const queries: string[] = [];
+		let firstWriteEntered: () => void = () => undefined;
+		let committed: () => void = () => undefined;
+		const firstWrite = new Promise<void>((resolve) => {
+			firstWriteEntered = resolve;
+		});
+		const commit = new Promise<void>((resolve) => {
+			committed = resolve;
+		});
+		const query = async (statement: string) => {
+			queries.push(statement);
+			if (statement === "COMMIT") committed();
+			if (statement.startsWith("SELECT decision.effective_role"))
+				return {
+					rows: [
+						{
+							effective_role: "admin",
+							enforcement: "strict",
+							project_status: "active",
+							allowed: true,
+						},
+					],
+				};
+			if (statement.includes("p.status = ANY($3::text[])"))
+				return { rows: [{ id: PROJECT }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: "test-user" }] };
+			if (statement.includes("project_memberships"))
+				return { rows: [{ actor_subject: "test-user" }] };
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			return { rows: [] };
+		};
+		const db = {
+			query,
+			connect: async () => ({ query, release: () => undefined }),
+		};
+		const handlers = createOptimizationHandlers({
+			pool: () => db as never,
+			get: async () => privateJob(),
+			events: async () => [
+				{
+					id: 1,
+					status: "preparing" as const,
+					detail: {},
+					created_at: "2026-08-11T00:00:00.000Z",
+				},
+			],
+		} as unknown as OptimizationDependencies);
+		const api = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		api.use("*", async (c, next) => {
+			c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+				actor: "test-user",
+				actorId: "33333333-3333-4333-8333-333333333333",
+				organizationId: "44444444-4444-4444-8444-444444444444",
+			});
+			await next();
+		});
+		api.openapi(optimizationEvents, handlers.handleEvents);
+
+		const originalWriteSSE = SSEStreamingApi.prototype.writeSSE;
+		SSEStreamingApi.prototype.writeSSE = async function (message) {
+			if (message.event !== "status")
+				return originalWriteSSE.call(this, message);
+			firstWriteEntered();
+			await new Promise<void>((resolve) => this.onAbort(resolve));
+		};
+		try {
+			const response = await api.request(
+				`/v1/prompt-optimizations/33333333-3333-4333-8333-333333333333/events?project_id=${PROJECT}`,
+			);
+			const reader = response.body?.getReader();
+			if (!reader) throw new Error("Optimization SSE response has no body");
+			await firstWrite;
+			expect((await reader.read()).done).toBe(true);
+			await commit;
+			expect(queries).toContain("COMMIT");
+		} finally {
+			SSEStreamingApi.prototype.writeSSE = originalWriteSSE;
+			if (originalTimeout === undefined)
+				delete process.env.SSE_FRAME_WRITE_TIMEOUT_MS;
+			else process.env.SSE_FRAME_WRITE_TIMEOUT_MS = originalTimeout;
 		}
 	});
 });

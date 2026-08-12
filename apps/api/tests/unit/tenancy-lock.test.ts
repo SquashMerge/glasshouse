@@ -11,15 +11,22 @@ const scope = {
 	actorId: "00000000-0000-4000-8000-000000000003",
 	organizationId: "00000000-0000-4000-8000-000000000001",
 	projectId: "00000000-0000-4000-8000-000000000002",
-	organizationRole: "member" as const,
-	projectRole: "member" as const,
+	projectRole: "read_only" as const,
+	enforcement: "strict" as const,
 	projectStatus: "active" as const,
 };
 
 describe("withActiveAuthorizedProjectLock", () => {
-	it("locks active project and current memberships through persistence", async () => {
+	it("locks active project through the centralized policy decision", async () => {
 		const query = mock(async (statement: string) => {
-			if (statement.startsWith("SELECT")) return { rows: [{ id: "project" }] };
+			if (statement.includes("p.status = ANY($3::text[])"))
+				return { rows: [{ id: "project" }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.includes("project_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
 			return { rows: [] };
 		});
 		const release = mock(() => undefined);
@@ -32,15 +39,90 @@ describe("withActiveAuthorizedProjectLock", () => {
 
 		expect(query.mock.calls.map(([statement]) => statement)).toEqual([
 			"BEGIN",
-			expect.stringContaining("p.status = 'active'"),
+			expect.stringContaining("organization_memberships"),
+			expect.stringContaining("project_memberships"),
+			expect.stringContaining("p.status = ANY($3::text[])"),
+			expect.stringContaining("authorization_allows_project"),
 			"COMMIT",
 		]);
-		expect(query.mock.calls[1]?.[0]).toContain("FOR UPDATE OF p, om");
-		expect(query.mock.calls[1]?.[0]).toContain(
-			"project_memberships WHERE project_id = p.id AND basic_auth_canonical_subject(actor_subject) = identity.canonical_subject FOR UPDATE",
-		);
+		expect(query.mock.calls[3]?.[0]).toContain("FOR UPDATE OF p");
 		expect(persisted).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
+	});
+
+	it("retries a lock-phase deadlock before any persistence", async () => {
+		let attempt = 0;
+		const query = mock(async (statement: string) => {
+			if (statement === "BEGIN") {
+				attempt += 1;
+				return { rows: [] };
+			}
+			if (attempt === 1 && statement.includes("p.status = ANY($3::text[])"))
+				throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
+			if (statement.includes("p.status = ANY($3::text[])"))
+				return { rows: [{ id: scope.projectId }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: scope.actor }] };
+			if (statement.includes("project_memberships"))
+				return { rows: [{ actor_subject: scope.actor }] };
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			return { rows: [] };
+		});
+		const release = mock(() => undefined);
+		const db = {
+			connect: mock(async () => ({ query, release })),
+		} as never;
+		const persisted = mock(async () => undefined);
+
+		await withActiveAuthorizedProjectLock(db, scope, persisted);
+
+		expect(attempt).toBe(2);
+		expect(persisted).toHaveBeenCalledTimes(1);
+		expect(release).toHaveBeenCalledTimes(2);
+		expect(query.mock.calls.map(([statement]) => statement)).toEqual([
+			"BEGIN",
+			expect.stringContaining("organization_memberships"),
+			expect.stringContaining("project_memberships"),
+			expect.stringContaining("p.status = ANY($3::text[])"),
+			"ROLLBACK",
+			"BEGIN",
+			expect.stringContaining("organization_memberships"),
+			expect.stringContaining("project_memberships"),
+			expect.stringContaining("p.status = ANY($3::text[])"),
+			expect.stringContaining("authorization_allows_project"),
+			"COMMIT",
+		]);
+	});
+
+	it("does not retry after a callback has run", async () => {
+		const serializationFailure = Object.assign(
+			new Error("could not serialize access"),
+			{ code: "40001" },
+		);
+		const query = mock(async (statement: string) => {
+			if (statement.includes("p.status = ANY($3::text[])"))
+				return { rows: [{ id: scope.projectId }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: scope.actor }] };
+			if (statement.includes("project_memberships"))
+				return { rows: [{ actor_subject: scope.actor }] };
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			if (statement === "COMMIT") throw serializationFailure;
+			return { rows: [] };
+		});
+		const db = {
+			connect: mock(async () => ({ query, release: () => undefined })),
+		} as never;
+		const persisted = mock(async () => undefined);
+
+		await expect(
+			withActiveAuthorizedProjectLock(db, scope, persisted),
+		).rejects.toBe(serializationFailure);
+
+		expect(persisted).toHaveBeenCalledTimes(1);
+		expect(db.connect).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not persist after archive or membership revocation revalidation fails", async () => {
@@ -60,7 +142,9 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect(persisted, reason).not.toHaveBeenCalled();
 			expect(query.mock.calls.map(([statement]) => statement)).toEqual([
 				"BEGIN",
-				expect.any(String),
+				expect.stringContaining("organization_memberships"),
+				expect.stringContaining("project_memberships"),
+				expect.stringContaining("p.status = ANY($3::text[])"),
 				"ROLLBACK",
 			]);
 		}
@@ -69,7 +153,14 @@ describe("withActiveAuthorizedProjectLock", () => {
 	it("preserves a persistence failure when rollback fails", async () => {
 		const failure = new Error("ClickHouse failed");
 		const query = mock(async (statement: string) => {
-			if (statement.startsWith("SELECT")) return { rows: [{ id: "project" }] };
+			if (statement.includes("p.status = ANY($3::text[])"))
+				return { rows: [{ id: "project" }] };
+			if (statement.includes("organization_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.includes("project_memberships"))
+				return { rows: [{ actor_subject: "member" }] };
+			if (statement.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
 			if (statement === "ROLLBACK") throw new Error("rollback failed");
 			return { rows: [] };
 		});

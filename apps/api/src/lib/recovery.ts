@@ -8,6 +8,7 @@ type RecoverableExperiment = {
 
 type RecoveryDependencies = {
 	pool: () => unknown;
+	cancelAdmissions: (pool: unknown) => Promise<number>;
 	recoverExperiments: (pool: unknown) => Promise<RecoverableExperiment[]>;
 	failOptimizations: (pool: unknown) => Promise<InterruptedWork[]>;
 	failRetentionRuns: (pool: unknown) => Promise<InterruptedWork[]>;
@@ -19,6 +20,7 @@ export async function recoverInterruptedWork(
 	dependencies: RecoveryDependencies,
 ): Promise<void> {
 	const pool = dependencies.pool();
+	const cancelledAdmissions = await dependencies.cancelAdmissions(pool);
 	const [experiments, optimizations, retentionRuns] = await Promise.all([
 		dependencies.recoverExperiments(pool),
 		dependencies.failOptimizations(pool),
@@ -28,6 +30,7 @@ export async function recoverInterruptedWork(
 		experiments.map((experiment) => dependencies.resumeExperiment(experiment)),
 	);
 	dependencies.log("work.recovered_after_restart", {
+		execution_admissions_cancelled: cancelledAdmissions,
 		experiments_resumed: experiments.length,
 		optimizations_failed: optimizations.length,
 		retention_runs_failed: retentionRuns.length,

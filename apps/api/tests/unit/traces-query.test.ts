@@ -30,7 +30,14 @@ function fakeClient() {
 describe("getTrace project scope", () => {
 	it("filters both trace and observations by the selected project", async () => {
 		const { client, queries } = fakeClient();
-		await getTrace(client as never, ORGANIZATION_ID, TRACE_ID, PROJECT_ID);
+		const controller = new AbortController();
+		await getTrace(
+			client as never,
+			ORGANIZATION_ID,
+			TRACE_ID,
+			PROJECT_ID,
+			controller.signal,
+		);
 
 		expect(queries).toHaveLength(2);
 		expect(queries[0]).toMatchObject({
@@ -50,6 +57,8 @@ describe("getTrace project scope", () => {
 				limit: 5_000,
 			},
 		});
+		for (const request of queries)
+			expect(request).toMatchObject({ abort_signal: controller.signal });
 	});
 
 	it("limits omitted project scope to legacy unscoped rows", async () => {

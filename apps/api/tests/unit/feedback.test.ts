@@ -20,6 +20,11 @@ const base = {
 		},
 	},
 };
+const authorization = {
+	organization_id: "22222222-2222-4222-8222-222222222222",
+	actor_id: "33333333-3333-4333-8333-333333333333",
+	operation: "product_write" as const,
+};
 
 describe("feedback contract", () => {
 	it("accepts only typed human feedback payloads", () => {
@@ -87,7 +92,9 @@ describe("feedback review persistence", () => {
 		};
 		const client = {
 			query: async (sql: string) => {
-				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews")) return { rows: [row] };
 				if (sql.includes("SELECT request_hash"))
 					return { rows: [{ request_hash: requestHash(base) }] };
@@ -100,6 +107,7 @@ describe("feedback review persistence", () => {
 			{
 				...base,
 				idempotency_key: "same-intent",
+				authorization,
 			},
 		);
 
@@ -150,7 +158,9 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
@@ -181,6 +191,7 @@ describe("feedback review persistence", () => {
 				id: "33333333-3333-4333-8333-333333333333",
 				dataset_id: "22222222-2222-4222-8222-222222222222",
 				input: { question: "hello" },
+				authorization: { ...authorization, operation: "governed" },
 			}),
 		).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
 		expect(queries.some((sql) => sql.includes("FROM datasets"))).toBe(false);
@@ -195,7 +206,9 @@ describe("feedback review persistence", () => {
 			const client = {
 				query: async (sql: string) => {
 					queries.push(sql);
-					if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+					if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+					if (sql.startsWith("SELECT authorization_allows_project"))
+						return { rows: [{ allowed: true }] };
 					if (sql.includes("JOIN feedback_reviews"))
 						return {
 							rows: [
@@ -230,6 +243,7 @@ describe("feedback review persistence", () => {
 					status: "added_to_dataset",
 					dataset_id: "22222222-2222-4222-8222-222222222222",
 					dataset_item_id: "44444444-4444-4444-8444-444444444444",
+					authorization: { ...authorization, operation: "governed" },
 				}),
 			).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
 			expect(queries[0]).toBe("BEGIN");
@@ -248,7 +262,9 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
@@ -281,6 +297,7 @@ describe("feedback review persistence", () => {
 				dataset_id: "22222222-2222-4222-8222-222222222222",
 				input: { question: "hello" },
 				expected_output: { answer: "world" },
+				authorization: { ...authorization, operation: "governed" },
 			},
 		);
 
@@ -298,7 +315,9 @@ describe("feedback review persistence", () => {
 		const client = {
 			query: async (sql: string) => {
 				queries.push(sql);
-				if (sql.includes("FROM projects WHERE id=$1")) return { rows: [{}] };
+				if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews"))
 					return {
 						rows: [
@@ -318,6 +337,8 @@ describe("feedback review persistence", () => {
 							},
 						],
 					};
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: false }] };
 				return { rows: [] };
 			},
 			release: () => {},
@@ -327,6 +348,7 @@ describe("feedback review persistence", () => {
 				project_id: base.project_id,
 				id: "33333333-3333-4333-8333-333333333333",
 				status: "dismissed",
+				authorization: { ...authorization, operation: "governed" },
 			}),
 		).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
 		expect(queries).toContain("ROLLBACK");
@@ -346,6 +368,7 @@ describe("feedback review persistence", () => {
 				createFeedback({ connect: async () => client() } as never, {
 					...base,
 					idempotency_key: "archived",
+					authorization,
 				}),
 			() =>
 				promoteFeedback({ connect: async () => client() } as never, {
@@ -353,18 +376,20 @@ describe("feedback review persistence", () => {
 					id: "33333333-3333-4333-8333-333333333333",
 					dataset_id: "22222222-2222-4222-8222-222222222222",
 					input: {},
+					authorization: { ...authorization, operation: "governed" },
 				}),
 			() =>
 				reviewFeedback({ connect: async () => client() } as never, {
 					project_id: base.project_id,
 					id: "33333333-3333-4333-8333-333333333333",
 					status: "dismissed",
+					authorization: { ...authorization, operation: "governed" },
 				}),
 		];
 		for (const mutate of mutations) {
 			const before = calls.length;
 			await expect(mutate()).rejects.toMatchObject({ code: "NOT_FOUND" });
-			expect(calls[before + 1]).toContain("status='active' FOR UPDATE");
+			expect(calls[before + 3]).toContain("p.status = ANY($3::text[])");
 		}
 
 		const listed = await listFeedback(

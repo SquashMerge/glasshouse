@@ -10,7 +10,7 @@ interface ProjectSelectionContextValue {
 	projects: Project[];
 	selectedProjectId: string | null;
 	selectedProject: Project | null;
-	organizationRole: "owner" | "member" | null;
+	organizationRole: "admin" | "user" | null;
 	isLoading: boolean;
 	error: Error | null;
 	selectProject: (projectId: string) => void;

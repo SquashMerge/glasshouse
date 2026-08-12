@@ -151,6 +151,7 @@ function app() {
 		c.set(TRUSTED_ACTOR_CONTEXT_KEY, "context-admin");
 		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
 			actor: "context-admin",
+			actorId: "33333333-3333-4333-8333-333333333333",
 			organizationId: "00000000-0000-4000-8000-000000000001",
 		});
 		await next();
@@ -361,7 +362,15 @@ describe("prompt route contracts", () => {
 		expect(await response.json()).toEqual(PROMPT);
 		expect(rollbackLatestPromptVersionRecord).toHaveBeenCalledWith(
 			expect.anything(),
-			{ project_id: PROJECT, slug: "support-agent" },
+			expect.objectContaining({
+				project_id: PROJECT,
+				slug: "support-agent",
+				authorization: {
+					organization_id: "00000000-0000-4000-8000-000000000001",
+					actor_id: "33333333-3333-4333-8333-333333333333",
+					operation: "product_write",
+				},
+			}),
 		);
 	});
 
@@ -490,6 +499,11 @@ describe("prompt route contracts", () => {
 			slug: "support-agent",
 			confirmation: "support-agent",
 			actor: "context-admin",
+			authorization: {
+				organization_id: "00000000-0000-4000-8000-000000000001",
+				actor_id: "33333333-3333-4333-8333-333333333333",
+				operation: "product_write",
+			},
 		});
 	});
 });

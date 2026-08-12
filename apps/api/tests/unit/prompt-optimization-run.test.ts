@@ -64,17 +64,46 @@ function dependencies(input: {
 		baseline_validation_score: number;
 		metric_calls_used: number | null;
 	};
+	admitted?: boolean;
 }) {
 	const completed: Array<Record<string, unknown>> = [];
 	const published: Array<Record<string, unknown>> = [];
 	const metricCalls: Array<Record<string, unknown>> = [];
+	const workerCalls: Array<Record<string, unknown>> = [];
+	const unknownDispatches: Array<Record<string, unknown>> = [];
 	const d = {
 		pool: () => ({}),
-		worker: async (workerInput: Record<string, unknown>) => input.result,
+		worker: async (workerInput: Record<string, unknown>) => {
+			workerCalls.push(workerInput);
+			return input.result;
+		},
 		create: async () => job(),
 		get: async () => job(),
 		getActive: async () => null,
 		claim: async () => true,
+		admitExecution: async () =>
+			input.admitted === false
+				? null
+				: {
+						id: "77777777-7777-4777-8777-777777777777",
+						project_id: PROJECT,
+						requester_actor_id: "admin",
+						authorization_epoch: 1,
+					},
+		isAdmissionActive: async () => input.admitted !== false,
+		claimExecution: async () =>
+			input.admitted !== false
+				? { status: "created" as const }
+				: { status: "unavailable" as const },
+		cancelAdmission: async () => {},
+		completeAdmission: async () => {},
+		cancelExecution: async () => {},
+		failUnknownDispatch: async (
+			_pool: unknown,
+			unknownDispatch: Record<string, unknown>,
+		) => {
+			unknownDispatches.push(unknownDispatch);
+		},
 		renew: async () => true,
 		sourceMessages: async () => [
 			{ role: "system" as const, content: "Summarize {{tasks}}" },
@@ -98,10 +127,80 @@ function dependencies(input: {
 		},
 		promote: async () => job(),
 	} as unknown as OptimizationDependencies;
-	return { d, completed, published, metricCalls };
+	return {
+		d,
+		completed,
+		published,
+		metricCalls,
+		workerCalls,
+		unknownDispatches,
+	};
 }
 
 describe("optimization completion policy", () => {
+	it("does not invoke the worker when revocation wins after validation but before dispatch claim", async () => {
+		const input = dependencies({
+			result: {
+				candidate: "Summarize {{tasks}} by urgency and timing.",
+				training_score: 1,
+				validation_score: 1,
+				baseline_validation_score: 0,
+				metric_calls_used: 3,
+			},
+		});
+		(
+			input.d as unknown as {
+				claimExecution: () => Promise<{ status: "unavailable" }>;
+			}
+		).claimExecution = async () => ({ status: "unavailable" });
+
+		await runOptimizationJob(job(), input.d);
+
+		expect(input.workerCalls).toHaveLength(0);
+	});
+
+	it("does not invoke the provider when execution admission is revoked", async () => {
+		const input = dependencies({
+			admitted: false,
+			result: {
+				candidate: "Summarize {{tasks}} by urgency and timing.",
+				training_score: 1,
+				validation_score: 1,
+				baseline_validation_score: 0,
+				metric_calls_used: 3,
+			},
+		});
+		await runOptimizationJob(job(), input.d);
+
+		expect(input.workerCalls).toHaveLength(0);
+		expect(input.completed).toHaveLength(0);
+		expect(input.published).toHaveLength(0);
+	});
+
+	it("terminalizes an optimization when its durable provider outcome is unknown", async () => {
+		const input = dependencies({
+			result: {
+				candidate: "Summarize {{tasks}} by urgency and timing.",
+				training_score: 1,
+				validation_score: 1,
+				baseline_validation_score: 0,
+				metric_calls_used: 3,
+			},
+		});
+		(
+			input.d as unknown as {
+				claimExecution: () => Promise<{ status: "existing" }>;
+			}
+		).claimExecution = async () => ({ status: "existing" });
+
+		await runOptimizationJob(job(), input.d);
+
+		expect(input.workerCalls).toHaveLength(0);
+		expect(input.unknownDispatches).toEqual([
+			{ id: JOB, worker_id: expect.any(String) },
+		]);
+	});
+
 	it("keeps a one-sample held-out result as a review-required draft", async () => {
 		const input = dependencies({
 			result: {
@@ -117,7 +216,12 @@ describe("optimization completion policy", () => {
 
 		expect(input.published).toHaveLength(0);
 		expect(input.metricCalls).toEqual([
-			{ id: JOB, worker_id: expect.any(String), metric_calls_used: 3 },
+			{
+				id: JOB,
+				worker_id: expect.any(String),
+				metric_calls_used: 3,
+				admission_id: "77777777-7777-4777-8777-777777777777",
+			},
 		]);
 		expect(input.completed).toHaveLength(1);
 		expect(input.completed[0]).toMatchObject({

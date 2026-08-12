@@ -16,6 +16,9 @@ export function ch(): ClickHouseClient {
 		database: process.env.CLICKHOUSE_DB ?? "astraea",
 		username: process.env.CLICKHOUSE_USER ?? "astraea",
 		password: process.env.CLICKHOUSE_PASSWORD ?? "",
+		clickhouse_settings: {
+			cancel_http_readonly_queries_on_client_close: 1,
+		},
 	});
 	return _client;
 }

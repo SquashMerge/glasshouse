@@ -1,9 +1,9 @@
 import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "./common.js";
 
-export const ProjectRole = z.enum(["manager", "member"]);
-export const ActorProjectRole = z.enum(["owner", "manager", "member"]);
-export const OrganizationRole = z.enum(["owner", "member"]);
+export const ProjectRole = z.enum(["user", "read_only"]);
+export const ActorProjectRole = z.enum(["admin", "user", "read_only"]);
+export const OrganizationRole = z.enum(["admin", "user"]);
 export const ProjectStatus = z.enum(["active", "archived", "deleting"]);
 export const Project = z
 	.object({
@@ -14,6 +14,8 @@ export const Project = z
 		created_at: z.string().datetime(),
 		archived_at: z.string().datetime().nullable(),
 		project_role: ActorProjectRole,
+		can_manage: z.boolean(),
+		can_govern: z.boolean(),
 		is_default: z.boolean(),
 	})
 	.strict()
@@ -71,8 +73,8 @@ export const Me = z
 		actor_subject: z.string(),
 		actor_id: z.string().uuid(),
 		effective_organization_role_id: z.enum([
-			"organization:owner",
-			"organization:member",
+			"organization:admin",
+			"organization:user",
 		]),
 		organization_id: z.string().uuid(),
 		organization_role: OrganizationRole,

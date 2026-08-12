@@ -266,7 +266,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 					<SidebarLink
 						to="/projects"
 						label={
-							organizationRole === "owner"
+							organizationRole === "admin"
 								? "Create / manage projects"
 								: "Manage projects"
 						}

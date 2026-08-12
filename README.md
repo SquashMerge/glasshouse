@@ -184,7 +184,7 @@ OPENAI_API_BASE=https://litellm.example.com/v1
 OPENAI_API_KEY=your-proxy-key
 ```
 
-The current UI exposes model names and the metric-call budget, but not provider credentials, proxy administration, connection testing, or model discovery. Never commit these credentials or store them in prompt/job records. For Docker Compose, place them in the gitignored `infra/.env`; for production, use the deployment secret mechanism. `GEPA_WORKER_MODE=fake` is only for deterministic tests and does not perform LLM calls.
+The current UI exposes model names and the metric-call budget, but not provider credentials, proxy administration, connection testing, or model discovery. Never commit these credentials or store them in prompt/job records. For Docker Compose, place them in the gitignored `infra/.env`; for production, use the deployment secret mechanism. Each job supplies GEPA with a durable provider-dispatch root key; LiteLLM derives unique deterministic task/reflection sequence keys, disables automatic retries, and sends the key through provider idempotency and request-ID facilities. `GEPA_WORKER_MODE=fake` is only for deterministic tests and does not perform LLM calls.
 
 #### Held-out optimization datasets and promotion
 

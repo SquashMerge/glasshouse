@@ -68,6 +68,12 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
   UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun run --cwd "$ROOT/apps/api" db:migrate
 
+# These races require two live PostgreSQL connections. Keeping them here makes
+# the revocation linearization checks mandatory in the Docker-backed CI job.
+DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
+  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+  bun test --cwd "$ROOT/apps/api" tests/integration/authorization-revocation-serialization.test.ts
+
 run_uuid_advisory_serialization_check() {
   local project_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
   local organization_id="00000000-0000-4000-8000-000000000001"
@@ -141,7 +147,7 @@ run_audit_lock_order_serialization_check() {
 		< "$ORDER_HOLDER_INPUT" > "$ORDER_HOLDER_OUTPUT" 2>&1 &
 	ORDER_HOLDER_PID=$!
 	exec 4>"$ORDER_HOLDER_INPUT"
-	printf "BEGIN; SELECT lock_project_audit_provenance('%s'); SELECT id FROM projects WHERE id = '%s' FOR UPDATE; SELECT id FROM governance_retention_runs WHERE project_id = '%s' FOR UPDATE;\n" "$project_id" "$project_id" "$project_id" >&4
+	printf "BEGIN; SELECT id FROM projects WHERE id = '%s' FOR UPDATE; SELECT lock_project_audit_provenance('%s'); SELECT id FROM governance_retention_runs WHERE project_id = '%s' FOR UPDATE;\n" "$project_id" "$project_id" "$project_id" >&4
 
 	for _ in {1..50}; do
 		holder_ready="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT pg_try_advisory_xact_lock(hashtextextended('$project_id', 0))")"
@@ -153,19 +159,19 @@ run_audit_lock_order_serialization_check() {
 		exit 1
 	fi
 
-	# The retry/retention path must take A before either project or run row locks.
+	# Retention finalization takes the Project fence before its audit UUID lock.
 	docker exec --interactive "$CONTAINER" \
 		psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-		--command "BEGIN; SELECT lock_project_audit_provenance('$project_id'); SELECT id FROM projects WHERE id = '$project_id' FOR UPDATE; SELECT id FROM governance_retention_runs WHERE project_id = '$project_id' FOR UPDATE; COMMIT;" \
+		--command "BEGIN; SELECT id FROM projects WHERE id = '$project_id' FOR UPDATE; SELECT lock_project_audit_provenance('$project_id'); SELECT id FROM governance_retention_runs WHERE project_id = '$project_id' FOR UPDATE; COMMIT;" \
 		> "$ORDER_CONTENDER_OUTPUT" 2>&1 &
 	ORDER_CONTENDER_PID=$!
 	for _ in {1..50}; do
-		contender_waiting="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'BEGIN; SELECT lock_project_audit_provenance%')")"
+		contender_waiting="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'BEGIN; SELECT id FROM projects WHERE id = ''$project_id'' FOR UPDATE%')")"
 		[[ "$contender_waiting" == "t" ]] && break
 		sleep 0.1
 	done
 	if [[ "$contender_waiting" != "t" ]]; then
-		echo "retry/retention contender did not serialize behind the audit lock" >&2
+		echo "retry/retention contender did not serialize behind the project fence" >&2
 		exit 1
 	fi
 
@@ -222,6 +228,187 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0040_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0040.assert.sql"
+
+UPGRADE_0041_DATABASE="${POSTGRES_DB}_0041_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0041_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0041_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0041.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" \
+  < "$ROOT/infra/db/migrations/0041_admin_user_read_only_authorization.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0041_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0041.assert.sql"
+
+UPGRADE_0042_DATABASE="${POSTGRES_DB}_0042_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0042_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0042_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0042_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0042_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0042.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0042_DATABASE" \
+  < "$ROOT/infra/db/migrations/0042_experiment_requester_authorization.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0042_DATABASE" \
+  < "$ROOT/infra/db/migrations/0042_experiment_requester_authorization.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0042_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0042.assert.sql"
+
+UPGRADE_0043_DATABASE="${POSTGRES_DB}_0043_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0043_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0043_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0043_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0043_DATABASE" \
+  < "$ROOT/infra/db/migrations/0043_authorization_revocation_fence.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0043_DATABASE" \
+  < "$ROOT/infra/db/migrations/0043_authorization_revocation_fence.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0043_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0043.assert.sql"
+
+UPGRADE_0044_DATABASE="${POSTGRES_DB}_0044_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0044_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0044_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0044.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" \
+  < "$ROOT/infra/db/migrations/0044_execution_admission_cancellation.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" \
+  < "$ROOT/infra/db/migrations/0044_execution_admission_cancellation.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0044_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0044.assert.sql"
+
+UPGRADE_0046_DATABASE="${POSTGRES_DB}_0046_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0046_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0046_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0046_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0046_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0044.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0046_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0046.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0046_DATABASE" \
+  < "$ROOT/infra/db/migrations/0046_authorization_lock_order_and_effect_keys.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0046_DATABASE" \
+  < "$ROOT/infra/db/migrations/0046_authorization_lock_order_and_effect_keys.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0046_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0046.assert.sql"
+
+UPGRADE_0047_DATABASE="${POSTGRES_DB}_0047_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0047_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0047_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0044.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0047.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
+  < "$ROOT/infra/db/migrations/0047_durable_execution_effects.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
+  < "$ROOT/infra/db/migrations/0047_durable_execution_effects.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0047_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0047.assert.sql"
+
+UPGRADE_0049_DATABASE="${POSTGRES_DB}_0049_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0049_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0049_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0049.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/db/migrations/0049_execution_admission_cancellation_identity_fix.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/db/migrations/0049_execution_admission_cancellation_identity_fix.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0049_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0049.assert.sql"
+
+UPGRADE_0050_DATABASE="${POSTGRES_DB}_0050_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0050_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0050.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/db/migrations/0050_authorization_role_migration_quarantine_tenant_scope.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/db/migrations/0050_authorization_role_migration_quarantine_tenant_scope.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0050.assert.sql"
+
+UPGRADE_0050_NULL_ORGANIZATION_DATABASE="${POSTGRES_DB}_0050_null_organization"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0050_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0050-null-organization.fixture.sql"
+if migration_error="$(docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE" \
+  < "$ROOT/infra/db/migrations/0050_authorization_role_migration_quarantine_tenant_scope.sql" 2>&1)"; then
+  echo "0050 migration accepted a quarantine record without organization scope" >&2
+  exit 1
+fi
+if [[ "$migration_error" != *"authorization role migration quarantine rows missing organization scope"* ]]; then
+  echo "0050 quarantine tenant-scope preflight failed unexpectedly: $migration_error" >&2
+  exit 1
+fi
 
 UPGRADE_0040_MISMATCH_DATABASE="${POSTGRES_DB}_0040_mismatch"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0040_MISMATCH_DATABASE"

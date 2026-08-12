@@ -42,18 +42,22 @@ def command_for_model(model):
     return [argument.replace("{model}", model) for argument in command]
 
 
-def run_dev_cli(prompt, model):
+def run_dev_cli(prompt, model, provider_dispatch_key=None):
     if not isinstance(prompt, str) or not isinstance(model, str) or not model:
         raise DevCliLlmError("development CLI requires a prompt and model")
     timeout = _positive_integer("ASTRAEA_DEV_LLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
     max_output_bytes = _positive_integer("ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES)
     try:
+        environment = os.environ.copy()
+        if provider_dispatch_key is not None:
+            environment["ASTRAEA_PROVIDER_DISPATCH_KEY"] = provider_dispatch_key
         process = subprocess.Popen(
             command_for_model(model),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=environment,
         )
     except OSError as error:
         raise DevCliLlmError("development CLI command is unavailable") from error
@@ -121,17 +125,21 @@ def run_dev_cli(prompt, model):
         raise DevCliLlmError("development CLI returned invalid UTF-8") from error
 
 
-def task_lm_for_model(model):
+def task_lm_for_model(model, next_dispatch_key=None):
     def task_lm(messages):
         if not isinstance(messages, list):
             raise DevCliLlmError("task LLM must receive chat messages")
-        return run_dev_cli(json.dumps(messages, ensure_ascii=False), model)
+        return run_dev_cli(
+            json.dumps(messages, ensure_ascii=False),
+            model,
+            next_dispatch_key() if next_dispatch_key else None,
+        )
 
     return task_lm
 
 
-def reflection_lm_for_model(model):
+def reflection_lm_for_model(model, next_dispatch_key=None):
     def reflection_lm(prompt):
-        return run_dev_cli(prompt, model)
+        return run_dev_cli(prompt, model, next_dispatch_key() if next_dispatch_key else None)
 
     return reflection_lm

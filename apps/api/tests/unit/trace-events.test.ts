@@ -154,6 +154,23 @@ const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
+function createApiApp(handlers = traceEventHandlers): OpenAPIHono {
+	const app = new OpenAPIHono({
+		defaultHook: (result, c) =>
+			result.success
+				? undefined
+				: c.json(
+						{ code: "BAD_REQUEST", message: "Request validation failed" },
+						400,
+					),
+	});
+	app.use("/v1/*", basicAuthMiddleware());
+	app.openapi(streamTraceEvents, handlers.handleStreamTraceEvents);
+	app.openapi(streamObservationEvents, handlers.handleStreamObservationEvents);
+	app.openapi(streamTraceDetailEvents, handlers.handleStreamTraceDetailEvents);
+	return app;
+}
+
 const traceEventHandlers = createTraceEventHandlers({
 	assertProjectAccess: assertProjectAccessMock,
 	defaultClient: defaultClientMock,
@@ -162,25 +179,7 @@ const traceEventHandlers = createTraceEventHandlers({
 	heartbeatMs: 60,
 	subscribe: subscribeSpy,
 });
-const apiApp = new OpenAPIHono({
-	defaultHook: (result, c) =>
-		result.success
-			? undefined
-			: c.json(
-					{ code: "BAD_REQUEST", message: "Request validation failed" },
-					400,
-				),
-});
-apiApp.use("/v1/*", basicAuthMiddleware());
-apiApp.openapi(streamTraceEvents, traceEventHandlers.handleStreamTraceEvents);
-apiApp.openapi(
-	streamObservationEvents,
-	traceEventHandlers.handleStreamObservationEvents,
-);
-apiApp.openapi(
-	streamTraceDetailEvents,
-	traceEventHandlers.handleStreamTraceDetailEvents,
-);
+const apiApp = createApiApp();
 
 // ---------------------------------------------------------------------------
 // SSE stream helper: reads frames from the response body incrementally.
@@ -238,6 +237,26 @@ function parseFrame(raw: string): SSEFrame {
 			dataLines.push(line.slice("data: ".length));
 	}
 	return { event, data: dataLines.join("\n") };
+}
+
+function deferred<T>() {
+	let resolve: (value: T) => void = () => undefined;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+async function waitFor(
+	predicate: () => boolean,
+	timeoutMs = 500,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!predicate()) {
+		if (Date.now() >= deadline)
+			throw new Error("Timed out waiting for condition");
+		await Bun.sleep(5);
+	}
 }
 
 /** Read raw text from the stream for X ms (used for header / :ok assertions). */
@@ -777,6 +796,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			DEFAULT_ORGANIZATION_ID,
 			VALID_TRACE_ID,
 			PROJECT_ID,
+			expect.any(AbortSignal),
 		);
 	});
 
@@ -855,6 +875,170 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			"obs-during-query",
 		);
 		await reader.cancel();
+	});
+
+	it("drops a high-rate pre-snapshot buffer overflow before opening SSE", async () => {
+		const snapshot = deferred<{
+			trace: TraceRow | null;
+			observations: ObservationRow[];
+		}>();
+		const snapshotStarted = deferred<void>();
+		let snapshotSignal: AbortSignal | undefined;
+		const handlers = createTraceEventHandlers({
+			assertProjectAccess: assertProjectAccessMock,
+			defaultClient: defaultClientMock,
+			getTrace: (async (...args: unknown[]) => {
+				snapshotSignal = args[4] as AbortSignal;
+				snapshotStarted.resolve();
+				return snapshot.promise;
+			}) as never,
+			graceMs: 150,
+			heartbeatMs: 60,
+			maxPendingBytes: 64 * 1024,
+			maxPendingFrames: 2,
+			snapshotTimeoutMs: 1_000,
+			subscribe: subscribeSpy,
+		});
+		const response = createApiApp(handlers).fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+
+		await snapshotStarted.promise;
+		for (let index = 0; index < 100; index += 1) {
+			publishSync("observation.created", {
+				observation: {
+					...fakeObservation,
+					observation_id: `overflow-${index}`,
+				},
+			});
+		}
+
+		const result = await response;
+		expect(result.status).toBe(503);
+		expect(snapshotSignal?.aborted).toBe(true);
+		expect(unsubscribeCallLog).toEqual(["observation.created"]);
+		snapshot.resolve({ trace: fakeTrace, observations: [] });
+		await Bun.sleep(20);
+		publishSync("observation.created", {
+			observation: { ...fakeObservation, observation_id: "after-overflow" },
+		});
+		expect(unsubscribeCallLog).toEqual(["observation.created"]);
+	});
+
+	it("bounds pre-snapshot observations by their encoded frame bytes", async () => {
+		const snapshot = deferred<{
+			trace: TraceRow | null;
+			observations: ObservationRow[];
+		}>();
+		const snapshotStarted = deferred<void>();
+		const handlers = createTraceEventHandlers({
+			assertProjectAccess: assertProjectAccessMock,
+			defaultClient: defaultClientMock,
+			getTrace: async () => {
+				snapshotStarted.resolve();
+				return snapshot.promise;
+			},
+			graceMs: 150,
+			heartbeatMs: 60,
+			maxPendingBytes: 1_024,
+			maxPendingFrames: 100,
+			snapshotTimeoutMs: 1_000,
+			subscribe: subscribeSpy,
+		});
+		const response = createApiApp(handlers).fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+
+		await snapshotStarted.promise;
+		publishSync("observation.created", {
+			observation: {
+				...fakeObservation,
+				output_text: "x".repeat(2_048),
+			},
+		});
+
+		expect((await response).status).toBe(503);
+		expect(unsubscribeCallLog).toEqual(["observation.created"]);
+		snapshot.resolve({ trace: fakeTrace, observations: [] });
+	});
+
+	it("releases the pre-snapshot subscription when the client aborts", async () => {
+		const snapshot = deferred<{
+			trace: TraceRow | null;
+			observations: ObservationRow[];
+		}>();
+		const snapshotStarted = deferred<void>();
+		let snapshotSignal: AbortSignal | undefined;
+		const handlers = createTraceEventHandlers({
+			assertProjectAccess: assertProjectAccessMock,
+			defaultClient: defaultClientMock,
+			getTrace: (async (...args: unknown[]) => {
+				snapshotSignal = args[4] as AbortSignal;
+				snapshotStarted.resolve();
+				return snapshot.promise;
+			}) as never,
+			graceMs: 150,
+			heartbeatMs: 60,
+			snapshotTimeoutMs: 1_000,
+			subscribe: subscribeSpy,
+		});
+		const controller = new AbortController();
+		const response = createApiApp(handlers).fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH }, signal: controller.signal },
+			),
+		);
+
+		await snapshotStarted.promise;
+		controller.abort();
+		await waitFor(() => unsubscribeCallLog.includes("observation.created"));
+		expect(snapshotSignal?.aborted).toBe(true);
+		snapshot.resolve({ trace: fakeTrace, observations: [] });
+		const result = await response;
+		expect(result.status).toBe(499);
+		publishSync("observation.created", {
+			observation: { ...fakeObservation, observation_id: "after-abort" },
+		});
+		expect(unsubscribeCallLog).toEqual(["observation.created"]);
+	});
+
+	it("times out a stalled snapshot after releasing its subscription", async () => {
+		const snapshot = deferred<{
+			trace: TraceRow | null;
+			observations: ObservationRow[];
+		}>();
+		let snapshotSignal: AbortSignal | undefined;
+		const handlers = createTraceEventHandlers({
+			assertProjectAccess: assertProjectAccessMock,
+			defaultClient: defaultClientMock,
+			getTrace: (async (...args: unknown[]) => {
+				snapshotSignal = args[4] as AbortSignal;
+				return snapshot.promise;
+			}) as never,
+			graceMs: 150,
+			heartbeatMs: 60,
+			snapshotTimeoutMs: 20,
+			subscribe: subscribeSpy,
+		});
+
+		const result = await createApiApp(handlers).fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+
+		expect(result.status).toBe(504);
+		expect(snapshotSignal?.aborted).toBe(true);
+		expect(unsubscribeCallLog).toEqual(["observation.created"]);
+		snapshot.resolve({ trace: fakeTrace, observations: [] });
 	});
 
 	it("snapshot event is the first SSE frame after :ok and contains the observations", async () => {

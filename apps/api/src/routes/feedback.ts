@@ -3,6 +3,8 @@ import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import { ch } from "../db/clickhouse.js";
 import { logger } from "../lib/logger.js";
+import { projectAuthorization } from "../db/project-authorization.js";
+import { trustedTenant } from "../tenancy.js";
 import {
 	createFeedback,
 	FeedbackRepositoryError,
@@ -151,6 +153,7 @@ export const handleCreateFeedback = async (
 			await createFeedback(pgPool(), {
 				...body,
 				idempotency_key: c.req.valid("header")["idempotency-key"],
+				authorization: projectAuthorization(trustedTenant(c), "product_write"),
 			}),
 			201,
 		);
@@ -176,6 +179,7 @@ export const handlePromoteFeedback = async (
 				project_id: c.req.valid("query").project_id,
 				id: c.req.valid("param").id,
 				...c.req.valid("json"),
+				authorization: projectAuthorization(trustedTenant(c), "governed"),
 			}),
 		);
 	} catch (cause) {
@@ -191,6 +195,7 @@ export const handleReviewFeedback = async (
 				project_id: c.req.valid("query").project_id,
 				id: c.req.valid("param").id,
 				...c.req.valid("json"),
+				authorization: projectAuthorization(trustedTenant(c), "governed"),
 			}),
 		);
 	} catch (cause) {

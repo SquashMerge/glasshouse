@@ -10,18 +10,27 @@ import {
 	defaultClient,
 	getTrace as queryGetTrace,
 } from "../db/traces-query.js";
-import type { TenantScopedObservation } from "../db/traces-writer.js";
-import { assertTenantProjectAccess, trustedTenant } from "../tenancy.js";
+import { trustedTenant } from "../tenancy.js";
 import { pgPool } from "../db/postgres.js";
 import type { TrustedTenantContext } from "../middleware/auth.js";
+import {
+	createAuthorizedSseDelivery,
+	authorizedSseFrame,
+	sseFrameWriteTimeoutMs,
+	sseMaxPendingBytes,
+	sseMaxPendingFrames,
+	type AuthorizedSseDelivery,
+} from "../lib/authorized-sse.js";
 import {
 	presentObservationMetadata,
 	type ObservationMetadata,
 } from "../db/observation-metadata.js";
+import { logger } from "../lib/logger.js";
 
 // Read tunables once at module load so per-event work is allocation-free.
 const HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS ?? 15_000);
 const GRACE_MS = Number(process.env.TRACE_COMPLETE_GRACE_MS ?? 30_000);
+const sseEncoder = new TextEncoder();
 
 const tag = "traces";
 
@@ -134,6 +143,16 @@ function notFoundResponse(traceId: string): Response {
 	);
 }
 
+function snapshotOverflowResponse(): Response {
+	return new Response(
+		JSON.stringify({
+			code: "SERVICE_UNAVAILABLE",
+			message: "Trace snapshot is unavailable",
+		}),
+		{ status: 503, headers: { "content-type": "application/json" } },
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -143,53 +162,79 @@ function notFoundResponse(traceId: string): Response {
  * frame per `trace.created` bus event. Stays open until the client aborts.
  */
 export type TraceEventRouteDependencies = {
-	assertProjectAccess: (
+	assertProjectAccess?: (
 		tenant: TrustedTenantContext,
 		projectId: string,
 	) => Promise<void>;
-	defaultClient: typeof defaultClient;
-	getTrace: typeof queryGetTrace;
-	graceMs: number;
-	heartbeatMs: number;
-	subscribe: typeof subscribe;
-};
-
-const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
-	assertProjectAccess: (tenant, projectId) =>
-		assertTenantProjectAccess(pgPool(), tenant, projectId),
-	defaultClient,
-	getTrace: queryGetTrace,
-	graceMs: GRACE_MS,
-	heartbeatMs: HEARTBEAT_MS,
-	subscribe,
-};
-
-export function createTraceEventHandlers(
-	dependencies: TraceEventRouteDependencies = productionTraceEventRouteDependencies,
-) {
-	const guardStream = (
+	createFrameDelivery?: (
 		stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
 		tenant: TrustedTenantContext,
 		projectId: string,
 		cleanup: () => void,
-	) => {
-		let closed = false;
-		let pending = Promise.resolve();
-		return (write: () => Promise<unknown>) => {
-			pending = pending.then(async () => {
-				if (closed || stream.aborted) return;
-				try {
-					await dependencies.assertProjectAccess(tenant, projectId);
-				} catch {
-					closed = true;
-					cleanup();
-					return;
+	) => AuthorizedSseDelivery;
+	defaultClient: typeof defaultClient;
+	getTrace: typeof queryGetTrace;
+	graceMs: number;
+	heartbeatMs: number;
+	maxPendingBytes: number;
+	maxPendingFrames: number;
+	snapshotTimeoutMs: number;
+	subscribe: typeof subscribe;
+};
+
+const productionTraceEventRouteDependencies: TraceEventRouteDependencies = {
+	createFrameDelivery: (stream, tenant, projectId, cleanup) =>
+		createAuthorizedSseDelivery({
+			stream,
+			pool: pgPool,
+			tenant,
+			projectId,
+			onClose: cleanup,
+		}),
+	defaultClient,
+	getTrace: queryGetTrace,
+	graceMs: GRACE_MS,
+	heartbeatMs: HEARTBEAT_MS,
+	maxPendingBytes: sseMaxPendingBytes(),
+	maxPendingFrames: sseMaxPendingFrames(),
+	snapshotTimeoutMs: sseFrameWriteTimeoutMs(),
+	subscribe,
+};
+
+export function createTraceEventHandlers(
+	dependencies: Partial<TraceEventRouteDependencies> = {},
+) {
+	const d = { ...productionTraceEventRouteDependencies, ...dependencies };
+	const createFrameDelivery =
+		dependencies.createFrameDelivery ??
+		(dependencies.assertProjectAccess
+			? (stream, tenant, projectId, cleanup) => {
+					let closed = false;
+					const close = () => {
+						if (closed) return;
+						closed = true;
+						stream.abort();
+						cleanup();
+					};
+					return {
+						deliver: async (frame) => {
+							if (closed || stream.aborted) return false;
+							try {
+								await dependencies.assertProjectAccess!(tenant, projectId);
+								await frame.write();
+								return !closed && !stream.aborted;
+							} catch {
+								close();
+								return false;
+							}
+						},
+						close,
+						get closed() {
+							return closed;
+						},
+					};
 				}
-				if (!closed && !stream.aborted) await write();
-			});
-			return pending;
-		};
-	};
+			: productionTraceEventRouteDependencies.createFrameDelivery!);
 	const streamTraceEventsHandler = async (c: Context): Promise<Response> => {
 		const tenant = trustedTenant(c);
 		const { project_id: expectedProjectId } = (
@@ -215,13 +260,13 @@ export function createTraceEventHandlers(
 				return;
 			}
 
-			const guardedWrite = guardStream(
+			const frameDelivery = createFrameDelivery(
 				stream,
 				tenant,
 				expectedProjectId,
 				cleanup,
 			);
-			unsubscribe = dependencies.subscribe("trace.created", (msg) => {
+			unsubscribe = d.subscribe("trace.created", (msg) => {
 				const trace = msg.payload.trace;
 				if (
 					!trace ||
@@ -229,15 +274,24 @@ export function createTraceEventHandlers(
 					trace.project_id !== expectedProjectId
 				)
 					return;
-				guardedWrite(() =>
-					stream.writeSSE({ event: "trace", data: JSON.stringify({ trace }) }),
+				const data = JSON.stringify({ trace });
+				void frameDelivery.deliver(
+					authorizedSseFrame(data, () =>
+						stream.writeSSE({ event: "trace", data }),
+					),
 				);
 			});
 			heartbeat = setInterval(() => {
-				guardedWrite(() => stream.write(":heartbeat\n\n"));
-			}, dependencies.heartbeatMs);
+				void frameDelivery.deliver(
+					authorizedSseFrame(":heartbeat\n\n", () =>
+						stream.write(":heartbeat\n\n"),
+					),
+				);
+			}, d.heartbeatMs);
 
-			await guardedWrite(() => stream.write(":ok\n\n"));
+			await frameDelivery.deliver(
+				authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+			);
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -270,13 +324,13 @@ export function createTraceEventHandlers(
 				return;
 			}
 
-			const guardedWrite = guardStream(
+			const frameDelivery = createFrameDelivery(
 				stream,
 				tenant,
 				expectedProjectId,
 				cleanup,
 			);
-			unsubscribe = dependencies.subscribe("observation.created", (msg) => {
+			unsubscribe = d.subscribe("observation.created", (msg) => {
 				const observation = msg.payload.observation;
 				if (
 					!observation ||
@@ -285,21 +339,27 @@ export function createTraceEventHandlers(
 				)
 					return;
 				const presented = presentObservation(observation);
-				guardedWrite(() =>
-					stream.writeSSE({
-						event: "observation",
-						data: JSON.stringify({
-							observation: presented,
-							metadataParsed: presented.metadata,
-						}),
-					}),
+				const data = JSON.stringify({
+					observation: presented,
+					metadataParsed: presented.metadata,
+				});
+				void frameDelivery.deliver(
+					authorizedSseFrame(data, () =>
+						stream.writeSSE({ event: "observation", data }),
+					),
 				);
 			});
 			heartbeat = setInterval(() => {
-				guardedWrite(() => stream.write(":heartbeat\n\n"));
-			}, dependencies.heartbeatMs);
+				void frameDelivery.deliver(
+					authorizedSseFrame(":heartbeat\n\n", () =>
+						stream.write(":heartbeat\n\n"),
+					),
+				);
+			}, d.heartbeatMs);
 
-			await guardedWrite(() => stream.write(":ok\n\n"));
+			await frameDelivery.deliver(
+				authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+			);
 			if (stream.aborted) cleanup();
 			await waitForAbort;
 		});
@@ -314,11 +374,33 @@ export function createTraceEventHandlers(
 			c.req as { valid: (target: "query") => { project_id?: string } }
 		).valid("query");
 		const expectedProjectId = projectId ?? "";
-		const bufferedObservations: TenantScopedObservation[] = [];
-		let forwardObservation:
-			| ((observation: TenantScopedObservation) => void)
-			| null = null;
-		const unsubscribe = dependencies.subscribe("observation.created", (msg) => {
+		const bufferedObservations: Array<{ data: string; bytes: number }> = [];
+		let bufferedObservationBytes = 0;
+		let forwardObservation: ((data: string) => void) | null = null;
+		let unsubscribe: (() => void) | null = null;
+		let preSnapshotClosed: "aborted" | "overflow" | "timeout" | null = null;
+		const snapshotController = new AbortController();
+		let resolvePreSnapshotClose: () => void = () => undefined;
+		const preSnapshotClose = new Promise<void>((resolve) => {
+			resolvePreSnapshotClose = resolve;
+		});
+		const cleanupPreSnapshot = (reason: "aborted" | "overflow" | "timeout") => {
+			if (preSnapshotClosed) return;
+			preSnapshotClosed = reason;
+			snapshotController.abort();
+			forwardObservation = null;
+			bufferedObservationBytes = 0;
+			bufferedObservations.length = 0;
+			unsubscribe?.();
+			unsubscribe = null;
+			resolvePreSnapshotClose();
+		};
+		const requestSignal = c.req.raw.signal;
+		const onRequestAbort = () => cleanupPreSnapshot("aborted");
+		requestSignal.addEventListener("abort", onRequestAbort, { once: true });
+		if (requestSignal.aborted) cleanupPreSnapshot("aborted");
+		unsubscribe = d.subscribe("observation.created", (msg) => {
+			if (preSnapshotClosed) return;
 			const observation = msg.payload.observation;
 			if (
 				!observation ||
@@ -327,24 +409,81 @@ export function createTraceEventHandlers(
 				observation.project_id !== expectedProjectId
 			)
 				return;
-			if (forwardObservation) forwardObservation(observation);
-			else bufferedObservations.push(observation);
+			const data = JSON.stringify({
+				observation: presentObservation(observation),
+			});
+			if (forwardObservation) {
+				forwardObservation(data);
+				return;
+			}
+			const bytes = sseEncoder.encode(data).byteLength;
+			if (
+				bufferedObservations.length >= d.maxPendingFrames ||
+				bufferedObservationBytes + bytes > d.maxPendingBytes
+			) {
+				cleanupPreSnapshot("overflow");
+				return;
+			}
+			bufferedObservationBytes += bytes;
+			bufferedObservations.push({ data, bytes });
 		});
 
-		let traceExists: Awaited<ReturnType<typeof queryGetTrace>>;
-		try {
-			traceExists = await dependencies.getTrace(
-				dependencies.defaultClient(),
+		if (preSnapshotClosed) {
+			unsubscribe?.();
+			return preSnapshotClosed === "overflow"
+				? snapshotOverflowResponse()
+				: new Response(null, { status: 499 });
+		}
+
+		const snapshot = Promise.resolve().then(() =>
+			d.getTrace(
+				d.defaultClient(),
 				tenant.organizationId,
 				traceId,
 				projectId,
+				snapshotController.signal,
+			),
+		);
+		let clearSnapshotTimeout: (() => void) | undefined;
+		const traceExists = await Promise.race([
+			snapshot.then(
+				(value) => ({ kind: "snapshot" as const, value }),
+				(error) => ({ kind: "error" as const, error }),
+			),
+			new Promise<{ kind: "timeout" }>((resolve) => {
+				const timeout = setTimeout(
+					() => resolve({ kind: "timeout" }),
+					d.snapshotTimeoutMs,
+				);
+				clearSnapshotTimeout = () => clearTimeout(timeout);
+			}),
+			preSnapshotClose.then(() => ({ kind: "closed" as const })),
+		]);
+		clearSnapshotTimeout?.();
+		if (traceExists.kind === "closed") {
+			requestSignal.removeEventListener("abort", onRequestAbort);
+			return preSnapshotClosed === "overflow"
+				? snapshotOverflowResponse()
+				: new Response(null, { status: 499 });
+		}
+		if (traceExists.kind === "timeout") {
+			cleanupPreSnapshot("timeout");
+			requestSignal.removeEventListener("abort", onRequestAbort);
+			return new Response(
+				JSON.stringify({
+					code: "GATEWAY_TIMEOUT",
+					message: "Trace snapshot timed out",
+				}),
+				{ status: 504, headers: { "content-type": "application/json" } },
 			);
-		} catch (err) {
-			unsubscribe();
-			console.error(
-				`GET /v1/traces/{id}/events snapshot query failed:`,
-				(err as Error).message,
-			);
+		}
+		if (traceExists.kind === "error") {
+			cleanupPreSnapshot("aborted");
+			requestSignal.removeEventListener("abort", onRequestAbort);
+			logger.error("trace_events.snapshot_query_failed", traceExists.error, {
+				trace_id: traceId,
+				project_id: expectedProjectId,
+			});
 			return new Response(
 				JSON.stringify({
 					code: "INTERNAL",
@@ -353,14 +492,18 @@ export function createTraceEventHandlers(
 				{ status: 500, headers: { "content-type": "application/json" } },
 			);
 		}
-		if (!traceExists.trace) {
-			unsubscribe();
+		requestSignal.removeEventListener("abort", onRequestAbort);
+		const snapshotResult = traceExists.value;
+		if (!snapshotResult.trace) {
+			unsubscribe?.();
+			bufferedObservationBytes = 0;
+			bufferedObservations.length = 0;
 			return notFoundResponse(traceId);
 		}
-		const snapshotTrace = traceExists.trace;
+		const snapshotTrace = snapshotResult.trace;
 
 		const snapshotObservations =
-			traceExists.observations.map(presentObservation);
+			snapshotResult.observations.map(presentObservation);
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let graceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -379,7 +522,10 @@ export function createTraceEventHandlers(
 				if (heartbeat !== null) clearInterval(heartbeat);
 				heartbeat = null;
 				forwardObservation = null;
-				unsubscribe();
+				bufferedObservationBytes = 0;
+				bufferedObservations.length = 0;
+				unsubscribe?.();
+				unsubscribe = null;
 				resolveWait();
 			};
 			stream.onAbort(cleanup);
@@ -388,16 +534,22 @@ export function createTraceEventHandlers(
 				return;
 			}
 
-			const guardedWrite = guardStream(
+			const frameDelivery = createFrameDelivery(
 				stream,
 				tenant,
 				expectedProjectId,
 				cleanup,
 			);
 			heartbeat = setInterval(() => {
-				void guardedWrite(() => stream.write(":heartbeat\n\n"));
-			}, dependencies.heartbeatMs);
-			await guardedWrite(() => stream.write(":ok\n\n"));
+				void frameDelivery.deliver(
+					authorizedSseFrame(":heartbeat\n\n", () =>
+						stream.write(":heartbeat\n\n"),
+					),
+				);
+			}, d.heartbeatMs);
+			await frameDelivery.deliver(
+				authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+			);
 			if (stream.aborted) {
 				cleanup();
 				return;
@@ -408,39 +560,44 @@ export function createTraceEventHandlers(
 				graceTimer = setTimeout(() => {
 					if (closed) return;
 					closed = true;
-					void guardedWrite(() =>
-						stream.writeSSE({
-							event: "status",
-							data: JSON.stringify({ status: "complete" }),
-						}),
-					).finally(cleanup);
-				}, dependencies.graceMs);
+					const data = JSON.stringify({ status: "complete" });
+					void frameDelivery
+						.deliver(
+							authorizedSseFrame(data, () =>
+								stream.writeSSE({ event: "status", data }),
+							),
+						)
+						.finally(cleanup);
+				}, d.graceMs);
 			};
-			const sendObservation = (observation: TenantScopedObservation) => {
+			const sendObservation = (data: string) => {
 				if (closed) return;
 				armGraceTimer();
-				void guardedWrite(() =>
-					stream.writeSSE({
-						event: "observation",
-						data: JSON.stringify({
-							observation: presentObservation(observation),
-						}),
-					}),
+				void frameDelivery.deliver(
+					authorizedSseFrame(data, () =>
+						stream.writeSSE({ event: "observation", data }),
+					),
 				);
 			};
 
-			await guardedWrite(() =>
-				stream.writeSSE({
-					event: "snapshot",
-					data: JSON.stringify({
-						trace: snapshotTrace,
-						observations: snapshotObservations,
-					}),
-				}),
+			const snapshotData = JSON.stringify({
+				trace: snapshotTrace,
+				observations: snapshotObservations,
+			});
+			await frameDelivery.deliver(
+				authorizedSseFrame(snapshotData, () =>
+					stream.writeSSE({ event: "snapshot", data: snapshotData }),
+				),
 			);
+			if (frameDelivery.closed || stream.aborted) {
+				cleanup();
+				return;
+			}
 			forwardObservation = sendObservation;
-			for (const observation of bufferedObservations.splice(0))
-				sendObservation(observation);
+			for (const observation of bufferedObservations.splice(0)) {
+				bufferedObservationBytes -= observation.bytes;
+				sendObservation(observation.data);
+			}
 			armGraceTimer();
 			await waitForClose;
 		});

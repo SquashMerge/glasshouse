@@ -2,6 +2,10 @@ import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+	lockActiveAuthorizedProject,
+	lockProjectAuditProvenance,
+} from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
 import {
 	policyHash,
@@ -23,7 +27,11 @@ import {
 	PolicyResponse,
 	RetentionRunHistory,
 } from "../schemas/governance.js";
-import { trustedTenant } from "../tenancy.js";
+import {
+	assertTenantProjectAccess,
+	TenantScopeError,
+	trustedTenant,
+} from "../tenancy.js";
 import { logger } from "../lib/logger.js";
 
 const policyParams = z.object({ id: z.string().uuid() });
@@ -134,6 +142,12 @@ const output = (row: VersionRow) => ({
 });
 async function manager(c: Context, projectId: string) {
 	const tenant = trustedTenant(c);
+	try {
+		await assertTenantProjectAccess(pgPool(), tenant, projectId, "governed");
+	} catch (cause) {
+		if (cause instanceof TenantScopeError) throw new Error("Not found");
+		throw cause;
+	}
 	const result = await pgPool().query<{ role: string | null }>(
 		"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active'",
 		[projectId, tenant.organizationId, tenant.actorId],
@@ -218,15 +232,13 @@ export async function handleCreatePolicyDraft(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
-			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-				project_id,
-			]);
 			await lockActiveManager(
 				client,
 				tenant.organizationId,
 				project_id,
 				tenant.actorId,
 			);
+			await lockProjectAuditProvenance(client, project_id);
 			await client.query(
 				"INSERT INTO governance_policies (organization_id, project_id) VALUES ($1, $2) ON CONFLICT (project_id) DO NOTHING",
 				[tenant.organizationId, project_id],
@@ -281,14 +293,15 @@ export async function handleApprovePolicy(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
-			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-				project_id,
-			]);
-			const authorized = await client.query(
-				"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $3) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
-				[project_id, tenant.organizationId, tenant.actorId],
-			);
-			if (!authorized.rows[0]) throw new Error("Not found");
+			if (
+				!(await lockActiveAuthorizedProject(client, project_id, {
+					organization_id: tenant.organizationId,
+					actor_id: tenant.actorId,
+					operation: "governed",
+				}))
+			)
+				throw new Error("Not found");
+			await lockProjectAuditProvenance(client, project_id);
 			const version = (
 				await client.query<VersionRow>(
 					"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id WHERE v.id = $1 AND p.project_id = $2 AND p.organization_id = $3",
@@ -344,15 +357,13 @@ export async function handlePreviewRetention(c: Context) {
 		const client = await pgPool().connect();
 		try {
 			await client.query("BEGIN");
-			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-				project_id,
-			]);
 			const current = await activeManagerAndVersion(
 				client,
 				tenant.organizationId,
 				project_id,
 				tenant.actorId,
 			);
+			await lockProjectAuditProvenance(client, project_id);
 			if (current.id !== version.id) throw new Error("Policy preview is stale");
 			const preview = await client.query<{ id: string; expires_at: Date }>(
 				"INSERT INTO governance_retention_previews (organization_id, project_id, policy_version_id, actor_subject, counts, expires_at) VALUES ($1, $2, $3, $4, $5::jsonb, now() + interval '15 minutes') RETURNING id, expires_at",
@@ -434,15 +445,13 @@ export async function handleRunRetention(c: Context) {
 		const counts: Record<string, number> = {};
 		try {
 			await client.query("BEGIN");
-			await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-				project_id,
-			]);
 			version = await activeManagerAndVersion(
 				client,
 				tenant.organizationId,
 				project_id,
 				tenant.actorId,
 			);
+			await lockProjectAuditProvenance(client, project_id);
 			if (version.id !== policy_version_id)
 				throw new Error("Policy preview is stale");
 			const consumed = await client.query(
@@ -685,11 +694,13 @@ async function lockActiveManager(
 	projectId: string,
 	actorId: string,
 ) {
-	const authorized = await client.query(
-		"SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $3) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active' AND (om.role = 'owner' OR pm.role = 'manager') FOR UPDATE OF p, om",
-		[projectId, organizationId, actorId],
-	);
-	if (!authorized.rows[0])
+	if (
+		!(await lockActiveAuthorizedProject(client as PoolClient, projectId, {
+			organization_id: organizationId,
+			actor_id: actorId,
+			operation: "governed",
+		}))
+	)
 		throw new Error(
 			"Project is no longer active or manager access was revoked",
 		);
@@ -763,14 +774,12 @@ async function terminalizeRun(
 		);
 		const projectId = run.rows[0]?.project_id;
 		if (!projectId) throw new Error("Retention run ownership was lost");
-		await client.query("SELECT lock_project_audit_provenance($1::uuid)", [
-			projectId,
-		]);
 		const owned = await client.query(
 			"SELECT r.id FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id WHERE r.id = $1 AND r.owner_token = $2::uuid AND r.status = 'running' FOR UPDATE OF p, r",
 			[runId, ownerToken],
 		);
 		if (!owned.rows[0]) throw new Error("Retention run ownership was lost");
+		await lockProjectAuditProvenance(client, projectId);
 		const transitioned = await client.query<{
 			status: "completed" | "failed";
 			counts: Record<string, number>;

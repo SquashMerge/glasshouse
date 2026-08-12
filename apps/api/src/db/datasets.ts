@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
 
 export type JsonObject = Record<string, unknown>;
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
@@ -126,16 +130,23 @@ export async function listDatasets(db: Queryable, project_id: string) {
 
 export async function createDataset(
 	db: Transactional,
-	input: { project_id: string; name: string; description?: string | null },
+	input: {
+		project_id: string;
+		name: string;
+		description?: string | null;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		const active = await client.query(
-			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			[input.project_id],
-		);
-		if (!active.rows[0])
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
 			`INSERT INTO datasets (id, project_id, name, description) SELECT $1, $2, $3, $4 FROM projects WHERE id = $2 AND status = 'active' RETURNING *, 0::int AS item_count`,
@@ -199,16 +210,19 @@ export async function addDatasetItem(
 		metadata?: JsonObject;
 		source_trace_id?: string | null;
 		source_observation_id?: string | null;
+		authorization: ProjectAuthorization;
 	},
 ) {
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		const active = await client.query(
-			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			[input.project_id],
-		);
-		if (!active.rows[0])
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await getDataset(client, {
 			project_id: input.project_id,
@@ -243,16 +257,23 @@ export async function addDatasetItem(
 
 export async function deleteDatasetItem(
 	db: Transactional,
-	input: { project_id: string; dataset_id: string; item_id: string },
+	input: {
+		project_id: string;
+		dataset_id: string;
+		item_id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		const active = await client.query(
-			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			[input.project_id],
-		);
-		if (!active.rows[0])
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await client.query(
 			`UPDATE feedback_reviews SET status = CASE WHEN status = 'added_to_dataset' THEN 'reviewed' ELSE status END, dataset_id = NULL, dataset_item_id = NULL, updated_at = now() WHERE project_id = $1 AND dataset_id = $2 AND dataset_item_id = $3`,

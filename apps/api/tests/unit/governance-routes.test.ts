@@ -24,10 +24,40 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		statement === "ROLLBACK"
 	)
 		return { rows: [] };
+	if (statement.includes("authorization_effective_project_role")) {
+		const allowed =
+			values[1] !== otherProjectId &&
+			values[2] !== "member" &&
+			(values[2] === "manager" || values[2] === permittedActorId);
+		return {
+			rows: [
+				{
+					effective_role: allowed ? "user" : "read_only",
+					enforcement: "compatibility",
+					project_status: "active",
+					allowed,
+				},
+			],
+		};
+	}
 	if (statement.startsWith("SELECT CASE WHEN om.role")) {
 		if (values[0] === otherProjectId) return { rows: [] };
 		return { rows: [{ role: values[2] === "member" ? "member" : "manager" }] };
 	}
+	if (statement.includes("p.status = ANY($3::text[])"))
+		return values[0] === otherProjectId
+			? { rows: [] }
+			: { rows: [{ id: projectId }] };
+	if (statement.includes("FROM organization_memberships om"))
+		return { rows: [{ actor_subject: "manager" }] };
+	if (statement.includes("FROM project_memberships pm"))
+		return { rows: [{ actor_subject: "manager" }] };
+	if (statement.startsWith("SELECT authorization_allows_project"))
+		return {
+			rows: [
+				{ allowed: values[2] === "manager" || values[2] === permittedActorId },
+			],
+		};
 	if (statement.startsWith("SELECT p.id FROM projects"))
 		return values[2] === "manager" || values[2] === permittedActorId
 			? { rows: [{ id: projectId }] }
@@ -135,7 +165,7 @@ describe("governance route guards", () => {
 	it("rejects members, cross-project access, and unapproved retention previews", async () => {
 		calls.length = 0;
 		for (const [actor, target, status] of [
-			["member", projectId, 403],
+			["member", projectId, 404],
 			["manager", otherProjectId, 404],
 			["manager", projectId, 409],
 		] as const) {
@@ -190,7 +220,7 @@ describe("governance route guards", () => {
 		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
 			index("BEGIN"),
 		);
-		expect(index("SELECT lock_project_audit_provenance")).toBeLessThan(
+		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(
 			index("SELECT p.id FROM projects"),
 		);
 		expect(calls).toEqual(
@@ -301,12 +331,7 @@ describe("governance route guards", () => {
 		const authorization = calls.find((call) =>
 			call.startsWith("SELECT p.id FROM projects"),
 		);
-		expect(authorization).toContain(
-			"basic_auth_identity_matches(p.organization_id, om.actor_subject, $3)",
-		);
-		expect(authorization).toContain(
-			"basic_auth_identity_matches(p.organization_id, actor_subject, $3)",
-		);
+		expect(authorization).toContain("p.status = ANY($3::text[])");
 	});
 
 	it("rejects a run request without preview authorization", async () => {

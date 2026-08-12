@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
 
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 type Transactional = Pick<Pool, "connect">;
@@ -84,16 +88,19 @@ export async function createBenchmarkSuite(
 		dataset_id: string;
 		name: string;
 		description?: string | null;
+		authorization: ProjectAuthorization;
 	},
 ) {
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		const active = await client.query(
-			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			[input.project_id],
-		);
-		if (!active.rows[0])
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
 			throw new BenchmarkRepositoryError(
 				"NOT_FOUND",
 				"Project is not available",
@@ -161,16 +168,19 @@ export async function createBenchmarkRun(
 		label: string;
 		model?: string | null;
 		prompt_version?: string | null;
+		authorization: ProjectAuthorization;
 	},
 ) {
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		const active = await client.query(
-			"SELECT id FROM projects WHERE id = $1 AND status = 'active' FOR UPDATE",
-			[input.project_id],
-		);
-		if (!active.rows[0])
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
 			throw new BenchmarkRepositoryError(
 				"NOT_FOUND",
 				"Project is not available",

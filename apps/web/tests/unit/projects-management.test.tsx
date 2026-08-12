@@ -25,7 +25,7 @@ const api = vi.hoisted(() => ({
 vi.mock("../../src/lib/api", () => api);
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
-		organizationRole: "owner",
+		organizationRole: "admin",
 		selectProject: vi.fn(),
 	}),
 }));
@@ -39,7 +39,9 @@ const PROJECT = {
 	status: "active",
 	created_at: "2026-07-15T10:00:00.000Z",
 	archived_at: null,
-	project_role: "manager" as const,
+	project_role: "admin" as const,
+	can_manage: true,
+	can_govern: true,
 	is_default: true,
 };
 
@@ -189,14 +191,14 @@ describe("ProjectsPage", () => {
 			items: [
 				{
 					actor_subject: "member",
-					role: "member",
+					role: "read_only",
 					created_at: PROJECT.created_at,
 				},
 			],
 		});
 		api.putProjectMember.mockResolvedValue({
 			actor_subject: "new-member",
-			role: "manager",
+			role: "user",
 			created_at: PROJECT.created_at,
 		});
 		api.deleteProjectMember.mockResolvedValue(undefined);
@@ -211,24 +213,24 @@ describe("ProjectsPage", () => {
 			target: { value: "new-member" },
 		});
 		fireEvent.change(screen.getByLabelText("Member role"), {
-			target: { value: "manager" },
+			target: { value: "user" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Add member" }));
 		await waitFor(() =>
 			expect(api.putProjectMember.mock.calls[0]?.[0]).toEqual({
 				projectId: PROJECT.id,
 				actorSubject: "new-member",
-				role: "manager",
+				role: "user",
 			}),
 		);
 		fireEvent.change(screen.getByLabelText("Role for member"), {
-			target: { value: "manager" },
+			target: { value: "user" },
 		});
 		await waitFor(() =>
 			expect(api.putProjectMember.mock.calls[1]?.[0]).toEqual({
 				projectId: PROJECT.id,
 				actorSubject: "member",
-				role: "manager",
+				role: "user",
 			}),
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Remove member" }));
@@ -242,7 +244,14 @@ describe("ProjectsPage", () => {
 
 	it("hides management controls from ordinary project members", async () => {
 		api.listProjects.mockResolvedValue({
-			items: [{ ...PROJECT, project_role: "member" }],
+			items: [
+				{
+					...PROJECT,
+					project_role: "read_only",
+					can_manage: false,
+					can_govern: false,
+				},
+			],
 			total: 1,
 		});
 		renderPage();
