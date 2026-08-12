@@ -247,10 +247,10 @@ test("scopes historical migration outputs to their fixture rows", () => {
 		"(original_project_id, original_prompt_id, original_version_id, original_label) IN (",
 	);
 	for (const tuple of [
-		"('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'invalid!')",
-		"('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'latest')",
-		"('22222222-2222-2222-2222-222222222222', 'aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000101', 'tenant')",
-		"('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000101', 'version-link')",
+		"('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'invalid!')",
+		"('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'latest')",
+		"('22222222-2222-2222-2222-222222222222'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'tenant')",
+		"('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'bbbbbbbb-0000-0000-0000-000000000101'::uuid, 'version-link')",
 	])
 		expect(promptLabelAssertion).toContain(tuple);
 	for (const reason of [
@@ -282,6 +282,25 @@ test("requires a scoped bootstrap audit event for every historical project", () 
 	expect(bootstrapAuthorizationAssertion).toContain(
 		"OR EXISTS (\n            SELECT 1\n            FROM projects AS p\n            WHERE p.organization_id = '00000000-0000-4000-8000-000000000001'\n                AND (\n                    p.id IN (\n                        '11111111-1111-1111-1111-111111111111',\n                        '22222222-2222-2222-2222-222222222222',\n                        '44444444-4444-4444-8444-444444444444'\n                    ) OR p.id = (\n                        SELECT default_project_id\n                        FROM organizations\n                        WHERE id = '00000000-0000-4000-8000-000000000001'\n                    )\n                )\n                AND NOT EXISTS (\n                    SELECT 1\n                    FROM project_authorization_audit_events AS event\n                    WHERE event.organization_id = '00000000-0000-4000-8000-000000000001'\n                        AND event.project_id = p.id\n                        AND event.actor_subject = 'bootstrap-owner'\n                        AND event.event_type = 'bootstrap_manager_added'\n                )\n        )",
 	);
+});
+
+test("types every UUID in scoped prompt-label quarantine tuples", () => {
+	const promptLabelAssertion = migrationAssertion.slice(
+		migrationAssertion.indexOf(
+			"(original_project_id, original_prompt_id, original_version_id, original_label) IN (",
+		),
+		migrationAssertion.indexOf(
+			"valid labels were not retained and restored exactly",
+		),
+	);
+
+	for (const tuple of [
+		"('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'invalid!')",
+		"('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'latest')",
+		"('22222222-2222-2222-2222-222222222222'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'aaaaaaaa-0000-0000-0000-000000000101'::uuid, 'tenant')",
+		"('11111111-1111-1111-1111-111111111111'::uuid, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'bbbbbbbb-0000-0000-0000-000000000101'::uuid, 'version-link')",
+	])
+		expect(promptLabelAssertion).toContain(tuple);
 });
 
 test("initializes future organizations in compatibility mode", () => {
