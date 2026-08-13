@@ -644,7 +644,8 @@ BEGIN
             AND column_name IN ('organization_id', 'project_id')
             AND (table_name, column_name) NOT IN (
                 ('authorization_role_migration_audit', 'project_id'),
-                ('authorization_role_migration_quarantine', 'project_id')
+                ('authorization_role_migration_quarantine', 'project_id'),
+                ('admin_access_audit_events', 'project_id')
             )
             AND is_nullable <> 'NO'
     ) THEN

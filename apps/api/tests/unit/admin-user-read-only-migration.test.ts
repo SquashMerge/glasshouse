@@ -104,6 +104,13 @@ const quarantineTenantScopeAssertion = readFileSync(
 	),
 	"utf8",
 );
+const adminMembershipProjectGrantsAssertion = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0051.assert.sql",
+	),
+	"utf8",
+);
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
@@ -494,7 +501,7 @@ test("covers cancellation behavior after 0049 resolves the requester actor ID", 
 	);
 });
 
-test("preserves only organization-scoped role migration project-null records", () => {
+test("preserves only explicitly project-null tenant identifier records", () => {
 	const tenantIdentifierNullabilityAssertion = migrationAssertion.slice(
 		migrationAssertion.indexOf("FROM information_schema.columns"),
 		migrationAssertion.indexOf("tenant identifier columns must be NOT NULL"),
@@ -518,13 +525,16 @@ test("preserves only organization-scoped role migration project-null records", (
 		"test-db-migrations-0050-null-organization.fixture.sql",
 	);
 	expect(tenantIdentifierNullabilityAssertion).toContain(
-		"AND (table_name, column_name) NOT IN (\n                ('authorization_role_migration_audit', 'project_id'),\n                ('authorization_role_migration_quarantine', 'project_id')\n            )",
+		"AND (table_name, column_name) NOT IN (\n                ('authorization_role_migration_audit', 'project_id'),\n                ('authorization_role_migration_quarantine', 'project_id'),\n                ('admin_access_audit_events', 'project_id')\n            )",
 	);
 	expect(tenantIdentifierNullabilityAssertion).not.toContain(
 		"('authorization_role_migration_audit', 'organization_id')",
 	);
 	expect(tenantIdentifierNullabilityAssertion).not.toContain(
 		"('authorization_role_migration_quarantine', 'organization_id')",
+	);
+	expect(tenantIdentifierNullabilityAssertion).not.toContain(
+		"('admin_access_audit_events', 'organization_id')",
 	);
 	expect(tenantIdentifierNullabilityAssertion).toContain(
 		"column_name IN ('organization_id', 'project_id')",
@@ -540,5 +550,14 @@ test("preserves only organization-scoped role migration project-null records", (
 	);
 	expect(quarantineTenantScopeAssertion).toContain(
 		"EXCEPTION WHEN not_null_violation",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"PERFORM audit_admin_access_event(\n        fixture_organization_id,\n        NULL,\n        fixture_owner_id,\n        fixture_owner_id,\n        'bootstrap_owner_granted'\n    );",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"WHERE organization_id = fixture_organization_id\n          AND project_id IS NULL\n          AND actor_id = fixture_owner_id\n          AND target_actor_id = fixture_owner_id\n          AND action = 'bootstrap_owner_granted'",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"WHERE organization_id = fixture_organization_id\n          AND project_id = fixture_project_id\n          AND actor_id = fixture_owner_id\n          AND target_actor_id = fixture_reader_id\n          AND action = 'project_grant_set'",
 	);
 });

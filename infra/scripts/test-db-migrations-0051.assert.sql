@@ -114,14 +114,32 @@ BEGIN
         fixture_reader_id,
         'project_grant_set'
     );
+    PERFORM audit_admin_access_event(
+        fixture_organization_id,
+        NULL,
+        fixture_owner_id,
+        fixture_owner_id,
+        'bootstrap_owner_granted'
+    );
     IF NOT EXISTS (
         SELECT 1 FROM admin_access_audit_events
         WHERE organization_id = fixture_organization_id
+          AND project_id = fixture_project_id
           AND actor_id = fixture_owner_id
           AND target_actor_id = fixture_reader_id
           AND action = 'project_grant_set'
     ) THEN
-        RAISE EXCEPTION '0051 did not record the content-free admin audit event';
+        RAISE EXCEPTION '0051 did not retain the project-scoped admin audit event';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM admin_access_audit_events
+        WHERE organization_id = fixture_organization_id
+          AND project_id IS NULL
+          AND actor_id = fixture_owner_id
+          AND target_actor_id = fixture_owner_id
+          AND action = 'bootstrap_owner_granted'
+    ) THEN
+        RAISE EXCEPTION '0051 did not record the organization-scoped admin audit event';
     END IF;
     BEGIN
         DELETE FROM admin_access_audit_events WHERE organization_id = fixture_organization_id;
