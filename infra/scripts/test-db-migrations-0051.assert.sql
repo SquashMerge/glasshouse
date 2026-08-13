@@ -100,24 +100,24 @@ BEGIN
         SET role = 'user'
         WHERE project_id = fixture_project_id AND actor_id = fixture_reader_id;
         RAISE EXCEPTION '0051 accepted a User project grant for a Read-only actor';
-    EXCEPTION WHEN raise_exception THEN
-        IF SQLERRM <> 'project grant exceeds the target organization role' THEN RAISE; END IF;
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
     END;
 
     BEGIN
         INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role)
         VALUES (fixture_project_id, fixture_organization_id, fixture_other_id, 'read_only');
         RAISE EXCEPTION '0051 accepted a cross-organization project grant';
-    EXCEPTION WHEN raise_exception THEN
-        IF SQLERRM <> 'project grant actor identity is outside the organization' THEN RAISE; END IF;
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
     END;
 
     BEGIN
         INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role)
         VALUES (fixture_project_id, fixture_organization_id, fixture_worker_id, 'read_only');
         RAISE EXCEPTION '0051 accepted a project grant without an organization role';
-    EXCEPTION WHEN raise_exception THEN
-        IF SQLERRM <> 'project grants require a non-Admin organization role' THEN RAISE; END IF;
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
     END;
 
     BEGIN

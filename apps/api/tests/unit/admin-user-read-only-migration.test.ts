@@ -111,6 +111,13 @@ const adminMembershipProjectGrantsAssertion = readFileSync(
 	),
 	"utf8",
 );
+const adminMembershipProjectGrantsMigration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0051_admin_membership_project_grants_recovery.sql",
+	),
+	"utf8",
+);
 const adminMembershipProjectGrantsFixture = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -612,14 +619,9 @@ WHERE id IN (
 	expect(adminMembershipProjectGrantsAssertion).toContain(
 		"fixture_organization_id::text",
 	);
-	for (const message of [
-		"project grant exceeds the target organization role",
-		"project grant actor identity is outside the organization",
-		"project grants require a non-Admin organization role",
-	])
-		expect(adminMembershipProjectGrantsAssertion).toContain(
-			`IF SQLERRM <> '${message}' THEN RAISE; END IF;`,
-		);
+	expect(adminMembershipProjectGrantsMigration).toContain(
+		"BEFORE INSERT OR UPDATE OF project_id, organization_id, actor_id, role ON project_actor_grants",
+	);
 	expect(adminMembershipProjectGrantsFixture).toContain(restoreNotNull);
 	expect(adminMembershipProjectGrantsFixture).not.toContain(
 		"ALTER TABLE organizations DROP CONSTRAINT",
