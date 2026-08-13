@@ -11,11 +11,14 @@ POSTGRES_DB="astraea_migrations"
 cleanup() {
   [[ -n "${UUID_LOCK_PID:-}" ]] && kill "$UUID_LOCK_PID" >/dev/null 2>&1 || true
   [[ -n "${UUID_INSERT_PID:-}" ]] && kill "$UUID_INSERT_PID" >/dev/null 2>&1 || true
+	[[ -n "${ADMIN_AUDIT_LOCK_PID:-}" ]] && kill "$ADMIN_AUDIT_LOCK_PID" >/dev/null 2>&1 || true
+	[[ -n "${ADMIN_AUDIT_INSERT_PID:-}" ]] && kill "$ADMIN_AUDIT_INSERT_PID" >/dev/null 2>&1 || true
 	[[ -n "${ORDER_HOLDER_PID:-}" ]] && kill "$ORDER_HOLDER_PID" >/dev/null 2>&1 || true
 	[[ -n "${ORDER_CONTENDER_PID:-}" ]] && kill "$ORDER_CONTENDER_PID" >/dev/null 2>&1 || true
   exec 3>&- || true
+	exec 5>&- || true
 	exec 4>&- || true
-  rm -f "${UUID_LOCK_INPUT:-}" "${UUID_LOCK_OUTPUT:-}" "${UUID_INSERT_OUTPUT:-}" "${ORDER_HOLDER_INPUT:-}" "${ORDER_HOLDER_OUTPUT:-}" "${ORDER_CONTENDER_OUTPUT:-}"
+  rm -f "${UUID_LOCK_INPUT:-}" "${UUID_LOCK_OUTPUT:-}" "${UUID_INSERT_OUTPUT:-}" "${ADMIN_AUDIT_LOCK_INPUT:-}" "${ADMIN_AUDIT_LOCK_OUTPUT:-}" "${ADMIN_AUDIT_INSERT_OUTPUT:-}" "${ORDER_HOLDER_INPUT:-}" "${ORDER_HOLDER_OUTPUT:-}" "${ORDER_CONTENDER_OUTPUT:-}"
   docker rm --force "$CONTAINER" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -458,6 +461,103 @@ done
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0053_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0053.assert.sql"
+
+run_admin_access_audit_provenance_serialization_check() {
+	local database="$1"
+	local project_id="54000000-0000-4000-8000-000000000001"
+	local organization_id="51000000-0000-4000-8000-000000000001"
+	local owner_id="51000000-0000-4000-8000-000000000101"
+	local reader_id="51000000-0000-4000-8000-000000000102"
+	local lock_state= lock_waited= event_persisted=
+	ADMIN_AUDIT_LOCK_INPUT="$(mktemp)"
+	ADMIN_AUDIT_LOCK_OUTPUT="$(mktemp)"
+	ADMIN_AUDIT_INSERT_OUTPUT="$(mktemp)"
+	rm "$ADMIN_AUDIT_LOCK_INPUT"
+	mkfifo "$ADMIN_AUDIT_LOCK_INPUT"
+
+	docker exec --interactive "$CONTAINER" \
+		psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+		< "$ADMIN_AUDIT_LOCK_INPUT" > "$ADMIN_AUDIT_LOCK_OUTPUT" 2>&1 &
+	ADMIN_AUDIT_LOCK_PID=$!
+	exec 5>"$ADMIN_AUDIT_LOCK_INPUT"
+	printf "BEGIN; SELECT lock_project_audit_provenance('%s');\n" "$project_id" >&5
+
+	for _ in {1..50}; do
+		lock_state="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$database" --command "SELECT pg_try_advisory_xact_lock(hashtextextended('$project_id', 0))")"
+		[[ "$lock_state" == "f" ]] && break
+		sleep 0.1
+	done
+	if [[ "$lock_state" != "f" ]]; then
+		echo "admin audit advisory-lock holder did not acquire the project UUID lock" >&2
+		exit 1
+	fi
+
+	docker exec --interactive "$CONTAINER" \
+		psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+		--command "INSERT INTO admin_access_audit_events (organization_id, project_id, actor_id, target_actor_id, action, correlation_id) VALUES ('$organization_id', '$project_id', '$owner_id', '$reader_id', 'project_grant_set', gen_random_uuid())" \
+		> "$ADMIN_AUDIT_INSERT_OUTPUT" 2>&1 &
+	ADMIN_AUDIT_INSERT_PID=$!
+	for _ in {1..50}; do
+		lock_waited="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$database" --command "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'INSERT INTO admin_access_audit_events%')")"
+		[[ "$lock_waited" == "t" ]] && break
+		sleep 0.1
+	done
+	if [[ "$lock_waited" != "t" ]]; then
+		echo "project-scoped admin audit insert did not wait for the advisory lock" >&2
+		exit 1
+	fi
+
+	printf 'COMMIT;\n' >&5
+	exec 5>&-
+	timeout 10s bash -c "while kill -0 '$ADMIN_AUDIT_LOCK_PID' 2>/dev/null; do sleep 0.1; done"
+	timeout 10s bash -c "while kill -0 '$ADMIN_AUDIT_INSERT_PID' 2>/dev/null; do sleep 0.1; done"
+	wait "$ADMIN_AUDIT_LOCK_PID"
+	wait "$ADMIN_AUDIT_INSERT_PID"
+	event_persisted="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$database" --command "SELECT EXISTS (SELECT 1 FROM admin_access_audit_events WHERE organization_id = '$organization_id' AND project_id = '$project_id' AND actor_id = '$owner_id' AND target_actor_id = '$reader_id' AND action = 'project_grant_set')")"
+	if [[ "$event_persisted" != "t" ]]; then
+		echo "admin audit event did not persist after advisory-lock serialization" >&2
+		exit 1
+	fi
+	rm -f "$ADMIN_AUDIT_LOCK_INPUT" "$ADMIN_AUDIT_LOCK_OUTPUT" "$ADMIN_AUDIT_INSERT_OUTPUT"
+	ADMIN_AUDIT_LOCK_PID=
+	ADMIN_AUDIT_INSERT_PID=
+	ADMIN_AUDIT_LOCK_INPUT=
+	ADMIN_AUDIT_LOCK_OUTPUT=
+	ADMIN_AUDIT_INSERT_OUTPUT=
+}
+
+UPGRADE_0054_DATABASE="${POSTGRES_DB}_0054_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0054_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0051_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0054_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0054_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0051.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0054_DATABASE" \
+  < "$ROOT/infra/db/migrations/0051_admin_membership_project_grants_recovery.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0054_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0053.fixture.sql"
+for migration in \
+  "$ROOT/infra/db/migrations/0052_durable_authorization_revocation_cancellation.sql" \
+  "$ROOT/infra/db/migrations/0053_project_audit_provenance_serialization_recovery.sql" \
+  "$ROOT/infra/db/migrations/0053_project_audit_provenance_serialization_recovery.sql" \
+  "$ROOT/infra/db/migrations/0054_admin_access_audit_provenance_serialization.sql" \
+  "$ROOT/infra/db/migrations/0054_admin_access_audit_provenance_serialization.sql"; do
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0054_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0054_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0054.fixture.sql"
+run_admin_access_audit_provenance_serialization_check "$UPGRADE_0054_DATABASE"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0054_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0054.assert.sql"
 
 UPGRADE_0050_NULL_ORGANIZATION_DATABASE="${POSTGRES_DB}_0050_null_organization"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE"
