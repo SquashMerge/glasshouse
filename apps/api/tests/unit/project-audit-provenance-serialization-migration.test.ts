@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const migration = readFileSync(
@@ -27,6 +27,27 @@ const migrationAssertions = readFileSync(
 	),
 	"utf8",
 );
+const adminAuditScopeMigrationPath = resolve(
+	import.meta.dir,
+	"../../../../infra/db/migrations/0054_admin_access_audit_provenance_serialization.sql",
+);
+const adminAuditScopeMigration = existsSync(adminAuditScopeMigrationPath)
+	? readFileSync(adminAuditScopeMigrationPath, "utf8")
+	: "";
+const adminAuditScopeFixturePath = resolve(
+	import.meta.dir,
+	"../../../../infra/scripts/test-db-migrations-0054.fixture.sql",
+);
+const adminAuditScopeFixture = existsSync(adminAuditScopeFixturePath)
+	? readFileSync(adminAuditScopeFixturePath, "utf8")
+	: "";
+const adminAuditScopeAssertionsPath = resolve(
+	import.meta.dir,
+	"../../../../infra/scripts/test-db-migrations-0054.assert.sql",
+);
+const adminAuditScopeAssertions = existsSync(adminAuditScopeAssertionsPath)
+	? readFileSync(adminAuditScopeAssertionsPath, "utf8")
+	: "";
 
 test("0053 restores UUID provenance serialization without dropping retained audit sources", () => {
 	const functionStart = migration.indexOf(
@@ -65,7 +86,7 @@ test("0053 restores UUID provenance serialization without dropping retained audi
 test("0053 isolated upgrade rejects reuse of a UUID retained only by admin access audit provenance", () => {
 	const upgrade0053 = migrationHarness.slice(
 		migrationHarness.indexOf("UPGRADE_0053_DATABASE"),
-		migrationHarness.indexOf("UPGRADE_0050_NULL_ORGANIZATION_DATABASE"),
+		migrationHarness.indexOf("UPGRADE_0054_DATABASE"),
 	);
 
 	const migration0051 = "0051_admin_membership_project_grants_recovery.sql";
@@ -99,6 +120,88 @@ test("0053 isolated upgrade rejects reuse of a UUID retained only by admin acces
 	expect(migrationAssertions).toContain("RETURNED_SQLSTATE");
 	expect(migrationAssertions).toContain("'23505'");
 	expect(migrationAssertions).toContain(
+		"project UUID has retained audit provenance",
+	);
+});
+
+test("0054 serializes project-scoped admin audit writes with UUID reuse checks", () => {
+	const functionStart = adminAuditScopeMigration.indexOf(
+		"CREATE OR REPLACE FUNCTION enforce_admin_access_audit_scope()",
+	);
+	const functionBody = adminAuditScopeMigration.slice(functionStart);
+	const liveProjectLock =
+		"FROM projects AS project\n        WHERE project.id = NEW.project_id\n        FOR KEY SHARE;";
+	const provenanceLock =
+		"PERFORM lock_project_audit_provenance(NEW.project_id);";
+	const sameOrganizationCheck =
+		"project.organization_id = NEW.organization_id\n            FOR KEY SHARE";
+
+	expect(existsSync(adminAuditScopeMigrationPath)).toBe(true);
+	expect(functionStart).toBeGreaterThanOrEqual(0);
+	expect(functionBody).toContain("IF NEW.project_id IS NOT NULL THEN");
+	expect(functionBody).toContain(liveProjectLock);
+	expect(functionBody).toContain(provenanceLock);
+	expect(functionBody).toContain(sameOrganizationCheck);
+	expect(functionBody.indexOf(liveProjectLock)).toBeLessThan(
+		functionBody.indexOf(provenanceLock),
+	);
+	expect(functionBody.indexOf(provenanceLock)).toBeLessThan(
+		functionBody.indexOf(sameOrganizationCheck),
+	);
+	expect(functionBody).toContain(
+		"RAISE EXCEPTION 'admin access audit project belongs to another organization'",
+	);
+	expect(functionBody).toContain("USING ERRCODE = '23503';");
+	expect(existsSync(adminAuditScopeFixturePath)).toBe(true);
+	expect(existsSync(adminAuditScopeAssertionsPath)).toBe(true);
+
+	const upgrade0054 = migrationHarness.slice(
+		migrationHarness.indexOf("UPGRADE_0054_DATABASE"),
+		migrationHarness.indexOf("UPGRADE_0050_NULL_ORGANIZATION_DATABASE"),
+	);
+	const migration0052 =
+		"0052_durable_authorization_revocation_cancellation.sql";
+	const migration0053 =
+		"0053_project_audit_provenance_serialization_recovery.sql";
+	const migration0054 = "0054_admin_access_audit_provenance_serialization.sql";
+
+	expect(upgrade0054).toContain("test-db-migrations-0051.fixture.sql");
+	expect(upgrade0054).toContain(
+		"0051_admin_membership_project_grants_recovery.sql",
+	);
+	expect(upgrade0054).toContain("test-db-migrations-0053.fixture.sql");
+	expect(upgrade0054).toContain("test-db-migrations-0054.fixture.sql");
+	expect(upgrade0054.match(new RegExp(migration0053, "g"))).toHaveLength(2);
+	expect(upgrade0054.match(new RegExp(migration0054, "g"))).toHaveLength(2);
+	expect(upgrade0054).toContain("test-db-migrations-0054.assert.sql");
+	expect(upgrade0054.indexOf(migration0052)).toBeLessThan(
+		upgrade0054.indexOf(migration0053),
+	);
+	expect(upgrade0054.indexOf(migration0053)).toBeLessThan(
+		upgrade0054.indexOf(migration0054),
+	);
+	expect(upgrade0054.indexOf(migration0054)).toBeLessThan(
+		upgrade0054.indexOf("test-db-migrations-0054.fixture.sql"),
+	);
+	expect(
+		upgrade0054.indexOf("test-db-migrations-0054.fixture.sql"),
+	).toBeLessThan(upgrade0054.indexOf("test-db-migrations-0054.assert.sql"));
+	expect(migrationHarness).toContain(
+		"run_admin_access_audit_provenance_serialization_check",
+	);
+	expect(migrationHarness).toContain(
+		"query LIKE 'INSERT INTO admin_access_audit_events%'",
+	);
+	expect(adminAuditScopeFixture).toContain(
+		"'54000000-0000-4000-8000-000000000001'",
+	);
+	expect(adminAuditScopeAssertions).toContain(
+		"NULL,\n        fixture_owner_id",
+	);
+	expect(adminAuditScopeAssertions).toContain(
+		"admin access audit project belongs to another organization",
+	);
+	expect(adminAuditScopeAssertions).toContain(
 		"project UUID has retained audit provenance",
 	);
 });
