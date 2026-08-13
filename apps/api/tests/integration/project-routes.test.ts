@@ -418,6 +418,16 @@ describe("project authorization routes", () => {
 			),
 		).toBe(true);
 		expect(
+			query.mock.calls.some(([sql]) =>
+				sql.startsWith("SELECT actor_id FROM project_actor_grants"),
+			),
+		).toBe(true);
+		expect(
+			query.mock.calls.some(([sql]) =>
+				sql.startsWith("DELETE FROM project_actor_grants"),
+			),
+		).toBe(true);
+		expect(
 			query.mock.calls.some(([sql]) => sql.includes("SET project_id = NULL")),
 		).toBe(false);
 	});
@@ -515,6 +525,7 @@ describe("project authorization routes", () => {
 				sql.startsWith("SELECT id FROM projects") ||
 				sql.startsWith("SELECT id FROM organizations") ||
 				sql.startsWith("SELECT actor_subject FROM organization_memberships") ||
+				sql.startsWith("SELECT actor_id FROM organization_actor_roles") ||
 				sql.startsWith("SELECT lock_project_audit_provenance")
 			)
 				return { rows: [] };
@@ -751,10 +762,16 @@ describe("project authorization routes", () => {
 
 	it("lists actor roles and archived projects only in management mode", async () => {
 		query.mockImplementationOnce(async () => ({
-			rows: [{ role: "member" }],
+			rows: [
+				{
+					role: "member",
+					durable_role: "read_only",
+					default_project_id: PROJECT,
+				},
+			],
 		}));
 		query.mockImplementationOnce(async (sql: string) => {
-			expect(sql).toContain("p.status = 'active'");
+			expect(sql).toContain("authorization_effective_project_role");
 			expect(sql).toContain("project_role");
 			return {
 				rows: [
@@ -793,9 +810,17 @@ describe("project authorization routes", () => {
 	});
 
 	it("keeps /v1/me active-only while exposing the actor project role", async () => {
-		query.mockImplementationOnce(async () => ({ rows: [{ role: "member" }] }));
+		query.mockImplementationOnce(async () => ({
+			rows: [
+				{
+					role: "member",
+					durable_role: "read_only",
+					default_project_id: PROJECT,
+				},
+			],
+		}));
 		query.mockImplementationOnce(async (sql: string) => {
-			expect(sql).toContain("p.status = 'active'");
+			expect(sql).toContain("authorization_effective_project_role");
 			return {
 				rows: [
 					{

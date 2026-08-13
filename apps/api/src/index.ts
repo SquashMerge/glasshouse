@@ -176,6 +176,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				c.req.path === "/v1/auth/login" ||
 				c.req.path === "/v1/otel/v1/traces" ||
 				c.req.path.startsWith("/v1/projects") ||
+				c.req.path.startsWith("/v1/admin/") ||
 				c.req.path.startsWith("/v1/organization/")
 			)
 				return await next();

@@ -425,17 +425,12 @@ export interface Project {
 	is_default: boolean;
 }
 
-export interface ProjectMember {
-	actor_subject: string;
-	role: "user" | "read_only";
-	created_at: string;
-}
-
 export interface CurrentActor {
 	actor_subject: string;
 	actor_id: string;
 	organization_id: string;
-	organization_role: "admin" | "user";
+	organization_role: "admin" | "user" | "read_only";
+	can_recover_admin: boolean;
 	effective_organization_role_id: "organization:admin" | "organization:user";
 	default_project_id: string;
 	projects: Project[];
@@ -524,37 +519,6 @@ export async function getProjectDeletionStatus(
 		"getProjectDeletionStatus",
 	);
 }
-export async function listProjectMembers(
-	projectId: string,
-): Promise<{ items: ProjectMember[] }> {
-	return responseJson(
-		await authedFetch(`/v1/projects/${encodeURIComponent(projectId)}/members`),
-		"listProjectMembers",
-	);
-}
-export async function putProjectMember(input: {
-	projectId: string;
-	actorSubject: string;
-	role: ProjectMember["role"];
-}): Promise<ProjectMember> {
-	return responseJson(
-		await authedFetch(
-			`/v1/projects/${encodeURIComponent(input.projectId)}/members/${encodeURIComponent(input.actorSubject)}`,
-			jsonRequest({ actor_subject: input.actorSubject, role: input.role }),
-		),
-		"putProjectMember",
-	);
-}
-export async function deleteProjectMember(input: {
-	projectId: string;
-	actorSubject: string;
-}): Promise<void> {
-	const response = await authedFetch(
-		`/v1/projects/${encodeURIComponent(input.projectId)}/members/${encodeURIComponent(input.actorSubject)}`,
-		{ method: "DELETE" },
-	);
-	if (!response.ok) await responseJson<never>(response, "deleteProjectMember");
-}
 export async function archiveProject(id: string): Promise<Project> {
 	return responseJson<Project>(
 		await authedFetch(`/v1/projects/${encodeURIComponent(id)}/archive`, {
@@ -573,6 +537,91 @@ export async function restoreProject(id: string): Promise<Project> {
 }
 export async function getCurrentActor(): Promise<CurrentActor> {
 	return responseJson(await authedFetch("/v1/me"), "getCurrentActor");
+}
+
+export interface AdminActor {
+	actor_id: string;
+	organization_role: "admin" | "user" | "read_only" | null;
+	created_at: string;
+}
+
+export interface ProjectGrant {
+	actor_id: string;
+	project_id: string;
+	role: "user" | "read_only";
+	created_at: string;
+}
+
+export async function listAdminActors(): Promise<{ items: AdminActor[] }> {
+	return responseJson(await authedFetch("/v1/admin/actors"), "listAdminActors");
+}
+
+export async function setAdminActorRole(input: {
+	actorId: string;
+	role: Exclude<AdminActor["organization_role"], null>;
+}): Promise<AdminActor> {
+	return responseJson(
+		await authedFetch(
+			`/v1/admin/actors/${encodeURIComponent(input.actorId)}/role`,
+			{
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ role: input.role }),
+			},
+		),
+		"setAdminActorRole",
+	);
+}
+
+export async function listProjectGrants(
+	projectId: string,
+): Promise<{ items: ProjectGrant[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/admin/projects/${encodeURIComponent(projectId)}/grants`,
+		),
+		"listProjectGrants",
+	);
+}
+
+export async function setProjectGrant(input: {
+	projectId: string;
+	actorId: string;
+	role: ProjectGrant["role"];
+}): Promise<ProjectGrant> {
+	return responseJson(
+		await authedFetch(
+			`/v1/admin/projects/${encodeURIComponent(input.projectId)}/grants/${encodeURIComponent(input.actorId)}`,
+			{
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ role: input.role }),
+			},
+		),
+		"setProjectGrant",
+	);
+}
+
+export async function revokeProjectGrant(input: {
+	projectId: string;
+	actorId: string;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/admin/projects/${encodeURIComponent(input.projectId)}/grants/${encodeURIComponent(input.actorId)}`,
+		{ method: "DELETE" },
+	);
+	if (!response.ok) await responseJson<never>(response, "revokeProjectGrant");
+}
+
+export async function recoverAdmin(): Promise<AdminActor> {
+	return responseJson(
+		await authedFetch("/v1/admin/recovery", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ confirmation: "RESTORE ADMIN" }),
+		}),
+		"recoverAdmin",
+	);
 }
 
 export type PromptRole = "system" | "user";

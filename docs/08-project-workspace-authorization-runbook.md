@@ -57,6 +57,40 @@ persist a result, write an evaluation trace, complete, or resume after restart.
 No manual replay is required or supported for these cancelled runs; submit a new
 experiment after restoring appropriate execute access.
 
+## Admin access and break-glass recovery
+
+Migration `0051_admin_membership_project_grants_recovery.sql` makes durable Actor
+IDs the administration and authorization source of truth. The `/access` dashboard
+and `/v1/admin/*` endpoints are Admin-only: they list every organization-scoped
+durable actor, set only **Admin**, **User**, or **Read-only** organization roles,
+and list, set, or revoke explicit **User** or **Read-only** grants for active
+same-organization Projects. The API never accepts a username, email, IdP claim,
+or caller-selected organization as the authorization subject. Basic Auth subjects
+remain a compatibility projection and are never returned by this administration
+surface. Admins hold organization-wide authority; User and Read-only actors have
+only their explicit active-Project grants. A Read-only organization role is a
+ceiling: it cannot receive or retain a User-level Project grant.
+
+The existing `ASTRAEA_BOOTSTRAP_OWNER_USERNAME` credential is the only supported
+break-glass authority. It must match exactly one configured Basic Auth credential
+for the authenticated organization and its deterministic durable Actor ID. No
+emergency password, token, or secret is created, stored, logged, returned, or sent
+to the dashboard. `POST /v1/admin/recovery` requires the exact confirmation
+`RESTORE ADMIN`, succeeds only when the organization has no active Admin, and
+cannot select or cross into another organization. Every success, denial, and
+cooldown decision is append-only and content-free, recording only durable actor,
+organization/Project scope, action, correlation UUID, and timestamp. Attempts have
+a durable 15-minute cooldown, including denied attempts, so an operator must wait
+for expiry before retrying. Rotate or revoke the configured Basic Auth owner only
+through deployment-secret configuration and a deliberate replacement Admin flow;
+never create an application-side recovery credential.
+
+The database rejects removal, demotion, and identity unlinking of the final active
+Admin. Administration mutations lock compatibility membership rows, durable role
+and Project-grant rows, Project rows, and audit UUIDs in that order; retries occur
+only before mutation code begins. Do not bypass these guards for fixtures or manual
+repair. Inspect `/v1/admin/audit-events` for content-free access evidence.
+
 Migrations `0043_authorization_revocation_fence.sql` through
 `0048_project_audit_lock_order.sql` serialize Project and organization membership
 changes with authorization-sensitive work. The global physical order is organization

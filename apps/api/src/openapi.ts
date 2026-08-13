@@ -68,37 +68,41 @@ import {
 	createProject,
 	deleteProject,
 	getProjectDeletionStatus,
-	deleteOrganizationMember,
-	deleteProjectMember,
 	getMe,
 	getProject,
 	handleArchiveProject,
 	handleCreateProject,
 	handleDeleteProject,
 	handleGetProjectDeletionStatus,
-	handleDeleteOrganizationMember,
-	handleDeleteProjectMember,
 	handleGetMe,
 	handleGetProject,
 	handleGetProjectAuditEvents,
-	handleListOrganizationMembers,
-	handleListProjectMembers,
 	handleListProjects,
-	handlePutOrganizationMember,
-	handlePutProjectMember,
 	handleRestoreProject,
 	handleUpdateProject,
 	handleSetDefaultProject,
-	listProjectMembers,
-	listOrganizationMembers,
 	listProjectAuditEvents,
 	listProjects,
-	putOrganizationMember,
-	putProjectMember,
 	restoreProject,
 	setDefaultProject,
 	updateProject,
 } from "./routes/projects.js";
+import {
+	handleListAdminActors,
+	handleListAdminAuditEvents,
+	handleListProjectGrants,
+	handleRecoverAdmin,
+	handleRevokeProjectGrant,
+	handleSetAdminActorRole,
+	handleSetProjectGrant,
+	listAdminActors,
+	listAdminAuditEvents,
+	listProjectGrants,
+	recoverAdmin,
+	revokeProjectGrant,
+	setAdminActorRole,
+	setProjectGrant,
+} from "./routes/admin-access.js";
 import {
 	listBenchmarkSuites,
 	createBenchmarkSuiteRoute,
@@ -260,13 +264,14 @@ register(getProject, handleGetProject);
 register(updateProject, handleUpdateProject);
 register(archiveProject, handleArchiveProject);
 register(restoreProject, handleRestoreProject);
-register(listProjectMembers, handleListProjectMembers);
 register(listProjectAuditEvents, handleGetProjectAuditEvents);
-register(putProjectMember, handlePutProjectMember);
-register(deleteProjectMember, handleDeleteProjectMember);
-register(putOrganizationMember, handlePutOrganizationMember);
-register(listOrganizationMembers, handleListOrganizationMembers);
-register(deleteOrganizationMember, handleDeleteOrganizationMember);
+register(listAdminActors, handleListAdminActors);
+register(setAdminActorRole, handleSetAdminActorRole);
+register(listProjectGrants, handleListProjectGrants);
+register(setProjectGrant, handleSetProjectGrant);
+register(revokeProjectGrant, handleRevokeProjectGrant);
+register(listAdminAuditEvents, handleListAdminAuditEvents);
+register(recoverAdmin, handleRecoverAdmin);
 register(listPrompts, handleListPrompts);
 register(createPrompt, handleCreatePrompt);
 register(previewPrompt, handlePreviewPrompt);

@@ -44,8 +44,12 @@ class MockClient {
 		}
 		if (text.includes("FROM organization_memberships om"))
 			return { rows: [{ actor_subject: "writer" }] };
+		if (text.includes("FROM organization_actor_roles"))
+			return { rows: [{ actor_id: "44444444-4444-4444-8444-444444444444" }] };
 		if (text.includes("FROM project_memberships pm"))
 			return { rows: [{ actor_subject: "writer" }] };
+		if (text.includes("FROM project_actor_grants"))
+			return { rows: [{ actor_id: "44444444-4444-4444-8444-444444444444" }] };
 		if (text.startsWith("SELECT authorization_allows_project"))
 			return { rows: [{ allowed: true }] };
 		this.calls.push({ text, values });
