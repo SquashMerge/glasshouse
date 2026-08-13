@@ -409,6 +409,29 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0051_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0051.assert.sql"
 
+UPGRADE_0052_DATABASE="${POSTGRES_DB}_0052_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0052_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0051_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0052_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0052_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0051.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0052_DATABASE" \
+  < "$ROOT/infra/db/migrations/0051_admin_membership_project_grants_recovery.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0052_DATABASE" \
+  < "$ROOT/infra/db/migrations/0052_durable_authorization_revocation_cancellation.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0052_DATABASE" \
+  < "$ROOT/infra/db/migrations/0052_durable_authorization_revocation_cancellation.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0052_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0052.assert.sql"
+
 UPGRADE_0050_NULL_ORGANIZATION_DATABASE="${POSTGRES_DB}_0050_null_organization"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE"
 for migration in "$ROOT"/infra/db/migrations/*.sql; do
