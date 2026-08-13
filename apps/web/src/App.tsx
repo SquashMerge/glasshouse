@@ -18,6 +18,7 @@ import { EvaluationsPage, EvaluationDetailPage } from "./routes/evaluations";
 import { FeedbackPage } from "./routes/feedback";
 import { ProjectsPage } from "./routes/projects";
 import { GovernancePage } from "./routes/governance";
+import { AdminAccessPage } from "./routes/admin-access";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 import { ProjectProvider } from "./components/ProjectProvider";
@@ -122,6 +123,11 @@ const governanceRoute = createRoute({
 	path: "/governance",
 	component: GovernancePage,
 });
+const adminAccessRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/access",
+	component: AdminAccessPage,
+});
 
 const router = createRouter({
 	routeTree: rootRoute.addChildren([
@@ -141,6 +147,7 @@ const router = createRouter({
 			feedbackRoute,
 			projectsRoute,
 			governanceRoute,
+			adminAccessRoute,
 		]),
 	]),
 	defaultPreload: false,

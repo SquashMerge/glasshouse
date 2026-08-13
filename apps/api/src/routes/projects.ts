@@ -27,6 +27,7 @@ import {
 	trustedTenant,
 } from "../tenancy.js";
 import type { ProjectOperation } from "../authorization-policy.js";
+import { basicCredentialsFromEnvironment } from "../middleware/auth.js";
 import {
 	lockActiveAuthorizedOrganizationProject,
 	lockAuthorizedOrganization,
@@ -216,14 +217,14 @@ type Row = {
 	status: "active" | "archived" | "deleting";
 	created_at: Date;
 	archived_at: Date | null;
-	project_role: "owner" | "manager" | "member";
+	project_role: "owner" | "manager" | "member" | "admin" | "user" | "read_only";
 	can_manage?: boolean;
 	can_govern?: boolean;
 	is_default?: boolean;
 };
 function publicProjectRole(role: Row["project_role"]) {
-	if (role === "owner") return "admin" as const;
-	if (role === "manager") return "user" as const;
+	if (role === "owner" || role === "admin") return "admin" as const;
+	if (role === "manager" || role === "user") return "user" as const;
 	return "read_only" as const;
 }
 function publicOrganizationRole(role: "owner" | "member") {
@@ -234,6 +235,18 @@ function legacyProjectRole(role: "user" | "read_only") {
 }
 function legacyOrganizationRole(role: "admin" | "user") {
 	return role === "admin" ? ("owner" as const) : ("member" as const);
+}
+function canRecoverAdmin(tenant: ReturnType<typeof trustedTenant>) {
+	const username = process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME;
+	if (!username) return false;
+	const matches = basicCredentialsFromEnvironment().filter(
+		(credential) => credential.username === username,
+	);
+	return (
+		matches.length === 1 &&
+		matches[0]?.organizationId === tenant.organizationId &&
+		matches[0]?.actorId === tenant.actorId
+	);
 }
 const project = (row: Row) => ({
 	...row,
@@ -290,6 +303,7 @@ const deletionCleanupSql = [
 	"DELETE FROM governance_policy_approvals WHERE project_id = $1",
 	"DELETE FROM governance_policy_versions WHERE project_id = $1",
 	"DELETE FROM governance_policies WHERE project_id = $1",
+	"DELETE FROM project_actor_grants WHERE project_id = $1",
 	"DELETE FROM project_memberships WHERE project_id = $1",
 ];
 function failure(c: Context, error: unknown): Response {
@@ -388,9 +402,10 @@ export async function handleGetMe(c: Context) {
 		const pool = pgPool();
 		const membership = await pool.query<{
 			role: "owner" | "member";
+			durable_role: "admin" | "user" | "read_only" | null;
 			default_project_id: string;
 		}>(
-			"SELECT om.role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1",
+			"SELECT om.role, durable.role AS durable_role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN organization_actor_roles durable ON durable.organization_id = om.organization_id AND durable.actor_id = $2 WHERE om.organization_id = $1",
 			[tenant.organizationId, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
@@ -399,8 +414,11 @@ export async function handleGetMe(c: Context) {
 			actor_subject: tenant.actor,
 			actor_id: tenant.actorId,
 			organization_id: tenant.organizationId,
-			organization_role: publicOrganizationRole(membership.rows[0].role),
-			effective_organization_role_id: `organization:${publicOrganizationRole(membership.rows[0].role)}`,
+			organization_role:
+				membership.rows[0].durable_role ??
+				publicOrganizationRole(membership.rows[0].role),
+			can_recover_admin: canRecoverAdmin(tenant),
+			effective_organization_role_id: `organization:${membership.rows[0].durable_role === "admin" ? "admin" : "user"}`,
 			default_project_id: membership.rows[0].default_project_id,
 			projects: rows.rows.map(project),
 		});
@@ -436,7 +454,7 @@ async function listAccessibleProjects(
 	includeArchived: boolean,
 ) {
 	return pool.query<Row>(
-		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role, authorization_allows_project(p.organization_id, p.id, $3, 'project_manage') AS can_manage, authorization_allows_project(p.organization_id, p.id, $3, 'governed') AS can_govern FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.organization_id = $1 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL) AND (p.status = 'active' OR ($2::boolean AND authorization_allows_project(p.organization_id, p.id, $3, 'project_manage'))) ORDER BY p.created_at",
+		"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, access.effective_role AS project_role, authorization_allows_project(p.organization_id, p.id, $3, 'project_manage') AS can_manage, authorization_allows_project(p.organization_id, p.id, $3, 'governed') AS can_govern FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN LATERAL authorization_effective_project_role(p.organization_id, p.id, $3) access ON true WHERE p.organization_id = $1 AND access.effective_role IS NOT NULL AND (authorization_allows_project(p.organization_id, p.id, $3, 'product_read') OR ($2::boolean AND authorization_allows_project(p.organization_id, p.id, $3, 'project_manage'))) ORDER BY p.created_at",
 		[tenant.organizationId, includeArchived, tenant.actorId],
 	);
 }
@@ -678,6 +696,10 @@ export async function handleDeleteProject(c: Context) {
 				await finalize.query("BEGIN");
 				await finalize.query(
 					"SELECT actor_subject FROM project_memberships WHERE project_id = $1 AND organization_id = $2 ORDER BY actor_subject FOR UPDATE",
+					[id, tenant.organizationId],
+				);
+				await finalize.query(
+					"SELECT actor_id FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 ORDER BY actor_id FOR UPDATE",
 					[id, tenant.organizationId],
 				);
 				const deletionProject = await finalize.query(

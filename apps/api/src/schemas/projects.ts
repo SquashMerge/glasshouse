@@ -3,7 +3,7 @@ import { ErrorEnvelope } from "./common.js";
 
 export const ProjectRole = z.enum(["user", "read_only"]);
 export const ActorProjectRole = z.enum(["admin", "user", "read_only"]);
-export const OrganizationRole = z.enum(["admin", "user"]);
+export const OrganizationRole = z.enum(["admin", "user", "read_only"]);
 export const ProjectStatus = z.enum(["active", "archived", "deleting"]);
 export const Project = z
 	.object({
@@ -78,6 +78,7 @@ export const Me = z
 		]),
 		organization_id: z.string().uuid(),
 		organization_role: OrganizationRole,
+		can_recover_admin: z.boolean(),
 		default_project_id: z.string().uuid(),
 		projects: z.array(Project),
 	})

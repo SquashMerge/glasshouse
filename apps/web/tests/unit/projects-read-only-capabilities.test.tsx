@@ -11,9 +11,6 @@ const api = vi.hoisted(() => ({
 	deleteProject: vi.fn(),
 	getProjectDeletionStatus: vi.fn(),
 	setDefaultProject: vi.fn(),
-	listProjectMembers: vi.fn(),
-	putProjectMember: vi.fn(),
-	deleteProjectMember: vi.fn(),
 }));
 vi.mock("../../src/lib/api", () => api);
 vi.mock("../../src/components/ProjectProvider", () => ({
@@ -58,7 +55,7 @@ describe("project dashboard capabilities", () => {
 		await screen.findByText("Evidence");
 		expect(screen.queryByRole("button", { name: /Rename/ })).toBeNull();
 		expect(screen.queryByRole("button", { name: /Archive/ })).toBeNull();
-		expect(screen.queryByRole("button", { name: /Manage members/ })).toBeNull();
+		expect(screen.queryByRole("button", { name: /Members/ })).toBeNull();
 	});
 
 	it("shows compatibility-manager controls from server-authoritative capabilities", async () => {
@@ -94,11 +91,7 @@ describe("project dashboard capabilities", () => {
 		expect(
 			screen.getByRole("button", { name: "Rename Compatibility manager" }),
 		).toBeInTheDocument();
-		expect(
-			screen.getByRole("button", {
-				name: "Manage members for Compatibility manager",
-			}),
-		).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /Members/ })).toBeNull();
 	});
 
 	it("hides management controls for a strict User from server-authoritative capabilities", async () => {
@@ -132,6 +125,6 @@ describe("project dashboard capabilities", () => {
 
 		await screen.findByText("Strict user");
 		expect(screen.queryByRole("button", { name: /Rename/ })).toBeNull();
-		expect(screen.queryByRole("button", { name: /Manage members/ })).toBeNull();
+		expect(screen.queryByRole("button", { name: /Members/ })).toBeNull();
 	});
 });

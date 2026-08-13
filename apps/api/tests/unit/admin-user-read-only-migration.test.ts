@@ -104,6 +104,27 @@ const quarantineTenantScopeAssertion = readFileSync(
 	),
 	"utf8",
 );
+const adminMembershipProjectGrantsAssertion = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0051.assert.sql",
+	),
+	"utf8",
+);
+const adminMembershipProjectGrantsMigration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0051_admin_membership_project_grants_recovery.sql",
+	),
+	"utf8",
+);
+const adminMembershipProjectGrantsFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0051.fixture.sql",
+	),
+	"utf8",
+);
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
@@ -494,7 +515,7 @@ test("covers cancellation behavior after 0049 resolves the requester actor ID", 
 	);
 });
 
-test("preserves only organization-scoped role migration project-null records", () => {
+test("preserves only explicitly project-null tenant identifier records", () => {
 	const tenantIdentifierNullabilityAssertion = migrationAssertion.slice(
 		migrationAssertion.indexOf("FROM information_schema.columns"),
 		migrationAssertion.indexOf("tenant identifier columns must be NOT NULL"),
@@ -518,13 +539,16 @@ test("preserves only organization-scoped role migration project-null records", (
 		"test-db-migrations-0050-null-organization.fixture.sql",
 	);
 	expect(tenantIdentifierNullabilityAssertion).toContain(
-		"AND (table_name, column_name) NOT IN (\n                ('authorization_role_migration_audit', 'project_id'),\n                ('authorization_role_migration_quarantine', 'project_id')\n            )",
+		"AND (table_name, column_name) NOT IN (\n                ('authorization_role_migration_audit', 'project_id'),\n                ('authorization_role_migration_quarantine', 'project_id'),\n                ('admin_access_audit_events', 'project_id')\n            )",
 	);
 	expect(tenantIdentifierNullabilityAssertion).not.toContain(
 		"('authorization_role_migration_audit', 'organization_id')",
 	);
 	expect(tenantIdentifierNullabilityAssertion).not.toContain(
 		"('authorization_role_migration_quarantine', 'organization_id')",
+	);
+	expect(tenantIdentifierNullabilityAssertion).not.toContain(
+		"('admin_access_audit_events', 'organization_id')",
 	);
 	expect(tenantIdentifierNullabilityAssertion).toContain(
 		"column_name IN ('organization_id', 'project_id')",
@@ -540,5 +564,94 @@ test("preserves only organization-scoped role migration project-null records", (
 	);
 	expect(quarantineTenantScopeAssertion).toContain(
 		"EXCEPTION WHEN not_null_violation",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"PERFORM audit_admin_access_event(\n        fixture_organization_id,\n        NULL,\n        fixture_owner_id,\n        fixture_owner_id,\n        'bootstrap_owner_granted'\n    );",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"WHERE organization_id = fixture_organization_id\n          AND project_id IS NULL\n          AND actor_id = fixture_owner_id\n          AND target_actor_id = fixture_owner_id\n          AND action = 'bootstrap_owner_granted'",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"WHERE organization_id = fixture_organization_id\n          AND project_id = fixture_project_id\n          AND actor_id = fixture_owner_id\n          AND target_actor_id = fixture_reader_id\n          AND action = 'project_grant_set'",
+	);
+});
+
+test("stages the 0051 fixture default projects before assigning scoped defaults", () => {
+	const dropNotNull =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;";
+	const organizationInsert =
+		"INSERT INTO organizations (id, name, slug) VALUES";
+	const projectInsert =
+		"INSERT INTO projects (id, organization_id, name, slug) VALUES";
+	const defaultAssignment = `UPDATE organizations
+SET default_project_id = CASE id
+    WHEN '51000000-0000-4000-8000-000000000001' THEN '51000000-0000-4000-8000-000000000010'::uuid
+    WHEN '51000000-0000-4000-8000-000000000002' THEN '51000000-0000-4000-8000-000000000020'::uuid
+END
+WHERE id IN (
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002'
+);`;
+	const restoreNotNull =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;";
+
+	expect(adminMembershipProjectGrantsFixture).toContain(dropNotNull);
+	expect(adminMembershipProjectGrantsFixture).toContain(organizationInsert);
+	expect(adminMembershipProjectGrantsFixture).not.toContain(
+		"INSERT INTO organizations (id, name, slug, default_project_id)",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(
+		"('51000000-0000-4000-8000-000000000010', '51000000-0000-4000-8000-000000000001', 'Admin default', 'default')",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(
+		"('51000000-0000-4000-8000-000000000020', '51000000-0000-4000-8000-000000000002', 'Other default', 'default')",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(defaultAssignment);
+	expect(adminMembershipProjectGrantsFixture).not.toContain(
+		"internal:evaluation-worker:v1",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(
+		"organization-insert trigger already provisions the durable",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"fixture_worker_id UUID := durable_actor_id(",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"fixture_organization_id::text",
+	);
+	expect(adminMembershipProjectGrantsMigration).toContain(
+		"BEFORE INSERT OR UPDATE OF project_id, organization_id, actor_id, role ON project_actor_grants",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(restoreNotNull);
+	expect(adminMembershipProjectGrantsFixture).not.toContain(
+		"ALTER TABLE organizations DROP CONSTRAINT",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"FROM organizations AS organization\n        JOIN projects AS project\n            ON project.id = organization.default_project_id\n            AND project.organization_id = organization.id",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"('51000000-0000-4000-8000-000000000001'::uuid, '51000000-0000-4000-8000-000000000010'::uuid)",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"('51000000-0000-4000-8000-000000000002'::uuid, '51000000-0000-4000-8000-000000000020'::uuid)",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"column_name = 'default_project_id'\n          AND is_nullable = 'NO'",
+	);
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(organizationInsert),
+	).toBeGreaterThan(adminMembershipProjectGrantsFixture.indexOf(dropNotNull));
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(projectInsert),
+	).toBeGreaterThan(
+		adminMembershipProjectGrantsFixture.indexOf(organizationInsert),
+	);
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(defaultAssignment),
+	).toBeGreaterThan(adminMembershipProjectGrantsFixture.indexOf(projectInsert));
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(restoreNotNull),
+	).toBeGreaterThan(
+		adminMembershipProjectGrantsFixture.indexOf(defaultAssignment),
 	);
 });

@@ -5,19 +5,20 @@ import { SSEStreamingApi } from "hono/streaming";
 import { StreamingApi } from "hono/utils/stream";
 import { Pool } from "pg";
 import {
+	cancelExecutionAdmission,
+	claimExecutionAdmission,
+	completeExecutionAdmission,
+} from "../../src/db/execution-admissions";
+import {
 	admitExperimentExecution,
 	claimExperimentExecution,
 	claimExperimentTask,
 	completeExperimentIfTasksFinished,
 	experimentExecutionAdmissionIsActive,
 	finalizeExperimentTask,
+	getExperiment as getExperimentRecord,
 	updateExperiment,
 } from "../../src/db/experiments";
-import {
-	cancelExecutionAdmission,
-	claimExecutionAdmission,
-	completeExecutionAdmission,
-} from "../../src/db/execution-admissions";
 import {
 	lockActiveAuthorizedOrganizationProject,
 	lockActiveAuthorizedProject,
@@ -26,38 +27,35 @@ import {
 	withLockPhaseTransaction,
 } from "../../src/db/project-authorization";
 import {
+	admitOptimizationExecution,
+	claimOptimizationExecution,
+	claimOptimizationJob,
+	type OptimizationJob,
+	optimizationExecutionAdmissionIsActive,
+	transitionOptimizationJob,
+} from "../../src/db/prompt-optimizations";
+import { createAuthorizedSseDelivery } from "../../src/lib/authorized-sse";
+import { publishSync } from "../../src/lib/event-bus";
+import {
 	TRUSTED_ACTOR_CONTEXT_KEY,
 	TRUSTED_TENANT_CONTEXT_KEY,
 } from "../../src/middleware/auth";
 import {
+	createExperimentHandlers,
+	type ExperimentDependencies,
+	executeExperiment,
+	getExperimentEvents,
+} from "../../src/routes/experiments";
+import {
 	createOptimizationHandlers,
+	type OptimizationDependencies,
 	optimizationEvents,
 	runOptimizationJob,
-	type OptimizationDependencies,
 } from "../../src/routes/prompt-optimizations";
-import {
-	admitOptimizationExecution,
-	claimOptimizationExecution,
-	claimOptimizationJob,
-	optimizationExecutionAdmissionIsActive,
-	transitionOptimizationJob,
-	type OptimizationJob,
-} from "../../src/db/prompt-optimizations";
 import {
 	createTraceEventHandlers,
 	streamTraceEvents,
 } from "../../src/routes/trace-events";
-import { publishSync } from "../../src/lib/event-bus";
-import {
-	executeExperiment,
-	type ExperimentDependencies,
-} from "../../src/routes/experiments";
-import {
-	createExperimentHandlers,
-	getExperimentEvents,
-} from "../../src/routes/experiments";
-import { getExperiment as getExperimentRecord } from "../../src/db/experiments";
-import { createAuthorizedSseDelivery } from "../../src/lib/authorized-sse";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -155,7 +153,35 @@ async function seedAdditionalProjectManager(
 		"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 		[projectId, organizationId, subject],
 	);
+	await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 	return { actorId, subject };
+}
+
+async function seedDurableProjectAccess(
+	pool: Pool,
+	organizationId: string,
+	projectId: string,
+	actorId: string,
+) {
+	await pool.query(
+		"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'user')",
+		[organizationId, actorId],
+	);
+	await pool.query(
+		"INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role) VALUES ($1, $2, $3, 'user')",
+		[projectId, organizationId, actorId],
+	);
+}
+
+async function seedDurableOrganizationAdmin(
+	pool: Pool,
+	organizationId: string,
+	actorId: string,
+) {
+	await pool.query(
+		"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin')",
+		[organizationId, actorId],
+	);
 }
 
 async function seedAdditionalOrganizationOwner(
@@ -174,9 +200,16 @@ async function seedAdditionalOrganizationOwner(
 		"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'owner')",
 		[organizationId, subject],
 	);
+	await seedDurableOrganizationAdmin(pool, organizationId, actorId);
 }
 
 async function deleteScenarioActor(pool: Pool, actorId: string) {
+	await pool.query("DELETE FROM project_actor_grants WHERE actor_id = $1", [
+		actorId,
+	]);
+	await pool.query("DELETE FROM organization_actor_roles WHERE actor_id = $1", [
+		actorId,
+	]);
 	await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
 		actorId,
 	]);
@@ -214,6 +247,7 @@ async function seedExecutionExperiment(pool: Pool) {
 		"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 		[projectId, organizationId, subject],
 	);
+	await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 	const additionalManager = await seedAdditionalProjectManager(
 		pool,
 		organizationId,
@@ -276,7 +310,10 @@ async function seedExecutionExperiment(pool: Pool) {
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
 			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -314,6 +351,8 @@ async function seedProjectAuditLockRace(pool: Pool) {
 		"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'owner'), ($1, $3, 'owner')",
 		[organizationId, managerSubject, ownerSubject],
 	);
+	await seedDurableOrganizationAdmin(pool, organizationId, managerActorId);
+	await seedDurableOrganizationAdmin(pool, organizationId, ownerActorId);
 	await pool.query(
 		"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Audit lock race', $3)",
 		[projectId, organizationId, `audit-lock-race-${projectId}`],
@@ -367,6 +406,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
 			);
+			await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 			additionalManagerActorId = (
 				await seedAdditionalProjectManager(
 					pool,
@@ -390,8 +430,8 @@ test.skipIf(!databaseUrl)(
 
 			await demoter.query("BEGIN");
 			await demoter.query(
-				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-				[projectId, subject],
+				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				[projectId, organizationId, actorId],
 			);
 			await expect(
 				pool.query("SELECT id FROM projects WHERE id = $1 FOR UPDATE NOWAIT", [
@@ -472,7 +512,10 @@ test.skipIf(!databaseUrl)(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
 			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -520,6 +563,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
 			);
+			await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 			additionalManagerActorId = (
 				await seedAdditionalProjectManager(
 					pool,
@@ -545,8 +589,8 @@ test.skipIf(!databaseUrl)(
 			const revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-					[projectId, subject],
+					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
 			})();
@@ -571,7 +615,10 @@ test.skipIf(!databaseUrl)(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
 			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -639,13 +686,17 @@ test.skipIf(!databaseUrl)(
 				)
 					throw new Error("owner authorization was unexpectedly denied");
 				await demoter.query(
+					"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+					[fixture.organizationId, fixture.managerActorId],
+				);
+				await demoter.query(
 					"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
 					[fixture.organizationId],
 				);
 				await lockProjectAuditProvenance(demoter, fixture.projectId);
 				await demoter.query(
-					"UPDATE organization_memberships SET role = 'member' WHERE organization_id = $1 AND actor_subject = $2",
-					[fixture.organizationId, fixture.managerSubject],
+					"UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
+					[fixture.organizationId, fixture.managerActorId],
 				);
 				await demoter.query(
 					"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'organization_membership_updated')",
@@ -674,11 +725,11 @@ test.skipIf(!databaseUrl)(
 			expect(
 				(
 					await pool.query(
-						"SELECT role FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
-						[fixture.organizationId, fixture.managerSubject],
+						"SELECT role FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
+						[fixture.organizationId, fixture.managerActorId],
 					)
 				).rows[0]?.role,
-			).toBe("member");
+			).toBe("user");
 		} finally {
 			releaseMutation.resolve();
 			await demoter.query("ROLLBACK").catch(() => {});
@@ -712,6 +763,10 @@ test.skipIf(!databaseUrl)(
 			)
 				throw new Error("owner authorization was unexpectedly denied");
 			await demoter.query(
+				"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+				[fixture.organizationId, fixture.managerActorId],
+			);
+			await demoter.query(
 				"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
 				[fixture.organizationId],
 			);
@@ -741,8 +796,8 @@ test.skipIf(!databaseUrl)(
 			await demotionLocked.promise;
 			await waitForLock(pool, "astraea-audit-race-manager-second");
 			await demoter.query(
-				"UPDATE organization_memberships SET role = 'member' WHERE organization_id = $1 AND actor_subject = $2",
-				[fixture.organizationId, fixture.managerSubject],
+				"UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
+				[fixture.organizationId, fixture.managerActorId],
 			);
 			await demoter.query(
 				"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'organization_membership_updated')",
@@ -816,6 +871,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
 			);
+			await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 			additionalManagerActorId = (
 				await seedAdditionalProjectManager(
 					pool,
@@ -876,8 +932,8 @@ test.skipIf(!databaseUrl)(
 			revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-					[projectId, subject],
+					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
 			})();
@@ -910,7 +966,10 @@ test.skipIf(!databaseUrl)(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
 			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -972,6 +1031,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
 			);
+			await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 			additionalManagerActorId = (
 				await seedAdditionalProjectManager(
 					pool,
@@ -1030,8 +1090,8 @@ test.skipIf(!databaseUrl)(
 			revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-					[projectId, subject],
+					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
 			})();
@@ -1064,7 +1124,10 @@ test.skipIf(!databaseUrl)(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
 			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -1118,6 +1181,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
 			);
+			await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 			additionalManagerActorId = (
 				await seedAdditionalProjectManager(
 					pool,
@@ -1171,8 +1235,8 @@ test.skipIf(!databaseUrl)(
 			await providerEntered.promise;
 			await Promise.race([
 				pool.query(
-					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-					[projectId, subject],
+					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					[projectId, organizationId, actorId],
 				),
 				Bun.sleep(500).then(() => {
 					throw new Error("revocation waited on the stalled provider");
@@ -1248,7 +1312,10 @@ test.skipIf(!databaseUrl)(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
 			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -1311,6 +1378,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
 			);
+			await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 			additionalManagerActorId = (
 				await seedAdditionalProjectManager(
 					pool,
@@ -1364,8 +1432,8 @@ test.skipIf(!databaseUrl)(
 			revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-					[projectId, subject],
+					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
 			})();
@@ -1404,7 +1472,10 @@ test.skipIf(!databaseUrl)(
 				"DELETE FROM project_memberships WHERE project_id = $1",
 				[projectId],
 			);
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -1470,8 +1541,8 @@ test.skipIf(!databaseUrl)(
 			await validated.promise;
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-				[fixture.projectId, fixture.subject],
+				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				[fixture.projectId, fixture.organizationId, fixture.actorId],
 			);
 			await revoker.query("COMMIT");
 			releaseClaim.resolve();
@@ -1558,8 +1629,8 @@ test.skipIf(!databaseUrl)(
 				).rows[0]?.count,
 			).toBe(1);
 			await pool.query(
-				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-				[fixture.projectId, fixture.subject],
+				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				[fixture.projectId, fixture.organizationId, fixture.actorId],
 			);
 			await Promise.race([
 				providerAborted.promise,
@@ -1645,8 +1716,8 @@ test.skipIf(!databaseUrl)(
 			await traceValidated.promise;
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-				[fixture.projectId, fixture.subject],
+				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				[fixture.projectId, fixture.organizationId, fixture.actorId],
 			);
 			await revoker.query("COMMIT");
 			releaseTraceClaim.resolve();
@@ -1743,6 +1814,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) VALUES ($1, $2, $3, 'manager')",
 				[projectId, organizationId, subject],
 			);
+			await seedDurableProjectAccess(pool, organizationId, projectId, actorId);
 			additionalManagerActorId = (
 				await seedAdditionalProjectManager(
 					pool,
@@ -1809,8 +1881,8 @@ test.skipIf(!databaseUrl)(
 			await validated.promise;
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-				[projectId, subject],
+				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				[projectId, organizationId, actorId],
 			);
 			await revoker.query("COMMIT");
 			releaseClaim.resolve();
@@ -1865,7 +1937,10 @@ test.skipIf(!databaseUrl)(
 					"DELETE FROM project_memberships WHERE project_id = $1",
 					[projectId],
 				);
-				await cleanup.query("DELETE FROM projects WHERE id = $1", [projectId]);
+				await cleanup.query(
+					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					[projectId],
+				);
 				await cleanup.query(
 					"DELETE FROM organization_memberships WHERE organization_id = $1",
 					[organizationId],
@@ -1890,7 +1965,7 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
-	"a revocation holding its project membership first serializes project authorization without 40P01 and fails closed",
+	"a revocation holding its project grant first serializes project authorization without 40P01 and fails closed",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
 		const fixture = await seedExecutionExperiment(pool);
@@ -1899,12 +1974,12 @@ test.skipIf(!databaseUrl)(
 		try {
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"SELECT actor_subject FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 FOR UPDATE",
-				[fixture.projectId, fixture.subject],
+				"SELECT actor_id FROM project_actor_grants WHERE project_id = $1 AND actor_id = $2 FOR UPDATE",
+				[fixture.projectId, fixture.actorId],
 			);
 			await authorizer.query("BEGIN");
 			await authorizer.query(
-				"SET application_name = 'astraea-membership-first-project'",
+				"SET application_name = 'astraea-grant-first-project'",
 			);
 			const authorized = lockActiveAuthorizedProject(
 				authorizer,
@@ -1915,11 +1990,11 @@ test.skipIf(!databaseUrl)(
 					operation: "product_write",
 				},
 			);
-			await waitForLock(pool, "astraea-membership-first-project");
+			await waitForLock(pool, "astraea-grant-first-project");
 			const revoke = (async () => {
 				await revoker.query(
-					"DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2",
-					[fixture.projectId, fixture.subject],
+					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					[fixture.projectId, fixture.organizationId, fixture.actorId],
 				);
 				await revoker.query("COMMIT");
 			})();
@@ -1945,7 +2020,7 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
-	"a revocation holding its organization membership first serializes the default-project lock without 40P01 and fails closed",
+	"a revocation holding its organization role first serializes the default-project lock without 40P01 and fails closed",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
 		const organizationId = randomUUID();
@@ -1970,6 +2045,7 @@ test.skipIf(!databaseUrl)(
 				"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'owner')",
 				[organizationId, subject],
 			);
+			await seedDurableOrganizationAdmin(pool, organizationId, actorId);
 			await seedAdditionalOrganizationOwner(
 				pool,
 				organizationId,
@@ -1982,12 +2058,12 @@ test.skipIf(!databaseUrl)(
 
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 FOR UPDATE",
-				[organizationId, subject],
+				"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+				[organizationId, actorId],
 			);
 			await defaultProject.query("BEGIN");
 			await defaultProject.query(
-				"SET application_name = 'astraea-membership-first-default'",
+				"SET application_name = 'astraea-role-first-default'",
 			);
 			const authorized = lockActiveAuthorizedOrganizationProject(
 				defaultProject,
@@ -1996,11 +2072,11 @@ test.skipIf(!databaseUrl)(
 				actorId,
 				"destructive",
 			);
-			await waitForLock(pool, "astraea-membership-first-default");
+			await waitForLock(pool, "astraea-role-first-default");
 			const revoke = (async () => {
 				await revoker.query(
-					"DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
-					[organizationId, subject],
+					"DELETE FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
+					[organizationId, actorId],
 				);
 				await revoker.query("COMMIT");
 			})();
@@ -2021,7 +2097,10 @@ test.skipIf(!databaseUrl)(
 			await revoker.query("ROLLBACK").catch(() => {});
 			defaultProject.release();
 			revoker.release();
-			await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
+			await pool.query(
+				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				[projectId],
+			);
 			// The default project and its remaining Admin are retained by design.
 			await deleteScenarioActor(pool, actorId);
 			await pool.end();

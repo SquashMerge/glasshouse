@@ -42,8 +42,12 @@ function transactionPool(
 			}
 			if (text.includes("FROM organization_memberships om"))
 				return { rows: [{ actor_subject: "requester" }] };
+			if (text.includes("FROM organization_actor_roles"))
+				return { rows: [{ actor_id: authorization.actor_id }] };
 			if (text.includes("FROM project_memberships pm"))
 				return { rows: [{ actor_subject: "requester" }] };
+			if (text.includes("FROM project_actor_grants"))
+				return { rows: [{ actor_id: authorization.actor_id }] };
 			if (text.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: executionAuthorized }] };
 			if (text.startsWith("SELECT e.* FROM experiments")) {

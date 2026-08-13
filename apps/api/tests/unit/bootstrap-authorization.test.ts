@@ -71,6 +71,13 @@ describe("bootstrap authorization", () => {
 			),
 		).toBe(true);
 		expect(ended).toBe(true);
+		expect(
+			queries.some(
+				({ sql }) =>
+					sql.includes("INSERT INTO organization_actor_roles") &&
+					sql.includes("'admin'"),
+			),
+		).toBe(true);
 	});
 
 	it("provisions durable identities for every configured credential without granting secondary authority", async () => {

@@ -5,12 +5,9 @@ import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	archiveProject,
 	createProject,
-	deleteProjectMember,
 	deleteProject,
 	getProjectDeletionStatus,
-	listProjectMembers,
 	listProjects,
-	putProjectMember,
 	restoreProject,
 	setDefaultProject,
 	updateProject,
@@ -31,23 +28,11 @@ export function ProjectsPage() {
 	const [editing, setEditing] = React.useState<Project | null>(null);
 	const [editedName, setEditedName] = React.useState("");
 	const [editedSlug, setEditedSlug] = React.useState("");
-	const [membersProject, setMembersProject] = React.useState<Project | null>(
-		null,
-	);
-	const [memberActor, setMemberActor] = React.useState("");
-	const [memberRole, setMemberRole] = React.useState<"user" | "read_only">(
-		"read_only",
-	);
 	const [operationFailed, setOperationFailed] = React.useState(false);
 	const [deleting, setDeleting] = React.useState<Project | null>(null);
 	const [confirmationName, setConfirmationName] = React.useState("");
 	const isOwner = organizationRole === "admin";
 	const canManage = (project: Project) => project.can_manage;
-	const membersQuery = useQuery({
-		queryKey: ["project-members", membersProject?.id],
-		queryFn: () => listProjectMembers(membersProject!.id),
-		enabled: Boolean(membersProject),
-	});
 
 	function failed() {
 		setOperationFailed(true);
@@ -128,25 +113,6 @@ export function ProjectsPage() {
 				projectsQuery.data?.items.find((project) => project.is_default)?.id ??
 					"",
 			);
-		},
-		onError: failed,
-	});
-	const putMemberMutation = useMutation({
-		mutationFn: putProjectMember,
-		onSuccess: () => {
-			setMemberActor("");
-			void queryClient.invalidateQueries({
-				queryKey: ["project-members", membersProject?.id],
-			});
-		},
-		onError: failed,
-	});
-	const deleteMemberMutation = useMutation({
-		mutationFn: deleteProjectMember,
-		onSuccess: () => {
-			void queryClient.invalidateQueries({
-				queryKey: ["project-members", membersProject?.id],
-			});
 		},
 		onError: failed,
 	});
@@ -248,10 +214,6 @@ export function ProjectsPage() {
 					setOperationFailed(false);
 					restoreMutation.mutate(project.id);
 				}}
-				onMembers={(project) => {
-					setMembersProject(project);
-					setOperationFailed(false);
-				}}
 				onSetDefault={(project) => {
 					setOperationFailed(false);
 					defaultMutation.mutate(project.id);
@@ -292,10 +254,6 @@ export function ProjectsPage() {
 							setOperationFailed(false);
 							restoreMutation.mutate(project.id);
 						}}
-						onMembers={(project) => {
-							setMembersProject(project);
-							setOperationFailed(false);
-						}}
 						onSetDefault={() => {}}
 						onDelete={() => {}}
 					/>
@@ -322,106 +280,6 @@ export function ProjectsPage() {
 							}}
 						/>
 					))}
-				</section>
-			)}
-			{membersProject && (
-				<section className="space-y-3 rounded-md border border-border p-3">
-					<h2 className="text-lg font-semibold">
-						Members for {membersProject.name}
-					</h2>
-					{membersQuery.isError ? (
-						<p className="text-sm text-destructive" role="alert">
-							Project operation could not be completed.
-						</p>
-					) : (
-						<>
-							<form
-								className="flex flex-wrap items-end gap-2"
-								onSubmit={(event) => {
-									event.preventDefault();
-									setOperationFailed(false);
-									putMemberMutation.mutate({
-										projectId: membersProject.id,
-										actorSubject: memberActor,
-										role: memberRole,
-									});
-								}}
-							>
-								<label className="grid gap-1 text-sm">
-									Member actor
-									<input
-										aria-label="Member actor"
-										required
-										value={memberActor}
-										onChange={(event) => setMemberActor(event.target.value)}
-										className="h-9 rounded-md border border-input bg-background px-2"
-									/>
-								</label>
-								<label className="grid gap-1 text-sm">
-									Member role
-									<select
-										aria-label="Member role"
-										value={memberRole}
-										onChange={(event) =>
-											setMemberRole(event.target.value as "user" | "read_only")
-										}
-										className="h-9 rounded-md border border-input bg-background px-2"
-									>
-										<option value="read_only">Read-only</option>
-										<option value="user">User</option>
-									</select>
-								</label>
-								<Button
-									type="submit"
-									size="sm"
-									disabled={putMemberMutation.isPending}
-								>
-									Add member
-								</Button>
-							</form>
-							{membersQuery.data?.items.map((member) => (
-								<div
-									key={member.actor_subject}
-									className="flex items-center justify-between gap-3"
-								>
-									<span>
-										{member.actor_subject} ({member.role})
-									</span>
-									<select
-										aria-label={`Role for ${member.actor_subject}`}
-										value={member.role}
-										onChange={(event) => {
-											setOperationFailed(false);
-											putMemberMutation.mutate({
-												projectId: membersProject.id,
-												actorSubject: member.actor_subject,
-												role: event.target.value as "user" | "read_only",
-											});
-										}}
-										className="h-9 rounded-md border border-input bg-background px-2"
-									>
-										<option value="read_only">Read-only</option>
-										<option value="user">User</option>
-									</select>
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										aria-label={`Remove ${member.actor_subject}`}
-										onClick={() => {
-											setOperationFailed(false);
-											deleteMemberMutation.mutate({
-												projectId: membersProject.id,
-												actorSubject: member.actor_subject,
-											});
-										}}
-									>
-										Remove member
-									</Button>
-								</div>
-							))}
-						</>
-					)}
 				</section>
 			)}
 			{deleting && (
@@ -570,7 +428,6 @@ function ProjectList({
 	onSave,
 	onArchive,
 	onRestore,
-	onMembers,
 	onSetDefault,
 	onDelete,
 }: {
@@ -586,7 +443,6 @@ function ProjectList({
 	onSave: (project: Project) => void;
 	onArchive: (project: Project) => void;
 	onRestore: (project: Project) => void;
-	onMembers: (project: Project) => void;
 	onSetDefault: (project: Project) => void;
 	onDelete: (project: Project) => void;
 }) {
@@ -668,15 +524,6 @@ function ProjectList({
 									Delete
 								</Button>
 							)}
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={() => onMembers(project)}
-								aria-label={`Manage members for ${project.name}`}
-							>
-								Members
-							</Button>
 							{project.status === "active" ? (
 								<Button
 									type="button"

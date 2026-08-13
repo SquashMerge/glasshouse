@@ -79,6 +79,10 @@ export async function bootstrapAuthorization(
 			"WITH unfrozen AS (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM projects WHERE organization_id = $1 AND status = 'deleting')) INSERT INTO organization_memberships (organization_id, actor_subject, role) SELECT $1, $2, 'owner' FROM unfrozen ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = 'owner', updated_at = now() WHERE organization_memberships.role <> 'owner' RETURNING 1",
 			[credential.organizationId, credential.username],
 		);
+		const durableOwner = await client.query(
+			"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin') ON CONFLICT (organization_id, actor_id) DO UPDATE SET role = 'admin', updated_at = now() WHERE organization_actor_roles.role <> 'admin' RETURNING 1",
+			[credential.organizationId, credential.actorId],
+		);
 		await client.query(
 			"WITH unfrozen AS (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM projects WHERE organization_id = $1 AND status = 'deleting')), memberships AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $1, $2, 'manager' FROM projects CROSS JOIN unfrozen WHERE organization_id = $1 AND status <> 'deleting' ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = 'manager', updated_at = now() WHERE project_memberships.role <> 'manager' RETURNING project_id) INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, project_id, $2, 'bootstrap_manager_added' FROM memberships ORDER BY project_id RETURNING project_id",
 			[credential.organizationId, credential.username],
@@ -87,6 +91,11 @@ export async function bootstrapAuthorization(
 			await client.query(
 				"INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, id, $2, 'bootstrap_owner_added' FROM projects WHERE organization_id = $1 ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1",
 				[credential.organizationId, credential.username],
+			);
+		if (durableOwner.rowCount)
+			await client.query(
+				"SELECT audit_admin_access_event($1, NULL, $2, $2, 'bootstrap_owner_granted')",
+				[credential.organizationId, credential.actorId],
 			);
 		await client.query("COMMIT");
 	} catch (error) {

@@ -10,7 +10,8 @@ interface ProjectSelectionContextValue {
 	projects: Project[];
 	selectedProjectId: string | null;
 	selectedProject: Project | null;
-	organizationRole: "admin" | "user" | null;
+	organizationRole: "admin" | "user" | "read_only" | null;
+	canRecoverAdmin: boolean;
 	isLoading: boolean;
 	error: Error | null;
 	selectProject: (projectId: string) => void;
@@ -111,6 +112,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			selectedProjectId: selectedProject?.id ?? null,
 			selectedProject,
 			organizationRole: projectsQuery.data?.organization_role ?? null,
+			canRecoverAdmin: projectsQuery.data?.can_recover_admin ?? false,
 			isLoading: projectsQuery.isLoading,
 			error: (projectsQuery.error as Error | null) ?? null,
 			selectProject,
@@ -121,6 +123,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 			projects,
 			selectedProject,
 			projectsQuery.data?.organization_role,
+			projectsQuery.data?.can_recover_admin,
 			projectsQuery.isLoading,
 			projectsQuery.error,
 			queryClient,

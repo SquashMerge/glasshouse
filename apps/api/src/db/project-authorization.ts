@@ -98,12 +98,25 @@ export async function lockAuthorizedProject(
 		[authorization.organization_id, authorization.actor_id],
 	);
 	await client.query(
+		"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+		[authorization.organization_id, authorization.actor_id],
+	);
+	await client.query(
 		"SELECT pm.actor_subject FROM project_memberships pm WHERE pm.project_id = $1 AND pm.organization_id = $2 AND ($5::boolean OR basic_auth_identity_matches($2, pm.actor_subject, $3) OR pm.actor_subject = $4) ORDER BY pm.actor_subject FOR UPDATE",
 		[
 			projectId,
 			authorization.organization_id,
 			authorization.actor_id,
 			options.memberSubject ?? null,
+			options.lockAllProjectMembers ?? false,
+		],
+	);
+	await client.query(
+		"SELECT actor_id FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND ($4::boolean OR actor_id = $3) ORDER BY actor_id FOR UPDATE",
+		[
+			projectId,
+			authorization.organization_id,
+			authorization.actor_id,
 			options.lockAllProjectMembers ?? false,
 		],
 	);
@@ -138,6 +151,10 @@ export async function lockAuthorizedOrganization(
 		memberSubject
 			? [organizationId, actorId, memberSubject]
 			: [organizationId, actorId],
+	);
+	await client.query(
+		"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+		[organizationId, actorId],
 	);
 	const decision = await client.query<{ allowed: boolean }>(
 		"SELECT authorization_allows_organization($1, $2, $3) AS allowed",

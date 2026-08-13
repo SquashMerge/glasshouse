@@ -10,7 +10,7 @@ import {
 test("publishes Admin/User/Read-only roles without accepting raw legacy roles", () => {
 	expect(ProjectRole.options).toEqual(["user", "read_only"]);
 	expect(ActorProjectRole.options).toEqual(["admin", "user", "read_only"]);
-	expect(OrganizationRole.options).toEqual(["admin", "user"]);
+	expect(OrganizationRole.options).toEqual(["admin", "user", "read_only"]);
 	expect(ProjectRole.safeParse("manager").success).toBe(false);
 	expect(
 		OrganizationMemberInput.safeParse({

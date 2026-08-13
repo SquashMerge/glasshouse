@@ -54,6 +54,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 		isLoading: projectsLoading,
 		error: projectsError,
 		organizationRole,
+		canRecoverAdmin,
 		selectProject,
 		clearSession,
 		retry: retryProjects,
@@ -263,6 +264,15 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						active={isActive("/governance")}
 						collapsed={collapsed}
 					/>
+					{(organizationRole === "admin" || canRecoverAdmin) && (
+						<SidebarLink
+							to="/access"
+							label="Access"
+							icon={<LuSettings className="h-4 w-4" />}
+							active={isActive("/access")}
+							collapsed={collapsed}
+						/>
+					)}
 					<SidebarLink
 						to="/projects"
 						label={
@@ -489,6 +499,7 @@ function SidebarLink({
 		| "/evaluations"
 		| "/feedback"
 		| "/governance"
+		| "/access"
 		| "/projects";
 	label: string;
 	icon: React.ReactNode;

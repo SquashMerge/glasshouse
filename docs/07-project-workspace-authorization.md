@@ -131,7 +131,7 @@ Add typed Zod/OpenAPI routes and generated clients for:
 - actor identity and accessible Projects (`GET /v1/me`, `GET /v1/projects`);
 - project creation, authorized detail, safe metadata update, archive, and
   restore;
-- owner/manager-governed Project membership management.
+- Admin-governed durable Actor role and explicit Project-grant management.
 
 `PATCH /v1/projects/{id}` accepts a non-empty subset of `name` and `slug`.
 Names and slugs use the same validation as creation; slugs remain unique within
@@ -142,11 +142,13 @@ and membership evidence only to organization owners and managers authorized for
 that Project. Unauthorized Project targets return the same non-enumerating
 response as other Project lifecycle routes.
 
-Admins manage the organization membership directory through
-`GET /v1/organization/members` and `PUT` or `DELETE
-/v1/organization/members/{actor}`. Deletion preserves the database
-final-owner safeguard and is audited; an actor with Project memberships must be
-removed from those Projects before organization membership deletion.
+Admins manage organization-scoped durable Actors through `GET
+/v1/admin/actors` and `PUT /v1/admin/actors/{actorId}/role`. They manage
+explicit active-Project grants through `GET`, `PUT`, and `DELETE
+/v1/admin/projects/{projectId}/grants/{actorId}`. The API accepts durable actor
+UUIDs only, preserves the final-Admin safeguard, and records content-free,
+append-only audit evidence. Legacy Basic Auth membership rows remain internal
+compatibility projections and are not an administration surface.
 
 Projects have stable IDs. Archive is non-destructive, removes a Project from
 normal selection, and blocks new product-data writes until explicit restore.
