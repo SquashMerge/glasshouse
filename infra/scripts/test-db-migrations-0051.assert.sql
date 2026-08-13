@@ -7,6 +7,30 @@ DECLARE
     fixture_worker_id UUID := '51000000-0000-4000-8000-000000000104';
     fixture_project_id UUID := '51000000-0000-4000-8000-000000000011';
 BEGIN
+    IF (
+        SELECT count(*)
+        FROM organizations AS organization
+        JOIN projects AS project
+            ON project.id = organization.default_project_id
+            AND project.organization_id = organization.id
+        WHERE (organization.id, organization.default_project_id) IN (
+            ('51000000-0000-4000-8000-000000000001'::uuid, '51000000-0000-4000-8000-000000000010'::uuid),
+            ('51000000-0000-4000-8000-000000000002'::uuid, '51000000-0000-4000-8000-000000000020'::uuid)
+        )
+    ) <> 2 THEN
+        RAISE EXCEPTION '0051 fixture default projects are not scoped to their organizations';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'organizations'
+          AND column_name = 'default_project_id'
+          AND is_nullable = 'NO'
+    ) THEN
+        RAISE EXCEPTION '0051 fixture did not restore organizations.default_project_id NOT NULL';
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM organization_actor_roles
         WHERE organization_id = fixture_organization_id AND actor_id = fixture_owner_id AND role = 'admin'

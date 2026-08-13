@@ -111,6 +111,13 @@ const adminMembershipProjectGrantsAssertion = readFileSync(
 	),
 	"utf8",
 );
+const adminMembershipProjectGrantsFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0051.fixture.sql",
+	),
+	"utf8",
+);
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
@@ -559,5 +566,70 @@ test("preserves only explicitly project-null tenant identifier records", () => {
 	);
 	expect(adminMembershipProjectGrantsAssertion).toContain(
 		"WHERE organization_id = fixture_organization_id\n          AND project_id = fixture_project_id\n          AND actor_id = fixture_owner_id\n          AND target_actor_id = fixture_reader_id\n          AND action = 'project_grant_set'",
+	);
+});
+
+test("stages the 0051 fixture default projects before assigning scoped defaults", () => {
+	const dropNotNull =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;";
+	const organizationInsert =
+		"INSERT INTO organizations (id, name, slug) VALUES";
+	const projectInsert =
+		"INSERT INTO projects (id, organization_id, name, slug) VALUES";
+	const defaultAssignment = `UPDATE organizations
+SET default_project_id = CASE id
+    WHEN '51000000-0000-4000-8000-000000000001' THEN '51000000-0000-4000-8000-000000000010'
+    WHEN '51000000-0000-4000-8000-000000000002' THEN '51000000-0000-4000-8000-000000000020'
+END
+WHERE id IN (
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002'
+);`;
+	const restoreNotNull =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;";
+
+	expect(adminMembershipProjectGrantsFixture).toContain(dropNotNull);
+	expect(adminMembershipProjectGrantsFixture).toContain(organizationInsert);
+	expect(adminMembershipProjectGrantsFixture).not.toContain(
+		"INSERT INTO organizations (id, name, slug, default_project_id)",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(
+		"('51000000-0000-4000-8000-000000000010', '51000000-0000-4000-8000-000000000001', 'Admin default', 'default')",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(
+		"('51000000-0000-4000-8000-000000000020', '51000000-0000-4000-8000-000000000002', 'Other default', 'default')",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(defaultAssignment);
+	expect(adminMembershipProjectGrantsFixture).toContain(restoreNotNull);
+	expect(adminMembershipProjectGrantsFixture).not.toContain(
+		"ALTER TABLE organizations DROP CONSTRAINT",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"FROM organizations AS organization\n        JOIN projects AS project\n            ON project.id = organization.default_project_id\n            AND project.organization_id = organization.id",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"('51000000-0000-4000-8000-000000000001'::uuid, '51000000-0000-4000-8000-000000000010'::uuid)",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"('51000000-0000-4000-8000-000000000002'::uuid, '51000000-0000-4000-8000-000000000020'::uuid)",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"column_name = 'default_project_id'\n          AND is_nullable = 'NO'",
+	);
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(organizationInsert),
+	).toBeGreaterThan(adminMembershipProjectGrantsFixture.indexOf(dropNotNull));
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(projectInsert),
+	).toBeGreaterThan(
+		adminMembershipProjectGrantsFixture.indexOf(organizationInsert),
+	);
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(defaultAssignment),
+	).toBeGreaterThan(adminMembershipProjectGrantsFixture.indexOf(projectInsert));
+	expect(
+		adminMembershipProjectGrantsFixture.indexOf(restoreNotNull),
+	).toBeGreaterThan(
+		adminMembershipProjectGrantsFixture.indexOf(defaultAssignment),
 	);
 });
