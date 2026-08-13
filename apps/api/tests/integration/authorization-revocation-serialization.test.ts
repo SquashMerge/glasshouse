@@ -725,11 +725,11 @@ test.skipIf(!databaseUrl)(
 			expect(
 				(
 					await pool.query(
-						"SELECT role FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
-						[fixture.organizationId, fixture.managerSubject],
+						"SELECT role FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
+						[fixture.organizationId, fixture.managerActorId],
 					)
 				).rows[0]?.role,
-			).toBe("member");
+			).toBe("user");
 		} finally {
 			releaseMutation.resolve();
 			await demoter.query("ROLLBACK").catch(() => {});
