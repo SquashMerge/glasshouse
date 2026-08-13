@@ -442,8 +442,13 @@ done
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0053_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0051.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0053_DATABASE" \
+  < "$ROOT/infra/db/migrations/0051_admin_membership_project_grants_recovery.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0053_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0053.fixture.sql"
 for migration in \
-  "$ROOT/infra/db/migrations/0051_admin_membership_project_grants_recovery.sql" \
   "$ROOT/infra/db/migrations/0052_durable_authorization_revocation_cancellation.sql" \
   "$ROOT/infra/db/migrations/0053_project_audit_provenance_serialization_recovery.sql" \
   "$ROOT/infra/db/migrations/0053_project_audit_provenance_serialization_recovery.sql"; do
