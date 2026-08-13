@@ -21,16 +21,16 @@ WHERE id IN (
 
 ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
 
+-- Migration 0040's organization-insert trigger already provisions the durable
+-- internal evaluation-worker identity. Only seed Basic Auth identities here.
 INSERT INTO actors (id) VALUES
     ('51000000-0000-4000-8000-000000000101'),
     ('51000000-0000-4000-8000-000000000102'),
-    ('51000000-0000-4000-8000-000000000103'),
-    ('51000000-0000-4000-8000-000000000104');
+    ('51000000-0000-4000-8000-000000000103');
 INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES
     ('51000000-0000-4000-8000-000000000101', '51000000-0000-4000-8000-000000000001', 'basic:v1', 'admin-fixture-owner'),
     ('51000000-0000-4000-8000-000000000102', '51000000-0000-4000-8000-000000000001', 'basic:v1', 'admin-fixture-reader'),
-    ('51000000-0000-4000-8000-000000000103', '51000000-0000-4000-8000-000000000002', 'basic:v1', 'other-fixture-reader'),
-    ('51000000-0000-4000-8000-000000000104', '51000000-0000-4000-8000-000000000001', 'internal:evaluation-worker:v1', '51000000-0000-4000-8000-000000000001');
+    ('51000000-0000-4000-8000-000000000103', '51000000-0000-4000-8000-000000000002', 'basic:v1', 'other-fixture-reader');
 INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES
     ('51000000-0000-4000-8000-000000000001', 'admin-fixture-owner', 'owner'),
     ('51000000-0000-4000-8000-000000000001', 'admin-fixture-reader', 'member'),
