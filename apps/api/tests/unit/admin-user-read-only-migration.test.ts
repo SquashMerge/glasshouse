@@ -612,6 +612,14 @@ WHERE id IN (
 	expect(adminMembershipProjectGrantsAssertion).toContain(
 		"fixture_organization_id::text",
 	);
+	for (const message of [
+		"project grant exceeds the target organization role",
+		"project grant actor identity is outside the organization",
+		"project grants require a non-Admin organization role",
+	])
+		expect(adminMembershipProjectGrantsAssertion).toContain(
+			`IF SQLERRM <> '${message}' THEN RAISE; END IF;`,
+		);
 	expect(adminMembershipProjectGrantsFixture).toContain(restoreNotNull);
 	expect(adminMembershipProjectGrantsFixture).not.toContain(
 		"ALTER TABLE organizations DROP CONSTRAINT",
