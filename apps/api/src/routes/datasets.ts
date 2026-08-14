@@ -43,6 +43,25 @@ const DatasetList = z
 	.object({ items: z.array(Dataset), total: z.number().int().nonnegative() })
 	.strict();
 const DatasetItemList = z.object({ items: z.array(DatasetItem) }).strict();
+const DraftRevisionEtag = z
+	.string()
+	.regex(/^"\d+"$/)
+	.openapi({
+		description: "Quoted current draft revision for optimistic concurrency.",
+		example: '"3"',
+	});
+const DraftRevisionHeaders = z.object({ ETag: DraftRevisionEtag });
+const IfMatchDraftRevision = z.object({
+	"if-match": DraftRevisionEtag.openapi({
+		param: {
+			name: "if-match",
+			in: "header",
+			required: true,
+			description:
+				"Quoted draft revision returned by the latest draft ETag response.",
+		},
+	}),
+});
 
 const errorResponse = (c: Context, cause: unknown): Response => {
 	const error =
@@ -130,28 +149,24 @@ export const addDatasetItem = createRoute({
 	method: "post",
 	path: "/v1/datasets/{id}/items",
 	tags: [tag],
-	summary: "Add a dataset item, optionally preserving trace provenance",
+	summary: "Legacy dataset item write endpoint",
+	deprecated: true,
 	security: [{ basicAuth: [] }],
 	request: {
 		params: DatasetIdParam,
 		body: { content: { "application/json": { schema: DatasetItemCreate } } },
 	},
-	responses: {
-		201: {
-			description: "Item added",
-			content: { "application/json": { schema: DatasetItem } },
-		},
-		...DatasetErrorResponses,
-	},
+	responses: { ...DatasetErrorResponses },
 });
 export const deleteDatasetItem = createRoute({
 	method: "delete",
 	path: "/v1/datasets/{id}/items/{itemId}",
 	tags: [tag],
-	summary: "Delete a dataset item",
+	summary: "Legacy dataset item write endpoint",
+	deprecated: true,
 	security: [{ basicAuth: [] }],
 	request: { params: DatasetItemIdParams, query: DatasetProjectQuery },
-	responses: { 204: { description: "No content" }, ...DatasetErrorResponses },
+	responses: { ...DatasetErrorResponses },
 });
 export const getDatasetBySlug = createRoute({
 	method: "get",
@@ -199,6 +214,7 @@ export const createDatasetDraft = createRoute({
 	responses: {
 		200: {
 			description: "Draft",
+			headers: DraftRevisionHeaders,
 			content: { "application/json": { schema: DatasetDraft } },
 		},
 		...DatasetErrorResponses,
@@ -214,6 +230,7 @@ export const getDatasetDraft = createRoute({
 	responses: {
 		200: {
 			description: "Draft",
+			headers: DraftRevisionHeaders,
 			content: { "application/json": { schema: DatasetDraft } },
 		},
 		...DatasetErrorResponses,
@@ -228,6 +245,7 @@ export const putDatasetDraftItem = createRoute({
 	request: {
 		params: DatasetDraftItemParam,
 		query: DatasetProjectQuery,
+		headers: IfMatchDraftRevision,
 		body: {
 			content: { "application/json": { schema: DatasetDraftItemUpsert } },
 		},
@@ -235,6 +253,7 @@ export const putDatasetDraftItem = createRoute({
 	responses: {
 		200: {
 			description: "Draft item",
+			headers: DraftRevisionHeaders,
 			content: { "application/json": { schema: DatasetDraftItem } },
 		},
 		...DatasetErrorResponses,
@@ -527,60 +546,24 @@ export function createDatasetRouteHandlers(
 		},
 		handleAddDatasetItem: async (
 			c: Parameters<RouteHandler<typeof addDatasetItem>>[0],
-		) => {
-			try {
-				const body = c.req.valid("json");
-				if (body.source_observation_id && !body.source_trace_id)
-					throw new DatasetRepositoryError(
-						"BAD_REQUEST",
-						"Observation provenance requires a trace",
-					);
-				if (
-					body.source_trace_id &&
-					!(await dependencies.targetExists({
-						organization_id: trustedTenant(c).organizationId,
-						project_id: body.project_id,
-						trace_id: body.source_trace_id,
-						observation_id: body.source_observation_id,
-					}))
-				)
-					throw new DatasetRepositoryError(
-						"NOT_FOUND",
-						"Source target not found",
-					);
-				return c.json(
-					await dependencies.addDatasetItem(dependencies.pool(), {
-						dataset_id: c.req.valid("param").id,
-						...body,
-						authorization: projectAuthorization(
-							trustedTenant(c),
-							"product_write",
-						),
-					}),
-					201,
-				);
-			} catch (cause) {
-				return errorResponse(c, cause);
-			}
-		},
+		) =>
+			errorResponse(
+				c,
+				new DatasetRepositoryError(
+					"CONFLICT",
+					"Legacy dataset item writes are not supported; edit the dataset draft instead",
+				),
+			),
 		handleDeleteDatasetItem: async (
 			c: Parameters<RouteHandler<typeof deleteDatasetItem>>[0],
-		) => {
-			try {
-				await dependencies.deleteDatasetItem(dependencies.pool(), {
-					dataset_id: c.req.valid("param").id,
-					item_id: c.req.valid("param").itemId,
-					project_id: c.req.valid("query").project_id,
-					authorization: projectAuthorization(
-						trustedTenant(c),
-						"product_write",
-					),
-				});
-				return c.body(null, 204);
-			} catch (cause) {
-				return errorResponse(c, cause);
-			}
-		},
+		) =>
+			errorResponse(
+				c,
+				new DatasetRepositoryError(
+					"CONFLICT",
+					"Legacy dataset item writes are not supported; edit the dataset draft instead",
+				),
+			),
 	};
 }
 

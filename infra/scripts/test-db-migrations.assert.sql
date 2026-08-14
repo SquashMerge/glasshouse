@@ -1234,6 +1234,8 @@ DECLARE
     dataset_project_id UUID := '55555555-5555-4555-8555-555555555556';
     other_project_id UUID := '55555555-5555-4555-8555-555555555557';
     fixture_dataset_id UUID := '55555555-5555-4555-8555-555555555558';
+    other_dataset_id UUID := '55555555-5555-4555-8555-555555555559';
+    untrusted_actor_id UUID := '51000000-0000-4000-8000-000000000104';
 BEGIN
     IF EXISTS (
         SELECT 1 FROM pg_constraint
@@ -1244,17 +1246,36 @@ BEGIN
     END IF;
     INSERT INTO projects (id, name, slug, organization_id)
     VALUES
-        (dataset_project_id, 'Dataset Retention Fixture', 'dataset-retention-fixture', '00000000-0000-4000-8000-000000000001'),
-        (other_project_id, 'Other Dataset Fixture', 'other-dataset-fixture', '00000000-0000-4000-8000-000000000001');
+        (dataset_project_id, 'Dataset Retention Fixture', 'dataset-retention-fixture', '51000000-0000-4000-8000-000000000001'),
+        (other_project_id, 'Other Dataset Fixture', 'other-dataset-fixture', '51000000-0000-4000-8000-000000000002');
     INSERT INTO datasets (id, project_id, slug, name)
     VALUES (fixture_dataset_id, dataset_project_id, 'retained-dataset', 'Retained Dataset');
-    INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type)
-    VALUES (dataset_project_id, fixture_dataset_id, 'retained-dataset', '44444444-4444-4444-8444-444444444444', 'archived');
+    INSERT INTO datasets (id, project_id, slug, name)
+    VALUES (other_dataset_id, other_project_id, 'other-retained-dataset', 'Other Retained Dataset');
+    INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+    VALUES ('51000000-0000-4000-8000-000000000001', dataset_project_id, fixture_dataset_id, 'retained-dataset', '51000000-0000-4000-8000-000000000101', 'archived');
+    INSERT INTO actors (id) VALUES (untrusted_actor_id);
+    INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+    VALUES (untrusted_actor_id, '51000000-0000-4000-8000-000000000001', 'test:v1', 'untrusted-dataset-audit-actor');
     BEGIN
-        INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type)
-        VALUES (other_project_id, fixture_dataset_id, 'retained-dataset', '44444444-4444-4444-8444-444444444444', 'created');
+        INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+        VALUES ('51000000-0000-4000-8000-000000000001', dataset_project_id, fixture_dataset_id, 'retained-dataset', untrusted_actor_id, 'created');
+        RAISE EXCEPTION 'dataset lifecycle audit accepted an unauthorized actor';
+    EXCEPTION WHEN insufficient_privilege THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+        VALUES ('51000000-0000-4000-8000-000000000002', other_project_id, fixture_dataset_id, 'retained-dataset', '51000000-0000-4000-8000-000000000101', 'created');
         RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-project dataset';
     EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+        VALUES ('51000000-0000-4000-8000-000000000002', other_project_id, other_dataset_id, 'other-retained-dataset', '51000000-0000-4000-8000-000000000101', 'created');
+        RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-organization actor';
+    EXCEPTION WHEN insufficient_privilege THEN
         NULL;
     END;
     BEGIN
@@ -1277,7 +1298,10 @@ BEGIN
     DELETE FROM dataset_tombstones WHERE project_id = dataset_project_id;
     DELETE FROM datasets WHERE project_id = dataset_project_id;
     DELETE FROM projects WHERE id = dataset_project_id;
+    DELETE FROM datasets WHERE project_id = other_project_id;
     DELETE FROM projects WHERE id = other_project_id;
+    DELETE FROM actor_identities WHERE actor_id = untrusted_actor_id;
+    DELETE FROM actors WHERE id = untrusted_actor_id;
 END
 $$;
 

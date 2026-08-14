@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import {
 	addDatasetItem,
 	createDataset,
@@ -13,7 +14,16 @@ import {
 	upsertDatasetDraftItem,
 	updateDatasetMetadata,
 } from "../../src/db/datasets";
-import { createDatasetRouteHandlers } from "../../src/routes/datasets";
+import {
+	deleteDatasetItem as deleteDatasetItemRoute,
+	createDatasetDraft,
+	createDatasetRouteHandlers,
+	getDatasetDraft as getDatasetDraftRoute,
+	handleCreateDatasetDraft,
+	handleGetDatasetDraft,
+	handlePutDatasetDraftItem,
+	putDatasetDraftItem,
+} from "../../src/routes/datasets";
 import {
 	DatasetCreate,
 	DatasetDraftItemParam,
@@ -196,6 +206,11 @@ describe("dataset repository", () => {
 				query.text.includes("d.project_id = $1 AND d.slug = $2"),
 			),
 		).toBe(true);
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("dataset_lifecycle_audit_events"),
+			),
+		).toBe(false);
 	});
 
 	it("fences every dataset read through the active authorized project lock", () => {
@@ -253,6 +268,7 @@ describe("dataset repository", () => {
 		const db = fakeDb([
 			{ rows: [] },
 			{ rows: [{ id: PROJECT }] },
+			{ rows: [] },
 			{ rows: [{ ...datasetRow, item_count: 3 }] },
 		]);
 		await expect(
@@ -268,6 +284,18 @@ describe("dataset repository", () => {
 				query.text.includes("COUNT(*)::int FROM dataset_items"),
 			),
 		).toBe(true);
+		const audits = db.queries.filter((query) =>
+			query.text.includes("dataset_lifecycle_audit_events"),
+		);
+		expect(audits).toHaveLength(1);
+		expect(audits[0]?.text).toContain("'metadata_updated'");
+		expect(audits[0]?.values).toEqual([
+			authorization.organization_id,
+			PROJECT,
+			DATASET,
+			"golden",
+			authorization.actor_id,
+		]);
 	});
 
 	it("creates a shared draft under the authorized project lock", async () => {
@@ -300,46 +328,6 @@ describe("dataset repository", () => {
 			db.queries.some((query) =>
 				query.text.includes("ON CONFLICT (dataset_id)"),
 			),
-		).toBe(true);
-	});
-
-	it("persists trace and observation provenance when adding an item", async () => {
-		const itemId = "33333333-3333-4333-8333-333333333333";
-		const db = fakeDb([
-			{ rows: [] },
-			{ rows: [{ id: PROJECT }] },
-			{ rows: [datasetRow], rowCount: 1 },
-			{
-				rows: [
-					{
-						id: itemId,
-						dataset_id: DATASET,
-						input: { question: "hello" },
-						expected_output: null,
-						metadata: {},
-						source_trace_id: "a".repeat(32),
-						source_observation_id: "b".repeat(16),
-						created_at: NOW,
-					},
-				],
-				rowCount: 1,
-			},
-		]);
-		const result = await addDatasetItem(db, {
-			project_id: PROJECT,
-			dataset_id: DATASET,
-			input: { question: "hello" },
-			source_trace_id: "a".repeat(32),
-			source_observation_id: "b".repeat(16),
-			authorization,
-		});
-		expect(result.source_trace_id).toBe("a".repeat(32));
-		expect(result.source_observation_id).toBe("b".repeat(16));
-		expect(
-			db.queries.some((query) => query.text.includes("source_trace_id")),
-		).toBe(true);
-		expect(
-			db.queries.some((query) => query.values?.includes("a".repeat(32))),
 		).toBe(true);
 	});
 
@@ -377,6 +365,7 @@ describe("dataset repository", () => {
 		);
 		expect(audit?.text).toContain("'created'");
 		expect(audit?.values).toEqual([
+			authorization.organization_id,
 			PROJECT,
 			DATASET,
 			"golden",
@@ -384,35 +373,9 @@ describe("dataset repository", () => {
 		]);
 	});
 
-	it("deletes a feedback-linked item after severing the readable feedback association", async () => {
+	it("rejects legacy item mutations without changing published items or feedback links", async () => {
 		const itemId = "33333333-3333-4333-8333-333333333333";
 		const db = fakeDb([{ rows: [] }, { rows: [{ id: PROJECT }] }]);
-		const query = db.query;
-		const feedback: {
-			status: "added_to_dataset" | "reviewed";
-			dataset_id: string | null;
-			dataset_item_id: string | null;
-		} = {
-			status: "added_to_dataset",
-			dataset_id: DATASET,
-			dataset_item_id: itemId,
-		};
-		db.query = async (text, values) => {
-			if (text.startsWith("UPDATE feedback_reviews")) {
-				db.queries.push({ text, values });
-				feedback.status = "reviewed";
-				feedback.dataset_id = null;
-				feedback.dataset_item_id = null;
-				return { rows: [], rowCount: 1 };
-			}
-			if (text.startsWith("DELETE FROM dataset_items")) {
-				db.queries.push({ text, values });
-				if (feedback.dataset_item_id) throw { code: "23503" };
-				return { rows: [], rowCount: 1 };
-			}
-			return query(text, values);
-		};
-
 		await expect(
 			deleteDatasetItem(db, {
 				project_id: PROJECT,
@@ -420,21 +383,23 @@ describe("dataset repository", () => {
 				item_id: itemId,
 				authorization,
 			}),
-		).resolves.toBeUndefined();
-		expect(feedback).toEqual({
-			status: "reviewed",
-			dataset_id: null,
-			dataset_item_id: null,
-		});
-		const clearLink = db.queries.findIndex((query) =>
-			query.text.startsWith("UPDATE feedback_reviews"),
-		);
-		const removeItem = db.queries.findIndex((query) =>
-			query.text.startsWith("DELETE FROM dataset_items"),
-		);
-		expect(clearLink).toBeGreaterThan(-1);
-		expect(db.queries[clearLink]?.values).toEqual([PROJECT, DATASET, itemId]);
-		expect(removeItem).toBeGreaterThan(clearLink);
+		).rejects.toMatchObject<DatasetRepositoryError>({ code: "CONFLICT" });
+		await expect(
+			addDatasetItem(db, {
+				project_id: PROJECT,
+				dataset_id: DATASET,
+				input: { question: "hello" },
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({ code: "CONFLICT" });
+		expect(
+			db.queries.some(
+				(query) =>
+					query.text.startsWith("INSERT INTO dataset_items") ||
+					query.text.startsWith("DELETE FROM dataset_items") ||
+					query.text.startsWith("UPDATE feedback_reviews"),
+			),
+		).toBe(false);
 	});
 
 	it("locks and authorizes the active project before every dataset mutation", async () => {
@@ -490,14 +455,89 @@ describe("dataset repository", () => {
 				new Response(JSON.stringify(body), { status }),
 		} as never);
 
-		expect(response.status).toBe(404);
+		expect(response.status).toBe(409);
 		expect(added).toBe(false);
-		expect(checked).toEqual({
-			organization_id: "00000000-0000-4000-8000-000000000001",
-			project_id: PROJECT,
-			trace_id: "a".repeat(32),
-			observation_id: "b".repeat(16),
+		expect(checked).toBeUndefined();
+	});
+
+	it("rejects the legacy item route before checking or writing source provenance", async () => {
+		let added = false;
+		let checked = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			addDatasetItem: async () => {
+				added = true;
+				return {} as never;
+			},
+			targetExists: async () => {
+				checked = true;
+				return true;
+			},
+		} as never);
+		const response = await handlers.handleAddDatasetItem({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				valid: (part: string) =>
+					part === "param"
+						? { id: DATASET }
+						: {
+								project_id: PROJECT,
+								input: {},
+								source_trace_id: "a".repeat(32),
+							},
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+		expect(response.status).toBe(409);
+		expect(added).toBe(false);
+		expect(checked).toBe(false);
+		const deletion = await handlers.handleDeleteDatasetItem({
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+		expect(deletion.status).toBe(409);
+	});
+
+	it("documents draft ETags and the required If-Match revision", () => {
+		const app = new OpenAPIHono();
+		app.openapi(createDatasetDraft, handleCreateDatasetDraft);
+		app.openapi(getDatasetDraftRoute, handleGetDatasetDraft);
+		app.openapi(putDatasetDraftItem, handlePutDatasetDraftItem);
+		const document = app.getOpenAPIDocument({
+			openapi: "3.1.0",
+			info: { title: "test", version: "1" },
 		});
+		for (const operation of [
+			document.paths?.["/v1/datasets/by-slug/{slug}/drafts"]?.post,
+			document.paths?.["/v1/datasets/by-slug/{slug}/draft"]?.get,
+			document.paths?.["/v1/datasets/by-slug/{slug}/draft/items/{itemKey}"]
+				?.put,
+		])
+			expect((operation as any).responses["200"].headers.ETag).toBeDefined();
+		const put = document.paths?.[
+			"/v1/datasets/by-slug/{slug}/draft/items/{itemKey}"
+		]?.put as any;
+		expect(put.parameters).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					in: "header",
+					name: "if-match",
+					required: true,
+				}),
+			]),
+		);
+		app.openapi(deleteDatasetItemRoute, async () => new Response());
+		const legacy = app.getOpenAPIDocument({
+			openapi: "3.1.0",
+			info: { title: "test", version: "1" },
+		}).paths?.["/v1/datasets/{id}/items/{itemId}"]?.delete as any;
+		expect(legacy.deprecated).toBe(true);
+		expect(legacy.responses["204"]).toBeUndefined();
+		expect(legacy.responses["409"]).toBeDefined();
 	});
 
 	it("returns only the documented draft item fields from the route", async () => {
