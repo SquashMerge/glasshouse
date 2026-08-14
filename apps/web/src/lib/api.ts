@@ -48,11 +48,105 @@ function jsonRequest(body: unknown): RequestInit {
 export interface Dataset {
 	id: string;
 	project_id: string;
+	slug: string;
 	name: string;
 	description: string | null;
+	tags: string[];
+	latest_published_version: number | null;
+	archived_at: string | null;
 	item_count: number;
 	created_at: string;
 	updated_at: string;
+}
+export interface DatasetDraft {
+	id: string;
+	project_id: string;
+	dataset_id: string;
+	base_version: number | null;
+	revision: number;
+	item_count: number;
+	created_at: string;
+	updated_at: string;
+}
+export async function getDatasetBySlug(input: {
+	project_id: string;
+	slug: string;
+}): Promise<Dataset> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getDatasetBySlug",
+	);
+}
+export async function createDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+}): Promise<DatasetDraft> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/drafts${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"createDatasetDraft",
+	);
+}
+export async function updateDatasetMetadata(input: {
+	project_id: string;
+	slug: string;
+	name?: string;
+	description?: string | null;
+	tags?: string[];
+}): Promise<Dataset> {
+	const { project_id, slug, ...body } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(slug)}${buildQs({ project_id })}`,
+			{
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			},
+		),
+		"updateDatasetMetadata",
+	);
+}
+export async function upsertDatasetDraftItem(input: {
+	project_id: string;
+	slug: string;
+	item_key: string;
+	revision: number;
+	input: JsonObject;
+	expected_output?: JsonObject | null;
+	metadata?: JsonObject;
+}): Promise<void> {
+	const { project_id, slug, item_key, revision, ...body } = input;
+	await responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(slug)}/draft/items/${encodeURIComponent(item_key)}${buildQs({ project_id })}`,
+			{
+				method: "PUT",
+				headers: {
+					"content-type": "application/json",
+					"if-match": `"${revision}"`,
+				},
+				body: JSON.stringify(body),
+			},
+		),
+		"upsertDatasetDraftItem",
+	);
+}
+export async function discardDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+}): Promise<void> {
+	await responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/discard${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"discardDatasetDraft",
+	);
 }
 export interface DatasetItem {
 	id: string;

@@ -8,11 +8,18 @@ import { projectAuthorization } from "../db/project-authorization.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
 	createDataset as createDatasetRecord,
+	discardDatasetDraft as discardDatasetDraftRecord,
 	DatasetRepositoryError,
 	deleteDatasetItem as deleteDatasetItemRecord,
+	archiveDataset as archiveDatasetRecord,
+	getDatasetBySlug as getDatasetBySlugRecord,
+	getDatasetDraft as getDatasetDraftRecord,
+	getOrCreateDatasetDraft as getOrCreateDatasetDraftRecord,
 	getDataset as getDatasetRecord,
 	listDatasetItems as listDatasetItemsRecord,
 	listDatasets as listDatasetsRecord,
+	updateDatasetMetadata as updateDatasetMetadataRecord,
+	upsertDatasetDraftItem as upsertDatasetDraftItemRecord,
 } from "../db/datasets.js";
 import {
 	Dataset,
@@ -22,7 +29,12 @@ import {
 	DatasetItem,
 	DatasetItemCreate,
 	DatasetItemIdParams,
+	DatasetDraft,
+	DatasetDraftItem,
+	DatasetDraftItemParam,
+	DatasetMetadataUpdate,
 	DatasetProjectQuery,
+	DatasetSlugParam,
 } from "../schemas/datasets.js";
 
 const tag = "datasets";
@@ -140,6 +152,109 @@ export const deleteDatasetItem = createRoute({
 	request: { params: DatasetItemIdParams, query: DatasetProjectQuery },
 	responses: { 204: { description: "No content" }, ...DatasetErrorResponses },
 });
+export const getDatasetBySlug = createRoute({
+	method: "get",
+	path: "/v1/datasets/by-slug/{slug}",
+	tags: [tag],
+	summary: "Get a dataset by stable slug",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
+	responses: {
+		200: {
+			description: "OK",
+			content: { "application/json": { schema: Dataset } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const patchDatasetBySlug = createRoute({
+	method: "patch",
+	path: "/v1/datasets/by-slug/{slug}",
+	tags: [tag],
+	summary: "Update dataset metadata",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		body: {
+			content: { "application/json": { schema: DatasetMetadataUpdate } },
+		},
+	},
+	responses: {
+		200: {
+			description: "Updated",
+			content: { "application/json": { schema: Dataset } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const createDatasetDraft = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/drafts",
+	tags: [tag],
+	summary: "Create or get the shared dataset draft",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
+	responses: {
+		200: {
+			description: "Draft",
+			content: { "application/json": { schema: DatasetDraft } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const getDatasetDraft = createRoute({
+	method: "get",
+	path: "/v1/datasets/by-slug/{slug}/draft",
+	tags: [tag],
+	summary: "Get the shared dataset draft",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
+	responses: {
+		200: {
+			description: "Draft",
+			content: { "application/json": { schema: DatasetDraft } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const putDatasetDraftItem = createRoute({
+	method: "put",
+	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemKey}",
+	tags: [tag],
+	summary: "Upsert a draft item using its stable key",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetDraftItemParam,
+		query: DatasetProjectQuery,
+		body: { content: { "application/json": { schema: DatasetDraftItem } } },
+	},
+	responses: {
+		200: {
+			description: "Draft item",
+			content: { "application/json": { schema: DatasetDraftItem } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const archiveDataset = createRoute({
+	method: "delete",
+	path: "/v1/datasets/by-slug/{slug}",
+	tags: [tag],
+	summary: "Archive a dataset",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
+	responses: { 204: { description: "Archived" }, ...DatasetErrorResponses },
+});
+export const discardDatasetDraft = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/draft/discard",
+	tags: [tag],
+	summary: "Discard the shared dataset draft",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
+	responses: { 204: { description: "Discarded" }, ...DatasetErrorResponses },
+});
 
 export type DatasetRouteDependencies = {
 	pool: typeof pgPool;
@@ -149,6 +264,13 @@ export type DatasetRouteDependencies = {
 	listDatasetItems: typeof listDatasetItemsRecord;
 	addDatasetItem: typeof addDatasetItemRecord;
 	deleteDatasetItem: typeof deleteDatasetItemRecord;
+	getDatasetBySlug: typeof getDatasetBySlugRecord;
+	updateDatasetMetadata: typeof updateDatasetMetadataRecord;
+	getOrCreateDatasetDraft: typeof getOrCreateDatasetDraftRecord;
+	getDatasetDraft: typeof getDatasetDraftRecord;
+	upsertDatasetDraftItem: typeof upsertDatasetDraftItemRecord;
+	archiveDataset: typeof archiveDatasetRecord;
+	discardDatasetDraft: typeof discardDatasetDraftRecord;
 	targetExists: (input: {
 		organization_id: string;
 		project_id: string;
@@ -180,6 +302,13 @@ const production: DatasetRouteDependencies = {
 	listDatasetItems: listDatasetItemsRecord,
 	addDatasetItem: addDatasetItemRecord,
 	deleteDatasetItem: deleteDatasetItemRecord,
+	getDatasetBySlug: getDatasetBySlugRecord,
+	updateDatasetMetadata: updateDatasetMetadataRecord,
+	getOrCreateDatasetDraft: getOrCreateDatasetDraftRecord,
+	getDatasetDraft: getDatasetDraftRecord,
+	upsertDatasetDraftItem: upsertDatasetDraftItemRecord,
+	archiveDataset: archiveDatasetRecord,
+	discardDatasetDraft: discardDatasetDraftRecord,
 	targetExists,
 };
 
@@ -197,6 +326,140 @@ export function createDatasetRouteHandlers(
 						c.req.valid("query").project_id,
 					),
 				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleGetDatasetBySlug: async (
+			c: Parameters<RouteHandler<typeof getDatasetBySlug>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.getDatasetBySlug(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handlePatchDatasetBySlug: async (
+			c: Parameters<RouteHandler<typeof patchDatasetBySlug>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.updateDatasetMetadata(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						...c.req.valid("json"),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleCreateDatasetDraft: async (
+			c: Parameters<RouteHandler<typeof createDatasetDraft>>[0],
+		) => {
+			try {
+				const value = await dependencies.getOrCreateDatasetDraft(
+					dependencies.pool(),
+					{
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
+					},
+				);
+				c.header("ETag", `\"${value.revision}\"`);
+				return c.json(value);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleGetDatasetDraft: async (
+			c: Parameters<RouteHandler<typeof getDatasetDraft>>[0],
+		) => {
+			try {
+				const value = await dependencies.getDatasetDraft(dependencies.pool(), {
+					project_id: c.req.valid("query").project_id,
+					slug: c.req.valid("param").slug,
+				});
+				c.header("ETag", `\"${value.revision}\"`);
+				return c.json(value);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handlePutDatasetDraftItem: async (
+			c: Parameters<RouteHandler<typeof putDatasetDraftItem>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current draft revision",
+					);
+				const {
+					item_key: _itemKey,
+					position: _position,
+					...body
+				} = c.req.valid("json");
+				const item = await dependencies.upsertDatasetDraftItem(
+					dependencies.pool(),
+					{
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						item_key: c.req.valid("param").itemKey,
+						revision: Number(match),
+						...body,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
+					},
+				);
+				c.header("ETag", `\"${Number(match) + 1}\"`);
+				return c.json(item);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleArchiveDataset: async (
+			c: Parameters<RouteHandler<typeof archiveDataset>>[0],
+		) => {
+			try {
+				await dependencies.archiveDataset(dependencies.pool(), {
+					project_id: c.req.valid("query").project_id,
+					slug: c.req.valid("param").slug,
+					authorization: projectAuthorization(trustedTenant(c), "destructive"),
+				});
+				return c.body(null, 204);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleDiscardDatasetDraft: async (
+			c: Parameters<RouteHandler<typeof discardDatasetDraft>>[0],
+		) => {
+			try {
+				await dependencies.discardDatasetDraft(dependencies.pool(), {
+					project_id: c.req.valid("query").project_id,
+					slug: c.req.valid("param").slug,
+					authorization: projectAuthorization(
+						trustedTenant(c),
+						"product_write",
+					),
+				});
+				return c.body(null, 204);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}
@@ -313,4 +576,11 @@ export const {
 	handleListDatasetItems,
 	handleAddDatasetItem,
 	handleDeleteDatasetItem,
+	handleGetDatasetBySlug,
+	handlePatchDatasetBySlug,
+	handleCreateDatasetDraft,
+	handleGetDatasetDraft,
+	handlePutDatasetDraftItem,
+	handleArchiveDataset,
+	handleDiscardDatasetDraft,
 } = createDatasetRouteHandlers();

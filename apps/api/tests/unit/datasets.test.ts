@@ -4,6 +4,8 @@ import {
 	createDataset,
 	DatasetRepositoryError,
 	deleteDatasetItem,
+	getDatasetBySlug,
+	getOrCreateDatasetDraft,
 	listDatasets,
 } from "../../src/db/datasets";
 import { createDatasetRouteHandlers } from "../../src/routes/datasets";
@@ -25,8 +27,12 @@ const authorization = {
 const datasetRow = {
 	id: DATASET,
 	project_id: PROJECT,
+	slug: "golden",
 	name: "golden",
 	description: null,
+	tags: [],
+	latest_published_version: 1,
+	archived_at: null,
 	item_count: 0,
 	created_at: NOW,
 	updated_at: NOW,
@@ -110,6 +116,23 @@ describe("dataset contracts", () => {
 		});
 		expect(result.success).toBe(true);
 	});
+
+	it("accepts a stable dataset slug and draft item key", () => {
+		expect(
+			DatasetCreate.safeParse({
+				project_id: PROJECT,
+				slug: "golden-suite",
+				name: "Golden",
+			}).success,
+		).toBe(true);
+		expect(
+			DatasetCreate.safeParse({
+				project_id: PROJECT,
+				slug: "Golden",
+				name: "Golden",
+			}).success,
+		).toBe(false);
+	});
 });
 
 describe("dataset repository", () => {
@@ -119,6 +142,47 @@ describe("dataset repository", () => {
 		expect(result.items[0]?.id).toBe(DATASET);
 		expect(db.queries[0]?.text).toContain("WHERE d.project_id = $1");
 		expect(db.queries[0]?.values).toEqual([PROJECT]);
+	});
+
+	it("looks up stable slugs within the requested project", async () => {
+		const db = fakeDb([{ rows: [datasetRow], rowCount: 1 }]);
+		await expect(
+			getDatasetBySlug(db, { project_id: PROJECT, slug: "golden" }),
+		).resolves.toMatchObject({ slug: "golden" });
+		expect(db.queries[0]?.text).toContain("d.project_id = $1 AND d.slug = $2");
+	});
+
+	it("creates a shared draft under the authorized project lock", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{
+				rows: [
+					{
+						id: "55555555-5555-4555-8555-555555555555",
+						project_id: PROJECT,
+						dataset_id: DATASET,
+						base_version: 1,
+						revision: 1,
+						item_count: 0,
+						created_at: NOW,
+						updated_at: NOW,
+					},
+				],
+			},
+		]);
+		await expect(
+			getOrCreateDatasetDraft(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 1 });
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("ON CONFLICT (dataset_id)"),
+			),
+		).toBe(true);
 	});
 
 	it("persists trace and observation provenance when adding an item", async () => {

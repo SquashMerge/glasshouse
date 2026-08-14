@@ -1,5 +1,14 @@
 DO $$
 BEGIN
+	IF (SELECT slug FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000001') <> 'legacy-evaluation-dataset' THEN
+		RAISE EXCEPTION 'dataset slug backfill was not deterministic';
+	END IF;
+	IF (SELECT latest_published_version FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000001') <> 1 THEN
+		RAISE EXCEPTION 'legacy dataset was not snapshotted as version one';
+	END IF;
+	IF (SELECT count(*) FROM dataset_version_items WHERE dataset_version_id = (SELECT id FROM dataset_versions WHERE dataset_id = 'a4000000-0000-4000-8000-000000000001' AND version = 1)) <> 2 THEN
+		RAISE EXCEPTION 'legacy dataset item snapshots were not retained';
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_versions')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_approvals')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN

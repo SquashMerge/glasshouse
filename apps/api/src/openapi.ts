@@ -148,6 +148,20 @@ import {
 	handleAddDatasetItem,
 	deleteDatasetItem,
 	handleDeleteDatasetItem,
+	getDatasetBySlug,
+	handleGetDatasetBySlug,
+	patchDatasetBySlug,
+	handlePatchDatasetBySlug,
+	createDatasetDraft,
+	handleCreateDatasetDraft,
+	getDatasetDraft,
+	handleGetDatasetDraft,
+	putDatasetDraftItem,
+	handlePutDatasetDraftItem,
+	archiveDataset,
+	handleArchiveDataset,
+	discardDatasetDraft,
+	handleDiscardDatasetDraft,
 } from "./routes/datasets.js";
 
 import {
@@ -293,6 +307,13 @@ register(getOptimization, handleGet);
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);
+register(getDatasetBySlug, handleGetDatasetBySlug);
+register(patchDatasetBySlug, handlePatchDatasetBySlug);
+register(createDatasetDraft, handleCreateDatasetDraft);
+register(getDatasetDraft, handleGetDatasetDraft);
+register(putDatasetDraftItem, handlePutDatasetDraftItem);
+register(archiveDataset, handleArchiveDataset);
+register(discardDatasetDraft, handleDiscardDatasetDraft);
 register(getDataset, handleGetDataset);
 register(listDatasetItems, handleListDatasetItems);
 register(addDatasetItem, handleAddDatasetItem);

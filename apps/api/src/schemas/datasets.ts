@@ -2,12 +2,22 @@ import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "./common.js";
 import { ProjectIdQuery } from "./prompts.js";
 
+export const DatasetSlug = z
+	.string()
+	.max(64)
+	.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+	.openapi({ example: "support-regression" });
+
 export const Dataset = z
 	.object({
 		id: z.string().uuid(),
 		project_id: z.string().uuid(),
+		slug: DatasetSlug,
 		name: z.string(),
 		description: z.string().nullable(),
+		tags: z.array(z.string()),
+		latest_published_version: z.number().int().positive().nullable(),
+		archived_at: z.string().datetime().nullable(),
 		item_count: z.number().int().nonnegative(),
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
@@ -18,8 +28,10 @@ export const Dataset = z
 export const DatasetCreate = z
 	.object({
 		project_id: z.string().uuid(),
+		slug: DatasetSlug.optional(),
 		name: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(1000).nullable().optional(),
+		tags: z.array(z.string().trim().min(1).max(64)).max(32).optional(),
 	})
 	.strict()
 	.openapi("DatasetCreate");
@@ -81,6 +93,52 @@ export const DatasetItemIdParams = z
 	.strict();
 
 export const DatasetProjectQuery = ProjectIdQuery;
+export const DatasetSlugParam = z
+	.object({
+		slug: DatasetSlug.openapi({ param: { name: "slug", in: "path" } }),
+	})
+	.strict();
+export const DatasetMetadataUpdate = z
+	.object({
+		name: z.string().trim().min(1).max(120).optional(),
+		description: z.string().trim().max(1000).nullable().optional(),
+		tags: z.array(z.string().trim().min(1).max(64)).max(32).optional(),
+	})
+	.strict()
+	.refine(
+		(value) => Object.keys(value).length > 0,
+		"At least one field is required",
+	);
+export const DatasetDraft = z
+	.object({
+		id: z.string().uuid(),
+		dataset_id: z.string().uuid(),
+		project_id: z.string().uuid(),
+		base_version: z.number().int().positive().nullable(),
+		revision: z.number().int().positive(),
+		item_count: z.number().int().nonnegative(),
+		created_at: z.string().datetime(),
+		updated_at: z.string().datetime(),
+	})
+	.strict()
+	.openapi("DatasetDraft");
+export const DatasetDraftItem = z
+	.object({
+		item_key: z.string().min(1).max(200),
+		input: z.record(z.string(), z.unknown()),
+		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
+		metadata: z.record(z.string(), z.unknown()).optional(),
+		position: z.number().int().nonnegative().optional(),
+	})
+	.strict()
+	.openapi("DatasetDraftItem");
+export const DatasetDraftItemParam = DatasetSlugParam.extend({
+	itemKey: z
+		.string()
+		.min(1)
+		.max(200)
+		.openapi({ param: { name: "itemKey", in: "path" } }),
+}).strict();
 export const DatasetErrorResponses = {
 	400: {
 		description: "Bad request",
