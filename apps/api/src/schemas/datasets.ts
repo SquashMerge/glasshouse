@@ -132,6 +132,13 @@ export const DatasetDraftItem = z
 	})
 	.strict()
 	.openapi("DatasetDraftItem");
+export const DatasetDraftItemUpsert = DatasetDraftItem.pick({
+	input: true,
+	expected_output: true,
+	metadata: true,
+})
+	.strict()
+	.openapi("DatasetDraftItemUpsert");
 export const DatasetDraftItemParam = DatasetSlugParam.extend({
 	itemKey: z
 		.string()

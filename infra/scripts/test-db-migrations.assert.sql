@@ -1231,6 +1231,53 @@ $$;
 
 DO $$
 DECLARE
+    dataset_project_id UUID := '55555555-5555-4555-8555-555555555556';
+    other_project_id UUID := '55555555-5555-4555-8555-555555555557';
+    fixture_dataset_id UUID := '55555555-5555-4555-8555-555555555558';
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'dataset_lifecycle_audit_events'::regclass
+            AND conname = 'dataset_lifecycle_audit_events_dataset_project_fkey'
+            AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (project_id, dataset_id)%'
+            AND pg_get_constraintdef(oid) LIKE '%REFERENCES datasets(project_id, id)%'
+    ) THEN
+        RAISE EXCEPTION 'dataset lifecycle audit project/dataset integrity is incomplete';
+    END IF;
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES
+        (dataset_project_id, 'Dataset Retention Fixture', 'dataset-retention-fixture', '00000000-0000-4000-8000-000000000001'),
+        (other_project_id, 'Other Dataset Fixture', 'other-dataset-fixture', '00000000-0000-4000-8000-000000000001');
+    INSERT INTO datasets (id, project_id, slug, name)
+    VALUES (fixture_dataset_id, dataset_project_id, 'retained-dataset', 'Retained Dataset');
+    INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type)
+    VALUES (dataset_project_id, fixture_dataset_id, 'retained-dataset', '44444444-4444-4444-8444-444444444444', 'archived');
+    BEGIN
+        INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type)
+        VALUES (other_project_id, fixture_dataset_id, 'retained-dataset', '44444444-4444-4444-8444-444444444444', 'archived');
+        RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-project dataset';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        DELETE FROM dataset_lifecycle_audit_events WHERE dataset_id = fixture_dataset_id;
+        RAISE EXCEPTION 'dataset lifecycle audit accepted an ordinary delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    INSERT INTO dataset_tombstones (project_id, slug)
+    VALUES (dataset_project_id, 'retained-dataset');
+    PERFORM set_config('astraea.project_deletion_id', dataset_project_id::text, true);
+    DELETE FROM dataset_lifecycle_audit_events WHERE project_id = dataset_project_id;
+    DELETE FROM dataset_tombstones WHERE project_id = dataset_project_id;
+    DELETE FROM datasets WHERE project_id = dataset_project_id;
+    DELETE FROM projects WHERE id = dataset_project_id;
+    DELETE FROM projects WHERE id = other_project_id;
+END
+$$;
+
+DO $$
+DECLARE
     deletion_project_id UUID := '77777777-7777-4777-8777-777777777777';
 BEGIN
     INSERT INTO projects (id, name, slug, organization_id)

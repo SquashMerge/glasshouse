@@ -5,12 +5,16 @@ import {
 	DatasetRepositoryError,
 	deleteDatasetItem,
 	getDatasetBySlug,
+	getDatasetDraft,
 	getOrCreateDatasetDraft,
 	listDatasets,
+	updateDatasetMetadata,
 } from "../../src/db/datasets";
 import { createDatasetRouteHandlers } from "../../src/routes/datasets";
 import {
 	DatasetCreate,
+	DatasetDraftItemParam,
+	DatasetDraftItemUpsert,
 	DatasetItem,
 	DatasetItemCreate,
 } from "../../src/schemas/datasets";
@@ -132,6 +136,18 @@ describe("dataset contracts", () => {
 				name: "Golden",
 			}).success,
 		).toBe(false);
+		expect(
+			DatasetDraftItemParam.safeParse({
+				slug: "golden-suite",
+				itemKey: "stable-key",
+			}).success,
+		).toBe(true);
+		expect(
+			DatasetDraftItemUpsert.safeParse({
+				input: { question: "hello" },
+				metadata: { source: "test" },
+			}).success,
+		).toBe(true);
 	});
 });
 
@@ -145,11 +161,54 @@ describe("dataset repository", () => {
 	});
 
 	it("looks up stable slugs within the requested project", async () => {
-		const db = fakeDb([{ rows: [datasetRow], rowCount: 1 }]);
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [datasetRow], rowCount: 1 },
+		]);
 		await expect(
-			getDatasetBySlug(db, { project_id: PROJECT, slug: "golden" }),
+			getDatasetBySlug(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				authorization,
+			}),
 		).resolves.toMatchObject({ slug: "golden" });
-		expect(db.queries[0]?.text).toContain("d.project_id = $1 AND d.slug = $2");
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("authorization_allows_project"),
+			),
+		).toBe(true);
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("d.project_id = $1 AND d.slug = $2"),
+			),
+		).toBe(true);
+	});
+
+	it("fences slug and draft reads through the active authorized project lock", () => {
+		for (const operation of [getDatasetBySlug, getDatasetDraft])
+			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
+	});
+
+	it("returns the actual metadata item count", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [{ ...datasetRow, item_count: 3 }] },
+		]);
+		await expect(
+			updateDatasetMetadata(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				name: "Golden updated",
+				authorization,
+			}),
+		).resolves.toMatchObject({ item_count: 3 });
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("COUNT(*)::int FROM dataset_items"),
+			),
+		).toBe(true);
 	});
 
 	it("creates a shared draft under the authorized project lock", async () => {

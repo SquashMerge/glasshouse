@@ -234,19 +234,37 @@ export async function getDataset(
 }
 
 export async function getDatasetBySlug(
-	db: Queryable,
-	input: { project_id: string; slug: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const result = await client.query(
 			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $1 AND d.slug = $2 AND d.archived_at IS NULL GROUP BY d.id`,
 			[input.project_id, input.slug],
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		await client.query("COMMIT");
 		return dataset(result.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
@@ -273,7 +291,7 @@ export async function updateDatasetMetadata(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
-			`UPDATE datasets SET name = COALESCE($3, name), description = CASE WHEN $4::boolean THEN $5 ELSE description END, tags = COALESCE($6::jsonb, tags), updated_at = now() WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL RETURNING *, 0::int AS item_count`,
+			`UPDATE datasets SET name = COALESCE($3, name), description = CASE WHEN $4::boolean THEN $5 ELSE description END, tags = COALESCE($6::jsonb, tags), updated_at = now() WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL RETURNING *, (SELECT COUNT(*)::int FROM dataset_items WHERE dataset_id = datasets.id) AS item_count`,
 			[
 				input.project_id,
 				input.slug,
@@ -331,19 +349,37 @@ export async function getOrCreateDatasetDraft(
 }
 
 export async function getDatasetDraft(
-	db: Queryable,
-	input: { project_id: string; slug: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const result = await client.query(
 			`SELECT dr.*, COUNT(i.id)::int AS item_count FROM dataset_drafts dr JOIN datasets d ON d.id = dr.dataset_id AND d.project_id = dr.project_id LEFT JOIN dataset_draft_items i ON i.draft_id = dr.id WHERE d.project_id = $1 AND d.slug = $2 AND d.archived_at IS NULL GROUP BY dr.id`,
 			[input.project_id, input.slug],
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset draft not found");
+		await client.query("COMMIT");
 		return draft(result.rows[0]);
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 

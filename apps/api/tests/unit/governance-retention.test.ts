@@ -126,31 +126,42 @@ describe("governance retention", () => {
 		const statements: string[] = [];
 		const result = await deleteSafeDatasetRetentionBatch(
 			{
-				query: async (statement: string) => {
-					statements.push(statement);
-					return { rows: [{ id: "dataset", skipped: "2" }] };
-				},
+				connect: async () => ({
+					query: async (statement: string) => {
+						statements.push(statement);
+						return { rows: [{ id: "dataset", skipped: "2" }] };
+					},
+					release() {},
+				}),
 			},
 			"project",
 			new Date("2026-01-01T00:00:00Z"),
 			10,
 		);
 		expect(result).toEqual({ deleted: 1, skipped: 2 });
-		expect(statements[0]).not.toContain("DELETE FROM feedback_reviews");
-		expect(statements[0]).toContain(
+		const deletion = statements.find((statement) =>
+			statement.startsWith("WITH candidates"),
+		);
+		expect(deletion).not.toContain("DELETE FROM feedback_reviews");
+		expect(deletion).toContain(
 			"NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id)",
 		);
-		expect(statements[0]).not.toContain("f.created_at >=");
-		expect(statements).toHaveLength(1);
-		expect(statements[0]).toContain("NOT EXISTS (SELECT 1 FROM experiments");
-		expect(statements[0]).toContain(
-			"NOT EXISTS (SELECT 1 FROM benchmark_suites",
-		);
+		expect(deletion).not.toContain("f.created_at >=");
+		expect(deletion).toContain("NOT EXISTS (SELECT 1 FROM experiments");
+		expect(deletion).toContain("NOT EXISTS (SELECT 1 FROM benchmark_suites");
+		expect(deletion).toContain("INSERT INTO dataset_tombstones");
+		expect(deletion).toContain("deleted_audits");
+		expect(statements[1]).toContain("dataset_retention_project_id");
 	});
 
 	it("reports dependency-blocked datasets when no dataset can be deleted", async () => {
 		const result = await deleteSafeDatasetRetentionBatch(
-			{ query: async () => ({ rows: [{ id: null, skipped: "3" }] }) },
+			{
+				connect: async () => ({
+					query: async () => ({ rows: [{ id: null, skipped: "3" }] }),
+					release() {},
+				}),
+			},
 			"project",
 			new Date("2026-01-01T00:00:00Z"),
 			10,

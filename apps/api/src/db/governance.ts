@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { ch } from "./clickhouse.js";
 import { lockProjectAuditProvenance } from "./project-authorization.js";
 
@@ -101,19 +101,36 @@ export async function retentionCounts(
 }
 
 export async function deleteSafeDatasetRetentionBatch(
-	pool: Pick<Pool, "query">,
+	db: Pick<Pool, "connect"> | Pick<PoolClient, "query">,
 	projectId: string,
 	cutoff: Date,
 	batchSize: number,
 ): Promise<{ deleted: number; skipped: number }> {
-	const result = await pool.query<{ id: string | null; skipped: string }>(
-		"WITH candidates AS MATERIALIZED (SELECT d.id FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id) ORDER BY d.created_at, d.id LIMIT $3 FOR UPDATE), deleted AS (DELETE FROM datasets d USING candidates c WHERE d.id = c.id RETURNING d.id), skipped AS (SELECT count(*)::text AS count FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND (EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id))) SELECT id, (SELECT count FROM skipped) AS skipped FROM deleted UNION ALL SELECT NULL::uuid AS id, count AS skipped FROM skipped WHERE NOT EXISTS (SELECT 1 FROM deleted)",
-		[projectId, cutoff, batchSize],
-	);
-	return {
-		deleted: result.rows.filter((row) => row.id !== null).length,
-		skipped: Number(result.rows[0]?.skipped ?? 0),
-	};
+	const ownsTransaction = "connect" in db;
+	const client: Pick<PoolClient, "query"> = ownsTransaction
+		? await (db as Pick<Pool, "connect">).connect()
+		: db;
+	try {
+		if (ownsTransaction) await client.query("BEGIN");
+		await client.query(
+			"SELECT set_config('astraea.dataset_retention_project_id', $1, true)",
+			[projectId],
+		);
+		const result = await client.query<{ id: string | null; skipped: string }>(
+			"WITH candidates AS MATERIALIZED (SELECT d.id, d.slug FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id) ORDER BY d.created_at, d.id LIMIT $3 FOR UPDATE), inserted_tombstones AS (INSERT INTO dataset_tombstones (project_id, slug) SELECT $1, slug FROM candidates ON CONFLICT (project_id, slug) DO NOTHING RETURNING slug), reserved AS (SELECT slug FROM inserted_tombstones UNION SELECT c.slug FROM candidates c JOIN dataset_tombstones t ON t.project_id = $1 AND t.slug = c.slug), deleted_audits AS (DELETE FROM dataset_lifecycle_audit_events a USING candidates c WHERE a.project_id = $1 AND a.dataset_id = c.id), deleted_version_items AS (DELETE FROM dataset_version_items i USING dataset_versions v, candidates c WHERE i.dataset_version_id = v.id AND v.dataset_id = c.id), deleted_versions AS (DELETE FROM dataset_versions v USING candidates c WHERE v.dataset_id = c.id), deleted AS (DELETE FROM datasets d USING candidates c JOIN reserved r ON r.slug = c.slug WHERE d.id = c.id AND (SELECT count(*) FROM deleted_audits) >= 0 AND (SELECT count(*) FROM deleted_version_items) >= 0 AND (SELECT count(*) FROM deleted_versions) >= 0 RETURNING d.id), skipped AS (SELECT count(*)::text AS count FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2 AND (EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id))) SELECT id, (SELECT count FROM skipped) AS skipped FROM deleted UNION ALL SELECT NULL::uuid AS id, count AS skipped FROM skipped WHERE NOT EXISTS (SELECT 1 FROM deleted)",
+			[projectId, cutoff, batchSize],
+		);
+		if (ownsTransaction) await client.query("COMMIT");
+		return {
+			deleted: result.rows.filter((row) => row.id !== null).length,
+			skipped: Number(result.rows[0]?.skipped ?? 0),
+		};
+	} catch (cause) {
+		if (ownsTransaction) await client.query("ROLLBACK");
+		throw cause;
+	} finally {
+		if (ownsTransaction) (client as PoolClient).release();
+	}
 }
 
 export type TraceRetentionSelection = {

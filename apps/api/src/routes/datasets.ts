@@ -32,6 +32,7 @@ import {
 	DatasetDraft,
 	DatasetDraftItem,
 	DatasetDraftItemParam,
+	DatasetDraftItemUpsert,
 	DatasetMetadataUpdate,
 	DatasetProjectQuery,
 	DatasetSlugParam,
@@ -227,7 +228,9 @@ export const putDatasetDraftItem = createRoute({
 	request: {
 		params: DatasetDraftItemParam,
 		query: DatasetProjectQuery,
-		body: { content: { "application/json": { schema: DatasetDraftItem } } },
+		body: {
+			content: { "application/json": { schema: DatasetDraftItemUpsert } },
+		},
 	},
 	responses: {
 		200: {
@@ -338,6 +341,10 @@ export function createDatasetRouteHandlers(
 					await dependencies.getDatasetBySlug(dependencies.pool(), {
 						project_id: c.req.valid("query").project_id,
 						slug: c.req.valid("param").slug,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -391,6 +398,7 @@ export function createDatasetRouteHandlers(
 				const value = await dependencies.getDatasetDraft(dependencies.pool(), {
 					project_id: c.req.valid("query").project_id,
 					slug: c.req.valid("param").slug,
+					authorization: projectAuthorization(trustedTenant(c), "product_read"),
 				});
 				c.header("ETag", `\"${value.revision}\"`);
 				return c.json(value);
@@ -408,11 +416,7 @@ export function createDatasetRouteHandlers(
 						"BAD_REQUEST",
 						"If-Match must contain the current draft revision",
 					);
-				const {
-					item_key: _itemKey,
-					position: _position,
-					...body
-				} = c.req.valid("json");
+				const body = c.req.valid("json");
 				const item = await dependencies.upsertDatasetDraftItem(
 					dependencies.pool(),
 					{
