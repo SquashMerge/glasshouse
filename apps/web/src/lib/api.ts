@@ -259,10 +259,12 @@ export async function getDataset(input: {
 export async function listDatasetItems(input: {
 	project_id: string;
 	id: string;
+	signal?: AbortSignal;
 }): Promise<{ items: DatasetItem[] }> {
 	return responseJson(
 		await authedFetch(
 			`/v1/datasets/${encodeURIComponent(input.id)}/items${buildQs({ project_id: input.project_id })}`,
+			{ signal: input.signal },
 		),
 		"listDatasetItems",
 	);

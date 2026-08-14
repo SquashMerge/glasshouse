@@ -80,15 +80,28 @@ const publishedItem = {
 	created_at: "2026-08-14T00:00:00.000Z",
 };
 
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise;
+		reject = rejectPromise;
+	});
+	return { promise, resolve, reject };
+}
+
 function renderPage() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
-	return render(
-		<QueryClientProvider client={client}>
-			<DatasetDetailPage />
-		</QueryClientProvider>,
-	);
+	return {
+		client,
+		...render(
+			<QueryClientProvider client={client}>
+				<DatasetDetailPage />
+			</QueryClientProvider>,
+		),
+	};
 }
 
 describe("DatasetDetailPage draft lifecycle", () => {
@@ -139,8 +152,20 @@ describe("DatasetDetailPage draft lifecycle", () => {
 		expect(publishDatasetDraft).not.toHaveBeenCalled();
 	});
 
-	it("keeps an added draft case visible while its item query refreshes", async () => {
-		listDatasetItems.mockResolvedValue({ items: [] });
+	it("keeps an added draft case when a cancelled stale refresh resolves", async () => {
+		const staleResponse = deferred<{ items: (typeof publishedItem)[] }>();
+		let staleRequestSignal: AbortSignal | undefined;
+		listDatasetItems
+			.mockResolvedValueOnce({ items: [] })
+			.mockImplementationOnce(({ signal }) => {
+				staleRequestSignal = signal;
+				return new Promise((resolve, reject) => {
+					signal?.addEventListener("abort", () =>
+						reject(new DOMException("aborted", "AbortError")),
+					);
+					staleResponse.promise.then(resolve, reject);
+				});
+			});
 		upsertDatasetDraftItem.mockResolvedValue({
 			id: "44444444-4444-4444-8444-444444444444",
 			item_key: "new-case",
@@ -151,14 +176,25 @@ describe("DatasetDetailPage draft lifecycle", () => {
 			source_observation_id: null,
 			position: 0,
 		});
-		renderPage();
+		const { client } = renderPage();
 
 		await screen.findByText("Golden");
+		void client.invalidateQueries({
+			queryKey: ["dataset-items", projectId, datasetId],
+		});
+		await waitFor(() => expect(listDatasetItems).toHaveBeenCalledTimes(2));
 		fireEvent.change(screen.getByLabelText("Input"), {
 			target: { value: '{"question":"new"}' },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
 
+		await waitFor(() =>
+			expect(
+				screen.getByText(/"question": "new"/, { selector: "pre" }),
+			).toBeInTheDocument(),
+		);
+		expect(staleRequestSignal?.aborted).toBe(true);
+		staleResponse.resolve({ items: [publishedItem] });
 		await waitFor(() =>
 			expect(
 				screen.getByText(/"question": "new"/, { selector: "pre" }),

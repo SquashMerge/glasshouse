@@ -158,7 +158,8 @@ export function DatasetDetailPage() {
 	});
 	const items = useQuery({
 		queryKey: ["dataset-items", selectedProjectId, id],
-		queryFn: () => listDatasetItems({ project_id: selectedProjectId!, id }),
+		queryFn: ({ signal }) =>
+			listDatasetItems({ project_id: selectedProjectId!, id, signal }),
 		enabled: Boolean(selectedProjectId),
 	});
 	const [input, setInput] = React.useState("{}");
