@@ -212,10 +212,10 @@ describe("feedback review persistence", () => {
 		expect(queries).toContain("ROLLBACK");
 	});
 
-	it("rejects direct dataset additions from new or dismissed feedback", async () => {
+	it("rejects legacy review promotion rather than writing a mutable dataset item ID", async () => {
 		const now = new Date("2026-07-29T12:00:00.000Z");
 
-		for (const status of ["new", "dismissed"] as const) {
+		for (const status of ["reviewed", "new", "dismissed"] as const) {
 			const queries: string[] = [];
 			const client = {
 				query: async (sql: string) => {
@@ -242,7 +242,6 @@ describe("feedback review persistence", () => {
 								},
 							],
 						};
-					if (sql.includes("SELECT i.id")) return { rows: [{ id: "item" }] };
 					if (sql.includes("UPDATE feedback_reviews"))
 						return { rows: [{ updated_at: now }] };
 					return { rows: [] };
@@ -259,7 +258,14 @@ describe("feedback review persistence", () => {
 					dataset_item_id: "44444444-4444-4444-8444-444444444444",
 					authorization: { ...authorization, operation: "governed" },
 				}),
-			).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+			).rejects.toMatchObject({
+				code: "CONFLICT",
+				status: 409,
+				message:
+					status === "reviewed"
+						? "Use the feedback promotion endpoint to add feedback through a dataset draft"
+						: "Feedback must be reviewed before promotion",
+			});
 			expect(queries[0]).toBe("BEGIN");
 			expect(queries[1]).toContain("FOR UPDATE");
 			expect(queries).toContain("ROLLBACK");

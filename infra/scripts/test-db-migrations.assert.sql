@@ -763,9 +763,15 @@ BEGIN
     ) OR NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_dataset_version_item_project_fk'
+            AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (dataset_item_id, project_id)%'
+            AND pg_get_constraintdef(oid) LIKE '%REFERENCES dataset_version_items(id, project_id)%'
+            AND pg_get_constraintdef(oid) LIKE '%ON DELETE RESTRICT%'
+    ) OR EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
             AND contype = 'f'
             AND pg_get_constraintdef(oid) LIKE '%dataset_items%'
-            AND pg_get_constraintdef(oid) LIKE '%RESTRICT%'
     ) OR NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_idempotency'::regclass
@@ -802,7 +808,7 @@ BEGIN
     ) OR NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_reviews'::regclass
-            AND conname = 'feedback_reviews_dataset_item_dataset_fk'
+            AND conname = 'feedback_reviews_dataset_draft_item_project_fk'
     ) THEN
         RAISE EXCEPTION 'feedback project scope constraints are incomplete';
     END IF;
@@ -811,10 +817,14 @@ BEGIN
         ('a1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-a', 'feedback-scope-a'),
         ('a2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-b', 'feedback-scope-b'),
         ('b1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'feedback-scope-other', 'feedback-scope-other');
-    INSERT INTO dataset_items (id, dataset_id, input) VALUES
-        ('a1000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', '{}'),
-        ('a2000000-0000-4000-8000-000000000002', 'a2000000-0000-4000-8000-000000000001', '{}'),
-        ('b1000000-0000-4000-8000-000000000002', 'b1000000-0000-4000-8000-000000000001', '{}');
+    INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES
+        ('a1000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111', 'a1000000-0000-4000-8000-000000000001', 1, 1, repeat('a', 64)),
+        ('a2000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111', 'a2000000-0000-4000-8000-000000000001', 1, 1, repeat('b', 64)),
+        ('b1000000-0000-4000-8000-000000000003', '22222222-2222-2222-2222-222222222222', 'b1000000-0000-4000-8000-000000000001', 1, 1, repeat('c', 64));
+    INSERT INTO dataset_version_items (id, project_id, dataset_version_id, item_key, position, input) VALUES
+        ('a1000000-0000-4000-8000-000000000004', '11111111-1111-1111-1111-111111111111', 'a1000000-0000-4000-8000-000000000003', 'feedback-scope-a', 0, '{}'),
+        ('a2000000-0000-4000-8000-000000000004', '11111111-1111-1111-1111-111111111111', 'a2000000-0000-4000-8000-000000000003', 'feedback-scope-b', 0, '{}'),
+        ('b1000000-0000-4000-8000-000000000004', '22222222-2222-2222-2222-222222222222', 'b1000000-0000-4000-8000-000000000003', 'feedback-scope-other', 0, '{}');
     INSERT INTO scores (id, project_id, trace_id, name, value, metadata) VALUES
         ('c1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-1', 'human.feedback', -1, '{}'),
         ('c2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-2', 'human.feedback', -1, '{}'),
@@ -833,22 +843,9 @@ BEGIN
             '11111111-1111-1111-1111-111111111111',
             'added_to_dataset',
             'b1000000-0000-4000-8000-000000000001',
-            'b1000000-0000-4000-8000-000000000002'
+            'b1000000-0000-4000-8000-000000000004'
         );
         RAISE EXCEPTION 'feedback review accepted a dataset from another project';
-    EXCEPTION WHEN foreign_key_violation THEN
-        NULL;
-    END;
-    BEGIN
-        INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
-        VALUES (
-            'c3000000-0000-4000-8000-000000000001',
-            '11111111-1111-1111-1111-111111111111',
-            'added_to_dataset',
-            'a1000000-0000-4000-8000-000000000001',
-            'a2000000-0000-4000-8000-000000000002'
-        );
-        RAISE EXCEPTION 'feedback review accepted a dataset item from another dataset';
     EXCEPTION WHEN foreign_key_violation THEN
         NULL;
     END;
@@ -860,7 +857,7 @@ BEGIN
 		'11111111-1111-1111-1111-111111111111',
 		'added_to_dataset',
 		'a1000000-0000-4000-8000-000000000001',
-		'a1000000-0000-4000-8000-000000000002'
+		'a1000000-0000-4000-8000-000000000004'
 	);
 	UPDATE dataset_items
 	SET feedback_score_id = 'c1000000-0000-4000-8000-000000000001'

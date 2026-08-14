@@ -440,48 +440,22 @@ export async function reviewFeedback(
 					"CONFLICT",
 					"Feedback must be reviewed before promotion",
 				);
-			if (!input.dataset_id || !input.dataset_item_id)
-				throw new FeedbackRepositoryError(
-					"CONFLICT",
-					"Dataset item linkage is required",
-				);
-			const linked = await client.query(
-				`SELECT i.id FROM dataset_items i JOIN datasets d ON d.id=i.dataset_id WHERE d.project_id=$1 AND d.id=$2 AND i.id=$3 AND i.source_trace_id=$4 AND (i.source_observation_id IS NOT DISTINCT FROM $5)`,
-				[
-					input.project_id,
-					input.dataset_id,
-					input.dataset_item_id,
-					current.trace_id,
-					current.observation_id,
-				],
+			throw new FeedbackRepositoryError(
+				"CONFLICT",
+				"Use the feedback promotion endpoint to add feedback through a dataset draft",
 			);
-			if (!linked.rows[0])
-				throw new FeedbackRepositoryError(
-					"CONFLICT",
-					"Dataset item does not match feedback provenance",
-				);
 		}
 		const result = await client.query(
 			`UPDATE feedback_reviews SET status=$1,note=$2,dataset_id=$3,dataset_item_id=$4,updated_at=now() WHERE score_id=$5 RETURNING updated_at`,
-			[
-				input.status,
-				input.note ?? null,
-				input.status === "added_to_dataset" ? input.dataset_id : null,
-				input.status === "added_to_dataset" ? input.dataset_item_id : null,
-				input.id,
-			],
+			[input.status, input.note ?? null, null, null, input.id],
 		);
 		await client.query("COMMIT");
 		return {
 			...current,
 			status: input.status,
 			note: input.note ?? null,
-			dataset_id:
-				input.status === "added_to_dataset" ? (input.dataset_id ?? null) : null,
-			dataset_item_id:
-				input.status === "added_to_dataset"
-					? (input.dataset_item_id ?? null)
-					: null,
+			dataset_id: null,
+			dataset_item_id: null,
 			updated_at: time(result.rows[0]!, "updated_at"),
 		};
 	} catch (cause) {

@@ -215,7 +215,7 @@ type EvaluationDefinition = {
 - **External-key upsert:** API/SDK upserts match `item_key` only. The server never deduplicates cases by JSON equality or model output.
 - **Delete behavior:** archive datasets/evaluations by default. A version referenced by a run cannot be physically removed. Hard delete requires no versions/runs or a privileged retention job.
 
-Draft item removal uses `DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemKey}` with the draft `If-Match` ETag. Legacy `/items/{id}` write endpoints remain deprecated and return `409`; published versions are immutable.
+Draft item removal uses `DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemId}` with the draft `If-Match` ETag. Legacy `/items/{id}` write endpoints remain deprecated and return `409`; published versions are immutable.
 - **Project isolation:** every lookup and foreign key includes project scope; cross-project attachment returns `404`, not an existence leak.
 
 ## API and SDK surface
@@ -235,7 +235,7 @@ GET    /v1/datasets/by-slug/{slug}/versions/{version}?project_id=
 POST   /v1/datasets/by-slug/{slug}/drafts?project_id= # optional explicit fork; default creates from latest
 GET    /v1/datasets/by-slug/{slug}/draft?project_id=
 PUT    /v1/datasets/by-slug/{slug}/draft/items/{itemKey}?project_id=  # upsert; If-Match draft revision
-DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemKey}?project_id=
+DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemId}?project_id=
 POST   /v1/datasets/by-slug/{slug}/draft/import?project_id= # CSV/JSONL/trace selections; async for large input
 POST   /v1/datasets/by-slug/{slug}/draft/validate?project_id=
 POST   /v1/datasets/by-slug/{slug}/draft/publish?project_id=

@@ -35,6 +35,26 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS datasets_project_slug_key ON datasets(project_id, slug);
 CREATE UNIQUE INDEX IF NOT EXISTS datasets_project_id_id_key ON datasets(project_id, id);
 
+CREATE TABLE IF NOT EXISTS dataset_item_input_quarantine (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    dataset_id UUID NOT NULL,
+    dataset_item_id UUID NOT NULL UNIQUE REFERENCES dataset_items(id) ON DELETE RESTRICT,
+    original_input JSONB NOT NULL,
+    reason TEXT NOT NULL CHECK (reason = 'input_not_object'),
+    quarantined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (project_id, dataset_id) REFERENCES datasets(project_id, id) ON DELETE RESTRICT
+);
+INSERT INTO dataset_item_input_quarantine (project_id, dataset_id, dataset_item_id, original_input, reason)
+SELECT d.project_id, i.dataset_id, i.id, i.input, 'input_not_object'
+FROM dataset_items i
+JOIN datasets d ON d.id = i.dataset_id
+WHERE jsonb_typeof(i.input) <> 'object'
+ON CONFLICT (dataset_item_id) DO NOTHING;
+UPDATE dataset_items
+SET input = jsonb_build_object('legacy_input', input)
+WHERE jsonb_typeof(input) <> 'object';
+
 CREATE TABLE IF NOT EXISTS dataset_tombstones (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     slug TEXT NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
