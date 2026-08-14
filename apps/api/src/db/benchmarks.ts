@@ -131,7 +131,7 @@ export async function createBenchmarkSuite(
 export async function getBenchmarkSuite(
 	db: Transactional,
 	input: {
-		project_id?: string;
+		project_id: string;
 		id: string;
 		authorization: ProjectAuthorization;
 	},
@@ -140,16 +140,10 @@ export async function getBenchmarkSuite(
 		const client = await db.connect();
 		try {
 			await client.query("BEGIN");
-			const owner = await client.query(
-				"SELECT project_id FROM benchmark_suites WHERE id=$1",
-				[input.id],
-			);
-			const projectId = owner.rows[0]?.project_id;
 			if (
-				typeof projectId !== "string" ||
 				!(await lockActiveAuthorizedProject(
 					client,
-					projectId,
+					input.project_id,
 					input.authorization,
 				))
 			)
@@ -159,7 +153,7 @@ export async function getBenchmarkSuite(
 				);
 			const r = await client.query(
 				"SELECT b.* FROM benchmark_suites b WHERE b.id=$1 AND b.project_id=$2",
-				[input.id, projectId],
+				[input.id, input.project_id],
 			);
 			if (!r.rows[0])
 				throw new BenchmarkRepositoryError(
@@ -268,13 +262,14 @@ export async function createBenchmarkRun(
 export async function listBenchmarkRuns(
 	db: Transactional,
 	input: {
-		project_id?: string;
+		project_id: string;
 		suite_id: string;
 		authorization: ProjectAuthorization;
 	},
 ) {
 	try {
 		const parent = await getBenchmarkSuite(db, {
+			project_id: input.project_id,
 			id: input.suite_id,
 			authorization: input.authorization,
 		});

@@ -294,23 +294,17 @@ export async function listExperiments(
 export async function getExperiment(
 	db: Transactional,
 	input: {
-		project_id?: string;
+		project_id: string;
 		id: string;
 		authorization: ProjectAuthorization;
 	},
 ) {
 	try {
 		return await withTransaction(db, async (client) => {
-			const owner = await client.query(
-				"SELECT project_id FROM experiments WHERE id=$1",
-				[input.id],
-			);
-			const projectId = owner.rows[0]?.project_id;
 			if (
-				typeof projectId !== "string" ||
 				!(await lockActiveAuthorizedProject(
 					client,
-					projectId,
+					input.project_id,
 					input.authorization,
 				))
 			)
@@ -320,7 +314,7 @@ export async function getExperiment(
 				);
 			const r = await client.query(
 				"SELECT e.* FROM experiments e WHERE e.id=$1 AND e.project_id=$2",
-				[input.id, projectId],
+				[input.id, input.project_id],
 			);
 			if (!r.rows[0])
 				throw new ExperimentRepositoryError(
@@ -808,7 +802,7 @@ export async function claimExperimentExecution(
 export async function listExperimentResults(
 	db: Transactional,
 	input: {
-		project_id?: string;
+		project_id: string;
 		id: string;
 		authorization: ProjectAuthorization;
 	},
@@ -840,7 +834,7 @@ export async function listExperimentResults(
 export async function experimentSummary(
 	db: Transactional,
 	input: {
-		project_id?: string;
+		project_id: string;
 		id: string;
 		authorization: ProjectAuthorization;
 	},

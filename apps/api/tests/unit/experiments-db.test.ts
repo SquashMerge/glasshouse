@@ -2,12 +2,15 @@ import { describe, expect, it } from "bun:test";
 import {
 	cancelExperiment,
 	claimExperimentTask,
+	experimentSummary,
 	finalizeExperimentTask,
 	getExperiment,
+	listExperimentResults,
 	listRecoverableExperiments,
 } from "../../src/db/experiments";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
+const otherProjectId = "99999999-9999-4999-8999-999999999999";
 const experimentId = "22222222-2222-4222-8222-222222222222";
 const datasetId = "33333333-3333-4333-8333-333333333333";
 const taskId = "44444444-4444-4444-8444-444444444444";
@@ -76,15 +79,15 @@ const runningExperiment = {
 };
 
 describe("durable experiment task ledger", () => {
-	it("does not trust a supplied project id when an experiment read is revoked", async () => {
-		const calls: string[] = [];
+	it("does not read an experiment from another authorized project", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const client = {
-			query: async (text: string) => {
-				calls.push(text);
-				if (text.startsWith("SELECT project_id FROM experiments"))
-					return { rows: [{ project_id: projectId }] };
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				if (text.includes("FROM projects p"))
+					return { rows: [{ id: otherProjectId }] };
 				if (text.startsWith("SELECT authorization_allows_project"))
-					return { rows: [{ allowed: false }] };
+					return { rows: [{ allowed: true }] };
 				return { rows: [] };
 			},
 			release() {},
@@ -92,13 +95,45 @@ describe("durable experiment task ledger", () => {
 		await expect(
 			getExperiment({ connect: async () => client } as never, {
 				id: experimentId,
-				project_id: "88888888-8888-4888-8888-888888888888",
+				project_id: otherProjectId,
 				authorization: { ...authorization, operation: "product_read" },
 			}),
 		).rejects.toMatchObject({ code: "NOT_FOUND" });
 		expect(
-			calls.some((text) => text.startsWith("SELECT e.* FROM experiments")),
-		).toBe(false);
+			calls.find((call) => call.text.startsWith("SELECT e.* FROM experiments")),
+		).toMatchObject({ values: [experimentId, otherProjectId] });
+	});
+
+	it("does not expose another authorized project's experiment results or summary", async () => {
+		for (const read of [listExperimentResults, experimentSummary]) {
+			const calls: Array<{ text: string; values: unknown[] }> = [];
+			const client = {
+				query: async (text: string, values: unknown[] = []) => {
+					calls.push({ text, values });
+					if (text.includes("FROM projects p"))
+						return { rows: [{ id: otherProjectId }] };
+					if (text.startsWith("SELECT authorization_allows_project"))
+						return { rows: [{ allowed: true }] };
+					return { rows: [] };
+				},
+				release() {},
+			};
+			await expect(
+				read({ connect: async () => client } as never, {
+					id: experimentId,
+					project_id: otherProjectId,
+					authorization: { ...authorization, operation: "product_read" },
+				}),
+			).rejects.toMatchObject({ code: "NOT_FOUND" });
+			expect(
+				calls.find((call) =>
+					call.text.startsWith("SELECT e.* FROM experiments"),
+				),
+			).toMatchObject({ values: [experimentId, otherProjectId] });
+			expect(
+				calls.some((call) => call.text.includes("FROM experiment_results")),
+			).toBe(false);
+		}
 	});
 
 	it("rechecks the requester under the project lock before claiming provider work", async () => {
