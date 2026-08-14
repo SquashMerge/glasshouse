@@ -37,7 +37,12 @@ BEGIN
 	END;
 	INSERT INTO agents (id, project_id, name) VALUES ('a3000000-0000-4000-8000-000000000002', '22222222-2222-2222-2222-222222222222', 'Second project agent');
 	INSERT INTO datasets (id, project_id, name) VALUES ('a4000000-0000-4000-8000-000000000004', '22222222-2222-2222-2222-222222222222', 'Second project dataset');
-	INSERT INTO experiments (id, project_id, agent_id, dataset_id) VALUES ('a6000000-0000-4000-8000-000000000003', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000002', 'a4000000-0000-4000-8000-000000000004');
+	INSERT INTO actors (id) VALUES ('a6000000-0000-4000-8000-000000000004');
+	INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+	SELECT 'a6000000-0000-4000-8000-000000000004', organization_id, 'basic:v1', 'migration-cross-project-probe'
+	FROM projects
+	WHERE id = '22222222-2222-2222-2222-222222222222';
+	INSERT INTO experiments (id, project_id, agent_id, dataset_id, requested_by_actor_id) VALUES ('a6000000-0000-4000-8000-000000000003', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000002', 'a4000000-0000-4000-8000-000000000004', 'a6000000-0000-4000-8000-000000000004');
 	BEGIN
 		INSERT INTO experiment_tasks (project_id, experiment_id, dataset_version_item_id)
 		SELECT '22222222-2222-2222-2222-222222222222', 'a6000000-0000-4000-8000-000000000003', id FROM dataset_version_items WHERE project_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
