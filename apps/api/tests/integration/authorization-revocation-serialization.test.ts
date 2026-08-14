@@ -2531,7 +2531,7 @@ test.skipIf(!databaseUrl)(
 			expect(
 				(
 					await pool.query<{ acquired: boolean }>(
-						"SELECT pg_try_advisory_xact_lock(hashtext($1)::bigint) AS acquired",
+						"SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired",
 						[`dataset:${fixture.projectId}:${slug}`],
 					)
 				).rows[0]?.acquired,
