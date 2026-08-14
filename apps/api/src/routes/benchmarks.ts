@@ -1,7 +1,7 @@
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
-import { listDatasetItems } from "../db/datasets.js";
+import { listPublishedDatasetItems } from "../db/datasets.js";
 import {
 	createBenchmarkRun,
 	createBenchmarkSuite,
@@ -145,7 +145,7 @@ export const handleCreateBenchmarkSuite = async (
 ) => {
 	try {
 		const body = c.req.valid("json");
-		const items = await listDatasetItems(pgPool(), {
+		const items = await listPublishedDatasetItems(pgPool(), {
 			project_id: body.project_id,
 			dataset_id: body.dataset_id,
 			authorization: projectAuthorization(trustedTenant(c), "product_write"),

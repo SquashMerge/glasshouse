@@ -7,10 +7,12 @@ import { trustedTenant } from "../tenancy.js";
 import { projectAuthorization } from "../db/project-authorization.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
+	authorizeDatasetWrite as authorizeDatasetWriteRecord,
 	createDataset as createDatasetRecord,
 	discardDatasetDraft as discardDatasetDraftRecord,
 	DatasetRepositoryError,
 	deleteDatasetItem as deleteDatasetItemRecord,
+	deleteDatasetDraftItem as deleteDatasetDraftItemRecord,
 	archiveDataset as archiveDatasetRecord,
 	getDatasetBySlug as getDatasetBySlugRecord,
 	getDatasetDraft as getDatasetDraftRecord,
@@ -259,6 +261,22 @@ export const putDatasetDraftItem = createRoute({
 		...DatasetErrorResponses,
 	},
 });
+export const deleteDatasetDraftItem = createRoute({
+	method: "delete",
+	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemKey}",
+	tags: [tag],
+	summary: "Delete a draft item using its stable key",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetDraftItemParam,
+		query: DatasetProjectQuery,
+		headers: IfMatchDraftRevision,
+	},
+	responses: {
+		204: { description: "Draft item deleted", headers: DraftRevisionHeaders },
+		...DatasetErrorResponses,
+	},
+});
 export const archiveDataset = createRoute({
 	method: "delete",
 	path: "/v1/datasets/by-slug/{slug}",
@@ -291,6 +309,8 @@ export type DatasetRouteDependencies = {
 	getOrCreateDatasetDraft: typeof getOrCreateDatasetDraftRecord;
 	getDatasetDraft: typeof getDatasetDraftRecord;
 	upsertDatasetDraftItem: typeof upsertDatasetDraftItemRecord;
+	deleteDatasetDraftItem: typeof deleteDatasetDraftItemRecord;
+	authorizeDatasetWrite: typeof authorizeDatasetWriteRecord;
 	archiveDataset: typeof archiveDatasetRecord;
 	discardDatasetDraft: typeof discardDatasetDraftRecord;
 	targetExists: (input: {
@@ -329,6 +349,8 @@ const production: DatasetRouteDependencies = {
 	getOrCreateDatasetDraft: getOrCreateDatasetDraftRecord,
 	getDatasetDraft: getDatasetDraftRecord,
 	upsertDatasetDraftItem: upsertDatasetDraftItemRecord,
+	deleteDatasetDraftItem: deleteDatasetDraftItemRecord,
+	authorizeDatasetWrite: authorizeDatasetWriteRecord,
 	archiveDataset: archiveDatasetRecord,
 	discardDatasetDraft: discardDatasetDraftRecord,
 	targetExists,
@@ -440,6 +462,11 @@ export function createDatasetRouteHandlers(
 					);
 				const body = c.req.valid("json");
 				const tenant = trustedTenant(c);
+				const authorization = projectAuthorization(tenant, "product_write");
+				await dependencies.authorizeDatasetWrite(dependencies.pool(), {
+					project_id: c.req.valid("query").project_id,
+					authorization,
+				});
 				if (
 					body.source_trace_id &&
 					!(await dependencies.targetExists({
@@ -461,11 +488,37 @@ export function createDatasetRouteHandlers(
 						item_key: c.req.valid("param").itemKey,
 						revision: Number(match),
 						...body,
-						authorization: projectAuthorization(tenant, "product_write"),
+						authorization,
 					},
 				);
 				c.header("ETag", `\"${Number(match) + 1}\"`);
 				return c.json(item);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleDeleteDatasetDraftItem: async (
+			c: Parameters<RouteHandler<typeof deleteDatasetDraftItem>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current draft revision",
+					);
+				await dependencies.deleteDatasetDraftItem(dependencies.pool(), {
+					project_id: c.req.valid("query").project_id,
+					slug: c.req.valid("param").slug,
+					item_key: c.req.valid("param").itemKey,
+					revision: Number(match),
+					authorization: projectAuthorization(
+						trustedTenant(c),
+						"product_write",
+					),
+				});
+				c.header("ETag", `\"${Number(match) + 1}\"`);
+				return c.body(null, 204);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}
@@ -590,6 +643,7 @@ export const {
 	handleCreateDatasetDraft,
 	handleGetDatasetDraft,
 	handlePutDatasetDraftItem,
+	handleDeleteDatasetDraftItem,
 	handleArchiveDataset,
 	handleDiscardDatasetDraft,
 } = createDatasetRouteHandlers();

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { upsertDatasetDraftItem } from "../../src/lib/api";
+import {
+	deleteDatasetDraftItem,
+	upsertDatasetDraftItem,
+} from "../../src/lib/api";
 import { setCredentials } from "../../src/lib/auth";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -42,5 +45,21 @@ describe("dataset API client", () => {
 		);
 		const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(new Headers(request.headers).get("if-match")).toBe('"2"');
+	});
+
+	it("deletes a draft item with its current ETag rather than the legacy item endpoint", async () => {
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		await deleteDatasetDraftItem({
+			project_id: PROJECT_ID,
+			slug: "golden",
+			item_key: "item/key",
+			revision: 3,
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			`/v1/datasets/by-slug/golden/draft/items/item%2Fkey?project_id=${PROJECT_ID}`,
+			expect.objectContaining({ method: "DELETE" }),
+		);
+		const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(new Headers(request.headers).get("if-match")).toBe('"3"');
 	});
 });

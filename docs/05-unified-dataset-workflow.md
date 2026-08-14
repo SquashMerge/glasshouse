@@ -214,6 +214,8 @@ type EvaluationDefinition = {
 - **Draft collision default:** one shared draft per dataset. Save uses an ETag/revision; conflicting edits require refresh/merge. V2 may add personal drafts, but not before conflict visibility works.
 - **External-key upsert:** API/SDK upserts match `item_key` only. The server never deduplicates cases by JSON equality or model output.
 - **Delete behavior:** archive datasets/evaluations by default. A version referenced by a run cannot be physically removed. Hard delete requires no versions/runs or a privileged retention job.
+
+Draft item removal uses `DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemKey}` with the draft `If-Match` ETag. Legacy `/items/{id}` write endpoints remain deprecated and return `409`; published versions are immutable.
 - **Project isolation:** every lookup and foreign key includes project scope; cross-project attachment returns `404`, not an existence leak.
 
 ## API and SDK surface

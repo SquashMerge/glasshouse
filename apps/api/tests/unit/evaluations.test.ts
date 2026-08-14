@@ -271,7 +271,7 @@ describe("evaluation MVP", () => {
 		const handlers = createExperimentHandlers({
 			pool: () => ({}) as never,
 			getDataset: async () => ({ id: datasetId }),
-			listDatasetItems: async () => ({
+			listPublishedDatasetItems: async () => ({
 				items: [{ id: "case", input: {}, expected_output: null }],
 			}),
 			createExperiment: async () => {
@@ -299,6 +299,31 @@ describe("evaluation MVP", () => {
 				new Response(JSON.stringify(body), { status }),
 		} as never);
 
+		expect(response.status).toBe(409);
+		expect(created).toBe(false);
+	});
+
+	it("rejects creation when only a draft would make the dataset nonempty", async () => {
+		let created = false;
+		const handlers = createExperimentHandlers({
+			pool: () => ({}) as never,
+			getDataset: async () => ({ id: datasetId }),
+			listPublishedDatasetItems: async () => ({ items: [] }),
+			createExperiment: async () => {
+				created = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handleCreateExperiment({
+			get: () => ({
+				actor: "test",
+				actorId: "44444444-4444-4444-8444-444444444444",
+				organizationId,
+			}),
+			req: { valid: () => baseExperiment },
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
 		expect(response.status).toBe(409);
 		expect(created).toBe(false);
 	});

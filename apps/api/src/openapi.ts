@@ -158,6 +158,8 @@ import {
 	handleGetDatasetDraft,
 	putDatasetDraftItem,
 	handlePutDatasetDraftItem,
+	deleteDatasetDraftItem,
+	handleDeleteDatasetDraftItem,
 	archiveDataset,
 	handleArchiveDataset,
 	discardDatasetDraft,
@@ -312,6 +314,7 @@ register(patchDatasetBySlug, handlePatchDatasetBySlug);
 register(createDatasetDraft, handleCreateDatasetDraft);
 register(getDatasetDraft, handleGetDatasetDraft);
 register(putDatasetDraftItem, handlePutDatasetDraftItem);
+register(deleteDatasetDraftItem, handleDeleteDatasetDraftItem);
 register(archiveDataset, handleArchiveDataset);
 register(discardDatasetDraft, handleDiscardDatasetDraft);
 register(getDataset, handleGetDataset);

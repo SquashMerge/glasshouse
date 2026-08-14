@@ -76,11 +76,12 @@ function present(row: Row) {
 		note: nullableText(row, "note"),
 		dataset_id: nullableText(row, "dataset_id"),
 		dataset_item_id: nullableText(row, "dataset_item_id"),
+		dataset_draft_item_id: nullableText(row, "dataset_draft_item_id"),
 		created_at: time(row, "created_at"),
 		updated_at: time(row, "updated_at"),
 	};
 }
-const SELECT = `SELECT s.id, s.project_id, s.trace_id, s.observation_id, s.value, s.metadata, s.created_at, r.status, r.note, r.dataset_id, r.dataset_item_id, r.updated_at FROM scores s JOIN projects p ON p.id=s.project_id AND p.status='active' JOIN feedback_reviews r ON r.score_id=s.id`;
+const SELECT = `SELECT s.id, s.project_id, s.trace_id, s.observation_id, s.value, s.metadata, s.created_at, r.status, r.note, r.dataset_id, r.dataset_item_id, r.dataset_draft_item_id, r.updated_at FROM scores s JOIN projects p ON p.id=s.project_id AND p.status='active' JOIN feedback_reviews r ON r.score_id=s.id`;
 async function requireActiveProject(
 	client: PoolClient,
 	projectId: string,
@@ -263,16 +264,24 @@ export async function promoteFeedback(
 				"Feedback must be reviewed before promotion",
 			);
 		const dataset = await client.query(
-			"SELECT id FROM datasets WHERE id=$1 AND project_id=$2",
+			"SELECT id, slug FROM datasets WHERE id=$1 AND project_id=$2 AND archived_at IS NULL FOR UPDATE",
 			[input.dataset_id, input.project_id],
 		);
 		if (!dataset.rows[0])
 			throw new FeedbackRepositoryError("NOT_FOUND", "Dataset not found");
+		const draft = await client.query(
+			`WITH inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM datasets WHERE id = $2 AND project_id = $1 ON CONFLICT (dataset_id) DO NOTHING RETURNING *) SELECT * FROM inserted UNION ALL SELECT * FROM dataset_drafts WHERE dataset_id = $2 LIMIT 1`,
+			[input.project_id, input.dataset_id, input.authorization.actor_id],
+		);
+		const draftRow = draft.rows[0];
+		if (!draftRow)
+			throw new FeedbackRepositoryError("NOT_FOUND", "Dataset draft not found");
 		const inserted = await client.query(
-			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id, feedback_score_id) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7,$8) ON CONFLICT (feedback_score_id) WHERE feedback_score_id IS NOT NULL DO NOTHING RETURNING id`,
+			`INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id, feedback_score_id) VALUES ($1,$2,$3,COALESCE((SELECT MAX(position) + 1 FROM dataset_draft_items WHERE draft_id=$2),0),$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$3::uuid) ON CONFLICT (feedback_score_id) WHERE feedback_score_id IS NOT NULL DO NOTHING RETURNING id`,
 			[
-				randomUUID(),
-				input.dataset_id,
+				input.project_id,
+				draftRow.id,
+				current.id,
 				JSON.stringify(input.input),
 				input.expected_output == null
 					? null
@@ -289,8 +298,12 @@ export async function promoteFeedback(
 				"CONFLICT",
 				"Feedback is already being promoted",
 			);
+		await client.query(
+			"UPDATE dataset_drafts SET revision = revision + 1, updated_at = now() WHERE id = $1",
+			[draftRow.id],
+		);
 		const result = await client.query(
-			"UPDATE feedback_reviews SET status='added_to_dataset',dataset_id=$1,dataset_item_id=$2,updated_at=now() WHERE score_id=$3 RETURNING updated_at",
+			"UPDATE feedback_reviews SET status='added_to_dataset',dataset_id=$1,dataset_item_id=NULL,dataset_draft_item_id=$2,updated_at=now() WHERE score_id=$3 RETURNING updated_at",
 			[input.dataset_id, itemId, current.id],
 		);
 		await client.query("COMMIT");
@@ -298,7 +311,8 @@ export async function promoteFeedback(
 			...current,
 			status: "added_to_dataset" as const,
 			dataset_id: input.dataset_id,
-			dataset_item_id: itemId,
+			dataset_item_id: null,
+			dataset_draft_item_id: itemId,
 			updated_at: time(result.rows[0]!, "updated_at"),
 		};
 	} catch (cause) {

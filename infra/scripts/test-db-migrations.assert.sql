@@ -891,6 +891,26 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'durable experiment task ledger is incomplete';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'experiment_tasks'
+            AND column_name = 'dataset_version_item_id'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'experiment_results'
+            AND column_name = 'dataset_version_item_id'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'experiment_tasks'::regclass
+            AND conname = 'experiment_tasks_one_item_identity'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public'
+            AND indexname = 'experiment_tasks_version_item_key'
+    ) OR pg_get_functiondef('seed_experiment_tasks'::regproc) NOT LIKE '%dataset_version_item_id%'
+        OR pg_get_functiondef('seed_experiment_tasks'::regproc) LIKE '%FROM dataset_items%' THEN
+        RAISE EXCEPTION 'experiment task seeding does not use immutable dataset snapshots';
+    END IF;
 
     IF (
         SELECT count(*)

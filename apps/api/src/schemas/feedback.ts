@@ -76,6 +76,7 @@ export const Feedback = z
 		note: z.string().nullable(),
 		dataset_id: z.string().uuid().nullable(),
 		dataset_item_id: z.string().uuid().nullable(),
+		dataset_draft_item_id: z.string().uuid().nullable(),
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
 	})

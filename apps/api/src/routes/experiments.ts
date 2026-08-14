@@ -1,7 +1,7 @@
 import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { getDataset, listDatasetItems } from "../db/datasets.js";
+import { getDataset, listPublishedDatasetItems } from "../db/datasets.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
 	claimExperimentTask,
@@ -209,7 +209,7 @@ export type ExperimentDependencies = {
 	claimExecution: typeof claimExperimentExecution;
 	reconcileUnknownProviderDispatch: typeof reconcileUnknownExperimentTaskProviderDispatch;
 	summary: typeof experimentSummaryRecord;
-	listDatasetItems: typeof listDatasetItems;
+	listPublishedDatasetItems: typeof listPublishedDatasetItems;
 	getDataset: typeof getDataset;
 	invokeLlm: typeof invokeConfiguredLlm;
 	trace: (input: {
@@ -346,7 +346,7 @@ export const production: ExperimentDependencies = {
 	reconcileUnknownProviderDispatch:
 		reconcileUnknownExperimentTaskProviderDispatch,
 	summary: experimentSummaryRecord,
-	listDatasetItems,
+	listPublishedDatasetItems,
 	getDataset,
 	invokeLlm: invokeConfiguredLlm,
 	trace: createProductionTrace(),
@@ -620,12 +620,15 @@ export function createExperimentHandlers(
 					id: body.dataset_id,
 					authorization: projectAuthorization(trustedTenant(c), "execute"),
 				});
-				const dataset = await deps.listDatasetItems(db, {
+				const dataset = await deps.listPublishedDatasetItems(db, {
 					project_id: body.project_id,
 					dataset_id: body.dataset_id,
 					authorization: projectAuthorization(trustedTenant(c), "execute"),
 				});
-				if (dataset.items.some((item) => item.expected_output === null))
+				if (
+					!dataset.items.length ||
+					dataset.items.some((item) => item.expected_output === null)
+				)
 					throw new ExperimentRepositoryError(
 						"CONFLICT",
 						"Every dataset item needs expected output for this evaluator",

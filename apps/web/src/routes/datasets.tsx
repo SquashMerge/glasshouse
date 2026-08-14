@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	createDatasetDraft,
 	createDataset,
-	deleteDatasetItem,
+	deleteDatasetDraftItem,
 	getDataset,
 	listDatasetItems,
 	listDatasets,
@@ -205,10 +205,15 @@ export function DatasetDetailPage() {
 		try {
 			setError("");
 			setDeletingItemId(itemId);
-			await deleteDatasetItem({
+			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
-				dataset_id: id,
-				item_id: itemId,
+				slug: dataset.data!.slug,
+			});
+			await deleteDatasetDraftItem({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				item_key: itemId,
+				revision: draft.revision,
 			});
 			await client.invalidateQueries({
 				queryKey: ["dataset-items", selectedProjectId, id],

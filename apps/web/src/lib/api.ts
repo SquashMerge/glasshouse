@@ -150,6 +150,18 @@ export async function discardDatasetDraft(input: {
 		"discardDatasetDraft",
 	);
 }
+export async function deleteDatasetDraftItem(input: {
+	project_id: string;
+	slug: string;
+	item_key: string;
+	revision: number;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/items/${encodeURIComponent(input.item_key)}${buildQs({ project_id: input.project_id })}`,
+		{ method: "DELETE", headers: { "if-match": `"${input.revision}"` } },
+	);
+	if (!response.ok) await responseJson(response, "deleteDatasetDraftItem");
+}
 export interface DatasetItem {
 	id: string;
 	dataset_id: string;
@@ -184,6 +196,7 @@ export interface Feedback {
 	note: string | null;
 	dataset_id: string | null;
 	dataset_item_id: string | null;
+	dataset_draft_item_id: string | null;
 	created_at: string;
 	updated_at: string;
 }

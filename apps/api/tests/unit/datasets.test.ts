@@ -2,26 +2,31 @@ import { describe, expect, it } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
 	addDatasetItem,
+	authorizeDatasetWrite,
 	createDataset,
 	DatasetRepositoryError,
+	deleteDatasetDraftItem,
 	deleteDatasetItem,
 	getDatasetBySlug,
 	getDatasetDraft,
 	getOrCreateDatasetDraft,
 	getDataset,
 	listDatasetItems,
+	listPublishedDatasetItems,
 	listDatasets,
 	upsertDatasetDraftItem,
 	updateDatasetMetadata,
 } from "../../src/db/datasets";
 import {
 	deleteDatasetItem as deleteDatasetItemRoute,
+	deleteDatasetDraftItem as deleteDatasetDraftItemRoute,
 	createDatasetDraft,
 	createDatasetRouteHandlers,
 	getDatasetDraft as getDatasetDraftRoute,
 	handleCreateDatasetDraft,
 	handleGetDatasetDraft,
 	handlePutDatasetDraftItem,
+	handleDeleteDatasetDraftItem,
 	putDatasetDraftItem,
 } from "../../src/routes/datasets";
 import {
@@ -224,6 +229,24 @@ describe("dataset repository", () => {
 			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
 	});
 
+	it("keeps draft-visible items separate from published execution items", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [datasetRow] },
+			{ rows: [] },
+		]);
+		await listPublishedDatasetItems(db, {
+			project_id: PROJECT,
+			dataset_id: DATASET,
+			authorization,
+		});
+		const query = db.queries.find((entry) =>
+			entry.text.includes("FROM dataset_version_items"),
+		);
+		expect(query?.text).not.toContain("dataset_draft_items");
+	});
+
 	it("serializes draft items to the exact public schema without persisted fields", async () => {
 		const db = fakeDb([
 			{ rows: [] },
@@ -283,7 +306,9 @@ describe("dataset repository", () => {
 		).resolves.toMatchObject({ item_count: 3 });
 		expect(
 			db.queries.some((query) =>
-				query.text.includes("COUNT(*)::int FROM dataset_items"),
+				query.text.includes(
+					"dataset_versions v WHERE v.dataset_id = datasets.id",
+				),
 			),
 		).toBe(true);
 		const audits = db.queries.filter((query) =>
@@ -405,8 +430,38 @@ describe("dataset repository", () => {
 	});
 
 	it("locks and authorizes the active project before every dataset mutation", async () => {
-		for (const operation of [createDataset, addDatasetItem, deleteDatasetItem])
+		for (const operation of [
+			createDataset,
+			addDatasetItem,
+			deleteDatasetItem,
+			deleteDatasetDraftItem,
+			authorizeDatasetWrite,
+		])
 			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
+	});
+
+	it("deletes a draft item with its revision and records deletion provenance", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [{ id: "draft", dataset_id: DATASET, revision: 2 }] },
+			{ rows: [{ id: "item" }] },
+		]);
+		await deleteDatasetDraftItem(db, {
+			project_id: PROJECT,
+			slug: "golden",
+			item_key: "stable",
+			revision: 2,
+			authorization,
+		});
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("DELETE FROM dataset_draft_items"),
+			),
+		).toBe(true);
+		expect(
+			db.queries.some((query) => query.text.includes("'draft_item_deleted'")),
+		).toBe(true);
 	});
 
 	it("does not persist provenance copied from another project", async () => {
@@ -509,6 +564,7 @@ describe("dataset repository", () => {
 		app.openapi(createDatasetDraft, handleCreateDatasetDraft);
 		app.openapi(getDatasetDraftRoute, handleGetDatasetDraft);
 		app.openapi(putDatasetDraftItem, handlePutDatasetDraftItem);
+		app.openapi(deleteDatasetDraftItemRoute, handleDeleteDatasetDraftItem);
 		const document = app.getOpenAPIDocument({
 			openapi: "3.1.0",
 			info: { title: "test", version: "1" },
@@ -523,6 +579,19 @@ describe("dataset repository", () => {
 		const put = document.paths?.[
 			"/v1/datasets/by-slug/{slug}/draft/items/{itemKey}"
 		]?.put as any;
+		const remove = document.paths?.[
+			"/v1/datasets/by-slug/{slug}/draft/items/{itemKey}"
+		]?.delete as any;
+		expect(remove.responses["204"].headers.ETag).toBeDefined();
+		expect(remove.parameters).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					in: "header",
+					name: "if-match",
+					required: true,
+				}),
+			]),
+		);
 		expect(put.parameters).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
@@ -545,6 +614,7 @@ describe("dataset repository", () => {
 	it("returns only the documented draft item fields from the route", async () => {
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
 			upsertDatasetDraftItem: async () => ({
 				item_key: "stable",
 				input: {},
@@ -585,6 +655,7 @@ describe("dataset repository", () => {
 		let written = false;
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
 			targetExists: async () => false,
 			upsertDatasetDraftItem: async () => {
 				written = true;
@@ -611,5 +682,41 @@ describe("dataset repository", () => {
 		} as never);
 		expect(response.status).toBe(404);
 		expect(written).toBe(false);
+	});
+
+	it("authorizes draft writes before probing source provenance", async () => {
+		let checked = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {
+				throw new DatasetRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			},
+			targetExists: async () => {
+				checked = true;
+				return true;
+			},
+		} as never);
+		const response = await handlers.handlePutDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => '"1"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden", itemKey: "stable" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: { input: {}, source_trace_id: "a".repeat(32) },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+		expect(response.status).toBe(404);
+		expect(checked).toBe(false);
 	});
 });

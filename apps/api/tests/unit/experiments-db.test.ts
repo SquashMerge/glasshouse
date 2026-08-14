@@ -109,6 +109,44 @@ describe("durable experiment task ledger", () => {
 		);
 	});
 
+	it("claims immutable published snapshot items without falling back to drafts", async () => {
+		const snapshotItemId = "88888888-8888-4888-8888-888888888888";
+		const db = transactionPool([
+			{ rows: [] },
+			{ rows: [runningExperiment] },
+			{ rows: [{ id: taskId, dataset_version_item_id: snapshotItemId }] },
+			{
+				rows: [
+					{
+						id: taskId,
+						dataset_version_item_id: snapshotItemId,
+						lease_token: leaseToken,
+					},
+				],
+			},
+			{
+				rows: [
+					{
+						input: { question: "published" },
+						expected_output: { value: "one" },
+					},
+				],
+			},
+			{ rows: [] },
+		]);
+
+		await expect(
+			claimExperimentTask(db as never, {
+				project_id: projectId,
+				experiment_id: experimentId,
+			}),
+		).resolves.toMatchObject({ dataset_item_id: snapshotItemId });
+		const itemQuery = db.calls.find((call) =>
+			call.text.includes("FROM dataset_version_items"),
+		);
+		expect(itemQuery?.values).toEqual([null, snapshotItemId]);
+	});
+
 	it("does not finalize a result after requester execution access is revoked", async () => {
 		const db = transactionPool([
 			{ rows: [] },

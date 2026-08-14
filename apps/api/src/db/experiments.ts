@@ -114,7 +114,12 @@ function result(row: Row) {
 	return {
 		id: text(row, "id"),
 		experiment_id: text(row, "experiment_id"),
-		dataset_item_id: text(row, "dataset_item_id"),
+		dataset_item_id: text(
+			row,
+			row.dataset_version_item_id
+				? "dataset_version_item_id"
+				: "dataset_item_id",
+		),
 		agent_version: nullableText(row, "agent_version"),
 		output: row.output == null ? null : json(row, "output"),
 		scores: json(row, "scores") as Record<string, number>,
@@ -384,21 +389,24 @@ export async function claimExperimentTask(
 			}
 			if (access.row.status !== "running") return null;
 			const candidate = await client.query(
-				"SELECT t.id, t.dataset_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
+				"SELECT t.id, t.dataset_item_id, t.dataset_version_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
 				[input.experiment_id],
 			);
 			const task = candidate.rows[0] as Row | undefined;
 			if (!task) return null;
 			const leaseToken = input.lease_token ?? randomUUID();
 			const claimed = await client.query(
-				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 RETURNING id, dataset_item_id, lease_token",
+				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 RETURNING id, dataset_item_id, dataset_version_item_id, lease_token",
 				[text(task, "id"), leaseToken, input.lease_seconds ?? 60],
 			);
 			const claimedTask = claimed.rows[0] as Row | undefined;
 			if (!claimedTask) return null;
 			const item = await client.query(
-				"SELECT input, expected_output FROM dataset_items WHERE id=$1",
-				[text(claimedTask, "dataset_item_id")],
+				"SELECT input, expected_output FROM dataset_items WHERE id=$1 UNION ALL SELECT input, expected_output FROM dataset_version_items WHERE id=$2",
+				[
+					claimedTask.dataset_item_id ?? null,
+					claimedTask.dataset_version_item_id ?? null,
+				],
 			);
 			const datasetItem = item.rows[0] as Row | undefined;
 			if (!datasetItem)
@@ -408,7 +416,12 @@ export async function claimExperimentTask(
 				);
 			return {
 				id: text(claimedTask, "id"),
-				dataset_item_id: text(claimedTask, "dataset_item_id"),
+				dataset_item_id: text(
+					claimedTask,
+					claimedTask.dataset_version_item_id
+						? "dataset_version_item_id"
+						: "dataset_item_id",
+				),
 				lease_token: text(claimedTask, "lease_token"),
 				input: json(datasetItem, "input"),
 				expected_output: datasetItem.expected_output,
@@ -478,16 +491,17 @@ export async function finalizeExperimentTask(
 			}
 			if (access.row.status !== "running") return false;
 			const finalized = await client.query(
-				"UPDATE experiment_tasks SET status=$4, lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id",
+				"UPDATE experiment_tasks SET status=$4, lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id",
 				[input.task_id, input.experiment_id, input.lease_token, input.status],
 			);
 			const task = finalized.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),$1,$2,$3,$4::jsonb,$5::jsonb,$6,$7) ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
+				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, dataset_version_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),$1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT DO NOTHING",
 				[
 					text(task, "experiment_id"),
-					text(task, "dataset_item_id"),
+					task.dataset_item_id ?? null,
+					task.dataset_version_item_id ?? null,
 					input.agent_version ?? null,
 					input.output == null ? null : JSON.stringify(input.output),
 					JSON.stringify(input.scores),
@@ -522,14 +536,18 @@ export async function reconcileUnknownExperimentTaskProviderDispatch(
 				return false;
 			}
 			const failed = await client.query(
-				"UPDATE experiment_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id",
+				"UPDATE experiment_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id",
 				[input.task_id, input.experiment_id, input.lease_token],
 			);
 			const task = failed.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, output, scores, status) VALUES (gen_random_uuid(), $1, $2, NULL, '{}'::jsonb, 'failed') ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
-				[text(task, "experiment_id"), text(task, "dataset_item_id")],
+				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, dataset_version_item_id, output, scores, status) VALUES (gen_random_uuid(), $1, $2, $3, NULL, '{}'::jsonb, 'failed') ON CONFLICT DO NOTHING",
+				[
+					text(task, "experiment_id"),
+					task.dataset_item_id ?? null,
+					task.dataset_version_item_id ?? null,
+				],
 			);
 			return true;
 		});
