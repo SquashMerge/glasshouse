@@ -4,7 +4,10 @@ DECLARE
     fixture_owner_id UUID := '51000000-0000-4000-8000-000000000101';
     fixture_reader_id UUID := '51000000-0000-4000-8000-000000000102';
     fixture_other_id UUID := '51000000-0000-4000-8000-000000000103';
-    fixture_worker_id UUID := '51000000-0000-4000-8000-000000000104';
+    fixture_worker_id UUID := durable_actor_id(
+        'internal:evaluation-worker:v1',
+        fixture_organization_id::text
+    );
     fixture_project_id UUID := '51000000-0000-4000-8000-000000000011';
 BEGIN
     IF (

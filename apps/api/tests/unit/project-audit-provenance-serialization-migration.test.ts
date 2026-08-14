@@ -192,16 +192,16 @@ test("0054 serializes project-scoped admin audit writes with UUID reuse checks",
 	expect(migrationHarness).toContain(
 		"query LIKE 'INSERT INTO admin_access_audit_events%'",
 	);
+	expect(migrationHarness).toContain("admin audit event did not persist");
 	expect(adminAuditScopeFixture).toContain(
 		"'54000000-0000-4000-8000-000000000001'",
 	);
-	expect(adminAuditScopeAssertions).toContain(
-		"NULL,\n        fixture_owner_id",
-	);
-	expect(adminAuditScopeAssertions).toContain(
+	for (const message of [
 		"admin access audit project belongs to another organization",
-	);
-	expect(adminAuditScopeAssertions).toContain(
 		"project UUID has retained audit provenance",
-	);
+		"admin access audit events are append-only",
+		"0054 admin access audit events are not content-free",
+	]) {
+		expect(adminAuditScopeAssertions).toContain(message);
+	}
 });

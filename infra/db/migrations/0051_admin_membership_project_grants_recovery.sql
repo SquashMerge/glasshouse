@@ -154,7 +154,7 @@ END;
 $$;
 DROP TRIGGER IF EXISTS project_actor_grants_scope ON project_actor_grants;
 CREATE TRIGGER project_actor_grants_scope
-BEFORE INSERT OR UPDATE OF project_id, organization_id, actor_id ON project_actor_grants
+BEFORE INSERT OR UPDATE OF project_id, organization_id, actor_id, role ON project_actor_grants
 FOR EACH ROW EXECUTE FUNCTION enforce_project_actor_grant_scope();
 
 CREATE OR REPLACE FUNCTION prevent_final_admin_role_removal()

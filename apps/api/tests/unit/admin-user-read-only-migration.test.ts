@@ -111,6 +111,13 @@ const adminMembershipProjectGrantsAssertion = readFileSync(
 	),
 	"utf8",
 );
+const adminMembershipProjectGrantsMigration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0051_admin_membership_project_grants_recovery.sql",
+	),
+	"utf8",
+);
 const adminMembershipProjectGrantsFixture = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -600,6 +607,21 @@ WHERE id IN (
 		"('51000000-0000-4000-8000-000000000020', '51000000-0000-4000-8000-000000000002', 'Other default', 'default')",
 	);
 	expect(adminMembershipProjectGrantsFixture).toContain(defaultAssignment);
+	expect(adminMembershipProjectGrantsFixture).not.toContain(
+		"internal:evaluation-worker:v1",
+	);
+	expect(adminMembershipProjectGrantsFixture).toContain(
+		"organization-insert trigger already provisions the durable",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"fixture_worker_id UUID := durable_actor_id(",
+	);
+	expect(adminMembershipProjectGrantsAssertion).toContain(
+		"fixture_organization_id::text",
+	);
+	expect(adminMembershipProjectGrantsMigration).toContain(
+		"BEFORE INSERT OR UPDATE OF project_id, organization_id, actor_id, role ON project_actor_grants",
+	);
 	expect(adminMembershipProjectGrantsFixture).toContain(restoreNotNull);
 	expect(adminMembershipProjectGrantsFixture).not.toContain(
 		"ALTER TABLE organizations DROP CONSTRAINT",

@@ -468,7 +468,7 @@ run_admin_access_audit_provenance_serialization_check() {
 	local organization_id="51000000-0000-4000-8000-000000000001"
 	local owner_id="51000000-0000-4000-8000-000000000101"
 	local reader_id="51000000-0000-4000-8000-000000000102"
-	local lock_state= lock_waited=
+	local lock_state= lock_waited= event_persisted=
 	ADMIN_AUDIT_LOCK_INPUT="$(mktemp)"
 	ADMIN_AUDIT_LOCK_OUTPUT="$(mktemp)"
 	ADMIN_AUDIT_INSERT_OUTPUT="$(mktemp)"
@@ -513,6 +513,11 @@ run_admin_access_audit_provenance_serialization_check() {
 	timeout 10s bash -c "while kill -0 '$ADMIN_AUDIT_INSERT_PID' 2>/dev/null; do sleep 0.1; done"
 	wait "$ADMIN_AUDIT_LOCK_PID"
 	wait "$ADMIN_AUDIT_INSERT_PID"
+	event_persisted="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$database" --command "SELECT EXISTS (SELECT 1 FROM admin_access_audit_events WHERE organization_id = '$organization_id' AND project_id = '$project_id' AND actor_id = '$owner_id' AND target_actor_id = '$reader_id' AND action = 'project_grant_set')")"
+	if [[ "$event_persisted" != "t" ]]; then
+		echo "admin audit event did not persist after advisory-lock serialization" >&2
+		exit 1
+	fi
 	rm -f "$ADMIN_AUDIT_LOCK_INPUT" "$ADMIN_AUDIT_LOCK_OUTPUT" "$ADMIN_AUDIT_INSERT_OUTPUT"
 	ADMIN_AUDIT_LOCK_PID=
 	ADMIN_AUDIT_INSERT_PID=

@@ -39,7 +39,9 @@ DECLARE
     fixture_owner_id UUID := '51000000-0000-4000-8000-000000000101';
     fixture_reader_id UUID := '51000000-0000-4000-8000-000000000102';
     fixture_other_project_id UUID := '51000000-0000-4000-8000-000000000020';
+    missing_project_id UUID := '54000000-0000-4000-8000-000000000099';
     serialized_project_id UUID := '54000000-0000-4000-8000-000000000001';
+    invalid_project_id UUID;
     error_state TEXT;
     error_message TEXT;
 BEGIN
@@ -74,24 +76,30 @@ BEGIN
         RAISE EXCEPTION '0054 rejected an organization-scoped admin audit event';
     END IF;
 
-    BEGIN
-        PERFORM audit_admin_access_event(
-            fixture_organization_id,
-            fixture_other_project_id,
-            fixture_owner_id,
-            fixture_reader_id,
-            'project_grant_set'
-        );
-        RAISE EXCEPTION '0054 accepted a cross-organization project-scoped admin audit event';
-    EXCEPTION WHEN foreign_key_violation THEN
-        GET STACKED DIAGNOSTICS
-            error_state = RETURNED_SQLSTATE,
-            error_message = MESSAGE_TEXT;
-        IF error_state <> '23503'
-           OR error_message <> 'admin access audit project belongs to another organization' THEN
-            RAISE EXCEPTION '0054 changed the admin audit cross-organization error contract';
-        END IF;
-    END;
+    FOR invalid_project_id IN
+        SELECT fixture_other_project_id
+        UNION ALL
+        SELECT missing_project_id
+    LOOP
+        BEGIN
+            PERFORM audit_admin_access_event(
+                fixture_organization_id,
+                invalid_project_id,
+                fixture_owner_id,
+                fixture_reader_id,
+                'project_grant_set'
+            );
+            RAISE EXCEPTION '0054 accepted an invalid project-scoped admin audit event';
+        EXCEPTION WHEN foreign_key_violation THEN
+            GET STACKED DIAGNOSTICS
+                error_state = RETURNED_SQLSTATE,
+                error_message = MESSAGE_TEXT;
+            IF error_state <> '23503'
+               OR error_message <> 'admin access audit project belongs to another organization' THEN
+                RAISE EXCEPTION '0054 changed the admin audit project-scope error contract';
+            END IF;
+        END;
+    END LOOP;
 
     BEGIN
         UPDATE admin_access_audit_events
@@ -100,7 +108,13 @@ BEGIN
           AND project_id = serialized_project_id;
         RAISE EXCEPTION '0054 accepted an admin access audit update';
     EXCEPTION WHEN object_not_in_prerequisite_state THEN
-        NULL;
+        GET STACKED DIAGNOSTICS
+            error_state = RETURNED_SQLSTATE,
+            error_message = MESSAGE_TEXT;
+        IF error_state <> '55000'
+           OR error_message <> 'admin access audit events are append-only' THEN
+            RAISE EXCEPTION '0054 changed the admin audit update immutability contract';
+        END IF;
     END;
     BEGIN
         DELETE FROM admin_access_audit_events
@@ -108,8 +122,39 @@ BEGIN
           AND project_id = serialized_project_id;
         RAISE EXCEPTION '0054 accepted an admin access audit deletion';
     EXCEPTION WHEN object_not_in_prerequisite_state THEN
-        NULL;
+        GET STACKED DIAGNOSTICS
+            error_state = RETURNED_SQLSTATE,
+            error_message = MESSAGE_TEXT;
+        IF error_state <> '55000'
+           OR error_message <> 'admin access audit events are append-only' THEN
+            RAISE EXCEPTION '0054 changed the admin audit deletion immutability contract';
+        END IF;
     END;
+
+    IF (
+        SELECT count(*)
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'admin_access_audit_events'
+    ) <> 8
+    OR EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'admin_access_audit_events'
+          AND column_name NOT IN (
+              'id',
+              'organization_id',
+              'project_id',
+              'actor_id',
+              'target_actor_id',
+              'action',
+              'correlation_id',
+              'created_at'
+          )
+    ) THEN
+        RAISE EXCEPTION '0054 admin access audit events are not content-free';
+    END IF;
 
     UPDATE projects
     SET status = 'deleting'
@@ -151,9 +196,9 @@ BEGIN
         SELECT 1
         FROM admin_access_audit_events
         WHERE organization_id = fixture_organization_id
-          AND project_id = fixture_other_project_id
+          AND project_id IN (fixture_other_project_id, missing_project_id)
     ) THEN
-        RAISE EXCEPTION '0054 retained a cross-organization project-scoped admin audit event';
+        RAISE EXCEPTION '0054 retained an invalid project-scoped admin audit event';
     END IF;
     IF NOT EXISTS (
         SELECT 1
