@@ -60,9 +60,12 @@ BEGIN
 	INSERT INTO scores (id, project_id, name, value)
 	VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'human.feedback', 1);
 	BEGIN
-		INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_draft_item_id)
-		VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'added_to_dataset', 'a4000000-0000-4000-8000-000000000004', 'a4000000-0000-4000-8000-000000000007');
-		RAISE EXCEPTION 'cross-project feedback draft link was accepted';
+		INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+		SELECT 'a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'added_to_dataset', 'a4000000-0000-4000-8000-000000000004', id
+		FROM dataset_version_items
+		WHERE project_id = '11111111-1111-1111-1111-111111111111'
+		LIMIT 1;
+		RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';
 	EXCEPTION WHEN foreign_key_violation THEN NULL;
 	END;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_versions')
