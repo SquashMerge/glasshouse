@@ -30,8 +30,8 @@ BEGIN
 		RAISE EXCEPTION 'normalized scalar and array items were not retained in the immutable snapshot';
 	END IF;
 	BEGIN
-		INSERT INTO experiments (id, project_id, agent_id, dataset_id)
-		VALUES ('a6000000-0000-4000-8000-000000000002', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001');
+		INSERT INTO experiments (id, project_id, agent_id, dataset_id, status)
+		VALUES ('a6000000-0000-4000-8000-000000000002', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001', 'completed');
 		RAISE EXCEPTION 'cross-project experiment dataset reference was accepted';
 	EXCEPTION WHEN foreign_key_violation THEN NULL;
 	END;
