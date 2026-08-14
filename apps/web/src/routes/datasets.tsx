@@ -2,12 +2,13 @@ import * as React from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	addDatasetItem,
+	createDatasetDraft,
 	createDataset,
 	deleteDatasetItem,
 	getDataset,
 	listDatasetItems,
 	listDatasets,
+	upsertDatasetDraftItem,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
@@ -171,9 +172,15 @@ export function DatasetDetailPage() {
 		try {
 			setError("");
 			setPending(true);
-			await addDatasetItem({
+			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
-				dataset_id: id,
+				slug: dataset.data!.slug,
+			});
+			await upsertDatasetDraftItem({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				item_key: crypto.randomUUID(),
+				revision: draft.revision,
 				input: parseObject(input),
 				expected_output: expected.trim() ? parseObject(expected) : null,
 				metadata: parseObject(metadata),

@@ -260,6 +260,8 @@ describe("dataset repository", () => {
 			input: { question: "hello" },
 			expected_output: null,
 			metadata: { source: "test" },
+			source_trace_id: "trace",
+			source_observation_id: null,
 			position: 0,
 		});
 	});
@@ -577,5 +579,37 @@ describe("dataset repository", () => {
 			metadata: {},
 			position: 0,
 		});
+	});
+
+	it("rejects draft provenance outside the authorized project before writing", async () => {
+		let written = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			targetExists: async () => false,
+			upsertDatasetDraftItem: async () => {
+				written = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handlePutDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => '"1"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden", itemKey: "stable" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: { input: {}, source_trace_id: "a".repeat(32) },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+		expect(response.status).toBe(404);
+		expect(written).toBe(false);
 	});
 });

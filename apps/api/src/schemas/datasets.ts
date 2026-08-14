@@ -128,6 +128,8 @@ export const DatasetDraftItem = z
 		input: z.record(z.string(), z.unknown()),
 		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
 		metadata: z.record(z.string(), z.unknown()).optional(),
+		source_trace_id: z.string().max(128).nullable().optional(),
+		source_observation_id: z.string().max(128).nullable().optional(),
 		position: z.number().int().nonnegative().optional(),
 	})
 	.strict()
@@ -136,8 +138,18 @@ export const DatasetDraftItemUpsert = DatasetDraftItem.pick({
 	input: true,
 	expected_output: true,
 	metadata: true,
+	source_trace_id: true,
+	source_observation_id: true,
 })
 	.strict()
+	.superRefine((value, ctx) => {
+		if (value.source_observation_id && !value.source_trace_id)
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["source_observation_id"],
+				message: "Observation provenance requires a trace",
+			});
+	})
 	.openapi("DatasetDraftItemUpsert");
 export const DatasetDraftItemParam = DatasetSlugParam.extend({
 	itemKey: z

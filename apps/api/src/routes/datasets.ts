@@ -439,6 +439,20 @@ export function createDatasetRouteHandlers(
 						"If-Match must contain the current draft revision",
 					);
 				const body = c.req.valid("json");
+				const tenant = trustedTenant(c);
+				if (
+					body.source_trace_id &&
+					!(await dependencies.targetExists({
+						organization_id: tenant.organizationId,
+						project_id: c.req.valid("query").project_id,
+						trace_id: body.source_trace_id,
+						observation_id: body.source_observation_id,
+					}))
+				)
+					throw new DatasetRepositoryError(
+						"NOT_FOUND",
+						"Source trace not found",
+					);
 				const item = await dependencies.upsertDatasetDraftItem(
 					dependencies.pool(),
 					{
@@ -447,10 +461,7 @@ export function createDatasetRouteHandlers(
 						item_key: c.req.valid("param").itemKey,
 						revision: Number(match),
 						...body,
-						authorization: projectAuthorization(
-							trustedTenant(c),
-							"product_write",
-						),
+						authorization: projectAuthorization(tenant, "product_write"),
 					},
 				);
 				c.header("ETag", `\"${Number(match) + 1}\"`);

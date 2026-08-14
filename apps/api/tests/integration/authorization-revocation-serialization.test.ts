@@ -255,7 +255,7 @@ async function seedExecutionExperiment(pool: Pool) {
 		"dispatch-race",
 	);
 	await pool.query(
-		"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Dispatch race dataset')",
+		"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'dispatch-race-dataset', 'Dispatch race dataset')",
 		[datasetId, projectId],
 	);
 	await pool.query(
@@ -416,7 +416,7 @@ test.skipIf(!databaseUrl)(
 				)
 			).actorId;
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Revocation race dataset')",
+				"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'revocation-race-dataset', 'Revocation race dataset')",
 				[datasetId, projectId],
 			);
 			await pool.query(
@@ -452,7 +452,7 @@ test.skipIf(!databaseUrl)(
 			const allowed = await authorization;
 			if (allowed)
 				await writer.query(
-					"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'must-not-write')",
+					"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'must-not-write', 'must-not-write')",
 					[randomUUID(), projectId],
 				);
 			await writer.query("COMMIT");
@@ -1191,7 +1191,7 @@ test.skipIf(!databaseUrl)(
 				)
 			).actorId;
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Provider revocation dataset')",
+				"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'provider-revocation-dataset', 'Provider revocation dataset')",
 				[datasetId, projectId],
 			);
 			await pool.query(
@@ -1388,7 +1388,7 @@ test.skipIf(!databaseUrl)(
 				)
 			).actorId;
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Experiment SSE dataset')",
+				"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'experiment-sse-dataset', 'Experiment SSE dataset')",
 				[datasetId, projectId],
 			);
 			await pool.query(

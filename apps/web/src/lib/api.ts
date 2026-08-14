@@ -119,6 +119,8 @@ export async function upsertDatasetDraftItem(input: {
 	input: JsonObject;
 	expected_output?: JsonObject | null;
 	metadata?: JsonObject;
+	source_trace_id?: string | null;
+	source_observation_id?: string | null;
 }): Promise<void> {
 	const { project_id, slug, item_key, revision, ...body } = input;
 	await responseJson(

@@ -149,6 +149,8 @@ function draftItem(row: Row) {
 		expected_output:
 			row.expected_output == null ? null : jsonObject(row, "expected_output"),
 		metadata: jsonObject(row, "metadata"),
+		source_trace_id: nullableText(row, "source_trace_id"),
+		source_observation_id: nullableText(row, "source_observation_id"),
 		position: Number(row.position),
 	};
 }
@@ -484,6 +486,8 @@ export async function upsertDatasetDraftItem(
 		input: JsonObject;
 		expected_output?: JsonObject | null;
 		metadata?: JsonObject;
+		source_trace_id?: string | null;
+		source_observation_id?: string | null;
 		authorization: ProjectAuthorization;
 	},
 ) {
@@ -511,7 +515,7 @@ export async function upsertDatasetDraftItem(
 				"Dataset draft has changed; refresh and retry",
 			);
 		const result = await client.query(
-			`INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata) VALUES ($1, $2, $3, COALESCE((SELECT position FROM dataset_draft_items WHERE draft_id = $2 AND item_key = $3), (SELECT COALESCE(MAX(position) + 1, 0) FROM dataset_draft_items WHERE draft_id = $2)), $4::jsonb, $5::jsonb, $6::jsonb) ON CONFLICT (draft_id, item_key) DO UPDATE SET input = EXCLUDED.input, expected_output = EXCLUDED.expected_output, metadata = EXCLUDED.metadata, updated_at = now() RETURNING *`,
+			`INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) VALUES ($1, $2, $3, COALESCE((SELECT position FROM dataset_draft_items WHERE draft_id = $2 AND item_key = $3), (SELECT COALESCE(MAX(position) + 1, 0) FROM dataset_draft_items WHERE draft_id = $2)), $4::jsonb, $5::jsonb, $6::jsonb, $7, $8) ON CONFLICT (draft_id, item_key) DO UPDATE SET input = EXCLUDED.input, expected_output = EXCLUDED.expected_output, metadata = EXCLUDED.metadata, source_trace_id = EXCLUDED.source_trace_id, source_observation_id = EXCLUDED.source_observation_id, updated_at = now() RETURNING *`,
 			[
 				input.project_id,
 				row.id,
@@ -521,6 +525,8 @@ export async function upsertDatasetDraftItem(
 					? null
 					: JSON.stringify(input.expected_output),
 				JSON.stringify(input.metadata ?? {}),
+				input.source_trace_id ?? null,
+				input.source_observation_id ?? null,
 			],
 		);
 		await client.query(
@@ -661,7 +667,7 @@ export async function listDatasetItems(
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await getDatasetRow(client, input.project_id, input.dataset_id);
 		const result = await client.query(
-			`SELECT i.* FROM dataset_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE i.dataset_id = $1 AND d.project_id = $2 ORDER BY i.created_at ASC, i.id ASC`,
+			`WITH selected_draft AS (SELECT dr.id FROM dataset_drafts dr WHERE dr.dataset_id = $1), visible_items AS (SELECT i.id, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_draft_items i JOIN selected_draft d ON d.id = i.draft_id UNION ALL SELECT i.id, i.dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, 0 AS position FROM dataset_items i WHERE i.dataset_id = $1 AND NOT EXISTS (SELECT 1 FROM selected_draft)) SELECT i.id, i.dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM visible_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
 		await client.query("COMMIT");

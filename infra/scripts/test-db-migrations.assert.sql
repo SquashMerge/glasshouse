@@ -3,6 +3,15 @@ BEGIN
 	IF (SELECT slug FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000001') <> 'legacy-evaluation-dataset' THEN
 		RAISE EXCEPTION 'dataset slug backfill was not deterministic';
 	END IF;
+	INSERT INTO datasets (id, project_id, name)
+	VALUES (
+		'a4000000-0000-4000-8000-000000000002',
+		'11111111-1111-1111-1111-111111111111',
+		'Direct write compatibility dataset'
+	);
+	IF (SELECT slug FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000002') <> 'dataset-a4000000000040008000000000000002' THEN
+		RAISE EXCEPTION 'direct dataset writes did not receive a stable slug';
+	END IF;
 	IF (SELECT latest_published_version FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000001') <> 1 THEN
 		RAISE EXCEPTION 'legacy dataset was not snapshotted as version one';
 	END IF;
@@ -756,10 +765,10 @@ BEGIN
         RAISE EXCEPTION 'feedback project scope constraints are incomplete';
     END IF;
 
-    INSERT INTO datasets (id, project_id, name) VALUES
-        ('a1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-a'),
-        ('a2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-b'),
-        ('b1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'feedback-scope-other');
+    INSERT INTO datasets (id, project_id, slug, name) VALUES
+        ('a1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-a', 'feedback-scope-a'),
+        ('a2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-b', 'feedback-scope-b'),
+        ('b1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'feedback-scope-other', 'feedback-scope-other');
     INSERT INTO dataset_items (id, dataset_id, input) VALUES
         ('a1000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', '{}'),
         ('a2000000-0000-4000-8000-000000000002', 'a2000000-0000-4000-8000-000000000001', '{}'),
