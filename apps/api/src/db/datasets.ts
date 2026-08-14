@@ -37,6 +37,25 @@ export class DatasetRepositoryError extends Error {
 	}
 }
 
+export async function lockDatasetSlugForCreate(
+	client: Pick<PoolClient, "query">,
+	projectId: string,
+	slug: string,
+) {
+	await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+		`dataset:${projectId}:${slug}`,
+	]);
+	const reserved = await client.query(
+		"SELECT 1 FROM dataset_tombstones WHERE project_id = $1 AND slug = $2",
+		[projectId, slug],
+	);
+	if (reserved.rows[0])
+		throw new DatasetRepositoryError(
+			"CONFLICT",
+			"Dataset identifier has been deleted",
+		);
+}
+
 export async function authorizeDatasetWrite(
 	db: Transactional,
 	input: { project_id: string; authorization: ProjectAuthorization },
@@ -251,18 +270,7 @@ export async function createDataset(
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const baseSlug = input.slug ?? slugify(input.name);
 		await lockProjectAuditProvenance(client, input.project_id);
-		await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-			`dataset:${input.project_id}:${baseSlug}`,
-		]);
-		const reserved = await client.query(
-			"SELECT 1 FROM dataset_tombstones WHERE project_id = $1 AND slug = $2",
-			[input.project_id, baseSlug],
-		);
-		if (reserved.rows[0])
-			throw new DatasetRepositoryError(
-				"CONFLICT",
-				"Dataset identifier has been deleted",
-			);
+		await lockDatasetSlugForCreate(client, input.project_id, baseSlug);
 		const result = await client.query(
 			`INSERT INTO datasets (id, project_id, slug, name, description, tags) SELECT $1, $2, $3, $4, $5, $6::jsonb FROM projects WHERE id = $2 AND status = 'active' RETURNING *, 0::int AS item_count`,
 			[

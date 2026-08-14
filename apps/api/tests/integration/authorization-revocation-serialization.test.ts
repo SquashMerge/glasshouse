@@ -4,7 +4,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { SSEStreamingApi } from "hono/streaming";
 import { StreamingApi } from "hono/utils/stream";
 import { Pool } from "pg";
-import { createDataset } from "../../src/db/datasets";
+import { lockDatasetSlugForCreate } from "../../src/db/datasets";
 import { deleteSafeDatasetRetentionBatch } from "../../src/db/governance";
 import {
 	cancelExecutionAdmission,
@@ -2427,57 +2427,40 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
-	"retention tombstoning serializes with a create that has passed its tombstone precheck",
+	"retention holds the creation slug lock until its tombstone commits",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
 		const fixture = await seedProjectAuditLockRace(pool);
 		const oldDatasetId = randomUUID();
 		const retention = await pool.connect();
-		const tombstoneChecked = deferred();
-		const releaseCreate = deferred();
+		const creating = await pool.connect();
+		const gate = await pool.connect();
+		const slug = "retention-race";
+		const gateKey = `dataset-retention-test:${randomUUID()}`;
+		const triggerName = `dataset_tombstone_gate_${randomUUID().replaceAll("-", "")}`;
+		const functionName = `${triggerName}_fn`;
+		let gateHeld = false;
+		let retentionStarted = false;
+		let createStarted = false;
 		try {
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, 'retention-race', 'Retention race', now() - interval '2 days')",
-				[oldDatasetId, fixture.projectId],
+				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, $3, 'Retention race', now() - interval '2 days')",
+				[oldDatasetId, fixture.projectId, slug],
 			);
-			const createDb = {
-				connect: async () => {
-					const client = await pool.connect();
-					const query = client.query.bind(client);
-					return {
-						query: async (...args: Parameters<typeof client.query>) => {
-							const result = await query(...args);
-							if (
-								typeof args[0] === "string" &&
-								args[0].startsWith("SELECT 1 FROM dataset_tombstones")
-							) {
-								tombstoneChecked.resolve();
-								await releaseCreate.promise;
-							}
-							return result;
-						},
-						release: client.release.bind(client),
-					};
-				},
-			};
-			const creating = createDataset(createDb, {
-				project_id: fixture.projectId,
-				name: "Retention race",
-				slug: "retention-race",
-				authorization: {
-					organization_id: fixture.organizationId,
-					actor_id: fixture.managerActorId,
-					operation: "product_write",
-				},
-			}).then(
-				() => null,
-				(cause) => cause,
+			await gate.query("SELECT pg_advisory_lock(hashtext($1))", [gateKey]);
+			gateHeld = true;
+			await pool.query(
+				`CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.project_id = '${fixture.projectId}'::uuid AND NEW.slug = '${slug}' THEN PERFORM pg_advisory_xact_lock(hashtext('${gateKey}')); END IF; RETURN NEW; END $$`,
 			);
-			await tombstoneChecked.promise;
+			await pool.query(
+				`CREATE TRIGGER ${triggerName} AFTER INSERT ON dataset_tombstones FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+			);
+
 			await retention.query("BEGIN");
 			await retention.query(
-				"SET application_name = 'astraea-dataset-retention-create-race'",
+				"SET application_name = 'astraea-dataset-retention-slug-race'",
 			);
+			retentionStarted = true;
 			const deleting = deleteSafeDatasetRetentionBatch(
 				retention,
 				fixture.projectId,
@@ -2486,32 +2469,80 @@ test.skipIf(!databaseUrl)(
 				randomUUID(),
 				randomUUID(),
 			);
-			await waitForLock(pool, "astraea-dataset-retention-create-race");
-			releaseCreate.resolve();
-			const createFailure = await creating;
-			expect(createFailure).toMatchObject({ code: "CONFLICT" });
-			expect(await deleting).toEqual({ deleted: 1, skipped: 0 });
-			await retention.query("COMMIT");
+			await waitForLock(pool, "astraea-dataset-retention-slug-race");
 			expect(
 				(
-					await pool.query(
-						"SELECT count(*)::int AS count FROM datasets WHERE project_id = $1 AND slug = 'retention-race'",
-						[fixture.projectId],
+					await pool.query<{ held: boolean }>(
+						"SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE a.application_name = $1 AND l.locktype = 'advisory' AND l.granted AND l.classid = 0 AND l.objid::bigint = (hashtext($2)::bigint & 4294967295)) AS held",
+						[
+							"astraea-dataset-retention-slug-race",
+							`dataset:${fixture.projectId}:${slug}`,
+						],
+					)
+				).rows[0]?.held,
+			).toBe(true);
+
+			await creating.query("BEGIN");
+			await creating.query(
+				"SET application_name = 'astraea-dataset-create-slug-race'",
+			);
+			createStarted = true;
+			// The production path takes audit provenance before this shared slug phase.
+			// Exercise the latter directly so the audit lock cannot mask this fence.
+			const creation = lockDatasetSlugForCreate(
+				creating,
+				fixture.projectId,
+				slug,
+			).then(
+				() => null,
+				(cause) => cause,
+			);
+			await waitForLock(pool, "astraea-dataset-create-slug-race");
+			await gate.query("SELECT pg_advisory_unlock(hashtext($1))", [gateKey]);
+			gateHeld = false;
+			expect(await deleting).toEqual({ deleted: 1, skipped: 0 });
+			await expect(
+				Promise.race([
+					creation.then(() => "advanced"),
+					Bun.sleep(50).then(() => "waiting"),
+				]),
+			).resolves.toBe("waiting");
+			await retention.query("COMMIT");
+			retentionStarted = false;
+			expect(await creation).toMatchObject({
+				code: "CONFLICT",
+				message: "Dataset identifier has been deleted",
+			});
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM datasets WHERE project_id = $1 AND slug = $2",
+						[fixture.projectId, slug],
 					)
 				).rows[0]?.count,
 			).toBe(0);
 			expect(
 				(
-					await pool.query(
-						"SELECT count(*)::int AS count FROM dataset_tombstones WHERE project_id = $1 AND slug = 'retention-race'",
-						[fixture.projectId],
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_tombstones WHERE project_id = $1 AND slug = $2",
+						[fixture.projectId, slug],
 					)
 				).rows[0]?.count,
 			).toBe(1);
 		} finally {
-			releaseCreate.resolve();
-			await retention.query("ROLLBACK").catch(() => {});
+			if (gateHeld)
+				await gate
+					.query("SELECT pg_advisory_unlock(hashtext($1))", [gateKey])
+					.catch(() => {});
+			if (createStarted) await creating.query("ROLLBACK").catch(() => {});
+			if (retentionStarted) await retention.query("ROLLBACK").catch(() => {});
+			creating.release();
 			retention.release();
+			gate.release();
+			await pool.query(
+				`DROP TRIGGER IF EXISTS ${triggerName} ON dataset_tombstones`,
+			);
+			await pool.query(`DROP FUNCTION IF EXISTS ${functionName}()`);
 			const cleanup = await pool.connect();
 			try {
 				await cleanup.query("BEGIN");
