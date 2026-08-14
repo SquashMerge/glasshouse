@@ -166,11 +166,11 @@ export async function publishDatasetDraft(input: {
 export async function deleteDatasetDraftItem(input: {
 	project_id: string;
 	slug: string;
-	item_key: string;
+	item_id: string;
 	revision: number;
 }): Promise<void> {
 	const response = await authedFetch(
-		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/items/${encodeURIComponent(input.item_key)}${buildQs({ project_id: input.project_id })}`,
+		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/items/${encodeURIComponent(input.item_id)}${buildQs({ project_id: input.project_id })}`,
 		{ method: "DELETE", headers: { "if-match": `"${input.revision}"` } },
 	);
 	if (!response.ok) await responseJson(response, "deleteDatasetDraftItem");
@@ -178,6 +178,7 @@ export async function deleteDatasetDraftItem(input: {
 export interface DatasetItem {
 	id: string;
 	dataset_id: string;
+	item_key: string | null;
 	input: JsonObject;
 	expected_output: JsonObject | null;
 	metadata: JsonObject;

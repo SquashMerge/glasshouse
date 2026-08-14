@@ -49,6 +49,7 @@ export const DatasetItem = z
 	.object({
 		id: z.string().uuid(),
 		dataset_id: z.string().uuid(),
+		item_key: z.string().nullable().default(null),
 		input: z.record(z.string(), z.unknown()),
 		expected_output: z.record(z.string(), z.unknown()).nullable(),
 		metadata: z.record(z.string(), z.unknown()),
@@ -124,6 +125,7 @@ export const DatasetDraft = z
 	.openapi("DatasetDraft");
 export const DatasetDraftItem = z
 	.object({
+		id: z.string().uuid(),
 		item_key: z.string().min(1).max(200),
 		input: z.record(z.string(), z.unknown()),
 		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -152,6 +154,12 @@ export const DatasetDraftItemUpsert = DatasetDraftItem.pick({
 	})
 	.openapi("DatasetDraftItemUpsert");
 export const DatasetDraftItemParam = DatasetSlugParam.extend({
+	itemId: z
+		.string()
+		.uuid()
+		.openapi({ param: { name: "itemId", in: "path" } }),
+}).strict();
+export const DatasetDraftItemKeyParam = DatasetSlugParam.extend({
 	itemKey: z
 		.string()
 		.min(1)

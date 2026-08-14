@@ -497,7 +497,7 @@ export async function finalizeExperimentTask(
 			const task = finalized.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, dataset_version_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),$1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT DO NOTHING",
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),(SELECT project_id FROM experiments WHERE id=$1),$1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT DO NOTHING",
 				[
 					text(task, "experiment_id"),
 					task.dataset_item_id ?? null,
@@ -542,7 +542,7 @@ export async function reconcileUnknownExperimentTaskProviderDispatch(
 			const task = failed.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, dataset_version_item_id, output, scores, status) VALUES (gen_random_uuid(), $1, $2, $3, NULL, '{}'::jsonb, 'failed') ON CONFLICT DO NOTHING",
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, output, scores, status) VALUES (gen_random_uuid(), (SELECT project_id FROM experiments WHERE id=$1), $1, $2, $3, NULL, '{}'::jsonb, 'failed') ON CONFLICT DO NOTHING",
 				[
 					text(task, "experiment_id"),
 					task.dataset_item_id ?? null,
@@ -656,7 +656,7 @@ export async function insertExperimentResult(
 					"Experiment is not available",
 				);
 			const r = await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) RETURNING *",
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES ($1,(SELECT project_id FROM experiments WHERE id=$2),$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) RETURNING *",
 				[
 					randomUUID(),
 					input.experiment_id,

@@ -22,6 +22,28 @@ BEGIN
 		OR NOT EXISTS (SELECT 1 FROM dataset_item_input_quarantine WHERE dataset_item_id = 'a5000000-0000-4000-8000-000000000003') THEN
 		RAISE EXCEPTION 'legacy scalar dataset input was not normalized and quarantined before snapshots';
 	END IF;
+	IF (SELECT input FROM dataset_items WHERE id = 'a5000000-0000-4000-8000-000000000004') <> '{"legacy_input":["legacy","array"]}'::jsonb
+		OR NOT EXISTS (SELECT 1 FROM dataset_item_input_quarantine WHERE dataset_item_id = 'a5000000-0000-4000-8000-000000000004') THEN
+		RAISE EXCEPTION 'legacy array dataset input was not normalized and quarantined before snapshots';
+	END IF;
+	IF (SELECT count(*) FROM dataset_version_items WHERE dataset_version_id = (SELECT id FROM dataset_versions WHERE dataset_id = 'a4000000-0000-4000-8000-000000000003' AND version = 1)) <> 2 THEN
+		RAISE EXCEPTION 'normalized scalar and array items were not retained in the immutable snapshot';
+	END IF;
+	BEGIN
+		INSERT INTO experiments (id, project_id, agent_id, dataset_id)
+		VALUES ('a6000000-0000-4000-8000-000000000002', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001');
+		RAISE EXCEPTION 'cross-project experiment dataset reference was accepted';
+	EXCEPTION WHEN foreign_key_violation THEN NULL;
+	END;
+	INSERT INTO agents (id, project_id, name) VALUES ('a3000000-0000-4000-8000-000000000002', '22222222-2222-2222-2222-222222222222', 'Second project agent');
+	INSERT INTO datasets (id, project_id, name) VALUES ('a4000000-0000-4000-8000-000000000004', '22222222-2222-2222-2222-222222222222', 'Second project dataset');
+	INSERT INTO experiments (id, project_id, agent_id, dataset_id) VALUES ('a6000000-0000-4000-8000-000000000003', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000002', 'a4000000-0000-4000-8000-000000000004');
+	BEGIN
+		INSERT INTO experiment_tasks (project_id, experiment_id, dataset_version_item_id)
+		SELECT '22222222-2222-2222-2222-222222222222', 'a6000000-0000-4000-8000-000000000003', id FROM dataset_version_items WHERE project_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
+		RAISE EXCEPTION 'cross-project snapshot task reference was accepted';
+	EXCEPTION WHEN foreign_key_violation THEN NULL;
+	END;
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND conname = 'feedback_reviews_dataset_draft_item_id_fkey' AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL%') THEN
 		RAISE EXCEPTION 'feedback draft links must not block draft discard';
 	END IF;

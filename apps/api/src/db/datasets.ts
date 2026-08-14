@@ -157,6 +157,7 @@ function item(row: Row) {
 	return {
 		id: text(row, "id"),
 		dataset_id: text(row, "dataset_id"),
+		item_key: nullableText(row, "item_key"),
 		input: jsonObject(row, "input"),
 		expected_output:
 			row.expected_output == null ? null : jsonObject(row, "expected_output"),
@@ -168,6 +169,7 @@ function item(row: Row) {
 }
 function draftItem(row: Row) {
 	return {
+		id: text(row, "id"),
 		item_key: text(row, "item_key"),
 		input: jsonObject(row, "input"),
 		expected_output:
@@ -613,7 +615,7 @@ export async function deleteDatasetDraftItem(
 				"Dataset draft has changed; refresh and retry",
 			);
 		const removed = await client.query(
-			"DELETE FROM dataset_draft_items WHERE draft_id = $1 AND item_key = $2 RETURNING id",
+			"DELETE FROM dataset_draft_items WHERE draft_id = $1 AND id = $2::uuid RETURNING id",
 			[row.id, input.item_key],
 		);
 		if (!removed.rows[0])
@@ -829,7 +831,7 @@ export async function listDatasetItems(
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await getDatasetRow(client, input.project_id, input.dataset_id);
 		const result = await client.query(
-			`WITH selected_draft AS (SELECT dr.id FROM dataset_drafts dr WHERE dr.dataset_id = $1), visible_items AS (SELECT i.item_key AS id, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_draft_items i JOIN selected_draft d ON d.id = i.draft_id UNION ALL SELECT i.id::text, $1::uuid, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version WHERE d.id = $1 AND NOT EXISTS (SELECT 1 FROM selected_draft)) SELECT i.id, i.dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM visible_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
+			`WITH selected_draft AS (SELECT dr.id FROM dataset_drafts dr WHERE dr.dataset_id = $1), visible_items AS (SELECT i.id::text AS id, i.item_key, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_draft_items i JOIN selected_draft d ON d.id = i.draft_id UNION ALL SELECT i.id::text, NULL::text, $1::uuid, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version WHERE d.id = $1 AND NOT EXISTS (SELECT 1 FROM selected_draft)) SELECT i.id, i.item_key, i.dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM visible_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
 		await client.query("COMMIT");
@@ -863,7 +865,7 @@ export async function listPublishedDatasetItems(
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await getDatasetRow(client, input.project_id, input.dataset_id);
 		const result = await client.query(
-			`SELECT i.id::text AS id, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
+			`SELECT i.id::text AS id, NULL::text AS item_key, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
 		await client.query("COMMIT");

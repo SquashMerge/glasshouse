@@ -34,6 +34,7 @@ import {
 	DatasetItemIdParams,
 	DatasetDraft,
 	DatasetDraftItem,
+	DatasetDraftItemKeyParam,
 	DatasetDraftItemParam,
 	DatasetDraftItemUpsert,
 	DatasetMetadataUpdate,
@@ -247,7 +248,7 @@ export const putDatasetDraftItem = createRoute({
 	summary: "Upsert a draft item using its stable key",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: DatasetDraftItemParam,
+		params: DatasetDraftItemKeyParam,
 		query: DatasetProjectQuery,
 		headers: IfMatchDraftRevision,
 		body: {
@@ -265,9 +266,9 @@ export const putDatasetDraftItem = createRoute({
 });
 export const deleteDatasetDraftItem = createRoute({
 	method: "delete",
-	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemKey}",
+	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemId}",
 	tags: [tag],
-	summary: "Delete a draft item using its stable key",
+	summary: "Delete a draft item using its UUID identity",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: DatasetDraftItemParam,
@@ -311,6 +312,7 @@ export const publishDatasetDraft = createRoute({
 	responses: {
 		200: {
 			description: "Published",
+			headers: DraftRevisionHeaders,
 			content: { "application/json": { schema: DatasetDraftPublish } },
 		},
 		...DatasetErrorResponses,
@@ -533,7 +535,7 @@ export function createDatasetRouteHandlers(
 				await dependencies.deleteDatasetDraftItem(dependencies.pool(), {
 					project_id: c.req.valid("query").project_id,
 					slug: c.req.valid("param").slug,
-					item_key: c.req.valid("param").itemKey,
+					item_key: c.req.valid("param").itemId,
 					revision: Number(match),
 					authorization: projectAuthorization(
 						trustedTenant(c),
@@ -587,8 +589,9 @@ export function createDatasetRouteHandlers(
 						"BAD_REQUEST",
 						"If-Match must contain the current draft revision",
 					);
-				return c.json(
-					await dependencies.publishDatasetDraft(dependencies.pool(), {
+				const published = await dependencies.publishDatasetDraft(
+					dependencies.pool(),
+					{
 						project_id: c.req.valid("query").project_id,
 						slug: c.req.valid("param").slug,
 						revision: Number(match),
@@ -596,8 +599,10 @@ export function createDatasetRouteHandlers(
 							trustedTenant(c),
 							"product_write",
 						),
-					}),
+					},
 				);
+				c.header("ETag", `\"${published.version}\"`);
+				return c.json(published);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}

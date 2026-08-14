@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
 	lockActiveAuthorizedProject,
+	lockProjectAuditProvenance,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
 
@@ -307,12 +308,27 @@ export async function promoteFeedback(
 		if (!dataset.rows[0])
 			throw new FeedbackRepositoryError("NOT_FOUND", "Dataset not found");
 		const draft = await client.query(
-			`WITH inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM datasets WHERE id = $2 AND project_id = $1 ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id FROM inserted d JOIN dataset_versions v ON v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.dataset_version_id = v.id) SELECT * FROM inserted UNION ALL SELECT * FROM dataset_drafts WHERE dataset_id = $2 LIMIT 1`,
+			`WITH inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM datasets WHERE id = $2 AND project_id = $1 ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id FROM inserted d JOIN dataset_versions v ON v.project_id = d.project_id AND v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.project_id = v.project_id AND i.dataset_version_id = v.id) SELECT *, EXISTS (SELECT 1 FROM inserted) AS created FROM inserted UNION ALL SELECT d.*, false FROM dataset_drafts d WHERE d.dataset_id = $2 AND NOT EXISTS (SELECT 1 FROM inserted) LIMIT 1`,
 			[input.project_id, input.dataset_id, input.authorization.actor_id],
 		);
 		const draftRow = draft.rows[0];
 		if (!draftRow)
 			throw new FeedbackRepositoryError("NOT_FOUND", "Dataset draft not found");
+		if (draftRow.created) {
+			await lockProjectAuditProvenance(client, input.project_id);
+			await client.query(
+				"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, draft_revision, item_count) VALUES ($1, $2, $3, $4, $5, 'draft_created', $6, $7)",
+				[
+					input.authorization.organization_id,
+					input.project_id,
+					input.dataset_id,
+					dataset.rows[0].slug,
+					input.authorization.actor_id,
+					draftRow.revision,
+					0,
+				],
+			);
+		}
 		const inserted = await client.query(
 			`INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id, feedback_score_id) VALUES ($1,$2,$3,COALESCE((SELECT MAX(position) + 1 FROM dataset_draft_items WHERE draft_id=$2),0),$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$3::uuid) ON CONFLICT (feedback_score_id) WHERE feedback_score_id IS NOT NULL DO NOTHING RETURNING id`,
 			[
@@ -338,6 +354,18 @@ export async function promoteFeedback(
 		await client.query(
 			"UPDATE dataset_drafts SET revision = revision + 1, updated_at = now() WHERE id = $1",
 			[draftRow.id],
+		);
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, draft_revision) VALUES ($1, $2, $3, $4, $5, 'draft_item_upserted', $6)",
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				input.dataset_id,
+				dataset.rows[0].slug,
+				input.authorization.actor_id,
+				Number(draftRow.revision) + 1,
+			],
 		);
 		const result = await client.query(
 			"UPDATE feedback_reviews SET status='added_to_dataset',dataset_id=$1,dataset_item_id=NULL,dataset_draft_item_id=$2,updated_at=now() WHERE score_id=$3 RETURNING updated_at",

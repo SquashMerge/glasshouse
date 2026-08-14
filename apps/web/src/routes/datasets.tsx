@@ -242,7 +242,7 @@ export function DatasetDetailPage() {
 			await deleteDatasetDraftItem({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
-				item_key: itemId,
+				item_id: itemId,
 				revision: draft.revision,
 			});
 			await client.invalidateQueries({

@@ -142,7 +142,7 @@ describe("dataset contracts", () => {
 		expect(result.success).toBe(true);
 	});
 
-	it("accepts a stable dataset slug and draft item key", () => {
+	it("accepts a stable dataset slug, draft item key, and UUID item identity", () => {
 		expect(
 			DatasetCreate.safeParse({
 				project_id: PROJECT,
@@ -160,7 +160,7 @@ describe("dataset contracts", () => {
 		expect(
 			DatasetDraftItemParam.safeParse({
 				slug: "golden-suite",
-				itemKey: "stable-key",
+				itemId: "33333333-3333-4333-8333-333333333333",
 			}).success,
 		).toBe(true);
 		expect(
@@ -257,7 +257,7 @@ describe("dataset repository", () => {
 			{
 				rows: [
 					{
-						id: "private",
+						id: "33333333-3333-4333-8333-333333333333",
 						project_id: PROJECT,
 						draft_id: "draft",
 						item_key: "stable",
@@ -281,6 +281,7 @@ describe("dataset repository", () => {
 		});
 		expect(DatasetDraftItem.safeParse(result).success).toBe(true);
 		expect(result).toEqual({
+			id: "33333333-3333-4333-8333-333333333333",
 			item_key: "stable",
 			input: { question: "hello" },
 			expected_output: null,
@@ -634,7 +635,7 @@ describe("dataset repository", () => {
 			"/v1/datasets/by-slug/{slug}/draft/items/{itemKey}"
 		]?.put as any;
 		const remove = document.paths?.[
-			"/v1/datasets/by-slug/{slug}/draft/items/{itemKey}"
+			"/v1/datasets/by-slug/{slug}/draft/items/{itemId}"
 		]?.delete as any;
 		expect(remove.responses["204"].headers.ETag).toBeDefined();
 		expect(remove.parameters).toEqual(
@@ -683,6 +684,7 @@ describe("dataset repository", () => {
 			pool: () => ({}) as never,
 			authorizeDatasetWrite: async () => {},
 			upsertDatasetDraftItem: async () => ({
+				id: "33333333-3333-4333-8333-333333333333",
 				item_key: "stable",
 				input: {},
 				expected_output: null,
@@ -710,6 +712,7 @@ describe("dataset repository", () => {
 				new Response(JSON.stringify(body), { status }),
 		} as never);
 		expect(await response.json()).toEqual({
+			id: "33333333-3333-4333-8333-333333333333",
 			item_key: "stable",
 			input: {},
 			expected_output: null,
