@@ -212,6 +212,77 @@ describe("feedback review persistence", () => {
 		expect(queries).toContain("ROLLBACK");
 	});
 
+	it("maps the immutable feedback ID to the draft item conflict key", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const feedbackId = "33333333-3333-4333-8333-333333333333";
+		const draftId = "44444444-4444-4444-8444-444444444444";
+		const queries: Array<{ sql: string; values?: unknown[] }> = [];
+		const client = {
+			query: async (sql: string, values?: unknown[]) => {
+				queries.push({ sql, values });
+				if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.includes("JOIN feedback_reviews"))
+					return {
+						rows: [
+							{
+								id: feedbackId,
+								project_id: base.project_id,
+								trace_id: base.trace_id,
+								observation_id: null,
+								value: -1,
+								metadata: base.metadata,
+								created_at: now,
+								status: "reviewed",
+								note: null,
+								dataset_id: null,
+								dataset_item_id: null,
+								dataset_draft_item_id: null,
+								updated_at: now,
+							},
+						],
+					};
+				if (sql.startsWith("SELECT id, slug FROM datasets"))
+					return { rows: [{ id: "dataset-id", slug: "dataset" }] };
+				if (sql.startsWith("WITH inserted AS"))
+					return { rows: [{ id: draftId, revision: 2, created: false }] };
+				if (sql.startsWith("INSERT INTO dataset_draft_items"))
+					return { rows: [{ id: "item-id" }] };
+				if (sql.startsWith("UPDATE feedback_reviews"))
+					return { rows: [{ updated_at: now }] };
+				return { rows: [] };
+			},
+			release: () => {},
+		};
+
+		await promoteFeedback({ connect: async () => client } as never, {
+			project_id: base.project_id,
+			id: feedbackId,
+			dataset_id: "22222222-2222-4222-8222-222222222222",
+			input: { question: "hello" },
+			expected_output: { answer: "world" },
+			metadata: { source: "feedback" },
+			authorization: { ...authorization, operation: "governed" },
+		});
+
+		const insert = queries.find(({ sql }) =>
+			sql.startsWith("INSERT INTO dataset_draft_items"),
+		);
+		expect(insert?.sql).toContain("$9::uuid");
+		expect(insert?.values).toEqual([
+			base.project_id,
+			draftId,
+			feedbackId,
+			JSON.stringify({ question: "hello" }),
+			JSON.stringify({ answer: "world" }),
+			JSON.stringify({ source: "feedback" }),
+			base.trace_id,
+			null,
+			feedbackId,
+		]);
+	});
+
 	it("rejects legacy review promotion rather than writing a mutable dataset item ID", async () => {
 		const now = new Date("2026-07-29T12:00:00.000Z");
 

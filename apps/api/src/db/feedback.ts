@@ -330,7 +330,7 @@ export async function promoteFeedback(
 			);
 		}
 		const inserted = await client.query(
-			`INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id, feedback_score_id) VALUES ($1,$2,$3,COALESCE((SELECT MAX(position) + 1 FROM dataset_draft_items WHERE draft_id=$2),0),$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$3::uuid) ON CONFLICT (feedback_score_id) WHERE feedback_score_id IS NOT NULL DO NOTHING RETURNING id`,
+			`INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id, feedback_score_id) VALUES ($1,$2,$3,COALESCE((SELECT MAX(position) + 1 FROM dataset_draft_items WHERE draft_id=$2),0),$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9::uuid) ON CONFLICT (feedback_score_id) WHERE feedback_score_id IS NOT NULL DO NOTHING RETURNING id`,
 			[
 				input.project_id,
 				draftRow.id,
