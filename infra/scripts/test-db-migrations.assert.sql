@@ -66,7 +66,7 @@ BEGIN
 		WHERE project_id = '11111111-1111-1111-1111-111111111111'
 		LIMIT 1;
 		RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';
-	EXCEPTION WHEN foreign_key_violation THEN NULL;
+	EXCEPTION WHEN check_violation OR foreign_key_violation THEN NULL;
 	END;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_versions')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_approvals')
@@ -862,7 +862,7 @@ BEGIN
             'b1000000-0000-4000-8000-000000000004'
         );
         RAISE EXCEPTION 'feedback review accepted a dataset from another project';
-    EXCEPTION WHEN foreign_key_violation THEN
+    EXCEPTION WHEN check_violation OR foreign_key_violation THEN
         NULL;
     END;
 	INSERT INTO scores (id, project_id, trace_id, name, value, metadata)

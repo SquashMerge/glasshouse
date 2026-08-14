@@ -157,6 +157,15 @@ test("migration fixture clears prior feedback probes before testing protected pr
 	);
 });
 
+test("cross-project feedback probes accept only their trigger or foreign-key rejections", () => {
+	expect(migrationAssertion).toContain(
+		"RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';\n\tEXCEPTION WHEN check_violation OR foreign_key_violation THEN NULL;",
+	);
+	expect(migrationAssertion).toContain(
+		"RAISE EXCEPTION 'feedback review accepted a dataset from another project';\n    EXCEPTION WHEN check_violation OR foreign_key_violation THEN",
+	);
+});
+
 test("deletion dependency fixtures are created locally and asserted by identity", () => {
 	const promotedDraftItem =
 		"INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)\n\tVALUES (\n\t\t'a1000000-0000-4000-8000-000000000009',";
