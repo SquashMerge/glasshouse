@@ -250,6 +250,7 @@ export async function createDataset(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const baseSlug = input.slug ?? slugify(input.name);
+		await lockProjectAuditProvenance(client, input.project_id);
 		await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
 			`dataset:${input.project_id}:${baseSlug}`,
 		]);
@@ -275,7 +276,6 @@ export async function createDataset(
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
-		await lockProjectAuditProvenance(client, input.project_id);
 		await client.query(
 			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type) VALUES ($1, $2, $3, $4, $5, 'created')",
 			[

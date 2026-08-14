@@ -149,6 +149,10 @@ describe("governance retention", () => {
 		expect(deletion).toContain("NOT EXISTS (SELECT 1 FROM experiments");
 		expect(deletion).toContain("NOT EXISTS (SELECT 1 FROM benchmark_suites");
 		expect(deletion).toContain("INSERT INTO dataset_tombstones");
+		expect(deletion).toContain("locked_slugs AS MATERIALIZED");
+		expect(deletion).toContain(
+			"pg_advisory_xact_lock(hashtext(format('dataset:%s:%s', $1, slug)))",
+		);
 		expect(deletion).toContain(
 			"deleted_quarantined_items AS (DELETE FROM dataset_item_input_quarantine q USING candidates c WHERE q.project_id = $1 AND q.dataset_id = c.id RETURNING q.id)",
 		);

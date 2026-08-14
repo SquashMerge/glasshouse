@@ -383,6 +383,7 @@ describe("dataset repository", () => {
 			{ rows: [{ id: PROJECT }] },
 			{ rows: [] },
 			{ rows: [] },
+			{ rows: [] },
 			{ rows: [datasetRow] },
 		]);
 		await createDataset(db, {

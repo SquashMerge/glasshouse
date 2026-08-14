@@ -4,6 +4,8 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { SSEStreamingApi } from "hono/streaming";
 import { StreamingApi } from "hono/utils/stream";
 import { Pool } from "pg";
+import { createDataset } from "../../src/db/datasets";
+import { deleteSafeDatasetRetentionBatch } from "../../src/db/governance";
 import {
 	cancelExecutionAdmission,
 	claimExecutionAdmission,
@@ -2419,6 +2421,133 @@ test.skipIf(!databaseUrl)(
 			first.release();
 			recovery.release();
 			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"retention tombstoning serializes with a create that has passed its tombstone precheck",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedProjectAuditLockRace(pool);
+		const oldDatasetId = randomUUID();
+		const retention = await pool.connect();
+		const tombstoneChecked = deferred();
+		const releaseCreate = deferred();
+		try {
+			await pool.query(
+				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, 'retention-race', 'Retention race', now() - interval '2 days')",
+				[oldDatasetId, fixture.projectId],
+			);
+			const createDb = {
+				connect: async () => {
+					const client = await pool.connect();
+					const query = client.query.bind(client);
+					return {
+						query: async (...args: Parameters<typeof client.query>) => {
+							const result = await query(...args);
+							if (
+								typeof args[0] === "string" &&
+								args[0].startsWith("SELECT 1 FROM dataset_tombstones")
+							) {
+								tombstoneChecked.resolve();
+								await releaseCreate.promise;
+							}
+							return result;
+						},
+						release: client.release.bind(client),
+					};
+				},
+			};
+			const creating = createDataset(createDb, {
+				project_id: fixture.projectId,
+				name: "Retention race",
+				slug: "retention-race",
+				authorization: {
+					organization_id: fixture.organizationId,
+					actor_id: fixture.managerActorId,
+					operation: "product_write",
+				},
+			}).then(
+				() => null,
+				(cause) => cause,
+			);
+			await tombstoneChecked.promise;
+			await retention.query("BEGIN");
+			await retention.query(
+				"SET application_name = 'astraea-dataset-retention-create-race'",
+			);
+			const deleting = deleteSafeDatasetRetentionBatch(
+				retention,
+				fixture.projectId,
+				new Date(),
+				1,
+				randomUUID(),
+				randomUUID(),
+			);
+			await waitForLock(pool, "astraea-dataset-retention-create-race");
+			releaseCreate.resolve();
+			const createFailure = await creating;
+			expect(createFailure).toMatchObject({ code: "CONFLICT" });
+			expect(await deleting).toEqual({ deleted: 1, skipped: 0 });
+			await retention.query("COMMIT");
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM datasets WHERE project_id = $1 AND slug = 'retention-race'",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM dataset_tombstones WHERE project_id = $1 AND slug = 'retention-race'",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+		} finally {
+			releaseCreate.resolve();
+			await retention.query("ROLLBACK").catch(() => {});
+			retention.release();
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				await cleanup.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_lifecycle_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_tombstones WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"UPDATE projects SET status = 'archived' WHERE id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM project_actor_grants WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("DELETE FROM projects WHERE id = $1", [
+					fixture.projectId,
+				]);
+				await cleanup.query(
+					"DELETE FROM organization_memberships WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query("COMMIT");
+			} finally {
+				cleanup.release();
+			}
+			await deleteScenarioActor(pool, fixture.managerActorId);
+			await deleteScenarioActor(pool, fixture.ownerActorId);
 			await pool.end();
 		}
 	},
