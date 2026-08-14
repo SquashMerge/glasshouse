@@ -155,15 +155,18 @@ describe("DatasetDetailPage draft lifecycle", () => {
 	it("keeps an added draft case when a cancelled stale refresh resolves", async () => {
 		const staleResponse = deferred<{ items: (typeof publishedItem)[] }>();
 		let staleRequestSignal: AbortSignal | undefined;
+		let staleRequestObservedAbort = false;
+		let staleResponseDelivered = false;
 		listDatasetItems
 			.mockResolvedValueOnce({ items: [] })
 			.mockImplementationOnce(({ signal }) => {
 				staleRequestSignal = signal;
-				return new Promise((resolve, reject) => {
-					signal?.addEventListener("abort", () =>
-						reject(new DOMException("aborted", "AbortError")),
-					);
-					staleResponse.promise.then(resolve, reject);
+				signal?.addEventListener("abort", () => {
+					staleRequestObservedAbort = true;
+				});
+				return staleResponse.promise.then((response) => {
+					staleResponseDelivered = true;
+					return response;
 				});
 			});
 		upsertDatasetDraftItem.mockResolvedValue({
@@ -193,8 +196,10 @@ describe("DatasetDetailPage draft lifecycle", () => {
 				screen.getByText(/"question": "new"/, { selector: "pre" }),
 			).toBeInTheDocument(),
 		);
-		expect(staleRequestSignal?.aborted).toBe(true);
+		await waitFor(() => expect(staleRequestSignal?.aborted).toBe(true));
+		expect(staleRequestObservedAbort).toBe(true);
 		staleResponse.resolve({ items: [publishedItem] });
+		await waitFor(() => expect(staleResponseDelivered).toBe(true));
 		await waitFor(() =>
 			expect(
 				screen.getByText(/"question": "new"/, { selector: "pre" }),
