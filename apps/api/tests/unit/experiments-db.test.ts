@@ -3,6 +3,7 @@ import {
 	cancelExperiment,
 	claimExperimentTask,
 	finalizeExperimentTask,
+	getExperiment,
 	listRecoverableExperiments,
 } from "../../src/db/experiments";
 
@@ -75,6 +76,31 @@ const runningExperiment = {
 };
 
 describe("durable experiment task ledger", () => {
+	it("does not trust a supplied project id when an experiment read is revoked", async () => {
+		const calls: string[] = [];
+		const client = {
+			query: async (text: string) => {
+				calls.push(text);
+				if (text.startsWith("SELECT project_id FROM experiments"))
+					return { rows: [{ project_id: projectId }] };
+				if (text.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: false }] };
+				return { rows: [] };
+			},
+			release() {},
+		};
+		await expect(
+			getExperiment({ connect: async () => client } as never, {
+				id: experimentId,
+				project_id: "88888888-8888-4888-8888-888888888888",
+				authorization: { ...authorization, operation: "product_read" },
+			}),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(
+			calls.some((text) => text.startsWith("SELECT e.* FROM experiments")),
+		).toBe(false);
+	});
+
 	it("rechecks the requester under the project lock before claiming provider work", async () => {
 		const db = transactionPool([
 			{ rows: [] },

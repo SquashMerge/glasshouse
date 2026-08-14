@@ -679,10 +679,13 @@ export function createExperimentHandlers(
 		) => {
 			try {
 				return c.json(
-					await deps.listExperiments(
-						deps.pool(),
-						c.req.valid("query").project_id,
-					),
+					await deps.listExperiments(deps.pool(), {
+						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
+					}),
 				);
 			} catch (cause) {
 				return errorResponse(c, cause);
@@ -696,6 +699,10 @@ export function createExperimentHandlers(
 					await deps.getExperiment(deps.pool(), {
 						id: c.req.valid("param").id,
 						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -710,6 +717,10 @@ export function createExperimentHandlers(
 					await deps.listResults(deps.pool(), {
 						id: c.req.valid("param").id,
 						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -724,6 +735,10 @@ export function createExperimentHandlers(
 					await deps.summary(deps.pool(), {
 						id: c.req.valid("param").id,
 						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -753,6 +768,15 @@ export function createExperimentHandlers(
 			try {
 				const params = c.req.valid("param");
 				const query = c.req.valid("query");
+				const authorization = projectAuthorization(
+					trustedTenant(c),
+					"product_read",
+				);
+				const initial = await deps.getExperiment(deps.pool(), {
+					id: params.id,
+					project_id: query.project_id,
+					authorization,
+				});
 				return streamSSE(c, async (stream) => {
 					let timer: ReturnType<typeof setInterval> | undefined;
 					let closed = false;
@@ -772,7 +796,7 @@ export function createExperimentHandlers(
 						stream,
 						pool: deps.pool,
 						tenant: trustedTenant(c),
-						projectId: query.project_id,
+						projectId: initial.project_id,
 						onClose: close,
 					});
 					const tick = async () => {
@@ -782,6 +806,7 @@ export function createExperimentHandlers(
 							const row = await deps.getExperiment(deps.pool(), {
 								id: params.id,
 								project_id: query.project_id,
+								authorization,
 							});
 							const data = JSON.stringify(row);
 							if (

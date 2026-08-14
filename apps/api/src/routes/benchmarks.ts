@@ -131,10 +131,10 @@ export const handleListBenchmarkSuites = async (
 ) => {
 	try {
 		return c.json(
-			await listBenchmarkSuitesRecord(
-				pgPool(),
-				c.req.valid("query").project_id,
-			),
+			await listBenchmarkSuitesRecord(pgPool(), {
+				project_id: c.req.valid("query").project_id,
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
+			}),
 		);
 	} catch (cause) {
 		return errorResponse(c, cause);
@@ -177,6 +177,7 @@ export const handleListBenchmarkRuns = async (
 			await listBenchmarkRuns(pgPool(), {
 				project_id: c.req.valid("query").project_id,
 				suite_id: c.req.valid("param").id,
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
 			}),
 		);
 	} catch (cause) {
@@ -193,6 +194,7 @@ export const handleCreateBenchmarkRun = async (
 		const suite = await getBenchmarkSuite(pgPool(), {
 			project_id,
 			id: suite_id,
+			authorization: projectAuthorization(trustedTenant(c), "execute"),
 		});
 		const config = { ...body.config, model: body.model ?? body.config.model };
 		const authorization = projectAuthorization(trustedTenant(c), "execute");

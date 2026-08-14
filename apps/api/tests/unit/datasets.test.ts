@@ -7,6 +7,7 @@ import {
 	DatasetRepositoryError,
 	deleteDatasetDraftItem,
 	deleteDatasetItem,
+	discardDatasetDraft,
 	getDatasetBySlug,
 	getDatasetDraft,
 	getOrCreateDatasetDraft,
@@ -448,6 +449,7 @@ describe("dataset repository", () => {
 			{ rows: [] },
 			{ rows: [{ id: PROJECT }] },
 			{ rows: [{ id: "draft", dataset_id: DATASET, revision: 2 }] },
+			{ rows: [] },
 			{ rows: [{ id: "item" }] },
 		]);
 		await deleteDatasetDraftItem(db, {
@@ -465,6 +467,49 @@ describe("dataset repository", () => {
 		expect(
 			db.queries.some((query) => query.text.includes("'draft_item_deleted'")),
 		).toBe(true);
+	});
+
+	it("does not delete a draft item that is durable promoted-feedback evidence", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [{ id: "draft", dataset_id: DATASET, revision: 2 }] },
+			{ rows: [{ score_id: "feedback" }] },
+		]);
+		await expect(
+			deleteDatasetDraftItem(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				item_key: "33333333-3333-4333-8333-333333333333",
+				revision: 2,
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({ code: "CONFLICT" });
+		expect(
+			db.queries.some((query) =>
+				query.text.startsWith("DELETE FROM dataset_draft_items"),
+			),
+		).toBe(false);
+	});
+
+	it("returns promoted feedback to reviewed before discarding its draft", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [] },
+			{ rows: [{ dataset_id: DATASET, revision: 2 }], rowCount: 1 },
+		]);
+		await discardDatasetDraft(db, {
+			project_id: PROJECT,
+			slug: "golden",
+			authorization,
+		});
+		const reset = db.queries.find((query) =>
+			query.text.startsWith(
+				"UPDATE feedback_reviews review SET status = 'reviewed'",
+			),
+		);
+		expect(reset?.values).toEqual([PROJECT, "golden"]);
 	});
 
 	it("publishes the complete draft as a new immutable snapshot and consumes it", async () => {

@@ -5,6 +5,7 @@ import {
 	createDatasetDraft,
 	createDataset,
 	deleteDatasetDraftItem,
+	type DatasetItem,
 	getDataset,
 	listDatasetItems,
 	listDatasets,
@@ -230,19 +231,27 @@ export function DatasetDetailPage() {
 			setPending(false);
 		}
 	}
-	async function remove(itemId: string) {
+	async function remove(item: DatasetItem) {
 		if (deletingItemId) return;
 		try {
 			setError("");
-			setDeletingItemId(itemId);
+			setDeletingItemId(item.id);
 			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
 			});
+			const draftItems = await listDatasetItems({
+				project_id: selectedProjectId!,
+				id: dataset.data!.id,
+			});
+			const draftItem = draftItems.items.find(
+				(candidate) => candidate.item_key === item.item_key,
+			);
+			if (!draftItem) throw new Error("Dataset draft item not found");
 			await deleteDatasetDraftItem({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
-				item_id: itemId,
+				item_id: draftItem.id,
 				revision: draft.revision,
 			});
 			await client.invalidateQueries({
@@ -354,7 +363,7 @@ export function DatasetDetailPage() {
 								size="sm"
 								variant="ghost"
 								disabled={deletingItemId !== null}
-								onClick={() => void remove(item.id)}
+								onClick={() => void remove(item)}
 							>
 								{deletingItemId === item.id ? "Deleting..." : "Delete"}
 							</Button>

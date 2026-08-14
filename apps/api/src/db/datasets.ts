@@ -614,6 +614,15 @@ export async function deleteDatasetDraftItem(
 				"CONFLICT",
 				"Dataset draft has changed; refresh and retry",
 			);
+		const linked = await client.query(
+			"SELECT 1 FROM feedback_reviews WHERE dataset_draft_item_id = $1 FOR KEY SHARE",
+			[input.item_key],
+		);
+		if (linked.rows[0])
+			throw new DatasetRepositoryError(
+				"CONFLICT",
+				"Promoted feedback items cannot be deleted individually; discard the draft instead",
+			);
 		const removed = await client.query(
 			"DELETE FROM dataset_draft_items WHERE draft_id = $1 AND id = $2::uuid RETURNING id",
 			[row.id, input.item_key],
@@ -667,6 +676,10 @@ export async function discardDatasetDraft(
 			))
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await client.query(
+			`UPDATE feedback_reviews review SET status = 'reviewed', dataset_id = NULL, dataset_item_id = NULL, dataset_draft_item_id = NULL, updated_at = now() WHERE review.dataset_draft_item_id IN (SELECT item.id FROM dataset_draft_items item JOIN dataset_drafts draft ON draft.id = item.draft_id JOIN datasets dataset ON dataset.id = draft.dataset_id AND dataset.project_id = draft.project_id WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL)`,
+			[input.project_id, input.slug],
+		);
 		const result = await client.query(
 			`DELETE FROM dataset_drafts dr USING datasets d WHERE dr.dataset_id = d.id AND dr.project_id = d.project_id AND d.project_id = $1 AND d.slug = $2 AND d.archived_at IS NULL RETURNING dr.dataset_id, dr.revision`,
 			[input.project_id, input.slug],
@@ -831,7 +844,7 @@ export async function listDatasetItems(
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await getDatasetRow(client, input.project_id, input.dataset_id);
 		const result = await client.query(
-			`WITH selected_draft AS (SELECT dr.id FROM dataset_drafts dr WHERE dr.dataset_id = $1), visible_items AS (SELECT i.id::text AS id, i.item_key, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_draft_items i JOIN selected_draft d ON d.id = i.draft_id UNION ALL SELECT i.id::text, NULL::text, $1::uuid, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version WHERE d.id = $1 AND NOT EXISTS (SELECT 1 FROM selected_draft)) SELECT i.id, i.item_key, i.dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM visible_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
+			`WITH selected_draft AS (SELECT dr.id FROM dataset_drafts dr WHERE dr.dataset_id = $1), visible_items AS (SELECT i.id::text AS id, i.item_key, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_draft_items i JOIN selected_draft d ON d.id = i.draft_id UNION ALL SELECT i.id::text, i.item_key, $1::uuid, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at, i.position FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version WHERE d.id = $1 AND NOT EXISTS (SELECT 1 FROM selected_draft)) SELECT i.id, i.item_key, i.dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM visible_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
 		await client.query("COMMIT");

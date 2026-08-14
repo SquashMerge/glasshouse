@@ -261,32 +261,74 @@ export async function createExperiment(
 		throw normalize(cause);
 	}
 }
-export async function listExperiments(db: Queryable, project_id: string) {
+export async function listExperiments(
+	db: Transactional,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
 	try {
-		const r = await db.query(
-			`SELECT e.* FROM experiments e JOIN projects p ON p.id=e.project_id AND p.status='active' WHERE e.project_id=$1 ORDER BY e.created_at DESC`,
-			[project_id],
-		);
-		return {
-			items: r.rows.map(experiment),
-			total: r.rowCount ?? r.rows.length,
-		};
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			const r = await client.query(
+				"SELECT e.* FROM experiments e WHERE e.project_id=$1 ORDER BY e.created_at DESC",
+				[input.project_id],
+			);
+			return {
+				items: r.rows.map(experiment),
+				total: r.rowCount ?? r.rows.length,
+			};
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function getExperiment(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id?: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		const r = await db.query(
-			`SELECT e.* FROM experiments e JOIN projects p ON p.id=e.project_id AND p.status='active' WHERE e.id=$1 AND e.project_id=$2`,
-			[input.id, input.project_id],
-		);
-		if (!r.rows[0])
-			throw new ExperimentRepositoryError("NOT_FOUND", "Experiment not found");
-		return experiment(r.rows[0]);
+		return await withTransaction(db, async (client) => {
+			const owner = await client.query(
+				"SELECT project_id FROM experiments WHERE id=$1",
+				[input.id],
+			);
+			const projectId = owner.rows[0]?.project_id;
+			if (
+				typeof projectId !== "string" ||
+				!(await lockActiveAuthorizedProject(
+					client,
+					projectId,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			const r = await client.query(
+				"SELECT e.* FROM experiments e WHERE e.id=$1 AND e.project_id=$2",
+				[input.id, projectId],
+			);
+			if (!r.rows[0])
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			return experiment(r.rows[0]);
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
@@ -613,10 +655,18 @@ export async function cancelExperiment(
 				[input.id, input.project_id],
 			);
 			if (!r.rows[0]) {
-				const existing = await getExperiment(client, input);
+				const existing = await client.query(
+					"SELECT e.* FROM experiments e WHERE e.id=$1 AND e.project_id=$2",
+					[input.id, input.project_id],
+				);
+				if (!existing.rows[0])
+					throw new ExperimentRepositoryError(
+						"NOT_FOUND",
+						"Experiment not found",
+					);
 				throw new ExperimentRepositoryError(
 					"CONFLICT",
-					`Evaluation is already ${existing.status}`,
+					`Evaluation is already ${experiment(existing.rows[0]!).status}`,
 				);
 			}
 			await client.query(
@@ -756,41 +806,75 @@ export async function claimExperimentExecution(
 	}
 }
 export async function listExperimentResults(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id?: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		await getExperiment(db, input);
-		const r = await db.query(
-			`SELECT r.* FROM experiment_results r JOIN experiments e ON e.id=r.experiment_id WHERE r.experiment_id=$1 AND e.project_id=$2 ORDER BY r.created_at ASC`,
-			[input.id, input.project_id],
-		);
-		return { experiment_id: input.id, items: r.rows.map(result) };
+		const parent = await getExperiment(db, input);
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					parent.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			const r = await client.query(
+				"SELECT r.* FROM experiment_results r WHERE r.experiment_id=$1 AND r.project_id=$2 ORDER BY r.created_at ASC",
+				[input.id, parent.project_id],
+			);
+			return { experiment_id: input.id, items: r.rows.map(result) };
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function experimentSummary(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id?: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		await getExperiment(db, input);
-		const r = await db.query(
-			`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='completed')::int AS passed, COUNT(*) FILTER (WHERE status='failed')::int AS failed, AVG(duration_ms)::float AS avg_duration_ms FROM experiment_results WHERE experiment_id=$1`,
-			[input.id],
-		);
-		const row = r.rows[0] ?? {};
-		const total = Number(row.total ?? 0);
-		return {
-			experiment_id: input.id,
-			total,
-			passed: Number(row.passed ?? 0),
-			failed: Number(row.failed ?? 0),
-			pass_rate: total === 0 ? 0 : Number(row.passed ?? 0) / total,
-			avg_duration_ms:
-				row.avg_duration_ms == null ? null : Number(row.avg_duration_ms),
-		};
+		const parent = await getExperiment(db, input);
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					parent.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			const r = await client.query(
+				"SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='completed')::int AS passed, COUNT(*) FILTER (WHERE status='failed')::int AS failed, AVG(duration_ms)::float AS avg_duration_ms FROM experiment_results WHERE experiment_id=$1 AND project_id=$2",
+				[input.id, parent.project_id],
+			);
+			const row = r.rows[0] ?? {};
+			const total = Number(row.total ?? 0);
+			return {
+				experiment_id: input.id,
+				total,
+				passed: Number(row.passed ?? 0),
+				failed: Number(row.failed ?? 0),
+				pass_rate: total === 0 ? 0 : Number(row.passed ?? 0) / total,
+				avg_duration_ms:
+					row.avg_duration_ms == null ? null : Number(row.avg_duration_ms),
+			};
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}

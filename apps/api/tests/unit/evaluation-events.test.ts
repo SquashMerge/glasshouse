@@ -31,8 +31,8 @@ describe("evaluation event stream", () => {
 				}) as never,
 			getExperiment: async () => {
 				calls += 1;
-				await blocked;
-				return { status: "running" } as never;
+				if (calls > 1) await blocked;
+				return { status: "running", project_id: projectId } as never;
 			},
 		} as never);
 		const response = await handlers.handleGetExperimentEvents({
@@ -54,7 +54,7 @@ describe("evaluation event stream", () => {
 		const reader = response.body?.getReader();
 
 		await Bun.sleep(1_100);
-		expect(calls).toBe(1);
+		expect(calls).toBe(2);
 		await expect(reader?.cancel()).resolves.toBeUndefined();
 		release();
 	});

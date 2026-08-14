@@ -44,9 +44,22 @@ BEGIN
 		RAISE EXCEPTION 'cross-project snapshot task reference was accepted';
 	EXCEPTION WHEN foreign_key_violation THEN NULL;
 	END;
-	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND conname = 'feedback_reviews_dataset_draft_item_id_fkey' AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL%') THEN
-		RAISE EXCEPTION 'feedback draft links must not block draft discard';
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND conname = 'feedback_reviews_dataset_draft_item_project_fk' AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (dataset_draft_item_id, project_id)%' AND pg_get_constraintdef(oid) LIKE '%ON DELETE RESTRICT%')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND conname = 'feedback_reviews_dataset_version_item_project_fk' AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (dataset_item_id, project_id)%') THEN
+		RAISE EXCEPTION 'feedback links must retain project-scoped draft and immutable snapshot ownership';
 	END IF;
+	INSERT INTO dataset_drafts (id, project_id, dataset_id, created_by)
+	VALUES ('a4000000-0000-4000-8000-000000000005', '11111111-1111-1111-1111-111111111111', 'a4000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000006');
+	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input)
+	VALUES ('a4000000-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111', 'a4000000-0000-4000-8000-000000000005', 'cross-project-feedback', 0, '{}'::jsonb);
+	INSERT INTO scores (id, project_id, name, value)
+	VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'human.feedback', 1);
+	BEGIN
+		INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_draft_item_id)
+		VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'added_to_dataset', 'a4000000-0000-4000-8000-000000000004', 'a4000000-0000-4000-8000-000000000007');
+		RAISE EXCEPTION 'cross-project feedback draft link was accepted';
+	EXCEPTION WHEN foreign_key_violation THEN NULL;
+	END;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_versions')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_approvals')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
