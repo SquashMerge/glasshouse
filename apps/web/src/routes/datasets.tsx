@@ -203,6 +203,9 @@ export function DatasetDetailPage() {
 		try {
 			setError("");
 			setPending(true);
+			await client.cancelQueries({
+				queryKey: ["dataset-items", selectedProjectId, id],
+			});
 			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
@@ -234,9 +237,6 @@ export function DatasetDetailPage() {
 			setInput("{}");
 			setExpected("");
 			setMetadata("{}");
-			await client.invalidateQueries({
-				queryKey: ["dataset-items", selectedProjectId, id],
-			});
 			await client.invalidateQueries({
 				queryKey: ["datasets", selectedProjectId],
 			});

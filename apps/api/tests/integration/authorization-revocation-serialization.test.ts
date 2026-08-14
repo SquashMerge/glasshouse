@@ -263,8 +263,8 @@ async function seedExecutionExperiment(pool: Pool) {
 		[datasetId, projectId],
 	);
 	await pool.query(
-		"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"question\":true}', '{\"answer\":true}')",
-		[itemId, datasetId],
+		"INSERT INTO dataset_items (id, project_id, dataset_id, input, expected_output) VALUES ($1, $2, $3, '{\"question\":true}', '{\"answer\":true}')",
+		[itemId, projectId, datasetId],
 	);
 	await pool.query(
 		"INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES ($1, $2, $3, 1, 1, repeat('0', 64))",
@@ -470,8 +470,8 @@ test.skipIf(!databaseUrl)(
 				[datasetId, projectId],
 			);
 			await pool.query(
-				"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"input\":true}', '{\"output\":true}')",
-				[datasetItemId, datasetId],
+				"INSERT INTO dataset_items (id, project_id, dataset_id, input, expected_output) VALUES ($1, $2, $3, '{\"input\":true}', '{\"output\":true}')",
+				[datasetItemId, projectId, datasetId],
 			);
 			await pool.query(
 				"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
@@ -1247,8 +1247,8 @@ test.skipIf(!databaseUrl)(
 				[datasetId, projectId],
 			);
 			await pool.query(
-				"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"input\":true}', '{\"output\":true}')",
-				[itemId, datasetId],
+				"INSERT INTO dataset_items (id, project_id, dataset_id, input, expected_output) VALUES ($1, $2, $3, '{\"input\":true}', '{\"output\":true}')",
+				[itemId, projectId, datasetId],
 			);
 			await pool.query(
 				"INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES ($1, $2, $3, 1, 1, repeat('0', 64))",

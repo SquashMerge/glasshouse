@@ -139,6 +139,33 @@ describe("DatasetDetailPage draft lifecycle", () => {
 		expect(publishDatasetDraft).not.toHaveBeenCalled();
 	});
 
+	it("keeps an added draft case visible while its item query refreshes", async () => {
+		listDatasetItems.mockResolvedValue({ items: [] });
+		upsertDatasetDraftItem.mockResolvedValue({
+			id: "44444444-4444-4444-8444-444444444444",
+			item_key: "new-case",
+			input: { question: "new" },
+			expected_output: null,
+			metadata: {},
+			source_trace_id: null,
+			source_observation_id: null,
+			position: 0,
+		});
+		renderPage();
+
+		await screen.findByText("Golden");
+		fireEvent.change(screen.getByLabelText("Input"), {
+			target: { value: '{"question":"new"}' },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
+
+		await waitFor(() =>
+			expect(
+				screen.getByText(/"question": "new"/, { selector: "pre" }),
+			).toBeInTheDocument(),
+		);
+	});
+
 	it("uses a published item key to delete its copied draft item without publishing", async () => {
 		const draftItem = {
 			...publishedItem,
