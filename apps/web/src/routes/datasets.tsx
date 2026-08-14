@@ -216,6 +216,11 @@ export function DatasetDetailPage() {
 				expected_output: expected.trim() ? parseObject(expected) : null,
 				metadata: parseObject(metadata),
 			});
+			await publishDatasetDraft({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				revision: draft.revision + 1,
+			});
 			client.setQueryData<{ items: DatasetItem[] }>(
 				["dataset-items", selectedProjectId, id],
 				(current) => ({

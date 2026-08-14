@@ -11,11 +11,13 @@ const {
 	createDatasetDraft,
 	createFeedback,
 	listDatasets,
+	publishDatasetDraft,
 	upsertDatasetDraftItem,
 } = vi.hoisted(() => ({
 	createDatasetDraft: vi.fn(),
 	createFeedback: vi.fn(),
 	listDatasets: vi.fn(),
+	publishDatasetDraft: vi.fn(),
 	upsertDatasetDraftItem: vi.fn(),
 }));
 
@@ -23,6 +25,7 @@ vi.mock("../../src/lib/api", () => ({
 	createDatasetDraft,
 	createFeedback,
 	listDatasets,
+	publishDatasetDraft,
 	upsertDatasetDraftItem,
 }));
 
@@ -43,6 +46,7 @@ describe("dataset feedback actions", () => {
 		});
 		createDatasetDraft.mockResolvedValue({ revision: 1 });
 		upsertDatasetDraftItem.mockResolvedValue({});
+		publishDatasetDraft.mockResolvedValue({ version: 1, item_count: 1 });
 		render(
 			<AddToDatasetDialog
 				projectId="project"
@@ -188,6 +192,7 @@ describe("dataset feedback actions", () => {
 		});
 		createDatasetDraft.mockResolvedValue({ revision: 1 });
 		upsertDatasetDraftItem.mockResolvedValue({});
+		publishDatasetDraft.mockResolvedValue({ version: 1, item_count: 1 });
 		render(
 			<AddToDatasetDialog
 				projectId="project"
@@ -218,6 +223,11 @@ describe("dataset feedback actions", () => {
 				slug: "golden",
 			}),
 		);
+		expect(publishDatasetDraft).toHaveBeenCalledWith({
+			project_id: "project",
+			slug: "golden",
+			revision: 2,
+		});
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 

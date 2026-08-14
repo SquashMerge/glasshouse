@@ -3,6 +3,7 @@ import {
 	createDatasetDraft,
 	createFeedback,
 	listDatasets,
+	publishDatasetDraft,
 	upsertDatasetDraftItem,
 	type JsonObject,
 } from "../lib/api";
@@ -131,6 +132,11 @@ export function AddToDatasetDialog({
 				expected_output: parsedExpected,
 				source_trace_id: traceId,
 				source_observation_id: observationId,
+			});
+			await publishDatasetDraft({
+				project_id: projectId,
+				slug: selected.slug,
+				revision: draft.revision + 1,
 			});
 			close();
 		} catch (cause) {

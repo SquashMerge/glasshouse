@@ -2546,6 +2546,8 @@ test.skipIf(!databaseUrl)(
 			const cleanup = await pool.connect();
 			try {
 				await cleanup.query("BEGIN");
+				// Bypass only this disposable fixture's final-Admin guard during teardown.
+				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
 					"SELECT set_config('astraea.project_deletion_id', $1, true)",
 					[fixture.projectId],
@@ -2573,12 +2575,22 @@ test.skipIf(!databaseUrl)(
 					"DELETE FROM organization_memberships WHERE organization_id = $1",
 					[fixture.organizationId],
 				);
+				await cleanup.query(
+					"DELETE FROM organization_actor_roles WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM actor_identities WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query("DELETE FROM actors WHERE id IN ($1, $2)", [
+					fixture.managerActorId,
+					fixture.ownerActorId,
+				]);
 				await cleanup.query("COMMIT");
 			} finally {
 				cleanup.release();
 			}
-			await deleteScenarioActor(pool, fixture.managerActorId);
-			await deleteScenarioActor(pool, fixture.ownerActorId);
 			await pool.end();
 		}
 	},
