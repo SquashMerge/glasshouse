@@ -882,15 +882,19 @@ BEGIN
 		'deletion-order-requester'
 	FROM projects
 	WHERE id = '11111111-1111-1111-1111-111111111111';
+	UPDATE datasets
+	SET latest_published_version = 1
+	WHERE id = 'a1000000-0000-4000-8000-000000000001';
 	INSERT INTO dataset_drafts (id, project_id, dataset_id, base_version, revision, created_by)
-	VALUES (
+	SELECT
 		'a1000000-0000-4000-8000-000000000008',
-		'11111111-1111-1111-1111-111111111111',
-		'a1000000-0000-4000-8000-000000000001',
-		1,
+		project_id,
+		id,
+		latest_published_version,
 		2,
 		'a1000000-0000-4000-8000-000000000012'
-	);
+	FROM datasets
+	WHERE id = 'a1000000-0000-4000-8000-000000000001';
 	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)
 	VALUES (
 		'a1000000-0000-4000-8000-000000000009',

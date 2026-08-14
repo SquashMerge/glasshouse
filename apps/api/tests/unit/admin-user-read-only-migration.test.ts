@@ -173,6 +173,12 @@ test("deletion dependency fixtures are created locally and asserted by identity"
 
 	expect(migrationAssertion).toContain(promotedDraftItem);
 	expect(migrationAssertion).toContain(promotedSnapshot);
+	expect(migrationAssertion).toContain(
+		"SET latest_published_version = 1\n\tWHERE id = 'a1000000-0000-4000-8000-000000000001';",
+	);
+	expect(migrationAssertion).toContain(
+		"\t\tlatest_published_version,\n\t\t2,\n\t\t'a1000000-0000-4000-8000-000000000012'",
+	);
 	expect(migrationAssertion).toContain(promotedDependency);
 	expect(migrationAssertion).toContain(benchmarkDependency);
 	expect(migrationAssertion).toContain(benchmarkExperiment);
