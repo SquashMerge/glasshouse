@@ -14,6 +14,7 @@ import {
 	listDatasetItems,
 	listPublishedDatasetItems,
 	listDatasets,
+	publishDatasetDraft,
 	upsertDatasetDraftItem,
 	updateDatasetMetadata,
 } from "../../src/db/datasets";
@@ -28,6 +29,7 @@ import {
 	handlePutDatasetDraftItem,
 	handleDeleteDatasetDraftItem,
 	putDatasetDraftItem,
+	publishDatasetDraft as publishDatasetDraftRoute,
 } from "../../src/routes/datasets";
 import {
 	DatasetCreate,
@@ -464,6 +466,57 @@ describe("dataset repository", () => {
 		).toBe(true);
 	});
 
+	it("publishes the complete draft as a new immutable snapshot and consumes it", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{
+				rows: [
+					{
+						id: "draft",
+						dataset_id: DATASET,
+						revision: 2,
+						latest_published_version: 1,
+						schema: {},
+					},
+				],
+			},
+			{ rows: [{ version_id: "version", item_count: 2 }] },
+			{ rows: [] },
+			{ rows: [] },
+		]);
+		await expect(
+			publishDatasetDraft(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 2,
+				authorization,
+			}),
+		).resolves.toEqual({ version: 2, item_count: 2 });
+		const snapshot = db.queries.find((query) =>
+			query.text.includes("INSERT INTO dataset_versions"),
+		);
+		expect(snapshot?.text).toContain(
+			"FROM dataset_draft_items WHERE draft_id = $5",
+		);
+		expect(snapshot?.text).toContain("INSERT INTO dataset_version_items");
+		expect(
+			db.queries.some((query) =>
+				query.text.includes(
+					"UPDATE feedback_reviews r SET dataset_draft_item_id",
+				),
+			),
+		).toBe(true);
+		expect(
+			db.queries.some(
+				(query) => query.text === "DELETE FROM dataset_drafts WHERE id = $1",
+			),
+		).toBe(true);
+		expect(
+			db.queries.some((query) => query.text.includes("'draft_published'")),
+		).toBe(true);
+	});
+
 	it("does not persist provenance copied from another project", async () => {
 		let added = false;
 		let checked: unknown;
@@ -565,6 +618,7 @@ describe("dataset repository", () => {
 		app.openapi(getDatasetDraftRoute, handleGetDatasetDraft);
 		app.openapi(putDatasetDraftItem, handlePutDatasetDraftItem);
 		app.openapi(deleteDatasetDraftItemRoute, handleDeleteDatasetDraftItem);
+		app.openapi(publishDatasetDraftRoute, async () => new Response());
 		const document = app.getOpenAPIDocument({
 			openapi: "3.1.0",
 			info: { title: "test", version: "1" },
@@ -609,6 +663,19 @@ describe("dataset repository", () => {
 		expect(legacy.deprecated).toBe(true);
 		expect(legacy.responses["204"]).toBeUndefined();
 		expect(legacy.responses["409"]).toBeDefined();
+		const publish = app.getOpenAPIDocument({
+			openapi: "3.1.0",
+			info: { title: "test", version: "1" },
+		}).paths?.["/v1/datasets/by-slug/{slug}/draft/publish"]?.post as any;
+		expect(publish.parameters).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					in: "header",
+					name: "if-match",
+					required: true,
+				}),
+			]),
+		);
 	});
 
 	it("returns only the documented draft item fields from the route", async () => {

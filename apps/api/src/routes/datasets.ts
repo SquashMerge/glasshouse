@@ -10,6 +10,7 @@ import {
 	authorizeDatasetWrite as authorizeDatasetWriteRecord,
 	createDataset as createDatasetRecord,
 	discardDatasetDraft as discardDatasetDraftRecord,
+	publishDatasetDraft as publishDatasetDraftRecord,
 	DatasetRepositoryError,
 	deleteDatasetItem as deleteDatasetItemRecord,
 	deleteDatasetDraftItem as deleteDatasetDraftItemRecord,
@@ -37,6 +38,7 @@ import {
 	DatasetDraftItemUpsert,
 	DatasetMetadataUpdate,
 	DatasetProjectQuery,
+	DatasetDraftPublish,
 	DatasetSlugParam,
 } from "../schemas/datasets.js";
 
@@ -295,6 +297,25 @@ export const discardDatasetDraft = createRoute({
 	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
 	responses: { 204: { description: "Discarded" }, ...DatasetErrorResponses },
 });
+export const publishDatasetDraft = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/draft/publish",
+	tags: [tag],
+	summary: "Publish the shared dataset draft",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		headers: IfMatchDraftRevision,
+	},
+	responses: {
+		200: {
+			description: "Published",
+			content: { "application/json": { schema: DatasetDraftPublish } },
+		},
+		...DatasetErrorResponses,
+	},
+});
 
 export type DatasetRouteDependencies = {
 	pool: typeof pgPool;
@@ -313,6 +334,7 @@ export type DatasetRouteDependencies = {
 	authorizeDatasetWrite: typeof authorizeDatasetWriteRecord;
 	archiveDataset: typeof archiveDatasetRecord;
 	discardDatasetDraft: typeof discardDatasetDraftRecord;
+	publishDatasetDraft: typeof publishDatasetDraftRecord;
 	targetExists: (input: {
 		organization_id: string;
 		project_id: string;
@@ -353,6 +375,7 @@ const production: DatasetRouteDependencies = {
 	authorizeDatasetWrite: authorizeDatasetWriteRecord,
 	archiveDataset: archiveDatasetRecord,
 	discardDatasetDraft: discardDatasetDraftRecord,
+	publishDatasetDraft: publishDatasetDraftRecord,
 	targetExists,
 };
 
@@ -554,6 +577,31 @@ export function createDatasetRouteHandlers(
 				return errorResponse(c, cause);
 			}
 		},
+		handlePublishDatasetDraft: async (
+			c: Parameters<RouteHandler<typeof publishDatasetDraft>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current draft revision",
+					);
+				return c.json(
+					await dependencies.publishDatasetDraft(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						revision: Number(match),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_write",
+						),
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
 		handleCreateDataset: async (
 			c: Parameters<RouteHandler<typeof createDataset>>[0],
 		) => {
@@ -646,4 +694,5 @@ export const {
 	handleDeleteDatasetDraftItem,
 	handleArchiveDataset,
 	handleDiscardDatasetDraft,
+	handlePublishDatasetDraft,
 } = createDatasetRouteHandlers();

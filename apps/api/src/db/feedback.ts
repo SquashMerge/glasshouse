@@ -5,7 +5,6 @@ import {
 	type ProjectAuthorization,
 } from "./project-authorization.js";
 
-type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
 export class FeedbackRepositoryError extends Error {
 	readonly status: 400 | 404 | 409 | 500;
@@ -181,8 +180,29 @@ export async function createFeedback(
 		client.release();
 	}
 }
+export async function authorizeFeedbackProject(
+	db: Pick<Pool, "connect">,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		await requireActiveProject(client, input.project_id, input.authorization);
+		await client.query("COMMIT");
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		if (cause instanceof FeedbackRepositoryError) throw cause;
+		throw new FeedbackRepositoryError(
+			"INTERNAL",
+			"Feedback operation failed",
+			cause,
+		);
+	} finally {
+		client.release();
+	}
+}
 export async function listFeedback(
-	db: Queryable,
+	db: Pick<Pool, "connect">,
 	input: {
 		project_id: string;
 		sentiment?: string;
@@ -192,39 +212,56 @@ export async function listFeedback(
 		target_type?: string;
 		limit: number;
 		offset: number;
+		authorization: ProjectAuthorization;
 	},
 ) {
-	const clauses = ["s.project_id=$1", "s.name='human.feedback'"];
-	const values: unknown[] = [input.project_id];
-	const add = (sql: string, value: unknown) => {
-		values.push(value);
-		clauses.push(sql.replace("?", `$${values.length}`));
-	};
-	if (input.sentiment)
-		add("s.metadata->'feedback'->>'sentiment'=?", input.sentiment);
-	if (input.status) add("r.status=?", input.status);
-	if (input.trace_id) add("s.trace_id=?", input.trace_id);
-	if (input.observation_id) add("s.observation_id=?", input.observation_id);
-	if (input.target_type)
-		clauses.push(
-			input.target_type === "observation"
-				? "s.observation_id IS NOT NULL"
-				: "s.observation_id IS NULL",
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		await requireActiveProject(client, input.project_id, input.authorization);
+		const clauses = ["s.project_id=$1", "s.name='human.feedback'"];
+		const values: unknown[] = [input.project_id];
+		const add = (sql: string, value: unknown) => {
+			values.push(value);
+			clauses.push(sql.replace("?", `$${values.length}`));
+		};
+		if (input.sentiment)
+			add("s.metadata->'feedback'->>'sentiment'=?", input.sentiment);
+		if (input.status) add("r.status=?", input.status);
+		if (input.trace_id) add("s.trace_id=?", input.trace_id);
+		if (input.observation_id) add("s.observation_id=?", input.observation_id);
+		if (input.target_type)
+			clauses.push(
+				input.target_type === "observation"
+					? "s.observation_id IS NOT NULL"
+					: "s.observation_id IS NULL",
+			);
+		values.push(input.limit, input.offset);
+		const where = clauses.join(" AND ");
+		const rows = await client.query(
+			`${SELECT} WHERE ${where} ORDER BY s.created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
+			values,
 		);
-	values.push(input.limit, input.offset);
-	const where = clauses.join(" AND ");
-	const rows = await db.query(
-		`${SELECT} WHERE ${where} ORDER BY s.created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
-		values,
-	);
-	const total = await db.query(
-		`SELECT COUNT(*)::int AS total FROM scores s JOIN projects p ON p.id=s.project_id AND p.status='active' JOIN feedback_reviews r ON r.score_id=s.id WHERE ${where}`,
-		values.slice(0, -2),
-	);
-	return {
-		items: rows.rows.map(present),
-		total: Number(total.rows[0]?.total ?? 0),
-	};
+		const total = await client.query(
+			`SELECT COUNT(*)::int AS total FROM scores s JOIN projects p ON p.id=s.project_id AND p.status='active' JOIN feedback_reviews r ON r.score_id=s.id WHERE ${where}`,
+			values.slice(0, -2),
+		);
+		await client.query("COMMIT");
+		return {
+			items: rows.rows.map(present),
+			total: Number(total.rows[0]?.total ?? 0),
+		};
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		if (cause instanceof FeedbackRepositoryError) throw cause;
+		throw new FeedbackRepositoryError(
+			"INTERNAL",
+			"Feedback operation failed",
+			cause,
+		);
+	} finally {
+		client.release();
+	}
 }
 export async function promoteFeedback(
 	db: Pick<Pool, "connect">,
@@ -270,7 +307,7 @@ export async function promoteFeedback(
 		if (!dataset.rows[0])
 			throw new FeedbackRepositoryError("NOT_FOUND", "Dataset not found");
 		const draft = await client.query(
-			`WITH inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM datasets WHERE id = $2 AND project_id = $1 ON CONFLICT (dataset_id) DO NOTHING RETURNING *) SELECT * FROM inserted UNION ALL SELECT * FROM dataset_drafts WHERE dataset_id = $2 LIMIT 1`,
+			`WITH inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM datasets WHERE id = $2 AND project_id = $1 ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id FROM inserted d JOIN dataset_versions v ON v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.dataset_version_id = v.id) SELECT * FROM inserted UNION ALL SELECT * FROM dataset_drafts WHERE dataset_id = $2 LIMIT 1`,
 			[input.project_id, input.dataset_id, input.authorization.actor_id],
 		);
 		const draftRow = draft.rows[0];

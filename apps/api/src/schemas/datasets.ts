@@ -158,6 +158,13 @@ export const DatasetDraftItemParam = DatasetSlugParam.extend({
 		.max(200)
 		.openapi({ param: { name: "itemKey", in: "path" } }),
 }).strict();
+export const DatasetDraftPublish = z
+	.object({
+		version: z.number().int().positive(),
+		item_count: z.number().int().nonnegative(),
+	})
+	.strict()
+	.openapi("DatasetDraftPublish");
 export const DatasetErrorResponses = {
 	400: {
 		description: "Bad request",

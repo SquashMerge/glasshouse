@@ -150,6 +150,19 @@ export async function discardDatasetDraft(input: {
 		"discardDatasetDraft",
 	);
 }
+export async function publishDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+}): Promise<{ version: number; item_count: number }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/publish${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST", headers: { "if-match": `"${input.revision}"` } },
+		),
+		"publishDatasetDraft",
+	);
+}
 export async function deleteDatasetDraftItem(input: {
 	project_id: string;
 	slug: string;

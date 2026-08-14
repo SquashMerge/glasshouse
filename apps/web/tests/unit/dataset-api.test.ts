@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	deleteDatasetDraftItem,
+	publishDatasetDraft,
 	upsertDatasetDraftItem,
 } from "../../src/lib/api";
 import { setCredentials } from "../../src/lib/auth";
@@ -61,5 +62,25 @@ describe("dataset API client", () => {
 		);
 		const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(new Headers(request.headers).get("if-match")).toBe('"3"');
+	});
+
+	it("publishes a draft with its current ETag", async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ version: 2, item_count: 3 }), {
+				status: 200,
+			}),
+		);
+		await expect(
+			publishDatasetDraft({
+				project_id: PROJECT_ID,
+				slug: "golden",
+				revision: 4,
+			}),
+		).resolves.toEqual({ version: 2, item_count: 3 });
+		const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			`/v1/datasets/by-slug/golden/draft/publish?project_id=${PROJECT_ID}`,
+		);
+		expect(new Headers(request.headers).get("if-match")).toBe('"4"');
 	});
 });

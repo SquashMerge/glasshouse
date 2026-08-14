@@ -7,6 +7,7 @@ import { projectAuthorization } from "../db/project-authorization.js";
 import { trustedTenant } from "../tenancy.js";
 import {
 	createFeedback,
+	authorizeFeedbackProject,
 	FeedbackRepositoryError,
 	listFeedback,
 	promoteFeedback,
@@ -117,6 +118,7 @@ export const promoteFeedbackRoute = createRoute({
 	},
 });
 async function targetExists(input: {
+	organization_id: string;
 	project_id: string;
 	trace_id: string;
 	observation_id?: string;
@@ -124,7 +126,7 @@ async function targetExists(input: {
 	const client = ch();
 	const table = input.observation_id ? "observations" : "traces";
 	const result = await client.query({
-		query: `SELECT 1 FROM ${table} WHERE project_id={project_id:String} AND trace_id={trace_id:String}${input.observation_id ? " AND observation_id={observation_id:String}" : ""} LIMIT 1`,
+		query: `SELECT 1 FROM ${table} WHERE organization_id={organization_id:String} AND project_id={project_id:String} AND trace_id={trace_id:String}${input.observation_id ? " AND observation_id={observation_id:String}" : ""} LIMIT 1`,
 		query_params: input,
 		format: "JSONEachRow",
 	});
@@ -135,6 +137,8 @@ export const handleCreateFeedback = async (
 ) => {
 	try {
 		const body = c.req.valid("json");
+		const tenant = trustedTenant(c);
+		const authorization = projectAuthorization(tenant, "product_write");
 		const feedback = body.metadata.feedback;
 		if (
 			(body.value === 1) !== (feedback.sentiment === "positive") ||
@@ -144,7 +148,13 @@ export const handleCreateFeedback = async (
 				"BAD_REQUEST",
 				"Feedback value, sentiment, and reason are invalid",
 			);
-		if (!(await targetExists(body)))
+		await authorizeFeedbackProject(pgPool(), {
+			project_id: body.project_id,
+			authorization,
+		});
+		if (
+			!(await targetExists({ ...body, organization_id: tenant.organizationId }))
+		)
 			throw new FeedbackRepositoryError(
 				"TARGET_NOT_FOUND",
 				"Feedback target not found",
@@ -153,7 +163,7 @@ export const handleCreateFeedback = async (
 			await createFeedback(pgPool(), {
 				...body,
 				idempotency_key: c.req.valid("header")["idempotency-key"],
-				authorization: projectAuthorization(trustedTenant(c), "product_write"),
+				authorization,
 			}),
 			201,
 		);
@@ -165,7 +175,12 @@ export const handleListFeedback = async (
 	c: Parameters<RouteHandler<typeof listFeedbackRoute>>[0],
 ) => {
 	try {
-		return c.json(await listFeedback(pgPool(), c.req.valid("query")));
+		return c.json(
+			await listFeedback(pgPool(), {
+				...c.req.valid("query"),
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
+			}),
+		);
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}

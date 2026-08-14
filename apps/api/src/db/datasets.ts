@@ -692,6 +692,77 @@ export async function discardDatasetDraft(
 	}
 }
 
+export async function publishDatasetDraft(
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		revision: number;
+		authorization: ProjectAuthorization;
+	},
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const selected = await client.query(
+			`SELECT dr.*, d.latest_published_version FROM dataset_drafts dr JOIN datasets d ON d.id = dr.dataset_id AND d.project_id = dr.project_id WHERE d.project_id = $1 AND d.slug = $2 AND d.archived_at IS NULL FOR UPDATE`,
+			[input.project_id, input.slug],
+		);
+		const row = selected.rows[0];
+		if (!row)
+			throw new DatasetRepositoryError("NOT_FOUND", "Dataset draft not found");
+		if (Number(row.revision) !== input.revision)
+			throw new DatasetRepositoryError(
+				"CONFLICT",
+				"Dataset draft has changed; refresh and retry",
+			);
+		const version = Number(row.latest_published_version ?? 0) + 1;
+		const snapshot = await client.query(
+			`WITH inserted AS (INSERT INTO dataset_versions (project_id, dataset_id, version, item_count, content_hash, created_via) SELECT $1, $2, $3, COUNT(*)::int, encode(digest(jsonb_build_object('schema', $4::jsonb, 'items', COALESCE(jsonb_agg(jsonb_build_object('item_key', item_key, 'input', input, 'expected_output', expected_output, 'metadata', metadata, 'source_trace_id', source_trace_id, 'source_observation_id', source_observation_id) ORDER BY position, item_key), '[]'::jsonb))::text, 'sha256'), 'hex'), 'draft_publish' FROM dataset_draft_items WHERE draft_id = $5 RETURNING id), copied AS (INSERT INTO dataset_version_items (project_id, dataset_version_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT $1, inserted.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id FROM inserted JOIN dataset_draft_items i ON i.draft_id = $5 RETURNING id) UPDATE datasets SET latest_published_version = $3, updated_at = now() WHERE id = $2 RETURNING (SELECT id FROM inserted) AS version_id, (SELECT COUNT(*)::int FROM copied) AS item_count`,
+			[
+				input.project_id,
+				row.dataset_id,
+				version,
+				JSON.stringify(row.schema ?? {}),
+				row.id,
+			],
+		);
+		await client.query(
+			`UPDATE feedback_reviews r SET dataset_draft_item_id = NULL, dataset_item_id = v.id, updated_at = now() FROM dataset_draft_items d JOIN dataset_version_items v ON v.dataset_version_id = $1 AND v.item_key = d.item_key WHERE r.dataset_draft_item_id = d.id AND d.draft_id = $2`,
+			[snapshot.rows[0]?.version_id, row.id],
+		);
+		await client.query("DELETE FROM dataset_drafts WHERE id = $1", [row.id]);
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, draft_revision, item_count) VALUES ($1, $2, $3, $4, $5, 'draft_published', $6, $7)",
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				row.dataset_id,
+				input.slug,
+				input.authorization.actor_id,
+				input.revision,
+				snapshot.rows[0]?.item_count ?? 0,
+			],
+		);
+		await client.query("COMMIT");
+		return { version, item_count: Number(snapshot.rows[0]?.item_count ?? 0) };
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		throw normalizeError(cause);
+	} finally {
+		client.release();
+	}
+}
+
 export async function archiveDataset(
 	db: Transactional,
 	input: {

@@ -133,10 +133,24 @@ describe("feedback review persistence", () => {
 		};
 		const result = await listFeedback(
 			{
-				query: async (sql: string) =>
-					sql.includes("COUNT(*)") ? { rows: [{ total: 1 }] } : { rows: [row] },
+				connect: async () => ({
+					query: async (sql: string) =>
+						sql.includes("p.status = ANY($3::text[])")
+							? { rows: [{}] }
+							: sql.startsWith("SELECT authorization_allows_project")
+								? { rows: [{ allowed: true }] }
+								: sql.includes("COUNT(*)")
+									? { rows: [{ total: 1 }] }
+									: { rows: [row] },
+					release() {},
+				}),
 			} as never,
-			{ ...base, limit: 10, offset: 0 },
+			{
+				...base,
+				limit: 10,
+				offset: 0,
+				authorization: { ...authorization, operation: "product_read" },
+			},
 		);
 
 		expect(result).toMatchObject({
@@ -396,13 +410,51 @@ describe("feedback review persistence", () => {
 
 		const listed = await listFeedback(
 			{
-				query: async (sql: string) => (calls.push(sql), { rows: [] }),
+				connect: async () => ({
+					query: async (sql: string) => {
+						calls.push(sql);
+						if (sql.includes("p.status = ANY($3::text[])"))
+							return { rows: [{}] };
+						if (sql.startsWith("SELECT authorization_allows_project"))
+							return { rows: [{ allowed: true }] };
+						return { rows: [] };
+					},
+					release() {},
+				}),
 			} as never,
-			{ ...base, limit: 10, offset: 0 },
+			{
+				...base,
+				limit: 10,
+				offset: 0,
+				authorization: { ...authorization, operation: "product_read" },
+			},
 		);
 		expect(listed).toEqual({ items: [], total: 0 });
 		const reads = calls.filter((sql) => sql.includes("feedback_reviews"));
 		expect(reads).toHaveLength(2);
 		for (const sql of reads) expect(sql).toContain("p.status='active'");
+	});
+
+	it("refuses an unauthorized feedback list before querying feedback rows", async () => {
+		const queries: string[] = [];
+		await expect(
+			listFeedback(
+				{
+					connect: async () => ({
+						query: async (sql: string) => (queries.push(sql), { rows: [] }),
+						release() {},
+					}),
+				} as never,
+				{
+					...base,
+					limit: 10,
+					offset: 0,
+					authorization: { ...authorization, operation: "product_read" },
+				},
+			),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(queries.some((sql) => sql.includes("JOIN feedback_reviews"))).toBe(
+			false,
+		);
 	});
 });

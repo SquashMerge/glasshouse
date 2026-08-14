@@ -8,6 +8,7 @@ import {
 	getDataset,
 	listDatasetItems,
 	listDatasets,
+	publishDatasetDraft,
 	upsertDatasetDraftItem,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
@@ -167,6 +168,35 @@ export function DatasetDetailPage() {
 	const [deletingItemId, setDeletingItemId] = React.useState<string | null>(
 		null,
 	);
+	async function publish() {
+		if (pending) return;
+		try {
+			setError("");
+			setPending(true);
+			const draft = await createDatasetDraft({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+			});
+			await publishDatasetDraft({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				revision: draft.revision,
+			});
+			await Promise.all([
+				client.invalidateQueries({
+					queryKey: ["dataset-items", selectedProjectId, id],
+				}),
+				client.invalidateQueries({
+					queryKey: ["dataset", selectedProjectId, id],
+				}),
+				client.invalidateQueries({ queryKey: ["datasets", selectedProjectId] }),
+			]);
+		} catch (cause) {
+			setError((cause as Error).message);
+		} finally {
+			setPending(false);
+		}
+	}
 	async function add() {
 		if (pending) return;
 		try {
@@ -292,6 +322,13 @@ export function DatasetDetailPage() {
 					{pending ? "Adding..." : "Add case"}
 				</Button>
 			</section>
+			<Button
+				variant="outline"
+				disabled={pending}
+				onClick={() => void publish()}
+			>
+				{pending ? "Publishing..." : "Publish draft"}
+			</Button>
 			<ul className="space-y-3">
 				{items.data?.items.map((item) => (
 					<li key={item.id} className="rounded border p-3">

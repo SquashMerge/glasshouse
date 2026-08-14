@@ -18,6 +18,13 @@ BEGIN
 	IF (SELECT count(*) FROM dataset_version_items WHERE dataset_version_id = (SELECT id FROM dataset_versions WHERE dataset_id = 'a4000000-0000-4000-8000-000000000001' AND version = 1)) <> 2 THEN
 		RAISE EXCEPTION 'legacy dataset item snapshots were not retained';
 	END IF;
+	IF (SELECT input FROM dataset_items WHERE id = 'a5000000-0000-4000-8000-000000000003') <> '{"legacy_input":"legacy scalar"}'::jsonb
+		OR NOT EXISTS (SELECT 1 FROM dataset_item_input_quarantine WHERE dataset_item_id = 'a5000000-0000-4000-8000-000000000003') THEN
+		RAISE EXCEPTION 'legacy scalar dataset input was not normalized and quarantined before snapshots';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND conname = 'feedback_reviews_dataset_draft_item_id_fkey' AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL%') THEN
+		RAISE EXCEPTION 'feedback draft links must not block draft discard';
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_versions')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_approvals')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
