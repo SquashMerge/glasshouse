@@ -22,16 +22,33 @@ describe("dataset API client", () => {
 
 	it("uses the validated path key and sends the draft-item upsert body", async () => {
 		fetchMock.mockResolvedValueOnce(
-			new Response(JSON.stringify({}), { status: 200 }),
+			new Response(
+				JSON.stringify({
+					id: "22222222-2222-4222-8222-222222222222",
+					item_key: "item/key",
+					input: { question: "hello" },
+					expected_output: null,
+					metadata: { source: "test" },
+					source_trace_id: null,
+					source_observation_id: null,
+					position: 0,
+				}),
+				{ status: 200 },
+			),
 		);
 
-		await upsertDatasetDraftItem({
+		const item = await upsertDatasetDraftItem({
 			project_id: PROJECT_ID,
 			slug: "golden",
 			item_key: "item/key",
 			revision: 2,
 			input: { question: "hello" },
 			metadata: { source: "test" },
+		});
+		expect(item).toMatchObject({
+			id: "22222222-2222-4222-8222-222222222222",
+			item_key: "item/key",
+			input: { question: "hello" },
 		});
 
 		expect(fetchMock).toHaveBeenCalledWith(

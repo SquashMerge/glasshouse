@@ -207,7 +207,7 @@ export function DatasetDetailPage() {
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
 			});
-			await upsertDatasetDraftItem({
+			const item = await upsertDatasetDraftItem({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
 				item_key: crypto.randomUUID(),
@@ -216,6 +216,21 @@ export function DatasetDetailPage() {
 				expected_output: expected.trim() ? parseObject(expected) : null,
 				metadata: parseObject(metadata),
 			});
+			client.setQueryData<{ items: DatasetItem[] }>(
+				["dataset-items", selectedProjectId, id],
+				(current) => ({
+					items: [
+						...(current?.items ?? []).filter(
+							(candidate) => candidate.item_key !== item.item_key,
+						),
+						{
+							...item,
+							dataset_id: id,
+							created_at: new Date().toISOString(),
+						},
+					],
+				}),
+			);
 			setInput("{}");
 			setExpected("");
 			setMetadata("{}");

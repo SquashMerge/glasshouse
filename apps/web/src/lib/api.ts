@@ -68,6 +68,16 @@ export interface DatasetDraft {
 	created_at: string;
 	updated_at: string;
 }
+export interface DatasetDraftItem {
+	id: string;
+	item_key: string;
+	input: JsonObject;
+	expected_output: JsonObject | null;
+	metadata: JsonObject;
+	source_trace_id: string | null;
+	source_observation_id: string | null;
+	position: number;
+}
 export async function getDatasetBySlug(input: {
 	project_id: string;
 	slug: string;
@@ -121,9 +131,9 @@ export async function upsertDatasetDraftItem(input: {
 	metadata?: JsonObject;
 	source_trace_id?: string | null;
 	source_observation_id?: string | null;
-}): Promise<void> {
+}): Promise<DatasetDraftItem> {
 	const { project_id, slug, item_key, revision, ...body } = input;
-	await responseJson(
+	return responseJson(
 		await authedFetch(
 			`/v1/datasets/by-slug/${encodeURIComponent(slug)}/draft/items/${encodeURIComponent(item_key)}${buildQs({ project_id })}`,
 			{
