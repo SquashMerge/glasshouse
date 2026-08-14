@@ -434,6 +434,14 @@ BEGIN
     END;
     INSERT INTO prompt_tombstones (project_id, slug)
     VALUES ('22222222-2222-2222-2222-222222222222', 'project-reservation');
+    PERFORM set_config(
+        'astraea.project_deletion_id',
+        '22222222-2222-2222-2222-222222222222',
+        true
+    );
+    DELETE FROM scores
+    WHERE id = 'a4000000-0000-4000-8000-000000000008';
+    PERFORM set_config('astraea.project_deletion_id', '', true);
     BEGIN
         DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';
         RAISE EXCEPTION 'project deletion removed a prompt tombstone';

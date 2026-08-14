@@ -126,6 +126,37 @@ const adminMembershipProjectGrantsFixture = readFileSync(
 	"utf8",
 );
 
+test("migration fixture clears prior feedback probes before testing protected project deletion", () => {
+	const feedbackProbe =
+		"VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'human.feedback', 1);";
+	const deletionContext =
+		"'astraea.project_deletion_id',\n        '22222222-2222-2222-2222-222222222222',";
+	const feedbackCleanup =
+		"DELETE FROM scores\n    WHERE id = 'a4000000-0000-4000-8000-000000000008';";
+	const clearedDeletionContext =
+		"PERFORM set_config('astraea.project_deletion_id', '', true);";
+	const projectDeletionProbe =
+		"DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';";
+
+	expect(migrationAssertion).toContain(feedbackProbe);
+	expect(migrationAssertion).toContain(deletionContext);
+	expect(migrationAssertion).toContain(feedbackCleanup);
+	expect(migrationAssertion).toContain(clearedDeletionContext);
+	expect(migrationAssertion).toContain(projectDeletionProbe);
+	expect(migrationAssertion.indexOf(feedbackProbe)).toBeLessThan(
+		migrationAssertion.indexOf(deletionContext),
+	);
+	expect(migrationAssertion.indexOf(deletionContext)).toBeLessThan(
+		migrationAssertion.indexOf(feedbackCleanup),
+	);
+	expect(migrationAssertion.indexOf(feedbackCleanup)).toBeLessThan(
+		migrationAssertion.indexOf(clearedDeletionContext),
+	);
+	expect(migrationAssertion.indexOf(clearedDeletionContext)).toBeLessThan(
+		migrationAssertion.indexOf(projectDeletionProbe),
+	);
+});
+
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
 		"CREATE TABLE IF NOT EXISTS authorization_policy_settings",
