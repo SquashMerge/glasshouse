@@ -142,19 +142,60 @@ function item(row: Row) {
 		created_at: timestamp(row, "created_at"),
 	};
 }
+function draftItem(row: Row) {
+	return {
+		item_key: text(row, "item_key"),
+		input: jsonObject(row, "input"),
+		expected_output:
+			row.expected_output == null ? null : jsonObject(row, "expected_output"),
+		metadata: jsonObject(row, "metadata"),
+		position: Number(row.position),
+	};
+}
 
-export async function listDatasets(db: Queryable, project_id: string) {
+async function getDatasetRow(
+	db: Queryable,
+	projectId: string,
+	datasetId: string,
+) {
+	const result = await db.query(
+		`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 AND d.archived_at IS NULL GROUP BY d.id`,
+		[datasetId, projectId],
+	);
+	if (!result.rows[0])
+		throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+	return dataset(result.rows[0]);
+}
+
+export async function listDatasets(
+	db: Transactional,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const result = await client.query(
 			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $1 AND d.archived_at IS NULL GROUP BY d.id ORDER BY d.created_at DESC`,
-			[project_id],
+			[input.project_id],
 		);
+		await client.query("COMMIT");
 		return {
 			items: result.rows.map(dataset),
 			total: result.rowCount ?? result.rows.length,
 		};
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
@@ -206,6 +247,16 @@ export async function createDataset(
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type) VALUES ($1, $2, $3, $4, 'created')",
+			[
+				input.project_id,
+				result.rows[0].id,
+				baseSlug,
+				input.authorization.actor_id,
+			],
+		);
 		await client.query("COMMIT");
 		return dataset(result.rows[0]);
 	} catch (cause) {
@@ -217,19 +268,32 @@ export async function createDataset(
 }
 
 export async function getDataset(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
+	const client = await db.connect();
 	try {
-		const result = await db.query(
-			`SELECT d.*, COUNT(i.id)::int AS item_count FROM datasets d LEFT JOIN dataset_items i ON i.dataset_id = d.id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 AND d.archived_at IS NULL GROUP BY d.id`,
-			[input.id, input.project_id],
-		);
-		if (!result.rows[0])
-			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
-		return dataset(result.rows[0]);
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const value = await getDatasetRow(client, input.project_id, input.id);
+		await client.query("COMMIT");
+		return value;
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
@@ -258,6 +322,16 @@ export async function getDatasetBySlug(
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type) VALUES ($1, $2, $3, $4, 'metadata_updated')",
+			[
+				input.project_id,
+				result.rows[0].id,
+				input.slug,
+				input.authorization.actor_id,
+			],
+		);
 		await client.query("COMMIT");
 		return dataset(result.rows[0]);
 	} catch (cause) {
@@ -333,11 +407,25 @@ export async function getOrCreateDatasetDraft(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
-			`WITH selected AS (SELECT id, latest_published_version FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL FOR UPDATE), inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM selected ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id FROM inserted d JOIN dataset_versions v ON v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.dataset_version_id = v.id), draft AS (SELECT * FROM inserted UNION ALL SELECT d.* FROM dataset_drafts d JOIN selected s ON s.id = d.dataset_id WHERE NOT EXISTS (SELECT 1 FROM inserted)) SELECT d.*, COUNT(i.id)::int AS item_count FROM draft d LEFT JOIN dataset_draft_items i ON i.draft_id = d.id GROUP BY d.id`,
+			`WITH selected AS (SELECT id, latest_published_version FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL FOR UPDATE), inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM selected ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id FROM inserted d JOIN dataset_versions v ON v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.dataset_version_id = v.id), draft AS (SELECT * FROM inserted UNION ALL SELECT d.* FROM dataset_drafts d JOIN selected s ON s.id = d.dataset_id WHERE NOT EXISTS (SELECT 1 FROM inserted)) SELECT d.*, COUNT(i.id)::int AS item_count, EXISTS (SELECT 1 FROM inserted) AS created FROM draft d LEFT JOIN dataset_draft_items i ON i.draft_id = d.id GROUP BY d.id`,
 			[input.project_id, input.slug, input.authorization.actor_id],
 		);
 		if (!result.rows[0])
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		if (result.rows[0].created) {
+			await lockProjectAuditProvenance(client, input.project_id);
+			await client.query(
+				"INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type, draft_revision, item_count) VALUES ($1, $2, $3, $4, 'draft_created', $5, $6)",
+				[
+					input.project_id,
+					result.rows[0].dataset_id,
+					input.slug,
+					input.authorization.actor_id,
+					result.rows[0].revision,
+					result.rows[0].item_count,
+				],
+			);
+		}
 		await client.query("COMMIT");
 		return draft(result.rows[0]);
 	} catch (cause) {
@@ -436,8 +524,19 @@ export async function upsertDatasetDraftItem(
 			"UPDATE dataset_drafts SET revision = revision + 1, updated_at = now() WHERE id = $1",
 			[row.id],
 		);
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type, draft_revision) VALUES ($1, $2, $3, $4, 'draft_item_upserted', $5)",
+			[
+				input.project_id,
+				row.dataset_id,
+				input.slug,
+				input.authorization.actor_id,
+				Number(row.revision) + 1,
+			],
+		);
 		await client.query("COMMIT");
-		return result.rows[0];
+		return draftItem(result.rows[0]);
 	} catch (cause) {
 		await client.query("ROLLBACK");
 		throw normalizeError(cause);
@@ -466,11 +565,22 @@ export async function discardDatasetDraft(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
-			`DELETE FROM dataset_drafts dr USING datasets d WHERE dr.dataset_id = d.id AND dr.project_id = d.project_id AND d.project_id = $1 AND d.slug = $2 AND d.archived_at IS NULL`,
+			`DELETE FROM dataset_drafts dr USING datasets d WHERE dr.dataset_id = d.id AND dr.project_id = d.project_id AND d.project_id = $1 AND d.slug = $2 AND d.archived_at IS NULL RETURNING dr.dataset_id, dr.revision`,
 			[input.project_id, input.slug],
 		);
 		if (result.rowCount !== 1)
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset draft not found");
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type, draft_revision) VALUES ($1, $2, $3, $4, 'draft_discarded', $5)",
+			[
+				input.project_id,
+				result.rows[0].dataset_id,
+				input.slug,
+				input.authorization.actor_id,
+				result.rows[0].revision,
+			],
+		);
 		await client.query("COMMIT");
 	} catch (cause) {
 		await client.query("ROLLBACK");
@@ -525,21 +635,36 @@ export async function archiveDataset(
 }
 
 export async function listDatasetItems(
-	db: Queryable,
-	input: { project_id: string; dataset_id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		dataset_id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
+	const client = await db.connect();
 	try {
-		await getDataset(db, {
-			project_id: input.project_id,
-			id: input.dataset_id,
-		});
-		const result = await db.query(
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await getDatasetRow(client, input.project_id, input.dataset_id);
+		const result = await client.query(
 			`SELECT i.* FROM dataset_items i JOIN datasets d ON d.id = i.dataset_id JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE i.dataset_id = $1 AND d.project_id = $2 ORDER BY i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
+		await client.query("COMMIT");
 		return { items: result.rows.map(item) };
 	} catch (cause) {
+		await client.query("ROLLBACK");
 		throw normalizeError(cause);
+	} finally {
+		client.release();
 	}
 }
 
@@ -567,10 +692,7 @@ export async function addDatasetItem(
 			))
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
-		await getDataset(client, {
-			project_id: input.project_id,
-			id: input.dataset_id,
-		});
+		await getDatasetRow(client, input.project_id, input.dataset_id);
 		const result = await client.query(
 			`INSERT INTO dataset_items (id, dataset_id, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6, $7 FROM datasets d JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $2 AND d.project_id = $8 RETURNING *`,
 			[

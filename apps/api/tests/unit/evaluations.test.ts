@@ -289,6 +289,11 @@ describe("evaluation MVP", () => {
 			trace: async () => {},
 		} as never);
 		const response = await handlers.handleCreateExperiment({
+			get: () => ({
+				actor: "test",
+				actorId: "44444444-4444-4444-8444-444444444444",
+				organizationId: "00000000-0000-4000-8000-000000000001",
+			}),
 			req: { valid: () => baseExperiment },
 			json: (body: unknown, status?: number) =>
 				new Response(JSON.stringify(body), { status }),

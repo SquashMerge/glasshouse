@@ -618,10 +618,12 @@ export function createExperimentHandlers(
 				await deps.getDataset(db, {
 					project_id: body.project_id,
 					id: body.dataset_id,
+					authorization: projectAuthorization(trustedTenant(c), "execute"),
 				});
 				const dataset = await deps.listDatasetItems(db, {
 					project_id: body.project_id,
 					dataset_id: body.dataset_id,
+					authorization: projectAuthorization(trustedTenant(c), "execute"),
 				});
 				if (dataset.items.some((item) => item.expected_output === null))
 					throw new ExperimentRepositoryError(

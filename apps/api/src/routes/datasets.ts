@@ -324,10 +324,13 @@ export function createDatasetRouteHandlers(
 		) => {
 			try {
 				return c.json(
-					await dependencies.listDatasets(
-						dependencies.pool(),
-						c.req.valid("query").project_id,
-					),
+					await dependencies.listDatasets(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
+					}),
 				);
 			} catch (cause) {
 				return errorResponse(c, cause);
@@ -494,6 +497,10 @@ export function createDatasetRouteHandlers(
 					await dependencies.getDataset(dependencies.pool(), {
 						id: c.req.valid("param").id,
 						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -508,6 +515,10 @@ export function createDatasetRouteHandlers(
 					await dependencies.listDatasetItems(dependencies.pool(), {
 						dataset_id: c.req.valid("param").id,
 						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {

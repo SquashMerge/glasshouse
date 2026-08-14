@@ -7,7 +7,10 @@ import {
 	getDatasetBySlug,
 	getDatasetDraft,
 	getOrCreateDatasetDraft,
+	getDataset,
+	listDatasetItems,
 	listDatasets,
+	upsertDatasetDraftItem,
 	updateDatasetMetadata,
 } from "../../src/db/datasets";
 import { createDatasetRouteHandlers } from "../../src/routes/datasets";
@@ -15,6 +18,7 @@ import {
 	DatasetCreate,
 	DatasetDraftItemParam,
 	DatasetDraftItemUpsert,
+	DatasetDraftItem,
 	DatasetItem,
 	DatasetItemCreate,
 } from "../../src/schemas/datasets";
@@ -153,11 +157,20 @@ describe("dataset contracts", () => {
 
 describe("dataset repository", () => {
 	it("lists only datasets for the requested project", async () => {
-		const db = fakeDb([{ rows: [datasetRow], rowCount: 1 }]);
-		const result = await listDatasets(db, PROJECT);
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [datasetRow], rowCount: 1 },
+		]);
+		const result = await listDatasets(db, {
+			project_id: PROJECT,
+			authorization: { ...authorization, operation: "product_read" },
+		});
 		expect(result.items[0]?.id).toBe(DATASET);
-		expect(db.queries[0]?.text).toContain("WHERE d.project_id = $1");
-		expect(db.queries[0]?.values).toEqual([PROJECT]);
+		const listQuery = db.queries.find((query) =>
+			query.text.includes("WHERE d.project_id = $1"),
+		);
+		expect(listQuery?.values).toEqual([PROJECT]);
 	});
 
 	it("looks up stable slugs within the requested project", async () => {
@@ -185,9 +198,55 @@ describe("dataset repository", () => {
 		).toBe(true);
 	});
 
-	it("fences slug and draft reads through the active authorized project lock", () => {
-		for (const operation of [getDatasetBySlug, getDatasetDraft])
+	it("fences every dataset read through the active authorized project lock", () => {
+		for (const operation of [
+			getDatasetBySlug,
+			getDatasetDraft,
+			listDatasets,
+			getDataset,
+			listDatasetItems,
+		])
 			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
+	});
+
+	it("serializes draft items to the exact public schema without persisted fields", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [{ id: "draft", dataset_id: DATASET, revision: 1 }] },
+			{
+				rows: [
+					{
+						id: "private",
+						project_id: PROJECT,
+						draft_id: "draft",
+						item_key: "stable",
+						position: 0,
+						input: '{"question":"hello"}',
+						expected_output: null,
+						metadata: '{"source":"test"}',
+						source_trace_id: "trace",
+						created_at: NOW,
+					},
+				],
+			},
+		]);
+		const result = await upsertDatasetDraftItem(db, {
+			project_id: PROJECT,
+			slug: "golden",
+			item_key: "stable",
+			revision: 1,
+			input: { question: "hello" },
+			authorization,
+		});
+		expect(DatasetDraftItem.safeParse(result).success).toBe(true);
+		expect(result).toEqual({
+			item_key: "stable",
+			input: { question: "hello" },
+			expected_output: null,
+			metadata: { source: "test" },
+			position: 0,
+		});
 	});
 
 	it("returns the actual metadata item count", async () => {
@@ -297,6 +356,32 @@ describe("dataset repository", () => {
 			code: "CONFLICT",
 			status: 409,
 		});
+	});
+
+	it("records creation evidence without dataset content", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [] },
+			{ rows: [] },
+			{ rows: [datasetRow] },
+		]);
+		await createDataset(db, {
+			project_id: PROJECT,
+			name: "Golden",
+			description: "sensitive dataset content",
+			authorization,
+		});
+		const audit = db.queries.find((query) =>
+			query.text.includes("dataset_lifecycle_audit_events"),
+		);
+		expect(audit?.text).toContain("'created'");
+		expect(audit?.values).toEqual([
+			PROJECT,
+			DATASET,
+			"golden",
+			authorization.actor_id,
+		]);
 	});
 
 	it("deletes a feedback-linked item after severing the readable feedback association", async () => {
@@ -412,6 +497,45 @@ describe("dataset repository", () => {
 			project_id: PROJECT,
 			trace_id: "a".repeat(32),
 			observation_id: "b".repeat(16),
+		});
+	});
+
+	it("returns only the documented draft item fields from the route", async () => {
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			upsertDatasetDraftItem: async () => ({
+				item_key: "stable",
+				input: {},
+				expected_output: null,
+				metadata: {},
+				position: 0,
+			}),
+		} as never);
+		const response = await handlers.handlePutDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => '"1"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden", itemKey: "stable" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: { input: {} },
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+		expect(await response.json()).toEqual({
+			item_key: "stable",
+			input: {},
+			expected_output: null,
+			metadata: {},
+			position: 0,
 		});
 	});
 });

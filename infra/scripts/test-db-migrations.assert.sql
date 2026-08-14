@@ -1235,14 +1235,12 @@ DECLARE
     other_project_id UUID := '55555555-5555-4555-8555-555555555557';
     fixture_dataset_id UUID := '55555555-5555-4555-8555-555555555558';
 BEGIN
-    IF NOT EXISTS (
+    IF EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'dataset_lifecycle_audit_events'::regclass
             AND conname = 'dataset_lifecycle_audit_events_dataset_project_fkey'
-            AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (project_id, dataset_id)%'
-            AND pg_get_constraintdef(oid) LIKE '%REFERENCES datasets(project_id, id)%'
     ) THEN
-        RAISE EXCEPTION 'dataset lifecycle audit project/dataset integrity is incomplete';
+        RAISE EXCEPTION 'dataset lifecycle audit must retain historical identity after retention';
     END IF;
     INSERT INTO projects (id, name, slug, organization_id)
     VALUES
@@ -1254,7 +1252,7 @@ BEGIN
     VALUES (dataset_project_id, fixture_dataset_id, 'retained-dataset', '44444444-4444-4444-8444-444444444444', 'archived');
     BEGIN
         INSERT INTO dataset_lifecycle_audit_events (project_id, dataset_id, slug, actor_id, event_type)
-        VALUES (other_project_id, fixture_dataset_id, 'retained-dataset', '44444444-4444-4444-8444-444444444444', 'archived');
+        VALUES (other_project_id, fixture_dataset_id, 'retained-dataset', '44444444-4444-4444-8444-444444444444', 'created');
         RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-project dataset';
     EXCEPTION WHEN foreign_key_violation THEN
         NULL;
@@ -1262,6 +1260,13 @@ BEGIN
     BEGIN
         DELETE FROM dataset_lifecycle_audit_events WHERE dataset_id = fixture_dataset_id;
         RAISE EXCEPTION 'dataset lifecycle audit accepted an ordinary delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    PERFORM set_config('astraea.dataset_retention_project_id', dataset_project_id::text, true);
+    BEGIN
+        DELETE FROM dataset_lifecycle_audit_events WHERE dataset_id = fixture_dataset_id;
+        RAISE EXCEPTION 'dataset retention context deleted append-only lifecycle evidence';
     EXCEPTION WHEN SQLSTATE '55000' THEN
         NULL;
     END;

@@ -148,6 +148,7 @@ export const handleCreateBenchmarkSuite = async (
 		const items = await listDatasetItems(pgPool(), {
 			project_id: body.project_id,
 			dataset_id: body.dataset_id,
+			authorization: projectAuthorization(trustedTenant(c), "product_write"),
 		});
 		if (
 			!items.items.length ||
