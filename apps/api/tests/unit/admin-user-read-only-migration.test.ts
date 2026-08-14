@@ -157,6 +157,37 @@ test("migration fixture clears prior feedback probes before testing protected pr
 	);
 });
 
+test("deletion dependency fixtures are created locally and asserted by identity", () => {
+	const promotedItem =
+		"INSERT INTO dataset_items (id, project_id, dataset_id, input)\n\tVALUES (\n\t\t'a1000000-0000-4000-8000-000000000002',";
+	const promotedItemLink =
+		"SET feedback_score_id = 'c1000000-0000-4000-8000-000000000001'\n\tWHERE id = 'a1000000-0000-4000-8000-000000000002';";
+	const promotedDependency =
+		"AND item.id = 'a1000000-0000-4000-8000-000000000002'";
+	const benchmarkDependency =
+		"WHERE run.id = 'd2000000-0000-4000-8000-000000000001'";
+	const benchmarkExperiment =
+		"INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config)";
+	const benchmarkExperimentLink =
+		"'a1000000-0000-4000-8000-000000000006',\n\t\t'deletion-order-run'";
+
+	expect(migrationAssertion).toContain(promotedItem);
+	expect(migrationAssertion).toContain(promotedItemLink);
+	expect(migrationAssertion).toContain(promotedDependency);
+	expect(migrationAssertion).toContain(benchmarkDependency);
+	expect(migrationAssertion).toContain(benchmarkExperiment);
+	expect(migrationAssertion).toContain(benchmarkExperimentLink);
+	expect(migrationAssertion.indexOf(promotedItem)).toBeLessThan(
+		migrationAssertion.indexOf(promotedItemLink),
+	);
+	expect(migrationAssertion.indexOf(promotedItemLink)).toBeLessThan(
+		migrationAssertion.indexOf(promotedDependency),
+	);
+	expect(migrationAssertion.indexOf(benchmarkExperiment)).toBeLessThan(
+		migrationAssertion.indexOf(benchmarkExperimentLink),
+	);
+});
+
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(
 		"CREATE TABLE IF NOT EXISTS authorization_policy_settings",
