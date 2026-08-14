@@ -158,33 +158,44 @@ test("migration fixture clears prior feedback probes before testing protected pr
 });
 
 test("deletion dependency fixtures are created locally and asserted by identity", () => {
-	const promotedItem =
-		"INSERT INTO dataset_items (id, project_id, dataset_id, input)\n\tVALUES (\n\t\t'a1000000-0000-4000-8000-000000000002',";
-	const promotedItemLink =
-		"SET feedback_score_id = 'c1000000-0000-4000-8000-000000000001'\n\tWHERE id = 'a1000000-0000-4000-8000-000000000002';";
+	const promotedDraftItem =
+		"INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)\n\tVALUES (\n\t\t'a1000000-0000-4000-8000-000000000009',";
+	const promotedSnapshot =
+		"FROM dataset_draft_items item\n\tWHERE item.id = 'a1000000-0000-4000-8000-000000000009';";
 	const promotedDependency =
-		"AND item.id = 'a1000000-0000-4000-8000-000000000002'";
+		"AND review.dataset_item_id = 'a1000000-0000-4000-8000-000000000011'";
 	const benchmarkDependency =
 		"WHERE run.id = 'd2000000-0000-4000-8000-000000000001'";
 	const benchmarkExperiment =
-		"INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config)";
+		"INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config, requested_by_actor_id)";
 	const benchmarkExperimentLink =
 		"'a1000000-0000-4000-8000-000000000006',\n\t\t'deletion-order-run'";
 
-	expect(migrationAssertion).toContain(promotedItem);
-	expect(migrationAssertion).toContain(promotedItemLink);
+	expect(migrationAssertion).toContain(promotedDraftItem);
+	expect(migrationAssertion).toContain(promotedSnapshot);
 	expect(migrationAssertion).toContain(promotedDependency);
 	expect(migrationAssertion).toContain(benchmarkDependency);
 	expect(migrationAssertion).toContain(benchmarkExperiment);
 	expect(migrationAssertion).toContain(benchmarkExperimentLink);
-	expect(migrationAssertion.indexOf(promotedItem)).toBeLessThan(
-		migrationAssertion.indexOf(promotedItemLink),
+	expect(migrationAssertion.indexOf(promotedDraftItem)).toBeLessThan(
+		migrationAssertion.indexOf(promotedSnapshot),
 	);
-	expect(migrationAssertion.indexOf(promotedItemLink)).toBeLessThan(
+	expect(
+		migrationAssertion.indexOf(
+			"INSERT INTO actors (id) VALUES ('a1000000-0000-4000-8000-000000000012');",
+		),
+	).toBeLessThan(migrationAssertion.indexOf(promotedDraftItem));
+	expect(migrationAssertion.indexOf(promotedSnapshot)).toBeLessThan(
 		migrationAssertion.indexOf(promotedDependency),
 	);
 	expect(migrationAssertion.indexOf(benchmarkExperiment)).toBeLessThan(
 		migrationAssertion.indexOf(benchmarkExperimentLink),
+	);
+	expect(migrationAssertion).toContain(
+		"AND identity.organization_id = project.organization_id\n\t\t\tAND identity.provider_namespace = 'basic:v1'",
+	);
+	expect(migrationAssertion).not.toContain(
+		"JOIN dataset_items item ON item.feedback_score_id = review.score_id",
 	);
 });
 

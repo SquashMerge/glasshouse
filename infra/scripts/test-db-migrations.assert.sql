@@ -867,24 +867,84 @@ BEGIN
     END;
 	INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
 	VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
-	INSERT INTO dataset_items (id, project_id, dataset_id, input)
-	VALUES (
-		'a1000000-0000-4000-8000-000000000002',
-		'11111111-1111-1111-1111-111111111111',
-		'a1000000-0000-4000-8000-000000000001',
-		'{}'
-	);
-	INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+	INSERT INTO feedback_reviews (score_id, project_id, status)
 	VALUES (
 		'c1000000-0000-4000-8000-000000000001',
 		'11111111-1111-1111-1111-111111111111',
-		'added_to_dataset',
-		'a1000000-0000-4000-8000-000000000001',
-		'a1000000-0000-4000-8000-000000000004'
+		'reviewed'
 	);
-	UPDATE dataset_items
-	SET feedback_score_id = 'c1000000-0000-4000-8000-000000000001'
-	WHERE id = 'a1000000-0000-4000-8000-000000000002';
+	INSERT INTO actors (id) VALUES ('a1000000-0000-4000-8000-000000000012');
+	INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+	SELECT
+		'a1000000-0000-4000-8000-000000000012',
+		organization_id,
+		'basic:v1',
+		'deletion-order-requester'
+	FROM projects
+	WHERE id = '11111111-1111-1111-1111-111111111111';
+	INSERT INTO dataset_drafts (id, project_id, dataset_id, base_version, revision, created_by)
+	VALUES (
+		'a1000000-0000-4000-8000-000000000008',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000001',
+		1,
+		2,
+		'a1000000-0000-4000-8000-000000000012'
+	);
+	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)
+	VALUES (
+		'a1000000-0000-4000-8000-000000000009',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000008',
+		'feedback-scope-score-1',
+		0,
+		'{}',
+		'c1000000-0000-4000-8000-000000000001'
+	);
+	UPDATE feedback_reviews
+	SET status = 'added_to_dataset',
+		dataset_id = 'a1000000-0000-4000-8000-000000000001',
+		dataset_draft_item_id = 'a1000000-0000-4000-8000-000000000009'
+	WHERE score_id = 'c1000000-0000-4000-8000-000000000001';
+	IF NOT EXISTS (
+		SELECT 1
+		FROM feedback_reviews review
+		JOIN dataset_draft_items item ON item.id = review.dataset_draft_item_id
+		WHERE review.score_id = 'c1000000-0000-4000-8000-000000000001'
+			AND review.status = 'added_to_dataset'
+			AND item.feedback_score_id = review.score_id
+			AND item.project_id = review.project_id
+	) THEN
+		RAISE EXCEPTION 'feedback promotion did not retain the reviewed score through its project-scoped draft item';
+	END IF;
+	INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash, created_via)
+	VALUES (
+		'a1000000-0000-4000-8000-000000000010',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000001',
+		2,
+		1,
+		repeat('d', 64),
+		'draft_publish'
+	);
+	INSERT INTO dataset_version_items (id, project_id, dataset_version_id, item_key, position, input)
+	SELECT
+		'a1000000-0000-4000-8000-000000000011',
+		item.project_id,
+		'a1000000-0000-4000-8000-000000000010',
+		item.item_key,
+		item.position,
+		item.input
+	FROM dataset_draft_items item
+	WHERE item.id = 'a1000000-0000-4000-8000-000000000009';
+	UPDATE datasets
+	SET latest_published_version = 2
+	WHERE id = 'a1000000-0000-4000-8000-000000000001';
+	UPDATE feedback_reviews
+	SET dataset_draft_item_id = NULL,
+		dataset_item_id = 'a1000000-0000-4000-8000-000000000011'
+	WHERE score_id = 'c1000000-0000-4000-8000-000000000001';
+	DELETE FROM dataset_drafts WHERE id = 'a1000000-0000-4000-8000-000000000008';
 	INSERT INTO benchmark_suites (id, project_id, dataset_id, name)
 	VALUES (
 		'd1000000-0000-4000-8000-000000000001',
@@ -898,14 +958,15 @@ BEGIN
 		'11111111-1111-1111-1111-111111111111',
 		'deletion-order-agent'
 	);
-	INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config)
+	INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config, requested_by_actor_id)
 	VALUES (
 		'a1000000-0000-4000-8000-000000000006',
 		'11111111-1111-1111-1111-111111111111',
 		'a1000000-0000-4000-8000-000000000005',
 		'a1000000-0000-4000-8000-000000000001',
 		'pending',
-		'{}'
+		'{}',
+		'a1000000-0000-4000-8000-000000000012'
 	);
 	INSERT INTO benchmark_runs (id, project_id, suite_id, experiment_id, label)
 	VALUES (
@@ -917,13 +978,17 @@ BEGIN
 	);
 	IF NOT EXISTS (
 		SELECT 1 FROM feedback_reviews review
-		JOIN dataset_items item ON item.feedback_score_id = review.score_id
+		JOIN dataset_version_items item ON item.id = review.dataset_item_id
+		JOIN dataset_versions version ON version.id = item.dataset_version_id
 		WHERE review.score_id = 'c1000000-0000-4000-8000-000000000001'
 			AND review.project_id = '11111111-1111-1111-1111-111111111111'
 			AND review.status = 'added_to_dataset'
 			AND review.dataset_id = 'a1000000-0000-4000-8000-000000000001'
-			AND review.dataset_item_id = 'a1000000-0000-4000-8000-000000000004'
-			AND item.id = 'a1000000-0000-4000-8000-000000000002'
+			AND review.dataset_item_id = 'a1000000-0000-4000-8000-000000000011'
+			AND item.project_id = review.project_id
+			AND item.item_key = 'feedback-scope-score-1'
+			AND version.id = 'a1000000-0000-4000-8000-000000000010'
+			AND version.dataset_id = review.dataset_id
 	) OR NOT EXISTS (
 		SELECT 1 FROM benchmark_runs run
 		JOIN benchmark_suites suite ON suite.id = run.suite_id
@@ -933,6 +998,15 @@ BEGIN
 			AND suite.id = 'd1000000-0000-4000-8000-000000000001'
 			AND suite.project_id = '11111111-1111-1111-1111-111111111111'
 			AND suite.dataset_id = 'a1000000-0000-4000-8000-000000000001'
+	) OR NOT EXISTS (
+		SELECT 1
+		FROM experiments experiment
+		JOIN actor_identities identity ON identity.actor_id = experiment.requested_by_actor_id
+		JOIN projects project ON project.id = experiment.project_id
+		WHERE experiment.id = 'a1000000-0000-4000-8000-000000000006'
+			AND experiment.status = 'pending'
+			AND identity.organization_id = project.organization_id
+			AND identity.provider_namespace = 'basic:v1'
 	) THEN
 		RAISE EXCEPTION 'deletion dependency fixtures for promoted feedback or benchmark suites are incomplete';
 	END IF;
