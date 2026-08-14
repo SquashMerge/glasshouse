@@ -22,7 +22,10 @@ async function responseJson<T>(
 	response: Response,
 	operation: string,
 ): Promise<T> {
-	if (response.ok) return response.json() as Promise<T>;
+	if (response.ok)
+		return response.status === 204
+			? (undefined as T)
+			: (response.json() as Promise<T>);
 
 	let envelope: ApiErrorEnvelope | null = null;
 	try {
@@ -262,6 +265,17 @@ export async function listDatasetItems(input: {
 			`/v1/datasets/${encodeURIComponent(input.id)}/items${buildQs({ project_id: input.project_id })}`,
 		),
 		"listDatasetItems",
+	);
+}
+export async function listPublishedDatasetItems(input: {
+	project_id: string;
+	id: string;
+}): Promise<{ items: DatasetItem[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/${encodeURIComponent(input.id)}/published-items${buildQs({ project_id: input.project_id })}`,
+		),
+		"listPublishedDatasetItems",
 	);
 }
 export async function addDatasetItem(input: {

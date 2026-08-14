@@ -242,7 +242,7 @@ export async function createExperiment(
 					"Project is not available",
 				);
 			const r = await client.query(
-				`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status, requested_by_actor_id) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending',$7 WHERE ($3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2)) AND EXISTS (SELECT 1 FROM datasets WHERE id=$4 AND project_id=$2) RETURNING *`,
+				`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status, requested_by_actor_id) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending',$7 WHERE ($3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2)) AND EXISTS (SELECT 1 FROM datasets WHERE id=$4 AND project_id=$2 AND archived_at IS NULL AND latest_published_version IS NOT NULL) RETURNING *`,
 				[
 					randomUUID(),
 					input.project_id,
@@ -425,23 +425,29 @@ export async function claimExperimentTask(
 			}
 			if (access.row.status !== "running") return null;
 			const candidate = await client.query(
-				"SELECT t.id, t.dataset_item_id, t.dataset_version_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
-				[input.experiment_id],
+				"SELECT t.id, t.dataset_item_id, t.dataset_version_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND t.project_id=$2 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
+				[input.experiment_id, access.project_id],
 			);
 			const task = candidate.rows[0] as Row | undefined;
 			if (!task) return null;
 			const leaseToken = input.lease_token ?? randomUUID();
 			const claimed = await client.query(
-				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 RETURNING id, dataset_item_id, dataset_version_item_id, lease_token",
-				[text(task, "id"), leaseToken, input.lease_seconds ?? 60],
+				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 AND project_id=$4 RETURNING id, dataset_item_id, dataset_version_item_id, lease_token",
+				[
+					text(task, "id"),
+					leaseToken,
+					input.lease_seconds ?? 60,
+					access.project_id,
+				],
 			);
 			const claimedTask = claimed.rows[0] as Row | undefined;
 			if (!claimedTask) return null;
 			const item = await client.query(
-				"SELECT input, expected_output FROM dataset_items WHERE id=$1 UNION ALL SELECT input, expected_output FROM dataset_version_items WHERE id=$2",
+				"SELECT input, expected_output FROM dataset_items WHERE id=$1 AND project_id=$3 UNION ALL SELECT input, expected_output FROM dataset_version_items WHERE id=$2 AND project_id=$3",
 				[
 					claimedTask.dataset_item_id ?? null,
 					claimedTask.dataset_version_item_id ?? null,
+					access.project_id,
 				],
 			);
 			const datasetItem = item.rows[0] as Row | undefined;

@@ -46,7 +46,6 @@ describe("dataset feedback actions", () => {
 		});
 		createDatasetDraft.mockResolvedValue({ revision: 1 });
 		upsertDatasetDraftItem.mockResolvedValue({});
-		publishDatasetDraft.mockResolvedValue({ version: 1, item_count: 1 });
 		render(
 			<AddToDatasetDialog
 				projectId="project"
@@ -64,7 +63,7 @@ describe("dataset feedback actions", () => {
 		fireEvent.change(screen.getByLabelText("Dataset"), {
 			target: { value: "dataset" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add case" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
 
 		expect(
 			await screen.findByText("Input must be valid JSON object"),
@@ -192,7 +191,6 @@ describe("dataset feedback actions", () => {
 		});
 		createDatasetDraft.mockResolvedValue({ revision: 1 });
 		upsertDatasetDraftItem.mockResolvedValue({});
-		publishDatasetDraft.mockResolvedValue({ version: 1, item_count: 1 });
 		render(
 			<AddToDatasetDialog
 				projectId="project"
@@ -207,7 +205,7 @@ describe("dataset feedback actions", () => {
 		fireEvent.change(screen.getByLabelText("Dataset"), {
 			target: { value: "dataset" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add case" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
 
 		await waitFor(() =>
 			expect(upsertDatasetDraftItem).toHaveBeenCalledTimes(1),
@@ -223,11 +221,7 @@ describe("dataset feedback actions", () => {
 				slug: "golden",
 			}),
 		);
-		expect(publishDatasetDraft).toHaveBeenCalledWith({
-			project_id: "project",
-			slug: "golden",
-			revision: 2,
-		});
+		expect(publishDatasetDraft).not.toHaveBeenCalled();
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 

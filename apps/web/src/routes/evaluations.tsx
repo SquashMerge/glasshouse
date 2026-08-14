@@ -8,9 +8,9 @@ import {
 	experimentResults,
 	experimentSummary,
 	getExperiment,
-	listDatasetItems,
 	listDatasets,
 	listExperiments,
+	listPublishedDatasetItems,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
@@ -43,9 +43,12 @@ export function EvaluationsPage() {
 		(dataset) => dataset.id === datasetId,
 	);
 	const selectedItems = useQuery({
-		queryKey: ["dataset-items", selectedProjectId, datasetId],
+		queryKey: ["published-dataset-items", selectedProjectId, datasetId],
 		queryFn: () =>
-			listDatasetItems({ project_id: selectedProjectId!, id: datasetId }),
+			listPublishedDatasetItems({
+				project_id: selectedProjectId!,
+				id: datasetId,
+			}),
 		enabled: Boolean(selectedProjectId && selectedDataset),
 	});
 	const [name, setName] = React.useState("");
@@ -59,7 +62,10 @@ export function EvaluationsPage() {
 		selectedItems.data?.items.filter((item) => !item.expected_output).length ??
 		0;
 	const selectedItemsValid = Boolean(
-		selectedDataset && selectedItems.data && missing === 0,
+		selectedDataset &&
+			selectedItems.data &&
+			selectedItems.data.items.length > 0 &&
+			missing === 0,
 	);
 	if (!selectedProject)
 		return (
@@ -166,6 +172,11 @@ export function EvaluationsPage() {
 					<p className="text-sm text-destructive">
 						{missing} dataset case{missing === 1 ? "" : "s"} need expected
 						output before this evaluation can run.
+					</p>
+				)}
+				{selectedDataset && selectedItems.data?.items.length === 0 && (
+					<p className="text-sm text-destructive">
+						Publish at least one dataset case before this evaluation can run.
 					</p>
 				)}
 				{error && (

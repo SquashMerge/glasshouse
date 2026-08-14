@@ -33,22 +33,11 @@ export const FeedbackCreate = z
 	.openapi("FeedbackCreate");
 
 export const FeedbackReview = z
-	.discriminatedUnion("status", [
-		z
-			.object({
-				status: z.literal("added_to_dataset"),
-				note: z.string().trim().max(2000).optional(),
-				dataset_id: z.string().uuid(),
-				dataset_item_id: z.string().uuid(),
-			})
-			.strict(),
-		z
-			.object({
-				status: z.enum(["new", "reviewed", "dismissed"]),
-				note: z.string().trim().max(2000).optional(),
-			})
-			.strict(),
-	])
+	.object({
+		status: z.enum(["new", "reviewed", "dismissed"]),
+		note: z.string().trim().max(2000).optional(),
+	})
+	.strict()
 	.openapi("FeedbackReview");
 
 export const FeedbackPromotion = z

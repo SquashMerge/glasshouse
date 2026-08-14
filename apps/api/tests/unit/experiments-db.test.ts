@@ -205,7 +205,41 @@ describe("durable experiment task ledger", () => {
 		const itemQuery = db.calls.find((call) =>
 			call.text.includes("FROM dataset_version_items"),
 		);
-		expect(itemQuery?.values).toEqual([null, snapshotItemId]);
+		expect(itemQuery?.values).toEqual([null, snapshotItemId, projectId]);
+	});
+
+	it("fails closed when a legacy task item is outside the experiment project", async () => {
+		const legacyItemId = "88888888-8888-4888-8888-888888888889";
+		const db = transactionPool([
+			{ rows: [] },
+			{ rows: [runningExperiment] },
+			{ rows: [{ id: taskId, dataset_item_id: legacyItemId }] },
+			{
+				rows: [
+					{
+						id: taskId,
+						dataset_item_id: legacyItemId,
+						lease_token: leaseToken,
+					},
+				],
+			},
+			{ rows: [] },
+		]);
+
+		await expect(
+			claimExperimentTask(db as never, {
+				project_id: projectId,
+				experiment_id: experimentId,
+			}),
+		).rejects.toMatchObject({
+			code: "INTERNAL",
+			message: "Dataset item not found",
+		});
+		const itemQuery = db.calls.find((call) =>
+			call.text.includes("FROM dataset_items"),
+		);
+		expect(itemQuery?.text).toContain("id=$1 AND project_id=$3");
+		expect(itemQuery?.values).toEqual([legacyItemId, null, projectId]);
 	});
 
 	it("does not finalize a result after requester execution access is revoked", async () => {

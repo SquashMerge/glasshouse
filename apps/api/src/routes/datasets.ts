@@ -20,6 +20,7 @@ import {
 	getOrCreateDatasetDraft as getOrCreateDatasetDraftRecord,
 	getDataset as getDatasetRecord,
 	listDatasetItems as listDatasetItemsRecord,
+	listPublishedDatasetItems as listPublishedDatasetItemsRecord,
 	listDatasets as listDatasetsRecord,
 	updateDatasetMetadata as updateDatasetMetadataRecord,
 	upsertDatasetDraftItem as upsertDatasetDraftItemRecord,
@@ -140,6 +141,21 @@ export const listDatasetItems = createRoute({
 	path: "/v1/datasets/{id}/items",
 	tags: [tag],
 	summary: "List dataset items",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetIdParam, query: DatasetProjectQuery },
+	responses: {
+		200: {
+			description: "OK",
+			content: { "application/json": { schema: DatasetItemList } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const listPublishedDatasetItems = createRoute({
+	method: "get",
+	path: "/v1/datasets/{id}/published-items",
+	tags: [tag],
+	summary: "List the latest published dataset items",
 	security: [{ basicAuth: [] }],
 	request: { params: DatasetIdParam, query: DatasetProjectQuery },
 	responses: {
@@ -325,6 +341,7 @@ export type DatasetRouteDependencies = {
 	createDataset: typeof createDatasetRecord;
 	getDataset: typeof getDatasetRecord;
 	listDatasetItems: typeof listDatasetItemsRecord;
+	listPublishedDatasetItems: typeof listPublishedDatasetItemsRecord;
 	addDatasetItem: typeof addDatasetItemRecord;
 	deleteDatasetItem: typeof deleteDatasetItemRecord;
 	getDatasetBySlug: typeof getDatasetBySlugRecord;
@@ -366,6 +383,7 @@ const production: DatasetRouteDependencies = {
 	createDataset: createDatasetRecord,
 	getDataset: getDatasetRecord,
 	listDatasetItems: listDatasetItemsRecord,
+	listPublishedDatasetItems: listPublishedDatasetItemsRecord,
 	addDatasetItem: addDatasetItemRecord,
 	deleteDatasetItem: deleteDatasetItemRecord,
 	getDatasetBySlug: getDatasetBySlugRecord,
@@ -661,6 +679,24 @@ export function createDatasetRouteHandlers(
 				return errorResponse(c, cause);
 			}
 		},
+		handleListPublishedDatasetItems: async (
+			c: Parameters<RouteHandler<typeof listPublishedDatasetItems>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.listPublishedDatasetItems(dependencies.pool(), {
+						dataset_id: c.req.valid("param").id,
+						project_id: c.req.valid("query").project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
 		handleAddDatasetItem: async (
 			c: Parameters<RouteHandler<typeof addDatasetItem>>[0],
 		) =>
@@ -689,6 +725,7 @@ export const {
 	handleCreateDataset,
 	handleGetDataset,
 	handleListDatasetItems,
+	handleListPublishedDatasetItems,
 	handleAddDatasetItem,
 	handleDeleteDatasetItem,
 	handleGetDatasetBySlug,

@@ -54,6 +54,15 @@ describe("benchmark evaluation execution", () => {
 			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
 	});
 
+	it("requires an active published dataset before creating a benchmark suite", () => {
+		expect(createBenchmarkSuite.toString()).toContain(
+			"dataset.archived_at IS NULL",
+		);
+		expect(createBenchmarkSuite.toString()).toContain(
+			"dataset.latest_published_version IS NOT NULL",
+		);
+	});
+
 	it("marks the experiment failed when background execution rejects", async () => {
 		const transitions: Array<{
 			status: string;

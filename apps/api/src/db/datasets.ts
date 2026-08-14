@@ -886,7 +886,7 @@ export async function listPublishedDatasetItems(
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await getDatasetRow(client, input.project_id, input.dataset_id);
 		const result = await client.query(
-			`SELECT i.id::text AS id, NULL::text AS item_key, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
+			`SELECT i.id::text AS id, i.item_key, $1::uuid AS dataset_id, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id, i.created_at FROM dataset_version_items i JOIN dataset_versions v ON v.id = i.dataset_version_id JOIN datasets d ON d.id = v.dataset_id AND v.version = d.latest_published_version JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.id = $1 AND d.project_id = $2 ORDER BY i.position ASC, i.created_at ASC, i.id ASC`,
 			[input.dataset_id, input.project_id],
 		);
 		await client.query("COMMIT");

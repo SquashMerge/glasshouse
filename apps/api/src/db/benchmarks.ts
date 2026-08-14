@@ -105,7 +105,7 @@ export async function createBenchmarkSuite(
 				"Project is not available",
 			);
 		const r = await client.query(
-			`INSERT INTO benchmark_suites (id, project_id, dataset_id, name, description) SELECT $1,$2,$3,$4,$5 FROM projects WHERE id=$2 AND status='active' RETURNING *`,
+			`INSERT INTO benchmark_suites (id, project_id, dataset_id, name, description) SELECT $1,$2,$3,$4,$5 FROM projects AS project JOIN datasets AS dataset ON dataset.id = $3 AND dataset.project_id = project.id AND dataset.archived_at IS NULL AND dataset.latest_published_version IS NOT NULL WHERE project.id = $2 AND project.status = 'active' RETURNING *`,
 			[
 				randomUUID(),
 				input.project_id,
@@ -115,10 +115,7 @@ export async function createBenchmarkSuite(
 			],
 		);
 		if (!r.rows[0])
-			throw new BenchmarkRepositoryError(
-				"NOT_FOUND",
-				"Project is not available",
-			);
+			throw new BenchmarkRepositoryError("NOT_FOUND", "Dataset not found");
 		await client.query("COMMIT");
 		return suite(r.rows[0]);
 	} catch (cause) {

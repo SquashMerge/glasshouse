@@ -29,6 +29,8 @@ import {
 	handleGetDatasetDraft,
 	handlePutDatasetDraftItem,
 	handleDeleteDatasetDraftItem,
+	handleListPublishedDatasetItems,
+	listPublishedDatasetItems as listPublishedDatasetItemsRoute,
 	putDatasetDraftItem,
 	publishDatasetDraft as publishDatasetDraftRoute,
 } from "../../src/routes/datasets";
@@ -248,6 +250,53 @@ describe("dataset repository", () => {
 			entry.text.includes("FROM dataset_version_items"),
 		);
 		expect(query?.text).not.toContain("dataset_draft_items");
+		expect(query?.text).toContain("i.item_key");
+		expect(query?.text).not.toContain("NULL::text AS item_key");
+	});
+
+	it("exposes published items through a dedicated immutable read route", async () => {
+		let received: Record<string, unknown> | undefined;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			listPublishedDatasetItems: async (
+				_db: unknown,
+				input: Record<string, unknown>,
+			) => {
+				received = input;
+				return { items: [] };
+			},
+		} as never);
+		const response = await handlers.handleListPublishedDatasetItems({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				valid: (part: string) =>
+					part === "param" ? { id: DATASET } : { project_id: PROJECT },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(await response.json()).toEqual({ items: [] });
+		expect(received).toMatchObject({
+			dataset_id: DATASET,
+			project_id: PROJECT,
+			authorization: { operation: "product_read" },
+		});
+		const app = new OpenAPIHono();
+		app.openapi(
+			listPublishedDatasetItemsRoute,
+			handleListPublishedDatasetItems,
+		);
+		expect(
+			app.getOpenAPIDocument({
+				openapi: "3.1.0",
+				info: { title: "test", version: "1" },
+			}).paths?.["/v1/datasets/{id}/published-items"]?.get,
+		).toBeDefined();
 	});
 
 	it("serializes draft items to the exact public schema without persisted fields", async () => {

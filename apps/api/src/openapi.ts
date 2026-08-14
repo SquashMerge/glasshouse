@@ -144,6 +144,8 @@ import {
 	handleGetDataset,
 	listDatasetItems,
 	handleListDatasetItems,
+	listPublishedDatasetItems,
+	handleListPublishedDatasetItems,
 	addDatasetItem,
 	handleAddDatasetItem,
 	deleteDatasetItem,
@@ -322,6 +324,7 @@ register(discardDatasetDraft, handleDiscardDatasetDraft);
 register(publishDatasetDraft, handlePublishDatasetDraft);
 register(getDataset, handleGetDataset);
 register(listDatasetItems, handleListDatasetItems);
+register(listPublishedDatasetItems, handleListPublishedDatasetItems);
 register(addDatasetItem, handleAddDatasetItem);
 register(deleteDatasetItem, handleDeleteDatasetItem);
 

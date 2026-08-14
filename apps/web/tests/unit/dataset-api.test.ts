@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	discardDatasetDraft,
 	deleteDatasetDraftItem,
 	publishDatasetDraft,
 	upsertDatasetDraftItem,
@@ -79,6 +80,13 @@ describe("dataset API client", () => {
 		);
 		const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(new Headers(request.headers).get("if-match")).toBe('"3"');
+	});
+
+	it("accepts an empty discard response", async () => {
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		await expect(
+			discardDatasetDraft({ project_id: PROJECT_ID, slug: "golden" }),
+		).resolves.toBeUndefined();
 	});
 
 	it("publishes a draft with its current ETag", async () => {

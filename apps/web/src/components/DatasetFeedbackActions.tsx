@@ -3,7 +3,6 @@ import {
 	createDatasetDraft,
 	createFeedback,
 	listDatasets,
-	publishDatasetDraft,
 	upsertDatasetDraftItem,
 	type JsonObject,
 } from "../lib/api";
@@ -133,11 +132,6 @@ export function AddToDatasetDialog({
 				source_trace_id: traceId,
 				source_observation_id: observationId,
 			});
-			await publishDatasetDraft({
-				project_id: projectId,
-				slug: selected.slug,
-				revision: draft.revision + 1,
-			});
 			close();
 		} catch (cause) {
 			setError((cause as Error).message);
@@ -260,7 +254,7 @@ export function AddToDatasetDialog({
 								disabled={pending || !datasetId}
 								onClick={() => void submit()}
 							>
-								{pending ? "Adding..." : "Add case"}
+								{pending ? "Adding to draft..." : "Add case to draft"}
 							</Button>
 						</div>
 					</div>

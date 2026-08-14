@@ -216,11 +216,6 @@ export function DatasetDetailPage() {
 				expected_output: expected.trim() ? parseObject(expected) : null,
 				metadata: parseObject(metadata),
 			});
-			await publishDatasetDraft({
-				project_id: selectedProjectId!,
-				slug: dataset.data!.slug,
-				revision: draft.revision + 1,
-			});
 			client.setQueryData<{ items: DatasetItem[] }>(
 				["dataset-items", selectedProjectId, id],
 				(current) => ({
@@ -348,16 +343,21 @@ export function DatasetDetailPage() {
 					</p>
 				)}
 				<Button disabled={pending} onClick={() => void add()}>
-					{pending ? "Adding..." : "Add case"}
+					{pending ? "Adding to draft..." : "Add case to draft"}
 				</Button>
 			</section>
-			<Button
-				variant="outline"
-				disabled={pending}
-				onClick={() => void publish()}
-			>
-				{pending ? "Publishing..." : "Publish draft"}
-			</Button>
+			<div className="space-y-2">
+				<Button
+					variant="outline"
+					disabled={pending}
+					onClick={() => void publish()}
+				>
+					{pending ? "Publishing..." : "Publish draft"}
+				</Button>
+				<p className="text-sm text-muted-foreground">
+					Changes stay in the shared draft until you publish.
+				</p>
+			</div>
 			<ul className="space-y-3">
 				{items.data?.items.map((item) => (
 					<li key={item.id} className="rounded border p-3">
@@ -385,7 +385,9 @@ export function DatasetDetailPage() {
 								disabled={deletingItemId !== null}
 								onClick={() => void remove(item)}
 							>
-								{deletingItemId === item.id ? "Deleting..." : "Delete"}
+								{deletingItemId === item.id
+									? "Deleting from draft..."
+									: "Delete from draft"}
 							</Button>
 						</div>
 					</li>
