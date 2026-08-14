@@ -409,6 +409,15 @@ describe("dataset repository", () => {
 				query.text.includes("ON CONFLICT (dataset_id)"),
 			),
 		).toBe(true);
+		const draftQuery = db.queries.find((query) =>
+			query.text.startsWith("WITH selected"),
+		);
+		expect(draftQuery?.text).toContain("RETURNING draft_id");
+		expect(draftQuery?.text).toContain("FROM copied c WHERE c.draft_id = d.id");
+		expect(draftQuery?.text).toContain(
+			"FROM dataset_draft_items i WHERE i.draft_id = d.id",
+		);
+		expect(draftQuery?.text).not.toContain("GROUP BY d.id");
 	});
 
 	it("maps duplicate dataset names to a conflict", async () => {

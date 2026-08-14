@@ -4,7 +4,10 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { SSEStreamingApi } from "hono/streaming";
 import { StreamingApi } from "hono/utils/stream";
 import { Pool } from "pg";
-import { lockDatasetSlugForCreate } from "../../src/db/datasets";
+import {
+	getOrCreateDatasetDraft,
+	lockDatasetSlugForCreate,
+} from "../../src/db/datasets";
 import { deleteSafeDatasetRetentionBatch } from "../../src/db/governance";
 import {
 	cancelExecutionAdmission,
@@ -334,6 +337,10 @@ async function seedExecutionExperiment(pool: Pool) {
 				await cleanup.query("DELETE FROM experiments WHERE id = $1", [
 					experimentId,
 				]);
+				await cleanup.query(
+					"DELETE FROM dataset_lifecycle_audit_events WHERE project_id = $1",
+					[projectId],
+				);
 				await cleanup.query(
 					"DELETE FROM dataset_version_items WHERE dataset_version_id = $1",
 					[versionId],
@@ -2427,6 +2434,57 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
+	"creates a draft from published items with an accurate count",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+		const fixture = await seedExecutionExperiment(pool);
+		const input = {
+			project_id: fixture.projectId,
+			slug: "dispatch-race-dataset",
+			authorization: {
+				organization_id: fixture.organizationId,
+				actor_id: fixture.actorId,
+				operation: "product_write" as const,
+			},
+		};
+		try {
+			const created = await getOrCreateDatasetDraft(pool, input);
+			expect(created).toMatchObject({
+				dataset_id: fixture.datasetId,
+				base_version: 1,
+				item_count: 1,
+				revision: 1,
+			});
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_draft_items WHERE project_id = $1 AND draft_id = $2",
+						[fixture.projectId, created.id],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+
+			const existing = await getOrCreateDatasetDraft(pool, input);
+			expect(existing).toMatchObject({
+				id: created.id,
+				item_count: 1,
+			});
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_lifecycle_audit_events WHERE project_id = $1 AND dataset_id = $2 AND event_type = 'draft_created' AND item_count = 1",
+						[fixture.projectId, fixture.datasetId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
 	"retention holds the creation slug lock until its tombstone commits",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
@@ -2472,15 +2530,12 @@ test.skipIf(!databaseUrl)(
 			await waitForLock(pool, "astraea-dataset-retention-slug-race");
 			expect(
 				(
-					await pool.query<{ held: boolean }>(
-						"SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a USING (pid) WHERE a.application_name = $1 AND l.locktype = 'advisory' AND l.granted AND l.classid = 0 AND l.objid::bigint = (hashtext($2)::bigint & 4294967295)) AS held",
-						[
-							"astraea-dataset-retention-slug-race",
-							`dataset:${fixture.projectId}:${slug}`,
-						],
+					await pool.query<{ acquired: boolean }>(
+						"SELECT pg_try_advisory_xact_lock(hashtext($1)::bigint) AS acquired",
+						[`dataset:${fixture.projectId}:${slug}`],
 					)
-				).rows[0]?.held,
-			).toBe(true);
+				).rows[0]?.acquired,
+			).toBe(false);
 
 			await creating.query("BEGIN");
 			await creating.query(
