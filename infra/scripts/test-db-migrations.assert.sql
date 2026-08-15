@@ -867,6 +867,14 @@ BEGIN
     END;
 	INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
 	VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
+	IF EXISTS (
+		SELECT 1
+		FROM pg_constraint
+		WHERE conrelid = 'feedback_reviews'::regclass
+			AND conname = 'feedback_reviews_check'
+	) THEN
+		RAISE EXCEPTION 'obsolete feedback review dataset-item check remains';
+	END IF;
 	INSERT INTO feedback_reviews (score_id, project_id, status)
 	VALUES (
 		'c1000000-0000-4000-8000-000000000001',
