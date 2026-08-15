@@ -157,6 +157,64 @@ test("migration fixture clears prior feedback probes before testing protected pr
 	);
 });
 
+test("post-upgrade dataset retention audit fixture seeds complete tenant aggregates", () => {
+	const relaxDefaultProjectConstraint =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;";
+	const fixtureOrganizations =
+		"(fixture_organization_id, 'Dataset retention fixture', 'dataset-retention-fixture'),";
+	const fixtureProjects =
+		"(fixture_default_project_id, 'Dataset Retention Default', 'default', fixture_organization_id),";
+	const restoreDefaultProjectConstraint =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;";
+	const fixtureActorIdentity =
+		"VALUES (fixture_actor_id, fixture_organization_id, 'test:v1', 'dataset-retention-owner');";
+	const fixtureActorRole =
+		"VALUES (fixture_organization_id, fixture_actor_id, 'admin');";
+	const auditInsert =
+		"VALUES (fixture_organization_id, dataset_project_id, fixture_dataset_id, 'retained-dataset', fixture_actor_id, 'archived');";
+
+	const fixtureStart = migrationAssertion.indexOf(
+		"fixture_organization_id UUID := '51000000-0000-4000-8000-000000000001';",
+	);
+	const indexAfterFixtureStart = (value: string) =>
+		migrationAssertion.indexOf(value, fixtureStart);
+
+	expect(fixtureStart).toBeGreaterThanOrEqual(0);
+	expect(
+		indexAfterFixtureStart(relaxDefaultProjectConstraint),
+	).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(fixtureOrganizations)).toBeGreaterThanOrEqual(
+		0,
+	);
+	expect(indexAfterFixtureStart(fixtureProjects)).toBeGreaterThanOrEqual(0);
+	expect(
+		indexAfterFixtureStart(restoreDefaultProjectConstraint),
+	).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(fixtureActorIdentity)).toBeGreaterThanOrEqual(
+		0,
+	);
+	expect(indexAfterFixtureStart(fixtureActorRole)).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(auditInsert)).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(relaxDefaultProjectConstraint)).toBeLessThan(
+		indexAfterFixtureStart(fixtureOrganizations),
+	);
+	expect(indexAfterFixtureStart(fixtureOrganizations)).toBeLessThan(
+		indexAfterFixtureStart(fixtureProjects),
+	);
+	expect(indexAfterFixtureStart(fixtureProjects)).toBeLessThan(
+		indexAfterFixtureStart(restoreDefaultProjectConstraint),
+	);
+	expect(indexAfterFixtureStart(restoreDefaultProjectConstraint)).toBeLessThan(
+		indexAfterFixtureStart(fixtureActorIdentity),
+	);
+	expect(indexAfterFixtureStart(fixtureActorIdentity)).toBeLessThan(
+		indexAfterFixtureStart(fixtureActorRole),
+	);
+	expect(indexAfterFixtureStart(fixtureActorRole)).toBeLessThan(
+		indexAfterFixtureStart(auditInsert),
+	);
+});
+
 test("cross-project feedback probes accept only their trigger or foreign-key rejections", () => {
 	expect(migrationAssertion).toContain(
 		"RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';\n\tEXCEPTION WHEN check_violation OR foreign_key_violation THEN NULL;",

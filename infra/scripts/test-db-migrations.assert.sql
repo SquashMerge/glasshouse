@@ -1433,10 +1433,15 @@ $$;
 
 DO $$
 DECLARE
+    fixture_organization_id UUID := '51000000-0000-4000-8000-000000000001';
+    other_organization_id UUID := '51000000-0000-4000-8000-000000000002';
+    fixture_default_project_id UUID := '55555555-5555-4555-8555-555555555554';
+    other_default_project_id UUID := '55555555-5555-4555-8555-555555555555';
     dataset_project_id UUID := '55555555-5555-4555-8555-555555555556';
     other_project_id UUID := '55555555-5555-4555-8555-555555555557';
     fixture_dataset_id UUID := '55555555-5555-4555-8555-555555555558';
     other_dataset_id UUID := '55555555-5555-4555-8555-555555555559';
+    fixture_actor_id UUID := '51000000-0000-4000-8000-000000000101';
     untrusted_actor_id UUID := '51000000-0000-4000-8000-000000000104';
 BEGIN
     IF EXISTS (
@@ -1446,36 +1451,63 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'dataset lifecycle audit must retain historical identity after retention';
     END IF;
+
+    -- The global migration fixture predates organizations. Seed complete tenant
+    -- aggregates here so this post-upgrade assertion does not rely on records
+    -- created in a separate historical-upgrade database.
+    ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;
+    INSERT INTO organizations (id, name, slug)
+    VALUES
+        (fixture_organization_id, 'Dataset retention fixture', 'dataset-retention-fixture'),
+        (other_organization_id, 'Other dataset fixture', 'other-dataset-fixture');
     INSERT INTO projects (id, name, slug, organization_id)
     VALUES
-        (dataset_project_id, 'Dataset Retention Fixture', 'dataset-retention-fixture', '51000000-0000-4000-8000-000000000001'),
-        (other_project_id, 'Other Dataset Fixture', 'other-dataset-fixture', '51000000-0000-4000-8000-000000000002');
+        (fixture_default_project_id, 'Dataset Retention Default', 'default', fixture_organization_id),
+        (other_default_project_id, 'Other Dataset Default', 'default', other_organization_id),
+        (dataset_project_id, 'Dataset Retention Fixture', 'dataset-retention-fixture', fixture_organization_id),
+        (other_project_id, 'Other Dataset Fixture', 'other-dataset-fixture', other_organization_id);
+    UPDATE organizations
+    SET default_project_id = CASE id
+        WHEN fixture_organization_id THEN fixture_default_project_id
+        WHEN other_organization_id THEN other_default_project_id
+    END
+    WHERE id IN (fixture_organization_id, other_organization_id);
+    ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
+
+    INSERT INTO actors (id) VALUES (fixture_actor_id);
+    INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+    VALUES (fixture_actor_id, fixture_organization_id, 'test:v1', 'dataset-retention-owner');
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES (fixture_organization_id, 'dataset-retention-owner', 'owner');
+    INSERT INTO organization_actor_roles (organization_id, actor_id, role)
+    VALUES (fixture_organization_id, fixture_actor_id, 'admin');
+
     INSERT INTO datasets (id, project_id, slug, name)
     VALUES (fixture_dataset_id, dataset_project_id, 'retained-dataset', 'Retained Dataset');
     INSERT INTO datasets (id, project_id, slug, name)
     VALUES (other_dataset_id, other_project_id, 'other-retained-dataset', 'Other Retained Dataset');
     INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
-    VALUES ('51000000-0000-4000-8000-000000000001', dataset_project_id, fixture_dataset_id, 'retained-dataset', '51000000-0000-4000-8000-000000000101', 'archived');
+    VALUES (fixture_organization_id, dataset_project_id, fixture_dataset_id, 'retained-dataset', fixture_actor_id, 'archived');
     INSERT INTO actors (id) VALUES (untrusted_actor_id);
     INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
-    VALUES (untrusted_actor_id, '51000000-0000-4000-8000-000000000001', 'test:v1', 'untrusted-dataset-audit-actor');
+    VALUES (untrusted_actor_id, fixture_organization_id, 'test:v1', 'untrusted-dataset-audit-actor');
     BEGIN
         INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
-        VALUES ('51000000-0000-4000-8000-000000000001', dataset_project_id, fixture_dataset_id, 'retained-dataset', untrusted_actor_id, 'created');
+        VALUES (fixture_organization_id, dataset_project_id, fixture_dataset_id, 'retained-dataset', untrusted_actor_id, 'created');
         RAISE EXCEPTION 'dataset lifecycle audit accepted an unauthorized actor';
     EXCEPTION WHEN insufficient_privilege THEN
         NULL;
     END;
     BEGIN
         INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
-        VALUES ('51000000-0000-4000-8000-000000000002', other_project_id, fixture_dataset_id, 'retained-dataset', '51000000-0000-4000-8000-000000000101', 'created');
+        VALUES (other_organization_id, other_project_id, fixture_dataset_id, 'retained-dataset', fixture_actor_id, 'created');
         RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-project dataset';
     EXCEPTION WHEN foreign_key_violation THEN
         NULL;
     END;
     BEGIN
         INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
-        VALUES ('51000000-0000-4000-8000-000000000002', other_project_id, other_dataset_id, 'other-retained-dataset', '51000000-0000-4000-8000-000000000101', 'created');
+        VALUES (other_organization_id, other_project_id, other_dataset_id, 'other-retained-dataset', fixture_actor_id, 'created');
         RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-organization actor';
     EXCEPTION WHEN insufficient_privilege THEN
         NULL;
