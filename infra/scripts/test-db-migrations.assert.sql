@@ -1435,8 +1435,8 @@ DO $$
 DECLARE
     fixture_organization_id UUID := '51000000-0000-4000-8000-000000000001';
     other_organization_id UUID := '51000000-0000-4000-8000-000000000002';
-    fixture_default_project_id UUID := '55555555-5555-4555-8555-555555555554';
-    other_default_project_id UUID := '55555555-5555-4555-8555-555555555555';
+    fixture_default_project_id UUID := '55555555-5555-4555-8555-555555555560';
+    other_default_project_id UUID := '55555555-5555-4555-8555-555555555561';
     dataset_project_id UUID := '55555555-5555-4555-8555-555555555556';
     other_project_id UUID := '55555555-5555-4555-8555-555555555557';
     fixture_dataset_id UUID := '55555555-5555-4555-8555-555555555558';
