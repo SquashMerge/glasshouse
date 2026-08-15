@@ -1,3 +1,11 @@
+INSERT INTO projects (id, organization_id, name, slug)
+VALUES (
+    '11111111-1111-1111-1111-111111111111',
+    '00000000-0000-4000-8000-000000000001',
+    'Feedback identity fixture',
+    'feedback-identity-fixture'
+);
+
 INSERT INTO datasets (id, project_id, slug, name, latest_published_version)
 VALUES
     ('65000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-identity-a', 'Feedback identity A', 1),

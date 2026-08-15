@@ -20,6 +20,13 @@ const migrationAssertion = readFileSync(
 	),
 	"utf8",
 );
+const feedbackDatasetIdentityFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0065.fixture.sql",
+	),
+	"utf8",
+);
 const revocationFenceMigration = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -215,9 +222,22 @@ test("post-upgrade dataset retention audit fixture seeds complete tenant aggrega
 	);
 });
 
+test("0065 feedback fixture seeds its project before tenant-scoped dataset records", () => {
+	const projectSeed = "INSERT INTO projects (id, organization_id, name, slug)";
+	const projectId = "'11111111-1111-1111-1111-111111111111'";
+	const datasetSeed =
+		"INSERT INTO datasets (id, project_id, slug, name, latest_published_version)";
+
+	expect(feedbackDatasetIdentityFixture).toContain(projectSeed);
+	expect(feedbackDatasetIdentityFixture).toContain(projectId);
+	expect(feedbackDatasetIdentityFixture.indexOf(projectSeed)).toBeLessThan(
+		feedbackDatasetIdentityFixture.indexOf(datasetSeed),
+	);
+});
+
 test("cross-project feedback probes accept only their trigger or foreign-key rejections", () => {
 	expect(migrationAssertion).toContain(
-		"RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';\n\tEXCEPTION WHEN check_violation OR foreign_key_violation THEN NULL;",
+		"RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';\n	EXCEPTION WHEN check_violation OR foreign_key_violation THEN NULL;",
 	);
 	expect(migrationAssertion).toContain(
 		"RAISE EXCEPTION 'feedback review accepted a dataset from another project';\n    EXCEPTION WHEN check_violation OR foreign_key_violation THEN",
