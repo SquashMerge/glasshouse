@@ -114,7 +114,9 @@ test("public dataset and experiment mutations pass the admitted actor to transac
 		completeExperiment: async () => false,
 		summary: async () => ({}) as never,
 		getDataset: async () => ({ id: datasetId }) as never,
-		listDatasetItems: async () => ({ items: [] }),
+		listPublishedDatasetItems: async () => ({
+			items: [{ id: "case", input: {}, expected_output: {} }],
+		}),
 		invokeLlm: async () => ({ output: {}, model: "test" }),
 		trace: async () => {},
 	} as never);

@@ -47,7 +47,7 @@ describe("feedback contract", () => {
 		);
 	});
 
-	it("requires complete dataset linkage only when a review is added to a dataset", () => {
+	it("reserves added-to-dataset transitions for the promotion endpoint", () => {
 		const dataset_id = "22222222-2222-4222-8222-222222222222";
 		const dataset_item_id = "44444444-4444-4444-8444-444444444444";
 		expect(FeedbackReview.safeParse({ status: "reviewed" }).success).toBe(true);
@@ -61,7 +61,7 @@ describe("feedback contract", () => {
 				dataset_id,
 				dataset_item_id,
 			}).success,
-		).toBe(true);
+		).toBe(false);
 		expect(
 			FeedbackReview.safeParse({
 				status: "dismissed",
@@ -133,10 +133,24 @@ describe("feedback review persistence", () => {
 		};
 		const result = await listFeedback(
 			{
-				query: async (sql: string) =>
-					sql.includes("COUNT(*)") ? { rows: [{ total: 1 }] } : { rows: [row] },
+				connect: async () => ({
+					query: async (sql: string) =>
+						sql.includes("p.status = ANY($3::text[])")
+							? { rows: [{}] }
+							: sql.startsWith("SELECT authorization_allows_project")
+								? { rows: [{ allowed: true }] }
+								: sql.includes("COUNT(*)")
+									? { rows: [{ total: 1 }] }
+									: { rows: [row] },
+					release() {},
+				}),
 			} as never,
-			{ ...base, limit: 10, offset: 0 },
+			{
+				...base,
+				limit: 10,
+				offset: 0,
+				authorization: { ...authorization, operation: "product_read" },
+			},
 		);
 
 		expect(result).toMatchObject({
@@ -198,10 +212,81 @@ describe("feedback review persistence", () => {
 		expect(queries).toContain("ROLLBACK");
 	});
 
-	it("rejects direct dataset additions from new or dismissed feedback", async () => {
+	it("maps the immutable feedback ID to the draft item conflict key", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const feedbackId = "33333333-3333-4333-8333-333333333333";
+		const draftId = "44444444-4444-4444-8444-444444444444";
+		const queries: Array<{ sql: string; values?: unknown[] }> = [];
+		const client = {
+			query: async (sql: string, values?: unknown[]) => {
+				queries.push({ sql, values });
+				if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.includes("JOIN feedback_reviews"))
+					return {
+						rows: [
+							{
+								id: feedbackId,
+								project_id: base.project_id,
+								trace_id: base.trace_id,
+								observation_id: null,
+								value: -1,
+								metadata: base.metadata,
+								created_at: now,
+								status: "reviewed",
+								note: null,
+								dataset_id: null,
+								dataset_item_id: null,
+								dataset_draft_item_id: null,
+								updated_at: now,
+							},
+						],
+					};
+				if (sql.startsWith("SELECT id, slug FROM datasets"))
+					return { rows: [{ id: "dataset-id", slug: "dataset" }] };
+				if (sql.startsWith("WITH inserted AS"))
+					return { rows: [{ id: draftId, revision: 2, created: false }] };
+				if (sql.startsWith("INSERT INTO dataset_draft_items"))
+					return { rows: [{ id: "item-id" }] };
+				if (sql.startsWith("UPDATE feedback_reviews"))
+					return { rows: [{ updated_at: now }] };
+				return { rows: [] };
+			},
+			release: () => {},
+		};
+
+		await promoteFeedback({ connect: async () => client } as never, {
+			project_id: base.project_id,
+			id: feedbackId,
+			dataset_id: "22222222-2222-4222-8222-222222222222",
+			input: { question: "hello" },
+			expected_output: { answer: "world" },
+			metadata: { source: "feedback" },
+			authorization: { ...authorization, operation: "governed" },
+		});
+
+		const insert = queries.find(({ sql }) =>
+			sql.startsWith("INSERT INTO dataset_draft_items"),
+		);
+		expect(insert?.sql).toContain("$9::uuid");
+		expect(insert?.values).toEqual([
+			base.project_id,
+			draftId,
+			feedbackId,
+			JSON.stringify({ question: "hello" }),
+			JSON.stringify({ answer: "world" }),
+			JSON.stringify({ source: "feedback" }),
+			base.trace_id,
+			null,
+			feedbackId,
+		]);
+	});
+
+	it("rejects legacy review promotion rather than writing a mutable dataset item ID", async () => {
 		const now = new Date("2026-07-29T12:00:00.000Z");
 
-		for (const status of ["new", "dismissed"] as const) {
+		for (const status of ["reviewed", "new", "dismissed"] as const) {
 			const queries: string[] = [];
 			const client = {
 				query: async (sql: string) => {
@@ -228,7 +313,6 @@ describe("feedback review persistence", () => {
 								},
 							],
 						};
-					if (sql.includes("SELECT i.id")) return { rows: [{ id: "item" }] };
 					if (sql.includes("UPDATE feedback_reviews"))
 						return { rows: [{ updated_at: now }] };
 					return { rows: [] };
@@ -245,7 +329,14 @@ describe("feedback review persistence", () => {
 					dataset_item_id: "44444444-4444-4444-8444-444444444444",
 					authorization: { ...authorization, operation: "governed" },
 				}),
-			).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+			).rejects.toMatchObject({
+				code: "CONFLICT",
+				status: 409,
+				message:
+					status === "reviewed"
+						? "Use the feedback promotion endpoint to add feedback through a dataset draft"
+						: "Feedback must be reviewed before promotion",
+			});
 			expect(queries[0]).toBe("BEGIN");
 			expect(queries[1]).toContain("FOR UPDATE");
 			expect(queries).toContain("ROLLBACK");
@@ -396,13 +487,51 @@ describe("feedback review persistence", () => {
 
 		const listed = await listFeedback(
 			{
-				query: async (sql: string) => (calls.push(sql), { rows: [] }),
+				connect: async () => ({
+					query: async (sql: string) => {
+						calls.push(sql);
+						if (sql.includes("p.status = ANY($3::text[])"))
+							return { rows: [{}] };
+						if (sql.startsWith("SELECT authorization_allows_project"))
+							return { rows: [{ allowed: true }] };
+						return { rows: [] };
+					},
+					release() {},
+				}),
 			} as never,
-			{ ...base, limit: 10, offset: 0 },
+			{
+				...base,
+				limit: 10,
+				offset: 0,
+				authorization: { ...authorization, operation: "product_read" },
+			},
 		);
 		expect(listed).toEqual({ items: [], total: 0 });
 		const reads = calls.filter((sql) => sql.includes("feedback_reviews"));
 		expect(reads).toHaveLength(2);
 		for (const sql of reads) expect(sql).toContain("p.status='active'");
+	});
+
+	it("refuses an unauthorized feedback list before querying feedback rows", async () => {
+		const queries: string[] = [];
+		await expect(
+			listFeedback(
+				{
+					connect: async () => ({
+						query: async (sql: string) => (queries.push(sql), { rows: [] }),
+						release() {},
+					}),
+				} as never,
+				{
+					...base,
+					limit: 10,
+					offset: 0,
+					authorization: { ...authorization, operation: "product_read" },
+				},
+			),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(queries.some((sql) => sql.includes("JOIN feedback_reviews"))).toBe(
+			false,
+		);
 	});
 });

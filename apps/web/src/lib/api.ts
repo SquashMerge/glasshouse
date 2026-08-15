@@ -22,7 +22,10 @@ async function responseJson<T>(
 	response: Response,
 	operation: string,
 ): Promise<T> {
-	if (response.ok) return response.json() as Promise<T>;
+	if (response.ok)
+		return response.status === 204
+			? (undefined as T)
+			: (response.json() as Promise<T>);
 
 	let envelope: ApiErrorEnvelope | null = null;
 	try {
@@ -48,15 +51,147 @@ function jsonRequest(body: unknown): RequestInit {
 export interface Dataset {
 	id: string;
 	project_id: string;
+	slug: string;
 	name: string;
 	description: string | null;
+	tags: string[];
+	latest_published_version: number | null;
+	archived_at: string | null;
 	item_count: number;
 	created_at: string;
 	updated_at: string;
 }
+export interface DatasetDraft {
+	id: string;
+	project_id: string;
+	dataset_id: string;
+	base_version: number | null;
+	revision: number;
+	item_count: number;
+	created_at: string;
+	updated_at: string;
+}
+export interface DatasetDraftItem {
+	id: string;
+	item_key: string;
+	input: JsonObject;
+	expected_output: JsonObject | null;
+	metadata: JsonObject;
+	source_trace_id: string | null;
+	source_observation_id: string | null;
+	position: number;
+}
+export async function getDatasetBySlug(input: {
+	project_id: string;
+	slug: string;
+}): Promise<Dataset> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getDatasetBySlug",
+	);
+}
+export async function createDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+}): Promise<DatasetDraft> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/drafts${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"createDatasetDraft",
+	);
+}
+export async function updateDatasetMetadata(input: {
+	project_id: string;
+	slug: string;
+	name?: string;
+	description?: string | null;
+	tags?: string[];
+}): Promise<Dataset> {
+	const { project_id, slug, ...body } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(slug)}${buildQs({ project_id })}`,
+			{
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			},
+		),
+		"updateDatasetMetadata",
+	);
+}
+export async function upsertDatasetDraftItem(input: {
+	project_id: string;
+	slug: string;
+	item_key: string;
+	revision: number;
+	input: JsonObject;
+	expected_output?: JsonObject | null;
+	metadata?: JsonObject;
+	source_trace_id?: string | null;
+	source_observation_id?: string | null;
+}): Promise<DatasetDraftItem> {
+	const { project_id, slug, item_key, revision, ...body } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(slug)}/draft/items/${encodeURIComponent(item_key)}${buildQs({ project_id })}`,
+			{
+				method: "PUT",
+				headers: {
+					"content-type": "application/json",
+					"if-match": `"${revision}"`,
+				},
+				body: JSON.stringify(body),
+			},
+		),
+		"upsertDatasetDraftItem",
+	);
+}
+export async function discardDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+}): Promise<void> {
+	await responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/discard${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"discardDatasetDraft",
+	);
+}
+export async function publishDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+}): Promise<{ version: number; item_count: number }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/publish${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST", headers: { "if-match": `"${input.revision}"` } },
+		),
+		"publishDatasetDraft",
+	);
+}
+export async function deleteDatasetDraftItem(input: {
+	project_id: string;
+	slug: string;
+	item_id: string;
+	revision: number;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/items/${encodeURIComponent(input.item_id)}${buildQs({ project_id: input.project_id })}`,
+		{ method: "DELETE", headers: { "if-match": `"${input.revision}"` } },
+	);
+	if (!response.ok) await responseJson(response, "deleteDatasetDraftItem");
+}
 export interface DatasetItem {
 	id: string;
 	dataset_id: string;
+	item_key: string | null;
 	input: JsonObject;
 	expected_output: JsonObject | null;
 	metadata: JsonObject;
@@ -88,6 +223,7 @@ export interface Feedback {
 	note: string | null;
 	dataset_id: string | null;
 	dataset_item_id: string | null;
+	dataset_draft_item_id: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -123,12 +259,25 @@ export async function getDataset(input: {
 export async function listDatasetItems(input: {
 	project_id: string;
 	id: string;
+	signal?: AbortSignal;
 }): Promise<{ items: DatasetItem[] }> {
 	return responseJson(
 		await authedFetch(
 			`/v1/datasets/${encodeURIComponent(input.id)}/items${buildQs({ project_id: input.project_id })}`,
+			{ signal: input.signal },
 		),
 		"listDatasetItems",
+	);
+}
+export async function listPublishedDatasetItems(input: {
+	project_id: string;
+	id: string;
+}): Promise<{ items: DatasetItem[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/${encodeURIComponent(input.id)}/published-items${buildQs({ project_id: input.project_id })}`,
+		),
+		"listPublishedDatasetItems",
 	);
 }
 export async function addDatasetItem(input: {

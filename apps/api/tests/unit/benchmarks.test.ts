@@ -4,16 +4,63 @@ import type { ExperimentDependencies } from "../../src/routes/experiments";
 import {
 	createBenchmarkRun,
 	createBenchmarkSuite,
+	listBenchmarkRuns,
 } from "../../src/db/benchmarks";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
+const otherProjectId = "99999999-9999-4999-8999-999999999999";
 const experimentId = "22222222-2222-4222-8222-222222222222";
 const datasetId = "33333333-3333-4333-8333-333333333333";
 
 describe("benchmark evaluation execution", () => {
+	it("does not read a suite or its runs from another authorized project", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
+		const client = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				if (text.includes("FROM projects p"))
+					return { rows: [{ id: otherProjectId }] };
+				if (text.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				return { rows: [] };
+			},
+			release() {},
+		};
+		await expect(
+			listBenchmarkRuns({ connect: async () => client } as never, {
+				suite_id: datasetId,
+				project_id: otherProjectId,
+				authorization: {
+					organization_id: "66666666-6666-4666-8666-666666666666",
+					actor_id: "77777777-7777-4777-8777-777777777777",
+					operation: "product_read",
+				},
+			}),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(
+			calls.find((call) =>
+				call.text.startsWith("SELECT b.* FROM benchmark_suites"),
+			),
+		).toMatchObject({ values: [datasetId, otherProjectId] });
+		expect(
+			calls.some((call) =>
+				call.text.startsWith("SELECT br.* FROM benchmark_runs"),
+			),
+		).toBe(false);
+	});
+
 	it("locks and authorizes the active project before benchmark writes", () => {
 		for (const operation of [createBenchmarkSuite, createBenchmarkRun])
 			expect(operation.toString()).toContain("lockActiveAuthorizedProject");
+	});
+
+	it("requires an active published dataset before creating a benchmark suite", () => {
+		expect(createBenchmarkSuite.toString()).toContain(
+			"dataset.archived_at IS NULL",
+		);
+		expect(createBenchmarkSuite.toString()).toContain(
+			"dataset.latest_published_version IS NOT NULL",
+		);
 	});
 
 	it("marks the experiment failed when background execution rejects", async () => {

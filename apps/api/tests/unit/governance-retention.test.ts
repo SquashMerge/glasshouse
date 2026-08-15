@@ -134,26 +134,46 @@ describe("governance retention", () => {
 			"project",
 			new Date("2026-01-01T00:00:00Z"),
 			10,
+			"11111111-1111-4111-8111-111111111111",
+			"22222222-2222-4222-8222-222222222222",
 		);
 		expect(result).toEqual({ deleted: 1, skipped: 2 });
-		expect(statements[0]).not.toContain("DELETE FROM feedback_reviews");
-		expect(statements[0]).toContain(
+		const deletion = statements.find((statement) =>
+			statement.startsWith("WITH candidates"),
+		);
+		expect(deletion).not.toContain("DELETE FROM feedback_reviews");
+		expect(deletion).toContain(
 			"NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id)",
 		);
-		expect(statements[0]).not.toContain("f.created_at >=");
-		expect(statements).toHaveLength(1);
-		expect(statements[0]).toContain("NOT EXISTS (SELECT 1 FROM experiments");
-		expect(statements[0]).toContain(
-			"NOT EXISTS (SELECT 1 FROM benchmark_suites",
+		expect(deletion).not.toContain("f.created_at >=");
+		expect(deletion).toContain("NOT EXISTS (SELECT 1 FROM experiments");
+		expect(deletion).toContain("NOT EXISTS (SELECT 1 FROM benchmark_suites");
+		expect(deletion).toContain("INSERT INTO dataset_tombstones");
+		expect(deletion).toContain("locked_slugs AS MATERIALIZED");
+		expect(deletion).toContain(
+			"pg_advisory_xact_lock(hashtext(format('dataset:%s:%s', $1, slug)))",
 		);
+		expect(deletion).toContain(
+			"deleted_quarantined_items AS (DELETE FROM dataset_item_input_quarantine q USING candidates c WHERE q.project_id = $1 AND q.dataset_id = c.id RETURNING q.id)",
+		);
+		expect(deletion).toContain(
+			"(SELECT count(*) FROM deleted_quarantined_items) >= 0",
+		);
+		expect(deletion).not.toContain("dataset_lifecycle_audit_events");
+		expect(statements[0]).toContain("lock_project_audit_provenance");
+		expect(statements[1]).toContain("dataset_retention_run_id");
 	});
 
 	it("reports dependency-blocked datasets when no dataset can be deleted", async () => {
 		const result = await deleteSafeDatasetRetentionBatch(
-			{ query: async () => ({ rows: [{ id: null, skipped: "3" }] }) },
+			{
+				query: async () => ({ rows: [{ id: null, skipped: "3" }] }),
+			},
 			"project",
 			new Date("2026-01-01T00:00:00Z"),
 			10,
+			"11111111-1111-4111-8111-111111111111",
+			"22222222-2222-4222-8222-222222222222",
 		);
 		expect(result).toEqual({ deleted: 0, skipped: 3 });
 	});

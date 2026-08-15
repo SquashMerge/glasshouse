@@ -1,7 +1,11 @@
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
-import { listDatasetItems } from "../db/datasets.js";
+import {
+	DatasetRepositoryError,
+	listPublishedDatasetItems,
+} from "../db/datasets.js";
+import { ExperimentRepositoryError } from "../db/experiments.js";
 import {
 	createBenchmarkRun,
 	createBenchmarkSuite,
@@ -58,6 +62,31 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 		error.status,
 	);
 };
+
+async function requirePublishedGoldenDataset(
+	input: Parameters<typeof listPublishedDatasetItems>[1],
+) {
+	try {
+		const items = await listPublishedDatasetItems(pgPool(), input);
+		if (
+			!items.items.length ||
+			items.items.some((item) => item.expected_output == null)
+		)
+			throw new BenchmarkRepositoryError(
+				"BAD_REQUEST",
+				"Golden benchmark datasets require expected_output for every item",
+			);
+		return items;
+	} catch (cause) {
+		if (cause instanceof DatasetRepositoryError && cause.code === "NOT_FOUND")
+			throw new BenchmarkRepositoryError(
+				"NOT_FOUND",
+				"Dataset not found",
+				cause,
+			);
+		throw cause;
+	}
+}
 
 export const listBenchmarkSuites = createRoute({
 	method: "get",
@@ -131,10 +160,10 @@ export const handleListBenchmarkSuites = async (
 ) => {
 	try {
 		return c.json(
-			await listBenchmarkSuitesRecord(
-				pgPool(),
-				c.req.valid("query").project_id,
-			),
+			await listBenchmarkSuitesRecord(pgPool(), {
+				project_id: c.req.valid("query").project_id,
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
+			}),
 		);
 	} catch (cause) {
 		return errorResponse(c, cause);
@@ -145,22 +174,19 @@ export const handleCreateBenchmarkSuite = async (
 ) => {
 	try {
 		const body = c.req.valid("json");
-		const items = await listDatasetItems(pgPool(), {
+		const authorization = projectAuthorization(
+			trustedTenant(c),
+			"product_write",
+		);
+		await requirePublishedGoldenDataset({
 			project_id: body.project_id,
 			dataset_id: body.dataset_id,
+			authorization,
 		});
-		if (
-			!items.items.length ||
-			items.items.some((item) => item.expected_output == null)
-		)
-			throw new BenchmarkRepositoryError(
-				"BAD_REQUEST",
-				"Golden benchmark datasets require expected_output for every item",
-			);
 		return c.json(
 			await createBenchmarkSuite(pgPool(), {
 				...body,
-				authorization: projectAuthorization(trustedTenant(c), "product_write"),
+				authorization,
 			}),
 			201,
 		);
@@ -176,6 +202,7 @@ export const handleListBenchmarkRuns = async (
 			await listBenchmarkRuns(pgPool(), {
 				project_id: c.req.valid("query").project_id,
 				suite_id: c.req.valid("param").id,
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
 			}),
 		);
 	} catch (cause) {
@@ -192,16 +219,36 @@ export const handleCreateBenchmarkRun = async (
 		const suite = await getBenchmarkSuite(pgPool(), {
 			project_id,
 			id: suite_id,
+			authorization: projectAuthorization(trustedTenant(c), "execute"),
 		});
 		const config = { ...body.config, model: body.model ?? body.config.model };
 		const authorization = projectAuthorization(trustedTenant(c), "execute");
-		const experiment = await production.createExperiment(pgPool(), {
+		await requirePublishedGoldenDataset({
 			project_id,
 			dataset_id: suite.dataset_id,
-			name: `benchmark:${body.label}`,
-			config,
 			authorization,
 		});
+		let experiment: Awaited<ReturnType<typeof production.createExperiment>>;
+		try {
+			experiment = await production.createExperiment(pgPool(), {
+				project_id,
+				dataset_id: suite.dataset_id,
+				name: `benchmark:${body.label}`,
+				config,
+				authorization,
+			});
+		} catch (cause) {
+			if (
+				cause instanceof ExperimentRepositoryError &&
+				cause.code === "NOT_FOUND"
+			)
+				throw new BenchmarkRepositoryError(
+					"NOT_FOUND",
+					"Dataset not found",
+					cause,
+				);
+			throw cause;
+		}
 		const run = await createBenchmarkRun(pgPool(), {
 			project_id,
 			suite_id,

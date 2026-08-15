@@ -20,6 +20,13 @@ const migrationAssertion = readFileSync(
 	),
 	"utf8",
 );
+const feedbackDatasetIdentityFixture = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0065.fixture.sql",
+	),
+	"utf8",
+);
 const revocationFenceMigration = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -125,6 +132,165 @@ const adminMembershipProjectGrantsFixture = readFileSync(
 	),
 	"utf8",
 );
+
+test("migration fixture clears prior feedback probes before testing protected project deletion", () => {
+	const feedbackProbe =
+		"VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'human.feedback', 1);";
+	const deletionContext =
+		"'astraea.project_deletion_id',\n        '22222222-2222-2222-2222-222222222222',";
+	const feedbackCleanup =
+		"DELETE FROM scores\n    WHERE id = 'a4000000-0000-4000-8000-000000000008';";
+	const clearedDeletionContext =
+		"PERFORM set_config('astraea.project_deletion_id', '', true);";
+	const projectDeletionProbe =
+		"DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';";
+
+	expect(migrationAssertion).toContain(feedbackProbe);
+	expect(migrationAssertion).toContain(deletionContext);
+	expect(migrationAssertion).toContain(feedbackCleanup);
+	expect(migrationAssertion).toContain(clearedDeletionContext);
+	expect(migrationAssertion).toContain(projectDeletionProbe);
+	expect(migrationAssertion.indexOf(feedbackProbe)).toBeLessThan(
+		migrationAssertion.indexOf(deletionContext),
+	);
+	expect(migrationAssertion.indexOf(deletionContext)).toBeLessThan(
+		migrationAssertion.indexOf(feedbackCleanup),
+	);
+	expect(migrationAssertion.indexOf(feedbackCleanup)).toBeLessThan(
+		migrationAssertion.indexOf(clearedDeletionContext),
+	);
+	expect(migrationAssertion.indexOf(clearedDeletionContext)).toBeLessThan(
+		migrationAssertion.indexOf(projectDeletionProbe),
+	);
+});
+
+test("post-upgrade dataset retention audit fixture seeds complete tenant aggregates", () => {
+	const relaxDefaultProjectConstraint =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;";
+	const fixtureOrganizations =
+		"(fixture_organization_id, 'Dataset retention fixture', 'dataset-retention-fixture'),";
+	const fixtureProjects =
+		"(fixture_default_project_id, 'Dataset Retention Default', 'default', fixture_organization_id),";
+	const restoreDefaultProjectConstraint =
+		"ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;";
+	const fixtureActorIdentity =
+		"VALUES (fixture_actor_id, fixture_organization_id, 'test:v1', 'dataset-retention-owner');";
+	const fixtureActorRole =
+		"VALUES (fixture_organization_id, fixture_actor_id, 'admin');";
+	const auditInsert =
+		"VALUES (fixture_organization_id, dataset_project_id, fixture_dataset_id, 'retained-dataset', fixture_actor_id, 'archived');";
+
+	const fixtureStart = migrationAssertion.indexOf(
+		"fixture_organization_id UUID := '51000000-0000-4000-8000-000000000001';",
+	);
+	const indexAfterFixtureStart = (value: string) =>
+		migrationAssertion.indexOf(value, fixtureStart);
+
+	expect(fixtureStart).toBeGreaterThanOrEqual(0);
+	expect(
+		indexAfterFixtureStart(relaxDefaultProjectConstraint),
+	).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(fixtureOrganizations)).toBeGreaterThanOrEqual(
+		0,
+	);
+	expect(indexAfterFixtureStart(fixtureProjects)).toBeGreaterThanOrEqual(0);
+	expect(
+		indexAfterFixtureStart(restoreDefaultProjectConstraint),
+	).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(fixtureActorIdentity)).toBeGreaterThanOrEqual(
+		0,
+	);
+	expect(indexAfterFixtureStart(fixtureActorRole)).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(auditInsert)).toBeGreaterThanOrEqual(0);
+	expect(indexAfterFixtureStart(relaxDefaultProjectConstraint)).toBeLessThan(
+		indexAfterFixtureStart(fixtureOrganizations),
+	);
+	expect(indexAfterFixtureStart(fixtureOrganizations)).toBeLessThan(
+		indexAfterFixtureStart(fixtureProjects),
+	);
+	expect(indexAfterFixtureStart(fixtureProjects)).toBeLessThan(
+		indexAfterFixtureStart(restoreDefaultProjectConstraint),
+	);
+	expect(indexAfterFixtureStart(restoreDefaultProjectConstraint)).toBeLessThan(
+		indexAfterFixtureStart(fixtureActorIdentity),
+	);
+	expect(indexAfterFixtureStart(fixtureActorIdentity)).toBeLessThan(
+		indexAfterFixtureStart(fixtureActorRole),
+	);
+	expect(indexAfterFixtureStart(fixtureActorRole)).toBeLessThan(
+		indexAfterFixtureStart(auditInsert),
+	);
+});
+
+test("0065 feedback fixture seeds its project before tenant-scoped dataset records", () => {
+	const projectSeed = "INSERT INTO projects (id, organization_id, name, slug)";
+	const projectId = "'11111111-1111-1111-1111-111111111111'";
+	const datasetSeed =
+		"INSERT INTO datasets (id, project_id, slug, name, latest_published_version)";
+
+	expect(feedbackDatasetIdentityFixture).toContain(projectSeed);
+	expect(feedbackDatasetIdentityFixture).toContain(projectId);
+	expect(feedbackDatasetIdentityFixture.indexOf(projectSeed)).toBeLessThan(
+		feedbackDatasetIdentityFixture.indexOf(datasetSeed),
+	);
+});
+
+test("cross-project feedback probes accept only their trigger or foreign-key rejections", () => {
+	expect(migrationAssertion).toContain(
+		"RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';\n	EXCEPTION WHEN check_violation OR foreign_key_violation THEN NULL;",
+	);
+	expect(migrationAssertion).toContain(
+		"RAISE EXCEPTION 'feedback review accepted a dataset from another project';\n    EXCEPTION WHEN check_violation OR foreign_key_violation THEN",
+	);
+});
+
+test("deletion dependency fixtures are created locally and asserted by identity", () => {
+	const promotedDraftItem =
+		"INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)\n\tVALUES (\n\t\t'a1000000-0000-4000-8000-000000000009',";
+	const promotedSnapshot =
+		"FROM dataset_draft_items item\n\tWHERE item.id = 'a1000000-0000-4000-8000-000000000009';";
+	const promotedDependency =
+		"AND review.dataset_item_id = 'a1000000-0000-4000-8000-000000000011'";
+	const benchmarkDependency =
+		"WHERE run.id = 'd2000000-0000-4000-8000-000000000001'";
+	const benchmarkExperiment =
+		"INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config, requested_by_actor_id)";
+	const benchmarkExperimentLink =
+		"'a1000000-0000-4000-8000-000000000006',\n\t\t'deletion-order-run'";
+
+	expect(migrationAssertion).toContain(promotedDraftItem);
+	expect(migrationAssertion).toContain(promotedSnapshot);
+	expect(migrationAssertion).toContain(
+		"SET latest_published_version = 1\n\tWHERE id = 'a1000000-0000-4000-8000-000000000001';",
+	);
+	expect(migrationAssertion).toContain(
+		"\t\tlatest_published_version,\n\t\t2,\n\t\t'a1000000-0000-4000-8000-000000000012'",
+	);
+	expect(migrationAssertion).toContain(promotedDependency);
+	expect(migrationAssertion).toContain(benchmarkDependency);
+	expect(migrationAssertion).toContain(benchmarkExperiment);
+	expect(migrationAssertion).toContain(benchmarkExperimentLink);
+	expect(migrationAssertion.indexOf(promotedDraftItem)).toBeLessThan(
+		migrationAssertion.indexOf(promotedSnapshot),
+	);
+	expect(
+		migrationAssertion.indexOf(
+			"INSERT INTO actors (id) VALUES ('a1000000-0000-4000-8000-000000000012');",
+		),
+	).toBeLessThan(migrationAssertion.indexOf(promotedDraftItem));
+	expect(migrationAssertion.indexOf(promotedSnapshot)).toBeLessThan(
+		migrationAssertion.indexOf(promotedDependency),
+	);
+	expect(migrationAssertion.indexOf(benchmarkExperiment)).toBeLessThan(
+		migrationAssertion.indexOf(benchmarkExperimentLink),
+	);
+	expect(migrationAssertion).toContain(
+		"AND identity.organization_id = project.organization_id\n\t\t\tAND identity.provider_namespace = 'basic:v1'",
+	);
+	expect(migrationAssertion).not.toContain(
+		"JOIN dataset_items item ON item.feedback_score_id = review.score_id",
+	);
+});
 
 test("adds replay-safe Admin/User/Read-only policy state without automatic cutover", () => {
 	expect(migration).toContain(

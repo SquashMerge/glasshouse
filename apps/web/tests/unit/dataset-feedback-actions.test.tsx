@@ -7,16 +7,26 @@ import {
 	waitFor,
 } from "@testing-library/react";
 
-const { addDatasetItem, createFeedback, listDatasets } = vi.hoisted(() => ({
-	addDatasetItem: vi.fn(),
+const {
+	createDatasetDraft,
+	createFeedback,
+	listDatasets,
+	publishDatasetDraft,
+	upsertDatasetDraftItem,
+} = vi.hoisted(() => ({
+	createDatasetDraft: vi.fn(),
 	createFeedback: vi.fn(),
 	listDatasets: vi.fn(),
+	publishDatasetDraft: vi.fn(),
+	upsertDatasetDraftItem: vi.fn(),
 }));
 
 vi.mock("../../src/lib/api", () => ({
-	addDatasetItem,
+	createDatasetDraft,
 	createFeedback,
 	listDatasets,
+	publishDatasetDraft,
+	upsertDatasetDraftItem,
 }));
 
 import {
@@ -32,9 +42,10 @@ afterEach(() => {
 describe("dataset feedback actions", () => {
 	it("retains invalid edited JSON and never submits a value wrapper", async () => {
 		listDatasets.mockResolvedValue({
-			items: [{ id: "dataset", name: "Golden" }],
+			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
 		});
-		addDatasetItem.mockResolvedValue({});
+		createDatasetDraft.mockResolvedValue({ revision: 1 });
+		upsertDatasetDraftItem.mockResolvedValue({});
 		render(
 			<AddToDatasetDialog
 				projectId="project"
@@ -52,12 +63,12 @@ describe("dataset feedback actions", () => {
 		fireEvent.change(screen.getByLabelText("Dataset"), {
 			target: { value: "dataset" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add case" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
 
 		expect(
 			await screen.findByText("Input must be valid JSON object"),
 		).toBeTruthy();
-		expect(addDatasetItem).not.toHaveBeenCalled();
+		expect(upsertDatasetDraftItem).not.toHaveBeenCalled();
 	});
 
 	it("resets its draft when the trace target changes and restores trigger focus on Escape", async () => {
@@ -127,7 +138,9 @@ describe("dataset feedback actions", () => {
 						rejectDatasets = reject;
 					}),
 			)
-			.mockResolvedValueOnce({ items: [{ id: "dataset", name: "Golden" }] });
+			.mockResolvedValueOnce({
+				items: [{ id: "dataset", name: "Golden", slug: "golden" }],
+			});
 		render(
 			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
 		);
@@ -174,9 +187,10 @@ describe("dataset feedback actions", () => {
 
 	it("leaves absent source output blank and submits null expected output", async () => {
 		listDatasets.mockResolvedValue({
-			items: [{ id: "dataset", name: "Golden" }],
+			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
 		});
-		addDatasetItem.mockResolvedValue({});
+		createDatasetDraft.mockResolvedValue({ revision: 1 });
+		upsertDatasetDraftItem.mockResolvedValue({});
 		render(
 			<AddToDatasetDialog
 				projectId="project"
@@ -191,12 +205,24 @@ describe("dataset feedback actions", () => {
 		fireEvent.change(screen.getByLabelText("Dataset"), {
 			target: { value: "dataset" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add case" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
 
-		await waitFor(() => expect(addDatasetItem).toHaveBeenCalledTimes(1));
-		expect(addDatasetItem).toHaveBeenCalledWith(
-			expect.objectContaining({ expected_output: null }),
+		await waitFor(() =>
+			expect(upsertDatasetDraftItem).toHaveBeenCalledTimes(1),
 		);
+		expect(createDatasetDraft).toHaveBeenCalledWith({
+			project_id: "project",
+			slug: "golden",
+		});
+		expect(upsertDatasetDraftItem).toHaveBeenCalledWith(
+			expect.objectContaining({
+				expected_output: null,
+				revision: 1,
+				slug: "golden",
+			}),
+		);
+		expect(publishDatasetDraft).not.toHaveBeenCalled();
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 
 	it("reuses one idempotency key when an explicit thumb submission is retried", async () => {

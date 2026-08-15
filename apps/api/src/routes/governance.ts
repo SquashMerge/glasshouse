@@ -536,6 +536,8 @@ export async function handleRunRetention(c: Context) {
 							project_id,
 							cutoff,
 							batch_size,
+							runId,
+							ownerToken,
 						);
 						counts.datasets = deleted.deleted;
 						counts.datasets_skipped = deleted.skipped;

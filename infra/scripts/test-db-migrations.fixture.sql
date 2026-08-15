@@ -25,6 +25,9 @@ INSERT INTO datasets (id, project_id, name) VALUES
 INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES
 	('a5000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001', '{"question":"already evaluated"}', '{"answer":"done"}'),
 	('a5000000-0000-4000-8000-000000000002', 'a4000000-0000-4000-8000-000000000001', '{"question":"not yet evaluated"}', '{"answer":"later"}');
+INSERT INTO datasets (id, project_id, name) VALUES ('a4000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111', 'Legacy scalar dataset');
+INSERT INTO dataset_items (id, dataset_id, input) VALUES ('a5000000-0000-4000-8000-000000000003', 'a4000000-0000-4000-8000-000000000003', '"legacy scalar"');
+INSERT INTO dataset_items (id, dataset_id, input) VALUES ('a5000000-0000-4000-8000-000000000004', 'a4000000-0000-4000-8000-000000000003', '["legacy", "array"]');
 INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config) VALUES
 	('a6000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'a3000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001', 'completed', '{}');
 INSERT INTO experiment_results (id, experiment_id, dataset_item_id, output, scores, status) VALUES

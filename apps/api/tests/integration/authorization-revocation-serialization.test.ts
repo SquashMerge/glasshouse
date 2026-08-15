@@ -5,6 +5,11 @@ import { SSEStreamingApi } from "hono/streaming";
 import { StreamingApi } from "hono/utils/stream";
 import { Pool } from "pg";
 import {
+	getOrCreateDatasetDraft,
+	lockDatasetSlugForCreate,
+} from "../../src/db/datasets";
+import { deleteSafeDatasetRetentionBatch } from "../../src/db/governance";
+import {
 	cancelExecutionAdmission,
 	claimExecutionAdmission,
 	completeExecutionAdmission,
@@ -222,6 +227,8 @@ async function seedExecutionExperiment(pool: Pool) {
 	const actorId = randomUUID();
 	const datasetId = randomUUID();
 	const itemId = randomUUID();
+	const versionId = randomUUID();
+	const versionItemId = randomUUID();
 	const experimentId = randomUUID();
 	const subject = `dispatch-race-${actorId}`;
 	await seedOrganizationWithDefaultProject(
@@ -255,17 +262,40 @@ async function seedExecutionExperiment(pool: Pool) {
 		"dispatch-race",
 	);
 	await pool.query(
-		"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Dispatch race dataset')",
+		"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'dispatch-race-dataset', 'Dispatch race dataset')",
 		[datasetId, projectId],
 	);
 	await pool.query(
-		"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"question\":true}', '{\"answer\":true}')",
-		[itemId, datasetId],
+		"INSERT INTO dataset_items (id, project_id, dataset_id, input, expected_output) VALUES ($1, $2, $3, '{\"question\":true}', '{\"answer\":true}')",
+		[itemId, projectId, datasetId],
+	);
+	await pool.query(
+		"INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES ($1, $2, $3, 1, 1, repeat('0', 64))",
+		[versionId, projectId, datasetId],
+	);
+	await pool.query(
+		"INSERT INTO dataset_version_items (id, project_id, dataset_version_id, item_key, position, input, expected_output) VALUES ($1, $2, $3, $4, 0, '{\"question\":true}', '{\"answer\":true}')",
+		[versionItemId, projectId, versionId, itemId],
+	);
+	await pool.query(
+		"UPDATE datasets SET latest_published_version = 1 WHERE id = $1",
+		[datasetId],
 	);
 	await pool.query(
 		"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
 		[experimentId, projectId, datasetId, actorId],
 	);
+	const tasks = await pool.query(
+		"SELECT project_id, dataset_item_id, dataset_version_item_id FROM experiment_tasks WHERE experiment_id = $1",
+		[experimentId],
+	);
+	expect(tasks.rows).toEqual([
+		expect.objectContaining({
+			project_id: projectId,
+			dataset_item_id: null,
+			dataset_version_item_id: versionItemId,
+		}),
+	]);
 	return {
 		organizationId,
 		projectId,
@@ -276,48 +306,75 @@ async function seedExecutionExperiment(pool: Pool) {
 		subject,
 		additionalManagerActorId: additionalManager.actorId,
 		cleanup: async () => {
-			await pool.query(
-				"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
-				[projectId],
-			);
-			await pool
-				.query("DELETE FROM execution_effects WHERE project_id = $1", [
-					projectId,
-				])
-				.catch(() => {});
-			await pool.query(
-				"DELETE FROM execution_admissions WHERE project_id = $1",
-				[projectId],
-			);
-			await pool.query(
-				"DELETE FROM experiment_results WHERE experiment_id = $1",
-				[experimentId],
-			);
-			await pool.query(
-				"DELETE FROM experiment_tasks WHERE experiment_id = $1",
-				[experimentId],
-			);
-			await pool.query("DELETE FROM experiments WHERE id = $1", [experimentId]);
-			await pool.query("DELETE FROM dataset_items WHERE dataset_id = $1", [
-				datasetId,
-			]);
-			await pool.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
-			await pool.query(
-				"UPDATE projects SET status = 'archived' WHERE id = $1",
-				[projectId],
-			);
-			await pool.query(
-				"DELETE FROM project_memberships WHERE project_id = $1",
-				[projectId],
-			);
-			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
-				[projectId],
-			);
-			await pool.query(
-				"DELETE FROM organization_memberships WHERE organization_id = $1",
-				[organizationId],
-			);
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				await cleanup.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM execution_admission_claims WHERE admission_id IN (SELECT id FROM execution_admissions WHERE project_id = $1)",
+					[projectId],
+				);
+				await cleanup
+					.query("DELETE FROM execution_effects WHERE project_id = $1", [
+						projectId,
+					])
+					.catch(() => {});
+				await cleanup.query(
+					"DELETE FROM execution_admissions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM experiment_results WHERE experiment_id = $1",
+					[experimentId],
+				);
+				await cleanup.query(
+					"DELETE FROM experiment_tasks WHERE experiment_id = $1",
+					[experimentId],
+				);
+				await cleanup.query("DELETE FROM experiments WHERE id = $1", [
+					experimentId,
+				]);
+				await cleanup.query(
+					"DELETE FROM dataset_lifecycle_audit_events WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_version_items WHERE dataset_version_id = $1",
+					[versionId],
+				);
+				await cleanup.query("DELETE FROM dataset_versions WHERE id = $1", [
+					versionId,
+				]);
+				await cleanup.query("DELETE FROM dataset_items WHERE dataset_id = $1", [
+					datasetId,
+				]);
+				await cleanup.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
+				await cleanup.query(
+					"UPDATE projects SET status = 'archived' WHERE id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM project_memberships WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM organization_memberships WHERE organization_id = $1",
+					[organizationId],
+				);
+				await cleanup.query("COMMIT");
+			} catch (cause) {
+				await cleanup.query("ROLLBACK").catch(() => {});
+				throw cause;
+			} finally {
+				cleanup.release();
+			}
 			await deleteScenarioActor(pool, actorId);
 			await deleteScenarioActor(pool, additionalManager.actorId);
 		},
@@ -416,12 +473,12 @@ test.skipIf(!databaseUrl)(
 				)
 			).actorId;
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Revocation race dataset')",
+				"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'revocation-race-dataset', 'Revocation race dataset')",
 				[datasetId, projectId],
 			);
 			await pool.query(
-				"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"input\":true}', '{\"output\":true}')",
-				[datasetItemId, datasetId],
+				"INSERT INTO dataset_items (id, project_id, dataset_id, input, expected_output) VALUES ($1, $2, $3, '{\"input\":true}', '{\"output\":true}')",
+				[datasetItemId, projectId, datasetId],
 			);
 			await pool.query(
 				"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
@@ -452,7 +509,7 @@ test.skipIf(!databaseUrl)(
 			const allowed = await authorization;
 			if (allowed)
 				await writer.query(
-					"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'must-not-write')",
+					"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'must-not-write', 'must-not-write')",
 					[randomUUID(), projectId],
 				);
 			await writer.query("COMMIT");
@@ -1149,6 +1206,8 @@ test.skipIf(!databaseUrl)(
 		const actorId = randomUUID();
 		const datasetId = randomUUID();
 		const itemId = randomUUID();
+		const versionId = randomUUID();
+		const versionItemId = randomUUID();
 		const experimentId = randomUUID();
 		const subject = `provider-revocation-${actorId}`;
 		const providerEntered = deferred();
@@ -1191,12 +1250,24 @@ test.skipIf(!databaseUrl)(
 				)
 			).actorId;
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Provider revocation dataset')",
+				"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'provider-revocation-dataset', 'Provider revocation dataset')",
 				[datasetId, projectId],
 			);
 			await pool.query(
-				"INSERT INTO dataset_items (id, dataset_id, input, expected_output) VALUES ($1, $2, '{\"input\":true}', '{\"output\":true}')",
-				[itemId, datasetId],
+				"INSERT INTO dataset_items (id, project_id, dataset_id, input, expected_output) VALUES ($1, $2, $3, '{\"input\":true}', '{\"output\":true}')",
+				[itemId, projectId, datasetId],
+			);
+			await pool.query(
+				"INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES ($1, $2, $3, 1, 1, repeat('0', 64))",
+				[versionId, projectId, datasetId],
+			);
+			await pool.query(
+				"INSERT INTO dataset_version_items (id, project_id, dataset_version_id, item_key, position, input, expected_output) VALUES ($1, $2, $3, $4, 0, '{\"input\":true}', '{\"output\":true}')",
+				[versionItemId, projectId, versionId, itemId],
+			);
+			await pool.query(
+				"UPDATE datasets SET latest_published_version = 1 WHERE id = $1",
+				[datasetId],
 			);
 			await pool.query(
 				"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
@@ -1300,22 +1371,43 @@ test.skipIf(!databaseUrl)(
 				[experimentId],
 			);
 			await pool.query("DELETE FROM experiments WHERE id = $1", [experimentId]);
-			await pool.query("DELETE FROM dataset_items WHERE dataset_id = $1", [
-				datasetId,
-			]);
-			await pool.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
-			await pool.query(
-				"UPDATE projects SET status = 'archived' WHERE id = $1",
-				[projectId],
-			);
-			await pool.query(
-				"DELETE FROM project_memberships WHERE project_id = $1",
-				[projectId],
-			);
-			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
-				[projectId],
-			);
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				await cleanup.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_version_items WHERE dataset_version_id = $1",
+					[versionId],
+				);
+				await cleanup.query("DELETE FROM dataset_versions WHERE id = $1", [
+					versionId,
+				]);
+				await cleanup.query("DELETE FROM dataset_items WHERE dataset_id = $1", [
+					datasetId,
+				]);
+				await cleanup.query("DELETE FROM datasets WHERE id = $1", [datasetId]);
+				await cleanup.query(
+					"UPDATE projects SET status = 'archived' WHERE id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM project_memberships WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					[projectId],
+				);
+				await cleanup.query("COMMIT");
+			} catch (cause) {
+				await cleanup.query("ROLLBACK").catch(() => {});
+				throw cause;
+			} finally {
+				cleanup.release();
+			}
 			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
@@ -1388,7 +1480,7 @@ test.skipIf(!databaseUrl)(
 				)
 			).actorId;
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, name) VALUES ($1, $2, 'Experiment SSE dataset')",
+				"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'experiment-sse-dataset', 'Experiment SSE dataset')",
 				[datasetId, projectId],
 			);
 			await pool.query(
@@ -2336,6 +2428,224 @@ test.skipIf(!databaseUrl)(
 			first.release();
 			recovery.release();
 			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"creates a draft from published items with an accurate count",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+		const fixture = await seedExecutionExperiment(pool);
+		const input = {
+			project_id: fixture.projectId,
+			slug: "dispatch-race-dataset",
+			authorization: {
+				organization_id: fixture.organizationId,
+				actor_id: fixture.actorId,
+				operation: "product_write" as const,
+			},
+		};
+		try {
+			const created = await getOrCreateDatasetDraft(pool, input);
+			expect(created).toMatchObject({
+				dataset_id: fixture.datasetId,
+				base_version: 1,
+				item_count: 1,
+				revision: 1,
+			});
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_draft_items WHERE project_id = $1 AND draft_id = $2",
+						[fixture.projectId, created.id],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+
+			const existing = await getOrCreateDatasetDraft(pool, input);
+			expect(existing).toMatchObject({
+				id: created.id,
+				item_count: 1,
+			});
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_lifecycle_audit_events WHERE project_id = $1 AND dataset_id = $2 AND event_type = 'draft_created' AND item_count = 1",
+						[fixture.projectId, fixture.datasetId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"retention holds the creation slug lock until its tombstone commits",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
+		const fixture = await seedProjectAuditLockRace(pool);
+		const oldDatasetId = randomUUID();
+		const retention = await pool.connect();
+		const creating = await pool.connect();
+		const gate = await pool.connect();
+		const slug = "retention-race";
+		const gateKey = `dataset-retention-test:${randomUUID()}`;
+		const triggerName = `dataset_tombstone_gate_${randomUUID().replaceAll("-", "")}`;
+		const functionName = `${triggerName}_fn`;
+		let gateHeld = false;
+		let retentionStarted = false;
+		let createStarted = false;
+		try {
+			await pool.query(
+				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, $3, 'Retention race', now() - interval '2 days')",
+				[oldDatasetId, fixture.projectId, slug],
+			);
+			await gate.query("SELECT pg_advisory_lock(hashtext($1))", [gateKey]);
+			gateHeld = true;
+			await pool.query(
+				`CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.project_id = '${fixture.projectId}'::uuid AND NEW.slug = '${slug}' THEN PERFORM pg_advisory_xact_lock(hashtext('${gateKey}')); END IF; RETURN NEW; END $$`,
+			);
+			await pool.query(
+				`CREATE TRIGGER ${triggerName} AFTER INSERT ON dataset_tombstones FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+			);
+
+			await retention.query("BEGIN");
+			await retention.query(
+				"SET application_name = 'astraea-dataset-retention-slug-race'",
+			);
+			retentionStarted = true;
+			const deleting = deleteSafeDatasetRetentionBatch(
+				retention,
+				fixture.projectId,
+				new Date(),
+				1,
+				randomUUID(),
+				randomUUID(),
+			);
+			await waitForLock(pool, "astraea-dataset-retention-slug-race");
+			expect(
+				(
+					await pool.query<{ acquired: boolean }>(
+						"SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired",
+						[`dataset:${fixture.projectId}:${slug}`],
+					)
+				).rows[0]?.acquired,
+			).toBe(false);
+
+			await creating.query("BEGIN");
+			await creating.query(
+				"SET application_name = 'astraea-dataset-create-slug-race'",
+			);
+			createStarted = true;
+			// The production path takes audit provenance before this shared slug phase.
+			// Exercise the latter directly so the audit lock cannot mask this fence.
+			const creation = lockDatasetSlugForCreate(
+				creating,
+				fixture.projectId,
+				slug,
+			).then(
+				() => null,
+				(cause) => cause,
+			);
+			await waitForLock(pool, "astraea-dataset-create-slug-race");
+			await gate.query("SELECT pg_advisory_unlock(hashtext($1))", [gateKey]);
+			gateHeld = false;
+			expect(await deleting).toEqual({ deleted: 1, skipped: 0 });
+			await expect(
+				Promise.race([
+					creation.then(() => "advanced"),
+					Bun.sleep(50).then(() => "waiting"),
+				]),
+			).resolves.toBe("waiting");
+			await retention.query("COMMIT");
+			retentionStarted = false;
+			expect(await creation).toMatchObject({
+				code: "CONFLICT",
+				message: "Dataset identifier has been deleted",
+			});
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM datasets WHERE project_id = $1 AND slug = $2",
+						[fixture.projectId, slug],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_tombstones WHERE project_id = $1 AND slug = $2",
+						[fixture.projectId, slug],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+		} finally {
+			if (gateHeld)
+				await gate
+					.query("SELECT pg_advisory_unlock(hashtext($1))", [gateKey])
+					.catch(() => {});
+			if (createStarted) await creating.query("ROLLBACK").catch(() => {});
+			if (retentionStarted) await retention.query("ROLLBACK").catch(() => {});
+			creating.release();
+			retention.release();
+			gate.release();
+			await pool.query(
+				`DROP TRIGGER IF EXISTS ${triggerName} ON dataset_tombstones`,
+			);
+			await pool.query(`DROP FUNCTION IF EXISTS ${functionName}()`);
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				// Bypass only this disposable fixture's final-Admin guard during teardown.
+				await cleanup.query("SET LOCAL session_replication_role = replica");
+				await cleanup.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_lifecycle_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_tombstones WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"UPDATE projects SET status = 'archived' WHERE id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM project_actor_grants WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("DELETE FROM projects WHERE id = $1", [
+					fixture.projectId,
+				]);
+				await cleanup.query(
+					"DELETE FROM organization_memberships WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM organization_actor_roles WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM actor_identities WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query("DELETE FROM actors WHERE id IN ($1, $2)", [
+					fixture.managerActorId,
+					fixture.ownerActorId,
+				]);
+				await cleanup.query("COMMIT");
+			} finally {
+				cleanup.release();
+			}
 			await pool.end();
 		}
 	},

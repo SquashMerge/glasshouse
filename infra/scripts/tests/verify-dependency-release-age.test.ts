@@ -87,6 +87,28 @@ describe("assertReleaseAges", () => {
 			),
 		).resolves.toBeUndefined();
 	});
+
+	it("permits the nanoid security repair only through its normal age window", async () => {
+		const securityPatch = [{ name: "nanoid", version: "3.3.18" }];
+		const publishedAt = async () => new Date("2026-08-07T16:41:05.696Z");
+
+		await expect(
+			assertReleaseAges(
+				securityPatch,
+				7,
+				new Date("2026-08-14T16:41:05.695Z"),
+				publishedAt,
+			),
+		).resolves.toBeUndefined();
+		await expect(
+			assertReleaseAges(
+				securityPatch,
+				7,
+				new Date("2026-08-14T16:41:05.696Z"),
+				publishedAt,
+			),
+		).resolves.toBeUndefined();
+	});
 });
 
 describe("release-age CLI", () => {

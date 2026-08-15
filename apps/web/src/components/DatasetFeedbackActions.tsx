@@ -1,8 +1,9 @@
 import * as React from "react";
 import {
-	addDatasetItem,
+	createDatasetDraft,
 	createFeedback,
 	listDatasets,
+	upsertDatasetDraftItem,
 	type JsonObject,
 } from "../lib/api";
 import { Button } from "./ui/button";
@@ -60,7 +61,7 @@ export function AddToDatasetDialog({
 	const [datasetLoadError, setDatasetLoadError] = React.useState("");
 	const [datasetLoadAttempt, setDatasetLoadAttempt] = React.useState(0);
 	const [datasets, setDatasets] = React.useState<
-		Array<{ id: string; name: string }>
+		Array<{ id: string; name: string; slug: string }>
 	>([]);
 	React.useEffect(() => {
 		if (!open || !projectId) return;
@@ -115,9 +116,17 @@ export function AddToDatasetDialog({
 				? jsonObject(expected, "Expected output")
 				: null;
 			setPending(true);
-			await addDatasetItem({
+			const selected = datasets.find((dataset) => dataset.id === datasetId);
+			if (!selected) throw new Error("Dataset is no longer available");
+			const draft = await createDatasetDraft({
 				project_id: projectId,
-				dataset_id: datasetId,
+				slug: selected.slug,
+			});
+			await upsertDatasetDraftItem({
+				project_id: projectId,
+				slug: selected.slug,
+				item_key: crypto.randomUUID(),
+				revision: draft.revision,
 				input: parsedInput,
 				expected_output: parsedExpected,
 				source_trace_id: traceId,
@@ -245,7 +254,7 @@ export function AddToDatasetDialog({
 								disabled={pending || !datasetId}
 								onClick={() => void submit()}
 							>
-								{pending ? "Adding..." : "Add case"}
+								{pending ? "Adding to draft..." : "Add case to draft"}
 							</Button>
 						</div>
 					</div>

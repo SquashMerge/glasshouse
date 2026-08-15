@@ -2,12 +2,15 @@ import * as React from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	addDatasetItem,
+	createDatasetDraft,
 	createDataset,
-	deleteDatasetItem,
+	deleteDatasetDraftItem,
+	type DatasetItem,
 	getDataset,
 	listDatasetItems,
 	listDatasets,
+	publishDatasetDraft,
+	upsertDatasetDraftItem,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
@@ -155,7 +158,8 @@ export function DatasetDetailPage() {
 	});
 	const items = useQuery({
 		queryKey: ["dataset-items", selectedProjectId, id],
-		queryFn: () => listDatasetItems({ project_id: selectedProjectId!, id }),
+		queryFn: ({ signal }) =>
+			listDatasetItems({ project_id: selectedProjectId!, id, signal }),
 		enabled: Boolean(selectedProjectId),
 	});
 	const [input, setInput] = React.useState("{}");
@@ -166,24 +170,74 @@ export function DatasetDetailPage() {
 	const [deletingItemId, setDeletingItemId] = React.useState<string | null>(
 		null,
 	);
+	async function publish() {
+		if (pending) return;
+		try {
+			setError("");
+			setPending(true);
+			const draft = await createDatasetDraft({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+			});
+			await publishDatasetDraft({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				revision: draft.revision,
+			});
+			await Promise.all([
+				client.invalidateQueries({
+					queryKey: ["dataset-items", selectedProjectId, id],
+				}),
+				client.invalidateQueries({
+					queryKey: ["dataset", selectedProjectId, id],
+				}),
+				client.invalidateQueries({ queryKey: ["datasets", selectedProjectId] }),
+			]);
+		} catch (cause) {
+			setError((cause as Error).message);
+		} finally {
+			setPending(false);
+		}
+	}
 	async function add() {
 		if (pending) return;
 		try {
 			setError("");
 			setPending(true);
-			await addDatasetItem({
+			await client.cancelQueries({
+				queryKey: ["dataset-items", selectedProjectId, id],
+			});
+			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
-				dataset_id: id,
+				slug: dataset.data!.slug,
+			});
+			const item = await upsertDatasetDraftItem({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				item_key: crypto.randomUUID(),
+				revision: draft.revision,
 				input: parseObject(input),
 				expected_output: expected.trim() ? parseObject(expected) : null,
 				metadata: parseObject(metadata),
 			});
+			client.setQueryData<{ items: DatasetItem[] }>(
+				["dataset-items", selectedProjectId, id],
+				(current) => ({
+					items: [
+						...(current?.items ?? []).filter(
+							(candidate) => candidate.item_key !== item.item_key,
+						),
+						{
+							...item,
+							dataset_id: id,
+							created_at: new Date().toISOString(),
+						},
+					],
+				}),
+			);
 			setInput("{}");
 			setExpected("");
 			setMetadata("{}");
-			await client.invalidateQueries({
-				queryKey: ["dataset-items", selectedProjectId, id],
-			});
 			await client.invalidateQueries({
 				queryKey: ["datasets", selectedProjectId],
 			});
@@ -193,15 +247,28 @@ export function DatasetDetailPage() {
 			setPending(false);
 		}
 	}
-	async function remove(itemId: string) {
+	async function remove(item: DatasetItem) {
 		if (deletingItemId) return;
 		try {
 			setError("");
-			setDeletingItemId(itemId);
-			await deleteDatasetItem({
+			setDeletingItemId(item.id);
+			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
-				dataset_id: id,
-				item_id: itemId,
+				slug: dataset.data!.slug,
+			});
+			const draftItems = await listDatasetItems({
+				project_id: selectedProjectId!,
+				id: dataset.data!.id,
+			});
+			const draftItem = draftItems.items.find(
+				(candidate) => candidate.item_key === item.item_key,
+			);
+			if (!draftItem) throw new Error("Dataset draft item not found");
+			await deleteDatasetDraftItem({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				item_id: draftItem.id,
+				revision: draft.revision,
 			});
 			await client.invalidateQueries({
 				queryKey: ["dataset-items", selectedProjectId, id],
@@ -277,9 +344,21 @@ export function DatasetDetailPage() {
 					</p>
 				)}
 				<Button disabled={pending} onClick={() => void add()}>
-					{pending ? "Adding..." : "Add case"}
+					{pending ? "Adding to draft..." : "Add case to draft"}
 				</Button>
 			</section>
+			<div className="space-y-2">
+				<Button
+					variant="outline"
+					disabled={pending}
+					onClick={() => void publish()}
+				>
+					{pending ? "Publishing..." : "Publish draft"}
+				</Button>
+				<p className="text-sm text-muted-foreground">
+					Changes stay in the shared draft until you publish.
+				</p>
+			</div>
 			<ul className="space-y-3">
 				{items.data?.items.map((item) => (
 					<li key={item.id} className="rounded border p-3">
@@ -305,9 +384,11 @@ export function DatasetDetailPage() {
 								size="sm"
 								variant="ghost"
 								disabled={deletingItemId !== null}
-								onClick={() => void remove(item.id)}
+								onClick={() => void remove(item)}
 							>
-								{deletingItemId === item.id ? "Deleting..." : "Delete"}
+								{deletingItemId === item.id
+									? "Deleting from draft..."
+									: "Delete from draft"}
 							</Button>
 						</div>
 					</li>

@@ -214,6 +214,8 @@ type EvaluationDefinition = {
 - **Draft collision default:** one shared draft per dataset. Save uses an ETag/revision; conflicting edits require refresh/merge. V2 may add personal drafts, but not before conflict visibility works.
 - **External-key upsert:** API/SDK upserts match `item_key` only. The server never deduplicates cases by JSON equality or model output.
 - **Delete behavior:** archive datasets/evaluations by default. A version referenced by a run cannot be physically removed. Hard delete requires no versions/runs or a privileged retention job.
+
+Draft item removal uses `DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemId}` with the draft `If-Match` ETag. Legacy `/items/{id}` write endpoints remain deprecated and return `409`; published versions are immutable.
 - **Project isolation:** every lookup and foreign key includes project scope; cross-project attachment returns `404`, not an existence leak.
 
 ## API and SDK surface
@@ -228,12 +230,14 @@ GET    /v1/datasets?project_id=&q=&tag=
 POST   /v1/datasets                          # new contract supplies ?project_id; legacy JSON-body project_id adapter remains valid
 GET    /v1/datasets/by-slug/{slug}?project_id=
 PATCH  /v1/datasets/by-slug/{slug}?project_id=       # metadata only
+GET    /v1/datasets/{id}/items?project_id=            # shared draft when one exists; otherwise latest published items
+GET    /v1/datasets/{id}/published-items?project_id=  # latest immutable published items only; execution preflight
 GET    /v1/datasets/by-slug/{slug}/versions?project_id=
 GET    /v1/datasets/by-slug/{slug}/versions/{version}?project_id=
 POST   /v1/datasets/by-slug/{slug}/drafts?project_id= # optional explicit fork; default creates from latest
 GET    /v1/datasets/by-slug/{slug}/draft?project_id=
 PUT    /v1/datasets/by-slug/{slug}/draft/items/{itemKey}?project_id=  # upsert; If-Match draft revision
-DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemKey}?project_id=
+DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemId}?project_id=
 POST   /v1/datasets/by-slug/{slug}/draft/import?project_id= # CSV/JSONL/trace selections; async for large input
 POST   /v1/datasets/by-slug/{slug}/draft/validate?project_id=
 POST   /v1/datasets/by-slug/{slug}/draft/publish?project_id=
@@ -267,6 +271,8 @@ POST   /v1/experiments/{id}/cancel?project_id=   # alias for EvaluationRun cance
 ```
 
 `POST /v1/datasets` accepts `slug` optionally; new clients supply `?project_id=<UUID>`, while the compatibility adapter accepts the existing body `project_id` and rejects a nonmatching query/body pair. The server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. `POST /v1/datasets/by-slug/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
+
+Draft-facing screens use `GET /v1/datasets/{id}/items` to show the shared editable state. Evaluation and benchmark preflight use `GET /v1/datasets/{id}/published-items`, so unpublished additions or removals cannot change executable cases until an explicit publish succeeds.
 
 #### Legacy POST scope adapter
 

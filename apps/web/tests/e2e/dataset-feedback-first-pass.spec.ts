@@ -122,7 +122,7 @@ async function addCaseInBrowser(
 			.getByLabel("Expected output (optional)")
 			.fill(JSON.stringify(expected));
 	await page.getByLabel("Metadata").fill("{}");
-	await page.getByRole("button", { name: "Add case" }).click();
+	await page.getByRole("button", { name: "Add case to draft" }).click();
 	await expect(
 		page.locator("pre").filter({ hasText: JSON.stringify(input, null, 2) }),
 	).toBeVisible();
@@ -291,7 +291,7 @@ test("records trace feedback and preserves observation provenance when adding it
 	await expect(dialog.getByLabel("Expected output suggestion")).toHaveValue(
 		JSON.stringify(output, null, 2),
 	);
-	await dialog.getByRole("button", { name: "Add case" }).click();
+	await dialog.getByRole("button", { name: "Add case to draft" }).click();
 	await expect(dialog).toBeHidden();
 
 	const feedback = await apiJson<{ items: Feedback[] }>(
@@ -444,7 +444,7 @@ test("reviews negative feedback through the inbox without promoting a dataset ca
 	});
 });
 
-test("blocks an evaluation before an LLM run when the selected dataset lacks expected output", async ({
+test("blocks an evaluation before an LLM run until its draft is published", async ({
 	page,
 	request,
 }) => {
@@ -469,7 +469,7 @@ test("blocks an evaluation before an LLM run when the selected dataset lacks exp
 	await page.locator("#evaluation-dataset").selectOption(dataset.id);
 	await expect(
 		page.getByText(
-			"1 dataset case need expected output before this evaluation can run.",
+			"Publish at least one dataset case before this evaluation can run.",
 		),
 	).toBeVisible();
 	await expect(

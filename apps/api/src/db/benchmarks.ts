@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 import {
 	lockActiveAuthorizedProject,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
 
-type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 type Transactional = Pick<Pool, "connect">;
 type Row = Record<string, any>;
 
@@ -106,7 +105,7 @@ export async function createBenchmarkSuite(
 				"Project is not available",
 			);
 		const r = await client.query(
-			`INSERT INTO benchmark_suites (id, project_id, dataset_id, name, description) SELECT $1,$2,$3,$4,$5 FROM projects WHERE id=$2 AND status='active' RETURNING *`,
+			`INSERT INTO benchmark_suites (id, project_id, dataset_id, name, description) SELECT $1,$2,$3,$4,$5 FROM projects AS project JOIN datasets AS dataset ON dataset.id = $3 AND dataset.project_id = project.id AND dataset.archived_at IS NULL AND dataset.latest_published_version IS NOT NULL WHERE project.id = $2 AND project.status = 'active' RETURNING *`,
 			[
 				randomUUID(),
 				input.project_id,
@@ -116,10 +115,7 @@ export async function createBenchmarkSuite(
 			],
 		);
 		if (!r.rows[0])
-			throw new BenchmarkRepositoryError(
-				"NOT_FOUND",
-				"Project is not available",
-			);
+			throw new BenchmarkRepositoryError("NOT_FOUND", "Dataset not found");
 		await client.query("COMMIT");
 		return suite(r.rows[0]);
 	} catch (cause) {
@@ -130,31 +126,80 @@ export async function createBenchmarkSuite(
 	}
 }
 export async function getBenchmarkSuite(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		const r = await db.query(
-			`SELECT b.* FROM benchmark_suites b JOIN projects p ON p.id=b.project_id AND p.status='active' WHERE b.id=$1 AND b.project_id=$2`,
-			[input.id, input.project_id],
-		);
-		if (!r.rows[0])
-			throw new BenchmarkRepositoryError(
-				"NOT_FOUND",
-				"Benchmark suite not found",
+		const client = await db.connect();
+		try {
+			await client.query("BEGIN");
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new BenchmarkRepositoryError(
+					"NOT_FOUND",
+					"Benchmark suite not found",
+				);
+			const r = await client.query(
+				"SELECT b.* FROM benchmark_suites b WHERE b.id=$1 AND b.project_id=$2",
+				[input.id, input.project_id],
 			);
-		return suite(r.rows[0]);
+			if (!r.rows[0])
+				throw new BenchmarkRepositoryError(
+					"NOT_FOUND",
+					"Benchmark suite not found",
+				);
+			await client.query("COMMIT");
+			return suite(r.rows[0]);
+		} catch (cause) {
+			await client.query("ROLLBACK");
+			throw cause;
+		} finally {
+			client.release();
+		}
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
-export async function listBenchmarkSuites(db: Queryable, project_id: string) {
+export async function listBenchmarkSuites(
+	db: Transactional,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
 	try {
-		const r = await db.query(
-			`SELECT b.* FROM benchmark_suites b JOIN projects p ON p.id=b.project_id AND p.status='active' WHERE b.project_id=$1 ORDER BY b.created_at DESC`,
-			[project_id],
-		);
-		return { items: r.rows.map(suite), total: r.rowCount ?? r.rows.length };
+		const client = await db.connect();
+		try {
+			await client.query("BEGIN");
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new BenchmarkRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			const r = await client.query(
+				"SELECT b.* FROM benchmark_suites b WHERE b.project_id=$1 ORDER BY b.created_at DESC",
+				[input.project_id],
+			);
+			await client.query("COMMIT");
+			return { items: r.rows.map(suite), total: r.rowCount ?? r.rows.length };
+		} catch (cause) {
+			await client.query("ROLLBACK");
+			throw cause;
+		} finally {
+			client.release();
+		}
 	} catch (cause) {
 		throw normalize(cause);
 	}
@@ -212,29 +257,57 @@ export async function createBenchmarkRun(
 	}
 }
 export async function listBenchmarkRuns(
-	db: Queryable,
-	input: { project_id: string; suite_id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		suite_id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		await getBenchmarkSuite(db, {
+		const parent = await getBenchmarkSuite(db, {
 			project_id: input.project_id,
 			id: input.suite_id,
+			authorization: input.authorization,
 		});
-		const r = await db.query(
-			`SELECT br.*, COUNT(er.id)::int AS total, COUNT(er.id) FILTER (WHERE er.status='completed')::int AS passed, COUNT(er.id) FILTER (WHERE er.status='failed')::int AS failed FROM benchmark_runs br JOIN projects p ON p.id=br.project_id AND p.status='active' LEFT JOIN experiment_results er ON er.experiment_id=br.experiment_id WHERE br.project_id=$1 AND br.suite_id=$2 GROUP BY br.id ORDER BY CASE WHEN COUNT(er.id)=0 THEN 0 ELSE COUNT(er.id) FILTER (WHERE er.status='completed')::float / COUNT(er.id) END DESC, br.created_at DESC`,
-			[input.project_id, input.suite_id],
-		);
-		return {
-			suite_id: input.suite_id,
-			items: r.rows.map((row) => ({
-				...run(row),
-				total: Number(row.total),
-				passed: Number(row.passed),
-				failed: Number(row.failed),
-				pass_rate:
-					Number(row.total) === 0 ? 0 : Number(row.passed) / Number(row.total),
-			})),
-		};
+		const client = await db.connect();
+		try {
+			await client.query("BEGIN");
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					parent.project_id,
+					input.authorization,
+				))
+			)
+				throw new BenchmarkRepositoryError(
+					"NOT_FOUND",
+					"Benchmark suite not found",
+				);
+			const r = await client.query(
+				"SELECT br.*, COUNT(er.id)::int AS total, COUNT(er.id) FILTER (WHERE er.status='completed')::int AS passed, COUNT(er.id) FILTER (WHERE er.status='failed')::int AS failed FROM benchmark_runs br LEFT JOIN experiment_results er ON er.experiment_id=br.experiment_id WHERE br.project_id=$1 AND br.suite_id=$2 GROUP BY br.id ORDER BY CASE WHEN COUNT(er.id)=0 THEN 0 ELSE COUNT(er.id) FILTER (WHERE er.status='completed')::float / COUNT(er.id) END DESC, br.created_at DESC",
+				[parent.project_id, input.suite_id],
+			);
+			await client.query("COMMIT");
+			return {
+				suite_id: input.suite_id,
+				items: r.rows.map((row) => ({
+					...run(row),
+					total: Number(row.total),
+					passed: Number(row.passed),
+					failed: Number(row.failed),
+					pass_rate:
+						Number(row.total) === 0
+							? 0
+							: Number(row.passed) / Number(row.total),
+				})),
+			};
+		} catch (cause) {
+			await client.query("ROLLBACK");
+			throw cause;
+		} finally {
+			client.release();
+		}
 	} catch (cause) {
 		throw normalize(cause);
 	}

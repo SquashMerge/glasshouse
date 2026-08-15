@@ -598,6 +598,14 @@ describe("project authorization routes", () => {
 		expect(index("DELETE FROM feedback_reviews")).toBeLessThan(
 			index("DELETE FROM dataset_items"),
 		);
+		expect(index("DELETE FROM dataset_item_input_quarantine")).toBeLessThan(
+			index("DELETE FROM dataset_items"),
+		);
+		expect(
+			sql.find((statement) =>
+				statement.startsWith("DELETE FROM dataset_item_input_quarantine"),
+			),
+		).toBe("DELETE FROM dataset_item_input_quarantine WHERE project_id = $1");
 		expect(index("DELETE FROM dataset_items")).toBeLessThan(
 			index("DELETE FROM scores"),
 		);

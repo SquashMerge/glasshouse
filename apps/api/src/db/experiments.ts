@@ -114,7 +114,12 @@ function result(row: Row) {
 	return {
 		id: text(row, "id"),
 		experiment_id: text(row, "experiment_id"),
-		dataset_item_id: text(row, "dataset_item_id"),
+		dataset_item_id: text(
+			row,
+			row.dataset_version_item_id
+				? "dataset_version_item_id"
+				: "dataset_item_id",
+		),
 		agent_version: nullableText(row, "agent_version"),
 		output: row.output == null ? null : json(row, "output"),
 		scores: json(row, "scores") as Record<string, number>,
@@ -237,7 +242,7 @@ export async function createExperiment(
 					"Project is not available",
 				);
 			const r = await client.query(
-				`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status, requested_by_actor_id) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending',$7 WHERE ($3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2)) AND EXISTS (SELECT 1 FROM datasets WHERE id=$4 AND project_id=$2) RETURNING *`,
+				`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status, requested_by_actor_id) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending',$7 WHERE ($3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2)) AND EXISTS (SELECT 1 FROM datasets WHERE id=$4 AND project_id=$2 AND archived_at IS NULL AND latest_published_version IS NOT NULL) RETURNING *`,
 				[
 					randomUUID(),
 					input.project_id,
@@ -256,32 +261,68 @@ export async function createExperiment(
 		throw normalize(cause);
 	}
 }
-export async function listExperiments(db: Queryable, project_id: string) {
+export async function listExperiments(
+	db: Transactional,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
 	try {
-		const r = await db.query(
-			`SELECT e.* FROM experiments e JOIN projects p ON p.id=e.project_id AND p.status='active' WHERE e.project_id=$1 ORDER BY e.created_at DESC`,
-			[project_id],
-		);
-		return {
-			items: r.rows.map(experiment),
-			total: r.rowCount ?? r.rows.length,
-		};
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			const r = await client.query(
+				"SELECT e.* FROM experiments e WHERE e.project_id=$1 ORDER BY e.created_at DESC",
+				[input.project_id],
+			);
+			return {
+				items: r.rows.map(experiment),
+				total: r.rowCount ?? r.rows.length,
+			};
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function getExperiment(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		const r = await db.query(
-			`SELECT e.* FROM experiments e JOIN projects p ON p.id=e.project_id AND p.status='active' WHERE e.id=$1 AND e.project_id=$2`,
-			[input.id, input.project_id],
-		);
-		if (!r.rows[0])
-			throw new ExperimentRepositoryError("NOT_FOUND", "Experiment not found");
-		return experiment(r.rows[0]);
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			const r = await client.query(
+				"SELECT e.* FROM experiments e WHERE e.id=$1 AND e.project_id=$2",
+				[input.id, input.project_id],
+			);
+			if (!r.rows[0])
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			return experiment(r.rows[0]);
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
@@ -384,21 +425,30 @@ export async function claimExperimentTask(
 			}
 			if (access.row.status !== "running") return null;
 			const candidate = await client.query(
-				"SELECT t.id, t.dataset_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
-				[input.experiment_id],
+				"SELECT t.id, t.dataset_item_id, t.dataset_version_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND t.project_id=$2 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
+				[input.experiment_id, access.project_id],
 			);
 			const task = candidate.rows[0] as Row | undefined;
 			if (!task) return null;
 			const leaseToken = input.lease_token ?? randomUUID();
 			const claimed = await client.query(
-				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 RETURNING id, dataset_item_id, lease_token",
-				[text(task, "id"), leaseToken, input.lease_seconds ?? 60],
+				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 AND project_id=$4 RETURNING id, dataset_item_id, dataset_version_item_id, lease_token",
+				[
+					text(task, "id"),
+					leaseToken,
+					input.lease_seconds ?? 60,
+					access.project_id,
+				],
 			);
 			const claimedTask = claimed.rows[0] as Row | undefined;
 			if (!claimedTask) return null;
 			const item = await client.query(
-				"SELECT input, expected_output FROM dataset_items WHERE id=$1",
-				[text(claimedTask, "dataset_item_id")],
+				"SELECT input, expected_output FROM dataset_items WHERE id=$1 AND project_id=$3 UNION ALL SELECT input, expected_output FROM dataset_version_items WHERE id=$2 AND project_id=$3",
+				[
+					claimedTask.dataset_item_id ?? null,
+					claimedTask.dataset_version_item_id ?? null,
+					access.project_id,
+				],
 			);
 			const datasetItem = item.rows[0] as Row | undefined;
 			if (!datasetItem)
@@ -408,7 +458,12 @@ export async function claimExperimentTask(
 				);
 			return {
 				id: text(claimedTask, "id"),
-				dataset_item_id: text(claimedTask, "dataset_item_id"),
+				dataset_item_id: text(
+					claimedTask,
+					claimedTask.dataset_version_item_id
+						? "dataset_version_item_id"
+						: "dataset_item_id",
+				),
 				lease_token: text(claimedTask, "lease_token"),
 				input: json(datasetItem, "input"),
 				expected_output: datasetItem.expected_output,
@@ -478,16 +533,17 @@ export async function finalizeExperimentTask(
 			}
 			if (access.row.status !== "running") return false;
 			const finalized = await client.query(
-				"UPDATE experiment_tasks SET status=$4, lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id",
+				"UPDATE experiment_tasks SET status=$4, lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id",
 				[input.task_id, input.experiment_id, input.lease_token, input.status],
 			);
 			const task = finalized.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),$1,$2,$3,$4::jsonb,$5::jsonb,$6,$7) ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),(SELECT project_id FROM experiments WHERE id=$1),$1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT DO NOTHING",
 				[
 					text(task, "experiment_id"),
-					text(task, "dataset_item_id"),
+					task.dataset_item_id ?? null,
+					task.dataset_version_item_id ?? null,
 					input.agent_version ?? null,
 					input.output == null ? null : JSON.stringify(input.output),
 					JSON.stringify(input.scores),
@@ -522,14 +578,18 @@ export async function reconcileUnknownExperimentTaskProviderDispatch(
 				return false;
 			}
 			const failed = await client.query(
-				"UPDATE experiment_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id",
+				"UPDATE experiment_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id",
 				[input.task_id, input.experiment_id, input.lease_token],
 			);
 			const task = failed.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, output, scores, status) VALUES (gen_random_uuid(), $1, $2, NULL, '{}'::jsonb, 'failed') ON CONFLICT (experiment_id, dataset_item_id) DO NOTHING",
-				[text(task, "experiment_id"), text(task, "dataset_item_id")],
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, output, scores, status) VALUES (gen_random_uuid(), (SELECT project_id FROM experiments WHERE id=$1), $1, $2, $3, NULL, '{}'::jsonb, 'failed') ON CONFLICT DO NOTHING",
+				[
+					text(task, "experiment_id"),
+					task.dataset_item_id ?? null,
+					task.dataset_version_item_id ?? null,
+				],
 			);
 			return true;
 		});
@@ -595,10 +655,18 @@ export async function cancelExperiment(
 				[input.id, input.project_id],
 			);
 			if (!r.rows[0]) {
-				const existing = await getExperiment(client, input);
+				const existing = await client.query(
+					"SELECT e.* FROM experiments e WHERE e.id=$1 AND e.project_id=$2",
+					[input.id, input.project_id],
+				);
+				if (!existing.rows[0])
+					throw new ExperimentRepositoryError(
+						"NOT_FOUND",
+						"Experiment not found",
+					);
 				throw new ExperimentRepositoryError(
 					"CONFLICT",
-					`Evaluation is already ${existing.status}`,
+					`Evaluation is already ${experiment(existing.rows[0]!).status}`,
 				);
 			}
 			await client.query(
@@ -638,7 +706,7 @@ export async function insertExperimentResult(
 					"Experiment is not available",
 				);
 			const r = await client.query(
-				"INSERT INTO experiment_results (id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) RETURNING *",
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, agent_version, output, scores, duration_ms, status) VALUES ($1,(SELECT project_id FROM experiments WHERE id=$2),$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) RETURNING *",
 				[
 					randomUUID(),
 					input.experiment_id,
@@ -738,41 +806,75 @@ export async function claimExperimentExecution(
 	}
 }
 export async function listExperimentResults(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		await getExperiment(db, input);
-		const r = await db.query(
-			`SELECT r.* FROM experiment_results r JOIN experiments e ON e.id=r.experiment_id WHERE r.experiment_id=$1 AND e.project_id=$2 ORDER BY r.created_at ASC`,
-			[input.id, input.project_id],
-		);
-		return { experiment_id: input.id, items: r.rows.map(result) };
+		const parent = await getExperiment(db, input);
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					parent.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			const r = await client.query(
+				"SELECT r.* FROM experiment_results r WHERE r.experiment_id=$1 AND r.project_id=$2 ORDER BY r.created_at ASC",
+				[input.id, parent.project_id],
+			);
+			return { experiment_id: input.id, items: r.rows.map(result) };
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}
 }
 export async function experimentSummary(
-	db: Queryable,
-	input: { project_id: string; id: string },
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	try {
-		await getExperiment(db, input);
-		const r = await db.query(
-			`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='completed')::int AS passed, COUNT(*) FILTER (WHERE status='failed')::int AS failed, AVG(duration_ms)::float AS avg_duration_ms FROM experiment_results WHERE experiment_id=$1`,
-			[input.id],
-		);
-		const row = r.rows[0] ?? {};
-		const total = Number(row.total ?? 0);
-		return {
-			experiment_id: input.id,
-			total,
-			passed: Number(row.passed ?? 0),
-			failed: Number(row.failed ?? 0),
-			pass_rate: total === 0 ? 0 : Number(row.passed ?? 0) / total,
-			avg_duration_ms:
-				row.avg_duration_ms == null ? null : Number(row.avg_duration_ms),
-		};
+		const parent = await getExperiment(db, input);
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					parent.project_id,
+					input.authorization,
+				))
+			)
+				throw new ExperimentRepositoryError(
+					"NOT_FOUND",
+					"Experiment not found",
+				);
+			const r = await client.query(
+				"SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='completed')::int AS passed, COUNT(*) FILTER (WHERE status='failed')::int AS failed, AVG(duration_ms)::float AS avg_duration_ms FROM experiment_results WHERE experiment_id=$1 AND project_id=$2",
+				[input.id, parent.project_id],
+			);
+			const row = r.rows[0] ?? {};
+			const total = Number(row.total ?? 0);
+			return {
+				experiment_id: input.id,
+				total,
+				passed: Number(row.passed ?? 0),
+				failed: Number(row.failed ?? 0),
+				pass_rate: total === 0 ? 0 : Number(row.passed ?? 0) / total,
+				avg_duration_ms:
+					row.avg_duration_ms == null ? null : Number(row.avg_duration_ms),
+			};
+		});
 	} catch (cause) {
 		throw normalize(cause);
 	}

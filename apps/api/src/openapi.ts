@@ -144,10 +144,30 @@ import {
 	handleGetDataset,
 	listDatasetItems,
 	handleListDatasetItems,
+	listPublishedDatasetItems,
+	handleListPublishedDatasetItems,
 	addDatasetItem,
 	handleAddDatasetItem,
 	deleteDatasetItem,
 	handleDeleteDatasetItem,
+	getDatasetBySlug,
+	handleGetDatasetBySlug,
+	patchDatasetBySlug,
+	handlePatchDatasetBySlug,
+	createDatasetDraft,
+	handleCreateDatasetDraft,
+	getDatasetDraft,
+	handleGetDatasetDraft,
+	putDatasetDraftItem,
+	handlePutDatasetDraftItem,
+	deleteDatasetDraftItem,
+	handleDeleteDatasetDraftItem,
+	archiveDataset,
+	handleArchiveDataset,
+	discardDatasetDraft,
+	handleDiscardDatasetDraft,
+	publishDatasetDraft,
+	handlePublishDatasetDraft,
 } from "./routes/datasets.js";
 
 import {
@@ -293,8 +313,18 @@ register(getOptimization, handleGet);
 
 register(listDatasets, handleListDatasets);
 register(createDataset, handleCreateDataset);
+register(getDatasetBySlug, handleGetDatasetBySlug);
+register(patchDatasetBySlug, handlePatchDatasetBySlug);
+register(createDatasetDraft, handleCreateDatasetDraft);
+register(getDatasetDraft, handleGetDatasetDraft);
+register(putDatasetDraftItem, handlePutDatasetDraftItem);
+register(deleteDatasetDraftItem, handleDeleteDatasetDraftItem);
+register(archiveDataset, handleArchiveDataset);
+register(discardDatasetDraft, handleDiscardDatasetDraft);
+register(publishDatasetDraft, handlePublishDatasetDraft);
 register(getDataset, handleGetDataset);
 register(listDatasetItems, handleListDatasetItems);
+register(listPublishedDatasetItems, handleListPublishedDatasetItems);
 register(addDatasetItem, handleAddDatasetItem);
 register(deleteDatasetItem, handleDeleteDatasetItem);
 

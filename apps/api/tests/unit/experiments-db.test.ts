@@ -2,11 +2,15 @@ import { describe, expect, it } from "bun:test";
 import {
 	cancelExperiment,
 	claimExperimentTask,
+	experimentSummary,
 	finalizeExperimentTask,
+	getExperiment,
+	listExperimentResults,
 	listRecoverableExperiments,
 } from "../../src/db/experiments";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
+const otherProjectId = "99999999-9999-4999-8999-999999999999";
 const experimentId = "22222222-2222-4222-8222-222222222222";
 const datasetId = "33333333-3333-4333-8333-333333333333";
 const taskId = "44444444-4444-4444-8444-444444444444";
@@ -75,6 +79,63 @@ const runningExperiment = {
 };
 
 describe("durable experiment task ledger", () => {
+	it("does not read an experiment from another authorized project", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
+		const client = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				if (text.includes("FROM projects p"))
+					return { rows: [{ id: otherProjectId }] };
+				if (text.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				return { rows: [] };
+			},
+			release() {},
+		};
+		await expect(
+			getExperiment({ connect: async () => client } as never, {
+				id: experimentId,
+				project_id: otherProjectId,
+				authorization: { ...authorization, operation: "product_read" },
+			}),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
+		expect(
+			calls.find((call) => call.text.startsWith("SELECT e.* FROM experiments")),
+		).toMatchObject({ values: [experimentId, otherProjectId] });
+	});
+
+	it("does not expose another authorized project's experiment results or summary", async () => {
+		for (const read of [listExperimentResults, experimentSummary]) {
+			const calls: Array<{ text: string; values: unknown[] }> = [];
+			const client = {
+				query: async (text: string, values: unknown[] = []) => {
+					calls.push({ text, values });
+					if (text.includes("FROM projects p"))
+						return { rows: [{ id: otherProjectId }] };
+					if (text.startsWith("SELECT authorization_allows_project"))
+						return { rows: [{ allowed: true }] };
+					return { rows: [] };
+				},
+				release() {},
+			};
+			await expect(
+				read({ connect: async () => client } as never, {
+					id: experimentId,
+					project_id: otherProjectId,
+					authorization: { ...authorization, operation: "product_read" },
+				}),
+			).rejects.toMatchObject({ code: "NOT_FOUND" });
+			expect(
+				calls.find((call) =>
+					call.text.startsWith("SELECT e.* FROM experiments"),
+				),
+			).toMatchObject({ values: [experimentId, otherProjectId] });
+			expect(
+				calls.some((call) => call.text.includes("FROM experiment_results")),
+			).toBe(false);
+		}
+	});
+
 	it("rechecks the requester under the project lock before claiming provider work", async () => {
 		const db = transactionPool([
 			{ rows: [] },
@@ -107,6 +168,78 @@ describe("durable experiment task ledger", () => {
 		expect(db.calls.some((call) => call.text.includes("SKIP LOCKED"))).toBe(
 			true,
 		);
+	});
+
+	it("claims immutable published snapshot items without falling back to drafts", async () => {
+		const snapshotItemId = "88888888-8888-4888-8888-888888888888";
+		const db = transactionPool([
+			{ rows: [] },
+			{ rows: [runningExperiment] },
+			{ rows: [{ id: taskId, dataset_version_item_id: snapshotItemId }] },
+			{
+				rows: [
+					{
+						id: taskId,
+						dataset_version_item_id: snapshotItemId,
+						lease_token: leaseToken,
+					},
+				],
+			},
+			{
+				rows: [
+					{
+						input: { question: "published" },
+						expected_output: { value: "one" },
+					},
+				],
+			},
+			{ rows: [] },
+		]);
+
+		await expect(
+			claimExperimentTask(db as never, {
+				project_id: projectId,
+				experiment_id: experimentId,
+			}),
+		).resolves.toMatchObject({ dataset_item_id: snapshotItemId });
+		const itemQuery = db.calls.find((call) =>
+			call.text.includes("FROM dataset_version_items"),
+		);
+		expect(itemQuery?.values).toEqual([null, snapshotItemId, projectId]);
+	});
+
+	it("fails closed when a legacy task item is outside the experiment project", async () => {
+		const legacyItemId = "88888888-8888-4888-8888-888888888889";
+		const db = transactionPool([
+			{ rows: [] },
+			{ rows: [runningExperiment] },
+			{ rows: [{ id: taskId, dataset_item_id: legacyItemId }] },
+			{
+				rows: [
+					{
+						id: taskId,
+						dataset_item_id: legacyItemId,
+						lease_token: leaseToken,
+					},
+				],
+			},
+			{ rows: [] },
+		]);
+
+		await expect(
+			claimExperimentTask(db as never, {
+				project_id: projectId,
+				experiment_id: experimentId,
+			}),
+		).rejects.toMatchObject({
+			code: "INTERNAL",
+			message: "Dataset item not found",
+		});
+		const itemQuery = db.calls.find((call) =>
+			call.text.includes("FROM dataset_items"),
+		);
+		expect(itemQuery?.text).toContain("id=$1 AND project_id=$3");
+		expect(itemQuery?.values).toEqual([legacyItemId, null, projectId]);
 	});
 
 	it("does not finalize a result after requester execution access is revoked", async () => {

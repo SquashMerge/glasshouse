@@ -1,5 +1,73 @@
 DO $$
 BEGIN
+	IF (SELECT slug FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000001') <> 'legacy-evaluation-dataset' THEN
+		RAISE EXCEPTION 'dataset slug backfill was not deterministic';
+	END IF;
+	INSERT INTO datasets (id, project_id, name)
+	VALUES (
+		'a4000000-0000-4000-8000-000000000002',
+		'11111111-1111-1111-1111-111111111111',
+		'Direct write compatibility dataset'
+	);
+	IF (SELECT slug FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000002') <> 'dataset-a4000000000040008000000000000002' THEN
+		RAISE EXCEPTION 'direct dataset writes did not receive a stable slug';
+	END IF;
+	IF (SELECT latest_published_version FROM datasets WHERE id = 'a4000000-0000-4000-8000-000000000001') <> 1 THEN
+		RAISE EXCEPTION 'legacy dataset was not snapshotted as version one';
+	END IF;
+	IF (SELECT count(*) FROM dataset_version_items WHERE dataset_version_id = (SELECT id FROM dataset_versions WHERE dataset_id = 'a4000000-0000-4000-8000-000000000001' AND version = 1)) <> 2 THEN
+		RAISE EXCEPTION 'legacy dataset item snapshots were not retained';
+	END IF;
+	IF (SELECT input FROM dataset_items WHERE id = 'a5000000-0000-4000-8000-000000000003') <> '{"legacy_input":"legacy scalar"}'::jsonb
+		OR NOT EXISTS (SELECT 1 FROM dataset_item_input_quarantine WHERE dataset_item_id = 'a5000000-0000-4000-8000-000000000003') THEN
+		RAISE EXCEPTION 'legacy scalar dataset input was not normalized and quarantined before snapshots';
+	END IF;
+	IF (SELECT input FROM dataset_items WHERE id = 'a5000000-0000-4000-8000-000000000004') <> '{"legacy_input":["legacy","array"]}'::jsonb
+		OR NOT EXISTS (SELECT 1 FROM dataset_item_input_quarantine WHERE dataset_item_id = 'a5000000-0000-4000-8000-000000000004') THEN
+		RAISE EXCEPTION 'legacy array dataset input was not normalized and quarantined before snapshots';
+	END IF;
+	IF (SELECT count(*) FROM dataset_version_items WHERE dataset_version_id = (SELECT id FROM dataset_versions WHERE dataset_id = 'a4000000-0000-4000-8000-000000000003' AND version = 1)) <> 2 THEN
+		RAISE EXCEPTION 'normalized scalar and array items were not retained in the immutable snapshot';
+	END IF;
+	BEGIN
+		INSERT INTO experiments (id, project_id, agent_id, dataset_id, status)
+		VALUES ('a6000000-0000-4000-8000-000000000002', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000001', 'completed');
+		RAISE EXCEPTION 'cross-project experiment dataset reference was accepted';
+	EXCEPTION WHEN foreign_key_violation THEN NULL;
+	END;
+	INSERT INTO agents (id, project_id, name) VALUES ('a3000000-0000-4000-8000-000000000002', '22222222-2222-2222-2222-222222222222', 'Second project agent');
+	INSERT INTO datasets (id, project_id, name) VALUES ('a4000000-0000-4000-8000-000000000004', '22222222-2222-2222-2222-222222222222', 'Second project dataset');
+	INSERT INTO actors (id) VALUES ('a6000000-0000-4000-8000-000000000004');
+	INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+	SELECT 'a6000000-0000-4000-8000-000000000004', organization_id, 'basic:v1', 'migration-cross-project-probe'
+	FROM projects
+	WHERE id = '22222222-2222-2222-2222-222222222222';
+	INSERT INTO experiments (id, project_id, agent_id, dataset_id, requested_by_actor_id) VALUES ('a6000000-0000-4000-8000-000000000003', '22222222-2222-2222-2222-222222222222', 'a3000000-0000-4000-8000-000000000002', 'a4000000-0000-4000-8000-000000000004', 'a6000000-0000-4000-8000-000000000004');
+	BEGIN
+		INSERT INTO experiment_tasks (project_id, experiment_id, dataset_version_item_id)
+		SELECT '22222222-2222-2222-2222-222222222222', 'a6000000-0000-4000-8000-000000000003', id FROM dataset_version_items WHERE project_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
+		RAISE EXCEPTION 'cross-project snapshot task reference was accepted';
+	EXCEPTION WHEN foreign_key_violation THEN NULL;
+	END;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND conname = 'feedback_reviews_dataset_draft_item_project_fk' AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (dataset_draft_item_id, project_id)%' AND pg_get_constraintdef(oid) LIKE '%ON DELETE RESTRICT%')
+		OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'feedback_reviews'::regclass AND conname = 'feedback_reviews_dataset_version_item_project_fk' AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (dataset_item_id, project_id)%') THEN
+		RAISE EXCEPTION 'feedback links must retain project-scoped draft and immutable snapshot ownership';
+	END IF;
+	INSERT INTO dataset_drafts (id, project_id, dataset_id, created_by)
+	VALUES ('a4000000-0000-4000-8000-000000000005', '11111111-1111-1111-1111-111111111111', 'a4000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000006');
+	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input)
+	VALUES ('a4000000-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111', 'a4000000-0000-4000-8000-000000000005', 'cross-project-feedback', 0, '{}'::jsonb);
+	INSERT INTO scores (id, project_id, name, value)
+	VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'human.feedback', 1);
+	BEGIN
+		INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+		SELECT 'a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'added_to_dataset', 'a4000000-0000-4000-8000-000000000004', id
+		FROM dataset_version_items
+		WHERE project_id = '11111111-1111-1111-1111-111111111111'
+		LIMIT 1;
+		RAISE EXCEPTION 'cross-project feedback snapshot link was accepted';
+	EXCEPTION WHEN check_violation OR foreign_key_violation THEN NULL;
+	END;
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_versions')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_policy_approvals')
 		OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'governance_retention_runs') THEN
@@ -366,6 +434,14 @@ BEGIN
     END;
     INSERT INTO prompt_tombstones (project_id, slug)
     VALUES ('22222222-2222-2222-2222-222222222222', 'project-reservation');
+    PERFORM set_config(
+        'astraea.project_deletion_id',
+        '22222222-2222-2222-2222-222222222222',
+        true
+    );
+    DELETE FROM scores
+    WHERE id = 'a4000000-0000-4000-8000-000000000008';
+    PERFORM set_config('astraea.project_deletion_id', '', true);
     BEGIN
         DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';
         RAISE EXCEPTION 'project deletion removed a prompt tombstone';
@@ -703,9 +779,15 @@ BEGIN
     ) OR NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_reviews'::regclass
+            AND conname = 'feedback_reviews_dataset_version_item_project_fk'
+            AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (dataset_item_id, project_id)%'
+            AND pg_get_constraintdef(oid) LIKE '%REFERENCES dataset_version_items(id, project_id)%'
+            AND pg_get_constraintdef(oid) LIKE '%ON DELETE RESTRICT%'
+    ) OR EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'feedback_reviews'::regclass
             AND contype = 'f'
             AND pg_get_constraintdef(oid) LIKE '%dataset_items%'
-            AND pg_get_constraintdef(oid) LIKE '%RESTRICT%'
     ) OR NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_idempotency'::regclass
@@ -742,19 +824,23 @@ BEGIN
     ) OR NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'feedback_reviews'::regclass
-            AND conname = 'feedback_reviews_dataset_item_dataset_fk'
+            AND conname = 'feedback_reviews_dataset_draft_item_project_fk'
     ) THEN
         RAISE EXCEPTION 'feedback project scope constraints are incomplete';
     END IF;
 
-    INSERT INTO datasets (id, project_id, name) VALUES
-        ('a1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-a'),
-        ('a2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-b'),
-        ('b1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'feedback-scope-other');
-    INSERT INTO dataset_items (id, dataset_id, input) VALUES
-        ('a1000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', '{}'),
-        ('a2000000-0000-4000-8000-000000000002', 'a2000000-0000-4000-8000-000000000001', '{}'),
-        ('b1000000-0000-4000-8000-000000000002', 'b1000000-0000-4000-8000-000000000001', '{}');
+    INSERT INTO datasets (id, project_id, slug, name) VALUES
+        ('a1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-a', 'feedback-scope-a'),
+        ('a2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-b', 'feedback-scope-b'),
+        ('b1000000-0000-4000-8000-000000000001', '22222222-2222-2222-2222-222222222222', 'feedback-scope-other', 'feedback-scope-other');
+    INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES
+        ('a1000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111', 'a1000000-0000-4000-8000-000000000001', 1, 1, repeat('a', 64)),
+        ('a2000000-0000-4000-8000-000000000003', '11111111-1111-1111-1111-111111111111', 'a2000000-0000-4000-8000-000000000001', 1, 1, repeat('b', 64)),
+        ('b1000000-0000-4000-8000-000000000003', '22222222-2222-2222-2222-222222222222', 'b1000000-0000-4000-8000-000000000001', 1, 1, repeat('c', 64));
+    INSERT INTO dataset_version_items (id, project_id, dataset_version_id, item_key, position, input) VALUES
+        ('a1000000-0000-4000-8000-000000000004', '11111111-1111-1111-1111-111111111111', 'a1000000-0000-4000-8000-000000000003', 'feedback-scope-a', 0, '{}'),
+        ('a2000000-0000-4000-8000-000000000004', '11111111-1111-1111-1111-111111111111', 'a2000000-0000-4000-8000-000000000003', 'feedback-scope-b', 0, '{}'),
+        ('b1000000-0000-4000-8000-000000000004', '22222222-2222-2222-2222-222222222222', 'b1000000-0000-4000-8000-000000000003', 'feedback-scope-other', 0, '{}');
     INSERT INTO scores (id, project_id, trace_id, name, value, metadata) VALUES
         ('c1000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-1', 'human.feedback', -1, '{}'),
         ('c2000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 'feedback-scope-score-2', 'human.feedback', -1, '{}'),
@@ -773,38 +859,104 @@ BEGIN
             '11111111-1111-1111-1111-111111111111',
             'added_to_dataset',
             'b1000000-0000-4000-8000-000000000001',
-            'b1000000-0000-4000-8000-000000000002'
+            'b1000000-0000-4000-8000-000000000004'
         );
         RAISE EXCEPTION 'feedback review accepted a dataset from another project';
-    EXCEPTION WHEN foreign_key_violation THEN
-        NULL;
-    END;
-    BEGIN
-        INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
-        VALUES (
-            'c3000000-0000-4000-8000-000000000001',
-            '11111111-1111-1111-1111-111111111111',
-            'added_to_dataset',
-            'a1000000-0000-4000-8000-000000000001',
-            'a2000000-0000-4000-8000-000000000002'
-        );
-        RAISE EXCEPTION 'feedback review accepted a dataset item from another dataset';
-    EXCEPTION WHEN foreign_key_violation THEN
+    EXCEPTION WHEN check_violation OR foreign_key_violation THEN
         NULL;
     END;
 	INSERT INTO scores (id, project_id, trace_id, name, value, metadata)
 	VALUES ('99999999-9999-4999-8999-999999999999', '11111111-1111-1111-1111-111111111111', 'feedback-trace', 'human.feedback', -1, '{}');
-	INSERT INTO feedback_reviews (score_id, project_id, status, dataset_id, dataset_item_id)
+	IF EXISTS (
+		SELECT 1
+		FROM pg_constraint
+		WHERE conrelid = 'feedback_reviews'::regclass
+			AND conname = 'feedback_reviews_check'
+	) THEN
+		RAISE EXCEPTION 'obsolete feedback review dataset-item check remains';
+	END IF;
+	INSERT INTO feedback_reviews (score_id, project_id, status)
 	VALUES (
 		'c1000000-0000-4000-8000-000000000001',
 		'11111111-1111-1111-1111-111111111111',
-		'added_to_dataset',
-		'a1000000-0000-4000-8000-000000000001',
-		'a1000000-0000-4000-8000-000000000002'
+		'reviewed'
 	);
-	UPDATE dataset_items
-	SET feedback_score_id = 'c1000000-0000-4000-8000-000000000001'
-	WHERE id = 'a1000000-0000-4000-8000-000000000002';
+	INSERT INTO actors (id) VALUES ('a1000000-0000-4000-8000-000000000012');
+	INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+	SELECT
+		'a1000000-0000-4000-8000-000000000012',
+		organization_id,
+		'basic:v1',
+		'deletion-order-requester'
+	FROM projects
+	WHERE id = '11111111-1111-1111-1111-111111111111';
+	UPDATE datasets
+	SET latest_published_version = 1
+	WHERE id = 'a1000000-0000-4000-8000-000000000001';
+	INSERT INTO dataset_drafts (id, project_id, dataset_id, base_version, revision, created_by)
+	SELECT
+		'a1000000-0000-4000-8000-000000000008',
+		project_id,
+		id,
+		latest_published_version,
+		2,
+		'a1000000-0000-4000-8000-000000000012'
+	FROM datasets
+	WHERE id = 'a1000000-0000-4000-8000-000000000001';
+	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)
+	VALUES (
+		'a1000000-0000-4000-8000-000000000009',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000008',
+		'feedback-scope-score-1',
+		0,
+		'{}',
+		'c1000000-0000-4000-8000-000000000001'
+	);
+	UPDATE feedback_reviews
+	SET status = 'added_to_dataset',
+		dataset_id = 'a1000000-0000-4000-8000-000000000001',
+		dataset_draft_item_id = 'a1000000-0000-4000-8000-000000000009'
+	WHERE score_id = 'c1000000-0000-4000-8000-000000000001';
+	IF NOT EXISTS (
+		SELECT 1
+		FROM feedback_reviews review
+		JOIN dataset_draft_items item ON item.id = review.dataset_draft_item_id
+		WHERE review.score_id = 'c1000000-0000-4000-8000-000000000001'
+			AND review.status = 'added_to_dataset'
+			AND item.feedback_score_id = review.score_id
+			AND item.project_id = review.project_id
+	) THEN
+		RAISE EXCEPTION 'feedback promotion did not retain the reviewed score through its project-scoped draft item';
+	END IF;
+	INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash, created_via)
+	VALUES (
+		'a1000000-0000-4000-8000-000000000010',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000001',
+		2,
+		1,
+		repeat('d', 64),
+		'draft_publish'
+	);
+	INSERT INTO dataset_version_items (id, project_id, dataset_version_id, item_key, position, input)
+	SELECT
+		'a1000000-0000-4000-8000-000000000011',
+		item.project_id,
+		'a1000000-0000-4000-8000-000000000010',
+		item.item_key,
+		item.position,
+		item.input
+	FROM dataset_draft_items item
+	WHERE item.id = 'a1000000-0000-4000-8000-000000000009';
+	UPDATE datasets
+	SET latest_published_version = 2
+	WHERE id = 'a1000000-0000-4000-8000-000000000001';
+	UPDATE feedback_reviews
+	SET dataset_draft_item_id = NULL,
+		dataset_item_id = 'a1000000-0000-4000-8000-000000000011'
+	WHERE score_id = 'c1000000-0000-4000-8000-000000000001';
+	DELETE FROM dataset_drafts WHERE id = 'a1000000-0000-4000-8000-000000000008';
 	INSERT INTO benchmark_suites (id, project_id, dataset_id, name)
 	VALUES (
 		'd1000000-0000-4000-8000-000000000001',
@@ -812,22 +964,61 @@ BEGIN
 		'a1000000-0000-4000-8000-000000000001',
 		'deletion-order-suite'
 	);
+	INSERT INTO agents (id, project_id, name)
+	VALUES (
+		'a1000000-0000-4000-8000-000000000005',
+		'11111111-1111-1111-1111-111111111111',
+		'deletion-order-agent'
+	);
+	INSERT INTO experiments (id, project_id, agent_id, dataset_id, status, config, requested_by_actor_id)
+	VALUES (
+		'a1000000-0000-4000-8000-000000000006',
+		'11111111-1111-1111-1111-111111111111',
+		'a1000000-0000-4000-8000-000000000005',
+		'a1000000-0000-4000-8000-000000000001',
+		'pending',
+		'{}',
+		'a1000000-0000-4000-8000-000000000012'
+	);
 	INSERT INTO benchmark_runs (id, project_id, suite_id, experiment_id, label)
 	VALUES (
 		'd2000000-0000-4000-8000-000000000001',
 		'11111111-1111-1111-1111-111111111111',
 		'd1000000-0000-4000-8000-000000000001',
-		'a6000000-0000-4000-8000-000000000001',
+		'a1000000-0000-4000-8000-000000000006',
 		'deletion-order-run'
 	);
 	IF NOT EXISTS (
 		SELECT 1 FROM feedback_reviews review
-		JOIN dataset_items item ON item.feedback_score_id = review.score_id
-		WHERE review.status = 'added_to_dataset'
+		JOIN dataset_version_items item ON item.id = review.dataset_item_id
+		JOIN dataset_versions version ON version.id = item.dataset_version_id
+		WHERE review.score_id = 'c1000000-0000-4000-8000-000000000001'
+			AND review.project_id = '11111111-1111-1111-1111-111111111111'
+			AND review.status = 'added_to_dataset'
+			AND review.dataset_id = 'a1000000-0000-4000-8000-000000000001'
+			AND review.dataset_item_id = 'a1000000-0000-4000-8000-000000000011'
+			AND item.project_id = review.project_id
+			AND item.item_key = 'feedback-scope-score-1'
+			AND version.id = 'a1000000-0000-4000-8000-000000000010'
+			AND version.dataset_id = review.dataset_id
 	) OR NOT EXISTS (
 		SELECT 1 FROM benchmark_runs run
 		JOIN benchmark_suites suite ON suite.id = run.suite_id
-		WHERE suite.name = 'deletion-order-suite'
+		WHERE run.id = 'd2000000-0000-4000-8000-000000000001'
+			AND run.project_id = '11111111-1111-1111-1111-111111111111'
+			AND run.experiment_id = 'a1000000-0000-4000-8000-000000000006'
+			AND suite.id = 'd1000000-0000-4000-8000-000000000001'
+			AND suite.project_id = '11111111-1111-1111-1111-111111111111'
+			AND suite.dataset_id = 'a1000000-0000-4000-8000-000000000001'
+	) OR NOT EXISTS (
+		SELECT 1
+		FROM experiments experiment
+		JOIN actor_identities identity ON identity.actor_id = experiment.requested_by_actor_id
+		JOIN projects project ON project.id = experiment.project_id
+		WHERE experiment.id = 'a1000000-0000-4000-8000-000000000006'
+			AND experiment.status = 'pending'
+			AND identity.organization_id = project.organization_id
+			AND identity.provider_namespace = 'basic:v1'
 	) THEN
 		RAISE EXCEPTION 'deletion dependency fixtures for promoted feedback or benchmark suites are incomplete';
 	END IF;
@@ -872,6 +1063,26 @@ BEGIN
         WHERE tgname = 'experiments_seed_tasks' AND NOT tgisinternal
     ) THEN
         RAISE EXCEPTION 'durable experiment task ledger is incomplete';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'experiment_tasks'
+            AND column_name = 'dataset_version_item_id'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'experiment_results'
+            AND column_name = 'dataset_version_item_id'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'experiment_tasks'::regclass
+            AND conname = 'experiment_tasks_one_item_identity'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public'
+            AND indexname = 'experiment_tasks_version_item_key'
+    ) OR pg_get_functiondef('seed_experiment_tasks'::regproc) NOT LIKE '%dataset_version_item_id%'
+        OR pg_get_functiondef('seed_experiment_tasks'::regproc) LIKE '%FROM dataset_items%' THEN
+        RAISE EXCEPTION 'experiment task seeding does not use immutable dataset snapshots';
     END IF;
 
     IF (
@@ -1217,6 +1428,114 @@ BEGIN
     IF EXISTS (SELECT 1 FROM projects WHERE id = test_project_id) THEN
         RAISE EXCEPTION 'deleting non-default project was not removed after membership cleanup';
     END IF;
+END
+$$;
+
+DO $$
+DECLARE
+    fixture_organization_id UUID := '51000000-0000-4000-8000-000000000001';
+    other_organization_id UUID := '51000000-0000-4000-8000-000000000002';
+    fixture_default_project_id UUID := '55555555-5555-4555-8555-555555555560';
+    other_default_project_id UUID := '55555555-5555-4555-8555-555555555561';
+    dataset_project_id UUID := '55555555-5555-4555-8555-555555555556';
+    other_project_id UUID := '55555555-5555-4555-8555-555555555557';
+    fixture_dataset_id UUID := '55555555-5555-4555-8555-555555555558';
+    other_dataset_id UUID := '55555555-5555-4555-8555-555555555559';
+    fixture_actor_id UUID := '51000000-0000-4000-8000-000000000101';
+    untrusted_actor_id UUID := '51000000-0000-4000-8000-000000000104';
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'dataset_lifecycle_audit_events'::regclass
+            AND conname = 'dataset_lifecycle_audit_events_dataset_project_fkey'
+    ) THEN
+        RAISE EXCEPTION 'dataset lifecycle audit must retain historical identity after retention';
+    END IF;
+
+    -- The global migration fixture predates organizations. Seed complete tenant
+    -- aggregates here so this post-upgrade assertion does not rely on records
+    -- created in a separate historical-upgrade database.
+    ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;
+    INSERT INTO organizations (id, name, slug)
+    VALUES
+        (fixture_organization_id, 'Dataset retention fixture', 'dataset-retention-fixture'),
+        (other_organization_id, 'Other dataset fixture', 'other-dataset-fixture');
+    INSERT INTO projects (id, name, slug, organization_id)
+    VALUES
+        (fixture_default_project_id, 'Dataset Retention Default', 'default', fixture_organization_id),
+        (other_default_project_id, 'Other Dataset Default', 'default', other_organization_id),
+        (dataset_project_id, 'Dataset Retention Fixture', 'dataset-retention-fixture', fixture_organization_id),
+        (other_project_id, 'Other Dataset Fixture', 'other-dataset-fixture', other_organization_id);
+    UPDATE organizations
+    SET default_project_id = CASE id
+        WHEN fixture_organization_id THEN fixture_default_project_id
+        WHEN other_organization_id THEN other_default_project_id
+    END
+    WHERE id IN (fixture_organization_id, other_organization_id);
+    ALTER TABLE organizations ALTER COLUMN default_project_id SET NOT NULL;
+
+    INSERT INTO actors (id) VALUES (fixture_actor_id);
+    INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+    VALUES (fixture_actor_id, fixture_organization_id, 'test:v1', 'dataset-retention-owner');
+    INSERT INTO organization_memberships (organization_id, actor_subject, role)
+    VALUES (fixture_organization_id, 'dataset-retention-owner', 'owner');
+    INSERT INTO organization_actor_roles (organization_id, actor_id, role)
+    VALUES (fixture_organization_id, fixture_actor_id, 'admin');
+
+    INSERT INTO datasets (id, project_id, slug, name)
+    VALUES (fixture_dataset_id, dataset_project_id, 'retained-dataset', 'Retained Dataset');
+    INSERT INTO datasets (id, project_id, slug, name)
+    VALUES (other_dataset_id, other_project_id, 'other-retained-dataset', 'Other Retained Dataset');
+    INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+    VALUES (fixture_organization_id, dataset_project_id, fixture_dataset_id, 'retained-dataset', fixture_actor_id, 'archived');
+    INSERT INTO actors (id) VALUES (untrusted_actor_id);
+    INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject)
+    VALUES (untrusted_actor_id, fixture_organization_id, 'test:v1', 'untrusted-dataset-audit-actor');
+    BEGIN
+        INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+        VALUES (fixture_organization_id, dataset_project_id, fixture_dataset_id, 'retained-dataset', untrusted_actor_id, 'created');
+        RAISE EXCEPTION 'dataset lifecycle audit accepted an unauthorized actor';
+    EXCEPTION WHEN insufficient_privilege THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+        VALUES (other_organization_id, other_project_id, fixture_dataset_id, 'retained-dataset', fixture_actor_id, 'created');
+        RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-project dataset';
+    EXCEPTION WHEN foreign_key_violation THEN
+        NULL;
+    END;
+    BEGIN
+        INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type)
+        VALUES (other_organization_id, other_project_id, other_dataset_id, 'other-retained-dataset', fixture_actor_id, 'created');
+        RAISE EXCEPTION 'dataset lifecycle audit accepted a cross-organization actor';
+    EXCEPTION WHEN insufficient_privilege THEN
+        NULL;
+    END;
+    BEGIN
+        DELETE FROM dataset_lifecycle_audit_events WHERE dataset_id = fixture_dataset_id;
+        RAISE EXCEPTION 'dataset lifecycle audit accepted an ordinary delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    PERFORM set_config('astraea.dataset_retention_project_id', dataset_project_id::text, true);
+    BEGIN
+        DELETE FROM dataset_lifecycle_audit_events WHERE dataset_id = fixture_dataset_id;
+        RAISE EXCEPTION 'dataset retention context deleted append-only lifecycle evidence';
+    EXCEPTION WHEN SQLSTATE '55000' THEN
+        NULL;
+    END;
+    INSERT INTO dataset_tombstones (project_id, slug)
+    VALUES (dataset_project_id, 'retained-dataset');
+    PERFORM set_config('astraea.project_deletion_id', dataset_project_id::text, true);
+    DELETE FROM dataset_lifecycle_audit_events WHERE project_id = dataset_project_id;
+    DELETE FROM dataset_tombstones WHERE project_id = dataset_project_id;
+    DELETE FROM datasets WHERE project_id = dataset_project_id;
+    DELETE FROM projects WHERE id = dataset_project_id;
+    DELETE FROM datasets WHERE project_id = other_project_id;
+    DELETE FROM projects WHERE id = other_project_id;
+    DELETE FROM actor_identities WHERE actor_id = untrusted_actor_id;
+    DELETE FROM actors WHERE id = untrusted_actor_id;
 END
 $$;
 

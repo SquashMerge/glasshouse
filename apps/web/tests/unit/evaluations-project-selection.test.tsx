@@ -13,13 +13,17 @@ const selection = vi.hoisted(() => ({
 	projectId: "11111111-1111-4111-8111-111111111111",
 	projectName: "Project One",
 }));
-const { createExperiment, listDatasetItems, listDatasets, listExperiments } =
-	vi.hoisted(() => ({
-		createExperiment: vi.fn(),
-		listDatasetItems: vi.fn(),
-		listDatasets: vi.fn(),
-		listExperiments: vi.fn(),
-	}));
+const {
+	createExperiment,
+	listPublishedDatasetItems,
+	listDatasets,
+	listExperiments,
+} = vi.hoisted(() => ({
+	createExperiment: vi.fn(),
+	listPublishedDatasetItems: vi.fn(),
+	listDatasets: vi.fn(),
+	listExperiments: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -35,7 +39,7 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 }));
 vi.mock("../../src/lib/api", () => ({
 	createExperiment,
-	listDatasetItems,
+	listPublishedDatasetItems,
 	listDatasets,
 	listExperiments,
 }));
@@ -120,7 +124,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			Promise.resolve(datasets[projectId as keyof typeof datasets]),
 		);
 		listExperiments.mockResolvedValue({ items: [], total: 0 });
-		listDatasetItems.mockReset();
+		listPublishedDatasetItems.mockReset();
 		createExperiment.mockReset();
 	});
 
@@ -128,7 +132,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 
 	it("keeps Run disabled while the selected dataset items are loading", async () => {
 		let resolveItems: ((value: typeof validItems) => void) | undefined;
-		listDatasetItems.mockImplementation(
+		listPublishedDatasetItems.mockImplementation(
 			() =>
 				new Promise<typeof validItems>((resolve) => {
 					resolveItems = resolve;
@@ -142,10 +146,14 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		expect(runButton()).toBeDisabled();
 		resolveItems?.(validItems);
 		await waitFor(() => expect(runButton()).toBeEnabled());
+		expect(listPublishedDatasetItems).toHaveBeenCalledWith({
+			project_id: PROJECT_ONE,
+			id: DATASET_ONE,
+		});
 	});
 
 	it("clears an invalid dataset selection after switching projects", async () => {
-		listDatasetItems.mockResolvedValue(validItems);
+		listPublishedDatasetItems.mockResolvedValue(validItems);
 		const page = renderPage();
 		await screen.findByRole("option", { name: "Project One dataset" });
 		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
@@ -166,14 +174,14 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		await screen.findByRole("option", { name: "Project Two dataset" });
 		await waitFor(() => expect(datasetSelect()).toHaveValue(""));
 		expect(runButton()).toBeDisabled();
-		expect(listDatasetItems).not.toHaveBeenCalledWith({
+		expect(listPublishedDatasetItems).not.toHaveBeenCalledWith({
 			project_id: PROJECT_TWO,
 			id: DATASET_ONE,
 		});
 	});
 
 	it("keeps visible evaluation labels consistently separated from controls", async () => {
-		listDatasetItems.mockResolvedValue(validItems);
+		listPublishedDatasetItems.mockResolvedValue(validItems);
 		renderPage();
 
 		await screen.findByRole("option", { name: "Project One dataset" });
