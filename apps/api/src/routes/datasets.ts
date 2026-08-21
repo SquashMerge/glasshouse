@@ -429,7 +429,9 @@ export const listDatasetDraftItemRevisions = createRoute({
 	method: "get",
 	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemId}/revisions",
 	tags: [tag],
-	summary: "List a draft item's redacted revision history",
+	summary: "List a Dataset item's redacted revision history",
+	description:
+		"Accepts the current draft-item UUID or a published snapshot-item UUID without creating a draft or recording an audit event.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: DatasetDraftItemParam,
@@ -437,7 +439,7 @@ export const listDatasetDraftItemRevisions = createRoute({
 	},
 	responses: {
 		200: {
-			description: "Draft item revisions",
+			description: "Dataset item revisions",
 			content: { "application/json": { schema: DatasetDraftItemRevisionList } },
 		},
 		...DatasetErrorResponses,

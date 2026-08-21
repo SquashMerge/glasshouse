@@ -45,6 +45,9 @@ const {
 	publishDatasetDraft: vi.fn(),
 	upsertDatasetDraftItem: vi.fn(),
 }));
+const projectSelection = vi.hoisted(() => ({
+	role: "user" as "user" | "read_only",
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -56,6 +59,7 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 		selectedProject: {
 			id: "11111111-1111-4111-8111-111111111111",
 			name: "Project One",
+			project_role: projectSelection.role,
 		},
 	}),
 }));
@@ -142,6 +146,7 @@ function renderListPage() {
 
 describe("DatasetDetailPage draft lifecycle", () => {
 	beforeEach(() => {
+		projectSelection.role = "user";
 		getDataset.mockResolvedValue(dataset);
 		getDatasetDraft.mockResolvedValue({ revision: 4 });
 		listDatasetDraftItemRevisions.mockResolvedValue({ items: [] });
@@ -462,6 +467,61 @@ describe("DatasetDetailPage draft lifecycle", () => {
 		);
 		expect(createDatasetDraft).not.toHaveBeenCalled();
 		expect(screen.getByText(/reviewed by 44444444/)).toBeInTheDocument();
+	});
+
+	it("keeps Dataset content and history readable while hiding curation controls for Read-only users", async () => {
+		projectSelection.role = "read_only";
+		listDatasetItems.mockResolvedValue({ items: [publishedItem] });
+		listDatasetDraftItemRevisions.mockResolvedValue({
+			items: [
+				{
+					item_revision: 2,
+					action: "reviewed",
+					actor_id: "44444444-4444-4444-8444-444444444444",
+					created_at: "2026-08-14T00:00:00.000Z",
+				},
+			],
+		});
+		renderPage();
+
+		await screen.findByText("Golden");
+		expect(
+			screen.getByText(/"question": "published"/, { selector: "pre" }),
+		).toBeInTheDocument();
+		expect(screen.queryByText("Add JSON case")).toBeNull();
+		expect(screen.queryByText("Import JSON cases")).toBeNull();
+		expect(
+			screen.queryByRole("button", { name: "Publish reviewed draft" }),
+		).toBeNull();
+		expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Mark reviewed" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Move up" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Move down" })).toBeNull();
+		expect(
+			screen.queryByRole("button", { name: "Delete from draft" }),
+		).toBeNull();
+
+		fireEvent.click(screen.getByRole("button", { name: "Revision history" }));
+		await waitFor(() =>
+			expect(listDatasetDraftItemRevisions).toHaveBeenCalledWith({
+				project_id: projectId,
+				slug: "golden",
+				item_id: publishedItem.id,
+			}),
+		);
+		expect(createDatasetDraft).not.toHaveBeenCalled();
+		expect(screen.getByText(/reviewed by 44444444/)).toBeInTheDocument();
+	});
+
+	it("hides Dataset creation controls for Read-only users", async () => {
+		projectSelection.role = "read_only";
+		listDatasets.mockResolvedValue({ items: [], total: 0 });
+		renderListPage();
+
+		await screen.findByText("No datasets are available in this project.");
+		expect(screen.queryByLabelText("Dataset name")).toBeNull();
+		expect(screen.queryByLabelText("Description")).toBeNull();
+		expect(screen.queryByRole("button", { name: "New dataset" })).toBeNull();
 	});
 
 	it("announces dataset-list failures and retries the query", async () => {

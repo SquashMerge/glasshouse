@@ -1020,6 +1020,15 @@ describe("dataset repository", () => {
 			state: "reviewed",
 			capture_context: {},
 		});
+		const revision = db.queries.find((query) =>
+			query.text.startsWith("INSERT INTO dataset_draft_item_revisions"),
+		);
+		expect(revision?.text).toContain("dataset_id");
+		expect(revision?.values?.slice(0, 3)).toEqual([
+			PROJECT,
+			DATASET,
+			"33333333-3333-4333-8333-333333333333",
+		]);
 	});
 
 	it("returns draft-item revision history with the stable item ID and action actor", async () => {
@@ -1040,6 +1049,7 @@ describe("dataset repository", () => {
 							{
 								id: revisionId,
 								draft_item_id: draftItemId,
+								item_id: draftItemId,
 								item_revision: 3,
 								item_key: "stable",
 								position: 0,
@@ -1084,6 +1094,144 @@ describe("dataset repository", () => {
 		expect(DatasetDraftItemRevision.safeParse(result.items[0]).success).toBe(
 			true,
 		);
+		expect(
+			queries.some((sql) => sql.includes("dataset_lifecycle_audit_events")),
+		).toBe(false);
+	});
+
+	it("returns revision history for the immutable published item UUID", async () => {
+		const draftItemId = "33333333-3333-4333-8333-333333333333";
+		const publishedItemId = "66666666-6666-4666-8666-666666666666";
+		const actorId = "55555555-5555-4555-8555-555555555555";
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string, values?: unknown[]) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: PROJECT }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT revision.*")) {
+					expect(values).toEqual([PROJECT, "golden", publishedItemId]);
+					return {
+						rows: [
+							{
+								id: "44444444-4444-4444-8444-444444444444",
+								draft_item_id: draftItemId,
+								dataset_version_item_id: publishedItemId,
+								item_id: publishedItemId,
+								item_revision: 3,
+								item_key: "stable",
+								position: 0,
+								validation_version: 1,
+								state: "reviewed",
+								input: { question: "hello" },
+								expected_output: null,
+								metadata: {},
+								external_id: null,
+								source_trace_id: null,
+								source_observation_id: null,
+								feedback_score_id: null,
+								capture_context: {},
+								action: "reviewed",
+								actor_id: actorId,
+								created_at: NOW,
+							},
+						],
+					};
+				}
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const result = await getDatasetDraftItemRevisions(
+			{ connect: async () => client } as never,
+			{
+				project_id: PROJECT,
+				slug: "golden",
+				item_id: publishedItemId,
+				authorization: { ...authorization, operation: "product_read" },
+			},
+		);
+
+		expect(result.items[0]).toMatchObject({
+			id: publishedItemId,
+			item_revision: 3,
+			action: "reviewed",
+			actor_id: actorId,
+		});
+		const historyQuery = queries.find((sql) =>
+			sql.startsWith("SELECT revision.*"),
+		);
+		expect(historyQuery).toContain("dataset_version_item_id");
+		expect(historyQuery).not.toContain("JOIN dataset_draft_items");
+		expect(
+			queries.some((sql) => sql.includes("dataset_lifecycle_audit_events")),
+		).toBe(false);
+	});
+
+	it("returns retained history after its draft is discarded", async () => {
+		const draftItemId = "33333333-3333-4333-8333-333333333333";
+		const actorId = "55555555-5555-4555-8555-555555555555";
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: PROJECT }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT revision.*"))
+					return {
+						rows: [
+							{
+								id: "44444444-4444-4444-8444-444444444444",
+								draft_item_id: draftItemId,
+								item_id: draftItemId,
+								item_revision: 1,
+								item_key: "discarded",
+								position: 0,
+								validation_version: 1,
+								state: "draft",
+								input: { question: "hello" },
+								expected_output: null,
+								metadata: {},
+								external_id: null,
+								source_trace_id: null,
+								source_observation_id: null,
+								feedback_score_id: null,
+								capture_context: {},
+								action: "upserted",
+								actor_id: actorId,
+								created_at: NOW,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const result = await getDatasetDraftItemRevisions(
+			{ connect: async () => client } as never,
+			{
+				project_id: PROJECT,
+				slug: "golden",
+				item_id: draftItemId,
+				authorization: { ...authorization, operation: "product_read" },
+			},
+		);
+
+		expect(result.items[0]).toMatchObject({
+			id: draftItemId,
+			action: "upserted",
+			actor_id: actorId,
+		});
+		const historyQuery = queries.find((sql) =>
+			sql.startsWith("SELECT revision.*"),
+		);
+		expect(historyQuery).not.toContain("JOIN dataset_drafts");
 		expect(
 			queries.some((sql) => sql.includes("dataset_lifecycle_audit_events")),
 		).toBe(false);
@@ -1351,6 +1499,11 @@ describe("dataset repository", () => {
 			),
 		);
 		expect(reset?.values).toEqual([PROJECT, "golden"]);
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("DELETE FROM dataset_draft_item_revisions"),
+			),
+		).toBe(false);
 	});
 
 	it("publishes the complete draft as a new immutable snapshot and consumes it", async () => {
@@ -1388,6 +1541,9 @@ describe("dataset repository", () => {
 			"FROM dataset_draft_items WHERE draft_id = $5",
 		);
 		expect(snapshot?.text).toContain("INSERT INTO dataset_version_items");
+		expect(snapshot?.text).toContain(
+			"UPDATE dataset_draft_item_revisions revision SET dataset_version_item_id = copied.id",
+		);
 		expect(
 			db.queries.some((query) =>
 				query.text.includes(

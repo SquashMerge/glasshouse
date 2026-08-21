@@ -40,6 +40,7 @@ export function FeedbackPage() {
 				Select a project to review feedback.
 			</PageMessage>
 		);
+	const canCurate = selectedProject.project_role !== "read_only";
 	return (
 		<div className="space-y-6">
 			<div>
@@ -133,6 +134,7 @@ export function FeedbackPage() {
 						key={item.id}
 						item={item}
 						projectId={selectedProjectId!}
+						canCurate={canCurate}
 						onUpdated={() =>
 							void client.invalidateQueries({ queryKey: ["feedback"] })
 						}
@@ -145,15 +147,18 @@ export function FeedbackPage() {
 function FeedbackRow({
 	item,
 	projectId,
+	canCurate,
 	onUpdated,
 }: {
 	item: Feedback;
 	projectId: string;
+	canCurate: boolean;
 	onUpdated: () => void;
 }) {
 	const datasets = useQuery({
 		queryKey: ["datasets", projectId],
 		queryFn: () => listDatasets(projectId),
+		enabled: canCurate,
 	});
 	const [datasetId, setDatasetId] = React.useState("");
 	const [error, setError] = React.useState("");
@@ -234,7 +239,7 @@ function FeedbackRow({
 						</Button>
 					</>
 				)}
-				{item.status === "reviewed" && (
+				{canCurate && item.status === "reviewed" && (
 					<>
 						{datasets.isLoading && !datasets.data && (
 							<Skeleton

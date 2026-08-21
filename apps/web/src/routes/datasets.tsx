@@ -56,6 +56,7 @@ export function DatasetsPage() {
 				Select a project to manage its datasets.
 			</PageMessage>
 		);
+	const canCurate = selectedProject.project_role !== "read_only";
 	async function submit() {
 		if (pending) return;
 		try {
@@ -83,34 +84,36 @@ export function DatasetsPage() {
 				<h1 className="text-2xl font-semibold">Datasets</h1>
 				<p className="text-sm text-muted-foreground">{selectedProject.name}</p>
 			</div>
-			<div className="flex flex-wrap gap-2">
-				<label className="sr-only" htmlFor="dataset-name">
-					Dataset name
-				</label>
-				<Input
-					id="dataset-name"
-					value={name}
-					onChange={(event) => setName(event.target.value)}
-					placeholder="Dataset name"
-					maxLength={120}
-				/>
-				<label className="sr-only" htmlFor="dataset-description">
-					Description
-				</label>
-				<Input
-					id="dataset-description"
-					value={description}
-					onChange={(event) => setDescription(event.target.value)}
-					placeholder="Description"
-					maxLength={1000}
-				/>
-				<Button
-					disabled={!name.trim() || pending}
-					onClick={() => void submit()}
-				>
-					{pending ? "Creating..." : "New dataset"}
-				</Button>
-			</div>
+			{canCurate && (
+				<div className="flex flex-wrap gap-2">
+					<label className="sr-only" htmlFor="dataset-name">
+						Dataset name
+					</label>
+					<Input
+						id="dataset-name"
+						value={name}
+						onChange={(event) => setName(event.target.value)}
+						placeholder="Dataset name"
+						maxLength={120}
+					/>
+					<label className="sr-only" htmlFor="dataset-description">
+						Description
+					</label>
+					<Input
+						id="dataset-description"
+						value={description}
+						onChange={(event) => setDescription(event.target.value)}
+						placeholder="Description"
+						maxLength={1000}
+					/>
+					<Button
+						disabled={!name.trim() || pending}
+						onClick={() => void submit()}
+					>
+						{pending ? "Creating..." : "New dataset"}
+					</Button>
+				</div>
+			)}
 			{error && (
 				<p className="text-sm text-destructive" role="alert">
 					{error}
@@ -141,7 +144,9 @@ export function DatasetsPage() {
 			)}
 			{query.data?.items.length === 0 && (
 				<PageMessage title="Datasets">
-					No datasets yet. Create one to add JSON cases.
+					{canCurate
+						? "No datasets yet. Create one to add JSON cases."
+						: "No datasets are available in this project."}
 				</PageMessage>
 			)}
 			<ul className="divide-y rounded border">
@@ -248,7 +253,7 @@ function parseImport(value: string) {
 
 export function DatasetDetailPage() {
 	const { id } = useParams({ from: "/protected/datasets/$id" });
-	const { selectedProjectId } = useProjectSelection();
+	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const client = useQueryClient();
 	const dataset = useQuery({
 		queryKey: ["dataset", selectedProjectId, id],
@@ -287,6 +292,7 @@ export function DatasetDetailPage() {
 	const [deletingItemId, setDeletingItemId] = React.useState<string | null>(
 		null,
 	);
+	const canCurate = selectedProject?.project_role !== "read_only";
 	const importAttempt = React.useRef<{
 		idempotency_key: string;
 		revision: number | undefined;
@@ -589,152 +595,159 @@ export function DatasetDetailPage() {
 					{dataset.data?.description}
 				</p>
 			</div>
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-lg">
-						{editing ? "Edit draft case" : "Add JSON case"}
-					</CardTitle>
-					<CardDescription>
-						Saved cases require an explicit review before publication.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<label
-						className="grid gap-2 text-sm font-medium"
-						htmlFor="dataset-input"
-					>
-						Input
-						<textarea
-							id="dataset-input"
-							className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							value={input}
-							onChange={(event) => setInput(event.target.value)}
-						/>
-					</label>
-					<label
-						className="grid gap-2 text-sm font-medium"
-						htmlFor="dataset-expected"
-					>
-						Expected output (optional)
-						<textarea
-							id="dataset-expected"
-							className="min-h-20 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							value={expected}
-							onChange={(event) => setExpected(event.target.value)}
-						/>
-					</label>
-					<label
-						className="grid gap-2 text-sm font-medium"
-						htmlFor="dataset-metadata"
-					>
-						Metadata
-						<textarea
-							id="dataset-metadata"
-							className="min-h-16 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							value={metadata}
-							onChange={(event) => setMetadata(event.target.value)}
-						/>
-					</label>
-					<label
-						className="grid gap-2 text-sm font-medium"
-						htmlFor="dataset-external-id"
-					>
-						External source identity (optional)
-						<Input
-							id="dataset-external-id"
-							value={externalId}
-							onChange={(event) => setExternalId(event.target.value)}
-							maxLength={200}
-						/>
-					</label>
-					{error && (
-						<p className="text-sm text-destructive" role="alert">
-							{error}
-						</p>
-					)}
-					<div className="flex flex-wrap gap-2">
-						<Button disabled={pending} onClick={() => void add()}>
-							{pending
-								? "Saving..."
-								: editing
-									? "Save and require review"
-									: "Add case to draft"}
-						</Button>
-						{editing && (
-							<Button
-								variant="outline"
-								disabled={pending}
-								onClick={() => setEditing(null)}
-							>
-								Cancel edit
-							</Button>
+			{canCurate && (
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-lg">
+							{editing ? "Edit draft case" : "Add JSON case"}
+						</CardTitle>
+						<CardDescription>
+							Saved cases require an explicit review before publication.
+						</CardDescription>
+					</CardHeader>
+					<CardContent className="space-y-4">
+						<label
+							className="grid gap-2 text-sm font-medium"
+							htmlFor="dataset-input"
+						>
+							Input
+							<textarea
+								id="dataset-input"
+								className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								value={input}
+								onChange={(event) => setInput(event.target.value)}
+							/>
+						</label>
+						<label
+							className="grid gap-2 text-sm font-medium"
+							htmlFor="dataset-expected"
+						>
+							Expected output (optional)
+							<textarea
+								id="dataset-expected"
+								className="min-h-20 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								value={expected}
+								onChange={(event) => setExpected(event.target.value)}
+							/>
+						</label>
+						<label
+							className="grid gap-2 text-sm font-medium"
+							htmlFor="dataset-metadata"
+						>
+							Metadata
+							<textarea
+								id="dataset-metadata"
+								className="min-h-16 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								value={metadata}
+								onChange={(event) => setMetadata(event.target.value)}
+							/>
+						</label>
+						<label
+							className="grid gap-2 text-sm font-medium"
+							htmlFor="dataset-external-id"
+						>
+							External source identity (optional)
+							<Input
+								id="dataset-external-id"
+								value={externalId}
+								onChange={(event) => setExternalId(event.target.value)}
+								maxLength={200}
+							/>
+						</label>
+						{error && (
+							<p className="text-sm text-destructive" role="alert">
+								{error}
+							</p>
 						)}
-					</div>
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-lg">Import JSON cases</CardTitle>
-					<CardDescription>
-						Paste up to 500 canonical rows. Invalid rows leave the draft
-						unchanged.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-3">
-					<label
-						className="grid gap-2 text-sm font-medium"
-						htmlFor="dataset-import"
-					>
-						JSON array
-						<textarea
-							id="dataset-import"
-							className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							placeholder='[{"item_key":"case-1","input":{"question":"..."}}]'
-							value={importValue}
-							onChange={(event) => setImportValue(event.target.value)}
-						/>
-					</label>
+						<div className="flex flex-wrap gap-2">
+							<Button disabled={pending} onClick={() => void add()}>
+								{pending
+									? "Saving..."
+									: editing
+										? "Save and require review"
+										: "Add case to draft"}
+							</Button>
+							{editing && (
+								<Button
+									variant="outline"
+									disabled={pending}
+									onClick={() => setEditing(null)}
+								>
+									Cancel edit
+								</Button>
+							)}
+						</div>
+					</CardContent>
+				</Card>
+			)}
+			{canCurate && (
+				<Card>
+					<CardHeader>
+						<CardTitle className="text-lg">Import JSON cases</CardTitle>
+						<CardDescription>
+							Paste up to 500 canonical rows. Invalid rows leave the draft
+							unchanged.
+						</CardDescription>
+					</CardHeader>
+					<CardContent className="space-y-3">
+						<label
+							className="grid gap-2 text-sm font-medium"
+							htmlFor="dataset-import"
+						>
+							JSON array
+							<textarea
+								id="dataset-import"
+								className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								placeholder='[{"item_key":"case-1","input":{"question":"..."}}]'
+								value={importValue}
+								onChange={(event) => setImportValue(event.target.value)}
+							/>
+						</label>
+						<Button
+							variant="outline"
+							disabled={pending || !importValue.trim()}
+							onClick={() => void importRows()}
+						>
+							{pending ? "Importing..." : "Import into draft"}
+						</Button>
+						{importValidationErrors.length > 0 && (
+							<div
+								className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+								role="alert"
+							>
+								<p className="font-medium">Import validation needs attention</p>
+								<ul className="mt-2 list-disc space-y-1 pl-5">
+									{importValidationErrors.map((issue, index) => (
+										<li
+											key={`${issue.item_key ?? "row"}-${issue.field}-${index}`}
+										>
+											{issue.item_key
+												? `${issue.item_key}, `
+												: `Row ${index + 1}, `}
+											{issue.field.replace(/^items\/\d+\//, "")}:{" "}
+											{issue.message}
+										</li>
+									))}
+								</ul>
+							</div>
+						)}
+					</CardContent>
+				</Card>
+			)}
+			{canCurate && (
+				<div className="flex flex-wrap items-center gap-3">
 					<Button
 						variant="outline"
-						disabled={pending || !importValue.trim()}
-						onClick={() => void importRows()}
+						disabled={pending}
+						onClick={() => void publish()}
 					>
-						{pending ? "Importing..." : "Import into draft"}
+						{pending ? "Publishing..." : "Publish reviewed draft"}
 					</Button>
-					{importValidationErrors.length > 0 && (
-						<div
-							className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
-							role="alert"
-						>
-							<p className="font-medium">Import validation needs attention</p>
-							<ul className="mt-2 list-disc space-y-1 pl-5">
-								{importValidationErrors.map((issue, index) => (
-									<li
-										key={`${issue.item_key ?? "row"}-${issue.field}-${index}`}
-									>
-										{issue.item_key
-											? `${issue.item_key}, `
-											: `Row ${index + 1}, `}
-										{issue.field.replace(/^items\/\d+\//, "")}: {issue.message}
-									</li>
-								))}
-							</ul>
-						</div>
-					)}
-				</CardContent>
-			</Card>
-			<div className="flex flex-wrap items-center gap-3">
-				<Button
-					variant="outline"
-					disabled={pending}
-					onClick={() => void publish()}
-				>
-					{pending ? "Publishing..." : "Publish reviewed draft"}
-				</Button>
-				<p className="text-sm text-muted-foreground">
-					Changes stay in the shared draft until you publish.
-				</p>
-			</div>
+					<p className="text-sm text-muted-foreground">
+						Changes stay in the shared draft until you publish.
+					</p>
+				</div>
+			)}
 			{validationErrors.length > 0 && (
 				<div
 					className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
@@ -752,9 +765,10 @@ export function DatasetDetailPage() {
 				</div>
 			)}
 			{items.data?.items.length === 0 && (
-				<PageMessage title="Draft cases">
-					No cases yet. Add a JSON case, import rows, or capture redacted
-					evidence from a trace.
+				<PageMessage title={canCurate ? "Draft cases" : "Dataset cases"}>
+					{canCurate
+						? "No cases yet. Add a JSON case, import rows, or capture redacted evidence from a trace."
+						: "No cases are available in this Dataset."}
 				</PageMessage>
 			)}
 			<ul className="space-y-3">
@@ -797,40 +811,44 @@ export function DatasetDetailPage() {
 								</Link>
 							)}
 							<div className="flex flex-wrap gap-2">
-								<Button
-									size="sm"
-									variant="ghost"
-									disabled={pending}
-									onClick={() => edit(item)}
-								>
-									Edit
-								</Button>
-								{item.state !== "reviewed" && (
-									<Button
-										size="sm"
-										variant="outline"
-										disabled={pending}
-										onClick={() => void review(item)}
-									>
-										Mark reviewed
-									</Button>
+								{canCurate && (
+									<>
+										<Button
+											size="sm"
+											variant="ghost"
+											disabled={pending}
+											onClick={() => edit(item)}
+										>
+											Edit
+										</Button>
+										{item.state !== "reviewed" && (
+											<Button
+												size="sm"
+												variant="outline"
+												disabled={pending}
+												onClick={() => void review(item)}
+											>
+												Mark reviewed
+											</Button>
+										)}
+										<Button
+											size="sm"
+											variant="ghost"
+											disabled={pending}
+											onClick={() => void move(item, -1)}
+										>
+											Move up
+										</Button>
+										<Button
+											size="sm"
+											variant="ghost"
+											disabled={pending}
+											onClick={() => void move(item, 1)}
+										>
+											Move down
+										</Button>
+									</>
 								)}
-								<Button
-									size="sm"
-									variant="ghost"
-									disabled={pending}
-									onClick={() => void move(item, -1)}
-								>
-									Move up
-								</Button>
-								<Button
-									size="sm"
-									variant="ghost"
-									disabled={pending}
-									onClick={() => void move(item, 1)}
-								>
-									Move down
-								</Button>
 								<Button
 									size="sm"
 									variant="ghost"
@@ -839,16 +857,18 @@ export function DatasetDetailPage() {
 								>
 									Revision history
 								</Button>
-								<Button
-									size="sm"
-									variant="ghost"
-									disabled={deletingItemId !== null || pending}
-									onClick={() => void remove(item)}
-								>
-									{deletingItemId === item.id
-										? "Deleting from draft..."
-										: "Delete from draft"}
-								</Button>
+								{canCurate && (
+									<Button
+										size="sm"
+										variant="ghost"
+										disabled={deletingItemId !== null || pending}
+										onClick={() => void remove(item)}
+									>
+										{deletingItemId === item.id
+											? "Deleting from draft..."
+											: "Delete from draft"}
+									</Button>
+								)}
 							</div>
 						</div>
 						{history?.itemId === item.id && (

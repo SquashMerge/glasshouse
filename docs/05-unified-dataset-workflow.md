@@ -98,8 +98,8 @@ mutation or execution attempt, including a stale or hand-crafted request.
 ### 2. Capture a production failure into an existing suite
 
 1. On a trace/observation detail, user chooses **Add to dataset**.
-2. A modal shows the selected observation’s extracted input/output and asks for a destination dataset. Selecting **Create dataset** does not leave context.
-3. User maps source data to canonical fields and may redact/edit values. The modal always preserves `source_trace_id` and `source_observation_id`; it never imports secrets stripped at ingest.
+2. A modal identifies the selected observation and asks for a destination dataset. Selecting **Create dataset** does not leave context.
+3. The browser submits only `source_trace_id` and optional `source_observation_id`. Astraea rereads that project-scoped source on the server, applies the active redaction policy, and stores only the resulting safe draft content and provenance.
 4. If the destination has a draft, the case is added there. Otherwise Astraea creates a draft from the latest published version and labels it “Unpublished changes.”
 5. Dataset Overview visibly shows “1 unpublished change.” The user must publish a new version before an attached pinned evaluation can consume it.
 6. User can launch a comparison run from the publish confirmation: baseline `@N` versus candidate `@N+1`, same target/evaluators.

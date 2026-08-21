@@ -729,13 +729,15 @@ async function recordDraftAudit(
 async function appendDraftItemRevision(
 	client: Pick<PoolClient, "query">,
 	row: Row,
+	datasetId: string,
 	actorId: string,
 	action: DraftItemRevisionAction,
 ): Promise<void> {
 	await client.query(
-		`INSERT INTO dataset_draft_item_revisions (project_id, draft_item_id, item_revision, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, actor_id, action) VALUES ($1, $2, (SELECT COALESCE(MAX(item_revision) + 1, 1) FROM dataset_draft_item_revisions WHERE draft_item_id = $2), $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13::uuid, $14::jsonb, $15::uuid, $16)`,
+		`INSERT INTO dataset_draft_item_revisions (project_id, dataset_id, draft_item_id, item_revision, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, actor_id, action) VALUES ($1, $2, $3, (SELECT COALESCE(MAX(item_revision) + 1, 1) FROM dataset_draft_item_revisions WHERE draft_item_id = $3), $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13, $14::uuid, $15::jsonb, $16::uuid, $17)`,
 		[
 			text(row, "project_id"),
+			datasetId,
 			text(row, "id"),
 			text(row, "item_key"),
 			Number(row.position),
@@ -828,6 +830,7 @@ async function writeDraftItem(
 	await appendDraftItemRevision(
 		client,
 		row,
+		text(draft, "dataset_id"),
 		authorization.actor_id,
 		options.action,
 	);
@@ -1016,12 +1019,12 @@ export async function getDatasetDraftItemRevisions(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
-			`SELECT revision.* FROM dataset_draft_item_revisions revision JOIN dataset_draft_items item ON item.id = revision.draft_item_id AND item.project_id = revision.project_id JOIN dataset_drafts draft ON draft.id = item.draft_id AND draft.project_id = item.project_id JOIN datasets dataset ON dataset.id = draft.dataset_id AND dataset.project_id = draft.project_id WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND item.id = $3::uuid ORDER BY revision.item_revision DESC`,
+			`SELECT revision.*, COALESCE(revision.dataset_version_item_id, revision.draft_item_id) AS item_id FROM dataset_draft_item_revisions revision JOIN datasets dataset ON dataset.id = revision.dataset_id AND dataset.project_id = revision.project_id WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND (revision.draft_item_id = $3::uuid OR EXISTS (SELECT 1 FROM dataset_version_items item JOIN dataset_versions version ON version.id = item.dataset_version_id AND version.project_id = item.project_id WHERE item.project_id = revision.project_id AND item.id = revision.dataset_version_item_id AND version.dataset_id = revision.dataset_id AND item.id = $3::uuid)) ORDER BY revision.item_revision DESC`,
 			[input.project_id, input.slug, input.item_id],
 		);
 		if (!result.rows.length) {
 			const exists = await client.query(
-				`SELECT 1 FROM dataset_draft_items item JOIN dataset_drafts draft ON draft.id = item.draft_id AND draft.project_id = item.project_id JOIN datasets dataset ON dataset.id = draft.dataset_id AND dataset.project_id = draft.project_id WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND item.id = $3::uuid`,
+				`SELECT 1 FROM datasets dataset WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND (EXISTS (SELECT 1 FROM dataset_draft_items item JOIN dataset_drafts draft ON draft.id = item.draft_id AND draft.project_id = item.project_id WHERE draft.dataset_id = dataset.id AND item.id = $3::uuid) OR EXISTS (SELECT 1 FROM dataset_version_items item JOIN dataset_versions version ON version.id = item.dataset_version_id AND version.project_id = item.project_id WHERE version.dataset_id = dataset.id AND item.id = $3::uuid))`,
 				[input.project_id, input.slug, input.item_id],
 			);
 			if (!exists.rows[0])
@@ -1034,7 +1037,7 @@ export async function getDatasetDraftItemRevisions(
 		return {
 			items: result.rows.map((row) => ({
 				...draftItem(row),
-				id: text(row as Row, "draft_item_id"),
+				id: text(row as Row, "item_id"),
 				item_revision: Number(row.item_revision),
 				action: text(row, "action"),
 				actor_id: text(row, "actor_id"),
@@ -1105,6 +1108,7 @@ export async function reviewDatasetDraftItem(
 		await appendDraftItemRevision(
 			client,
 			row,
+			text(draftRow, "dataset_id"),
 			input.authorization.actor_id,
 			"reviewed",
 		);
@@ -1179,6 +1183,7 @@ export async function reorderDatasetDraftItems(
 			await appendDraftItemRevision(
 				client,
 				row,
+				text(draftRow, "dataset_id"),
 				input.authorization.actor_id,
 				"reordered",
 			);
@@ -1776,7 +1781,7 @@ export async function publishDatasetDraft(
 			throw persistedValidationFailure(validationErrors);
 		const version = Number(row.latest_published_version ?? 0) + 1;
 		const snapshot = await client.query(
-			`WITH inserted AS (INSERT INTO dataset_versions (project_id, dataset_id, version, item_count, content_hash, created_via) SELECT $1, $2, $3, COUNT(*)::int, encode(digest(jsonb_build_object('schema', $4::jsonb, 'items', COALESCE(jsonb_agg(jsonb_build_object('item_key', item_key, 'validation_version', validation_version, 'state', state, 'input', input, 'expected_output', expected_output, 'metadata', metadata, 'external_id', external_id, 'source_trace_id', source_trace_id, 'source_observation_id', source_observation_id, 'feedback_score_id', feedback_score_id, 'capture_context', capture_context, 'created_by', created_by, 'reviewed_by', reviewed_by, 'reviewed_at', reviewed_at) ORDER BY position, item_key), '[]'::jsonb))::text, 'sha256'), 'hex'), 'draft_publish' FROM dataset_draft_items WHERE draft_id = $5 RETURNING id), copied AS (INSERT INTO dataset_version_items (project_id, dataset_version_id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at) SELECT $1, inserted.id, i.item_key, i.position, i.validation_version, i.state, i.input, i.expected_output, i.metadata, i.external_id, i.source_trace_id, i.source_observation_id, i.feedback_score_id, i.capture_context, i.created_by, i.reviewed_by, i.reviewed_at FROM inserted JOIN dataset_draft_items i ON i.draft_id = $5 RETURNING id) UPDATE datasets SET latest_published_version = $3, updated_at = now() WHERE id = $2 RETURNING (SELECT id FROM inserted) AS version_id, (SELECT COUNT(*)::int FROM copied) AS item_count`,
+			`WITH inserted AS (INSERT INTO dataset_versions (project_id, dataset_id, version, item_count, content_hash, created_via) SELECT $1, $2, $3, COUNT(*)::int, encode(digest(jsonb_build_object('schema', $4::jsonb, 'items', COALESCE(jsonb_agg(jsonb_build_object('item_key', item_key, 'validation_version', validation_version, 'state', state, 'input', input, 'expected_output', expected_output, 'metadata', metadata, 'external_id', external_id, 'source_trace_id', source_trace_id, 'source_observation_id', source_observation_id, 'feedback_score_id', feedback_score_id, 'capture_context', capture_context, 'created_by', created_by, 'reviewed_by', reviewed_by, 'reviewed_at', reviewed_at) ORDER BY position, item_key), '[]'::jsonb))::text, 'sha256'), 'hex'), 'draft_publish' FROM dataset_draft_items WHERE draft_id = $5 RETURNING id), copied AS (INSERT INTO dataset_version_items (project_id, dataset_version_id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at) SELECT $1, inserted.id, i.item_key, i.position, i.validation_version, i.state, i.input, i.expected_output, i.metadata, i.external_id, i.source_trace_id, i.source_observation_id, i.feedback_score_id, i.capture_context, i.created_by, i.reviewed_by, i.reviewed_at FROM inserted JOIN dataset_draft_items i ON i.draft_id = $5 RETURNING id, item_key), linked_revisions AS (UPDATE dataset_draft_item_revisions revision SET dataset_version_item_id = copied.id FROM copied JOIN dataset_draft_items item ON item.project_id = $1 AND item.draft_id = $5 AND item.item_key = copied.item_key WHERE revision.project_id = $1 AND revision.dataset_id = $2 AND revision.draft_item_id = item.id RETURNING revision.id) UPDATE datasets SET latest_published_version = $3, updated_at = now() WHERE id = $2 RETURNING (SELECT id FROM inserted) AS version_id, (SELECT COUNT(*)::int FROM copied) AS item_count`,
 			[
 				input.project_id,
 				row.dataset_id,

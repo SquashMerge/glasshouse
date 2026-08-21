@@ -15,11 +15,13 @@ export function AddToDatasetDialog({
 	traceId,
 	observationId,
 	label,
+	canCurate = true,
 }: {
 	projectId: string | null;
 	traceId: string;
 	observationId?: string;
 	label: string;
+	canCurate?: boolean;
 }) {
 	const [open, setOpen] = React.useState(false);
 	const triggerRef = React.useRef<HTMLButtonElement>(null);
@@ -38,7 +40,7 @@ export function AddToDatasetDialog({
 		Array<{ id: string; name: string; slug: string }>
 	>([]);
 	React.useEffect(() => {
-		if (!open || !projectId) return;
+		if (!canCurate || !open || !projectId) return;
 		const currentProjectId = projectId;
 		let active = true;
 		async function loadDatasets() {
@@ -57,7 +59,7 @@ export function AddToDatasetDialog({
 		return () => {
 			active = false;
 		};
-	}, [datasetLoadAttempt, open, projectId]);
+	}, [canCurate, datasetLoadAttempt, open, projectId]);
 	React.useEffect(() => {
 		setDatasetId("");
 		setError("");
@@ -85,7 +87,7 @@ export function AddToDatasetDialog({
 		}
 	}
 	async function submit() {
-		if (!projectId || !datasetId || pending) return;
+		if (!canCurate || !projectId || !datasetId || pending) return;
 		try {
 			setError("");
 			setPending(true);
@@ -112,6 +114,7 @@ export function AddToDatasetDialog({
 			setPending(false);
 		}
 	}
+	if (!canCurate) return null;
 	return (
 		<>
 			<Button

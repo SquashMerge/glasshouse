@@ -52,6 +52,20 @@ beforeEach(() => {
 });
 
 describe("dataset feedback actions", () => {
+	it("does not offer trace capture without Dataset curation access", () => {
+		render(
+			<AddToDatasetDialog
+				projectId="project"
+				traceId="trace-a"
+				label="trace"
+				canCurate={false}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Add to dataset" })).toBeNull();
+		expect(listDatasets).not.toHaveBeenCalled();
+	});
+
 	it("captures only source identity and lets the server redact the source", async () => {
 		listDatasets.mockResolvedValue({
 			items: [{ id: "dataset", name: "Golden", slug: "golden" }],

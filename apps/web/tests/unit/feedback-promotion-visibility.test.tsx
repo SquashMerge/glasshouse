@@ -17,6 +17,9 @@ const { listDatasets, listFeedback, promoteFeedback, reviewFeedback } =
 		promoteFeedback: vi.fn(),
 		reviewFeedback: vi.fn(),
 	}));
+const projectSelection = vi.hoisted(() => ({
+	role: "user" as "user" | "read_only",
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -24,7 +27,11 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
 		selectedProjectId: projectId,
-		selectedProject: { id: projectId, name: "Project One" },
+		selectedProject: {
+			id: projectId,
+			name: "Project One",
+			project_role: projectSelection.role,
+		},
 	}),
 }));
 vi.mock("../../src/lib/api", () => ({
@@ -39,6 +46,7 @@ import { FeedbackPage } from "../../src/routes/feedback";
 afterEach(() => {
 	cleanup();
 	vi.resetAllMocks();
+	projectSelection.role = "user";
 });
 
 describe("FeedbackPage promotion visibility", () => {
@@ -119,6 +127,45 @@ describe("FeedbackPage promotion visibility", () => {
 		expect(
 			screen.getAllByRole("button", { name: "Add to dataset" }),
 		).toHaveLength(1);
+	});
+
+	it("does not offer feedback promotion to a Read-only project user", async () => {
+		projectSelection.role = "read_only";
+		listFeedback.mockResolvedValue({
+			items: [
+				{
+					id: "44444444-4444-4444-8444-444444444444",
+					project_id: projectId,
+					trace_id: "b".repeat(32),
+					observation_id: null,
+					target_type: "trace",
+					value: -1,
+					sentiment: "negative",
+					reason: "incorrect_answer",
+					comment: null,
+					status: "reviewed",
+					note: null,
+					dataset_id: null,
+					dataset_item_id: null,
+					created_at: "2026-07-29T00:00:00.000Z",
+					updated_at: "2026-07-29T00:00:00.000Z",
+				},
+			],
+			total: 1,
+		});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+
+		render(
+			<QueryClientProvider client={client}>
+				<FeedbackPage />
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText(/trace · reviewed/);
+		expect(screen.queryByRole("button", { name: "Add to dataset" })).toBeNull();
+		expect(listDatasets).not.toHaveBeenCalled();
 	});
 
 	it("announces a feedback row dataset-load failure and retries", async () => {
