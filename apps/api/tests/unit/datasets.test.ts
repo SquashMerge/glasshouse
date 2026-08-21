@@ -23,11 +23,13 @@ import {
 	updateDatasetMetadata,
 } from "../../src/db/datasets";
 import {
+	captureDatasetDraftItem as captureDatasetDraftItemRoute,
 	deleteDatasetItem as deleteDatasetItemRoute,
 	deleteDatasetDraftItem as deleteDatasetDraftItemRoute,
 	createDatasetDraft,
 	createDatasetRouteHandlers,
 	getDatasetDraft as getDatasetDraftRoute,
+	importDatasetDraftItems as importDatasetDraftItemsRoute,
 	handleCreateDatasetDraft,
 	handleGetDatasetDraft,
 	handlePutDatasetDraftItem,
@@ -42,6 +44,7 @@ import {
 	DatasetDraftItemParam,
 	DatasetDraftItemUpsert,
 	DatasetDraftItem,
+	DatasetDraftImport,
 	DatasetItem,
 	DatasetItemCreate,
 } from "../../src/schemas/datasets";
@@ -105,11 +108,13 @@ function curationReplayDb({
 	recordDatasetId = DATASET,
 	draftAvailable = true,
 	archived = false,
+	replay = true,
 }: {
 	requestHash: string;
 	recordDatasetId?: string | null;
 	draftAvailable?: boolean;
 	archived?: boolean;
+	replay?: boolean;
 }) {
 	const draftId = "55555555-5555-4555-8555-555555555555";
 	const queries: Array<{ text: string; values?: unknown[] }> = [];
@@ -141,15 +146,33 @@ function curationReplayDb({
 					],
 				};
 			}
-			if (sql.includes("FROM dataset_curation_idempotency"))
+			if (sql.startsWith("WITH selected AS"))
 				return {
 					rows: [
 						{
-							dataset_id: recordDatasetId,
-							request_hash: requestHash,
-							response: { draft_id: draftId, revision: 7, item_ids: ["item"] },
+							id: draftId,
+							dataset_id: DATASET,
+							revision: 4,
+							item_count: 0,
+							created: false,
 						},
 					],
+				};
+			if (sql.includes("FROM dataset_curation_idempotency"))
+				return {
+					rows: replay
+						? [
+								{
+									dataset_id: recordDatasetId,
+									request_hash: requestHash,
+									response: {
+										draft_id: draftId,
+										revision: 7,
+										item_ids: ["item"],
+									},
+								},
+							]
+						: [],
 				};
 			return { rows: [] };
 		},
@@ -243,6 +266,17 @@ describe("dataset contracts", () => {
 				metadata: { source: "test" },
 			}).success,
 		).toBe(true);
+	});
+
+	it("rejects duplicate item keys in one import", () => {
+		expect(
+			DatasetDraftImport.safeParse({
+				items: [
+					{ item_key: "same", input: { question: "first" } },
+					{ item_key: "same", input: { question: "second" } },
+				],
+			}).success,
+		).toBe(false);
 	});
 });
 
@@ -484,6 +518,99 @@ describe("dataset repository", () => {
 		});
 	});
 
+	it("rejects duplicate import keys before writing any draft item", async () => {
+		const db = curationReplayDb({ requestHash: "", replay: false });
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [
+					{
+						project_id: PROJECT,
+						item_key: "same",
+						input: { question: "first" },
+					},
+					{
+						project_id: PROJECT,
+						item_key: "same",
+						input: { question: "second" },
+					},
+				],
+				idempotency_key: "duplicate-import-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "BAD_REQUEST",
+			status: 400,
+		});
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("ON CONFLICT (draft_id, item_key) DO UPDATE"),
+			),
+		).toBe(false);
+		expect(
+			db.queries.some((query) => query.text.startsWith("WITH selected AS")),
+		).toBe(false);
+	});
+
+	it("validates an import before creating a missing draft", async () => {
+		const db = curationReplayDb({ requestHash: "", replay: false });
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				items: [
+					{
+						project_id: PROJECT,
+						item_key: "too-large",
+						input: { question: "x".repeat(16_385) },
+					},
+				],
+				idempotency_key: "invalid-import-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "BAD_REQUEST",
+			status: 400,
+		});
+		expect(
+			db.queries.some((query) => query.text.startsWith("WITH selected AS")),
+		).toBe(false);
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("INSERT INTO dataset_draft_items"),
+			),
+		).toBe(false);
+	});
+
+	it("requires a revision before importing into an existing shared draft", async () => {
+		const db = curationReplayDb({ requestHash: "", replay: false });
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				items: [
+					{
+						project_id: PROJECT,
+						item_key: "new-item",
+						input: { question: "hello" },
+					},
+				],
+				idempotency_key: "missing-revision-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			status: 409,
+		});
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("ON CONFLICT (draft_id, item_key) DO UPDATE"),
+			),
+		).toBe(false);
+	});
+
 	it("derives a stable capture item key for retries without a caller item key", async () => {
 		const captured: Array<Record<string, unknown>> = [];
 		const handlers = createDatasetRouteHandlers({
@@ -528,6 +655,42 @@ describe("dataset repository", () => {
 		expect(captured).toHaveLength(2);
 		expect(captured[0]?.item_key).toBe(captured[1]?.item_key);
 		expect(captured[0]?.item_key).toMatch(/^capture-[0-9a-f]{32}$/);
+	});
+
+	it("does not create a draft or item when a capture source is missing", async () => {
+		let captured = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			captureSource: async () => null,
+			captureDatasetDraftItem: async () => {
+				captured = true;
+				return { item: null, revision: 1, idempotent: false };
+			},
+		} as never);
+		const response = await handlers.handleCaptureDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => undefined,
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "missing-source-key" }
+								: { source_trace_id: "a".repeat(32) },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(404);
+		expect(captured).toBe(false);
 	});
 
 	it("lists only datasets for the requested project", async () => {
@@ -1075,13 +1238,15 @@ describe("dataset repository", () => {
 		expect(deletion.status).toBe(409);
 	});
 
-	it("documents draft ETags and the required If-Match revision", () => {
+	it("documents draft ETags and required or creation-only If-Match revisions", () => {
 		const app = new OpenAPIHono();
 		app.openapi(createDatasetDraft, handleCreateDatasetDraft);
 		app.openapi(getDatasetDraftRoute, handleGetDatasetDraft);
 		app.openapi(putDatasetDraftItem, handlePutDatasetDraftItem);
 		app.openapi(deleteDatasetDraftItemRoute, handleDeleteDatasetDraftItem);
 		app.openapi(publishDatasetDraftRoute, async () => new Response());
+		app.openapi(importDatasetDraftItemsRoute, async () => new Response());
+		app.openapi(captureDatasetDraftItemRoute, async () => new Response());
 		const document = app.getOpenAPIDocument({
 			openapi: "3.1.0",
 			info: { title: "test", version: "1" },
@@ -1099,6 +1264,12 @@ describe("dataset repository", () => {
 		const remove = document.paths?.[
 			"/v1/datasets/by-slug/{slug}/draft/items/{itemId}"
 		]?.delete as any;
+		const imported = document.paths?.[
+			"/v1/datasets/by-slug/{slug}/draft/import"
+		]?.post as any;
+		const captured = document.paths?.[
+			"/v1/datasets/by-slug/{slug}/draft/capture"
+		]?.post as any;
 		expect(remove.responses["204"].headers.ETag).toBeDefined();
 		expect(remove.parameters).toEqual(
 			expect.arrayContaining([
@@ -1118,6 +1289,16 @@ describe("dataset repository", () => {
 				}),
 			]),
 		);
+		for (const operation of [imported, captured])
+			expect(operation.parameters).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						in: "header",
+						name: "if-match",
+						required: false,
+					}),
+				]),
+			);
 		app.openapi(deleteDatasetItemRoute, async () => new Response());
 		const legacy = app.getOpenAPIDocument({
 			openapi: "3.1.0",

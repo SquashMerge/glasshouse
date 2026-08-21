@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	cleanup,
 	fireEvent,
@@ -8,21 +8,32 @@ import {
 } from "@testing-library/react";
 
 const {
-	createDatasetDraft,
+	ApiError,
 	captureDatasetDraftItem,
 	createFeedback,
+	getDatasetDraft,
 	listDatasets,
 } = vi.hoisted(() => ({
-	createDatasetDraft: vi.fn(),
+	ApiError: class ApiError extends Error {
+		constructor(
+			readonly status: number,
+			readonly code: string,
+			message: string,
+		) {
+			super(message);
+		}
+	},
 	captureDatasetDraftItem: vi.fn(),
 	createFeedback: vi.fn(),
+	getDatasetDraft: vi.fn(),
 	listDatasets: vi.fn(),
 }));
 
 vi.mock("../../src/lib/api", () => ({
-	createDatasetDraft,
+	ApiError,
 	captureDatasetDraftItem,
 	createFeedback,
+	getDatasetDraft,
 	listDatasets,
 }));
 
@@ -36,12 +47,15 @@ afterEach(() => {
 	vi.resetAllMocks();
 });
 
+beforeEach(() => {
+	getDatasetDraft.mockResolvedValue({ revision: 1 });
+});
+
 describe("dataset feedback actions", () => {
 	it("captures only source identity and lets the server redact the source", async () => {
 		listDatasets.mockResolvedValue({
 			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
 		});
-		createDatasetDraft.mockResolvedValue({ revision: 1 });
 		captureDatasetDraftItem.mockResolvedValue({});
 		render(
 			<AddToDatasetDialog
@@ -163,7 +177,6 @@ describe("dataset feedback actions", () => {
 		listDatasets.mockResolvedValue({
 			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
 		});
-		createDatasetDraft.mockResolvedValue({ revision: 1 });
 		captureDatasetDraftItem.mockResolvedValue({});
 		render(
 			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
@@ -180,7 +193,7 @@ describe("dataset feedback actions", () => {
 		await waitFor(() =>
 			expect(captureDatasetDraftItem).toHaveBeenCalledTimes(1),
 		);
-		expect(createDatasetDraft).toHaveBeenCalledWith({
+		expect(getDatasetDraft).toHaveBeenCalledWith({
 			project_id: "project",
 			slug: "golden",
 		});
@@ -191,6 +204,49 @@ describe("dataset feedback actions", () => {
 			}),
 		);
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	});
+
+	it("uses a new capture idempotency key after a successful submission", async () => {
+		listDatasets.mockResolvedValue({
+			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
+		});
+		captureDatasetDraftItem.mockResolvedValue({});
+		render(
+			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
+		);
+		const trigger = screen.getByRole("button", { name: "Add to dataset" });
+		fireEvent.click(trigger);
+		await screen.findByRole("dialog");
+		fireEvent.change(screen.getByLabelText("Dataset"), {
+			target: { value: "dataset" },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "Capture redacted case" }),
+		);
+		await waitFor(() =>
+			expect(captureDatasetDraftItem).toHaveBeenCalledTimes(1),
+		);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+		fireEvent.click(trigger);
+		await screen.findByRole("dialog");
+		fireEvent.change(screen.getByLabelText("Dataset"), {
+			target: { value: "dataset" },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "Capture redacted case" }),
+		);
+		await waitFor(() =>
+			expect(captureDatasetDraftItem).toHaveBeenCalledTimes(2),
+		);
+
+		const first = captureDatasetDraftItem.mock.calls[0]?.[0] as {
+			idempotency_key: string;
+		};
+		const second = captureDatasetDraftItem.mock.calls[1]?.[0] as {
+			idempotency_key: string;
+		};
+		expect(second.idempotency_key).not.toBe(first.idempotency_key);
 	});
 
 	it("reuses one idempotency key when an explicit thumb submission is retried", async () => {

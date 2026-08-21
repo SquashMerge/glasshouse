@@ -87,6 +87,17 @@ const IfMatchDraftRevision = z.object({
 		},
 	}),
 });
+const OptionalIfMatchDraftRevision = z.object({
+	"if-match": DraftRevisionEtag.optional().openapi({
+		param: {
+			name: "if-match",
+			in: "header",
+			required: false,
+			description:
+				"Quoted current draft revision. Omit only to create a draft after request validation when none exists.",
+		},
+	}),
+});
 const DatasetIdempotencyHeader = z.object({
 	"idempotency-key": z
 		.string()
@@ -316,7 +327,7 @@ export const importDatasetDraftItems = createRoute({
 	request: {
 		params: DatasetSlugParam,
 		query: DatasetProjectQuery,
-		headers: IfMatchDraftRevision.merge(DatasetIdempotencyHeader),
+		headers: OptionalIfMatchDraftRevision.merge(DatasetIdempotencyHeader),
 		body: { content: { "application/json": { schema: DatasetDraftImport } } },
 	},
 	responses: {
@@ -337,7 +348,7 @@ export const captureDatasetDraftItem = createRoute({
 	request: {
 		params: DatasetSlugParam,
 		query: DatasetProjectQuery,
-		headers: IfMatchDraftRevision.merge(DatasetIdempotencyHeader),
+		headers: OptionalIfMatchDraftRevision.merge(DatasetIdempotencyHeader),
 		body: { content: { "application/json": { schema: DatasetDraftCapture } } },
 	},
 	responses: {
@@ -707,10 +718,10 @@ export function createDatasetRouteHandlers(
 		) => {
 			try {
 				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
-				if (!match || !/^\d+$/.test(match))
+				if (match !== undefined && !/^\d+$/.test(match))
 					throw new DatasetRepositoryError(
 						"BAD_REQUEST",
-						"If-Match must contain the current draft revision",
+						"If-Match must contain a draft revision",
 					);
 				const project_id = c.req.valid("query").project_id;
 				const result = await dependencies.importDatasetDraftItems(
@@ -718,7 +729,7 @@ export function createDatasetRouteHandlers(
 					{
 						project_id,
 						slug: c.req.valid("param").slug,
-						revision: Number(match),
+						revision: match === undefined ? undefined : Number(match),
 						items: c.req.valid("json").items.map((item) => ({
 							...item,
 							project_id,
@@ -746,10 +757,10 @@ export function createDatasetRouteHandlers(
 		) => {
 			try {
 				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
-				if (!match || !/^\d+$/.test(match))
+				if (match !== undefined && !/^\d+$/.test(match))
 					throw new DatasetRepositoryError(
 						"BAD_REQUEST",
-						"If-Match must contain the current draft revision",
+						"If-Match must contain a draft revision",
 					);
 				const body = c.req.valid("json");
 				const tenant = trustedTenant(c);
@@ -775,7 +786,7 @@ export function createDatasetRouteHandlers(
 					{
 						project_id,
 						slug: c.req.valid("param").slug,
-						revision: Number(match),
+						revision: match === undefined ? undefined : Number(match),
 						item_key:
 							body.item_key ??
 							`capture-${datasetCurationRequestHash(c.req.valid("header")["idempotency-key"]).slice(0, 32)}`,

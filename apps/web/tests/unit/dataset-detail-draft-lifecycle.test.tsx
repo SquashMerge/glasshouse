@@ -10,19 +10,33 @@ import {
 } from "@testing-library/react";
 
 const {
+	ApiError,
 	createDataset,
 	createDatasetDraft,
 	deleteDatasetDraftItem,
 	getDataset,
+	getDatasetDraft,
+	importDatasetDraftItems,
 	listDatasetItems,
 	listDatasets,
 	publishDatasetDraft,
 	upsertDatasetDraftItem,
 } = vi.hoisted(() => ({
+	ApiError: class ApiError extends Error {
+		constructor(
+			readonly status: number,
+			readonly code: string,
+			message: string,
+		) {
+			super(message);
+		}
+	},
 	createDataset: vi.fn(),
 	createDatasetDraft: vi.fn(),
 	deleteDatasetDraftItem: vi.fn(),
 	getDataset: vi.fn(),
+	getDatasetDraft: vi.fn(),
+	importDatasetDraftItems: vi.fn(),
 	listDatasetItems: vi.fn(),
 	listDatasets: vi.fn(),
 	publishDatasetDraft: vi.fn(),
@@ -39,10 +53,13 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 	}),
 }));
 vi.mock("../../src/lib/api", () => ({
+	ApiError,
 	createDataset,
 	createDatasetDraft,
 	deleteDatasetDraftItem,
 	getDataset,
+	getDatasetDraft,
+	importDatasetDraftItems,
 	listDatasetItems,
 	listDatasets,
 	publishDatasetDraft,
@@ -107,6 +124,7 @@ function renderPage() {
 describe("DatasetDetailPage draft lifecycle", () => {
 	beforeEach(() => {
 		getDataset.mockResolvedValue(dataset);
+		getDatasetDraft.mockResolvedValue({ revision: 4 });
 		createDatasetDraft.mockResolvedValue({ revision: 4 });
 		publishDatasetDraft.mockResolvedValue({ version: 2, item_count: 1 });
 	});
@@ -150,6 +168,92 @@ describe("DatasetDetailPage draft lifecycle", () => {
 			),
 		);
 		expect(publishDatasetDraft).not.toHaveBeenCalled();
+	});
+
+	it("does not create a draft when manual JSON is invalid", async () => {
+		listDatasetItems.mockResolvedValue({ items: [] });
+		renderPage();
+
+		await screen.findByText("Golden");
+		fireEvent.change(screen.getByLabelText("Input"), {
+			target: { value: "not json" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Unexpected token",
+		);
+		expect(createDatasetDraft).not.toHaveBeenCalled();
+		expect(upsertDatasetDraftItem).not.toHaveBeenCalled();
+	});
+
+	it("preserves import provenance through the parser and request", async () => {
+		listDatasetItems.mockResolvedValue({ items: [] });
+		importDatasetDraftItems.mockResolvedValue({
+			items: [],
+			revision: 5,
+			idempotent: false,
+			validation_version: 1,
+		});
+		renderPage();
+
+		await screen.findByText("Golden");
+		fireEvent.change(screen.getByLabelText("JSON array"), {
+			target: {
+				value: JSON.stringify([
+					{
+						item_key: "imported",
+						input: { question: "hello" },
+						source_trace_id: "a".repeat(32),
+						source_observation_id: "observation-1",
+					},
+				]),
+			},
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Import into draft" }));
+
+		await waitFor(() =>
+			expect(importDatasetDraftItems).toHaveBeenCalledWith(
+				expect.objectContaining({
+					project_id: projectId,
+					slug: "golden",
+					revision: 4,
+					items: [
+						expect.objectContaining({
+							source_trace_id: "a".repeat(32),
+							source_observation_id: "observation-1",
+						}),
+					],
+				}),
+			),
+		);
+		expect(createDatasetDraft).not.toHaveBeenCalled();
+	});
+
+	it("does not create a draft for import provenance without a trace", async () => {
+		listDatasetItems.mockResolvedValue({ items: [] });
+		renderPage();
+
+		await screen.findByText("Golden");
+		fireEvent.change(screen.getByLabelText("JSON array"), {
+			target: {
+				value: JSON.stringify([
+					{
+						item_key: "invalid",
+						input: { question: "hello" },
+						source_observation_id: "observation-1",
+					},
+				]),
+			},
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Import into draft" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"observation provenance requires a trace",
+		);
+		expect(getDatasetDraft).not.toHaveBeenCalled();
+		expect(createDatasetDraft).not.toHaveBeenCalled();
+		expect(importDatasetDraftItems).not.toHaveBeenCalled();
 	});
 
 	it("keeps an added draft case when a cancelled stale refresh resolves", async () => {

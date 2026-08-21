@@ -214,6 +214,24 @@ export const DatasetDraftImport = z
 			.max(500),
 	})
 	.strict()
+	.superRefine((value, ctx) => {
+		const itemKeys = new Set<string>();
+		for (const [index, item] of value.items.entries()) {
+			if (itemKeys.has(item.item_key))
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["items", index, "item_key"],
+					message: "Each import item_key must be unique",
+				});
+			else itemKeys.add(item.item_key);
+			if (item.source_observation_id && !item.source_trace_id)
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["items", index, "source_observation_id"],
+					message: "Observation provenance requires a trace",
+				});
+		}
+	})
 	.openapi("DatasetDraftImport");
 export const DatasetDraftCapture = z
 	.object({

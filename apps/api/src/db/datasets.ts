@@ -460,6 +460,47 @@ export async function updateDatasetMetadata(
 	}
 }
 
+async function getOrCreateDatasetDraftInTransaction(
+	client: Pick<PoolClient, "query">,
+	input: {
+		project_id: string;
+		slug: string;
+		authorization: ProjectAuthorization;
+	},
+) {
+	if (
+		!(await lockActiveAuthorizedProject(
+			client,
+			input.project_id,
+			input.authorization,
+		))
+	)
+		throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+	const result = await client.query(
+		`WITH selected AS (SELECT id, latest_published_version FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL FOR UPDATE), inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM selected ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, validation_version, state, capture_context, created_by, updated_by, reviewed_by, reviewed_at) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.external_id, i.source_trace_id, i.source_observation_id, i.feedback_score_id, i.validation_version, i.state, i.capture_context, COALESCE(i.curated_by, d.created_by), COALESCE(i.curated_by, d.created_by), i.reviewed_by, i.reviewed_at FROM inserted d JOIN dataset_versions v ON v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.dataset_version_id = v.id RETURNING draft_id), draft AS (SELECT * FROM inserted UNION ALL SELECT d.* FROM dataset_drafts d JOIN selected s ON s.id = d.dataset_id WHERE NOT EXISTS (SELECT 1 FROM inserted)) SELECT d.*, CASE WHEN EXISTS (SELECT 1 FROM inserted) THEN (SELECT COUNT(*)::int FROM copied c WHERE c.draft_id = d.id) ELSE (SELECT COUNT(*)::int FROM dataset_draft_items i WHERE i.draft_id = d.id) END AS item_count, EXISTS (SELECT 1 FROM inserted) AS created FROM draft d`,
+		[input.project_id, input.slug, input.authorization.actor_id],
+	);
+	const row = result.rows[0] as Row | undefined;
+	if (!row) throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+	const created = row.created === true;
+	if (created) {
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, draft_revision, item_count) VALUES ($1, $2, $3, $4, $5, 'draft_created', $6, $7)",
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				row.dataset_id,
+				input.slug,
+				input.authorization.actor_id,
+				row.revision,
+				row.item_count,
+			],
+		);
+	}
+	return { row, created };
+}
+
 export async function getOrCreateDatasetDraft(
 	db: Transactional,
 	input: {
@@ -471,37 +512,9 @@ export async function getOrCreateDatasetDraft(
 	const client = await db.connect();
 	try {
 		await client.query("BEGIN");
-		if (
-			!(await lockActiveAuthorizedProject(
-				client,
-				input.project_id,
-				input.authorization,
-			))
-		)
-			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
-		const result = await client.query(
-			`WITH selected AS (SELECT id, latest_published_version FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL FOR UPDATE), inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM selected ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, validation_version, state, capture_context, created_by, updated_by, reviewed_by, reviewed_at) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.external_id, i.source_trace_id, i.source_observation_id, i.feedback_score_id, i.validation_version, i.state, i.capture_context, COALESCE(i.curated_by, d.created_by), COALESCE(i.curated_by, d.created_by), i.reviewed_by, i.reviewed_at FROM inserted d JOIN dataset_versions v ON v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.dataset_version_id = v.id RETURNING draft_id), draft AS (SELECT * FROM inserted UNION ALL SELECT d.* FROM dataset_drafts d JOIN selected s ON s.id = d.dataset_id WHERE NOT EXISTS (SELECT 1 FROM inserted)) SELECT d.*, CASE WHEN EXISTS (SELECT 1 FROM inserted) THEN (SELECT COUNT(*)::int FROM copied c WHERE c.draft_id = d.id) ELSE (SELECT COUNT(*)::int FROM dataset_draft_items i WHERE i.draft_id = d.id) END AS item_count, EXISTS (SELECT 1 FROM inserted) AS created FROM draft d`,
-			[input.project_id, input.slug, input.authorization.actor_id],
-		);
-		if (!result.rows[0])
-			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
-		if (result.rows[0].created) {
-			await lockProjectAuditProvenance(client, input.project_id);
-			await client.query(
-				"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, draft_revision, item_count) VALUES ($1, $2, $3, $4, $5, 'draft_created', $6, $7)",
-				[
-					input.authorization.organization_id,
-					input.project_id,
-					result.rows[0].dataset_id,
-					input.slug,
-					input.authorization.actor_id,
-					result.rows[0].revision,
-					result.rows[0].item_count,
-				],
-			);
-		}
+		const result = await getOrCreateDatasetDraftInTransaction(client, input);
 		await client.query("COMMIT");
-		return draft(result.rows[0]);
+		return draft(result.row);
 	} catch (cause) {
 		await client.query("ROLLBACK");
 		throw normalizeError(cause);
@@ -605,6 +618,30 @@ async function lockDatasetDraft(
 	if (!row)
 		throw new DatasetRepositoryError("NOT_FOUND", "Dataset draft not found");
 	return row as Row;
+}
+
+async function curationDraft(
+	client: Pick<PoolClient, "query">,
+	input: {
+		project_id: string;
+		slug: string;
+		revision?: number;
+		authorization: ProjectAuthorization;
+	},
+	allowExistingWithoutRevision = false,
+) {
+	if (input.revision !== undefined || allowExistingWithoutRevision) {
+		const row = await lockDatasetDraft(client, input.project_id, input.slug);
+		requireDraftRevision(row, input.revision);
+		return row;
+	}
+	const result = await getOrCreateDatasetDraftInTransaction(client, input);
+	if (!result.created)
+		throw new DatasetRepositoryError(
+			"CONFLICT",
+			"Draft revision is required when a shared draft already exists",
+		);
+	return result.row;
 }
 
 async function lockCurationDataset(
@@ -1249,7 +1286,7 @@ export async function importDatasetDraftItems(
 	input: {
 		project_id: string;
 		slug: string;
-		revision: number;
+		revision?: number;
 		items: DraftItemWriteInput[];
 		idempotency_key: string;
 		authorization: ProjectAuthorization;
@@ -1291,23 +1328,37 @@ export async function importDatasetDraftItems(
 			await client.query("COMMIT");
 			return { items: [], revision: replay.revision, idempotent: true };
 		}
-		const validationErrors = input.items.flatMap((item, index) =>
-			validateDatasetDraftItem(item).map((issue) => ({
-				item_id: null,
-				item_key: item.item_key,
-				field: `items/${index}/${issue.field}`,
-				code: issue.code,
-				message: issue.message,
-			})),
-		);
+		const itemKeys = new Set<string>();
+		const duplicateItemKeyErrors = input.items.flatMap((item, index) => {
+			if (!itemKeys.has(item.item_key)) {
+				itemKeys.add(item.item_key);
+				return [];
+			}
+			return [
+				{
+					item_id: null,
+					item_key: item.item_key,
+					field: `items/${index}/item_key`,
+					code: "DUPLICATE_ITEM_KEY",
+					message: "Each import item_key must be unique",
+				},
+			];
+		});
+		const validationErrors = [
+			...duplicateItemKeyErrors,
+			...input.items.flatMap((item, index) =>
+				validateDatasetDraftItem(item).map((issue) => ({
+					item_id: null,
+					item_key: item.item_key,
+					field: `items/${index}/${issue.field}`,
+					code: issue.code,
+					message: issue.message,
+				})),
+			),
+		];
 		if (validationErrors.length)
 			throw persistedValidationFailure(validationErrors);
-		const draftRow = await lockDatasetDraft(
-			client,
-			input.project_id,
-			input.slug,
-		);
-		requireDraftRevision(draftRow, input.revision);
+		const draftRow = await curationDraft(client, input);
 		const items = [];
 		for (const item of input.items)
 			items.push(
@@ -1399,8 +1450,11 @@ export async function captureDatasetDraftItemInTransaction(
 			idempotent: true,
 			draft_id: replay.draft_id,
 		};
-	const draftRow = await lockDatasetDraft(client, input.project_id, input.slug);
-	requireDraftRevision(draftRow, input.revision);
+	const draftRow = await curationDraft(
+		client,
+		input,
+		operation === "feedback_promotion",
+	);
 	const item = await writeDraftItem(
 		client,
 		draftRow,

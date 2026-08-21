@@ -1,4 +1,44 @@
 -- Versioned, reviewable Dataset draft curation with content-safe provenance.
+-- Preserve legacy scalar/array payloads inside objects before curation readers
+-- require object-shaped JSON. Expected output is optional, but retaining its
+-- legacy value keeps historical snapshots inspectable.
+UPDATE dataset_draft_items
+SET input = jsonb_build_object('legacy_input', input)
+WHERE jsonb_typeof(input) IS DISTINCT FROM 'object';
+
+UPDATE dataset_draft_items
+SET expected_output = jsonb_build_object('legacy_expected_output', expected_output)
+WHERE expected_output IS NOT NULL
+  AND jsonb_typeof(expected_output) IS DISTINCT FROM 'object';
+
+DO $$
+DECLARE immutable_trigger_exists BOOLEAN;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgrelid = 'dataset_version_items'::regclass
+          AND tgname = 'dataset_version_items_immutable'
+    ) INTO immutable_trigger_exists;
+    IF immutable_trigger_exists THEN
+        EXECUTE 'ALTER TABLE dataset_version_items DISABLE TRIGGER dataset_version_items_immutable';
+    END IF;
+
+    UPDATE dataset_version_items
+    SET input = jsonb_build_object('legacy_input', input)
+    WHERE jsonb_typeof(input) IS DISTINCT FROM 'object';
+
+    UPDATE dataset_version_items
+    SET expected_output = jsonb_build_object('legacy_expected_output', expected_output)
+    WHERE expected_output IS NOT NULL
+      AND jsonb_typeof(expected_output) IS DISTINCT FROM 'object';
+
+    IF immutable_trigger_exists THEN
+        EXECUTE 'ALTER TABLE dataset_version_items ENABLE TRIGGER dataset_version_items_immutable';
+    END IF;
+END
+$$;
+
 ALTER TABLE dataset_draft_items
     ADD COLUMN IF NOT EXISTS validation_version INTEGER NOT NULL DEFAULT 1,
     ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT 'reviewed',
@@ -24,6 +64,9 @@ ALTER TABLE dataset_draft_items
     ALTER COLUMN updated_by SET NOT NULL;
 
 ALTER TABLE dataset_draft_items
+    DROP CONSTRAINT IF EXISTS dataset_draft_items_input_check,
+    ADD CONSTRAINT dataset_draft_items_input_check
+        CHECK (jsonb_typeof(input) = 'object'),
     DROP CONSTRAINT IF EXISTS dataset_draft_items_state_check,
     ADD CONSTRAINT dataset_draft_items_state_check
         CHECK (state IN ('draft', 'reviewed')),
@@ -41,7 +84,7 @@ ALTER TABLE dataset_draft_items
     DROP CONSTRAINT IF EXISTS dataset_draft_items_expected_output_object_check;
 ALTER TABLE dataset_draft_items
     ADD CONSTRAINT dataset_draft_items_expected_output_object_check
-        CHECK (expected_output IS NULL OR jsonb_typeof(expected_output) = 'object') NOT VALID;
+        CHECK (expected_output IS NULL OR jsonb_typeof(expected_output) = 'object');
 
 ALTER TABLE dataset_version_items
     ADD COLUMN IF NOT EXISTS validation_version INTEGER NOT NULL DEFAULT 1,
@@ -54,6 +97,9 @@ ALTER TABLE dataset_version_items
     ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 
 ALTER TABLE dataset_version_items
+    DROP CONSTRAINT IF EXISTS dataset_version_items_input_check,
+    ADD CONSTRAINT dataset_version_items_input_check
+        CHECK (jsonb_typeof(input) = 'object'),
     DROP CONSTRAINT IF EXISTS dataset_version_items_state_check,
     ADD CONSTRAINT dataset_version_items_state_check
         CHECK (state IN ('draft', 'reviewed')),
@@ -71,7 +117,7 @@ ALTER TABLE dataset_version_items
     DROP CONSTRAINT IF EXISTS dataset_version_items_expected_output_object_check;
 ALTER TABLE dataset_version_items
     ADD CONSTRAINT dataset_version_items_expected_output_object_check
-        CHECK (expected_output IS NULL OR jsonb_typeof(expected_output) = 'object') NOT VALID;
+        CHECK (expected_output IS NULL OR jsonb_typeof(expected_output) = 'object');
 
 CREATE TABLE IF NOT EXISTS dataset_draft_item_revisions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

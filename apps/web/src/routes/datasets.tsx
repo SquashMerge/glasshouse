@@ -9,6 +9,7 @@ import {
 	importDatasetDraftItems,
 	type DatasetItem,
 	getDataset,
+	getDatasetDraft,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
 	listDatasets,
@@ -190,6 +191,31 @@ function parseImport(value: string) {
 				Array.isArray(row.metadata))
 		)
 			throw new Error(`Import row ${index + 1} metadata must be an object`);
+		if (
+			row.source_trace_id !== undefined &&
+			row.source_trace_id !== null &&
+			typeof row.source_trace_id !== "string"
+		)
+			throw new Error(
+				`Import row ${index + 1} source_trace_id must be a string`,
+			);
+		if (
+			row.source_observation_id !== undefined &&
+			row.source_observation_id !== null &&
+			typeof row.source_observation_id !== "string"
+		)
+			throw new Error(
+				`Import row ${index + 1} source_observation_id must be a string`,
+			);
+		const sourceTraceId = row.source_trace_id as string | null | undefined;
+		const sourceObservationId = row.source_observation_id as
+			| string
+			| null
+			| undefined;
+		if (sourceObservationId && !sourceTraceId)
+			throw new Error(
+				`Import row ${index + 1} observation provenance requires a trace`,
+			);
 		return {
 			item_key: row.item_key,
 			input: row.input as Record<string, unknown>,
@@ -200,6 +226,12 @@ function parseImport(value: string) {
 			metadata: row.metadata as Record<string, unknown> | undefined,
 			external_id:
 				typeof row.external_id === "string" ? row.external_id : undefined,
+			...(sourceTraceId === undefined
+				? {}
+				: { source_trace_id: sourceTraceId }),
+			...(sourceObservationId === undefined
+				? {}
+				: { source_observation_id: sourceObservationId }),
 		};
 	});
 }
@@ -255,6 +287,19 @@ export function DatasetDetailPage() {
 			client.invalidateQueries({ queryKey: ["datasets", selectedProjectId] }),
 		]);
 	}
+	async function existingDraftRevision() {
+		try {
+			return (
+				await getDatasetDraft({
+					project_id: selectedProjectId!,
+					slug: dataset.data!.slug,
+				})
+			).revision;
+		} catch (cause) {
+			if (cause instanceof ApiError && cause.status === 404) return undefined;
+			throw cause;
+		}
+	}
 	async function currentDraftItems() {
 		const draft = await createDatasetDraft({
 			project_id: selectedProjectId!,
@@ -302,6 +347,9 @@ export function DatasetDetailPage() {
 		try {
 			setError("");
 			setValidationErrors([]);
+			const parsedInput = parseObject(input);
+			const parsedExpected = expected.trim() ? parseObject(expected) : null;
+			const parsedMetadata = parseObject(metadata);
 			setPending(true);
 			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
@@ -312,9 +360,9 @@ export function DatasetDetailPage() {
 				slug: dataset.data!.slug,
 				item_key: editing?.item_key ?? crypto.randomUUID(),
 				revision: draft.revision,
-				input: parseObject(input),
-				expected_output: expected.trim() ? parseObject(expected) : null,
-				metadata: parseObject(metadata),
+				input: parsedInput,
+				expected_output: parsedExpected,
+				metadata: parsedMetadata,
 				external_id: externalId.trim() || null,
 			});
 			setInput("{}");
@@ -405,15 +453,12 @@ export function DatasetDetailPage() {
 			setValidationErrors([]);
 			setPending(true);
 			const rows = parseImport(importValue);
-			const draft = await createDatasetDraft({
-				project_id: selectedProjectId!,
-				slug: dataset.data!.slug,
-			});
+			const revision = await existingDraftRevision();
 			importKey.current ??= crypto.randomUUID();
 			await importDatasetDraftItems({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
-				revision: draft.revision,
+				revision,
 				idempotency_key: importKey.current,
 				items: rows,
 			});

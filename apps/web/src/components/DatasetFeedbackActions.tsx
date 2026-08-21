@@ -1,8 +1,9 @@
 import * as React from "react";
 import {
+	ApiError,
 	captureDatasetDraftItem,
-	createDatasetDraft,
 	createFeedback,
+	getDatasetDraft,
 	listDatasets,
 } from "../lib/api";
 import { Button } from "./ui/button";
@@ -71,6 +72,15 @@ export function AddToDatasetDialog({
 		setOpen(false);
 		setTimeout(() => triggerRef.current?.focus(), 0);
 	}
+	async function existingDraftRevision(slug: string) {
+		if (!projectId) return undefined;
+		try {
+			return (await getDatasetDraft({ project_id: projectId, slug })).revision;
+		} catch (cause) {
+			if (cause instanceof ApiError && cause.status === 404) return undefined;
+			throw cause;
+		}
+	}
 	async function submit() {
 		if (!projectId || !datasetId || pending) return;
 		try {
@@ -78,19 +88,17 @@ export function AddToDatasetDialog({
 			setPending(true);
 			const selected = datasets.find((dataset) => dataset.id === datasetId);
 			if (!selected) throw new Error("Dataset is no longer available");
-			const draft = await createDatasetDraft({
-				project_id: projectId,
-				slug: selected.slug,
-			});
+			const revision = await existingDraftRevision(selected.slug);
 			idempotencyKey.current ??= crypto.randomUUID();
 			await captureDatasetDraftItem({
 				project_id: projectId,
 				slug: selected.slug,
-				revision: draft.revision,
+				revision,
 				idempotency_key: idempotencyKey.current,
 				source_trace_id: traceId,
 				source_observation_id: observationId,
 			});
+			idempotencyKey.current = null;
 			close();
 		} catch (cause) {
 			setError((cause as Error).message);

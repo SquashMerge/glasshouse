@@ -116,6 +116,17 @@ export async function createDatasetDraft(input: {
 		"createDatasetDraft",
 	);
 }
+export async function getDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+}): Promise<DatasetDraft> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft${buildQs({ project_id: input.project_id })}`,
+		),
+		"getDatasetDraft",
+	);
+}
 export async function updateDatasetMetadata(input: {
 	project_id: string;
 	slug: string;
@@ -189,7 +200,7 @@ export async function validateDatasetDraft(input: {
 export async function importDatasetDraftItems(input: {
 	project_id: string;
 	slug: string;
-	revision: number;
+	revision?: number;
 	idempotency_key: string;
 	items: Array<{
 		item_key: string;
@@ -214,8 +225,8 @@ export async function importDatasetDraftItems(input: {
 				method: "POST",
 				headers: {
 					"content-type": "application/json",
-					"if-match": `"${revision}"`,
 					"idempotency-key": idempotency_key,
+					...(revision === undefined ? {} : { "if-match": `"${revision}"` }),
 				},
 				body: JSON.stringify({ items }),
 			},
@@ -226,7 +237,7 @@ export async function importDatasetDraftItems(input: {
 export async function captureDatasetDraftItem(input: {
 	project_id: string;
 	slug: string;
-	revision: number;
+	revision?: number;
 	idempotency_key: string;
 	item_key?: string;
 	external_id?: string | null;
@@ -246,8 +257,8 @@ export async function captureDatasetDraftItem(input: {
 				method: "POST",
 				headers: {
 					"content-type": "application/json",
-					"if-match": `"${revision}"`,
 					"idempotency-key": idempotency_key,
+					...(revision === undefined ? {} : { "if-match": `"${revision}"` }),
 				},
 				body: JSON.stringify(body),
 			},
