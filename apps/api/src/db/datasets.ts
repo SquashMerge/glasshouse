@@ -660,6 +660,21 @@ async function lockCurationDataset(
 	return text(row as Row, "id");
 }
 
+async function lockCurationDatasetById(
+	client: Pick<PoolClient, "query">,
+	projectId: string,
+	datasetId: string,
+): Promise<string> {
+	const selected = await client.query(
+		"SELECT id FROM datasets WHERE project_id = $1 AND id = $2 FOR UPDATE",
+		[projectId, datasetId],
+	);
+	const row = selected.rows[0];
+	if (!row)
+		throw new DatasetRepositoryError("NOT_FOUND", "Dataset draft not found");
+	return text(row as Row, "id");
+}
+
 function requireDraftRevision(row: Row, revision: number | undefined): void {
 	if (revision === undefined) return;
 	if (Number(row.revision) !== revision)
@@ -1019,8 +1034,10 @@ export async function getDatasetDraftItemRevisions(
 		return {
 			items: result.rows.map((row) => ({
 				...draftItem(row),
+				id: text(row as Row, "draft_item_id"),
 				item_revision: Number(row.item_revision),
 				action: text(row, "action"),
+				actor_id: text(row, "actor_id"),
 				created_at: timestamp(row, "created_at"),
 			})),
 		};
@@ -1184,13 +1201,18 @@ export async function reorderDatasetDraftItems(
 	}
 }
 
-type CurationIdempotencyResponse = {
+export type DatasetCurationReplay = {
 	draft_id: string;
 	revision: number;
 	item_ids: string[];
 };
 
-function idempotencyResponse(row: Row): CurationIdempotencyResponse {
+export type DatasetCurationOperation =
+	| "import"
+	| "capture"
+	| "feedback_promotion";
+
+function idempotencyResponse(row: Row): DatasetCurationReplay {
 	const response = jsonObject(row, "response");
 	if (
 		typeof response.draft_id !== "string" ||
@@ -1202,7 +1224,17 @@ function idempotencyResponse(row: Row): CurationIdempotencyResponse {
 			"INTERNAL",
 			"Dataset curation idempotency record is invalid",
 		);
-	return response as CurationIdempotencyResponse;
+	return response as DatasetCurationReplay;
+}
+
+function curationRequestHashes(dataset_id: string, request: unknown) {
+	return {
+		legacy_request_hash: datasetCurationRequestHash(request),
+		request_hash: datasetCurationRequestHash({
+			...(request as Record<string, unknown>),
+			dataset_id,
+		}),
+	};
 }
 
 async function readCurationIdempotency(
@@ -1210,13 +1242,13 @@ async function readCurationIdempotency(
 	input: {
 		project_id: string;
 		authorization: ProjectAuthorization;
-		operation: "import" | "capture" | "feedback_promotion";
+		operation: DatasetCurationOperation;
 		idempotency_key: string;
 		dataset_id: string;
 		request_hash: string;
-		legacy_request_hash: string;
+		legacy_request_hashes: readonly string[];
 	},
-): Promise<CurationIdempotencyResponse | null> {
+): Promise<DatasetCurationReplay | null> {
 	const existing = await client.query(
 		"SELECT dataset_id, request_hash, response FROM dataset_curation_idempotency WHERE project_id = $1 AND actor_id = $2 AND operation = $3 AND idempotency_key = $4 FOR UPDATE",
 		[
@@ -1236,7 +1268,7 @@ async function readCurationIdempotency(
 	const storedRequestHash = text(row, "request_hash");
 	if (
 		storedRequestHash !== input.request_hash &&
-		storedRequestHash !== input.legacy_request_hash
+		!input.legacy_request_hashes.includes(storedRequestHash)
 	)
 		throw new DatasetRepositoryError(
 			"CONFLICT",
@@ -1261,11 +1293,11 @@ async function writeCurationIdempotency(
 	input: {
 		project_id: string;
 		authorization: ProjectAuthorization;
-		operation: "import" | "capture" | "feedback_promotion";
+		operation: DatasetCurationOperation;
 		idempotency_key: string;
 		dataset_id: string;
 		request_hash: string;
-		response: CurationIdempotencyResponse;
+		response: DatasetCurationReplay;
 	},
 ): Promise<void> {
 	await client.query(
@@ -1280,6 +1312,68 @@ async function writeCurationIdempotency(
 			JSON.stringify(input.response),
 		],
 	);
+}
+
+export async function getDatasetCurationReplay(
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug?: string;
+		dataset_id?: string;
+		operation: DatasetCurationOperation;
+		idempotency_key: string;
+		idempotency_request: Record<string, unknown>;
+		legacy_idempotency_requests?: Record<string, unknown>[];
+		authorization: ProjectAuthorization;
+	},
+): Promise<DatasetCurationReplay | null> {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const dataset_id = input.dataset_id
+			? await lockCurationDatasetById(
+					client,
+					input.project_id,
+					input.dataset_id,
+				)
+			: input.slug
+				? await lockCurationDataset(client, input.project_id, input.slug)
+				: (() => {
+						throw new DatasetRepositoryError(
+							"BAD_REQUEST",
+							"Dataset target is required",
+						);
+					})();
+		const hashes = curationRequestHashes(dataset_id, input.idempotency_request);
+		const replay = await readCurationIdempotency(client, {
+			...input,
+			dataset_id,
+			request_hash: hashes.request_hash,
+			legacy_request_hashes: [
+				hashes.legacy_request_hash,
+				...(input.legacy_idempotency_requests ?? []).map(
+					(legacyRequest) =>
+						curationRequestHashes(dataset_id, legacyRequest)
+							.legacy_request_hash,
+				),
+			],
+		});
+		await client.query("COMMIT");
+		return replay;
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		throw normalizeError(cause);
+	} finally {
+		client.release();
+	}
 }
 
 export async function importDatasetDraftItems(
@@ -1310,21 +1404,20 @@ export async function importDatasetDraftItems(
 			input.project_id,
 			input.slug,
 		);
-		const legacy_request_hash = datasetCurationRequestHash({
+		const idempotency_request = {
 			revision: input.revision,
 			items: input.idempotency_items ?? input.items,
-		});
-		const request_hash = datasetCurationRequestHash({
+		};
+		const { request_hash, legacy_request_hash } = curationRequestHashes(
 			dataset_id,
-			revision: input.revision,
-			items: input.idempotency_items ?? input.items,
-		});
+			idempotency_request,
+		);
 		const replay = await readCurationIdempotency(client, {
 			...input,
 			operation: "import",
 			dataset_id,
 			request_hash,
-			legacy_request_hash,
+			legacy_request_hashes: [legacy_request_hash],
 		});
 		if (replay) {
 			await client.query("COMMIT");
@@ -1432,17 +1525,16 @@ export async function captureDatasetDraftItemInTransaction(
 		source_trace_id: input.source_trace_id ?? null,
 		source_observation_id: input.source_observation_id ?? null,
 	};
-	const legacy_request_hash = datasetCurationRequestHash(idempotency_request);
-	const request_hash = datasetCurationRequestHash({
-		...idempotency_request,
+	const { request_hash, legacy_request_hash } = curationRequestHashes(
 		dataset_id,
-	});
+		idempotency_request,
+	);
 	const replay = await readCurationIdempotency(client, {
 		...input,
 		operation,
 		dataset_id,
 		request_hash,
-		legacy_request_hash,
+		legacy_request_hashes: [legacy_request_hash],
 	});
 	if (replay)
 		return {

@@ -15,6 +15,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Input } from "../components/ui/input";
 import {
 	ApiError,
@@ -119,16 +120,24 @@ export function DatasetsPage() {
 				<ListLoadingSkeleton testId="dataset-list-skeleton" />
 			)}
 			{query.isError && (
-				<PageMessage title="Datasets">
-					Unable to load datasets.{" "}
-					<Button
-						size="sm"
-						variant="outline"
-						onClick={() => void query.refetch()}
-					>
-						Retry
-					</Button>
-				</PageMessage>
+				<Alert variant="destructive" aria-live="assertive">
+					<AlertTitle>Datasets could not be loaded</AlertTitle>
+					<AlertDescription className="flex flex-wrap items-center gap-3">
+						<span>
+							{query.error instanceof Error
+								? query.error.message
+								: "Unable to load datasets."}
+						</span>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={query.isFetching}
+							onClick={() => void query.refetch()}
+						>
+							{query.isFetching ? "Retrying..." : "Retry loading datasets"}
+						</Button>
+					</AlertDescription>
+				</Alert>
 			)}
 			{query.data?.items.length === 0 && (
 				<PageMessage title="Datasets">
@@ -267,13 +276,21 @@ export function DatasetDetailPage() {
 	const [editing, setEditing] = React.useState<DatasetItem | null>(null);
 	const [history, setHistory] = React.useState<{
 		itemId: string;
-		items: Array<{ item_revision: number; action: string; created_at: string }>;
+		items: Array<{
+			item_revision: number;
+			action: string;
+			actor_id: string;
+			created_at: string;
+		}>;
 	} | null>(null);
 	const [pending, setPending] = React.useState(false);
 	const [deletingItemId, setDeletingItemId] = React.useState<string | null>(
 		null,
 	);
-	const importKey = React.useRef<string | null>(null);
+	const importAttempt = React.useRef<{
+		idempotency_key: string;
+		revision: number | undefined;
+	} | null>(null);
 
 	function recordError(cause: unknown) {
 		if (cause instanceof ApiError && cause.status === 409)
@@ -469,16 +486,19 @@ export function DatasetDetailPage() {
 			setImportValidationErrors([]);
 			setPending(true);
 			const rows = parseImport(importValue);
-			const revision = await existingDraftRevision();
-			importKey.current ??= crypto.randomUUID();
+			const attempt = importAttempt.current ?? {
+				idempotency_key: crypto.randomUUID(),
+				revision: await existingDraftRevision(),
+			};
+			importAttempt.current ??= attempt;
 			await importDatasetDraftItems({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
-				revision,
-				idempotency_key: importKey.current,
+				revision: attempt.revision,
+				idempotency_key: attempt.idempotency_key,
 				items: rows,
 			});
-			importKey.current = null;
+			importAttempt.current = null;
 			setImportValue("");
 			await refreshDraft();
 		} catch (cause) {
@@ -492,16 +512,10 @@ export function DatasetDetailPage() {
 	}
 	async function showHistory(item: DatasetItem) {
 		try {
-			const { draft, items: draftItems } = await currentDraftItems();
-			void draft;
-			const target = draftItems.find(
-				(candidate) => candidate.item_key === item.item_key,
-			);
-			if (!target) throw new Error("Dataset draft item not found");
 			const result = await listDatasetDraftItemRevisions({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
-				item_id: target.id,
+				item_id: item.id,
 			});
 			setHistory({ itemId: item.id, items: result.items });
 		} catch (cause) {
@@ -535,19 +549,33 @@ export function DatasetDetailPage() {
 		return <PageMessage title="Dataset">Select a project.</PageMessage>;
 	if ((dataset.isLoading && !dataset.data) || (items.isLoading && !items.data))
 		return <DetailLoadingSkeleton testId="dataset-detail-skeleton" />;
-	if (dataset.isError || items.isError)
+	if (dataset.isError || items.isError) {
+		const loadError = dataset.error ?? items.error;
 		return (
-			<PageMessage title="Dataset">
-				Unable to load dataset.{" "}
-				<Button
-					size="sm"
-					variant="outline"
-					onClick={() => void Promise.all([dataset.refetch(), items.refetch()])}
-				>
-					Retry
-				</Button>
-			</PageMessage>
+			<Alert variant="destructive" aria-live="assertive">
+				<AlertTitle>Dataset could not be loaded</AlertTitle>
+				<AlertDescription className="flex flex-wrap items-center gap-3">
+					<span>
+						{loadError instanceof Error
+							? loadError.message
+							: "Unable to load dataset."}
+					</span>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={dataset.isFetching || items.isFetching}
+						onClick={() =>
+							void Promise.all([dataset.refetch(), items.refetch()])
+						}
+					>
+						{dataset.isFetching || items.isFetching
+							? "Retrying..."
+							: "Retry loading dataset"}
+					</Button>
+				</AlertDescription>
+			</Alert>
 		);
+	}
 	return (
 		<div className="space-y-6">
 			<div>
@@ -829,7 +857,8 @@ export function DatasetDetailPage() {
 								<ul className="mt-2 space-y-1">
 									{history.items.map((revision) => (
 										<li key={revision.item_revision}>
-											Revision {revision.item_revision}: {revision.action}
+											Revision {revision.item_revision}: {revision.action} by{" "}
+											{revision.actor_id}
 										</li>
 									))}
 								</ul>

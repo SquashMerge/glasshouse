@@ -257,6 +257,7 @@ export const DatasetDraftOrder = z
 export const DatasetDraftItemRevision = DatasetDraftItem.extend({
 	item_revision: z.number().int().positive(),
 	action: z.enum(["upserted", "captured", "imported", "reviewed", "reordered"]),
+	actor_id: z.string().uuid(),
 	created_at: z.string().datetime(),
 }).openapi("DatasetDraftItemRevision");
 export const DatasetDraftItemRevisionList = z

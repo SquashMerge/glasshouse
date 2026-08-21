@@ -12,7 +12,9 @@ import {
 	discardDatasetDraft,
 	getDataset,
 	getDatasetBySlug,
+	getDatasetCurationReplay,
 	getDatasetDraft,
+	getDatasetDraftItemRevisions,
 	getOrCreateDatasetDraft,
 	importDatasetDraftItems,
 	listDatasetItems,
@@ -44,6 +46,7 @@ import {
 	DatasetDraftImport,
 	DatasetDraftItem,
 	DatasetDraftItemParam,
+	DatasetDraftItemRevision,
 	DatasetDraftItemUpsert,
 	DatasetItem,
 	DatasetItemCreate,
@@ -129,7 +132,10 @@ function curationReplayDb({
 				return {
 					rows: [
 						{
-							id: values?.[1] === "golden" ? DATASET : OTHER_DATASET,
+							id:
+								values?.[1] === "golden" || values?.[1] === DATASET
+									? DATASET
+									: OTHER_DATASET,
 							archived_at: archived ? NOW : null,
 						},
 					],
@@ -395,6 +401,33 @@ describe("dataset repository", () => {
 		expect(targetLookup?.text).not.toContain("archived_at IS NULL");
 	});
 
+	it("replays a curation request with its original draft revision", async () => {
+		const request = {
+			revision: 4,
+			item_key: "captured",
+			external_id: null,
+			source_trace_id: "a".repeat(32),
+			source_observation_id: null,
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash({
+				...request,
+				dataset_id: DATASET,
+			}),
+		});
+
+		await expect(
+			getDatasetCurationReplay(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				operation: "capture",
+				idempotency_key: "response-loss-capture-key",
+				idempotency_request: request,
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, item_ids: ["item"] });
+	});
+
 	it("replays a target-bound legacy import record after upgrade", async () => {
 		const item = {
 			project_id: PROJECT,
@@ -632,6 +665,7 @@ describe("dataset repository", () => {
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
 			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
 			captureSource: async () => ({
 				input_text: "question",
 				output_text: null,
@@ -678,6 +712,7 @@ describe("dataset repository", () => {
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
 			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
 			captureSource: async () => null,
 			captureDatasetDraftItem: async () => {
 				captured = true;
@@ -707,6 +742,115 @@ describe("dataset repository", () => {
 
 		expect(response.status).toBe(404);
 		expect(captured).toBe(false);
+	});
+
+	it("replays capture before reading a retained source again", async () => {
+		let sourceRead = false;
+		let captured = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			getDatasetCurationReplay: async () => ({
+				draft_id: "55555555-5555-4555-8555-555555555555",
+				revision: 7,
+				item_ids: ["66666666-6666-4666-8666-666666666666"],
+			}),
+			captureSource: async () => {
+				sourceRead = true;
+				return null;
+			},
+			captureDatasetDraftItem: async () => {
+				captured = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handleCaptureDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => '"4"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "response-loss-capture-key" }
+								: { source_trace_id: "a".repeat(32) },
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			revision: 7,
+			idempotent: true,
+		});
+		expect(sourceRead).toBe(false);
+		expect(captured).toBe(false);
+	});
+
+	it("replays import before rereading retained source rows", async () => {
+		let sourceRead = false;
+		let imported = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			getDatasetCurationReplay: async () => ({
+				draft_id: "55555555-5555-4555-8555-555555555555",
+				revision: 7,
+				item_ids: ["66666666-6666-4666-8666-666666666666"],
+			}),
+			captureSource: async () => {
+				sourceRead = true;
+				return null;
+			},
+			importDatasetDraftItems: async () => {
+				imported = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handleImportDatasetDraftItems({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => '"4"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "response-loss-import-key" }
+								: {
+										items: [
+											{
+												item_key: "captured",
+												input: { question: "caller value" },
+												source_trace_id: "a".repeat(32),
+											},
+										],
+									},
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			revision: 7,
+			idempotent: true,
+			items: [],
+		});
+		expect(sourceRead).toBe(false);
+		expect(imported).toBe(false);
 	});
 
 	it("lists only datasets for the requested project", async () => {
@@ -875,6 +1019,108 @@ describe("dataset repository", () => {
 			validation_version: 1,
 			state: "reviewed",
 			capture_context: {},
+		});
+	});
+
+	it("returns draft-item revision history with the stable item ID and action actor", async () => {
+		const draftItemId = "33333333-3333-4333-8333-333333333333";
+		const revisionId = "44444444-4444-4444-8444-444444444444";
+		const actorId = "55555555-5555-4555-8555-555555555555";
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: PROJECT }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT revision.*"))
+					return {
+						rows: [
+							{
+								id: revisionId,
+								draft_item_id: draftItemId,
+								item_revision: 3,
+								item_key: "stable",
+								position: 0,
+								validation_version: 1,
+								state: "reviewed",
+								input: { question: "hello" },
+								expected_output: null,
+								metadata: {},
+								external_id: null,
+								source_trace_id: null,
+								source_observation_id: null,
+								feedback_score_id: null,
+								capture_context: {},
+								action: "reviewed",
+								actor_id: actorId,
+								created_at: NOW,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const result = await getDatasetDraftItemRevisions(
+			{ connect: async () => client } as never,
+			{
+				project_id: PROJECT,
+				slug: "golden",
+				item_id: draftItemId,
+				authorization: { ...authorization, operation: "product_read" },
+			},
+		);
+
+		expect(result.items[0]).toMatchObject({
+			id: draftItemId,
+			item_revision: 3,
+			action: "reviewed",
+			actor_id: actorId,
+		});
+		expect(result.items[0]?.id).not.toBe(revisionId);
+		expect(DatasetDraftItemRevision.safeParse(result.items[0]).success).toBe(
+			true,
+		);
+		expect(
+			queries.some((sql) => sql.includes("dataset_lifecycle_audit_events")),
+		).toBe(false);
+	});
+
+	it("serves draft-item revision history with product-read authorization", async () => {
+		let received: Record<string, unknown> | undefined;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			getDatasetDraftItemRevisions: async (_db, input) => {
+				received = input;
+				return { items: [] };
+			},
+		} as never);
+		const response = await handlers.handleListDatasetDraftItemRevisions({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				valid: (part: string) =>
+					part === "param"
+						? {
+								slug: "golden",
+								itemId: "33333333-3333-4333-8333-333333333333",
+							}
+						: { project_id: PROJECT },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(received).toMatchObject({
+			project_id: PROJECT,
+			authorization: { operation: "product_read" },
 		});
 	});
 
@@ -1472,6 +1718,7 @@ describe("dataset repository", () => {
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
 			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
 			captureSource: async (input) => {
 				expect(input).toEqual({
 					organization_id: authorization.organization_id,
@@ -1545,6 +1792,7 @@ describe("dataset repository", () => {
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
 			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
 			captureSource: async () => null,
 			importDatasetDraftItems: async () => {
 				imported = true;

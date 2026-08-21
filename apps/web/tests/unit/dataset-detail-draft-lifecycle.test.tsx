@@ -17,6 +17,7 @@ const {
 	getDataset,
 	getDatasetDraft,
 	importDatasetDraftItems,
+	listDatasetDraftItemRevisions,
 	listDatasetItems,
 	listDatasets,
 	publishDatasetDraft,
@@ -38,6 +39,7 @@ const {
 	getDataset: vi.fn(),
 	getDatasetDraft: vi.fn(),
 	importDatasetDraftItems: vi.fn(),
+	listDatasetDraftItemRevisions: vi.fn(),
 	listDatasetItems: vi.fn(),
 	listDatasets: vi.fn(),
 	publishDatasetDraft: vi.fn(),
@@ -51,6 +53,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
 		selectedProjectId: "11111111-1111-4111-8111-111111111111",
+		selectedProject: {
+			id: "11111111-1111-4111-8111-111111111111",
+			name: "Project One",
+		},
 	}),
 }));
 vi.mock("../../src/lib/api", () => ({
@@ -61,13 +67,14 @@ vi.mock("../../src/lib/api", () => ({
 	getDataset,
 	getDatasetDraft,
 	importDatasetDraftItems,
+	listDatasetDraftItemRevisions,
 	listDatasetItems,
 	listDatasets,
 	publishDatasetDraft,
 	upsertDatasetDraftItem,
 }));
 
-import { DatasetDetailPage } from "../../src/routes/datasets";
+import { DatasetDetailPage, DatasetsPage } from "../../src/routes/datasets";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const datasetId = "22222222-2222-4222-8222-222222222222";
@@ -122,10 +129,22 @@ function renderPage() {
 	};
 }
 
+function renderListPage() {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	return render(
+		<QueryClientProvider client={client}>
+			<DatasetsPage />
+		</QueryClientProvider>,
+	);
+}
+
 describe("DatasetDetailPage draft lifecycle", () => {
 	beforeEach(() => {
 		getDataset.mockResolvedValue(dataset);
 		getDatasetDraft.mockResolvedValue({ revision: 4 });
+		listDatasetDraftItemRevisions.mockResolvedValue({ items: [] });
 		createDatasetDraft.mockResolvedValue({ revision: 4 });
 		publishDatasetDraft.mockResolvedValue({ version: 2, item_count: 1 });
 	});
@@ -229,6 +248,52 @@ describe("DatasetDetailPage draft lifecycle", () => {
 			),
 		);
 		expect(createDatasetDraft).not.toHaveBeenCalled();
+	});
+
+	it("retries an import with its original revision and idempotency key", async () => {
+		listDatasetItems.mockResolvedValue({ items: [] });
+		getDatasetDraft
+			.mockReset()
+			.mockResolvedValueOnce({ revision: 4 })
+			.mockResolvedValueOnce({ revision: 9 });
+		importDatasetDraftItems
+			.mockRejectedValueOnce(new Error("network interrupted"))
+			.mockResolvedValueOnce({
+				items: [],
+				revision: 5,
+				idempotent: true,
+				validation_version: 1,
+			});
+		renderPage();
+
+		await screen.findByText("Golden");
+		fireEvent.change(screen.getByLabelText("JSON array"), {
+			target: {
+				value: JSON.stringify([
+					{ item_key: "retry-row", input: { question: "hello" } },
+				]),
+			},
+		});
+		const submit = screen.getByRole("button", { name: "Import into draft" });
+		fireEvent.click(submit);
+		await screen.findByText("network interrupted");
+		fireEvent.click(submit);
+
+		await waitFor(() =>
+			expect(importDatasetDraftItems).toHaveBeenCalledTimes(2),
+		);
+		const first = importDatasetDraftItems.mock.calls[0]?.[0] as {
+			revision: number;
+			idempotency_key: string;
+		};
+		const second = importDatasetDraftItems.mock.calls[1]?.[0] as {
+			revision: number;
+			idempotency_key: string;
+		};
+		expect(first.revision).toBe(4);
+		expect(second.revision).toBe(4);
+		expect(second.idempotency_key).toBe(first.idempotency_key);
+		expect(getDatasetDraft).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not create a draft for import provenance without a trace", async () => {
@@ -369,5 +434,68 @@ describe("DatasetDetailPage draft lifecycle", () => {
 			}),
 		);
 		expect(publishDatasetDraft).not.toHaveBeenCalled();
+	});
+
+	it("views revision history without creating a draft", async () => {
+		listDatasetItems.mockResolvedValue({ items: [publishedItem] });
+		listDatasetDraftItemRevisions.mockResolvedValue({
+			items: [
+				{
+					item_revision: 2,
+					action: "reviewed",
+					actor_id: "44444444-4444-4444-8444-444444444444",
+					created_at: "2026-08-14T00:00:00.000Z",
+				},
+			],
+		});
+		renderPage();
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Revision history" }),
+		);
+		await waitFor(() =>
+			expect(listDatasetDraftItemRevisions).toHaveBeenCalledWith({
+				project_id: projectId,
+				slug: "golden",
+				item_id: publishedItem.id,
+			}),
+		);
+		expect(createDatasetDraft).not.toHaveBeenCalled();
+		expect(screen.getByText(/reviewed by 44444444/)).toBeInTheDocument();
+	});
+
+	it("announces dataset-list failures and retries the query", async () => {
+		listDatasets
+			.mockRejectedValueOnce(new Error("Dataset service unavailable"))
+			.mockResolvedValueOnce({ items: [], total: 0 });
+		renderListPage();
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Dataset service unavailable",
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Retry loading datasets" }),
+		);
+		await waitFor(() => expect(listDatasets).toHaveBeenCalledTimes(2));
+		expect(
+			await screen.findByText("No datasets yet. Create one to add JSON cases."),
+		).toBeInTheDocument();
+	});
+
+	it("announces dataset-detail failures and retries both reads", async () => {
+		getDataset
+			.mockRejectedValueOnce(new Error("Dataset service unavailable"))
+			.mockResolvedValueOnce(dataset);
+		listDatasetItems.mockResolvedValue({ items: [] });
+		renderPage();
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Dataset service unavailable",
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Retry loading dataset" }),
+		);
+		await waitFor(() => expect(getDataset).toHaveBeenCalledTimes(2));
+		expect(await screen.findByText("Golden")).toBeInTheDocument();
 	});
 });

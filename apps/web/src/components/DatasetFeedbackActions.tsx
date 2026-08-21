@@ -24,7 +24,10 @@ export function AddToDatasetDialog({
 	const [open, setOpen] = React.useState(false);
 	const triggerRef = React.useRef<HTMLButtonElement>(null);
 	const dialogRef = React.useRef<HTMLDivElement>(null);
-	const idempotencyKey = React.useRef<string | null>(null);
+	const captureAttempt = React.useRef<{
+		idempotency_key: string;
+		revision: number | undefined;
+	} | null>(null);
 	const [datasetId, setDatasetId] = React.useState("");
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
@@ -58,7 +61,7 @@ export function AddToDatasetDialog({
 	React.useEffect(() => {
 		setDatasetId("");
 		setError("");
-		idempotencyKey.current = null;
+		captureAttempt.current = null;
 	}, [projectId, traceId, observationId]);
 	React.useEffect(() => {
 		if (!open) return;
@@ -88,17 +91,20 @@ export function AddToDatasetDialog({
 			setPending(true);
 			const selected = datasets.find((dataset) => dataset.id === datasetId);
 			if (!selected) throw new Error("Dataset is no longer available");
-			const revision = await existingDraftRevision(selected.slug);
-			idempotencyKey.current ??= crypto.randomUUID();
+			const attempt = captureAttempt.current ?? {
+				idempotency_key: crypto.randomUUID(),
+				revision: await existingDraftRevision(selected.slug),
+			};
+			captureAttempt.current ??= attempt;
 			await captureDatasetDraftItem({
 				project_id: projectId,
 				slug: selected.slug,
-				revision,
-				idempotency_key: idempotencyKey.current,
+				revision: attempt.revision,
+				idempotency_key: attempt.idempotency_key,
 				source_trace_id: traceId,
 				source_observation_id: observationId,
 			});
-			idempotencyKey.current = null;
+			captureAttempt.current = null;
 			close();
 		} catch (cause) {
 			setError((cause as Error).message);
@@ -159,7 +165,10 @@ export function AddToDatasetDialog({
 								id="dataset-choice"
 								className="h-9 w-full rounded border px-2"
 								value={datasetId}
-								onChange={(event) => setDatasetId(event.target.value)}
+								onChange={(event) => {
+									captureAttempt.current = null;
+									setDatasetId(event.target.value);
+								}}
 							>
 								<option value="">Choose a dataset</option>
 								{datasets.map((dataset) => (

@@ -5,7 +5,11 @@ import {
 	lockProjectAuditProvenance,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
-import { captureDatasetDraftItemInTransaction } from "./datasets.js";
+import {
+	captureDatasetDraftItemInTransaction,
+	DatasetRepositoryError,
+	getDatasetCurationReplay,
+} from "./datasets.js";
 
 type Row = Record<string, unknown>;
 export class FeedbackRepositoryError extends Error {
@@ -265,7 +269,23 @@ export async function listFeedback(
 		client.release();
 	}
 }
-export async function getFeedbackPromotionTarget(
+function throwFeedbackCurationError(cause: unknown): never {
+	if (cause instanceof DatasetRepositoryError)
+		throw new FeedbackRepositoryError(
+			cause.code === "CONFLICT"
+				? "IDEMPOTENCY_CONFLICT"
+				: cause.code === "NOT_FOUND"
+					? "NOT_FOUND"
+					: cause.code === "BAD_REQUEST"
+						? "BAD_REQUEST"
+						: "INTERNAL",
+			cause.message,
+			cause,
+		);
+	throw cause;
+}
+
+async function getFeedbackPromotionRecord(
 	db: Pick<Pool, "connect">,
 	input: {
 		project_id: string;
@@ -283,18 +303,8 @@ export async function getFeedbackPromotionTarget(
 		);
 		if (!existing.rows[0])
 			throw new FeedbackRepositoryError("NOT_FOUND", "Feedback not found");
-		const current = present(existing.rows[0]);
-		if (current.status !== "reviewed" && current.status !== "added_to_dataset")
-			throw new FeedbackRepositoryError(
-				"CONFLICT",
-				"Feedback must be reviewed before promotion",
-			);
 		await client.query("COMMIT");
-		return {
-			trace_id: current.trace_id,
-			observation_id: current.observation_id,
-			status: current.status,
-		};
+		return present(existing.rows[0]);
 	} catch (cause) {
 		await client.query("ROLLBACK");
 		if (cause instanceof FeedbackRepositoryError) throw cause;
@@ -306,6 +316,91 @@ export async function getFeedbackPromotionTarget(
 	} finally {
 		client.release();
 	}
+}
+
+export async function getFeedbackPromotionTarget(
+	db: Pick<Pool, "connect">,
+	input: {
+		project_id: string;
+		id: string;
+		dataset_id: string;
+		item_key?: string;
+		idempotency_key: string;
+		authorization: ProjectAuthorization;
+	},
+) {
+	const idempotency_request = {
+		feedback_id: input.id,
+		dataset_id: input.dataset_id,
+		item_key: input.item_key ?? input.id,
+	};
+	let replay: Awaited<ReturnType<typeof getDatasetCurationReplay>> = null;
+	let legacyReplay = false;
+	try {
+		replay = await getDatasetCurationReplay(db, {
+			project_id: input.project_id,
+			dataset_id: input.dataset_id,
+			operation: "feedback_promotion",
+			idempotency_key: input.idempotency_key,
+			idempotency_request,
+			authorization: input.authorization,
+		});
+	} catch (cause) {
+		if (cause instanceof DatasetRepositoryError && cause.code === "CONFLICT")
+			legacyReplay = true;
+		else throwFeedbackCurationError(cause);
+	}
+	const current = await getFeedbackPromotionRecord(db, input);
+	if (legacyReplay) {
+		try {
+			replay = await getDatasetCurationReplay(db, {
+				project_id: input.project_id,
+				dataset_id: input.dataset_id,
+				operation: "feedback_promotion",
+				idempotency_key: input.idempotency_key,
+				idempotency_request,
+				legacy_idempotency_requests: [
+					{
+						...idempotency_request,
+						trace_id: current.trace_id,
+						observation_id: current.observation_id,
+					},
+				],
+				authorization: input.authorization,
+			});
+		} catch (cause) {
+			throwFeedbackCurationError(cause);
+		}
+	}
+	if (replay) {
+		const dataset_draft_item_id = replay.item_ids[0];
+		if (!dataset_draft_item_id)
+			throw new FeedbackRepositoryError(
+				"CONFLICT",
+				"Original draft item is no longer available",
+			);
+		return {
+			kind: "replay" as const,
+			feedback: {
+				...current,
+				status: "added_to_dataset" as const,
+				dataset_id: input.dataset_id,
+				dataset_item_id: null,
+				dataset_draft_item_id,
+			},
+		};
+	}
+	if (current.status !== "reviewed" && current.status !== "added_to_dataset")
+		throw new FeedbackRepositoryError(
+			"CONFLICT",
+			"Feedback must be reviewed before promotion",
+		);
+	return {
+		kind: "source" as const,
+		trace_id: current.trace_id,
+		observation_id: current.observation_id,
+		status: current.status,
+	};
 }
 
 export async function promoteFeedback(
@@ -391,8 +486,6 @@ export async function promoteFeedback(
 				feedback_id: current.id,
 				dataset_id: input.dataset_id,
 				item_key: input.item_key ?? current.id,
-				trace_id: current.trace_id,
-				observation_id: current.observation_id,
 			},
 			authorization: input.authorization,
 		});

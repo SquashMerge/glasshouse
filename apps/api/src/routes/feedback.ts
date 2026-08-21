@@ -216,11 +216,16 @@ export const handlePromoteFeedback = async (
 		const tenant = trustedTenant(c);
 		const project_id = c.req.valid("query").project_id;
 		const authorization = projectAuthorization(tenant, "product_write");
+		const body = c.req.valid("json");
+		const idempotency_key = c.req.valid("header")["idempotency-key"];
 		const target = await getFeedbackPromotionTarget(pgPool(), {
 			project_id,
 			id: c.req.valid("param").id,
+			...body,
+			idempotency_key,
 			authorization,
 		});
+		if (target.kind === "replay") return c.json(target.feedback);
 		const source =
 			target.status === "added_to_dataset"
 				? { input_text: "", output_text: "" }
@@ -239,12 +244,12 @@ export const handlePromoteFeedback = async (
 			await promoteFeedback(pgPool(), {
 				project_id,
 				id: c.req.valid("param").id,
-				...c.req.valid("json"),
+				...body,
 				captured_input: captureTextAsObject(source.input_text),
 				captured_expected_output: source.output_text
 					? captureTextAsObject(source.output_text)
 					: null,
-				idempotency_key: c.req.valid("header")["idempotency-key"],
+				idempotency_key,
 				authorization,
 			}),
 		);

@@ -16,6 +16,7 @@ import {
 	getDatasetDraftItemRevisions as getDatasetDraftItemRevisionsRecord,
 	getDatasetDraft as getDatasetDraftRecord,
 	getDataset as getDatasetRecord,
+	getDatasetCurationReplay as getDatasetCurationReplayRecord,
 	getOrCreateDatasetDraft as getOrCreateDatasetDraftRecord,
 	importDatasetDraftItems as importDatasetDraftItemsRecord,
 	listDatasetItems as listDatasetItemsRecord,
@@ -507,6 +508,7 @@ export type DatasetRouteDependencies = {
 	addDatasetItem: typeof addDatasetItemRecord;
 	deleteDatasetItem: typeof deleteDatasetItemRecord;
 	getDatasetBySlug: typeof getDatasetBySlugRecord;
+	getDatasetCurationReplay: typeof getDatasetCurationReplayRecord;
 	updateDatasetMetadata: typeof updateDatasetMetadataRecord;
 	getOrCreateDatasetDraft: typeof getOrCreateDatasetDraftRecord;
 	getDatasetDraft: typeof getDatasetDraftRecord;
@@ -582,6 +584,7 @@ const production: DatasetRouteDependencies = {
 	addDatasetItem: addDatasetItemRecord,
 	deleteDatasetItem: deleteDatasetItemRecord,
 	getDatasetBySlug: getDatasetBySlugRecord,
+	getDatasetCurationReplay: getDatasetCurationReplayRecord,
 	updateDatasetMetadata: updateDatasetMetadataRecord,
 	getOrCreateDatasetDraft: getOrCreateDatasetDraftRecord,
 	getDatasetDraft: getDatasetDraftRecord,
@@ -765,19 +768,40 @@ export function createDatasetRouteHandlers(
 				const project_id = c.req.valid("query").project_id;
 				const tenant = trustedTenant(c);
 				const authorization = projectAuthorization(tenant, "product_write");
-				await dependencies.authorizeDatasetWrite(dependencies.pool(), {
-					project_id,
-					authorization,
-				});
+				const slug = c.req.valid("param").slug;
+				const idempotency_key = c.req.valid("header")["idempotency-key"];
 				const idempotency_items = c.req.valid("json").items.map((item) => ({
 					...item,
 					project_id,
 				}));
+				const replay = await dependencies.getDatasetCurationReplay(
+					dependencies.pool(),
+					{
+						project_id,
+						slug,
+						operation: "import",
+						idempotency_key,
+						idempotency_request: {
+							revision: match === undefined ? undefined : Number(match),
+							items: idempotency_items,
+						},
+						authorization,
+					},
+				);
+				if (replay) {
+					c.header("ETag", `\"${replay.revision}\"`);
+					return c.json({
+						items: [],
+						revision: replay.revision,
+						idempotent: true,
+						validation_version: DATASET_DRAFT_VALIDATION_VERSION,
+					});
+				}
 				const result = await dependencies.importDatasetDraftItems(
 					dependencies.pool(),
 					{
 						project_id,
-						slug: c.req.valid("param").slug,
+						slug,
 						revision: match === undefined ? undefined : Number(match),
 						items: await Promise.all(
 							idempotency_items.map((item) =>
@@ -785,7 +809,7 @@ export function createDatasetRouteHandlers(
 							),
 						),
 						idempotency_items,
-						idempotency_key: c.req.valid("header")["idempotency-key"],
+						idempotency_key,
 						authorization,
 					},
 				);
@@ -814,10 +838,38 @@ export function createDatasetRouteHandlers(
 				const tenant = trustedTenant(c);
 				const project_id = c.req.valid("query").project_id;
 				const authorization = projectAuthorization(tenant, "product_write");
-				await dependencies.authorizeDatasetWrite(dependencies.pool(), {
-					project_id,
-					authorization,
-				});
+				const slug = c.req.valid("param").slug;
+				const idempotency_key = c.req.valid("header")["idempotency-key"];
+				const item_key =
+					body.item_key ??
+					`capture-${datasetCurationRequestHash(idempotency_key).slice(0, 32)}`;
+				const idempotency_request = {
+					revision: match === undefined ? undefined : Number(match),
+					item_key,
+					external_id: body.external_id ?? null,
+					source_trace_id: body.source_trace_id,
+					source_observation_id: body.source_observation_id ?? null,
+				};
+				const replay = await dependencies.getDatasetCurationReplay(
+					dependencies.pool(),
+					{
+						project_id,
+						slug,
+						operation: "capture",
+						idempotency_key,
+						idempotency_request,
+						authorization,
+					},
+				);
+				if (replay) {
+					c.header("ETag", `\"${replay.revision}\"`);
+					return c.json({
+						item: null,
+						revision: replay.revision,
+						idempotent: true,
+						validation_version: DATASET_DRAFT_VALIDATION_VERSION,
+					});
+				}
 				const source = await dependencies.captureSource({
 					organization_id: tenant.organizationId,
 					project_id,
@@ -833,11 +885,9 @@ export function createDatasetRouteHandlers(
 					dependencies.pool(),
 					{
 						project_id,
-						slug: c.req.valid("param").slug,
+						slug,
 						revision: match === undefined ? undefined : Number(match),
-						item_key:
-							body.item_key ??
-							`capture-${datasetCurationRequestHash(c.req.valid("header")["idempotency-key"]).slice(0, 32)}`,
+						item_key,
 						input: captureTextAsObject(source.input_text),
 						expected_output: source.output_text
 							? captureTextAsObject(source.output_text)
@@ -849,7 +899,8 @@ export function createDatasetRouteHandlers(
 						capture_context: {
 							kind: body.source_observation_id ? "observation" : "trace",
 						},
-						idempotency_key: c.req.valid("header")["idempotency-key"],
+						idempotency_key,
+						idempotency_request,
 						authorization,
 					},
 				);

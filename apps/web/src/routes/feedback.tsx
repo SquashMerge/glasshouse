@@ -11,6 +11,8 @@ import {
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Select } from "../components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { Skeleton } from "../components/ui/skeleton";
 import { PageMessage } from "./prompts";
 import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
 export function FeedbackPage() {
@@ -234,6 +236,33 @@ function FeedbackRow({
 				)}
 				{item.status === "reviewed" && (
 					<>
+						{datasets.isLoading && !datasets.data && (
+							<Skeleton
+								className="h-8 w-40"
+								role="status"
+								aria-label="Loading datasets"
+							/>
+						)}
+						{datasets.isError && !datasets.data && (
+							<Alert variant="destructive" aria-live="assertive">
+								<AlertTitle>Datasets could not be loaded</AlertTitle>
+								<AlertDescription className="flex flex-wrap items-center gap-2">
+									<span>
+										{datasets.error instanceof Error
+											? datasets.error.message
+											: "Unable to load datasets."}
+									</span>
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={datasets.isFetching}
+										onClick={() => void datasets.refetch()}
+									>
+										{datasets.isFetching ? "Retrying..." : "Retry datasets"}
+									</Button>
+								</AlertDescription>
+							</Alert>
+						)}
 						<label className="sr-only" htmlFor={`feedback-dataset-${item.id}`}>
 							Dataset
 						</label>
@@ -241,6 +270,9 @@ function FeedbackRow({
 							id={`feedback-dataset-${item.id}`}
 							className="h-8 w-auto text-sm"
 							value={datasetId}
+							disabled={
+								datasets.isLoading || (datasets.isError && !datasets.data)
+							}
 							onChange={(event) => {
 								promotionKey.current = null;
 								setDatasetId(event.target.value);

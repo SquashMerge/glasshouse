@@ -333,6 +333,7 @@ export async function listDatasetDraftItemRevisions(input: {
 		DatasetDraftItem & {
 			item_revision: number;
 			action: "upserted" | "captured" | "imported" | "reviewed" | "reordered";
+			actor_id: string;
 			created_at: string;
 		}
 	>;

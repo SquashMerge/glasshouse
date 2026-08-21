@@ -2,10 +2,12 @@ import { describe, expect, it } from "bun:test";
 import {
 	requestHash,
 	createFeedback,
+	getFeedbackPromotionTarget,
 	listFeedback,
 	promoteFeedback,
 	reviewFeedback,
 } from "../../src/db/feedback";
+import { datasetCurationRequestHash } from "../../src/db/datasets";
 import { FeedbackCreate, FeedbackReview } from "../../src/schemas/feedback";
 
 const base = {
@@ -74,6 +76,101 @@ describe("feedback contract", () => {
 });
 
 describe("feedback review persistence", () => {
+	it("replays a committed promotion before rereading discarded draft feedback", async () => {
+		const now = new Date("2026-07-29T12:00:00.000Z");
+		const feedbackId = "33333333-3333-4333-8333-333333333333";
+		const datasetId = "44444444-4444-4444-8444-444444444444";
+		const draftItemId = "55555555-5555-4555-8555-555555555555";
+		const request = {
+			feedback_id: feedbackId,
+			dataset_id: datasetId,
+			item_key: feedbackId,
+		};
+		const legacyRequest = {
+			...request,
+			trace_id: base.trace_id,
+			observation_id: null,
+		};
+		const queries: string[] = [];
+		const row = {
+			id: feedbackId,
+			project_id: base.project_id,
+			trace_id: base.trace_id,
+			observation_id: null,
+			value: -1,
+			metadata: base.metadata,
+			created_at: now,
+			status: "reviewed",
+			note: null,
+			dataset_id: null,
+			dataset_item_id: null,
+			dataset_draft_item_id: null,
+			updated_at: now,
+		};
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])")) return { rows: [{}] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT id FROM datasets WHERE project_id"))
+					return { rows: [{ id: datasetId }] };
+				if (sql.includes("FROM dataset_curation_idempotency"))
+					return {
+						rows: [
+							{
+								dataset_id: datasetId,
+								request_hash: datasetCurationRequestHash(legacyRequest),
+								response: {
+									draft_id: "66666666-6666-4666-8666-666666666666",
+									revision: 3,
+									item_ids: [draftItemId],
+								},
+							},
+						],
+					};
+				if (sql.includes("JOIN feedback_reviews")) return { rows: [row] };
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const target = await getFeedbackPromotionTarget(
+			{ connect: async () => client } as never,
+			{
+				project_id: base.project_id,
+				id: feedbackId,
+				dataset_id: datasetId,
+				idempotency_key: "discarded-draft-retry-key",
+				authorization,
+			},
+		);
+
+		expect(target).toMatchObject({
+			kind: "replay",
+			feedback: {
+				status: "added_to_dataset",
+				dataset_id: datasetId,
+				dataset_draft_item_id: draftItemId,
+			},
+		});
+		expect(
+			queries.findIndex((sql) =>
+				sql.includes("FROM dataset_curation_idempotency"),
+			),
+		).toBeLessThan(
+			queries.findIndex((sql) => sql.includes("JOIN feedback_reviews")),
+		);
+		expect(
+			queries.filter((sql) =>
+				sql.includes("FROM dataset_curation_idempotency"),
+			),
+		).toHaveLength(2);
+		expect(queries.some((sql) => sql.startsWith("WITH inserted AS"))).toBe(
+			false,
+		);
+	});
+
 	it("returns the original feedback for the same project idempotency key", async () => {
 		const now = new Date("2026-07-29T12:00:00.000Z");
 		const row = {

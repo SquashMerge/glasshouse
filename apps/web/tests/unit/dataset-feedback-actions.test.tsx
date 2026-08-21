@@ -88,6 +88,49 @@ describe("dataset feedback actions", () => {
 		).not.toContain("question");
 	});
 
+	it("retries capture with its original revision and idempotency key", async () => {
+		listDatasets.mockResolvedValue({
+			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
+		});
+		getDatasetDraft
+			.mockReset()
+			.mockResolvedValueOnce({ revision: 1 })
+			.mockResolvedValueOnce({ revision: 5 });
+		captureDatasetDraftItem
+			.mockRejectedValueOnce(new Error("network interrupted"))
+			.mockResolvedValueOnce({});
+		render(
+			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
+		await screen.findByRole("dialog");
+		fireEvent.change(screen.getByLabelText("Dataset"), {
+			target: { value: "dataset" },
+		});
+		const capture = screen.getByRole("button", {
+			name: "Capture redacted case",
+		});
+		fireEvent.click(capture);
+		await screen.findByText("network interrupted");
+		fireEvent.click(capture);
+
+		await waitFor(() =>
+			expect(captureDatasetDraftItem).toHaveBeenCalledTimes(2),
+		);
+		const first = captureDatasetDraftItem.mock.calls[0]?.[0] as {
+			revision: number;
+			idempotency_key: string;
+		};
+		const second = captureDatasetDraftItem.mock.calls[1]?.[0] as {
+			revision: number;
+			idempotency_key: string;
+		};
+		expect(first.revision).toBe(1);
+		expect(second.revision).toBe(1);
+		expect(second.idempotency_key).toBe(first.idempotency_key);
+		expect(getDatasetDraft).toHaveBeenCalledTimes(1);
+	});
+
 	it("resets selection when the trace target changes and restores trigger focus on Escape", async () => {
 		listDatasets.mockResolvedValue({ items: [] });
 		const { rerender } = render(
