@@ -1,7 +1,7 @@
 import { z } from "@hono/zod-openapi";
+import { DATASET_DRAFT_VALIDATION_VERSION } from "../lib/dataset-draft-validation.js";
 import { ErrorEnvelope } from "./common.js";
 import { ProjectIdQuery } from "./prompts.js";
-import { DATASET_DRAFT_VALIDATION_VERSION } from "../lib/dataset-draft-validation.js";
 
 export const DatasetSlug = z
 	.string()
@@ -186,8 +186,8 @@ const DatasetDraftItemPayload = z
 		expected_output: JsonObject.nullable().optional(),
 		metadata: DatasetDraftMetadata.optional(),
 		external_id: DatasetExternalId.nullable().optional(),
-		source_trace_id: z.string().max(128).nullable().optional(),
-		source_observation_id: z.string().max(128).nullable().optional(),
+		source_trace_id: z.string().min(1).max(128).nullable().optional(),
+		source_observation_id: z.string().min(1).max(128).nullable().optional(),
 	})
 	.strict()
 	.superRefine((value, ctx) => {

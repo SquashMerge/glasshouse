@@ -56,7 +56,7 @@ Project
 
 - **Dataset:** project-scoped named collection with a stable slug, description, tags, and version history. It is not itself a runnable snapshot.
 - **Dataset draft:** editable working copy of the next dataset version. An Admin, or a User with access to the Project, can change it; a Read-only user cannot. A draft can be discarded; it is never selected by a run.
-- **Dataset draft curation:** manual and import rows use the same versioned validation contract. Trace, Observation, and reviewed Feedback capture rereads the selected source on the server, applies the active redaction policy, stores safe project-scoped provenance and an explicit review state, and never publishes a Dataset.
+- **Dataset draft curation:** manual and import rows use the same versioned validation contract. Any row that carries Trace or Observation provenance rereads that selected source on the server, applies the active redaction policy, stores safe project-scoped provenance and an explicit review state, and never publishes a Dataset.
 - **Dataset version:** immutable ordered snapshot of items plus its schema/mapping contract. Displayed as `support-regression@12`.
 - **Dataset item:** one test case. `input` is sent to the target; `expected_output` and `metadata` are evaluator inputs. Item identity remains stable across versions when carried forward.
 - **Evaluation:** stable reusable definition, for example “Support quality gate.” It has a version history just as a prompt does.

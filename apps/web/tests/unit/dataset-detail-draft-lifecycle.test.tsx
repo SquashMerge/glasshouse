@@ -1,5 +1,3 @@
-import * as React from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	cleanup,
@@ -8,6 +6,8 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import * as React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
 	ApiError,
@@ -27,6 +27,7 @@ const {
 			readonly status: number,
 			readonly code: string,
 			message: string,
+			readonly details?: { errors?: unknown[] },
 		) {
 			super(message);
 		}
@@ -254,6 +255,41 @@ describe("DatasetDetailPage draft lifecycle", () => {
 		expect(getDatasetDraft).not.toHaveBeenCalled();
 		expect(createDatasetDraft).not.toHaveBeenCalled();
 		expect(importDatasetDraftItems).not.toHaveBeenCalled();
+	});
+
+	it("renders actionable server validation errors for an import row", async () => {
+		listDatasetItems.mockResolvedValue({ items: [] });
+		importDatasetDraftItems.mockRejectedValue(
+			new ApiError(400, "BAD_REQUEST", "Dataset draft validation failed", {
+				errors: [
+					{
+						item_id: null,
+						item_key: "invalid-row",
+						field: "items/0/input",
+						code: "OBJECT_REQUIRED",
+						message: "Input must be a JSON object",
+					},
+				],
+			}),
+		);
+		renderPage();
+
+		await screen.findByText("Golden");
+		fireEvent.change(screen.getByLabelText("JSON array"), {
+			target: {
+				value: JSON.stringify([
+					{ item_key: "invalid-row", input: { question: "hello" } },
+				]),
+			},
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Import into draft" }));
+
+		expect(
+			await screen.findByText("Import validation needs attention"),
+		).toBeInTheDocument();
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"invalid-row, input: Input must be a JSON object",
+		);
 	});
 
 	it("keeps an added draft case when a cancelled stale refresh resolves", async () => {

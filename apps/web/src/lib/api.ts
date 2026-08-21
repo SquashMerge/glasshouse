@@ -5,6 +5,19 @@ export type JsonObject = Record<string, unknown>;
 export interface ApiErrorEnvelope {
 	code: string;
 	message: string;
+	details?: ApiErrorDetails;
+}
+
+export interface ApiValidationIssue {
+	item_id: string | null;
+	item_key: string | null;
+	field: string;
+	code: string;
+	message: string;
+}
+
+export interface ApiErrorDetails {
+	errors?: ApiValidationIssue[];
 }
 
 export class ApiError extends Error {
@@ -12,6 +25,7 @@ export class ApiError extends Error {
 		readonly status: number,
 		readonly code: string,
 		message: string,
+		readonly details?: ApiErrorDetails,
 	) {
 		super(message);
 		this.name = "ApiError";
@@ -37,6 +51,7 @@ async function responseJson<T>(
 		response.status,
 		envelope?.code ?? "REQUEST_FAILED",
 		envelope?.message ?? `${operation} ${response.status}`,
+		envelope?.details,
 	);
 }
 

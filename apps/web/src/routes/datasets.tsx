@@ -1,15 +1,31 @@
-import * as React from "react";
-import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useParams } from "@tanstack/react-router";
+import * as React from "react";
+import {
+	DetailLoadingSkeleton,
+	ListLoadingSkeleton,
+} from "../components/LoadingSkeletons";
+import { useProjectSelection } from "../components/ProjectProvider";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "../components/ui/card";
+import { Input } from "../components/ui/input";
 import {
 	ApiError,
-	createDatasetDraft,
+	type ApiValidationIssue,
 	createDataset,
-	deleteDatasetDraftItem,
-	importDatasetDraftItems,
+	createDatasetDraft,
 	type DatasetItem,
+	deleteDatasetDraftItem,
 	getDataset,
 	getDatasetDraft,
+	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
 	listDatasets,
@@ -19,21 +35,6 @@ import {
 	upsertDatasetDraftItem,
 	validateDatasetDraft,
 } from "../lib/api";
-import { useProjectSelection } from "../components/ProjectProvider";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Badge } from "../components/ui/badge";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "../components/ui/card";
-import {
-	DetailLoadingSkeleton,
-	ListLoadingSkeleton,
-} from "../components/LoadingSkeletons";
 import { PageMessage } from "./prompts";
 
 export function DatasetsPage() {
@@ -260,6 +261,9 @@ export function DatasetDetailPage() {
 	const [validationErrors, setValidationErrors] = React.useState<
 		Array<{ item_key: string | null; field: string; message: string }>
 	>([]);
+	const [importValidationErrors, setImportValidationErrors] = React.useState<
+		ApiValidationIssue[]
+	>([]);
 	const [editing, setEditing] = React.useState<DatasetItem | null>(null);
 	const [history, setHistory] = React.useState<{
 		itemId: string;
@@ -275,6 +279,17 @@ export function DatasetDetailPage() {
 		if (cause instanceof ApiError && cause.status === 409)
 			setError("This draft changed elsewhere. Refresh the draft and retry.");
 		else setError((cause as Error).message);
+	}
+	function importValidation(cause: unknown): ApiValidationIssue[] {
+		if (!(cause instanceof ApiError)) return [];
+		return (
+			cause.details?.errors?.filter(
+				(issue): issue is ApiValidationIssue =>
+					typeof issue.field === "string" &&
+					typeof issue.message === "string" &&
+					(typeof issue.item_key === "string" || issue.item_key === null),
+			) ?? []
+		);
 	}
 	async function refreshDraft() {
 		await Promise.all([
@@ -451,6 +466,7 @@ export function DatasetDetailPage() {
 		try {
 			setError("");
 			setValidationErrors([]);
+			setImportValidationErrors([]);
 			setPending(true);
 			const rows = parseImport(importValue);
 			const revision = await existingDraftRevision();
@@ -466,7 +482,10 @@ export function DatasetDetailPage() {
 			setImportValue("");
 			await refreshDraft();
 		} catch (cause) {
-			recordError(cause);
+			const issues = importValidation(cause);
+			if (issues.length) {
+				setImportValidationErrors(issues);
+			} else recordError(cause);
 		} finally {
 			setPending(false);
 		}
@@ -654,6 +673,26 @@ export function DatasetDetailPage() {
 					>
 						{pending ? "Importing..." : "Import into draft"}
 					</Button>
+					{importValidationErrors.length > 0 && (
+						<div
+							className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+							role="alert"
+						>
+							<p className="font-medium">Import validation needs attention</p>
+							<ul className="mt-2 list-disc space-y-1 pl-5">
+								{importValidationErrors.map((issue, index) => (
+									<li
+										key={`${issue.item_key ?? "row"}-${issue.field}-${index}`}
+									>
+										{issue.item_key
+											? `${issue.item_key}, `
+											: `Row ${index + 1}, `}
+										{issue.field.replace(/^items\/\d+\//, "")}: {issue.message}
+									</li>
+								))}
+							</ul>
+						</div>
+					)}
 				</CardContent>
 			</Card>
 			<div className="flex flex-wrap items-center gap-3">

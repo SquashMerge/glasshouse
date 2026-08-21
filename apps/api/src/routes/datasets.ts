@@ -1,67 +1,67 @@
-import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
+import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import { pgPool } from "../db/postgres.js";
 import { ch } from "../db/clickhouse.js";
-import { logger } from "../lib/logger.js";
-import { trustedTenant } from "../tenancy.js";
-import { projectAuthorization } from "../db/project-authorization.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
+	archiveDataset as archiveDatasetRecord,
 	authorizeDatasetWrite as authorizeDatasetWriteRecord,
 	captureDatasetDraftItem as captureDatasetDraftItemRecord,
 	createDataset as createDatasetRecord,
-	datasetCurationRequestHash,
-	discardDatasetDraft as discardDatasetDraftRecord,
-	publishDatasetDraft as publishDatasetDraftRecord,
 	DatasetRepositoryError,
-	deleteDatasetItem as deleteDatasetItemRecord,
+	datasetCurationRequestHash,
 	deleteDatasetDraftItem as deleteDatasetDraftItemRecord,
-	archiveDataset as archiveDatasetRecord,
-	getDatasetDraftItemRevisions as getDatasetDraftItemRevisionsRecord,
+	deleteDatasetItem as deleteDatasetItemRecord,
+	discardDatasetDraft as discardDatasetDraftRecord,
 	getDatasetBySlug as getDatasetBySlugRecord,
+	getDatasetDraftItemRevisions as getDatasetDraftItemRevisionsRecord,
 	getDatasetDraft as getDatasetDraftRecord,
-	getOrCreateDatasetDraft as getOrCreateDatasetDraftRecord,
 	getDataset as getDatasetRecord,
+	getOrCreateDatasetDraft as getOrCreateDatasetDraftRecord,
 	importDatasetDraftItems as importDatasetDraftItemsRecord,
 	listDatasetItems as listDatasetItemsRecord,
-	listPublishedDatasetItems as listPublishedDatasetItemsRecord,
 	listDatasets as listDatasetsRecord,
+	listPublishedDatasetItems as listPublishedDatasetItemsRecord,
+	publishDatasetDraft as publishDatasetDraftRecord,
 	reorderDatasetDraftItems as reorderDatasetDraftItemsRecord,
 	reviewDatasetDraftItem as reviewDatasetDraftItemRecord,
 	updateDatasetMetadata as updateDatasetMetadataRecord,
 	upsertDatasetDraftItem as upsertDatasetDraftItemRecord,
 	validateDatasetDraft as validateDatasetDraftRecord,
 } from "../db/datasets.js";
+import { pgPool } from "../db/postgres.js";
+import { projectAuthorization } from "../db/project-authorization.js";
 import {
-	DATASET_DRAFT_VALIDATION_VERSION,
 	captureTextAsObject,
+	DATASET_DRAFT_VALIDATION_VERSION,
 } from "../lib/dataset-draft-validation.js";
+import { logger } from "../lib/logger.js";
 import {
 	Dataset,
 	DatasetCreate,
+	DatasetDraft,
+	DatasetDraftCapture,
+	DatasetDraftCaptureResult,
+	DatasetDraftImport,
+	DatasetDraftImportResult,
+	DatasetDraftItem,
+	DatasetDraftItemKeyParam,
+	DatasetDraftItemParam,
+	DatasetDraftItemRevisionList,
+	DatasetDraftItemUpsert,
+	DatasetDraftMutation,
+	DatasetDraftOrder,
+	DatasetDraftPublish,
+	DatasetDraftValidation,
 	DatasetErrorResponses,
 	DatasetIdParam,
 	DatasetItem,
 	DatasetItemCreate,
 	DatasetItemIdParams,
-	DatasetDraft,
-	DatasetDraftItem,
-	DatasetDraftItemKeyParam,
-	DatasetDraftItemParam,
-	DatasetDraftItemUpsert,
-	DatasetDraftCapture,
-	DatasetDraftCaptureResult,
-	DatasetDraftImport,
-	DatasetDraftImportResult,
-	DatasetDraftItemRevisionList,
-	DatasetDraftMutation,
-	DatasetDraftOrder,
-	DatasetDraftValidation,
 	DatasetMetadataUpdate,
 	DatasetProjectQuery,
-	DatasetDraftPublish,
 	DatasetSlugParam,
 } from "../schemas/datasets.js";
+import { trustedTenant } from "../tenancy.js";
 
 const tag = "datasets";
 const DatasetList = z
@@ -604,6 +604,45 @@ const production: DatasetRouteDependencies = {
 export function createDatasetRouteHandlers(
 	dependencies: DatasetRouteDependencies = production,
 ) {
+	async function sourceCapturedItem<
+		T extends {
+			input: Record<string, unknown>;
+			expected_output?: Record<string, unknown> | null;
+			source_trace_id?: string | null;
+			source_observation_id?: string | null;
+		},
+	>(
+		item: T,
+		organization_id: string,
+		project_id: string,
+	): Promise<
+		T & {
+			capture?: boolean;
+			capture_context?: { kind: "trace" | "observation" };
+		}
+	> {
+		if (!item.source_trace_id) return item;
+		const source = await dependencies.captureSource({
+			organization_id,
+			project_id,
+			trace_id: item.source_trace_id,
+			observation_id: item.source_observation_id,
+		});
+		if (!source)
+			throw new DatasetRepositoryError("NOT_FOUND", "Source trace not found");
+		return {
+			...item,
+			input: captureTextAsObject(source.input_text),
+			expected_output: source.output_text
+				? captureTextAsObject(source.output_text)
+				: null,
+			capture: true,
+			capture_context: {
+				kind: item.source_observation_id ? "observation" : "trace",
+			},
+		};
+	}
+
 	return {
 		handleListDatasets: async (
 			c: Parameters<RouteHandler<typeof listDatasets>>[0],
@@ -724,21 +763,30 @@ export function createDatasetRouteHandlers(
 						"If-Match must contain a draft revision",
 					);
 				const project_id = c.req.valid("query").project_id;
+				const tenant = trustedTenant(c);
+				const authorization = projectAuthorization(tenant, "product_write");
+				await dependencies.authorizeDatasetWrite(dependencies.pool(), {
+					project_id,
+					authorization,
+				});
+				const idempotency_items = c.req.valid("json").items.map((item) => ({
+					...item,
+					project_id,
+				}));
 				const result = await dependencies.importDatasetDraftItems(
 					dependencies.pool(),
 					{
 						project_id,
 						slug: c.req.valid("param").slug,
 						revision: match === undefined ? undefined : Number(match),
-						items: c.req.valid("json").items.map((item) => ({
-							...item,
-							project_id,
-						})),
-						idempotency_key: c.req.valid("header")["idempotency-key"],
-						authorization: projectAuthorization(
-							trustedTenant(c),
-							"product_write",
+						items: await Promise.all(
+							idempotency_items.map((item) =>
+								sourceCapturedItem(item, tenant.organizationId, project_id),
+							),
 						),
+						idempotency_items,
+						idempotency_key: c.req.valid("header")["idempotency-key"],
+						authorization,
 					},
 				);
 				c.header("ETag", `\"${result.revision}\"`);
@@ -862,31 +910,24 @@ export function createDatasetRouteHandlers(
 				const body = c.req.valid("json");
 				const tenant = trustedTenant(c);
 				const authorization = projectAuthorization(tenant, "product_write");
+				const project_id = c.req.valid("query").project_id;
 				await dependencies.authorizeDatasetWrite(dependencies.pool(), {
-					project_id: c.req.valid("query").project_id,
+					project_id,
 					authorization,
 				});
-				if (
-					body.source_trace_id &&
-					!(await dependencies.targetExists({
-						organization_id: tenant.organizationId,
-						project_id: c.req.valid("query").project_id,
-						trace_id: body.source_trace_id,
-						observation_id: body.source_observation_id,
-					}))
-				)
-					throw new DatasetRepositoryError(
-						"NOT_FOUND",
-						"Source trace not found",
-					);
+				const capturedItem = await sourceCapturedItem(
+					body,
+					tenant.organizationId,
+					project_id,
+				);
 				const item = await dependencies.upsertDatasetDraftItem(
 					dependencies.pool(),
 					{
-						project_id: c.req.valid("query").project_id,
+						project_id,
 						slug: c.req.valid("param").slug,
 						item_key: c.req.valid("param").itemKey,
 						revision: Number(match),
-						...body,
+						...capturedItem,
 						authorization,
 					},
 				);

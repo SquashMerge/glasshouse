@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+	DATASET_DRAFT_VALIDATION_VERSION,
+	type DatasetDraftItemInput,
+	type DatasetDraftValidationIssue,
+	validateDatasetDraftItem,
+} from "../lib/dataset-draft-validation.js";
 import { approvedRedaction } from "./governance.js";
 import {
 	lockActiveAuthorizedProject,
@@ -7,12 +13,6 @@ import {
 	type ProjectAuthorization,
 } from "./project-authorization.js";
 import { policyRedactionOptions, redactDatasetCapture } from "./redact.js";
-import {
-	DATASET_DRAFT_VALIDATION_VERSION,
-	validateDatasetDraftItem,
-	type DatasetDraftItemInput,
-	type DatasetDraftValidationIssue,
-} from "../lib/dataset-draft-validation.js";
 
 export type JsonObject = Record<string, unknown>;
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
@@ -563,6 +563,7 @@ type DraftItemWriteInput = DatasetDraftItemInput & {
 	item_key: string;
 	feedback_score_id?: string | null;
 	capture_context?: JsonObject;
+	capture?: boolean;
 };
 
 type DraftItemRevisionAction =
@@ -1288,6 +1289,7 @@ export async function importDatasetDraftItems(
 		slug: string;
 		revision?: number;
 		items: DraftItemWriteInput[];
+		idempotency_items?: DraftItemWriteInput[];
 		idempotency_key: string;
 		authorization: ProjectAuthorization;
 	},
@@ -1310,12 +1312,12 @@ export async function importDatasetDraftItems(
 		);
 		const legacy_request_hash = datasetCurationRequestHash({
 			revision: input.revision,
-			items: input.items,
+			items: input.idempotency_items ?? input.items,
 		});
 		const request_hash = datasetCurationRequestHash({
 			dataset_id,
 			revision: input.revision,
-			items: input.items,
+			items: input.idempotency_items ?? input.items,
 		});
 		const replay = await readCurationIdempotency(client, {
 			...input,
@@ -1363,7 +1365,7 @@ export async function importDatasetDraftItems(
 		for (const item of input.items)
 			items.push(
 				await writeDraftItem(client, draftRow, item, input.authorization, {
-					capture: false,
+					capture: item.capture ?? false,
 					action: "imported",
 				}),
 			);

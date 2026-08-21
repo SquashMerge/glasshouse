@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-	discardDatasetDraft,
 	deleteDatasetDraftItem,
+	discardDatasetDraft,
 	importDatasetDraftItems,
 	publishDatasetDraft,
 	upsertDatasetDraftItem,
@@ -131,6 +131,44 @@ describe("dataset API client", () => {
 		await expect(
 			discardDatasetDraft({ project_id: PROJECT_ID, slug: "golden" }),
 		).resolves.toBeUndefined();
+	});
+
+	it("preserves safe validation details on API errors", async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					code: "BAD_REQUEST",
+					message: "Dataset draft validation failed",
+					details: {
+						errors: [
+							{
+								item_id: null,
+								item_key: "bad-row",
+								field: "items/0/input",
+								code: "OBJECT_REQUIRED",
+								message: "Input must be a JSON object",
+							},
+						],
+					},
+				}),
+				{ status: 400 },
+			),
+		);
+
+		await expect(
+			importDatasetDraftItems({
+				project_id: PROJECT_ID,
+				slug: "golden",
+				idempotency_key: "import-key",
+				items: [{ item_key: "bad-row", input: {} }],
+			}),
+		).rejects.toMatchObject({
+			status: 400,
+			code: "BAD_REQUEST",
+			details: {
+				errors: [expect.objectContaining({ item_key: "bad-row" })],
+			},
+		});
 	});
 
 	it("publishes a draft with its current ETag", async () => {

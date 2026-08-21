@@ -6,45 +6,45 @@ import {
 	captureDatasetDraftItem,
 	createDataset,
 	DatasetRepositoryError,
+	datasetCurationRequestHash,
 	deleteDatasetDraftItem,
 	deleteDatasetItem,
 	discardDatasetDraft,
-	datasetCurationRequestHash,
+	getDataset,
 	getDatasetBySlug,
 	getDatasetDraft,
 	getOrCreateDatasetDraft,
 	importDatasetDraftItems,
-	getDataset,
 	listDatasetItems,
-	listPublishedDatasetItems,
 	listDatasets,
+	listPublishedDatasetItems,
 	publishDatasetDraft,
-	upsertDatasetDraftItem,
 	updateDatasetMetadata,
+	upsertDatasetDraftItem,
 } from "../../src/db/datasets";
 import {
 	captureDatasetDraftItem as captureDatasetDraftItemRoute,
-	deleteDatasetItem as deleteDatasetItemRoute,
-	deleteDatasetDraftItem as deleteDatasetDraftItemRoute,
 	createDatasetDraft,
 	createDatasetRouteHandlers,
+	deleteDatasetDraftItem as deleteDatasetDraftItemRoute,
+	deleteDatasetItem as deleteDatasetItemRoute,
 	getDatasetDraft as getDatasetDraftRoute,
-	importDatasetDraftItems as importDatasetDraftItemsRoute,
 	handleCreateDatasetDraft,
-	handleGetDatasetDraft,
-	handlePutDatasetDraftItem,
 	handleDeleteDatasetDraftItem,
+	handleGetDatasetDraft,
 	handleListPublishedDatasetItems,
+	handlePutDatasetDraftItem,
+	importDatasetDraftItems as importDatasetDraftItemsRoute,
 	listPublishedDatasetItems as listPublishedDatasetItemsRoute,
-	putDatasetDraftItem,
 	publishDatasetDraft as publishDatasetDraftRoute,
+	putDatasetDraftItem,
 } from "../../src/routes/datasets";
 import {
 	DatasetCreate,
+	DatasetDraftImport,
+	DatasetDraftItem,
 	DatasetDraftItemParam,
 	DatasetDraftItemUpsert,
-	DatasetDraftItem,
-	DatasetDraftImport,
 	DatasetItem,
 	DatasetItemCreate,
 } from "../../src/schemas/datasets";
@@ -266,6 +266,22 @@ describe("dataset contracts", () => {
 				metadata: { source: "test" },
 			}).success,
 		).toBe(true);
+	});
+
+	it("rejects empty draft provenance identifiers", () => {
+		expect(
+			DatasetDraftItemUpsert.safeParse({
+				input: { question: "hello" },
+				source_trace_id: "",
+			}).success,
+		).toBe(false);
+		expect(
+			DatasetDraftItemUpsert.safeParse({
+				input: { question: "hello" },
+				source_trace_id: "a".repeat(32),
+				source_observation_id: "",
+			}).success,
+		).toBe(false);
 	});
 
 	it("rejects duplicate item keys in one import", () => {
@@ -1369,7 +1385,7 @@ describe("dataset repository", () => {
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
 			authorizeDatasetWrite: async () => {},
-			targetExists: async () => false,
+			captureSource: async () => null,
 			upsertDatasetDraftItem: async () => {
 				written = true;
 				return {} as never;
@@ -1397,6 +1413,176 @@ describe("dataset repository", () => {
 		expect(written).toBe(false);
 	});
 
+	it("replaces manual provenance payloads with a server capture", async () => {
+		let written: unknown;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			captureSource: async () => ({
+				input_text: '{"question":"server value"}',
+				output_text: '{"answer":"server value"}',
+			}),
+			upsertDatasetDraftItem: async (_db, input) => {
+				written = input;
+				return {
+					id: "33333333-3333-4333-8333-333333333333",
+					item_key: "stable",
+					input: {},
+					expected_output: null,
+					metadata: {},
+					position: 0,
+				};
+			},
+		} as never);
+		const response = await handlers.handlePutDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => '"1"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden", itemKey: "stable" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: {
+									input: { question: "caller value" },
+									expected_output: { answer: "caller value" },
+									source_trace_id: "a".repeat(32),
+								},
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(written).toMatchObject({
+			input: { question: "server value" },
+			expected_output: { answer: "server value" },
+			capture: true,
+			capture_context: { kind: "trace" },
+		});
+	});
+
+	it("imports provenance only from a scoped server capture", async () => {
+		let imported: unknown;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			captureSource: async (input) => {
+				expect(input).toEqual({
+					organization_id: authorization.organization_id,
+					project_id: PROJECT,
+					trace_id: "a".repeat(32),
+					observation_id: "observation-1",
+				});
+				return {
+					input_text: '{"question":"server value"}',
+					output_text: '{"answer":"redact me"}',
+				};
+			},
+			importDatasetDraftItems: async (_db, input) => {
+				imported = input;
+				return { items: [], revision: 2, idempotent: false };
+			},
+		} as never);
+		const response = await handlers.handleImportDatasetDraftItems({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => undefined,
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "import-key" }
+								: {
+										items: [
+											{
+												item_key: "captured",
+												input: { question: "caller value" },
+												expected_output: { answer: "caller value" },
+												source_trace_id: "a".repeat(32),
+												source_observation_id: "observation-1",
+											},
+										],
+									},
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(imported).toMatchObject({
+			items: [
+				{
+					input: { question: "server value" },
+					expected_output: { answer: "redact me" },
+					capture: true,
+					capture_context: { kind: "observation" },
+				},
+			],
+			idempotency_items: [
+				{
+					input: { question: "caller value" },
+					expected_output: { answer: "caller value" },
+				},
+			],
+		});
+	});
+
+	it("rejects missing import provenance before writing", async () => {
+		let imported = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			captureSource: async () => null,
+			importDatasetDraftItems: async () => {
+				imported = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handleImportDatasetDraftItems({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => undefined,
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "import-key" }
+								: {
+										items: [
+											{
+												item_key: "missing",
+												input: {},
+												source_trace_id: "a".repeat(32),
+											},
+										],
+									},
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+		expect(response.status).toBe(404);
+		expect(imported).toBe(false);
+	});
+
 	it("authorizes draft writes before probing source provenance", async () => {
 		let checked = false;
 		const handlers = createDatasetRouteHandlers({
@@ -1407,9 +1593,9 @@ describe("dataset repository", () => {
 					"Project is not available",
 				);
 			},
-			targetExists: async () => {
+			captureSource: async () => {
 				checked = true;
-				return true;
+				return { input_text: "{}", output_text: "" };
 			},
 		} as never);
 		const response = await handlers.handlePutDatasetDraftItem({
