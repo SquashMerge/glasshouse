@@ -100,15 +100,37 @@ function fakeDb(
 	return pool;
 }
 
-function curationReplayDb(requestHash: string) {
+function curationReplayDb({
+	requestHash,
+	recordDatasetId = DATASET,
+	draftAvailable = true,
+	archived = false,
+}: {
+	requestHash: string;
+	recordDatasetId?: string | null;
+	draftAvailable?: boolean;
+	archived?: boolean;
+}) {
 	const draftId = "55555555-5555-4555-8555-555555555555";
+	const queries: Array<{ text: string; values?: unknown[] }> = [];
 	const client = {
 		query: async (sql: string, values?: unknown[]) => {
+			queries.push({ text: sql, values });
 			if (sql.includes("p.status = ANY($3::text[])"))
 				return { rows: [{ id: PROJECT }] };
 			if (sql.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
-			if (sql.startsWith("SELECT dr.* FROM dataset_drafts"))
+			if (sql.startsWith("SELECT id FROM datasets WHERE project_id"))
+				return {
+					rows: [
+						{
+							id: values?.[1] === "golden" ? DATASET : OTHER_DATASET,
+							archived_at: archived ? NOW : null,
+						},
+					],
+				};
+			if (sql.startsWith("SELECT dr.* FROM dataset_drafts")) {
+				if (!draftAvailable) return { rows: [] };
 				return {
 					rows: [
 						{
@@ -118,10 +140,12 @@ function curationReplayDb(requestHash: string) {
 						},
 					],
 				};
+			}
 			if (sql.includes("FROM dataset_curation_idempotency"))
 				return {
 					rows: [
 						{
+							dataset_id: recordDatasetId,
 							request_hash: requestHash,
 							response: { draft_id: draftId, revision: 7, item_ids: ["item"] },
 						},
@@ -131,7 +155,7 @@ function curationReplayDb(requestHash: string) {
 		},
 		release() {},
 	};
-	return { connect: async () => client };
+	return { connect: async () => client, queries };
 }
 
 describe("dataset contracts", () => {
@@ -223,6 +247,179 @@ describe("dataset contracts", () => {
 });
 
 describe("dataset repository", () => {
+	it("replays import after its draft is published", async () => {
+		const item = {
+			project_id: PROJECT,
+			item_key: "imported",
+			input: { question: "hello" },
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash({
+				dataset_id: DATASET,
+				revision: 4,
+				items: [item],
+			}),
+			draftAvailable: false,
+		});
+
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [item],
+				idempotency_key: "published-import-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		expect(
+			db.queries.some((query) =>
+				query.text.startsWith("SELECT dr.* FROM dataset_drafts"),
+			),
+		).toBe(false);
+	});
+
+	it("replays capture after its draft is discarded", async () => {
+		const request = {
+			dataset_id: DATASET,
+			revision: 4,
+			item_key: "captured",
+			external_id: null,
+			source_trace_id: null,
+			source_observation_id: null,
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash(request),
+			draftAvailable: false,
+		});
+
+		await expect(
+			captureDatasetDraftItem(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				item_key: "captured",
+				input: { question: "hello" },
+				metadata: {},
+				idempotency_key: "discarded-capture-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		expect(
+			db.queries.some((query) =>
+				query.text.startsWith("SELECT dr.* FROM dataset_drafts"),
+			),
+		).toBe(false);
+	});
+
+	it("replays capture after its dataset is archived", async () => {
+		const request = {
+			dataset_id: DATASET,
+			revision: 4,
+			item_key: "captured",
+			external_id: null,
+			source_trace_id: null,
+			source_observation_id: null,
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash(request),
+			draftAvailable: false,
+			archived: true,
+		});
+
+		await expect(
+			captureDatasetDraftItem(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				item_key: "captured",
+				input: { question: "hello" },
+				metadata: {},
+				idempotency_key: "archived-capture-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		const targetLookup = db.queries.find((query) =>
+			query.text.startsWith("SELECT id FROM datasets WHERE project_id"),
+		);
+		expect(targetLookup?.text).not.toContain("archived_at IS NULL");
+	});
+
+	it("replays a target-bound legacy import record after upgrade", async () => {
+		const item = {
+			project_id: PROJECT,
+			item_key: "imported",
+			input: { question: "hello" },
+		};
+		const legacyRequestHash = datasetCurationRequestHash({
+			revision: 4,
+			items: [item],
+		});
+		const requestHash = datasetCurationRequestHash({
+			dataset_id: DATASET,
+			revision: 4,
+			items: [item],
+		});
+		const db = curationReplayDb({
+			requestHash: legacyRequestHash,
+			draftAvailable: false,
+		});
+
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [item],
+				idempotency_key: "legacy-import-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		expect(
+			db.queries.find((query) =>
+				query.text.startsWith(
+					"UPDATE dataset_curation_idempotency SET request_hash",
+				),
+			)?.values,
+		).toEqual([
+			requestHash,
+			PROJECT,
+			authorization.actor_id,
+			"import",
+			"legacy-import-key",
+		]);
+	});
+
+	it("rejects legacy import reuse for another dataset target", async () => {
+		const item = {
+			project_id: PROJECT,
+			item_key: "imported",
+			input: { question: "hello" },
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash({
+				revision: 4,
+				items: [item],
+			}),
+			recordDatasetId: OTHER_DATASET,
+			draftAvailable: false,
+		});
+
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [item],
+				idempotency_key: "legacy-other-target-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			status: 409,
+		});
+	});
+
 	it("preserves import replay while rejecting the same key for another dataset", async () => {
 		const item = {
 			project_id: PROJECT,
@@ -234,7 +431,7 @@ describe("dataset repository", () => {
 			revision: 4,
 			items: [item],
 		});
-		const db = curationReplayDb(requestHash);
+		const db = curationReplayDb({ requestHash });
 		const input = {
 			project_id: PROJECT,
 			revision: 4,
@@ -263,7 +460,9 @@ describe("dataset repository", () => {
 			source_trace_id: null,
 			source_observation_id: null,
 		};
-		const db = curationReplayDb(datasetCurationRequestHash(request));
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash(request),
+		});
 		const input = {
 			project_id: PROJECT,
 			revision: 4,

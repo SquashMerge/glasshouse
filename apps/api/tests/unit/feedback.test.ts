@@ -245,6 +245,8 @@ describe("feedback review persistence", () => {
 					};
 				if (sql.startsWith("SELECT id, slug FROM datasets"))
 					return { rows: [{ id: "dataset-id", slug: "dataset" }] };
+				if (sql.startsWith("SELECT id FROM datasets WHERE project_id"))
+					return { rows: [{ id: "dataset-id" }] };
 				if (sql.startsWith("WITH inserted AS"))
 					return { rows: [{ id: draftId, revision: 2, created: false }] };
 				if (sql.startsWith("SELECT dr.* FROM dataset_drafts"))
