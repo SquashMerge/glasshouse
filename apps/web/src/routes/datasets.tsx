@@ -2,19 +2,33 @@ import * as React from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	ApiError,
 	createDatasetDraft,
 	createDataset,
 	deleteDatasetDraftItem,
+	importDatasetDraftItems,
 	type DatasetItem,
 	getDataset,
+	listDatasetDraftItemRevisions,
 	listDatasetItems,
 	listDatasets,
 	publishDatasetDraft,
+	reorderDatasetDraftItems,
+	reviewDatasetDraftItem,
 	upsertDatasetDraftItem,
+	validateDatasetDraft,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Badge } from "../components/ui/badge";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "../components/ui/card";
 import {
 	DetailLoadingSkeleton,
 	ListLoadingSkeleton,
@@ -147,6 +161,49 @@ function parseObject(value: string) {
 		throw new Error("JSON must be an object");
 	return parsed as Record<string, unknown>;
 }
+
+function parseImport(value: string) {
+	const parsed: unknown = JSON.parse(value);
+	if (!Array.isArray(parsed) || parsed.length === 0)
+		throw new Error("Import must be a non-empty JSON array");
+	return parsed.map((candidate, index) => {
+		if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+			throw new Error(`Import row ${index + 1} must be an object`);
+		const row = candidate as Record<string, unknown>;
+		if (typeof row.item_key !== "string" || !row.item_key.trim())
+			throw new Error(`Import row ${index + 1} needs an item_key`);
+		if (!row.input || typeof row.input !== "object" || Array.isArray(row.input))
+			throw new Error(`Import row ${index + 1} needs an input object`);
+		if (
+			row.expected_output !== undefined &&
+			row.expected_output !== null &&
+			(typeof row.expected_output !== "object" ||
+				Array.isArray(row.expected_output))
+		)
+			throw new Error(
+				`Import row ${index + 1} expected_output must be an object or null`,
+			);
+		if (
+			row.metadata !== undefined &&
+			(!row.metadata ||
+				typeof row.metadata !== "object" ||
+				Array.isArray(row.metadata))
+		)
+			throw new Error(`Import row ${index + 1} metadata must be an object`);
+		return {
+			item_key: row.item_key,
+			input: row.input as Record<string, unknown>,
+			expected_output:
+				row.expected_output === undefined
+					? undefined
+					: (row.expected_output as Record<string, unknown> | null),
+			metadata: row.metadata as Record<string, unknown> | undefined,
+			external_id:
+				typeof row.external_id === "string" ? row.external_id : undefined,
+		};
+	});
+}
+
 export function DatasetDetailPage() {
 	const { id } = useParams({ from: "/protected/datasets/$id" });
 	const { selectedProjectId } = useProjectSelection();
@@ -165,36 +222,77 @@ export function DatasetDetailPage() {
 	const [input, setInput] = React.useState("{}");
 	const [expected, setExpected] = React.useState("");
 	const [metadata, setMetadata] = React.useState("{}");
+	const [externalId, setExternalId] = React.useState("");
+	const [importValue, setImportValue] = React.useState("");
 	const [error, setError] = React.useState("");
+	const [validationErrors, setValidationErrors] = React.useState<
+		Array<{ item_key: string | null; field: string; message: string }>
+	>([]);
+	const [editing, setEditing] = React.useState<DatasetItem | null>(null);
+	const [history, setHistory] = React.useState<{
+		itemId: string;
+		items: Array<{ item_revision: number; action: string; created_at: string }>;
+	} | null>(null);
 	const [pending, setPending] = React.useState(false);
 	const [deletingItemId, setDeletingItemId] = React.useState<string | null>(
 		null,
 	);
+	const importKey = React.useRef<string | null>(null);
+
+	function recordError(cause: unknown) {
+		if (cause instanceof ApiError && cause.status === 409)
+			setError("This draft changed elsewhere. Refresh the draft and retry.");
+		else setError((cause as Error).message);
+	}
+	async function refreshDraft() {
+		await Promise.all([
+			client.invalidateQueries({
+				queryKey: ["dataset-items", selectedProjectId, id],
+			}),
+			client.invalidateQueries({
+				queryKey: ["dataset", selectedProjectId, id],
+			}),
+			client.invalidateQueries({ queryKey: ["datasets", selectedProjectId] }),
+		]);
+	}
+	async function currentDraftItems() {
+		const draft = await createDatasetDraft({
+			project_id: selectedProjectId!,
+			slug: dataset.data!.slug,
+		});
+		const visible = await listDatasetItems({
+			project_id: selectedProjectId!,
+			id: dataset.data!.id,
+		});
+		return { draft, items: visible.items };
+	}
 	async function publish() {
 		if (pending) return;
 		try {
 			setError("");
+			setValidationErrors([]);
 			setPending(true);
 			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
 			});
+			const validation = await validateDatasetDraft({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+			});
+			if (!validation.valid) {
+				setValidationErrors(validation.errors);
+				setError("Review the highlighted draft items before publishing.");
+				return;
+			}
 			await publishDatasetDraft({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
 				revision: draft.revision,
 			});
-			await Promise.all([
-				client.invalidateQueries({
-					queryKey: ["dataset-items", selectedProjectId, id],
-				}),
-				client.invalidateQueries({
-					queryKey: ["dataset", selectedProjectId, id],
-				}),
-				client.invalidateQueries({ queryKey: ["datasets", selectedProjectId] }),
-			]);
+			await refreshDraft();
 		} catch (cause) {
-			setError((cause as Error).message);
+			recordError(cause);
 		} finally {
 			setPending(false);
 		}
@@ -203,48 +301,147 @@ export function DatasetDetailPage() {
 		if (pending) return;
 		try {
 			setError("");
+			setValidationErrors([]);
 			setPending(true);
-			await client.cancelQueries({
-				queryKey: ["dataset-items", selectedProjectId, id],
-			});
 			const draft = await createDatasetDraft({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
 			});
-			const item = await upsertDatasetDraftItem({
+			await upsertDatasetDraftItem({
 				project_id: selectedProjectId!,
 				slug: dataset.data!.slug,
-				item_key: crypto.randomUUID(),
+				item_key: editing?.item_key ?? crypto.randomUUID(),
 				revision: draft.revision,
 				input: parseObject(input),
 				expected_output: expected.trim() ? parseObject(expected) : null,
 				metadata: parseObject(metadata),
+				external_id: externalId.trim() || null,
 			});
-			client.setQueryData<{ items: DatasetItem[] }>(
-				["dataset-items", selectedProjectId, id],
-				(current) => ({
-					items: [
-						...(current?.items ?? []).filter(
-							(candidate) => candidate.item_key !== item.item_key,
-						),
-						{
-							...item,
-							dataset_id: id,
-							created_at: new Date().toISOString(),
-						},
-					],
-				}),
-			);
 			setInput("{}");
 			setExpected("");
 			setMetadata("{}");
-			await client.invalidateQueries({
-				queryKey: ["datasets", selectedProjectId],
-			});
+			setExternalId("");
+			setEditing(null);
+			await refreshDraft();
 		} catch (cause) {
-			setError((cause as Error).message);
+			recordError(cause);
 		} finally {
 			setPending(false);
+		}
+	}
+	function edit(item: DatasetItem) {
+		setEditing(item);
+		setInput(JSON.stringify(item.input, null, 2));
+		setExpected(
+			item.expected_output ? JSON.stringify(item.expected_output, null, 2) : "",
+		);
+		setMetadata(JSON.stringify(item.metadata, null, 2));
+		setExternalId(item.external_id ?? "");
+		setError("");
+	}
+	async function review(item: DatasetItem) {
+		if (pending) return;
+		try {
+			setError("");
+			setPending(true);
+			const { draft, items: draftItems } = await currentDraftItems();
+			const target = draftItems.find(
+				(candidate) => candidate.item_key === item.item_key,
+			);
+			if (!target) throw new Error("Dataset draft item not found");
+			await reviewDatasetDraftItem({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				item_id: target.id,
+				revision: draft.revision,
+			});
+			await refreshDraft();
+		} catch (cause) {
+			recordError(cause);
+		} finally {
+			setPending(false);
+		}
+	}
+	async function move(item: DatasetItem, direction: -1 | 1) {
+		if (pending || !items.data) return;
+		const ordered = items.data.items;
+		const index = ordered.findIndex((candidate) => candidate.id === item.id);
+		const destination = index + direction;
+		if (index < 0 || destination < 0 || destination >= ordered.length) return;
+		try {
+			setError("");
+			setPending(true);
+			const { draft, items: draftItems } = await currentDraftItems();
+			const keys = ordered.map((candidate) => candidate.item_key);
+			if (keys.some((key) => !key))
+				throw new Error("Dataset draft item is missing its stable key");
+			const [moved] = keys.splice(index, 1);
+			if (!moved) throw new Error("Dataset draft item not found");
+			keys.splice(destination, 0, moved);
+			const ids = keys.map((key) => {
+				const draftItem = draftItems.find(
+					(candidate) => candidate.item_key === key,
+				);
+				if (!draftItem) throw new Error("Dataset draft item not found");
+				return draftItem.id;
+			});
+			await reorderDatasetDraftItems({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				revision: draft.revision,
+				item_ids: ids,
+			});
+			await refreshDraft();
+		} catch (cause) {
+			recordError(cause);
+		} finally {
+			setPending(false);
+		}
+	}
+	async function importRows() {
+		if (pending) return;
+		try {
+			setError("");
+			setValidationErrors([]);
+			setPending(true);
+			const rows = parseImport(importValue);
+			const draft = await createDatasetDraft({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+			});
+			importKey.current ??= crypto.randomUUID();
+			await importDatasetDraftItems({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				revision: draft.revision,
+				idempotency_key: importKey.current,
+				items: rows,
+			});
+			importKey.current = null;
+			setImportValue("");
+			await refreshDraft();
+		} catch (cause) {
+			recordError(cause);
+		} finally {
+			setPending(false);
+		}
+	}
+	async function showHistory(item: DatasetItem) {
+		try {
+			const { draft, items: draftItems } = await currentDraftItems();
+			void draft;
+			const target = draftItems.find(
+				(candidate) => candidate.item_key === item.item_key,
+			);
+			if (!target) throw new Error("Dataset draft item not found");
+			const result = await listDatasetDraftItemRevisions({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				item_id: target.id,
+			});
+			setHistory({ itemId: item.id, items: result.items });
+		} catch (cause) {
+			recordError(cause);
 		}
 	}
 	async function remove(item: DatasetItem) {
@@ -252,15 +449,8 @@ export function DatasetDetailPage() {
 		try {
 			setError("");
 			setDeletingItemId(item.id);
-			const draft = await createDatasetDraft({
-				project_id: selectedProjectId!,
-				slug: dataset.data!.slug,
-			});
-			const draftItems = await listDatasetItems({
-				project_id: selectedProjectId!,
-				id: dataset.data!.id,
-			});
-			const draftItem = draftItems.items.find(
+			const { draft, items: draftItems } = await currentDraftItems();
+			const draftItem = draftItems.find(
 				(candidate) => candidate.item_key === item.item_key,
 			);
 			if (!draftItem) throw new Error("Dataset draft item not found");
@@ -270,14 +460,9 @@ export function DatasetDetailPage() {
 				item_id: draftItem.id,
 				revision: draft.revision,
 			});
-			await client.invalidateQueries({
-				queryKey: ["dataset-items", selectedProjectId, id],
-			});
-			await client.invalidateQueries({
-				queryKey: ["datasets", selectedProjectId],
-			});
+			await refreshDraft();
 		} catch (cause) {
-			setError((cause as Error).message);
+			recordError(cause);
 		} finally {
 			setDeletingItemId(null);
 		}
@@ -300,7 +485,7 @@ export function DatasetDetailPage() {
 			</PageMessage>
 		);
 	return (
-		<div className="space-y-5">
+		<div className="space-y-6">
 			<div>
 				<Link className="text-sm underline" to="/datasets">
 					Datasets
@@ -312,56 +497,175 @@ export function DatasetDetailPage() {
 					{dataset.data?.description}
 				</p>
 			</div>
-			<section className="space-y-2 rounded border p-4">
-				<h2 className="font-semibold">Add JSON case</h2>
-				<label className="block text-sm">
-					Input
-					<textarea
-						className="mt-1 min-h-24 w-full rounded border p-2 font-mono text-xs"
-						value={input}
-						onChange={(event) => setInput(event.target.value)}
-					/>
-				</label>
-				<label className="block text-sm">
-					Expected output (optional)
-					<textarea
-						className="mt-1 min-h-20 w-full rounded border p-2 font-mono text-xs"
-						value={expected}
-						onChange={(event) => setExpected(event.target.value)}
-					/>
-				</label>
-				<label className="block text-sm">
-					Metadata
-					<textarea
-						className="mt-1 min-h-16 w-full rounded border p-2 font-mono text-xs"
-						value={metadata}
-						onChange={(event) => setMetadata(event.target.value)}
-					/>
-				</label>
-				{error && (
-					<p className="text-sm text-destructive" role="alert">
-						{error}
-					</p>
-				)}
-				<Button disabled={pending} onClick={() => void add()}>
-					{pending ? "Adding to draft..." : "Add case to draft"}
-				</Button>
-			</section>
-			<div className="space-y-2">
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-lg">
+						{editing ? "Edit draft case" : "Add JSON case"}
+					</CardTitle>
+					<CardDescription>
+						Saved cases require an explicit review before publication.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<label
+						className="grid gap-2 text-sm font-medium"
+						htmlFor="dataset-input"
+					>
+						Input
+						<textarea
+							id="dataset-input"
+							className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							value={input}
+							onChange={(event) => setInput(event.target.value)}
+						/>
+					</label>
+					<label
+						className="grid gap-2 text-sm font-medium"
+						htmlFor="dataset-expected"
+					>
+						Expected output (optional)
+						<textarea
+							id="dataset-expected"
+							className="min-h-20 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							value={expected}
+							onChange={(event) => setExpected(event.target.value)}
+						/>
+					</label>
+					<label
+						className="grid gap-2 text-sm font-medium"
+						htmlFor="dataset-metadata"
+					>
+						Metadata
+						<textarea
+							id="dataset-metadata"
+							className="min-h-16 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							value={metadata}
+							onChange={(event) => setMetadata(event.target.value)}
+						/>
+					</label>
+					<label
+						className="grid gap-2 text-sm font-medium"
+						htmlFor="dataset-external-id"
+					>
+						External source identity (optional)
+						<Input
+							id="dataset-external-id"
+							value={externalId}
+							onChange={(event) => setExternalId(event.target.value)}
+							maxLength={200}
+						/>
+					</label>
+					{error && (
+						<p className="text-sm text-destructive" role="alert">
+							{error}
+						</p>
+					)}
+					<div className="flex flex-wrap gap-2">
+						<Button disabled={pending} onClick={() => void add()}>
+							{pending
+								? "Saving..."
+								: editing
+									? "Save and require review"
+									: "Add case to draft"}
+						</Button>
+						{editing && (
+							<Button
+								variant="outline"
+								disabled={pending}
+								onClick={() => setEditing(null)}
+							>
+								Cancel edit
+							</Button>
+						)}
+					</div>
+				</CardContent>
+			</Card>
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-lg">Import JSON cases</CardTitle>
+					<CardDescription>
+						Paste up to 500 canonical rows. Invalid rows leave the draft
+						unchanged.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-3">
+					<label
+						className="grid gap-2 text-sm font-medium"
+						htmlFor="dataset-import"
+					>
+						JSON array
+						<textarea
+							id="dataset-import"
+							className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							placeholder='[{"item_key":"case-1","input":{"question":"..."}}]'
+							value={importValue}
+							onChange={(event) => setImportValue(event.target.value)}
+						/>
+					</label>
+					<Button
+						variant="outline"
+						disabled={pending || !importValue.trim()}
+						onClick={() => void importRows()}
+					>
+						{pending ? "Importing..." : "Import into draft"}
+					</Button>
+				</CardContent>
+			</Card>
+			<div className="flex flex-wrap items-center gap-3">
 				<Button
 					variant="outline"
 					disabled={pending}
 					onClick={() => void publish()}
 				>
-					{pending ? "Publishing..." : "Publish draft"}
+					{pending ? "Publishing..." : "Publish reviewed draft"}
 				</Button>
 				<p className="text-sm text-muted-foreground">
 					Changes stay in the shared draft until you publish.
 				</p>
 			</div>
+			{validationErrors.length > 0 && (
+				<div
+					className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+					role="alert"
+				>
+					<p className="font-medium">Draft validation needs attention</p>
+					<ul className="mt-2 list-disc space-y-1 pl-5">
+						{validationErrors.map((issue, index) => (
+							<li key={`${issue.item_key ?? "draft"}-${issue.field}-${index}`}>
+								{issue.item_key ? `${issue.item_key}: ` : ""}
+								{issue.message}
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+			{items.data?.items.length === 0 && (
+				<PageMessage title="Draft cases">
+					No cases yet. Add a JSON case, import rows, or capture redacted
+					evidence from a trace.
+				</PageMessage>
+			)}
 			<ul className="space-y-3">
 				{items.data?.items.map((item) => (
-					<li key={item.id} className="rounded border p-3">
+					<li
+						key={item.id}
+						className="rounded-lg border border-border bg-background p-4"
+					>
+						<div className="mb-3 flex flex-wrap items-center gap-2">
+							<Badge
+								variant={item.state === "reviewed" ? "success" : "secondary"}
+							>
+								{item.state === "reviewed" ? "Reviewed" : "Needs review"}
+							</Badge>
+							{item.capture_context?.redaction_applied && (
+								<Badge variant="outline">Redacted capture</Badge>
+							)}
+							{item.external_id && (
+								<span className="text-xs text-muted-foreground">
+									External: {item.external_id}
+								</span>
+							)}
+						</div>
 						<pre className="overflow-auto text-xs">
 							{JSON.stringify(item.input, null, 2)}
 						</pre>
@@ -370,7 +674,7 @@ export function DatasetDetailPage() {
 								Expected: {JSON.stringify(item.expected_output, null, 2)}
 							</pre>
 						)}
-						<div className="mt-2 flex justify-between text-xs text-muted-foreground">
+						<div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
 							{item.source_trace_id && (
 								<Link
 									className="underline"
@@ -380,17 +684,73 @@ export function DatasetDetailPage() {
 									Source trace
 								</Link>
 							)}
-							<Button
-								size="sm"
-								variant="ghost"
-								disabled={deletingItemId !== null}
-								onClick={() => void remove(item)}
-							>
-								{deletingItemId === item.id
-									? "Deleting from draft..."
-									: "Delete from draft"}
-							</Button>
+							<div className="flex flex-wrap gap-2">
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={pending}
+									onClick={() => edit(item)}
+								>
+									Edit
+								</Button>
+								{item.state !== "reviewed" && (
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={pending}
+										onClick={() => void review(item)}
+									>
+										Mark reviewed
+									</Button>
+								)}
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={pending}
+									onClick={() => void move(item, -1)}
+								>
+									Move up
+								</Button>
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={pending}
+									onClick={() => void move(item, 1)}
+								>
+									Move down
+								</Button>
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={pending}
+									onClick={() => void showHistory(item)}
+								>
+									Revision history
+								</Button>
+								<Button
+									size="sm"
+									variant="ghost"
+									disabled={deletingItemId !== null || pending}
+									onClick={() => void remove(item)}
+								>
+									{deletingItemId === item.id
+										? "Deleting from draft..."
+										: "Delete from draft"}
+								</Button>
+							</div>
 						</div>
+						{history?.itemId === item.id && (
+							<div className="mt-3 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+								<p className="font-medium text-foreground">Revision history</p>
+								<ul className="mt-2 space-y-1">
+									{history.items.map((revision) => (
+										<li key={revision.item_revision}>
+											Revision {revision.item_revision}: {revision.action}
+										</li>
+									))}
+								</ul>
+							</div>
+						)}
 					</li>
 				))}
 			</ul>

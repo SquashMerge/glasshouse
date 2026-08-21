@@ -138,8 +138,17 @@ describe("dataset contracts", () => {
 			input: {},
 			expected_output: null,
 			metadata: {},
+			validation_version: 1,
+			state: "reviewed",
+			external_id: null,
 			source_trace_id: null,
 			source_observation_id: null,
+			source_feedback_id: null,
+			capture_context: {},
+			created_by: null,
+			updated_by: null,
+			reviewed_by: null,
+			reviewed_at: null,
 			created_at: NOW.toISOString(),
 		});
 		expect(result.success).toBe(true);
@@ -330,7 +339,7 @@ describe("dataset repository", () => {
 			authorization,
 		});
 		expect(DatasetDraftItem.safeParse(result).success).toBe(true);
-		expect(result).toEqual({
+		expect(result).toMatchObject({
 			id: "33333333-3333-4333-8333-333333333333",
 			item_key: "stable",
 			input: { question: "hello" },
@@ -339,6 +348,9 @@ describe("dataset repository", () => {
 			source_trace_id: "trace",
 			source_observation_id: null,
 			position: 0,
+			validation_version: 1,
+			state: "reviewed",
+			capture_context: {},
 		});
 	});
 
@@ -586,6 +598,7 @@ describe("dataset repository", () => {
 					},
 				],
 			},
+			{ rows: [] },
 			{ rows: [{ version_id: "version", item_count: 2 }] },
 			{ rows: [] },
 			{ rows: [] },

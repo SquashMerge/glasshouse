@@ -55,8 +55,8 @@ BEGIN
 	END IF;
 	INSERT INTO dataset_drafts (id, project_id, dataset_id, created_by)
 	VALUES ('a4000000-0000-4000-8000-000000000005', '11111111-1111-1111-1111-111111111111', 'a4000000-0000-4000-8000-000000000001', 'a4000000-0000-4000-8000-000000000006');
-	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input)
-	VALUES ('a4000000-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111', 'a4000000-0000-4000-8000-000000000005', 'cross-project-feedback', 0, '{}'::jsonb);
+	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, created_by, updated_by)
+	VALUES ('a4000000-0000-4000-8000-000000000007', '11111111-1111-1111-1111-111111111111', 'a4000000-0000-4000-8000-000000000005', 'cross-project-feedback', 0, '{}'::jsonb, 'a4000000-0000-4000-8000-000000000006', 'a4000000-0000-4000-8000-000000000006');
 	INSERT INTO scores (id, project_id, name, value)
 	VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'human.feedback', 1);
 	BEGIN
@@ -903,7 +903,7 @@ BEGIN
 		'a1000000-0000-4000-8000-000000000012'
 	FROM datasets
 	WHERE id = 'a1000000-0000-4000-8000-000000000001';
-	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)
+	INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id, created_by, updated_by)
 	VALUES (
 		'a1000000-0000-4000-8000-000000000009',
 		'11111111-1111-1111-1111-111111111111',
@@ -911,7 +911,9 @@ BEGIN
 		'feedback-scope-score-1',
 		0,
 		'{}',
-		'c1000000-0000-4000-8000-000000000001'
+		'c1000000-0000-4000-8000-000000000001',
+		'a1000000-0000-4000-8000-000000000012',
+		'a1000000-0000-4000-8000-000000000012'
 	);
 	UPDATE feedback_reviews
 	SET status = 'added_to_dataset',

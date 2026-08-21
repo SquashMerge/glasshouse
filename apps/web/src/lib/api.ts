@@ -74,11 +74,23 @@ export interface DatasetDraft {
 export interface DatasetDraftItem {
 	id: string;
 	item_key: string;
+	validation_version: number;
+	state: "draft" | "reviewed";
 	input: JsonObject;
 	expected_output: JsonObject | null;
 	metadata: JsonObject;
+	external_id: string | null;
 	source_trace_id: string | null;
 	source_observation_id: string | null;
+	source_feedback_id: string | null;
+	capture_context: {
+		kind?: "trace" | "observation" | "feedback";
+		redaction_applied?: boolean;
+	};
+	created_by: string | null;
+	updated_by: string | null;
+	reviewed_by: string | null;
+	reviewed_at: string | null;
 	position: number;
 }
 export async function getDatasetBySlug(input: {
@@ -132,6 +144,7 @@ export async function upsertDatasetDraftItem(input: {
 	input: JsonObject;
 	expected_output?: JsonObject | null;
 	metadata?: JsonObject;
+	external_id?: string | null;
 	source_trace_id?: string | null;
 	source_observation_id?: string | null;
 }): Promise<DatasetDraftItem> {
@@ -149,6 +162,160 @@ export async function upsertDatasetDraftItem(input: {
 			},
 		),
 		"upsertDatasetDraftItem",
+	);
+}
+export async function validateDatasetDraft(input: {
+	project_id: string;
+	slug: string;
+}): Promise<{
+	validation_version: number;
+	valid: boolean;
+	errors: Array<{
+		item_id: string | null;
+		item_key: string | null;
+		field: string;
+		code: string;
+		message: string;
+	}>;
+}> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/validate${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"validateDatasetDraft",
+	);
+}
+export async function importDatasetDraftItems(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+	idempotency_key: string;
+	items: Array<{
+		item_key: string;
+		input: JsonObject;
+		expected_output?: JsonObject | null;
+		metadata?: JsonObject;
+		external_id?: string | null;
+		source_trace_id?: string | null;
+		source_observation_id?: string | null;
+	}>;
+}): Promise<{
+	items: DatasetDraftItem[];
+	validation_version: number;
+	revision: number;
+	idempotent: boolean;
+}> {
+	const { project_id, slug, revision, idempotency_key, items } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(slug)}/draft/import${buildQs({ project_id })}`,
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"if-match": `"${revision}"`,
+					"idempotency-key": idempotency_key,
+				},
+				body: JSON.stringify({ items }),
+			},
+		),
+		"importDatasetDraftItems",
+	);
+}
+export async function captureDatasetDraftItem(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+	idempotency_key: string;
+	item_key?: string;
+	external_id?: string | null;
+	source_trace_id: string;
+	source_observation_id?: string;
+}): Promise<{
+	item: DatasetDraftItem | null;
+	validation_version: number;
+	revision: number;
+	idempotent: boolean;
+}> {
+	const { project_id, slug, revision, idempotency_key, ...body } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(slug)}/draft/capture${buildQs({ project_id })}`,
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"if-match": `"${revision}"`,
+					"idempotency-key": idempotency_key,
+				},
+				body: JSON.stringify(body),
+			},
+		),
+		"captureDatasetDraftItem",
+	);
+}
+export async function reorderDatasetDraftItems(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+	item_ids: string[];
+}): Promise<{
+	validation_version: number;
+	revision: number;
+	idempotent: false;
+}> {
+	const { project_id, slug, revision, item_ids } = input;
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(slug)}/draft/items/order${buildQs({ project_id })}`,
+			{
+				method: "PUT",
+				headers: {
+					"content-type": "application/json",
+					"if-match": `"${revision}"`,
+				},
+				body: JSON.stringify({ item_ids }),
+			},
+		),
+		"reorderDatasetDraftItems",
+	);
+}
+export async function reviewDatasetDraftItem(input: {
+	project_id: string;
+	slug: string;
+	item_id: string;
+	revision: number;
+}): Promise<DatasetDraftItem> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/items/${encodeURIComponent(input.item_id)}/review${buildQs({ project_id: input.project_id })}`,
+			{
+				method: "POST",
+				headers: { "if-match": `"${input.revision}"` },
+			},
+		),
+		"reviewDatasetDraftItem",
+	);
+}
+export async function listDatasetDraftItemRevisions(input: {
+	project_id: string;
+	slug: string;
+	item_id: string;
+}): Promise<{
+	items: Array<
+		DatasetDraftItem & {
+			item_revision: number;
+			action: "upserted" | "captured" | "imported" | "reviewed" | "reordered";
+			created_at: string;
+		}
+	>;
+}> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/draft/items/${encodeURIComponent(input.item_id)}/revisions${buildQs({ project_id: input.project_id })}`,
+		),
+		"listDatasetDraftItemRevisions",
 	);
 }
 export async function discardDatasetDraft(input: {
@@ -192,11 +359,23 @@ export interface DatasetItem {
 	id: string;
 	dataset_id: string;
 	item_key: string | null;
+	validation_version: number;
+	state: "draft" | "reviewed";
 	input: JsonObject;
 	expected_output: JsonObject | null;
 	metadata: JsonObject;
+	external_id: string | null;
 	source_trace_id: string | null;
 	source_observation_id: string | null;
+	source_feedback_id: string | null;
+	capture_context: {
+		kind?: "trace" | "observation" | "feedback";
+		redaction_applied?: boolean;
+	};
+	created_by: string | null;
+	updated_by: string | null;
+	reviewed_by: string | null;
+	reviewed_at: string | null;
 	created_at: string;
 }
 export interface Experiment {
@@ -429,15 +608,20 @@ export async function promoteFeedback(input: {
 	project_id: string;
 	id: string;
 	dataset_id: string;
-	input: JsonObject;
-	expected_output?: JsonObject | null;
-	metadata?: JsonObject;
+	item_key?: string;
+	idempotency_key?: string;
 }): Promise<Feedback> {
-	const { project_id, id, ...body } = input;
+	const { project_id, id, idempotency_key, ...body } = input;
 	return responseJson(
 		await authedFetch(
 			`/v1/feedback/${encodeURIComponent(id)}/promote${buildQs({ project_id })}`,
-			jsonRequest(body),
+			{
+				...jsonRequest(body),
+				headers: {
+					"content-type": "application/json",
+					"idempotency-key": idempotency_key ?? crypto.randomUUID(),
+				},
+			},
 		),
 		"promoteFeedback",
 	);

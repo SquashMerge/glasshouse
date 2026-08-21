@@ -154,6 +154,11 @@ describe("DatasetDetailPage draft lifecycle", () => {
 
 	it("keeps an added draft case when a cancelled stale refresh resolves", async () => {
 		const staleResponse = deferred<{ items: (typeof publishedItem)[] }>();
+		const draftItem = {
+			...publishedItem,
+			id: "44444444-4444-4444-8444-444444444444",
+			input: { question: "new" },
+		};
 		let staleRequestSignal: AbortSignal | undefined;
 		let staleRequestObservedAbort = false;
 		let staleResponseDelivered = false;
@@ -168,17 +173,9 @@ describe("DatasetDetailPage draft lifecycle", () => {
 					staleResponseDelivered = true;
 					return response;
 				});
-			});
-		upsertDatasetDraftItem.mockResolvedValue({
-			id: "44444444-4444-4444-8444-444444444444",
-			item_key: "new-case",
-			input: { question: "new" },
-			expected_output: null,
-			metadata: {},
-			source_trace_id: null,
-			source_observation_id: null,
-			position: 0,
-		});
+			})
+			.mockResolvedValue({ items: [draftItem] });
+		upsertDatasetDraftItem.mockResolvedValue(draftItem);
 		const { client } = renderPage();
 
 		await screen.findByText("Golden");

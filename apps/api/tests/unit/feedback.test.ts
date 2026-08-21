@@ -247,8 +247,32 @@ describe("feedback review persistence", () => {
 					return { rows: [{ id: "dataset-id", slug: "dataset" }] };
 				if (sql.startsWith("WITH inserted AS"))
 					return { rows: [{ id: draftId, revision: 2, created: false }] };
+				if (sql.startsWith("SELECT dr.* FROM dataset_drafts"))
+					return {
+						rows: [{ id: draftId, dataset_id: "dataset-id", revision: 2 }],
+					};
 				if (sql.startsWith("INSERT INTO dataset_draft_items"))
-					return { rows: [{ id: "item-id" }] };
+					return {
+						rows: [
+							{
+								id: "item-id",
+								project_id: base.project_id,
+								item_key: feedbackId,
+								position: 0,
+								input: { question: "hello" },
+								expected_output: { answer: "world" },
+								metadata: {},
+								validation_version: 1,
+								state: "draft",
+								capture_context: { kind: "feedback" },
+								created_by: authorization.actor_id,
+								updated_by: authorization.actor_id,
+								created_at: now,
+							},
+						],
+					};
+				if (sql.startsWith("UPDATE dataset_drafts SET revision"))
+					return { rows: [{ revision: 3 }] };
 				if (sql.startsWith("UPDATE feedback_reviews"))
 					return { rows: [{ updated_at: now }] };
 				return { rows: [] };
@@ -260,27 +284,25 @@ describe("feedback review persistence", () => {
 			project_id: base.project_id,
 			id: feedbackId,
 			dataset_id: "22222222-2222-4222-8222-222222222222",
-			input: { question: "hello" },
-			expected_output: { answer: "world" },
-			metadata: { source: "feedback" },
+			captured_input: { question: "hello" },
+			captured_expected_output: { answer: "world" },
+			idempotency_key: "feedback-promotion-key",
 			authorization: { ...authorization, operation: "governed" },
 		});
 
 		const insert = queries.find(({ sql }) =>
 			sql.startsWith("INSERT INTO dataset_draft_items"),
 		);
-		expect(insert?.sql).toContain("$9::uuid");
-		expect(insert?.values).toEqual([
-			base.project_id,
-			draftId,
-			feedbackId,
-			JSON.stringify({ question: "hello" }),
-			JSON.stringify({ answer: "world" }),
-			JSON.stringify({ source: "feedback" }),
-			base.trace_id,
-			null,
-			feedbackId,
-		]);
+		expect(insert?.sql).toContain("feedback_score_id");
+		expect(insert?.values).toEqual(
+			expect.arrayContaining([
+				base.project_id,
+				draftId,
+				feedbackId,
+				JSON.stringify({ question: "hello" }),
+				JSON.stringify({ answer: "world" }),
+			]),
+		);
 	});
 
 	it("rejects legacy review promotion rather than writing a mutable dataset item ID", async () => {

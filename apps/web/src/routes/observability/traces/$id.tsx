@@ -310,16 +310,6 @@ function TraceDetailPageContent({
 						<AddToDatasetDialog
 							projectId={projectId}
 							traceId={id}
-							inputText={
-								typeof model.trace?.input_text === "string"
-									? model.trace.input_text
-									: ""
-							}
-							outputText={
-								typeof model.trace?.output_text === "string"
-									? model.trace.output_text
-									: ""
-							}
 							label="trace"
 						/>
 					</>
@@ -438,16 +428,6 @@ function TraceDetailPageContent({
 										projectId={projectId}
 										traceId={id}
 										observationId={selectedObservation.observation_id}
-										inputText={
-											typeof selectedObservation.input_text === "string"
-												? selectedObservation.input_text
-												: ""
-										}
-										outputText={
-											typeof selectedObservation.output_text === "string"
-												? selectedObservation.output_text
-												: ""
-										}
 										label="Observation"
 									/>
 								</>

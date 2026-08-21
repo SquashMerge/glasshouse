@@ -9,24 +9,21 @@ import {
 
 const {
 	createDatasetDraft,
+	captureDatasetDraftItem,
 	createFeedback,
 	listDatasets,
-	publishDatasetDraft,
-	upsertDatasetDraftItem,
 } = vi.hoisted(() => ({
 	createDatasetDraft: vi.fn(),
+	captureDatasetDraftItem: vi.fn(),
 	createFeedback: vi.fn(),
 	listDatasets: vi.fn(),
-	publishDatasetDraft: vi.fn(),
-	upsertDatasetDraftItem: vi.fn(),
 }));
 
 vi.mock("../../src/lib/api", () => ({
 	createDatasetDraft,
+	captureDatasetDraftItem,
 	createFeedback,
 	listDatasets,
-	publishDatasetDraft,
-	upsertDatasetDraftItem,
 }));
 
 import {
@@ -40,93 +37,70 @@ afterEach(() => {
 });
 
 describe("dataset feedback actions", () => {
-	it("retains invalid edited JSON and never submits a value wrapper", async () => {
+	it("captures only source identity and lets the server redact the source", async () => {
 		listDatasets.mockResolvedValue({
 			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
 		});
 		createDatasetDraft.mockResolvedValue({ revision: 1 });
-		upsertDatasetDraftItem.mockResolvedValue({});
+		captureDatasetDraftItem.mockResolvedValue({});
 		render(
 			<AddToDatasetDialog
 				projectId="project"
 				traceId="trace-a"
-				inputText='{"question":"one"}'
-				outputText='{"answer":"one"}'
 				label="trace"
 			/>,
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
 		await screen.findByRole("dialog");
-		fireEvent.change(screen.getByLabelText("Input"), {
-			target: { value: "not json" },
-		});
 		fireEvent.change(screen.getByLabelText("Dataset"), {
 			target: { value: "dataset" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
-
+		fireEvent.click(
+			screen.getByRole("button", { name: "Capture redacted case" }),
+		);
+		await waitFor(() =>
+			expect(captureDatasetDraftItem).toHaveBeenCalledTimes(1),
+		);
+		expect(captureDatasetDraftItem).toHaveBeenCalledWith(
+			expect.objectContaining({
+				project_id: "project",
+				slug: "golden",
+				revision: 1,
+				source_trace_id: "trace-a",
+			}),
+		);
 		expect(
-			await screen.findByText("Input must be valid JSON object"),
-		).toBeTruthy();
-		expect(upsertDatasetDraftItem).not.toHaveBeenCalled();
+			JSON.stringify(captureDatasetDraftItem.mock.calls[0]?.[0]),
+		).not.toContain("question");
 	});
 
-	it("resets its draft when the trace target changes and restores trigger focus on Escape", async () => {
+	it("resets selection when the trace target changes and restores trigger focus on Escape", async () => {
 		listDatasets.mockResolvedValue({ items: [] });
 		const { rerender } = render(
 			<AddToDatasetDialog
 				projectId="project"
 				traceId="trace-a"
-				inputText='{"question":"one"}'
 				label="trace"
 			/>,
 		);
 		const trigger = screen.getByRole("button", { name: "Add to dataset" });
 		fireEvent.click(trigger);
 		await screen.findByRole("dialog");
-		fireEvent.change(screen.getByLabelText("Input"), {
-			target: { value: '{"question":"edited"}' },
+		fireEvent.change(screen.getByLabelText("Dataset"), {
+			target: { value: "dataset" },
 		});
 		rerender(
 			<AddToDatasetDialog
 				projectId="project"
 				traceId="trace-b"
-				inputText='{"question":"two"}'
 				label="trace"
 			/>,
 		);
 
-		expect(screen.getByLabelText("Input")).toHaveValue(
-			'{\n  "question": "two"\n}',
-		);
+		expect(screen.getByLabelText("Dataset")).toHaveValue("");
 		fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 		await waitFor(() => expect(trigger).toHaveFocus());
-	});
-
-	it("hydrates delayed trace values before the dialog is opened", async () => {
-		listDatasets.mockResolvedValue({ items: [] });
-		const { rerender } = render(
-			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
-		);
-		rerender(
-			<AddToDatasetDialog
-				projectId="project"
-				traceId="trace"
-				inputText='{"question":"delayed"}'
-				outputText='{"answer":"delayed"}'
-				label="trace"
-			/>,
-		);
-
-		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
-		await screen.findByRole("dialog");
-		expect(screen.getByLabelText("Input")).toHaveValue(
-			'{\n  "question": "delayed"\n}',
-		);
-		expect(screen.getByLabelText("Expected output suggestion")).toHaveValue(
-			'{\n  "answer": "delayed"\n}',
-		);
 	});
 
 	it("shows dataset loading failures and retries without an unhandled rejection", async () => {
@@ -185,43 +159,37 @@ describe("dataset feedback actions", () => {
 		await waitFor(() => expect(trigger).toHaveFocus());
 	});
 
-	it("leaves absent source output blank and submits null expected output", async () => {
+	it("does not publish when capture succeeds", async () => {
 		listDatasets.mockResolvedValue({
 			items: [{ id: "dataset", name: "Golden", slug: "golden" }],
 		});
 		createDatasetDraft.mockResolvedValue({ revision: 1 });
-		upsertDatasetDraftItem.mockResolvedValue({});
+		captureDatasetDraftItem.mockResolvedValue({});
 		render(
-			<AddToDatasetDialog
-				projectId="project"
-				traceId="trace"
-				inputText='{"question":"one"}'
-				label="trace"
-			/>,
+			<AddToDatasetDialog projectId="project" traceId="trace" label="trace" />,
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Add to dataset" }));
 		await screen.findByRole("dialog");
-		expect(screen.getByLabelText("Expected output suggestion")).toHaveValue("");
 		fireEvent.change(screen.getByLabelText("Dataset"), {
 			target: { value: "dataset" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Capture redacted case" }),
+		);
 
 		await waitFor(() =>
-			expect(upsertDatasetDraftItem).toHaveBeenCalledTimes(1),
+			expect(captureDatasetDraftItem).toHaveBeenCalledTimes(1),
 		);
 		expect(createDatasetDraft).toHaveBeenCalledWith({
 			project_id: "project",
 			slug: "golden",
 		});
-		expect(upsertDatasetDraftItem).toHaveBeenCalledWith(
+		expect(captureDatasetDraftItem).toHaveBeenCalledWith(
 			expect.objectContaining({
-				expected_output: null,
 				revision: 1,
 				slug: "golden",
 			}),
 		);
-		expect(publishDatasetDraft).not.toHaveBeenCalled();
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 

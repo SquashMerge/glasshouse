@@ -10,7 +10,6 @@ import {
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { PageMessage } from "./prompts";
 import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
@@ -141,17 +140,6 @@ export function FeedbackPage() {
 		</div>
 	);
 }
-function object(value: string, label: string) {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(value);
-	} catch {
-		throw new Error(`${label} must be valid JSON object`);
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-		throw new Error(`${label} must be a JSON object`);
-	return parsed as Record<string, unknown>;
-}
 function FeedbackRow({
 	item,
 	projectId,
@@ -166,10 +154,9 @@ function FeedbackRow({
 		queryFn: () => listDatasets(projectId),
 	});
 	const [datasetId, setDatasetId] = React.useState("");
-	const [input, setInput] = React.useState("{}");
-	const [expected, setExpected] = React.useState("{}");
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
+	const promotionKey = React.useRef<string | null>(null);
 	async function transition(status: string) {
 		if (pending) return;
 		try {
@@ -188,13 +175,14 @@ function FeedbackRow({
 		try {
 			setError("");
 			setPending(true);
+			promotionKey.current ??= crypto.randomUUID();
 			await promoteFeedback({
 				project_id: projectId,
 				id: item.id,
 				dataset_id: datasetId,
-				input: object(input, "Dataset input"),
-				expected_output: object(expected, "Expected output"),
+				idempotency_key: promotionKey.current,
 			});
+			promotionKey.current = null;
 			onUpdated();
 		} catch (cause) {
 			setError((cause as Error).message);
@@ -253,7 +241,10 @@ function FeedbackRow({
 							id={`feedback-dataset-${item.id}`}
 							className="h-8 w-auto text-sm"
 							value={datasetId}
-							onChange={(event) => setDatasetId(event.target.value)}
+							onChange={(event) => {
+								promotionKey.current = null;
+								setDatasetId(event.target.value);
+							}}
 						>
 							<option value="">Choose dataset</option>
 							{datasets.data?.items.map((dataset) => (
@@ -262,20 +253,9 @@ function FeedbackRow({
 								</option>
 							))}
 						</Select>
-						<Input
-							className="h-8 w-40 text-xs"
-							value={input}
-							onChange={(event) => setInput(event.target.value)}
-							aria-label="Dataset input JSON"
-							disabled={pending}
-						/>
-						<Input
-							className="h-8 w-40 text-xs"
-							value={expected}
-							onChange={(event) => setExpected(event.target.value)}
-							aria-label="Expected output JSON"
-							disabled={pending}
-						/>
+						<span className="text-xs text-muted-foreground">
+							Server captures the redacted source into a reviewable draft item.
+						</span>
 						<Button
 							size="sm"
 							disabled={!datasetId || pending}

@@ -9,6 +9,7 @@ import {
 	createFeedback,
 	authorizeFeedbackProject,
 	FeedbackRepositoryError,
+	getFeedbackPromotionTarget,
 	listFeedback,
 	promoteFeedback,
 	reviewFeedback,
@@ -23,6 +24,7 @@ import {
 	FeedbackPromotion,
 	FeedbackReview,
 } from "../schemas/feedback.js";
+import { captureTextAsObject } from "../lib/dataset-draft-validation.js";
 
 const errorResponse = (c: Context, cause: unknown) => {
 	const error =
@@ -107,6 +109,7 @@ export const promoteFeedbackRoute = createRoute({
 	request: {
 		params: FeedbackIdParam,
 		query: FeedbackListQuery.pick({ project_id: true }),
+		headers: FeedbackIdempotencyHeader,
 		body: { content: { "application/json": { schema: FeedbackPromotion } } },
 	},
 	responses: {
@@ -131,6 +134,27 @@ async function targetExists(input: {
 		format: "JSONEachRow",
 	});
 	return ((await result.json()) as unknown[]).length > 0;
+}
+async function captureSource(input: {
+	organization_id: string;
+	project_id: string;
+	trace_id: string;
+	observation_id?: string | null;
+}) {
+	const table = input.observation_id ? "observations" : "traces";
+	const result = await ch().query({
+		query: `SELECT substring(input_text, 1, 32768) AS input_text, substring(output_text, 1, 32768) AS output_text FROM ${table} WHERE organization_id={organization_id:String} AND project_id={project_id:String} AND trace_id={trace_id:String}${input.observation_id ? " AND observation_id={observation_id:String}" : ""} LIMIT 1`,
+		query_params: input.observation_id
+			? { ...input, observation_id: input.observation_id }
+			: input,
+		format: "JSONEachRow",
+	});
+	const row = ((await result.json()) as Array<Record<string, unknown>>)[0];
+	if (!row) return null;
+	return {
+		input_text: typeof row.input_text === "string" ? row.input_text : "",
+		output_text: typeof row.output_text === "string" ? row.output_text : "",
+	};
 }
 export const handleCreateFeedback = async (
 	c: Parameters<RouteHandler<typeof createFeedbackRoute>>[0],
@@ -189,12 +213,39 @@ export const handlePromoteFeedback = async (
 	c: Parameters<RouteHandler<typeof promoteFeedbackRoute>>[0],
 ) => {
 	try {
+		const tenant = trustedTenant(c);
+		const project_id = c.req.valid("query").project_id;
+		const authorization = projectAuthorization(tenant, "product_write");
+		const target = await getFeedbackPromotionTarget(pgPool(), {
+			project_id,
+			id: c.req.valid("param").id,
+			authorization,
+		});
+		const source =
+			target.status === "added_to_dataset"
+				? { input_text: "", output_text: "" }
+				: await captureSource({
+						organization_id: tenant.organizationId,
+						project_id,
+						trace_id: target.trace_id,
+						observation_id: target.observation_id,
+					});
+		if (!source)
+			throw new FeedbackRepositoryError(
+				"TARGET_NOT_FOUND",
+				"Feedback target not found",
+			);
 		return c.json(
 			await promoteFeedback(pgPool(), {
-				project_id: c.req.valid("query").project_id,
+				project_id,
 				id: c.req.valid("param").id,
 				...c.req.valid("json"),
-				authorization: projectAuthorization(trustedTenant(c), "governed"),
+				captured_input: captureTextAsObject(source.input_text),
+				captured_expected_output: source.output_text
+					? captureTextAsObject(source.output_text)
+					: null,
+				idempotency_key: c.req.valid("header")["idempotency-key"],
+				authorization,
 			}),
 		);
 	} catch (cause) {
@@ -210,7 +261,7 @@ export const handleReviewFeedback = async (
 				project_id: c.req.valid("query").project_id,
 				id: c.req.valid("param").id,
 				...c.req.valid("json"),
-				authorization: projectAuthorization(trustedTenant(c), "governed"),
+				authorization: projectAuthorization(trustedTenant(c), "product_write"),
 			}),
 		);
 	} catch (cause) {

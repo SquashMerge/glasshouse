@@ -5,6 +5,7 @@ import {
 	lockProjectAuditProvenance,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
+import { captureDatasetDraftItemInTransaction } from "./datasets.js";
 
 type Row = Record<string, unknown>;
 export class FeedbackRepositoryError extends Error {
@@ -264,15 +265,59 @@ export async function listFeedback(
 		client.release();
 	}
 }
+export async function getFeedbackPromotionTarget(
+	db: Pick<Pool, "connect">,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		await requireActiveProject(client, input.project_id, input.authorization);
+		const existing = await client.query(
+			`${SELECT} WHERE s.id=$1 AND s.project_id=$2 AND s.name='human.feedback' FOR KEY SHARE`,
+			[input.id, input.project_id],
+		);
+		if (!existing.rows[0])
+			throw new FeedbackRepositoryError("NOT_FOUND", "Feedback not found");
+		const current = present(existing.rows[0]);
+		if (current.status !== "reviewed" && current.status !== "added_to_dataset")
+			throw new FeedbackRepositoryError(
+				"CONFLICT",
+				"Feedback must be reviewed before promotion",
+			);
+		await client.query("COMMIT");
+		return {
+			trace_id: current.trace_id,
+			observation_id: current.observation_id,
+			status: current.status,
+		};
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		if (cause instanceof FeedbackRepositoryError) throw cause;
+		throw new FeedbackRepositoryError(
+			"INTERNAL",
+			"Feedback operation failed",
+			cause,
+		);
+	} finally {
+		client.release();
+	}
+}
+
 export async function promoteFeedback(
 	db: Pick<Pool, "connect">,
 	input: {
 		project_id: string;
 		id: string;
 		dataset_id: string;
-		input: Record<string, unknown>;
-		expected_output?: Record<string, unknown> | null;
-		metadata?: Record<string, unknown>;
+		item_key?: string;
+		captured_input: Record<string, unknown>;
+		captured_expected_output?: Record<string, unknown> | null;
+		idempotency_key: string;
 		authorization: ProjectAuthorization;
 	},
 ) {
@@ -308,7 +353,7 @@ export async function promoteFeedback(
 		if (!dataset.rows[0])
 			throw new FeedbackRepositoryError("NOT_FOUND", "Dataset not found");
 		const draft = await client.query(
-			`WITH inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM datasets WHERE id = $2 AND project_id = $1 ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.source_trace_id, i.source_observation_id FROM inserted d JOIN dataset_versions v ON v.project_id = d.project_id AND v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.project_id = v.project_id AND i.dataset_version_id = v.id) SELECT *, EXISTS (SELECT 1 FROM inserted) AS created FROM inserted UNION ALL SELECT d.*, false FROM dataset_drafts d WHERE d.dataset_id = $2 AND NOT EXISTS (SELECT 1 FROM inserted) LIMIT 1`,
+			`WITH inserted AS (INSERT INTO dataset_drafts (project_id, dataset_id, base_version, created_by) SELECT $1, id, latest_published_version, $3 FROM datasets WHERE id = $2 AND project_id = $1 ON CONFLICT (dataset_id) DO NOTHING RETURNING *), copied AS (INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, validation_version, state, capture_context, created_by, updated_by, reviewed_by, reviewed_at) SELECT d.project_id, d.id, i.item_key, i.position, i.input, i.expected_output, i.metadata, i.external_id, i.source_trace_id, i.source_observation_id, i.feedback_score_id, i.validation_version, i.state, i.capture_context, COALESCE(i.curated_by, d.created_by), COALESCE(i.curated_by, d.created_by), i.reviewed_by, i.reviewed_at FROM inserted d JOIN dataset_versions v ON v.project_id = d.project_id AND v.dataset_id = d.dataset_id AND v.version = d.base_version JOIN dataset_version_items i ON i.project_id = v.project_id AND i.dataset_version_id = v.id) SELECT *, EXISTS (SELECT 1 FROM inserted) AS created FROM inserted UNION ALL SELECT d.*, false FROM dataset_drafts d WHERE d.dataset_id = $2 AND NOT EXISTS (SELECT 1 FROM inserted) LIMIT 1`,
 			[input.project_id, input.dataset_id, input.authorization.actor_id],
 		);
 		const draftRow = draft.rows[0];
@@ -329,44 +374,34 @@ export async function promoteFeedback(
 				],
 			);
 		}
-		const inserted = await client.query(
-			`INSERT INTO dataset_draft_items (project_id, draft_id, item_key, position, input, expected_output, metadata, source_trace_id, source_observation_id, feedback_score_id) VALUES ($1,$2,$3,COALESCE((SELECT MAX(position) + 1 FROM dataset_draft_items WHERE draft_id=$2),0),$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9::uuid) ON CONFLICT (feedback_score_id) WHERE feedback_score_id IS NOT NULL DO NOTHING RETURNING id`,
-			[
-				input.project_id,
-				draftRow.id,
-				current.id,
-				JSON.stringify(input.input),
-				input.expected_output == null
-					? null
-					: JSON.stringify(input.expected_output),
-				JSON.stringify(input.metadata ?? {}),
-				current.trace_id,
-				current.observation_id,
-				current.id,
-			],
-		);
-		const itemId = inserted.rows[0]?.id as string | undefined;
+		const captured = await captureDatasetDraftItemInTransaction(client, {
+			project_id: input.project_id,
+			slug: dataset.rows[0].slug as string,
+			item_key: input.item_key ?? current.id,
+			input: input.captured_input,
+			expected_output: input.captured_expected_output ?? null,
+			metadata: {},
+			source_trace_id: current.trace_id,
+			source_observation_id: current.observation_id,
+			feedback_score_id: current.id,
+			capture_context: { kind: "feedback" },
+			idempotency_key: input.idempotency_key,
+			idempotency_operation: "feedback_promotion",
+			idempotency_request: {
+				feedback_id: current.id,
+				dataset_id: input.dataset_id,
+				item_key: input.item_key ?? current.id,
+				trace_id: current.trace_id,
+				observation_id: current.observation_id,
+			},
+			authorization: input.authorization,
+		});
+		const itemId = captured.item?.id ?? captured.item_id;
 		if (!itemId)
 			throw new FeedbackRepositoryError(
 				"CONFLICT",
-				"Feedback is already being promoted",
+				"Original draft item is no longer available",
 			);
-		await client.query(
-			"UPDATE dataset_drafts SET revision = revision + 1, updated_at = now() WHERE id = $1",
-			[draftRow.id],
-		);
-		await lockProjectAuditProvenance(client, input.project_id);
-		await client.query(
-			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, draft_revision) VALUES ($1, $2, $3, $4, $5, 'draft_item_upserted', $6)",
-			[
-				input.authorization.organization_id,
-				input.project_id,
-				input.dataset_id,
-				dataset.rows[0].slug,
-				input.authorization.actor_id,
-				Number(draftRow.revision) + 1,
-			],
-		);
 		const result = await client.query(
 			"UPDATE feedback_reviews SET status='added_to_dataset',dataset_id=$1,dataset_item_id=NULL,dataset_draft_item_id=$2,updated_at=now() WHERE score_id=$3 RETURNING updated_at",
 			[input.dataset_id, itemId, current.id],

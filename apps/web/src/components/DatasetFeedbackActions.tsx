@@ -1,60 +1,30 @@
 import * as React from "react";
 import {
+	captureDatasetDraftItem,
 	createDatasetDraft,
 	createFeedback,
 	listDatasets,
-	upsertDatasetDraftItem,
-	type JsonObject,
 } from "../lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
 
-function jsonObject(value: string, label: string): JsonObject {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(value);
-	} catch {
-		throw new Error(`${label} must be valid JSON object`);
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-		throw new Error(`${label} must be a JSON object`);
-	return parsed as JsonObject;
-}
-function initialJson(value: string | undefined) {
-	if (!value) return "{}";
-	try {
-		return JSON.stringify(jsonObject(value, "Value"), null, 2);
-	} catch {
-		return value;
-	}
-}
-function initialExpectedJson(value: string | undefined) {
-	return value ? initialJson(value) : "";
-}
 export function AddToDatasetDialog({
 	projectId,
 	traceId,
 	observationId,
-	inputText,
-	outputText,
 	label,
 }: {
 	projectId: string | null;
 	traceId: string;
 	observationId?: string;
-	inputText?: string;
-	outputText?: string;
 	label: string;
 }) {
 	const [open, setOpen] = React.useState(false);
 	const triggerRef = React.useRef<HTMLButtonElement>(null);
 	const dialogRef = React.useRef<HTMLDivElement>(null);
+	const idempotencyKey = React.useRef<string | null>(null);
 	const [datasetId, setDatasetId] = React.useState("");
-	const [input, setInput] = React.useState(() => initialJson(inputText));
-	const [expected, setExpected] = React.useState(() =>
-		initialExpectedJson(outputText),
-	);
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
 	const [datasetLoading, setDatasetLoading] = React.useState(false);
@@ -86,15 +56,9 @@ export function AddToDatasetDialog({
 	}, [datasetLoadAttempt, open, projectId]);
 	React.useEffect(() => {
 		setDatasetId("");
-		setInput(initialJson(inputText));
-		setExpected(initialExpectedJson(outputText));
 		setError("");
+		idempotencyKey.current = null;
 	}, [projectId, traceId, observationId]);
-	React.useEffect(() => {
-		if (open) return;
-		setInput(initialJson(inputText));
-		setExpected(initialExpectedJson(outputText));
-	}, [inputText, open, outputText]);
 	React.useEffect(() => {
 		if (!open) return;
 		dialogRef.current
@@ -111,10 +75,6 @@ export function AddToDatasetDialog({
 		if (!projectId || !datasetId || pending) return;
 		try {
 			setError("");
-			const parsedInput = jsonObject(input, "Input");
-			const parsedExpected = expected.trim()
-				? jsonObject(expected, "Expected output")
-				: null;
 			setPending(true);
 			const selected = datasets.find((dataset) => dataset.id === datasetId);
 			if (!selected) throw new Error("Dataset is no longer available");
@@ -122,13 +82,12 @@ export function AddToDatasetDialog({
 				project_id: projectId,
 				slug: selected.slug,
 			});
-			await upsertDatasetDraftItem({
+			idempotencyKey.current ??= crypto.randomUUID();
+			await captureDatasetDraftItem({
 				project_id: projectId,
 				slug: selected.slug,
-				item_key: crypto.randomUUID(),
 				revision: draft.revision,
-				input: parsedInput,
-				expected_output: parsedExpected,
+				idempotency_key: idempotencyKey.current,
 				source_trace_id: traceId,
 				source_observation_id: observationId,
 			});
@@ -184,7 +143,7 @@ export function AddToDatasetDialog({
 				>
 					<div className="w-full max-w-xl space-y-3 rounded-lg bg-background p-5 shadow-lg">
 						<h2 id="add-to-dataset-title" className="font-semibold">
-							Add {label} to dataset
+							Capture {label} as a Dataset draft
 						</h2>
 						<label className="block text-sm" htmlFor="dataset-choice">
 							Dataset
@@ -225,22 +184,14 @@ export function AddToDatasetDialog({
 								</Button>
 							</div>
 						)}
-						<label className="block text-sm">
-							Input
-							<textarea
-								className="mt-1 min-h-24 w-full rounded border p-2 font-mono text-xs"
-								value={input}
-								onChange={(event) => setInput(event.target.value)}
-							/>
-						</label>
-						<label className="block text-sm">
-							Expected output suggestion
-							<textarea
-								className="mt-1 min-h-24 w-full rounded border p-2 font-mono text-xs"
-								value={expected}
-								onChange={(event) => setExpected(event.target.value)}
-							/>
-						</label>
+						<p
+							className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground"
+							role="status"
+						>
+							Astraea reads the selected source again on the server, applies the
+							active redaction policy, and saves an unpublished item for review.
+							Source text in this browser is never submitted as Dataset content.
+						</p>
 						{error && (
 							<p className="text-sm text-destructive" role="alert">
 								{error}
@@ -254,7 +205,7 @@ export function AddToDatasetDialog({
 								disabled={pending || !datasetId}
 								onClick={() => void submit()}
 							>
-								{pending ? "Adding to draft..." : "Add case to draft"}
+								{pending ? "Capturing..." : "Capture redacted case"}
 							</Button>
 						</div>
 					</div>

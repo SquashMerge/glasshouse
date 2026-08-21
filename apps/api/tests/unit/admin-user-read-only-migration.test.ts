@@ -246,7 +246,7 @@ test("cross-project feedback probes accept only their trigger or foreign-key rej
 
 test("deletion dependency fixtures are created locally and asserted by identity", () => {
 	const promotedDraftItem =
-		"INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id)\n\tVALUES (\n\t\t'a1000000-0000-4000-8000-000000000009',";
+		"INSERT INTO dataset_draft_items (id, project_id, draft_id, item_key, position, input, feedback_score_id, created_by, updated_by)\n\tVALUES (\n\t\t'a1000000-0000-4000-8000-000000000009',";
 	const promotedSnapshot =
 		"FROM dataset_draft_items item\n\tWHERE item.id = 'a1000000-0000-4000-8000-000000000009';";
 	const promotedDependency =
