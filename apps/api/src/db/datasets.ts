@@ -1226,7 +1226,13 @@ export async function importDatasetDraftItems(
 			))
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const draftRow = await lockDatasetDraft(
+			client,
+			input.project_id,
+			input.slug,
+		);
 		const request_hash = datasetCurationRequestHash({
+			dataset_id: text(draftRow, "dataset_id"),
 			revision: input.revision,
 			items: input.items,
 		});
@@ -1250,11 +1256,6 @@ export async function importDatasetDraftItems(
 		);
 		if (validationErrors.length)
 			throw persistedValidationFailure(validationErrors);
-		const draftRow = await lockDatasetDraft(
-			client,
-			input.project_id,
-			input.slug,
-		);
 		requireDraftRevision(draftRow, input.revision);
 		const items = [];
 		for (const item of input.items)
@@ -1314,15 +1315,17 @@ export async function captureDatasetDraftItemInTransaction(
 	)
 		throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 	const operation = input.idempotency_operation ?? "capture";
-	const request_hash = datasetCurationRequestHash(
-		input.idempotency_request ?? {
+	const draftRow = await lockDatasetDraft(client, input.project_id, input.slug);
+	const request_hash = datasetCurationRequestHash({
+		...(input.idempotency_request ?? {
 			revision: input.revision,
 			item_key: input.item_key,
 			external_id: input.external_id ?? null,
 			source_trace_id: input.source_trace_id ?? null,
 			source_observation_id: input.source_observation_id ?? null,
-		},
-	);
+		}),
+		dataset_id: text(draftRow, "dataset_id"),
+	});
 	const replay = await readCurationIdempotency(client, {
 		...input,
 		operation,
@@ -1336,7 +1339,6 @@ export async function captureDatasetDraftItemInTransaction(
 			idempotent: true,
 			draft_id: replay.draft_id,
 		};
-	const draftRow = await lockDatasetDraft(client, input.project_id, input.slug);
 	requireDraftRevision(draftRow, input.revision);
 	const item = await writeDraftItem(
 		client,

@@ -1,5 +1,4 @@
 import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
-import { randomUUID } from "node:crypto";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import { ch } from "../db/clickhouse.js";
@@ -11,6 +10,7 @@ import {
 	authorizeDatasetWrite as authorizeDatasetWriteRecord,
 	captureDatasetDraftItem as captureDatasetDraftItemRecord,
 	createDataset as createDatasetRecord,
+	datasetCurationRequestHash,
 	discardDatasetDraft as discardDatasetDraftRecord,
 	publishDatasetDraft as publishDatasetDraftRecord,
 	DatasetRepositoryError,
@@ -776,7 +776,9 @@ export function createDatasetRouteHandlers(
 						project_id,
 						slug: c.req.valid("param").slug,
 						revision: Number(match),
-						item_key: body.item_key ?? randomUUID(),
+						item_key:
+							body.item_key ??
+							`capture-${datasetCurationRequestHash(c.req.valid("header")["idempotency-key"]).slice(0, 32)}`,
 						input: captureTextAsObject(source.input_text),
 						expected_output: source.output_text
 							? captureTextAsObject(source.output_text)
