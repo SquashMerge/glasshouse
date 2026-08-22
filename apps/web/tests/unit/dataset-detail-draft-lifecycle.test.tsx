@@ -16,6 +16,7 @@ const {
 	deleteDatasetDraftItem,
 	getDataset,
 	getDatasetDraft,
+	getDatasetVersion,
 	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
@@ -38,6 +39,7 @@ const {
 	deleteDatasetDraftItem: vi.fn(),
 	getDataset: vi.fn(),
 	getDatasetDraft: vi.fn(),
+	getDatasetVersion: vi.fn(),
 	importDatasetDraftItems: vi.fn(),
 	listDatasetDraftItemRevisions: vi.fn(),
 	listDatasetItems: vi.fn(),
@@ -70,6 +72,7 @@ vi.mock("../../src/lib/api", () => ({
 	deleteDatasetDraftItem,
 	getDataset,
 	getDatasetDraft,
+	getDatasetVersion,
 	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
@@ -148,6 +151,19 @@ describe("DatasetDetailPage draft lifecycle", () => {
 	beforeEach(() => {
 		projectSelection.role = "user";
 		getDataset.mockResolvedValue(dataset);
+		getDatasetVersion.mockResolvedValue({
+			id: "44444444-4444-4444-8444-444444444444",
+			dataset_id: datasetId,
+			project_id: projectId,
+			version: 1,
+			item_count: 1,
+			content_hash: "a".repeat(64),
+			validation_version: 1,
+			published_by: null,
+			published_draft_revision: 1,
+			created_at: "2026-08-14T00:00:00.000Z",
+			items: [publishedItem],
+		});
 		getDatasetDraft.mockResolvedValue({ revision: 4 });
 		listDatasetDraftItemRevisions.mockResolvedValue({ items: [] });
 		createDatasetDraft.mockResolvedValue({ revision: 4 });
@@ -157,6 +173,23 @@ describe("DatasetDetailPage draft lifecycle", () => {
 	afterEach(() => {
 		cleanup();
 		vi.resetAllMocks();
+	});
+
+	it("keeps a published version inspectable after the shared draft changes", async () => {
+		listDatasetItems.mockResolvedValue({
+			items: [
+				{
+					...publishedItem,
+					input: { question: "changed draft" },
+				},
+			],
+		});
+
+		renderPage();
+
+		await screen.findByText("Published version 1");
+		expect(screen.getByText(/"question": "published"/)).toBeInTheDocument();
+		expect(screen.getByText(/"question": "changed draft"/)).toBeInTheDocument();
 	});
 
 	it("adds cases to the shared draft without publishing", async () => {

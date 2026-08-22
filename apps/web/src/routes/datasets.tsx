@@ -26,6 +26,7 @@ import {
 	deleteDatasetDraftItem,
 	getDataset,
 	getDatasetDraft,
+	getDatasetVersion,
 	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
@@ -275,6 +276,25 @@ export function DatasetDetailPage() {
 				slug: dataset.data!.slug,
 			}),
 		enabled: Boolean(selectedProjectId && dataset.data?.slug),
+	});
+	const publishedVersion = useQuery({
+		queryKey: [
+			"dataset-version",
+			selectedProjectId,
+			dataset.data?.slug,
+			dataset.data?.latest_published_version,
+		],
+		queryFn: () =>
+			getDatasetVersion({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				version: dataset.data!.latest_published_version!,
+			}),
+		enabled: Boolean(
+			selectedProjectId &&
+				dataset.data?.slug &&
+				dataset.data.latest_published_version,
+		),
 	});
 	const [input, setInput] = React.useState("{}");
 	const [expected, setExpected] = React.useState("");
@@ -791,6 +811,47 @@ export function DatasetDetailPage() {
 						))}
 					</ul>
 				</div>
+			)}
+			{publishedVersion.data && (
+				<Card>
+					<CardHeader>
+						<CardTitle>
+							Published version {publishedVersion.data.version}
+						</CardTitle>
+						<CardDescription>
+							Immutable snapshot with {publishedVersion.data.item_count} cases
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<ul className="space-y-3">
+							{publishedVersion.data.items.map((item) => (
+								<li
+									key={item.id}
+									className="rounded-md border border-border p-3"
+								>
+									<p className="text-sm font-medium">{item.item_key}</p>
+									<pre className="mt-2 overflow-auto text-xs">
+										{JSON.stringify(item.input, null, 2)}
+									</pre>
+									{item.expected_output && (
+										<pre className="mt-2 overflow-auto text-xs">
+											Expected: {JSON.stringify(item.expected_output, null, 2)}
+										</pre>
+									)}
+									{item.source_trace_id && (
+										<Link
+											className="mt-2 inline-block text-xs underline"
+											to="/observability/traces/$id"
+											params={{ id: item.source_trace_id }}
+										>
+											Source trace
+										</Link>
+									)}
+								</li>
+							))}
+						</ul>
+					</CardContent>
+				</Card>
 			)}
 			{items.data?.items.length === 0 && (
 				<PageMessage title={canCurate ? "Draft cases" : "Dataset cases"}>

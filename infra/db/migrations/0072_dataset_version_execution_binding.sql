@@ -30,6 +30,17 @@ ALTER TABLE experiments
     FOREIGN KEY (project_id, dataset_id, resolved_dataset_version_id)
     REFERENCES dataset_versions(project_id, dataset_id, id) ON DELETE RESTRICT;
 
+UPDATE execution_admissions
+SET status = 'cancelled', cancelled_at = now()
+WHERE work_kind = 'experiment_task'
+  AND status = 'active'
+  AND work_id IN (
+      SELECT task.id
+      FROM experiment_tasks task
+      JOIN experiments experiment ON experiment.id = task.experiment_id
+      WHERE experiment.dataset_input_binding = 'legacy_unversioned'
+        AND experiment.status IN ('pending', 'running')
+  );
 UPDATE experiment_tasks
 SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, updated_at = now()
 WHERE experiment_id IN (

@@ -205,6 +205,24 @@ function datasetVersion(row: Row) {
 		created_at: timestamp(row, "created_at"),
 	};
 }
+function datasetVersionItem(row: Row) {
+	return {
+		id: text(row, "id"),
+		item_key: text(row, "item_key"),
+		position: Number(row.position),
+		validation_version: Number(row.validation_version ?? 1),
+		state: row.state === "draft" ? "draft" : "reviewed",
+		input: jsonObject(row, "input"),
+		expected_output:
+			row.expected_output == null ? null : jsonObject(row, "expected_output"),
+		metadata: jsonObjectOrEmpty(row, "metadata"),
+		external_id: nullableText(row, "external_id"),
+		source_trace_id: nullableText(row, "source_trace_id"),
+		source_observation_id: nullableText(row, "source_observation_id"),
+		capture_context: jsonObjectOrEmpty(row, "capture_context"),
+		created_at: timestamp(row, "created_at"),
+	};
+}
 function item(row: Row) {
 	return {
 		id: text(row, "id"),
@@ -405,6 +423,12 @@ export async function listDatasetVersions(
 			))
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const dataset = await client.query(
+			"SELECT id FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL FOR SHARE",
+			[input.project_id, input.slug],
+		);
+		if (!dataset.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
 		const result = await client.query(
 			"SELECT version.* FROM dataset_versions version JOIN datasets dataset ON dataset.id = version.dataset_id AND dataset.project_id = version.project_id WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL ORDER BY version.version DESC",
 			[input.project_id, input.slug],
@@ -448,8 +472,15 @@ export async function getDatasetVersion(
 				"NOT_FOUND",
 				"Dataset version not found",
 			);
+		const items = await client.query(
+			"SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, capture_context, created_at FROM dataset_version_items WHERE project_id = $1 AND dataset_version_id = $2 ORDER BY position ASC, created_at ASC, id ASC",
+			[input.project_id, result.rows[0].id],
+		);
 		await client.query("COMMIT");
-		return datasetVersion(result.rows[0]);
+		return {
+			...datasetVersion(result.rows[0]),
+			items: items.rows.map(datasetVersionItem),
+		};
 	} catch (cause) {
 		await client.query("ROLLBACK");
 		throw normalizeError(cause);

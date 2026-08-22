@@ -316,7 +316,7 @@ export const DatasetDraftPublish = z
 	})
 	.strict()
 	.openapi("DatasetDraftPublish");
-export const DatasetVersion = z
+export const DatasetVersionSummary = z
 	.object({
 		id: z.string().uuid(),
 		dataset_id: z.string().uuid(),
@@ -330,9 +330,32 @@ export const DatasetVersion = z
 		created_at: z.string().datetime(),
 	})
 	.strict()
+	.openapi("DatasetVersionSummary");
+export const DatasetVersion = DatasetVersionSummary.extend({
+	items: z.array(
+		z
+			.object({
+				id: z.string().uuid(),
+				item_key: DatasetDraftItemKey,
+				position: z.number().int().nonnegative(),
+				validation_version: z.number().int().positive(),
+				state: DatasetDraftItemState,
+				input: JsonObject,
+				expected_output: JsonObject.nullable(),
+				metadata: DatasetDraftMetadata,
+				external_id: DatasetExternalId.nullable(),
+				source_trace_id: z.string().nullable(),
+				source_observation_id: z.string().nullable(),
+				capture_context: DatasetCaptureContext,
+				created_at: z.string().datetime(),
+			})
+			.strict(),
+	),
+})
+	.strict()
 	.openapi("DatasetVersion");
 export const DatasetVersionList = z
-	.object({ items: z.array(DatasetVersion) })
+	.object({ items: z.array(DatasetVersionSummary) })
 	.strict()
 	.openapi("DatasetVersionList");
 export const DatasetVersionParam = DatasetSlugParam.extend({

@@ -86,7 +86,7 @@ export interface DatasetDraft {
 	created_at: string;
 	updated_at: string;
 }
-export interface DatasetVersion {
+export interface DatasetVersionSummary {
 	id: string;
 	dataset_id: string;
 	project_id: string;
@@ -98,15 +98,47 @@ export interface DatasetVersion {
 	published_draft_revision: number | null;
 	created_at: string;
 }
+export interface DatasetVersion extends DatasetVersionSummary {
+	items: Array<{
+		id: string;
+		item_key: string;
+		position: number;
+		validation_version: number;
+		state: "draft" | "reviewed";
+		input: JsonObject;
+		expected_output: JsonObject | null;
+		metadata: JsonObject;
+		external_id: string | null;
+		source_trace_id: string | null;
+		source_observation_id: string | null;
+		capture_context: {
+			kind?: "trace" | "observation" | "feedback";
+			redaction_applied?: boolean;
+		};
+		created_at: string;
+	}>;
+}
 export async function listDatasetVersions(input: {
 	project_id: string;
 	slug: string;
-}): Promise<{ items: DatasetVersion[] }> {
+}): Promise<{ items: DatasetVersionSummary[] }> {
 	return responseJson(
 		await authedFetch(
 			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/versions${buildQs({ project_id: input.project_id })}`,
 		),
 		"listDatasetVersions",
+	);
+}
+export async function getDatasetVersion(input: {
+	project_id: string;
+	slug: string;
+	version: number;
+}): Promise<DatasetVersion> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/versions/${input.version}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getDatasetVersion",
 	);
 }
 export interface DatasetDraftItem {
