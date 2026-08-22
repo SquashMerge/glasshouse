@@ -631,7 +631,7 @@ docker exec --interactive "$CONTAINER" \
   < "$ROOT/infra/scripts/test-db-migrations-0068.fixture.sql"
 for migration in \
   "$ROOT/infra/db/migrations/0068_dataset_curation_idempotency_target.sql" \
-  "$ROOT/infra/db/migrations/0069_dataset_curation_idempotency_audit_recovery.sql" \
+  "$ROOT/infra/db/migrations/0068_dataset_curation_idempotency_target.sql" \
   "$ROOT/infra/db/migrations/0069_dataset_curation_idempotency_audit_recovery.sql"; do
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0068_DATABASE" < "$migration"
