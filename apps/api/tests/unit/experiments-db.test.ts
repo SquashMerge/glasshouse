@@ -203,9 +203,12 @@ describe("durable experiment task ledger", () => {
 			}),
 		).resolves.toMatchObject({ dataset_item_id: snapshotItemId });
 		const itemQuery = db.calls.find((call) =>
-			call.text.includes("FROM dataset_version_items"),
+			call.text.startsWith("SELECT item.input, item.expected_output"),
 		);
-		expect(itemQuery?.values).toEqual([null, snapshotItemId, projectId]);
+		expect(itemQuery?.text).toContain(
+			"item.dataset_version_id = experiment.resolved_dataset_version_id",
+		);
+		expect(itemQuery?.values).toEqual([taskId, null, projectId]);
 	});
 
 	it("fails closed when a legacy task item is outside the experiment project", async () => {
@@ -238,8 +241,8 @@ describe("durable experiment task ledger", () => {
 		const itemQuery = db.calls.find((call) =>
 			call.text.includes("FROM dataset_items"),
 		);
-		expect(itemQuery?.text).toContain("id=$1 AND project_id=$3");
-		expect(itemQuery?.values).toEqual([legacyItemId, null, projectId]);
+		expect(itemQuery?.text).toContain("id = $2 AND project_id = $3");
+		expect(itemQuery?.values).toEqual([taskId, legacyItemId, projectId]);
 	});
 
 	it("does not finalize a result after requester execution access is revoked", async () => {

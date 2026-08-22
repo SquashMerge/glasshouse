@@ -316,6 +316,61 @@ export const DatasetDraftPublish = z
 	})
 	.strict()
 	.openapi("DatasetDraftPublish");
+export const DatasetVersionSummary = z
+	.object({
+		id: z.string().uuid(),
+		dataset_id: z.string().uuid(),
+		project_id: z.string().uuid(),
+		version: z.number().int().positive(),
+		item_count: z.number().int().nonnegative(),
+		content_hash: z.string().regex(/^[0-9a-f]{64}$/),
+		validation_version: z.number().int().positive(),
+		published_by: z.string().uuid().nullable(),
+		published_draft_revision: z.number().int().positive().nullable(),
+		created_at: z.string().datetime(),
+	})
+	.strict()
+	.openapi("DatasetVersionSummary");
+export const DatasetVersion = DatasetVersionSummary.extend({
+	items: z.array(
+		z
+			.object({
+				id: z.string().uuid(),
+				item_key: DatasetDraftItemKey,
+				position: z.number().int().nonnegative(),
+				validation_version: z.number().int().positive(),
+				state: DatasetDraftItemState,
+				input: JsonObject,
+				expected_output: JsonObject.nullable(),
+				metadata: DatasetDraftMetadata,
+				external_id: DatasetExternalId.nullable(),
+				source_trace_id: z.string().nullable(),
+				source_observation_id: z.string().nullable(),
+				feedback_score_id: z.string().uuid().nullable(),
+				capture_context: DatasetCaptureContext,
+				curated_by: z.string().uuid().nullable(),
+				reviewed_by: z.string().uuid().nullable(),
+				reviewed_at: z.string().datetime().nullable(),
+				created_at: z.string().datetime(),
+			})
+			.strict(),
+	),
+})
+	.strict()
+	.openapi("DatasetVersion");
+export const DatasetVersionList = z
+	.object({ items: z.array(DatasetVersionSummary) })
+	.strict()
+	.openapi("DatasetVersionList");
+export const DatasetVersionParam = DatasetSlugParam.extend({
+	version: z.coerce
+		.number()
+		.int()
+		.positive()
+		.openapi({
+			param: { name: "version", in: "path" },
+		}),
+}).strict();
 export const DatasetErrorResponses = {
 	400: {
 		description: "Bad request",

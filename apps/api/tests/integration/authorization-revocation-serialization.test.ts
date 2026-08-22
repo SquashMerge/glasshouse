@@ -282,11 +282,11 @@ async function seedExecutionExperiment(pool: Pool) {
 		[datasetId],
 	);
 	await pool.query(
-		"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
-		[experimentId, projectId, datasetId, actorId],
+		"INSERT INTO experiments (id, project_id, dataset_id, resolved_dataset_version_id, dataset_input_binding, config, status, requested_by_actor_id) VALUES ($1, $2, $3, $4, 'versioned', '{}', 'running', $5)",
+		[experimentId, projectId, datasetId, versionId, actorId],
 	);
 	const tasks = await pool.query(
-		"SELECT project_id, dataset_item_id, dataset_version_item_id FROM experiment_tasks WHERE experiment_id = $1",
+		"SELECT task.project_id, task.dataset_item_id, task.dataset_version_item_id, experiment.resolved_dataset_version_id, experiment.dataset_input_binding FROM experiment_tasks task JOIN experiments experiment ON experiment.id = task.experiment_id WHERE task.experiment_id = $1",
 		[experimentId],
 	);
 	expect(tasks.rows).toEqual([
@@ -294,6 +294,8 @@ async function seedExecutionExperiment(pool: Pool) {
 			project_id: projectId,
 			dataset_item_id: null,
 			dataset_version_item_id: versionItemId,
+			resolved_dataset_version_id: versionId,
+			dataset_input_binding: "versioned",
 		}),
 	]);
 	return {
@@ -1270,8 +1272,8 @@ test.skipIf(!databaseUrl)(
 				[datasetId],
 			);
 			await pool.query(
-				"INSERT INTO experiments (id, project_id, dataset_id, config, status, requested_by_actor_id) VALUES ($1, $2, $3, '{}', 'running', $4)",
-				[experimentId, projectId, datasetId, actorId],
+				"INSERT INTO experiments (id, project_id, dataset_id, resolved_dataset_version_id, dataset_input_binding, config, status, requested_by_actor_id) VALUES ($1, $2, $3, $4, 'versioned', '{}', 'running', $5)",
+				[experimentId, projectId, datasetId, versionId, actorId],
 			);
 			const deps = {
 				pool: () => pool,

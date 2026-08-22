@@ -1430,6 +1430,28 @@ BEGIN
     IF EXISTS (SELECT 1 FROM projects WHERE id = test_project_id) THEN
         RAISE EXCEPTION 'deleting non-default project was not removed after membership cleanup';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'experiments'
+          AND column_name = 'resolved_dataset_version_id'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'experiments'::regclass
+          AND conname = 'experiments_dataset_input_binding_check'
+    ) THEN
+        RAISE EXCEPTION 'experiment immutable dataset-version binding is incomplete';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM experiments
+        WHERE dataset_input_binding = 'legacy_unversioned'
+          AND resolved_dataset_version_id IS NOT NULL
+    ) OR EXISTS (
+        SELECT 1 FROM experiments
+        WHERE dataset_input_binding = 'versioned'
+          AND resolved_dataset_version_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'experiment dataset binding does not truthfully distinguish legacy history';
+    END IF;
 END
 $$;
 

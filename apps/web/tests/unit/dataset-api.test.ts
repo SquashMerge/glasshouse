@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	deleteDatasetDraftItem,
 	discardDatasetDraft,
+	getDatasetVersion,
 	importDatasetDraftItems,
 	publishDatasetDraft,
 	upsertDatasetDraftItem,
@@ -65,6 +66,63 @@ describe("dataset API client", () => {
 		);
 		const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(new Headers(request.headers).get("if-match")).toBe('"2"');
+	});
+
+	it("returns immutable version snapshot provenance without feedback content", async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					id: "22222222-2222-4222-8222-222222222222",
+					dataset_id: "33333333-3333-4333-8333-333333333333",
+					project_id: PROJECT_ID,
+					version: 1,
+					item_count: 1,
+					content_hash: "a".repeat(64),
+					validation_version: 1,
+					published_by: null,
+					published_draft_revision: 1,
+					created_at: "2026-08-14T00:00:00.000Z",
+					items: [
+						{
+							id: "44444444-4444-4444-8444-444444444444",
+							item_key: "stable-case",
+							position: 0,
+							validation_version: 1,
+							state: "reviewed",
+							input: { question: "published" },
+							expected_output: null,
+							metadata: {},
+							external_id: null,
+							source_trace_id: null,
+							source_observation_id: null,
+							feedback_score_id: "55555555-5555-4555-8555-555555555555",
+							capture_context: {},
+							curated_by: "66666666-6666-4666-8666-666666666666",
+							reviewed_by: "77777777-7777-4777-8777-777777777777",
+							reviewed_at: "2026-08-14T01:00:00.000Z",
+							created_at: "2026-08-14T00:00:00.000Z",
+						},
+					],
+				}),
+				{ status: 200 },
+			),
+		);
+
+		const version = await getDatasetVersion({
+			project_id: PROJECT_ID,
+			slug: "golden",
+			version: 1,
+		});
+		const provenance: Pick<
+			(typeof version.items)[number],
+			"feedback_score_id" | "curated_by" | "reviewed_by" | "reviewed_at"
+		> = version.items[0]!;
+		expect(provenance).toMatchObject({
+			feedback_score_id: "55555555-5555-4555-8555-555555555555",
+			curated_by: "66666666-6666-4666-8666-666666666666",
+			reviewed_by: "77777777-7777-4777-8777-777777777777",
+			reviewed_at: "2026-08-14T01:00:00.000Z",
+		});
 	});
 
 	it("deletes a UUID draft item with its current ETag rather than the legacy item endpoint", async () => {

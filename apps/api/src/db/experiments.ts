@@ -103,6 +103,14 @@ function experiment(row: Row) {
 		project_id: text(row, "project_id"),
 		agent_id: nullableText(row, "agent_id"),
 		dataset_id: text(row, "dataset_id"),
+		resolved_dataset_version_id: nullableText(
+			row,
+			"resolved_dataset_version_id",
+		),
+		dataset_input_binding:
+			row.dataset_input_binding === "versioned"
+				? ("versioned" as const)
+				: ("legacy_unversioned" as const),
 		name: nullableText(row, "name"),
 		status: text(row, "status") as ExperimentStatus,
 		config: json(row, "config"),
@@ -242,7 +250,7 @@ export async function createExperiment(
 					"Project is not available",
 				);
 			const r = await client.query(
-				`INSERT INTO experiments (id, project_id, agent_id, dataset_id, name, config, status, requested_by_actor_id) SELECT $1,$2,$3,$4,$5,$6::jsonb,'pending',$7 WHERE ($3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id=$3 AND project_id=$2)) AND EXISTS (SELECT 1 FROM datasets WHERE id=$4 AND project_id=$2 AND archived_at IS NULL AND latest_published_version IS NOT NULL) RETURNING *`,
+				`INSERT INTO experiments (id, project_id, agent_id, dataset_id, resolved_dataset_version_id, dataset_input_binding, name, config, status, requested_by_actor_id) SELECT $1, $2, $3, dataset.id, version.id, 'versioned', $5, $6::jsonb, 'pending', $7 FROM datasets dataset JOIN dataset_versions version ON version.project_id = dataset.project_id AND version.dataset_id = dataset.id AND version.version = dataset.latest_published_version WHERE dataset.id = $4 AND dataset.project_id = $2 AND dataset.archived_at IS NULL AND ($3 IS NULL OR EXISTS (SELECT 1 FROM agents WHERE id = $3 AND project_id = $2)) AND EXISTS (SELECT 1 FROM dataset_version_items item WHERE item.project_id = version.project_id AND item.dataset_version_id = version.id) AND NOT EXISTS (SELECT 1 FROM dataset_version_items item WHERE item.project_id = version.project_id AND item.dataset_version_id = version.id AND item.expected_output IS NULL) RETURNING *`,
 				[
 					randomUUID(),
 					input.project_id,
@@ -443,10 +451,10 @@ export async function claimExperimentTask(
 			const claimedTask = claimed.rows[0] as Row | undefined;
 			if (!claimedTask) return null;
 			const item = await client.query(
-				"SELECT input, expected_output FROM dataset_items WHERE id=$1 AND project_id=$3 UNION ALL SELECT input, expected_output FROM dataset_version_items WHERE id=$2 AND project_id=$3",
+				"SELECT item.input, item.expected_output FROM experiment_tasks task JOIN experiments experiment ON experiment.id = task.experiment_id AND experiment.project_id = task.project_id JOIN dataset_version_items item ON item.id = task.dataset_version_item_id AND item.project_id = task.project_id AND item.dataset_version_id = experiment.resolved_dataset_version_id WHERE task.id = $1 AND task.project_id = $3 AND experiment.dataset_input_binding = 'versioned' UNION ALL SELECT input, expected_output FROM dataset_items WHERE id = $2 AND project_id = $3",
 				[
+					text(claimedTask, "id"),
 					claimedTask.dataset_item_id ?? null,
-					claimedTask.dataset_version_item_id ?? null,
 					access.project_id,
 				],
 			);

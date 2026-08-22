@@ -11,6 +11,8 @@ export const Experiment = z
 		project_id: z.string().uuid(),
 		agent_id: z.string().uuid().nullable(),
 		dataset_id: z.string().uuid(),
+		resolved_dataset_version_id: z.string().uuid().nullable(),
+		dataset_input_binding: z.enum(["versioned", "legacy_unversioned"]),
 		name: z.string().nullable(),
 		status: ExperimentStatus,
 		config: z.record(z.string(), z.unknown()),

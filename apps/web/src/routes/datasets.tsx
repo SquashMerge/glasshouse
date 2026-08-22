@@ -26,9 +26,11 @@ import {
 	deleteDatasetDraftItem,
 	getDataset,
 	getDatasetDraft,
+	getDatasetVersion,
 	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
+	listDatasetVersions,
 	listDatasets,
 	publishDatasetDraft,
 	reorderDatasetDraftItems,
@@ -266,6 +268,34 @@ export function DatasetDetailPage() {
 			listDatasetItems({ project_id: selectedProjectId!, id, signal }),
 		enabled: Boolean(selectedProjectId),
 	});
+	const versions = useQuery({
+		queryKey: ["dataset-versions", selectedProjectId, id, dataset.data?.slug],
+		queryFn: () =>
+			listDatasetVersions({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+			}),
+		enabled: Boolean(selectedProjectId && dataset.data?.slug),
+	});
+	const publishedVersion = useQuery({
+		queryKey: [
+			"dataset-version",
+			selectedProjectId,
+			dataset.data?.slug,
+			dataset.data?.latest_published_version,
+		],
+		queryFn: () =>
+			getDatasetVersion({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				version: dataset.data!.latest_published_version!,
+			}),
+		enabled: Boolean(
+			selectedProjectId &&
+				dataset.data?.slug &&
+				dataset.data.latest_published_version,
+		),
+	});
 	const [input, setInput] = React.useState("{}");
 	const [expected, setExpected] = React.useState("");
 	const [metadata, setMetadata] = React.useState("{}");
@@ -323,6 +353,9 @@ export function DatasetDetailPage() {
 				queryKey: ["dataset", selectedProjectId, id],
 			}),
 			client.invalidateQueries({ queryKey: ["datasets", selectedProjectId] }),
+			client.invalidateQueries({
+				queryKey: ["dataset-versions", selectedProjectId, id],
+			}),
 		]);
 	}
 	async function existingDraftRevision() {
@@ -594,6 +627,21 @@ export function DatasetDetailPage() {
 				<p className="text-sm text-muted-foreground">
 					{dataset.data?.description}
 				</p>
+				{dataset.data?.latest_published_version ? (
+					<p className="mt-2 text-sm text-muted-foreground">
+						Latest immutable version:{" "}
+						<strong>
+							{dataset.data.slug}@{dataset.data.latest_published_version}
+						</strong>
+						{versions.data?.items[0]
+							? ` (${versions.data.items[0].content_hash.slice(0, 12)})`
+							: ""}
+					</p>
+				) : (
+					<p className="mt-2 text-sm text-muted-foreground">
+						No published version yet.
+					</p>
+				)}
 			</div>
 			{canCurate && (
 				<Card>
@@ -763,6 +811,55 @@ export function DatasetDetailPage() {
 						))}
 					</ul>
 				</div>
+			)}
+			{publishedVersion.data && (
+				<Card>
+					<CardHeader>
+						<CardTitle>
+							Published version {publishedVersion.data.version}
+						</CardTitle>
+						<CardDescription>
+							Immutable snapshot with {publishedVersion.data.item_count} cases
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<ul className="space-y-3">
+							{publishedVersion.data.items.map((item) => (
+								<li
+									key={item.id}
+									className="rounded-md border border-border p-3"
+								>
+									<p className="text-sm font-medium">{item.item_key}</p>
+									<pre className="mt-2 overflow-auto text-xs">
+										{JSON.stringify(item.input, null, 2)}
+									</pre>
+									{item.expected_output && (
+										<pre className="mt-2 overflow-auto text-xs">
+											Expected: {JSON.stringify(item.expected_output, null, 2)}
+										</pre>
+									)}
+									<div className="mt-2 space-y-1 text-xs text-muted-foreground">
+										{item.feedback_score_id && (
+											<p>Feedback score: {item.feedback_score_id}</p>
+										)}
+										{item.curated_by && <p>Curated by: {item.curated_by}</p>}
+										{item.reviewed_by && <p>Reviewed by: {item.reviewed_by}</p>}
+										{item.reviewed_at && <p>Reviewed at: {item.reviewed_at}</p>}
+									</div>
+									{item.source_trace_id && (
+										<Link
+											className="mt-2 inline-block text-xs underline"
+											to="/observability/traces/$id"
+											params={{ id: item.source_trace_id }}
+										>
+											Source trace
+										</Link>
+									)}
+								</li>
+							))}
+						</ul>
+					</CardContent>
+				</Card>
 			)}
 			{items.data?.items.length === 0 && (
 				<PageMessage title={canCurate ? "Draft cases" : "Dataset cases"}>

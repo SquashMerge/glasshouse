@@ -16,6 +16,7 @@ const {
 	deleteDatasetDraftItem,
 	getDataset,
 	getDatasetDraft,
+	getDatasetVersion,
 	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
@@ -38,6 +39,7 @@ const {
 	deleteDatasetDraftItem: vi.fn(),
 	getDataset: vi.fn(),
 	getDatasetDraft: vi.fn(),
+	getDatasetVersion: vi.fn(),
 	importDatasetDraftItems: vi.fn(),
 	listDatasetDraftItemRevisions: vi.fn(),
 	listDatasetItems: vi.fn(),
@@ -70,6 +72,7 @@ vi.mock("../../src/lib/api", () => ({
 	deleteDatasetDraftItem,
 	getDataset,
 	getDatasetDraft,
+	getDatasetVersion,
 	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
@@ -106,6 +109,11 @@ const publishedItem = {
 	metadata: {},
 	source_trace_id: null,
 	source_observation_id: null,
+	feedback_score_id: "55555555-5555-4555-8555-555555555555",
+	capture_context: {},
+	curated_by: "66666666-6666-4666-8666-666666666666",
+	reviewed_by: "77777777-7777-4777-8777-777777777777",
+	reviewed_at: "2026-08-14T01:00:00.000Z",
 	created_at: "2026-08-14T00:00:00.000Z",
 };
 
@@ -148,6 +156,19 @@ describe("DatasetDetailPage draft lifecycle", () => {
 	beforeEach(() => {
 		projectSelection.role = "user";
 		getDataset.mockResolvedValue(dataset);
+		getDatasetVersion.mockResolvedValue({
+			id: "44444444-4444-4444-8444-444444444444",
+			dataset_id: datasetId,
+			project_id: projectId,
+			version: 1,
+			item_count: 1,
+			content_hash: "a".repeat(64),
+			validation_version: 1,
+			published_by: null,
+			published_draft_revision: 1,
+			created_at: "2026-08-14T00:00:00.000Z",
+			items: [publishedItem],
+		});
 		getDatasetDraft.mockResolvedValue({ revision: 4 });
 		listDatasetDraftItemRevisions.mockResolvedValue({ items: [] });
 		createDatasetDraft.mockResolvedValue({ revision: 4 });
@@ -157,6 +178,35 @@ describe("DatasetDetailPage draft lifecycle", () => {
 	afterEach(() => {
 		cleanup();
 		vi.resetAllMocks();
+	});
+
+	it("keeps a published version inspectable after the shared draft changes", async () => {
+		listDatasetItems.mockResolvedValue({
+			items: [
+				{
+					...publishedItem,
+					input: { question: "changed draft" },
+				},
+			],
+		});
+
+		renderPage();
+
+		await screen.findByText("Published version 1");
+		expect(screen.getByText(/"question": "published"/)).toBeInTheDocument();
+		expect(screen.getByText(/"question": "changed draft"/)).toBeInTheDocument();
+		expect(
+			screen.getByText("Feedback score: 55555555-5555-4555-8555-555555555555"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("Curated by: 66666666-6666-4666-8666-666666666666"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("Reviewed by: 77777777-7777-4777-8777-777777777777"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("Reviewed at: 2026-08-14T01:00:00.000Z"),
+		).toBeInTheDocument();
 	});
 
 	it("adds cases to the shared draft without publishing", async () => {

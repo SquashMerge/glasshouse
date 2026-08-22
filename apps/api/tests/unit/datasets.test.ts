@@ -15,11 +15,13 @@ import {
 	getDatasetCurationReplay,
 	getDatasetDraft,
 	getDatasetDraftItemRevisions,
+	getDatasetVersion,
 	getOrCreateDatasetDraft,
 	importDatasetDraftItems,
 	listDatasetItems,
 	listDatasets,
 	listPublishedDatasetItems,
+	listDatasetVersions,
 	publishDatasetDraft,
 	updateDatasetMetadata,
 	upsertDatasetDraftItem,
@@ -51,6 +53,7 @@ import {
 	DatasetDraftItemUpsert,
 	DatasetItem,
 	DatasetItemCreate,
+	DatasetVersion,
 } from "../../src/schemas/datasets";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -929,6 +932,126 @@ describe("dataset repository", () => {
 				query.text.includes("dataset_lifecycle_audit_events"),
 			),
 		).toBe(false);
+	});
+
+	it("returns the ordered immutable snapshot instead of the mutable draft", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{
+				rows: [
+					{
+						id: "55555555-5555-4555-8555-555555555555",
+						dataset_id: DATASET,
+						project_id: PROJECT,
+						version: 1,
+						item_count: 2,
+						content_hash: "a".repeat(64),
+						validation_version: 1,
+						published_by: authorization.actor_id,
+						published_draft_revision: 4,
+						created_at: NOW,
+					},
+				],
+			},
+			{
+				rows: [
+					{
+						id: "66666666-6666-4666-8666-666666666666",
+						item_key: "first",
+						position: 0,
+						validation_version: 1,
+						state: "reviewed",
+						input: { question: "published first" },
+						expected_output: { answer: "first" },
+						metadata: { source: "snapshot" },
+						external_id: "source-1",
+						source_trace_id: "trace-1",
+						source_observation_id: "observation-1",
+						feedback_score_id: "88888888-8888-4888-8888-888888888888",
+						capture_context: { redaction_applied: true },
+						curated_by: "99999999-9999-4999-8999-999999999999",
+						reviewed_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+						reviewed_at: NOW,
+						comment: "raw feedback must not be returned",
+						created_at: NOW,
+					},
+					{
+						id: "77777777-7777-4777-8777-777777777777",
+						item_key: "second",
+						position: 1,
+						validation_version: 1,
+						state: "reviewed",
+						input: { question: "published second" },
+						expected_output: null,
+						metadata: {},
+						external_id: null,
+						source_trace_id: null,
+						source_observation_id: null,
+						capture_context: {},
+						created_at: NOW,
+					},
+				],
+			},
+		]);
+
+		const result = await getDatasetVersion(db, {
+			project_id: PROJECT,
+			slug: "golden",
+			version: 1,
+			authorization: { ...authorization, operation: "product_read" },
+		});
+
+		expect(DatasetVersion.safeParse(result).success).toBe(true);
+		expect(result.items.map((item) => item.item_key)).toEqual([
+			"first",
+			"second",
+		]);
+		expect(result.items[0]).toMatchObject({
+			input: { question: "published first" },
+			source_trace_id: "trace-1",
+			source_observation_id: "observation-1",
+			feedback_score_id: "88888888-8888-4888-8888-888888888888",
+			capture_context: { redaction_applied: true },
+			curated_by: "99999999-9999-4999-8999-999999999999",
+			reviewed_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			reviewed_at: NOW.toISOString(),
+		});
+		expect(result.items[0]).not.toHaveProperty("comment");
+		expect(
+			db.queries.some((query) => query.text.includes("dataset_draft_items")),
+		).toBe(false);
+		expect(
+			db.queries.some(
+				(query) =>
+					query.text.includes("dataset_version_items") &&
+					query.text.includes("project_id = $1") &&
+					query.text.includes("feedback_score_id") &&
+					query.text.includes("curated_by") &&
+					query.text.includes("reviewed_by") &&
+					query.text.includes("reviewed_at"),
+			),
+		).toBe(true);
+	});
+
+	it("does not disclose absent or cross-project dataset slugs through an empty version list", async () => {
+		for (const slug of ["missing", "other-project-dataset"]) {
+			const db = fakeDb([
+				{ rows: [] },
+				{ rows: [{ id: PROJECT }] },
+				{ rows: [] },
+			]);
+			await expect(
+				listDatasetVersions(db, {
+					project_id: PROJECT,
+					slug,
+					authorization: { ...authorization, operation: "product_read" },
+				}),
+			).rejects.toMatchObject<DatasetRepositoryError>({
+				code: "NOT_FOUND",
+				status: 404,
+			});
+		}
 	});
 
 	it("fences every dataset read through the active authorized project lock", () => {
