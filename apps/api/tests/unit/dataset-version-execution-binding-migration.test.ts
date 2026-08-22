@@ -20,6 +20,13 @@ const fixture = readFileSync(
 	),
 	"utf8",
 );
+const preMigrationAssertion = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/scripts/test-db-migrations-0072.pre.assert.sql",
+	),
+	"utf8",
+);
 const assertion = readFileSync(
 	resolve(
 		import.meta.dir,
@@ -41,7 +48,15 @@ test("0072 revokes legacy task admissions before terminalizing legacy executions
 	expect(cancelAdmissions).toBeLessThan(cancelTasks);
 	expect(cancelAdmissions).toBeLessThan(cancelExperiments);
 	expect(migration).toContain("work_kind = 'experiment_task'");
+	const legacyItemInsert = fixture.indexOf("INSERT INTO dataset_items");
+	const experimentInsert = fixture.indexOf("INSERT INTO experiments");
+	expect(legacyItemInsert).toBeGreaterThan(-1);
+	expect(legacyItemInsert).toBeLessThan(experimentInsert);
 	expect(fixture).toContain("execution_admissions");
+	expect(preMigrationAssertion).toContain("legacy dataset item");
+	expect(preMigrationAssertion).toContain("historical trigger");
+	expect(preMigrationAssertion).toContain("active admission");
 	expect(assertion).toContain("execution_admissions");
 	expect(migrationHarness).toContain("UPGRADE_0072_DATABASE");
+	expect(migrationHarness).toContain("test-db-migrations-0072.pre.assert.sql");
 });

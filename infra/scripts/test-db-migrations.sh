@@ -690,6 +690,9 @@ done
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0072_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0072.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0072_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0072.pre.assert.sql"
 for migration in \
   "$ROOT/infra/db/migrations/0072_dataset_version_execution_binding.sql" \
   "$ROOT/infra/db/migrations/0072_dataset_version_execution_binding.sql"; do
