@@ -45,6 +45,7 @@ import {
 	DatasetCreate,
 	DatasetDraftImport,
 	DatasetDraftItem,
+	DatasetDraftItemKeyParam,
 	DatasetDraftItemParam,
 	DatasetDraftItemRevision,
 	DatasetDraftItemUpsert,
@@ -297,6 +298,36 @@ describe("dataset contracts", () => {
 					{ item_key: "same", input: { question: "first" } },
 					{ item_key: "same", input: { question: "second" } },
 				],
+			}).success,
+		).toBe(false);
+	});
+
+	it("normalizes direct upsert item keys like imports and rejects blank keys", () => {
+		const direct = DatasetDraftItemKeyParam.safeParse({
+			slug: "golden-suite",
+			itemKey: "  stable  ",
+		});
+		const imported = DatasetDraftImport.safeParse({
+			items: [{ item_key: "  stable  ", input: { question: "hello" } }],
+		});
+
+		expect(direct).toMatchObject({
+			success: true,
+			data: { slug: "golden-suite", itemKey: "stable" },
+		});
+		expect(imported).toMatchObject({
+			success: true,
+			data: { items: [{ item_key: "stable" }] },
+		});
+		expect(
+			DatasetDraftItemKeyParam.safeParse({
+				slug: "golden-suite",
+				itemKey: " \t ",
+			}).success,
+		).toBe(false);
+		expect(
+			DatasetDraftImport.safeParse({
+				items: [{ item_key: " \t ", input: { question: "hello" } }],
 			}).success,
 		).toBe(false);
 	});

@@ -32,6 +32,7 @@ const DatasetCaptureContext = z
 	})
 	.strict();
 const DatasetExternalId = z.string().trim().min(1).max(200);
+const DatasetDraftItemKey = z.string().trim().min(1).max(200);
 
 export const Dataset = z
 	.object({
@@ -207,7 +208,7 @@ export const DatasetDraftImport = z
 		items: z
 			.array(
 				DatasetDraftItemPayload.extend({
-					item_key: z.string().trim().min(1).max(200),
+					item_key: DatasetDraftItemKey,
 				}).strict(),
 			)
 			.min(1)
@@ -235,7 +236,7 @@ export const DatasetDraftImport = z
 	.openapi("DatasetDraftImport");
 export const DatasetDraftCapture = z
 	.object({
-		item_key: z.string().trim().min(1).max(200).optional(),
+		item_key: DatasetDraftItemKey.optional(),
 		external_id: DatasetExternalId.nullable().optional(),
 		source_trace_id: z.string().regex(/^[0-9a-f]{32}$/),
 		source_observation_id: z.string().min(1).max(128).optional(),
@@ -303,11 +304,9 @@ export const DatasetDraftItemParam = DatasetSlugParam.extend({
 		.openapi({ param: { name: "itemId", in: "path" } }),
 }).strict();
 export const DatasetDraftItemKeyParam = DatasetSlugParam.extend({
-	itemKey: z
-		.string()
-		.min(1)
-		.max(200)
-		.openapi({ param: { name: "itemKey", in: "path" } }),
+	itemKey: DatasetDraftItemKey.openapi({
+		param: { name: "itemKey", in: "path" },
+	}),
 }).strict();
 export const DatasetDraftItemRevisionParam = DatasetDraftItemParam;
 export const DatasetDraftPublish = z

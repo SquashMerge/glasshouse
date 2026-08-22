@@ -219,7 +219,7 @@ function FeedbackRow({
 				<p className="whitespace-pre-wrap text-sm">{item.comment}</p>
 			)}
 			<div className="flex flex-wrap gap-2">
-				{item.status !== "added_to_dataset" && (
+				{canCurate && item.status !== "added_to_dataset" && (
 					<>
 						<Button
 							size="sm"

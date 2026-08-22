@@ -165,6 +165,8 @@ describe("FeedbackPage promotion visibility", () => {
 
 		await screen.findByText(/trace · reviewed/);
 		expect(screen.queryByRole("button", { name: "Add to dataset" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Mark reviewed" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
 		expect(listDatasets).not.toHaveBeenCalled();
 	});
 
