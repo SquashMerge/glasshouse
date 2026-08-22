@@ -968,7 +968,12 @@ describe("dataset repository", () => {
 						external_id: "source-1",
 						source_trace_id: "trace-1",
 						source_observation_id: "observation-1",
+						feedback_score_id: "88888888-8888-4888-8888-888888888888",
 						capture_context: { redaction_applied: true },
+						curated_by: "99999999-9999-4999-8999-999999999999",
+						reviewed_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+						reviewed_at: NOW,
+						comment: "raw feedback must not be returned",
 						created_at: NOW,
 					},
 					{
@@ -1006,12 +1011,27 @@ describe("dataset repository", () => {
 			input: { question: "published first" },
 			source_trace_id: "trace-1",
 			source_observation_id: "observation-1",
+			feedback_score_id: "88888888-8888-4888-8888-888888888888",
 			capture_context: { redaction_applied: true },
+			curated_by: "99999999-9999-4999-8999-999999999999",
+			reviewed_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			reviewed_at: NOW.toISOString(),
 		});
-		expect(result.items[0]).not.toHaveProperty("feedback_score_id");
+		expect(result.items[0]).not.toHaveProperty("comment");
 		expect(
 			db.queries.some((query) => query.text.includes("dataset_draft_items")),
 		).toBe(false);
+		expect(
+			db.queries.some(
+				(query) =>
+					query.text.includes("dataset_version_items") &&
+					query.text.includes("project_id = $1") &&
+					query.text.includes("feedback_score_id") &&
+					query.text.includes("curated_by") &&
+					query.text.includes("reviewed_by") &&
+					query.text.includes("reviewed_at"),
+			),
+		).toBe(true);
 	});
 
 	it("does not disclose absent or cross-project dataset slugs through an empty version list", async () => {

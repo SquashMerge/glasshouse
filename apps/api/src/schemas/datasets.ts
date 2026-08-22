@@ -346,7 +346,11 @@ export const DatasetVersion = DatasetVersionSummary.extend({
 				external_id: DatasetExternalId.nullable(),
 				source_trace_id: z.string().nullable(),
 				source_observation_id: z.string().nullable(),
+				feedback_score_id: z.string().uuid().nullable(),
 				capture_context: DatasetCaptureContext,
+				curated_by: z.string().uuid().nullable(),
+				reviewed_by: z.string().uuid().nullable(),
+				reviewed_at: z.string().datetime().nullable(),
 				created_at: z.string().datetime(),
 			})
 			.strict(),

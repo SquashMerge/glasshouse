@@ -109,6 +109,11 @@ const publishedItem = {
 	metadata: {},
 	source_trace_id: null,
 	source_observation_id: null,
+	feedback_score_id: "55555555-5555-4555-8555-555555555555",
+	capture_context: {},
+	curated_by: "66666666-6666-4666-8666-666666666666",
+	reviewed_by: "77777777-7777-4777-8777-777777777777",
+	reviewed_at: "2026-08-14T01:00:00.000Z",
 	created_at: "2026-08-14T00:00:00.000Z",
 };
 
@@ -190,6 +195,18 @@ describe("DatasetDetailPage draft lifecycle", () => {
 		await screen.findByText("Published version 1");
 		expect(screen.getByText(/"question": "published"/)).toBeInTheDocument();
 		expect(screen.getByText(/"question": "changed draft"/)).toBeInTheDocument();
+		expect(
+			screen.getByText("Feedback score: 55555555-5555-4555-8555-555555555555"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("Curated by: 66666666-6666-4666-8666-666666666666"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("Reviewed by: 77777777-7777-4777-8777-777777777777"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText("Reviewed at: 2026-08-14T01:00:00.000Z"),
+		).toBeInTheDocument();
 	});
 
 	it("adds cases to the shared draft without publishing", async () => {

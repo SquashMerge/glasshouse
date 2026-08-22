@@ -838,6 +838,14 @@ export function DatasetDetailPage() {
 											Expected: {JSON.stringify(item.expected_output, null, 2)}
 										</pre>
 									)}
+									<div className="mt-2 space-y-1 text-xs text-muted-foreground">
+										{item.feedback_score_id && (
+											<p>Feedback score: {item.feedback_score_id}</p>
+										)}
+										{item.curated_by && <p>Curated by: {item.curated_by}</p>}
+										{item.reviewed_by && <p>Reviewed by: {item.reviewed_by}</p>}
+										{item.reviewed_at && <p>Reviewed at: {item.reviewed_at}</p>}
+									</div>
 									{item.source_trace_id && (
 										<Link
 											className="mt-2 inline-block text-xs underline"

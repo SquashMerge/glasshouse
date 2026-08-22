@@ -111,10 +111,14 @@ export interface DatasetVersion extends DatasetVersionSummary {
 		external_id: string | null;
 		source_trace_id: string | null;
 		source_observation_id: string | null;
+		feedback_score_id: string | null;
 		capture_context: {
 			kind?: "trace" | "observation" | "feedback";
 			redaction_applied?: boolean;
 		};
+		curated_by: string | null;
+		reviewed_by: string | null;
+		reviewed_at: string | null;
 		created_at: string;
 	}>;
 }

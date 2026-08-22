@@ -219,7 +219,11 @@ function datasetVersionItem(row: Row) {
 		external_id: nullableText(row, "external_id"),
 		source_trace_id: nullableText(row, "source_trace_id"),
 		source_observation_id: nullableText(row, "source_observation_id"),
+		feedback_score_id: nullableText(row, "feedback_score_id"),
 		capture_context: jsonObjectOrEmpty(row, "capture_context"),
+		curated_by: nullableText(row, "curated_by"),
+		reviewed_by: nullableText(row, "reviewed_by"),
+		reviewed_at: nullableTimestamp(row, "reviewed_at"),
 		created_at: timestamp(row, "created_at"),
 	};
 }
@@ -473,7 +477,7 @@ export async function getDatasetVersion(
 				"Dataset version not found",
 			);
 		const items = await client.query(
-			"SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, capture_context, created_at FROM dataset_version_items WHERE project_id = $1 AND dataset_version_id = $2 ORDER BY position ASC, created_at ASC, id ASC",
+			"SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at, created_at FROM dataset_version_items WHERE project_id = $1 AND dataset_version_id = $2 ORDER BY position ASC, created_at ASC, id ASC",
 			[input.project_id, result.rows[0].id],
 		);
 		await client.query("COMMIT");
