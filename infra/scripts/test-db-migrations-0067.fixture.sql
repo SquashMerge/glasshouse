@@ -6,6 +6,9 @@ VALUES (
     'dataset-curation-fixture'
 );
 
+INSERT INTO actors (id)
+VALUES (durable_actor_id('basic:v1', 'bootstrap-owner'));
+
 INSERT INTO datasets (id, project_id, slug, name)
 VALUES (
     '67000000-0000-4000-8000-000000000002',

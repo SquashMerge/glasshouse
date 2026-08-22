@@ -8,6 +8,10 @@ DECLARE
     legacy_version_item_id UUID := '67000000-0000-4000-8000-000000000007';
     actor_id UUID := durable_actor_id('basic:v1', 'bootstrap-owner');
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM actors WHERE id = actor_id) THEN
+        RAISE EXCEPTION '0067 fixture did not establish durable actor provenance';
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM dataset_draft_items
