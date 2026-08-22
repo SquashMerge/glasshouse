@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import {
 	loadRedactionOptions,
 	redactAttributesJson,
+	redactDatasetCapture,
 	redactMetadata,
 	redactTraceText,
 } from "../../src/db/redact";
@@ -99,6 +100,26 @@ describe("redactAttributesJson", () => {
 			redactKeys: ["x"],
 		});
 		expect(out).toBe("not json");
+	});
+});
+
+describe("redactDatasetCapture", () => {
+	it("redacts source text and configured keys recursively before draft persistence", () => {
+		expect(
+			redactDatasetCapture(
+				{
+					prompt: "protected source text",
+					metadata: { "user.email": "person@example.test", safe: 1 },
+				},
+				{ redactInput: true, redactKeys: ["user.email"] },
+			),
+		).toEqual({
+			value: {
+				prompt: "[REDACTED]",
+				metadata: { "user.email": "[REDACTED]", safe: 1 },
+			},
+			redacted: true,
+		});
 	});
 });
 

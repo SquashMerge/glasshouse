@@ -131,7 +131,7 @@ test("public dataset and experiment mutations pass the admitted actor to transac
 	expect(datasetInput?.authorization).toEqual({
 		organization_id: organizationId,
 		actor_id: actorId,
-		operation: "product_write",
+		operation: "curation_write",
 	});
 	expect(experimentInput?.authorization).toEqual({
 		organization_id: organizationId,

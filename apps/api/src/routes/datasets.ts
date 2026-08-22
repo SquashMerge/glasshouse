@@ -1,48 +1,68 @@
-import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
+import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import { pgPool } from "../db/postgres.js";
 import { ch } from "../db/clickhouse.js";
-import { logger } from "../lib/logger.js";
-import { trustedTenant } from "../tenancy.js";
-import { projectAuthorization } from "../db/project-authorization.js";
 import {
 	addDatasetItem as addDatasetItemRecord,
-	authorizeDatasetWrite as authorizeDatasetWriteRecord,
-	createDataset as createDatasetRecord,
-	discardDatasetDraft as discardDatasetDraftRecord,
-	publishDatasetDraft as publishDatasetDraftRecord,
-	DatasetRepositoryError,
-	deleteDatasetItem as deleteDatasetItemRecord,
-	deleteDatasetDraftItem as deleteDatasetDraftItemRecord,
 	archiveDataset as archiveDatasetRecord,
+	authorizeDatasetWrite as authorizeDatasetWriteRecord,
+	captureDatasetDraftItem as captureDatasetDraftItemRecord,
+	createDataset as createDatasetRecord,
+	DatasetRepositoryError,
+	datasetCurationRequestHash,
+	deleteDatasetDraftItem as deleteDatasetDraftItemRecord,
+	deleteDatasetItem as deleteDatasetItemRecord,
+	discardDatasetDraft as discardDatasetDraftRecord,
 	getDatasetBySlug as getDatasetBySlugRecord,
+	getDatasetDraftItemRevisions as getDatasetDraftItemRevisionsRecord,
 	getDatasetDraft as getDatasetDraftRecord,
-	getOrCreateDatasetDraft as getOrCreateDatasetDraftRecord,
 	getDataset as getDatasetRecord,
+	getDatasetCurationReplay as getDatasetCurationReplayRecord,
+	getOrCreateDatasetDraft as getOrCreateDatasetDraftRecord,
+	importDatasetDraftItems as importDatasetDraftItemsRecord,
 	listDatasetItems as listDatasetItemsRecord,
-	listPublishedDatasetItems as listPublishedDatasetItemsRecord,
 	listDatasets as listDatasetsRecord,
+	listPublishedDatasetItems as listPublishedDatasetItemsRecord,
+	publishDatasetDraft as publishDatasetDraftRecord,
+	reorderDatasetDraftItems as reorderDatasetDraftItemsRecord,
+	reviewDatasetDraftItem as reviewDatasetDraftItemRecord,
 	updateDatasetMetadata as updateDatasetMetadataRecord,
 	upsertDatasetDraftItem as upsertDatasetDraftItemRecord,
+	validateDatasetDraft as validateDatasetDraftRecord,
 } from "../db/datasets.js";
+import { pgPool } from "../db/postgres.js";
+import { projectAuthorization } from "../db/project-authorization.js";
+import {
+	captureTextAsObject,
+	DATASET_DRAFT_VALIDATION_VERSION,
+} from "../lib/dataset-draft-validation.js";
+import { logger } from "../lib/logger.js";
 import {
 	Dataset,
 	DatasetCreate,
+	DatasetDraft,
+	DatasetDraftCapture,
+	DatasetDraftCaptureResult,
+	DatasetDraftImport,
+	DatasetDraftImportResult,
+	DatasetDraftItem,
+	DatasetDraftItemKeyParam,
+	DatasetDraftItemParam,
+	DatasetDraftItemRevisionList,
+	DatasetDraftItemUpsert,
+	DatasetDraftMutation,
+	DatasetDraftOrder,
+	DatasetDraftPublish,
+	DatasetDraftValidation,
 	DatasetErrorResponses,
 	DatasetIdParam,
 	DatasetItem,
 	DatasetItemCreate,
 	DatasetItemIdParams,
-	DatasetDraft,
-	DatasetDraftItem,
-	DatasetDraftItemKeyParam,
-	DatasetDraftItemParam,
-	DatasetDraftItemUpsert,
 	DatasetMetadataUpdate,
 	DatasetProjectQuery,
-	DatasetDraftPublish,
 	DatasetSlugParam,
 } from "../schemas/datasets.js";
+import { trustedTenant } from "../tenancy.js";
 
 const tag = "datasets";
 const DatasetList = z
@@ -68,6 +88,30 @@ const IfMatchDraftRevision = z.object({
 		},
 	}),
 });
+const OptionalIfMatchDraftRevision = z.object({
+	"if-match": DraftRevisionEtag.optional().openapi({
+		param: {
+			name: "if-match",
+			in: "header",
+			required: false,
+			description:
+				"Quoted current draft revision. Omit only to create a draft after request validation when none exists.",
+		},
+	}),
+});
+const DatasetIdempotencyHeader = z.object({
+	"idempotency-key": z
+		.string()
+		.regex(/^[ -~]{1,200}$/)
+		.openapi({
+			param: {
+				name: "idempotency-key",
+				in: "header",
+				required: true,
+				description: "Stable key used to replay a curation request safely.",
+			},
+		}),
+});
 
 const errorResponse = (c: Context, cause: unknown): Response => {
 	const error =
@@ -84,6 +128,9 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 			code: error.code,
 			message:
 				error.code === "INTERNAL" ? "Dataset operation failed" : error.message,
+			...(error.code === "INTERNAL" || !error.details
+				? {}
+				: { details: error.details }),
 		},
 		error.status,
 	);
@@ -257,6 +304,84 @@ export const getDatasetDraft = createRoute({
 		...DatasetErrorResponses,
 	},
 });
+export const validateDatasetDraft = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/draft/validate",
+	tags: [tag],
+	summary: "Validate every draft item with the current versioned contract",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
+	responses: {
+		200: {
+			description: "Validation result",
+			content: { "application/json": { schema: DatasetDraftValidation } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const importDatasetDraftItems = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/draft/import",
+	tags: [tag],
+	summary: "Import up to 500 draft items atomically",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		headers: OptionalIfMatchDraftRevision.merge(DatasetIdempotencyHeader),
+		body: { content: { "application/json": { schema: DatasetDraftImport } } },
+	},
+	responses: {
+		200: {
+			description: "Imported draft items",
+			headers: DraftRevisionHeaders,
+			content: { "application/json": { schema: DatasetDraftImportResult } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const captureDatasetDraftItem = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/draft/capture",
+	tags: [tag],
+	summary: "Capture redacted trace or observation evidence into a draft",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		headers: OptionalIfMatchDraftRevision.merge(DatasetIdempotencyHeader),
+		body: { content: { "application/json": { schema: DatasetDraftCapture } } },
+	},
+	responses: {
+		200: {
+			description: "Captured draft item",
+			headers: DraftRevisionHeaders,
+			content: { "application/json": { schema: DatasetDraftCaptureResult } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const reorderDatasetDraftItems = createRoute({
+	method: "put",
+	path: "/v1/datasets/by-slug/{slug}/draft/items/order",
+	tags: [tag],
+	summary: "Reorder every draft item deterministically",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		headers: IfMatchDraftRevision,
+		body: { content: { "application/json": { schema: DatasetDraftOrder } } },
+	},
+	responses: {
+		200: {
+			description: "Draft reordered",
+			headers: DraftRevisionHeaders,
+			content: { "application/json": { schema: DatasetDraftMutation } },
+		},
+		...DatasetErrorResponses,
+	},
+});
 export const putDatasetDraftItem = createRoute({
 	method: "put",
 	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemKey}",
@@ -276,6 +401,46 @@ export const putDatasetDraftItem = createRoute({
 			description: "Draft item",
 			headers: DraftRevisionHeaders,
 			content: { "application/json": { schema: DatasetDraftItem } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const reviewDatasetDraftItem = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemId}/review",
+	tags: [tag],
+	summary: "Mark a draft item as reviewed",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetDraftItemParam,
+		query: DatasetProjectQuery,
+		headers: IfMatchDraftRevision,
+	},
+	responses: {
+		200: {
+			description: "Reviewed draft item",
+			headers: DraftRevisionHeaders,
+			content: { "application/json": { schema: DatasetDraftItem } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const listDatasetDraftItemRevisions = createRoute({
+	method: "get",
+	path: "/v1/datasets/by-slug/{slug}/draft/items/{itemId}/revisions",
+	tags: [tag],
+	summary: "List a Dataset item's redacted revision history",
+	description:
+		"Accepts the current draft-item UUID or a published snapshot-item UUID without creating a draft or recording an audit event.",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetDraftItemParam,
+		query: DatasetProjectQuery,
+	},
+	responses: {
+		200: {
+			description: "Dataset item revisions",
+			content: { "application/json": { schema: DatasetDraftItemRevisionList } },
 		},
 		...DatasetErrorResponses,
 	},
@@ -345,10 +510,17 @@ export type DatasetRouteDependencies = {
 	addDatasetItem: typeof addDatasetItemRecord;
 	deleteDatasetItem: typeof deleteDatasetItemRecord;
 	getDatasetBySlug: typeof getDatasetBySlugRecord;
+	getDatasetCurationReplay: typeof getDatasetCurationReplayRecord;
 	updateDatasetMetadata: typeof updateDatasetMetadataRecord;
 	getOrCreateDatasetDraft: typeof getOrCreateDatasetDraftRecord;
 	getDatasetDraft: typeof getDatasetDraftRecord;
 	upsertDatasetDraftItem: typeof upsertDatasetDraftItemRecord;
+	validateDatasetDraft: typeof validateDatasetDraftRecord;
+	importDatasetDraftItems: typeof importDatasetDraftItemsRecord;
+	captureDatasetDraftItem: typeof captureDatasetDraftItemRecord;
+	reorderDatasetDraftItems: typeof reorderDatasetDraftItemsRecord;
+	reviewDatasetDraftItem: typeof reviewDatasetDraftItemRecord;
+	getDatasetDraftItemRevisions: typeof getDatasetDraftItemRevisionsRecord;
 	deleteDatasetDraftItem: typeof deleteDatasetDraftItemRecord;
 	authorizeDatasetWrite: typeof authorizeDatasetWriteRecord;
 	archiveDataset: typeof archiveDatasetRecord;
@@ -360,6 +532,12 @@ export type DatasetRouteDependencies = {
 		trace_id: string;
 		observation_id?: string | null;
 	}) => Promise<boolean>;
+	captureSource: (input: {
+		organization_id: string;
+		project_id: string;
+		trace_id: string;
+		observation_id?: string | null;
+	}) => Promise<{ input_text: string; output_text: string } | null>;
 };
 async function targetExists(input: {
 	organization_id: string;
@@ -377,6 +555,27 @@ async function targetExists(input: {
 	});
 	return ((await result.json()) as unknown[]).length > 0;
 }
+async function captureSource(input: {
+	organization_id: string;
+	project_id: string;
+	trace_id: string;
+	observation_id?: string | null;
+}) {
+	const table = input.observation_id ? "observations" : "traces";
+	const result = await ch().query({
+		query: `SELECT substring(input_text, 1, 32768) AS input_text, substring(output_text, 1, 32768) AS output_text FROM ${table} WHERE organization_id={organization_id:String} AND project_id={project_id:String} AND trace_id={trace_id:String}${input.observation_id ? " AND observation_id={observation_id:String}" : ""} LIMIT 1`,
+		query_params: input.observation_id
+			? { ...input, observation_id: input.observation_id }
+			: input,
+		format: "JSONEachRow",
+	});
+	const row = ((await result.json()) as Array<Record<string, unknown>>)[0];
+	if (!row) return null;
+	return {
+		input_text: typeof row.input_text === "string" ? row.input_text : "",
+		output_text: typeof row.output_text === "string" ? row.output_text : "",
+	};
+}
 const production: DatasetRouteDependencies = {
 	pool: pgPool,
 	listDatasets: listDatasetsRecord,
@@ -387,21 +586,68 @@ const production: DatasetRouteDependencies = {
 	addDatasetItem: addDatasetItemRecord,
 	deleteDatasetItem: deleteDatasetItemRecord,
 	getDatasetBySlug: getDatasetBySlugRecord,
+	getDatasetCurationReplay: getDatasetCurationReplayRecord,
 	updateDatasetMetadata: updateDatasetMetadataRecord,
 	getOrCreateDatasetDraft: getOrCreateDatasetDraftRecord,
 	getDatasetDraft: getDatasetDraftRecord,
 	upsertDatasetDraftItem: upsertDatasetDraftItemRecord,
+	validateDatasetDraft: validateDatasetDraftRecord,
+	importDatasetDraftItems: importDatasetDraftItemsRecord,
+	captureDatasetDraftItem: captureDatasetDraftItemRecord,
+	reorderDatasetDraftItems: reorderDatasetDraftItemsRecord,
+	reviewDatasetDraftItem: reviewDatasetDraftItemRecord,
+	getDatasetDraftItemRevisions: getDatasetDraftItemRevisionsRecord,
 	deleteDatasetDraftItem: deleteDatasetDraftItemRecord,
 	authorizeDatasetWrite: authorizeDatasetWriteRecord,
 	archiveDataset: archiveDatasetRecord,
 	discardDatasetDraft: discardDatasetDraftRecord,
 	publishDatasetDraft: publishDatasetDraftRecord,
 	targetExists,
+	captureSource,
 };
 
 export function createDatasetRouteHandlers(
 	dependencies: DatasetRouteDependencies = production,
 ) {
+	async function sourceCapturedItem<
+		T extends {
+			input: Record<string, unknown>;
+			expected_output?: Record<string, unknown> | null;
+			source_trace_id?: string | null;
+			source_observation_id?: string | null;
+		},
+	>(
+		item: T,
+		organization_id: string,
+		project_id: string,
+	): Promise<
+		T & {
+			capture?: boolean;
+			capture_context?: { kind: "trace" | "observation" };
+		}
+	> {
+		if (!item.source_trace_id) return item;
+		const source = await dependencies.captureSource({
+			organization_id,
+			project_id,
+			trace_id: item.source_trace_id,
+			observation_id: item.source_observation_id,
+		});
+		if (!source)
+			throw new DatasetRepositoryError("NOT_FOUND", "Source trace not found");
+		return {
+			...item,
+			input: captureTextAsObject(source.input_text),
+			expected_output: source.output_text
+				? captureTextAsObject(source.output_text)
+				: null,
+			capture: true,
+			capture_context: {
+				kind: item.source_observation_id ? "observation" : "trace",
+			},
+		};
+	}
+
 	return {
 		handleListDatasets: async (
 			c: Parameters<RouteHandler<typeof listDatasets>>[0],
@@ -449,7 +695,7 @@ export function createDatasetRouteHandlers(
 						...c.req.valid("json"),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					}),
 				);
@@ -468,7 +714,7 @@ export function createDatasetRouteHandlers(
 						slug: c.req.valid("param").slug,
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					},
 				);
@@ -493,6 +739,217 @@ export function createDatasetRouteHandlers(
 				return errorResponse(c, cause);
 			}
 		},
+		handleValidateDatasetDraft: async (
+			c: Parameters<RouteHandler<typeof validateDatasetDraft>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.validateDatasetDraft(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"curation_write",
+						),
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleImportDatasetDraftItems: async (
+			c: Parameters<RouteHandler<typeof importDatasetDraftItems>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (match !== undefined && !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain a draft revision",
+					);
+				const project_id = c.req.valid("query").project_id;
+				const tenant = trustedTenant(c);
+				const authorization = projectAuthorization(tenant, "curation_write");
+				const slug = c.req.valid("param").slug;
+				const idempotency_key = c.req.valid("header")["idempotency-key"];
+				const idempotency_items = c.req.valid("json").items.map((item) => ({
+					...item,
+					project_id,
+				}));
+				const replay = await dependencies.getDatasetCurationReplay(
+					dependencies.pool(),
+					{
+						project_id,
+						slug,
+						operation: "import",
+						idempotency_key,
+						idempotency_request: {
+							revision: match === undefined ? undefined : Number(match),
+							items: idempotency_items,
+						},
+						authorization,
+					},
+				);
+				if (replay) {
+					c.header("ETag", `\"${replay.revision}\"`);
+					return c.json({
+						items: [],
+						revision: replay.revision,
+						idempotent: true,
+						validation_version: DATASET_DRAFT_VALIDATION_VERSION,
+					});
+				}
+				const result = await dependencies.importDatasetDraftItems(
+					dependencies.pool(),
+					{
+						project_id,
+						slug,
+						revision: match === undefined ? undefined : Number(match),
+						items: await Promise.all(
+							idempotency_items.map((item) =>
+								sourceCapturedItem(item, tenant.organizationId, project_id),
+							),
+						),
+						idempotency_items,
+						idempotency_key,
+						authorization,
+					},
+				);
+				c.header("ETag", `\"${result.revision}\"`);
+				return c.json({
+					items: result.items,
+					revision: result.revision,
+					idempotent: result.idempotent,
+					validation_version: DATASET_DRAFT_VALIDATION_VERSION,
+				});
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleCaptureDatasetDraftItem: async (
+			c: Parameters<RouteHandler<typeof captureDatasetDraftItem>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (match !== undefined && !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain a draft revision",
+					);
+				const body = c.req.valid("json");
+				const tenant = trustedTenant(c);
+				const project_id = c.req.valid("query").project_id;
+				const authorization = projectAuthorization(tenant, "curation_write");
+				const slug = c.req.valid("param").slug;
+				const idempotency_key = c.req.valid("header")["idempotency-key"];
+				const item_key =
+					body.item_key ??
+					`capture-${datasetCurationRequestHash(idempotency_key).slice(0, 32)}`;
+				const idempotency_request = {
+					revision: match === undefined ? undefined : Number(match),
+					item_key,
+					external_id: body.external_id ?? null,
+					source_trace_id: body.source_trace_id,
+					source_observation_id: body.source_observation_id ?? null,
+				};
+				const replay = await dependencies.getDatasetCurationReplay(
+					dependencies.pool(),
+					{
+						project_id,
+						slug,
+						operation: "capture",
+						idempotency_key,
+						idempotency_request,
+						authorization,
+					},
+				);
+				if (replay) {
+					c.header("ETag", `\"${replay.revision}\"`);
+					return c.json({
+						item: null,
+						revision: replay.revision,
+						idempotent: true,
+						validation_version: DATASET_DRAFT_VALIDATION_VERSION,
+					});
+				}
+				const source = await dependencies.captureSource({
+					organization_id: tenant.organizationId,
+					project_id,
+					trace_id: body.source_trace_id,
+					observation_id: body.source_observation_id,
+				});
+				if (!source)
+					throw new DatasetRepositoryError(
+						"NOT_FOUND",
+						"Source trace not found",
+					);
+				const result = await dependencies.captureDatasetDraftItem(
+					dependencies.pool(),
+					{
+						project_id,
+						slug,
+						revision: match === undefined ? undefined : Number(match),
+						item_key,
+						input: captureTextAsObject(source.input_text),
+						expected_output: source.output_text
+							? captureTextAsObject(source.output_text)
+							: null,
+						metadata: {},
+						external_id: body.external_id ?? null,
+						source_trace_id: body.source_trace_id,
+						source_observation_id: body.source_observation_id ?? null,
+						capture_context: {
+							kind: body.source_observation_id ? "observation" : "trace",
+						},
+						idempotency_key,
+						idempotency_request,
+						authorization,
+					},
+				);
+				c.header("ETag", `\"${result.revision}\"`);
+				return c.json({
+					item: result.item,
+					revision: result.revision,
+					idempotent: result.idempotent,
+					validation_version: DATASET_DRAFT_VALIDATION_VERSION,
+				});
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleReorderDatasetDraftItems: async (
+			c: Parameters<RouteHandler<typeof reorderDatasetDraftItems>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current draft revision",
+					);
+				const result = await dependencies.reorderDatasetDraftItems(
+					dependencies.pool(),
+					{
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						item_ids: c.req.valid("json").item_ids,
+						revision: Number(match),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"curation_write",
+						),
+					},
+				);
+				c.header("ETag", `\"${result.revision}\"`);
+				return c.json({
+					...result,
+					validation_version: DATASET_DRAFT_VALIDATION_VERSION,
+					idempotent: false,
+				});
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
 		handlePutDatasetDraftItem: async (
 			c: Parameters<RouteHandler<typeof putDatasetDraftItem>>[0],
 		) => {
@@ -505,37 +962,78 @@ export function createDatasetRouteHandlers(
 					);
 				const body = c.req.valid("json");
 				const tenant = trustedTenant(c);
-				const authorization = projectAuthorization(tenant, "product_write");
+				const authorization = projectAuthorization(tenant, "curation_write");
+				const project_id = c.req.valid("query").project_id;
 				await dependencies.authorizeDatasetWrite(dependencies.pool(), {
-					project_id: c.req.valid("query").project_id,
+					project_id,
 					authorization,
 				});
-				if (
-					body.source_trace_id &&
-					!(await dependencies.targetExists({
-						organization_id: tenant.organizationId,
-						project_id: c.req.valid("query").project_id,
-						trace_id: body.source_trace_id,
-						observation_id: body.source_observation_id,
-					}))
-				)
-					throw new DatasetRepositoryError(
-						"NOT_FOUND",
-						"Source trace not found",
-					);
+				const capturedItem = await sourceCapturedItem(
+					body,
+					tenant.organizationId,
+					project_id,
+				);
 				const item = await dependencies.upsertDatasetDraftItem(
 					dependencies.pool(),
 					{
-						project_id: c.req.valid("query").project_id,
+						project_id,
 						slug: c.req.valid("param").slug,
 						item_key: c.req.valid("param").itemKey,
 						revision: Number(match),
-						...body,
+						...capturedItem,
 						authorization,
 					},
 				);
 				c.header("ETag", `\"${Number(match) + 1}\"`);
 				return c.json(item);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleReviewDatasetDraftItem: async (
+			c: Parameters<RouteHandler<typeof reviewDatasetDraftItem>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current draft revision",
+					);
+				const result = await dependencies.reviewDatasetDraftItem(
+					dependencies.pool(),
+					{
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						item_id: c.req.valid("param").itemId,
+						revision: Number(match),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"curation_write",
+						),
+					},
+				);
+				c.header("ETag", `\"${result.revision}\"`);
+				return c.json(result.item);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleListDatasetDraftItemRevisions: async (
+			c: Parameters<RouteHandler<typeof listDatasetDraftItemRevisions>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.getDatasetDraftItemRevisions(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						item_id: c.req.valid("param").itemId,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
+					}),
+				);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}
@@ -557,7 +1055,7 @@ export function createDatasetRouteHandlers(
 					revision: Number(match),
 					authorization: projectAuthorization(
 						trustedTenant(c),
-						"product_write",
+						"curation_write",
 					),
 				});
 				c.header("ETag", `\"${Number(match) + 1}\"`);
@@ -589,7 +1087,7 @@ export function createDatasetRouteHandlers(
 					slug: c.req.valid("param").slug,
 					authorization: projectAuthorization(
 						trustedTenant(c),
-						"product_write",
+						"curation_write",
 					),
 				});
 				return c.body(null, 204);
@@ -615,7 +1113,7 @@ export function createDatasetRouteHandlers(
 						revision: Number(match),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					},
 				);
@@ -634,7 +1132,7 @@ export function createDatasetRouteHandlers(
 						...c.req.valid("json"),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					}),
 					201,
@@ -732,7 +1230,13 @@ export const {
 	handlePatchDatasetBySlug,
 	handleCreateDatasetDraft,
 	handleGetDatasetDraft,
+	handleValidateDatasetDraft,
+	handleImportDatasetDraftItems,
+	handleCaptureDatasetDraftItem,
+	handleReorderDatasetDraftItems,
 	handlePutDatasetDraftItem,
+	handleReviewDatasetDraftItem,
+	handleListDatasetDraftItemRevisions,
 	handleDeleteDatasetDraftItem,
 	handleArchiveDataset,
 	handleDiscardDatasetDraft,

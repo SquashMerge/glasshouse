@@ -87,6 +87,7 @@ export function TraceDetailPage() {
 	const location = useLocation();
 	const project = useOptionalProjectSelection();
 	const projectId = project?.selectedProjectId ?? null;
+	const canCurate = project?.selectedProject?.project_role !== "read_only";
 
 	return (
 		<TraceDetailPageContent
@@ -94,6 +95,7 @@ export function TraceDetailPage() {
 			id={id}
 			searchStr={location.searchStr}
 			projectId={projectId}
+			canCurate={canCurate}
 		/>
 	);
 }
@@ -102,10 +104,12 @@ function TraceDetailPageContent({
 	id,
 	searchStr,
 	projectId,
+	canCurate,
 }: {
 	id: string;
 	searchStr: string;
 	projectId: string | null;
+	canCurate: boolean;
 }) {
 	const spanDeepLink = React.useMemo(
 		() => new URLSearchParams(searchStr).get("span"),
@@ -306,21 +310,13 @@ function TraceDetailPageContent({
 							projectId={projectId}
 							traceId={id}
 							label="trace"
+							canCurate={canCurate}
 						/>
 						<AddToDatasetDialog
 							projectId={projectId}
 							traceId={id}
-							inputText={
-								typeof model.trace?.input_text === "string"
-									? model.trace.input_text
-									: ""
-							}
-							outputText={
-								typeof model.trace?.output_text === "string"
-									? model.trace.output_text
-									: ""
-							}
 							label="trace"
+							canCurate={canCurate}
 						/>
 					</>
 				}
@@ -433,22 +429,14 @@ function TraceDetailPageContent({
 										traceId={id}
 										observationId={selectedObservation.observation_id}
 										label="Observation"
+										canCurate={canCurate}
 									/>
 									<AddToDatasetDialog
 										projectId={projectId}
 										traceId={id}
 										observationId={selectedObservation.observation_id}
-										inputText={
-											typeof selectedObservation.input_text === "string"
-												? selectedObservation.input_text
-												: ""
-										}
-										outputText={
-											typeof selectedObservation.output_text === "string"
-												? selectedObservation.output_text
-												: ""
-										}
 										label="Observation"
+										canCurate={canCurate}
 									/>
 								</>
 							) : undefined

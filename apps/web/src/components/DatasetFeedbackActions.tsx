@@ -1,60 +1,36 @@
 import * as React from "react";
 import {
-	createDatasetDraft,
+	ApiError,
+	captureDatasetDraftItem,
 	createFeedback,
+	getDatasetDraft,
 	listDatasets,
-	upsertDatasetDraftItem,
-	type JsonObject,
 } from "../lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
 
-function jsonObject(value: string, label: string): JsonObject {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(value);
-	} catch {
-		throw new Error(`${label} must be valid JSON object`);
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-		throw new Error(`${label} must be a JSON object`);
-	return parsed as JsonObject;
-}
-function initialJson(value: string | undefined) {
-	if (!value) return "{}";
-	try {
-		return JSON.stringify(jsonObject(value, "Value"), null, 2);
-	} catch {
-		return value;
-	}
-}
-function initialExpectedJson(value: string | undefined) {
-	return value ? initialJson(value) : "";
-}
 export function AddToDatasetDialog({
 	projectId,
 	traceId,
 	observationId,
-	inputText,
-	outputText,
 	label,
+	canCurate = true,
 }: {
 	projectId: string | null;
 	traceId: string;
 	observationId?: string;
-	inputText?: string;
-	outputText?: string;
 	label: string;
+	canCurate?: boolean;
 }) {
 	const [open, setOpen] = React.useState(false);
 	const triggerRef = React.useRef<HTMLButtonElement>(null);
 	const dialogRef = React.useRef<HTMLDivElement>(null);
+	const captureAttempt = React.useRef<{
+		idempotency_key: string;
+		revision: number | undefined;
+	} | null>(null);
 	const [datasetId, setDatasetId] = React.useState("");
-	const [input, setInput] = React.useState(() => initialJson(inputText));
-	const [expected, setExpected] = React.useState(() =>
-		initialExpectedJson(outputText),
-	);
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
 	const [datasetLoading, setDatasetLoading] = React.useState(false);
@@ -64,7 +40,7 @@ export function AddToDatasetDialog({
 		Array<{ id: string; name: string; slug: string }>
 	>([]);
 	React.useEffect(() => {
-		if (!open || !projectId) return;
+		if (!canCurate || !open || !projectId) return;
 		const currentProjectId = projectId;
 		let active = true;
 		async function loadDatasets() {
@@ -83,18 +59,12 @@ export function AddToDatasetDialog({
 		return () => {
 			active = false;
 		};
-	}, [datasetLoadAttempt, open, projectId]);
+	}, [canCurate, datasetLoadAttempt, open, projectId]);
 	React.useEffect(() => {
 		setDatasetId("");
-		setInput(initialJson(inputText));
-		setExpected(initialExpectedJson(outputText));
 		setError("");
+		captureAttempt.current = null;
 	}, [projectId, traceId, observationId]);
-	React.useEffect(() => {
-		if (open) return;
-		setInput(initialJson(inputText));
-		setExpected(initialExpectedJson(outputText));
-	}, [inputText, open, outputText]);
 	React.useEffect(() => {
 		if (!open) return;
 		dialogRef.current
@@ -107,31 +77,36 @@ export function AddToDatasetDialog({
 		setOpen(false);
 		setTimeout(() => triggerRef.current?.focus(), 0);
 	}
+	async function existingDraftRevision(slug: string) {
+		if (!projectId) return undefined;
+		try {
+			return (await getDatasetDraft({ project_id: projectId, slug })).revision;
+		} catch (cause) {
+			if (cause instanceof ApiError && cause.status === 404) return undefined;
+			throw cause;
+		}
+	}
 	async function submit() {
-		if (!projectId || !datasetId || pending) return;
+		if (!canCurate || !projectId || !datasetId || pending) return;
 		try {
 			setError("");
-			const parsedInput = jsonObject(input, "Input");
-			const parsedExpected = expected.trim()
-				? jsonObject(expected, "Expected output")
-				: null;
 			setPending(true);
 			const selected = datasets.find((dataset) => dataset.id === datasetId);
 			if (!selected) throw new Error("Dataset is no longer available");
-			const draft = await createDatasetDraft({
+			const attempt = captureAttempt.current ?? {
+				idempotency_key: crypto.randomUUID(),
+				revision: await existingDraftRevision(selected.slug),
+			};
+			captureAttempt.current ??= attempt;
+			await captureDatasetDraftItem({
 				project_id: projectId,
 				slug: selected.slug,
-			});
-			await upsertDatasetDraftItem({
-				project_id: projectId,
-				slug: selected.slug,
-				item_key: crypto.randomUUID(),
-				revision: draft.revision,
-				input: parsedInput,
-				expected_output: parsedExpected,
+				revision: attempt.revision,
+				idempotency_key: attempt.idempotency_key,
 				source_trace_id: traceId,
 				source_observation_id: observationId,
 			});
+			captureAttempt.current = null;
 			close();
 		} catch (cause) {
 			setError((cause as Error).message);
@@ -139,6 +114,7 @@ export function AddToDatasetDialog({
 			setPending(false);
 		}
 	}
+	if (!canCurate) return null;
 	return (
 		<>
 			<Button
@@ -184,7 +160,7 @@ export function AddToDatasetDialog({
 				>
 					<div className="w-full max-w-xl space-y-3 rounded-lg bg-background p-5 shadow-lg">
 						<h2 id="add-to-dataset-title" className="font-semibold">
-							Add {label} to dataset
+							Capture {label} as a Dataset draft
 						</h2>
 						<label className="block text-sm" htmlFor="dataset-choice">
 							Dataset
@@ -192,7 +168,10 @@ export function AddToDatasetDialog({
 								id="dataset-choice"
 								className="h-9 w-full rounded border px-2"
 								value={datasetId}
-								onChange={(event) => setDatasetId(event.target.value)}
+								onChange={(event) => {
+									captureAttempt.current = null;
+									setDatasetId(event.target.value);
+								}}
 							>
 								<option value="">Choose a dataset</option>
 								{datasets.map((dataset) => (
@@ -225,22 +204,14 @@ export function AddToDatasetDialog({
 								</Button>
 							</div>
 						)}
-						<label className="block text-sm">
-							Input
-							<textarea
-								className="mt-1 min-h-24 w-full rounded border p-2 font-mono text-xs"
-								value={input}
-								onChange={(event) => setInput(event.target.value)}
-							/>
-						</label>
-						<label className="block text-sm">
-							Expected output suggestion
-							<textarea
-								className="mt-1 min-h-24 w-full rounded border p-2 font-mono text-xs"
-								value={expected}
-								onChange={(event) => setExpected(event.target.value)}
-							/>
-						</label>
+						<p
+							className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground"
+							role="status"
+						>
+							Astraea reads the selected source again on the server, applies the
+							active redaction policy, and saves an unpublished item for review.
+							Source text in this browser is never submitted as Dataset content.
+						</p>
 						{error && (
 							<p className="text-sm text-destructive" role="alert">
 								{error}
@@ -254,7 +225,7 @@ export function AddToDatasetDialog({
 								disabled={pending || !datasetId}
 								onClick={() => void submit()}
 							>
-								{pending ? "Adding to draft..." : "Add case to draft"}
+								{pending ? "Capturing..." : "Capture redacted case"}
 							</Button>
 						</div>
 					</div>
@@ -268,11 +239,13 @@ export function FeedbackControls({
 	traceId,
 	observationId,
 	label,
+	canCurate = true,
 }: {
 	projectId: string | null;
 	traceId: string;
 	observationId?: string;
 	label: string;
+	canCurate?: boolean;
 }) {
 	const [reason, setReason] = React.useState("");
 	const [comment, setComment] = React.useState("");
@@ -286,7 +259,12 @@ export function FeedbackControls({
 		idempotencyKeys.current = {};
 	}, [observationId, traceId]);
 	async function record(value: 1 | -1) {
-		if (pending || !projectId || (value === -1 && !reason.trim())) {
+		if (
+			!canCurate ||
+			pending ||
+			!projectId ||
+			(value === -1 && !reason.trim())
+		) {
 			setNegative(true);
 			return;
 		}
@@ -320,6 +298,7 @@ export function FeedbackControls({
 			setPending(false);
 		}
 	}
+	if (!canCurate) return null;
 	return (
 		<div className="flex flex-wrap items-center gap-2">
 			<Button

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-	discardDatasetDraft,
 	deleteDatasetDraftItem,
+	discardDatasetDraft,
+	importDatasetDraftItems,
 	publishDatasetDraft,
 	upsertDatasetDraftItem,
 } from "../../src/lib/api";
@@ -82,11 +83,92 @@ describe("dataset API client", () => {
 		expect(new Headers(request.headers).get("if-match")).toBe('"3"');
 	});
 
+	it("preserves import provenance and omits If-Match when creating a draft", async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					items: [],
+					validation_version: 1,
+					revision: 2,
+					idempotent: false,
+				}),
+				{ status: 200 },
+			),
+		);
+		await importDatasetDraftItems({
+			project_id: PROJECT_ID,
+			slug: "golden",
+			idempotency_key: "import-key",
+			items: [
+				{
+					item_key: "imported",
+					input: { question: "hello" },
+					source_trace_id: "a".repeat(32),
+					source_observation_id: "observation-1",
+				},
+			],
+		});
+
+		const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			`/v1/datasets/by-slug/golden/draft/import?project_id=${PROJECT_ID}`,
+		);
+		expect(JSON.parse(request.body as string)).toEqual({
+			items: [
+				{
+					item_key: "imported",
+					input: { question: "hello" },
+					source_trace_id: "a".repeat(32),
+					source_observation_id: "observation-1",
+				},
+			],
+		});
+		expect(new Headers(request.headers).get("if-match")).toBeNull();
+	});
+
 	it("accepts an empty discard response", async () => {
 		fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 		await expect(
 			discardDatasetDraft({ project_id: PROJECT_ID, slug: "golden" }),
 		).resolves.toBeUndefined();
+	});
+
+	it("preserves safe validation details on API errors", async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					code: "BAD_REQUEST",
+					message: "Dataset draft validation failed",
+					details: {
+						errors: [
+							{
+								item_id: null,
+								item_key: "bad-row",
+								field: "items/0/input",
+								code: "OBJECT_REQUIRED",
+								message: "Input must be a JSON object",
+							},
+						],
+					},
+				}),
+				{ status: 400 },
+			),
+		);
+
+		await expect(
+			importDatasetDraftItems({
+				project_id: PROJECT_ID,
+				slug: "golden",
+				idempotency_key: "import-key",
+				items: [{ item_key: "bad-row", input: {} }],
+			}),
+		).rejects.toMatchObject({
+			status: 400,
+			code: "BAD_REQUEST",
+			details: {
+				errors: [expect.objectContaining({ item_key: "bad-row" })],
+			},
+		});
 	});
 
 	it("publishes a draft with its current ETag", async () => {
