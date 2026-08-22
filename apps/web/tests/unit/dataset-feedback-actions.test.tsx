@@ -66,6 +66,22 @@ describe("dataset feedback actions", () => {
 		expect(listDatasets).not.toHaveBeenCalled();
 	});
 
+	it("does not expose accessible feedback mutations without curation access", () => {
+		render(
+			<FeedbackControls
+				projectId="project"
+				traceId="trace-a"
+				label="trace"
+				canCurate={false}
+			/>,
+		);
+
+		expect(screen.queryByLabelText("Thumbs up trace")).toBeNull();
+		expect(screen.queryByLabelText("Thumbs down trace")).toBeNull();
+		expect(screen.queryByLabelText("Comment")).toBeNull();
+		expect(createFeedback).not.toHaveBeenCalled();
+	});
+
 	it("captures only source identity and lets the server redact the source", async () => {
 		listDatasets.mockResolvedValue({
 			items: [{ id: "dataset", name: "Golden", slug: "golden" }],

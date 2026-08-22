@@ -239,11 +239,13 @@ export function FeedbackControls({
 	traceId,
 	observationId,
 	label,
+	canCurate = true,
 }: {
 	projectId: string | null;
 	traceId: string;
 	observationId?: string;
 	label: string;
+	canCurate?: boolean;
 }) {
 	const [reason, setReason] = React.useState("");
 	const [comment, setComment] = React.useState("");
@@ -257,7 +259,12 @@ export function FeedbackControls({
 		idempotencyKeys.current = {};
 	}, [observationId, traceId]);
 	async function record(value: 1 | -1) {
-		if (pending || !projectId || (value === -1 && !reason.trim())) {
+		if (
+			!canCurate ||
+			pending ||
+			!projectId ||
+			(value === -1 && !reason.trim())
+		) {
 			setNegative(true);
 			return;
 		}
@@ -291,6 +298,7 @@ export function FeedbackControls({
 			setPending(false);
 		}
 	}
+	if (!canCurate) return null;
 	return (
 		<div className="flex flex-wrap items-center gap-2">
 			<Button

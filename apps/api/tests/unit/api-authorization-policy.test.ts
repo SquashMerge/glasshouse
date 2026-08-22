@@ -14,7 +14,7 @@ afterEach(() => {
 	else process.env.UI_PASSWORD = originalPassword;
 });
 
-test("classifies ordinary writes, executions, and governed promotions at the server boundary", async () => {
+test("classifies curation writes, executions, and governed promotions at the server boundary", async () => {
 	const operations: string[] = [];
 	const app = createApiApp({
 		assertTenantProjectAccess: async (_pool, _tenant, _project, operation) => {
@@ -28,6 +28,15 @@ test("classifies ordinary writes, executions, and governed promotions at the ser
 		headers: { authorization, "content-type": "application/json" },
 		body: JSON.stringify({ project_id: projectId, name: "Dataset" }),
 	});
+	await app.request(`http://localhost/v1/feedback`, {
+		method: "POST",
+		headers: {
+			authorization,
+			"content-type": "application/json",
+			"idempotency-key": "policy-feedback",
+		},
+		body: JSON.stringify({ project_id: projectId }),
+	});
 	await app.request(
 		`http://localhost/v1/prompt-optimizations/22222222-2222-4222-8222-222222222222/promote?project_id=${projectId}`,
 		{ method: "POST", headers: { authorization } },
@@ -38,5 +47,10 @@ test("classifies ordinary writes, executions, and governed promotions at the ser
 		body: JSON.stringify({ project_id: projectId }),
 	});
 
-	expect(operations).toEqual(["product_write", "governed", "execute"]);
+	expect(operations).toEqual([
+		"curation_write",
+		"curation_write",
+		"governed",
+		"execute",
+	]);
 });

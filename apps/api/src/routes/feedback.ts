@@ -162,7 +162,7 @@ export const handleCreateFeedback = async (
 	try {
 		const body = c.req.valid("json");
 		const tenant = trustedTenant(c);
-		const authorization = projectAuthorization(tenant, "product_write");
+		const authorization = projectAuthorization(tenant, "curation_write");
 		const feedback = body.metadata.feedback;
 		if (
 			(body.value === 1) !== (feedback.sentiment === "positive") ||
@@ -215,7 +215,7 @@ export const handlePromoteFeedback = async (
 	try {
 		const tenant = trustedTenant(c);
 		const project_id = c.req.valid("query").project_id;
-		const authorization = projectAuthorization(tenant, "product_write");
+		const authorization = projectAuthorization(tenant, "curation_write");
 		const body = c.req.valid("json");
 		const idempotency_key = c.req.valid("header")["idempotency-key"];
 		const target = await getFeedbackPromotionTarget(pgPool(), {
@@ -266,7 +266,7 @@ export const handleReviewFeedback = async (
 				project_id: c.req.valid("query").project_id,
 				id: c.req.valid("param").id,
 				...c.req.valid("json"),
-				authorization: projectAuthorization(trustedTenant(c), "product_write"),
+				authorization: projectAuthorization(trustedTenant(c), "curation_write"),
 			}),
 		);
 	} catch (cause) {

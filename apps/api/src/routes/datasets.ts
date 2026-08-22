@@ -695,7 +695,7 @@ export function createDatasetRouteHandlers(
 						...c.req.valid("json"),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					}),
 				);
@@ -714,7 +714,7 @@ export function createDatasetRouteHandlers(
 						slug: c.req.valid("param").slug,
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					},
 				);
@@ -749,7 +749,7 @@ export function createDatasetRouteHandlers(
 						slug: c.req.valid("param").slug,
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					}),
 				);
@@ -769,7 +769,7 @@ export function createDatasetRouteHandlers(
 					);
 				const project_id = c.req.valid("query").project_id;
 				const tenant = trustedTenant(c);
-				const authorization = projectAuthorization(tenant, "product_write");
+				const authorization = projectAuthorization(tenant, "curation_write");
 				const slug = c.req.valid("param").slug;
 				const idempotency_key = c.req.valid("header")["idempotency-key"];
 				const idempotency_items = c.req.valid("json").items.map((item) => ({
@@ -839,7 +839,7 @@ export function createDatasetRouteHandlers(
 				const body = c.req.valid("json");
 				const tenant = trustedTenant(c);
 				const project_id = c.req.valid("query").project_id;
-				const authorization = projectAuthorization(tenant, "product_write");
+				const authorization = projectAuthorization(tenant, "curation_write");
 				const slug = c.req.valid("param").slug;
 				const idempotency_key = c.req.valid("header")["idempotency-key"];
 				const item_key =
@@ -936,7 +936,7 @@ export function createDatasetRouteHandlers(
 						revision: Number(match),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					},
 				);
@@ -962,7 +962,7 @@ export function createDatasetRouteHandlers(
 					);
 				const body = c.req.valid("json");
 				const tenant = trustedTenant(c);
-				const authorization = projectAuthorization(tenant, "product_write");
+				const authorization = projectAuthorization(tenant, "curation_write");
 				const project_id = c.req.valid("query").project_id;
 				await dependencies.authorizeDatasetWrite(dependencies.pool(), {
 					project_id,
@@ -1009,7 +1009,7 @@ export function createDatasetRouteHandlers(
 						revision: Number(match),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					},
 				);
@@ -1055,7 +1055,7 @@ export function createDatasetRouteHandlers(
 					revision: Number(match),
 					authorization: projectAuthorization(
 						trustedTenant(c),
-						"product_write",
+						"curation_write",
 					),
 				});
 				c.header("ETag", `\"${Number(match) + 1}\"`);
@@ -1087,7 +1087,7 @@ export function createDatasetRouteHandlers(
 					slug: c.req.valid("param").slug,
 					authorization: projectAuthorization(
 						trustedTenant(c),
-						"product_write",
+						"curation_write",
 					),
 				});
 				return c.body(null, 204);
@@ -1113,7 +1113,7 @@ export function createDatasetRouteHandlers(
 						revision: Number(match),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					},
 				);
@@ -1132,7 +1132,7 @@ export function createDatasetRouteHandlers(
 						...c.req.valid("json"),
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"curation_write",
 						),
 					}),
 					201,

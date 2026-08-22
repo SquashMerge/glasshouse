@@ -24,9 +24,17 @@ describe("Admin/User/Read-only authorization policy", () => {
 		).toBe(false);
 	});
 
+	it("denies Read-only curation in compatibility and strict enforcement", () => {
+		for (const enforcement of ["compatibility", "strict"] as const)
+			expect(
+				projectOperationAllowed(enforcement, "read_only", "curation_write"),
+			).toBe(false);
+	});
+
 	it("denies Read-only writes and governed actions while allowing only project evidence reads", () => {
 		for (const operation of [
 			"product_write",
+			"curation_write",
 			"execute",
 			"ingest",
 			"governed",

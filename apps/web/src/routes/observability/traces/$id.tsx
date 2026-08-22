@@ -310,6 +310,7 @@ function TraceDetailPageContent({
 							projectId={projectId}
 							traceId={id}
 							label="trace"
+							canCurate={canCurate}
 						/>
 						<AddToDatasetDialog
 							projectId={projectId}
@@ -428,6 +429,7 @@ function TraceDetailPageContent({
 										traceId={id}
 										observationId={selectedObservation.observation_id}
 										label="Observation"
+										canCurate={canCurate}
 									/>
 									<AddToDatasetDialog
 										projectId={projectId}
