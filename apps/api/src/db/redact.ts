@@ -4,7 +4,7 @@ import {
 	type ObservationMetadata,
 } from "./observation-metadata.js";
 
-const REDACTED = "[REDACTED]";
+export const REDACTED = "[REDACTED]";
 
 function shouldRedactInput(): boolean {
 	return (process.env.ASTRAEA_REDACT_INPUT ?? "").toLowerCase() === "true";
@@ -78,6 +78,34 @@ export function redactMetadata(
 				),
 			}
 		: redacted;
+}
+
+export function redactDatasetCapture(
+	value: Record<string, unknown>,
+	opts: RedactionOptions,
+): { value: Record<string, unknown>; redacted: boolean } {
+	let redacted = false;
+	const redact = (candidate: unknown, key?: string): unknown => {
+		if (key && opts.redactKeys.includes(key)) {
+			redacted = true;
+			return REDACTED;
+		}
+		if (typeof candidate === "string" && opts.redactInput) {
+			if (candidate) redacted = true;
+			return candidate ? REDACTED : "";
+		}
+		if (Array.isArray(candidate))
+			return candidate.map((entry) => redact(entry));
+		if (candidate && typeof candidate === "object")
+			return Object.fromEntries(
+				Object.entries(candidate).map(([entryKey, entry]) => [
+					entryKey,
+					redact(entry, entryKey),
+				]),
+			);
+		return candidate;
+	};
+	return { value: redact(value) as Record<string, unknown>, redacted };
 }
 
 function isNormalizedTextAttribute(key: string): boolean {

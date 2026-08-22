@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { DATASET_DRAFT_VALIDATION_VERSION } from "../lib/dataset-draft-validation.js";
 import { ErrorEnvelope } from "./common.js";
 import { ProjectIdQuery } from "./prompts.js";
 
@@ -7,6 +8,31 @@ export const DatasetSlug = z
 	.max(64)
 	.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 	.openapi({ example: "support-regression" });
+
+const JsonObject = z.record(z.string(), z.unknown());
+const MetadataScalar = z.union([
+	z.string().max(512),
+	z.number().finite(),
+	z.boolean(),
+	z.null(),
+]);
+const DatasetDraftMetadata = z
+	.record(
+		z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
+		MetadataScalar.or(z.array(MetadataScalar).max(16)),
+	)
+	.refine((value) => Object.keys(value).length <= 32, {
+		message: "Metadata must not contain more than 32 fields",
+	});
+const DatasetDraftItemState = z.enum(["draft", "reviewed"]);
+const DatasetCaptureContext = z
+	.object({
+		kind: z.enum(["trace", "observation", "feedback"]).optional(),
+		redaction_applied: z.boolean().optional(),
+	})
+	.strict();
+const DatasetExternalId = z.string().trim().min(1).max(200);
+const DatasetDraftItemKey = z.string().trim().min(1).max(200);
 
 export const Dataset = z
 	.object({
@@ -50,11 +76,20 @@ export const DatasetItem = z
 		id: z.string().uuid(),
 		dataset_id: z.string().uuid(),
 		item_key: z.string().nullable().default(null),
-		input: z.record(z.string(), z.unknown()),
-		expected_output: z.record(z.string(), z.unknown()).nullable(),
-		metadata: z.record(z.string(), z.unknown()),
+		validation_version: z.number().int().positive(),
+		state: DatasetDraftItemState,
+		input: JsonObject,
+		expected_output: JsonObject.nullable(),
+		metadata: DatasetDraftMetadata,
+		external_id: DatasetExternalId.nullable(),
 		source_trace_id: z.string().nullable(),
 		source_observation_id: z.string().nullable(),
+		source_feedback_id: z.string().uuid().nullable(),
+		capture_context: DatasetCaptureContext,
+		created_by: z.string().uuid().nullable(),
+		updated_by: z.string().uuid().nullable(),
+		reviewed_by: z.string().uuid().nullable(),
+		reviewed_at: z.string().datetime().nullable(),
 		created_at: z.string().datetime(),
 	})
 	.strict()
@@ -63,9 +98,9 @@ export const DatasetItem = z
 export const DatasetItemCreate = z
 	.object({
 		project_id: z.string().uuid(),
-		input: z.record(z.string(), z.unknown()),
-		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
-		metadata: z.record(z.string(), z.unknown()).optional(),
+		input: JsonObject,
+		expected_output: JsonObject.nullable().optional(),
+		metadata: DatasetDraftMetadata.optional(),
 		source_trace_id: z.string().max(128).nullable().optional(),
 		source_observation_id: z.string().max(128).nullable().optional(),
 	})
@@ -127,22 +162,34 @@ export const DatasetDraftItem = z
 	.object({
 		id: z.string().uuid(),
 		item_key: z.string().min(1).max(200),
-		input: z.record(z.string(), z.unknown()),
-		expected_output: z.record(z.string(), z.unknown()).nullable().optional(),
-		metadata: z.record(z.string(), z.unknown()).optional(),
-		source_trace_id: z.string().max(128).nullable().optional(),
-		source_observation_id: z.string().max(128).nullable().optional(),
-		position: z.number().int().nonnegative().optional(),
+		validation_version: z.number().int().positive(),
+		state: DatasetDraftItemState,
+		input: JsonObject,
+		expected_output: JsonObject.nullable(),
+		metadata: DatasetDraftMetadata,
+		external_id: DatasetExternalId.nullable(),
+		source_trace_id: z.string().max(128).nullable(),
+		source_observation_id: z.string().max(128).nullable(),
+		source_feedback_id: z.string().uuid().nullable(),
+		capture_context: DatasetCaptureContext,
+		created_by: z.string().uuid().nullable(),
+		updated_by: z.string().uuid().nullable(),
+		reviewed_by: z.string().uuid().nullable(),
+		reviewed_at: z.string().datetime().nullable(),
+		position: z.number().int().nonnegative(),
 	})
 	.strict()
 	.openapi("DatasetDraftItem");
-export const DatasetDraftItemUpsert = DatasetDraftItem.pick({
-	input: true,
-	expected_output: true,
-	metadata: true,
-	source_trace_id: true,
-	source_observation_id: true,
-})
+
+const DatasetDraftItemPayload = z
+	.object({
+		input: JsonObject,
+		expected_output: JsonObject.nullable().optional(),
+		metadata: DatasetDraftMetadata.optional(),
+		external_id: DatasetExternalId.nullable().optional(),
+		source_trace_id: z.string().min(1).max(128).nullable().optional(),
+		source_observation_id: z.string().min(1).max(128).nullable().optional(),
+	})
 	.strict()
 	.superRefine((value, ctx) => {
 		if (value.source_observation_id && !value.source_trace_id)
@@ -152,7 +199,104 @@ export const DatasetDraftItemUpsert = DatasetDraftItem.pick({
 				message: "Observation provenance requires a trace",
 			});
 	})
-	.openapi("DatasetDraftItemUpsert");
+	.openapi("DatasetDraftItemPayload");
+export const DatasetDraftItemUpsert = DatasetDraftItemPayload.openapi(
+	"DatasetDraftItemUpsert",
+);
+export const DatasetDraftImport = z
+	.object({
+		items: z
+			.array(
+				DatasetDraftItemPayload.extend({
+					item_key: DatasetDraftItemKey,
+				}).strict(),
+			)
+			.min(1)
+			.max(500),
+	})
+	.strict()
+	.superRefine((value, ctx) => {
+		const itemKeys = new Set<string>();
+		for (const [index, item] of value.items.entries()) {
+			if (itemKeys.has(item.item_key))
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["items", index, "item_key"],
+					message: "Each import item_key must be unique",
+				});
+			else itemKeys.add(item.item_key);
+			if (item.source_observation_id && !item.source_trace_id)
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["items", index, "source_observation_id"],
+					message: "Observation provenance requires a trace",
+				});
+		}
+	})
+	.openapi("DatasetDraftImport");
+export const DatasetDraftCapture = z
+	.object({
+		item_key: DatasetDraftItemKey.optional(),
+		external_id: DatasetExternalId.nullable().optional(),
+		source_trace_id: z.string().regex(/^[0-9a-f]{32}$/),
+		source_observation_id: z.string().min(1).max(128).optional(),
+	})
+	.strict()
+	.openapi("DatasetDraftCapture");
+export const DatasetDraftOrder = z
+	.object({ item_ids: z.array(z.string().uuid()).min(1).max(500) })
+	.strict()
+	.superRefine((value, ctx) => {
+		if (new Set(value.item_ids).size !== value.item_ids.length)
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["item_ids"],
+				message: "Each draft item may appear only once",
+			});
+	})
+	.openapi("DatasetDraftOrder");
+export const DatasetDraftItemRevision = DatasetDraftItem.extend({
+	item_revision: z.number().int().positive(),
+	action: z.enum(["upserted", "captured", "imported", "reviewed", "reordered"]),
+	actor_id: z.string().uuid(),
+	created_at: z.string().datetime(),
+}).openapi("DatasetDraftItemRevision");
+export const DatasetDraftItemRevisionList = z
+	.object({ items: z.array(DatasetDraftItemRevision) })
+	.strict()
+	.openapi("DatasetDraftItemRevisionList");
+export const DatasetDraftValidationIssue = z
+	.object({
+		item_id: z.string().uuid().nullable(),
+		item_key: z.string().nullable(),
+		field: z.string(),
+		code: z.string(),
+		message: z.string(),
+	})
+	.strict()
+	.openapi("DatasetDraftValidationIssue");
+export const DatasetDraftValidation = z
+	.object({
+		validation_version: z.number().int().positive(),
+		valid: z.boolean(),
+		errors: z.array(DatasetDraftValidationIssue),
+	})
+	.strict()
+	.openapi("DatasetDraftValidation");
+export const DatasetDraftMutation = z
+	.object({
+		validation_version: z.literal(DATASET_DRAFT_VALIDATION_VERSION),
+		revision: z.number().int().positive(),
+		idempotent: z.boolean(),
+	})
+	.strict()
+	.openapi("DatasetDraftMutation");
+export const DatasetDraftImportResult = DatasetDraftMutation.extend({
+	items: z.array(DatasetDraftItem),
+}).openapi("DatasetDraftImportResult");
+export const DatasetDraftCaptureResult = DatasetDraftMutation.extend({
+	item: DatasetDraftItem.nullable(),
+}).openapi("DatasetDraftCaptureResult");
 export const DatasetDraftItemParam = DatasetSlugParam.extend({
 	itemId: z
 		.string()
@@ -160,12 +304,11 @@ export const DatasetDraftItemParam = DatasetSlugParam.extend({
 		.openapi({ param: { name: "itemId", in: "path" } }),
 }).strict();
 export const DatasetDraftItemKeyParam = DatasetSlugParam.extend({
-	itemKey: z
-		.string()
-		.min(1)
-		.max(200)
-		.openapi({ param: { name: "itemKey", in: "path" } }),
+	itemKey: DatasetDraftItemKey.openapi({
+		param: { name: "itemKey", in: "path" },
+	}),
 }).strict();
+export const DatasetDraftItemRevisionParam = DatasetDraftItemParam;
 export const DatasetDraftPublish = z
 	.object({
 		version: z.number().int().positive(),

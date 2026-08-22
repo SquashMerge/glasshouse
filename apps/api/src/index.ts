@@ -63,13 +63,15 @@ function projectOperationForRequest(
 	method: string,
 ): ProjectOperation {
 	if (method === "GET" || method === "HEAD") return "product_read";
+	if (path.startsWith("/v1/datasets/")) {
+		if (method === "DELETE" && /^\/v1\/datasets\/by-slug\/[^/]+$/.test(path))
+			return "destructive";
+		return "curation_write";
+	}
+	if (path === "/v1/datasets") return "curation_write";
+	if (path.startsWith("/v1/feedback")) return "curation_write";
 	if (path.startsWith("/v1/governance/")) return "governed";
 	if (path.startsWith("/v1/prompt-optimizations/") && path.endsWith("/promote"))
-		return "governed";
-	if (
-		path.startsWith("/v1/feedback/") &&
-		(path.endsWith("/promote") || path.endsWith("/review"))
-	)
 		return "governed";
 	if (
 		path.startsWith("/v1/experiments") ||

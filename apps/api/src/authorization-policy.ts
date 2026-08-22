@@ -3,6 +3,7 @@ export type EffectiveProjectRole = "admin" | "user" | "read_only";
 export type ProjectOperation =
 	| "product_read"
 	| "product_write"
+	| "curation_write"
 	| "execute"
 	| "ingest"
 	| "audit_read"
@@ -13,6 +14,7 @@ export type ProjectOperation =
 const projectOperations: readonly ProjectOperation[] = [
 	"product_read",
 	"product_write",
+	"curation_write",
 	"execute",
 	"ingest",
 	"audit_read",
@@ -42,6 +44,7 @@ export function projectOperationAllowed(
 		return [
 			"product_read",
 			"product_write",
+			"curation_write",
 			"execute",
 			"ingest",
 			"audit_read",
@@ -52,6 +55,7 @@ export function projectOperationAllowed(
 		return [
 			"product_read",
 			"product_write",
+			"curation_write",
 			"execute",
 			"ingest",
 			"audit_read",
