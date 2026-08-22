@@ -282,16 +282,14 @@ test("records trace feedback and preserves observation provenance when adding it
 	);
 	await panel.getByRole("button", { name: "Add to dataset" }).click();
 	const dialog = page.getByRole("dialog", {
-		name: "Add Observation to dataset",
+		name: "Capture Observation as a Dataset draft",
 	});
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole("option", { name: dataset.name })).toHaveCount(
+		1,
+	);
 	await dialog.getByLabel("Dataset").selectOption(dataset.id);
-	await expect(dialog.getByLabel("Input")).toHaveValue(
-		JSON.stringify(input, null, 2),
-	);
-	await expect(dialog.getByLabel("Expected output suggestion")).toHaveValue(
-		JSON.stringify(output, null, 2),
-	);
-	await dialog.getByRole("button", { name: "Add case to draft" }).click();
+	await dialog.getByRole("button", { name: "Capture redacted case" }).click();
 	await expect(dialog).toBeHidden();
 
 	const feedback = await apiJson<{ items: Feedback[] }>(

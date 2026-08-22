@@ -8,6 +8,14 @@ DECLARE
 BEGIN
     IF NOT EXISTS (
         SELECT 1
+        FROM actors
+        WHERE id = durable_actor_id('basic:v1', 'bootstrap-owner')
+    ) THEN
+        RAISE EXCEPTION '0070 fixture did not retain revision actor provenance';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
         FROM dataset_draft_item_revisions
         WHERE id = fixture_revision_id
           AND project_id = fixture_project_id
