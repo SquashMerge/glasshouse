@@ -316,6 +316,34 @@ export const DatasetDraftPublish = z
 	})
 	.strict()
 	.openapi("DatasetDraftPublish");
+export const DatasetVersion = z
+	.object({
+		id: z.string().uuid(),
+		dataset_id: z.string().uuid(),
+		project_id: z.string().uuid(),
+		version: z.number().int().positive(),
+		item_count: z.number().int().nonnegative(),
+		content_hash: z.string().regex(/^[0-9a-f]{64}$/),
+		validation_version: z.number().int().positive(),
+		published_by: z.string().uuid().nullable(),
+		published_draft_revision: z.number().int().positive().nullable(),
+		created_at: z.string().datetime(),
+	})
+	.strict()
+	.openapi("DatasetVersion");
+export const DatasetVersionList = z
+	.object({ items: z.array(DatasetVersion) })
+	.strict()
+	.openapi("DatasetVersionList");
+export const DatasetVersionParam = DatasetSlugParam.extend({
+	version: z.coerce
+		.number()
+		.int()
+		.positive()
+		.openapi({
+			param: { name: "version", in: "path" },
+		}),
+}).strict();
 export const DatasetErrorResponses = {
 	400: {
 		description: "Bad request",

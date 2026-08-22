@@ -13,6 +13,7 @@ import {
 	deleteDatasetItem as deleteDatasetItemRecord,
 	discardDatasetDraft as discardDatasetDraftRecord,
 	getDatasetBySlug as getDatasetBySlugRecord,
+	getDatasetVersion as getDatasetVersionRecord,
 	getDatasetDraftItemRevisions as getDatasetDraftItemRevisionsRecord,
 	getDatasetDraft as getDatasetDraftRecord,
 	getDataset as getDatasetRecord,
@@ -21,6 +22,7 @@ import {
 	importDatasetDraftItems as importDatasetDraftItemsRecord,
 	listDatasetItems as listDatasetItemsRecord,
 	listDatasets as listDatasetsRecord,
+	listDatasetVersions as listDatasetVersionsRecord,
 	listPublishedDatasetItems as listPublishedDatasetItemsRecord,
 	publishDatasetDraft as publishDatasetDraftRecord,
 	reorderDatasetDraftItems as reorderDatasetDraftItemsRecord,
@@ -61,6 +63,9 @@ import {
 	DatasetMetadataUpdate,
 	DatasetProjectQuery,
 	DatasetSlugParam,
+	DatasetVersion,
+	DatasetVersionList,
+	DatasetVersionParam,
 } from "../schemas/datasets.js";
 import { trustedTenant } from "../tenancy.js";
 
@@ -499,6 +504,36 @@ export const publishDatasetDraft = createRoute({
 		...DatasetErrorResponses,
 	},
 });
+export const listDatasetVersions = createRoute({
+	method: "get",
+	path: "/v1/datasets/by-slug/{slug}/versions",
+	tags: [tag],
+	summary: "List immutable dataset versions",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
+	responses: {
+		200: {
+			description: "OK",
+			content: { "application/json": { schema: DatasetVersionList } },
+		},
+		...DatasetErrorResponses,
+	},
+});
+export const getDatasetVersion = createRoute({
+	method: "get",
+	path: "/v1/datasets/by-slug/{slug}/versions/{version}",
+	tags: [tag],
+	summary: "Inspect an immutable dataset version",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetVersionParam, query: DatasetProjectQuery },
+	responses: {
+		200: {
+			description: "OK",
+			content: { "application/json": { schema: DatasetVersion } },
+		},
+		...DatasetErrorResponses,
+	},
+});
 
 export type DatasetRouteDependencies = {
 	pool: typeof pgPool;
@@ -526,6 +561,8 @@ export type DatasetRouteDependencies = {
 	archiveDataset: typeof archiveDatasetRecord;
 	discardDatasetDraft: typeof discardDatasetDraftRecord;
 	publishDatasetDraft: typeof publishDatasetDraftRecord;
+	listDatasetVersions: typeof listDatasetVersionsRecord;
+	getDatasetVersion: typeof getDatasetVersionRecord;
 	targetExists: (input: {
 		organization_id: string;
 		project_id: string;
@@ -602,6 +639,8 @@ const production: DatasetRouteDependencies = {
 	archiveDataset: archiveDatasetRecord,
 	discardDatasetDraft: discardDatasetDraftRecord,
 	publishDatasetDraft: publishDatasetDraftRecord,
+	listDatasetVersions: listDatasetVersionsRecord,
+	getDatasetVersion: getDatasetVersionRecord,
 	targetExists,
 	captureSource,
 };
@@ -1123,6 +1162,42 @@ export function createDatasetRouteHandlers(
 				return errorResponse(c, cause);
 			}
 		},
+		handleListDatasetVersions: async (
+			c: Parameters<RouteHandler<typeof listDatasetVersions>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.listDatasetVersions(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						slug: c.req.valid("param").slug,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleGetDatasetVersion: async (
+			c: Parameters<RouteHandler<typeof getDatasetVersion>>[0],
+		) => {
+			try {
+				return c.json(
+					await dependencies.getDatasetVersion(dependencies.pool(), {
+						project_id: c.req.valid("query").project_id,
+						...c.req.valid("param"),
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
+					}),
+				);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
 		handleCreateDataset: async (
 			c: Parameters<RouteHandler<typeof createDataset>>[0],
 		) => {
@@ -1241,4 +1316,6 @@ export const {
 	handleArchiveDataset,
 	handleDiscardDatasetDraft,
 	handlePublishDatasetDraft,
+	handleListDatasetVersions,
+	handleGetDatasetVersion,
 } = createDatasetRouteHandlers();

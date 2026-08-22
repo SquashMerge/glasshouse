@@ -86,6 +86,29 @@ export interface DatasetDraft {
 	created_at: string;
 	updated_at: string;
 }
+export interface DatasetVersion {
+	id: string;
+	dataset_id: string;
+	project_id: string;
+	version: number;
+	item_count: number;
+	content_hash: string;
+	validation_version: number;
+	published_by: string | null;
+	published_draft_revision: number | null;
+	created_at: string;
+}
+export async function listDatasetVersions(input: {
+	project_id: string;
+	slug: string;
+}): Promise<{ items: DatasetVersion[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/versions${buildQs({ project_id: input.project_id })}`,
+		),
+		"listDatasetVersions",
+	);
+}
 export interface DatasetDraftItem {
 	id: string;
 	item_key: string;
@@ -409,6 +432,8 @@ export interface Experiment {
 	id: string;
 	project_id: string;
 	dataset_id: string;
+	resolved_dataset_version_id: string | null;
+	dataset_input_binding: "versioned" | "legacy_unversioned";
 	name: string | null;
 	status: "pending" | "running" | "completed" | "failed" | "cancelled";
 	config: JsonObject;

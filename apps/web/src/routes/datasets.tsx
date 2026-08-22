@@ -29,6 +29,7 @@ import {
 	importDatasetDraftItems,
 	listDatasetDraftItemRevisions,
 	listDatasetItems,
+	listDatasetVersions,
 	listDatasets,
 	publishDatasetDraft,
 	reorderDatasetDraftItems,
@@ -266,6 +267,15 @@ export function DatasetDetailPage() {
 			listDatasetItems({ project_id: selectedProjectId!, id, signal }),
 		enabled: Boolean(selectedProjectId),
 	});
+	const versions = useQuery({
+		queryKey: ["dataset-versions", selectedProjectId, id, dataset.data?.slug],
+		queryFn: () =>
+			listDatasetVersions({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+			}),
+		enabled: Boolean(selectedProjectId && dataset.data?.slug),
+	});
 	const [input, setInput] = React.useState("{}");
 	const [expected, setExpected] = React.useState("");
 	const [metadata, setMetadata] = React.useState("{}");
@@ -323,6 +333,9 @@ export function DatasetDetailPage() {
 				queryKey: ["dataset", selectedProjectId, id],
 			}),
 			client.invalidateQueries({ queryKey: ["datasets", selectedProjectId] }),
+			client.invalidateQueries({
+				queryKey: ["dataset-versions", selectedProjectId, id],
+			}),
 		]);
 	}
 	async function existingDraftRevision() {
@@ -594,6 +607,21 @@ export function DatasetDetailPage() {
 				<p className="text-sm text-muted-foreground">
 					{dataset.data?.description}
 				</p>
+				{dataset.data?.latest_published_version ? (
+					<p className="mt-2 text-sm text-muted-foreground">
+						Latest immutable version:{" "}
+						<strong>
+							{dataset.data.slug}@{dataset.data.latest_published_version}
+						</strong>
+						{versions.data?.items[0]
+							? ` (${versions.data.items[0].content_hash.slice(0, 12)})`
+							: ""}
+					</p>
+				) : (
+					<p className="mt-2 text-sm text-muted-foreground">
+						No published version yet.
+					</p>
+				)}
 			</div>
 			{canCurate && (
 				<Card>

@@ -180,6 +180,10 @@ import {
 	handleDiscardDatasetDraft,
 	publishDatasetDraft,
 	handlePublishDatasetDraft,
+	listDatasetVersions,
+	handleListDatasetVersions,
+	getDatasetVersion,
+	handleGetDatasetVersion,
 } from "./routes/datasets.js";
 
 import {
@@ -340,6 +344,8 @@ register(deleteDatasetDraftItem, handleDeleteDatasetDraftItem);
 register(archiveDataset, handleArchiveDataset);
 register(discardDatasetDraft, handleDiscardDatasetDraft);
 register(publishDatasetDraft, handlePublishDatasetDraft);
+register(listDatasetVersions, handleListDatasetVersions);
+register(getDatasetVersion, handleGetDatasetVersion);
 register(getDataset, handleGetDataset);
 register(listDatasetItems, handleListDatasetItems);
 register(listPublishedDatasetItems, handleListPublishedDatasetItems);

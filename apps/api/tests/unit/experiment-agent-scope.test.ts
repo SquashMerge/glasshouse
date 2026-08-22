@@ -51,7 +51,8 @@ describe("experiment agent scope", () => {
 		expect(insert?.text).toContain("FROM agents");
 		expect(insert?.text).toContain("project_id");
 		expect(insert?.text).toContain("archived_at IS NULL");
-		expect(insert?.text).toContain("latest_published_version IS NOT NULL");
+		expect(insert?.text).toContain("dataset_versions version");
+		expect(insert?.text).toContain("resolved_dataset_version_id");
 		expect(insert?.values).toContain(agent_id);
 	});
 
