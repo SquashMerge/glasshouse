@@ -56,6 +56,7 @@ Project
 
 - **Dataset:** project-scoped named collection with a stable slug, description, tags, and version history. It is not itself a runnable snapshot.
 - **Dataset draft:** editable working copy of the next dataset version. An Admin, or a User with access to the Project, can change it; a Read-only user cannot. A draft can be discarded; it is never selected by a run.
+- **Dataset draft curation:** manual and import rows use the same versioned validation contract. Any row that carries Trace or Observation provenance rereads that selected source on the server, applies the active redaction policy, stores safe project-scoped provenance and an explicit review state, and never publishes a Dataset.
 - **Dataset version:** immutable ordered snapshot of items plus its schema/mapping contract. Displayed as `support-regression@12`.
 - **Dataset item:** one test case. `input` is sent to the target; `expected_output` and `metadata` are evaluator inputs. Item identity remains stable across versions when carried forward.
 - **Evaluation:** stable reusable definition, for example “Support quality gate.” It has a version history just as a prompt does.
@@ -97,8 +98,8 @@ mutation or execution attempt, including a stale or hand-crafted request.
 ### 2. Capture a production failure into an existing suite
 
 1. On a trace/observation detail, user chooses **Add to dataset**.
-2. A modal shows the selected observation’s extracted input/output and asks for a destination dataset. Selecting **Create dataset** does not leave context.
-3. User maps source data to canonical fields and may redact/edit values. The modal always preserves `source_trace_id` and `source_observation_id`; it never imports secrets stripped at ingest.
+2. A modal identifies the selected observation and asks for a destination dataset. Selecting **Create dataset** does not leave context.
+3. The browser submits only `source_trace_id` and optional `source_observation_id`. Astraea rereads that project-scoped source on the server, applies the active redaction policy, and stores only the resulting safe draft content and provenance.
 4. If the destination has a draft, the case is added there. Otherwise Astraea creates a draft from the latest published version and labels it “Unpublished changes.”
 5. Dataset Overview visibly shows “1 unpublished change.” The user must publish a new version before an attached pinned evaluation can consume it.
 6. User can launch a comparison run from the publish confirmation: baseline `@N` versus candidate `@N+1`, same target/evaluators.

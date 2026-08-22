@@ -3,48 +3,59 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import {
 	addDatasetItem,
 	authorizeDatasetWrite,
+	captureDatasetDraftItem,
 	createDataset,
 	DatasetRepositoryError,
+	datasetCurationRequestHash,
 	deleteDatasetDraftItem,
 	deleteDatasetItem,
 	discardDatasetDraft,
-	getDatasetBySlug,
-	getDatasetDraft,
-	getOrCreateDatasetDraft,
 	getDataset,
+	getDatasetBySlug,
+	getDatasetCurationReplay,
+	getDatasetDraft,
+	getDatasetDraftItemRevisions,
+	getOrCreateDatasetDraft,
+	importDatasetDraftItems,
 	listDatasetItems,
-	listPublishedDatasetItems,
 	listDatasets,
+	listPublishedDatasetItems,
 	publishDatasetDraft,
-	upsertDatasetDraftItem,
 	updateDatasetMetadata,
+	upsertDatasetDraftItem,
 } from "../../src/db/datasets";
 import {
-	deleteDatasetItem as deleteDatasetItemRoute,
-	deleteDatasetDraftItem as deleteDatasetDraftItemRoute,
+	captureDatasetDraftItem as captureDatasetDraftItemRoute,
 	createDatasetDraft,
 	createDatasetRouteHandlers,
+	deleteDatasetDraftItem as deleteDatasetDraftItemRoute,
+	deleteDatasetItem as deleteDatasetItemRoute,
 	getDatasetDraft as getDatasetDraftRoute,
 	handleCreateDatasetDraft,
-	handleGetDatasetDraft,
-	handlePutDatasetDraftItem,
 	handleDeleteDatasetDraftItem,
+	handleGetDatasetDraft,
 	handleListPublishedDatasetItems,
+	handlePutDatasetDraftItem,
+	importDatasetDraftItems as importDatasetDraftItemsRoute,
 	listPublishedDatasetItems as listPublishedDatasetItemsRoute,
-	putDatasetDraftItem,
 	publishDatasetDraft as publishDatasetDraftRoute,
+	putDatasetDraftItem,
 } from "../../src/routes/datasets";
 import {
 	DatasetCreate,
-	DatasetDraftItemParam,
-	DatasetDraftItemUpsert,
+	DatasetDraftImport,
 	DatasetDraftItem,
+	DatasetDraftItemKeyParam,
+	DatasetDraftItemParam,
+	DatasetDraftItemRevision,
+	DatasetDraftItemUpsert,
 	DatasetItem,
 	DatasetItemCreate,
 } from "../../src/schemas/datasets";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const DATASET = "22222222-2222-4222-8222-222222222222";
+const OTHER_DATASET = "33333333-3333-4333-8333-333333333333";
 const NOW = new Date("2026-07-27T22:00:00.000Z");
 const authorization = {
 	organization_id: "00000000-0000-4000-8000-000000000001",
@@ -96,6 +107,87 @@ function fakeDb(
 	return pool;
 }
 
+function curationReplayDb({
+	requestHash,
+	recordDatasetId = DATASET,
+	draftAvailable = true,
+	archived = false,
+	replay = true,
+}: {
+	requestHash: string;
+	recordDatasetId?: string | null;
+	draftAvailable?: boolean;
+	archived?: boolean;
+	replay?: boolean;
+}) {
+	const draftId = "55555555-5555-4555-8555-555555555555";
+	const queries: Array<{ text: string; values?: unknown[] }> = [];
+	const client = {
+		query: async (sql: string, values?: unknown[]) => {
+			queries.push({ text: sql, values });
+			if (sql.includes("p.status = ANY($3::text[])"))
+				return { rows: [{ id: PROJECT }] };
+			if (sql.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			if (sql.startsWith("SELECT id FROM datasets WHERE project_id"))
+				return {
+					rows: [
+						{
+							id:
+								values?.[1] === "golden" || values?.[1] === DATASET
+									? DATASET
+									: OTHER_DATASET,
+							archived_at: archived ? NOW : null,
+						},
+					],
+				};
+			if (sql.startsWith("SELECT dr.* FROM dataset_drafts")) {
+				if (!draftAvailable) return { rows: [] };
+				return {
+					rows: [
+						{
+							id: draftId,
+							dataset_id: values?.[1] === "golden" ? DATASET : OTHER_DATASET,
+							revision: 4,
+						},
+					],
+				};
+			}
+			if (sql.startsWith("WITH selected AS"))
+				return {
+					rows: [
+						{
+							id: draftId,
+							dataset_id: DATASET,
+							revision: 4,
+							item_count: 0,
+							created: false,
+						},
+					],
+				};
+			if (sql.includes("FROM dataset_curation_idempotency"))
+				return {
+					rows: replay
+						? [
+								{
+									dataset_id: recordDatasetId,
+									request_hash: requestHash,
+									response: {
+										draft_id: draftId,
+										revision: 7,
+										item_ids: ["item"],
+									},
+								},
+							]
+						: [],
+				};
+			return { rows: [] };
+		},
+		release() {},
+	};
+	return { connect: async () => client, queries };
+}
+
 describe("dataset contracts", () => {
 	it("requires a project boundary when creating a dataset item", () => {
 		expect(
@@ -138,8 +230,17 @@ describe("dataset contracts", () => {
 			input: {},
 			expected_output: null,
 			metadata: {},
+			validation_version: 1,
+			state: "reviewed",
+			external_id: null,
 			source_trace_id: null,
 			source_observation_id: null,
+			source_feedback_id: null,
+			capture_context: {},
+			created_by: null,
+			updated_by: null,
+			reviewed_by: null,
+			reviewed_at: null,
 			created_at: NOW.toISOString(),
 		});
 		expect(result.success).toBe(true);
@@ -173,9 +274,616 @@ describe("dataset contracts", () => {
 			}).success,
 		).toBe(true);
 	});
+
+	it("rejects empty draft provenance identifiers", () => {
+		expect(
+			DatasetDraftItemUpsert.safeParse({
+				input: { question: "hello" },
+				source_trace_id: "",
+			}).success,
+		).toBe(false);
+		expect(
+			DatasetDraftItemUpsert.safeParse({
+				input: { question: "hello" },
+				source_trace_id: "a".repeat(32),
+				source_observation_id: "",
+			}).success,
+		).toBe(false);
+	});
+
+	it("rejects duplicate item keys in one import", () => {
+		expect(
+			DatasetDraftImport.safeParse({
+				items: [
+					{ item_key: "same", input: { question: "first" } },
+					{ item_key: "same", input: { question: "second" } },
+				],
+			}).success,
+		).toBe(false);
+	});
+
+	it("normalizes direct upsert item keys like imports and rejects blank keys", () => {
+		const direct = DatasetDraftItemKeyParam.safeParse({
+			slug: "golden-suite",
+			itemKey: "  stable  ",
+		});
+		const imported = DatasetDraftImport.safeParse({
+			items: [{ item_key: "  stable  ", input: { question: "hello" } }],
+		});
+
+		expect(direct).toMatchObject({
+			success: true,
+			data: { slug: "golden-suite", itemKey: "stable" },
+		});
+		expect(imported).toMatchObject({
+			success: true,
+			data: { items: [{ item_key: "stable" }] },
+		});
+		expect(
+			DatasetDraftItemKeyParam.safeParse({
+				slug: "golden-suite",
+				itemKey: " \t ",
+			}).success,
+		).toBe(false);
+		expect(
+			DatasetDraftImport.safeParse({
+				items: [{ item_key: " \t ", input: { question: "hello" } }],
+			}).success,
+		).toBe(false);
+	});
 });
 
 describe("dataset repository", () => {
+	it("replays import after its draft is published", async () => {
+		const item = {
+			project_id: PROJECT,
+			item_key: "imported",
+			input: { question: "hello" },
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash({
+				dataset_id: DATASET,
+				revision: 4,
+				items: [item],
+			}),
+			draftAvailable: false,
+		});
+
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [item],
+				idempotency_key: "published-import-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		expect(
+			db.queries.some((query) =>
+				query.text.startsWith("SELECT dr.* FROM dataset_drafts"),
+			),
+		).toBe(false);
+	});
+
+	it("replays capture after its draft is discarded", async () => {
+		const request = {
+			dataset_id: DATASET,
+			revision: 4,
+			item_key: "captured",
+			external_id: null,
+			source_trace_id: null,
+			source_observation_id: null,
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash(request),
+			draftAvailable: false,
+		});
+
+		await expect(
+			captureDatasetDraftItem(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				item_key: "captured",
+				input: { question: "hello" },
+				metadata: {},
+				idempotency_key: "discarded-capture-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		expect(
+			db.queries.some((query) =>
+				query.text.startsWith("SELECT dr.* FROM dataset_drafts"),
+			),
+		).toBe(false);
+	});
+
+	it("replays capture after its dataset is archived", async () => {
+		const request = {
+			dataset_id: DATASET,
+			revision: 4,
+			item_key: "captured",
+			external_id: null,
+			source_trace_id: null,
+			source_observation_id: null,
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash(request),
+			draftAvailable: false,
+			archived: true,
+		});
+
+		await expect(
+			captureDatasetDraftItem(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				item_key: "captured",
+				input: { question: "hello" },
+				metadata: {},
+				idempotency_key: "archived-capture-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		const targetLookup = db.queries.find((query) =>
+			query.text.startsWith("SELECT id FROM datasets WHERE project_id"),
+		);
+		expect(targetLookup?.text).not.toContain("archived_at IS NULL");
+	});
+
+	it("replays a curation request with its original draft revision", async () => {
+		const request = {
+			revision: 4,
+			item_key: "captured",
+			external_id: null,
+			source_trace_id: "a".repeat(32),
+			source_observation_id: null,
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash({
+				...request,
+				dataset_id: DATASET,
+			}),
+		});
+
+		await expect(
+			getDatasetCurationReplay(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				operation: "capture",
+				idempotency_key: "response-loss-capture-key",
+				idempotency_request: request,
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, item_ids: ["item"] });
+	});
+
+	it("replays a target-bound legacy import record after upgrade", async () => {
+		const item = {
+			project_id: PROJECT,
+			item_key: "imported",
+			input: { question: "hello" },
+		};
+		const legacyRequestHash = datasetCurationRequestHash({
+			revision: 4,
+			items: [item],
+		});
+		const requestHash = datasetCurationRequestHash({
+			dataset_id: DATASET,
+			revision: 4,
+			items: [item],
+		});
+		const db = curationReplayDb({
+			requestHash: legacyRequestHash,
+			draftAvailable: false,
+		});
+
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [item],
+				idempotency_key: "legacy-import-key",
+				authorization,
+			}),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		expect(
+			db.queries.find((query) =>
+				query.text.startsWith(
+					"UPDATE dataset_curation_idempotency SET request_hash",
+				),
+			)?.values,
+		).toEqual([
+			requestHash,
+			PROJECT,
+			authorization.actor_id,
+			"import",
+			"legacy-import-key",
+		]);
+	});
+
+	it("rejects legacy import reuse for another dataset target", async () => {
+		const item = {
+			project_id: PROJECT,
+			item_key: "imported",
+			input: { question: "hello" },
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash({
+				revision: 4,
+				items: [item],
+			}),
+			recordDatasetId: OTHER_DATASET,
+			draftAvailable: false,
+		});
+
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [item],
+				idempotency_key: "legacy-other-target-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			status: 409,
+		});
+	});
+
+	it("preserves import replay while rejecting the same key for another dataset", async () => {
+		const item = {
+			project_id: PROJECT,
+			item_key: "imported",
+			input: { question: "hello" },
+		};
+		const requestHash = datasetCurationRequestHash({
+			dataset_id: DATASET,
+			revision: 4,
+			items: [item],
+		});
+		const db = curationReplayDb({ requestHash });
+		const input = {
+			project_id: PROJECT,
+			revision: 4,
+			items: [item],
+			idempotency_key: "shared-import-key",
+			authorization,
+		};
+
+		await expect(
+			importDatasetDraftItems(db, { ...input, slug: "golden" }),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		await expect(
+			importDatasetDraftItems(db, { ...input, slug: "other" }),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			status: 409,
+		});
+	});
+
+	it("preserves capture replay while rejecting the same key for another dataset", async () => {
+		const request = {
+			dataset_id: DATASET,
+			revision: 4,
+			item_key: "captured",
+			external_id: null,
+			source_trace_id: null,
+			source_observation_id: null,
+		};
+		const db = curationReplayDb({
+			requestHash: datasetCurationRequestHash(request),
+		});
+		const input = {
+			project_id: PROJECT,
+			revision: 4,
+			item_key: "captured",
+			input: { question: "hello" },
+			metadata: {},
+			idempotency_key: "shared-capture-key",
+			authorization,
+		};
+
+		await expect(
+			captureDatasetDraftItem(db, { ...input, slug: "golden" }),
+		).resolves.toMatchObject({ revision: 7, idempotent: true });
+		await expect(
+			captureDatasetDraftItem(db, { ...input, slug: "other" }),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			status: 409,
+		});
+	});
+
+	it("rejects duplicate import keys before writing any draft item", async () => {
+		const db = curationReplayDb({ requestHash: "", replay: false });
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [
+					{
+						project_id: PROJECT,
+						item_key: "same",
+						input: { question: "first" },
+					},
+					{
+						project_id: PROJECT,
+						item_key: "same",
+						input: { question: "second" },
+					},
+				],
+				idempotency_key: "duplicate-import-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "BAD_REQUEST",
+			status: 400,
+		});
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("ON CONFLICT (draft_id, item_key) DO UPDATE"),
+			),
+		).toBe(false);
+		expect(
+			db.queries.some((query) => query.text.startsWith("WITH selected AS")),
+		).toBe(false);
+	});
+
+	it("validates an import before creating a missing draft", async () => {
+		const db = curationReplayDb({ requestHash: "", replay: false });
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				items: [
+					{
+						project_id: PROJECT,
+						item_key: "too-large",
+						input: { question: "x".repeat(16_385) },
+					},
+				],
+				idempotency_key: "invalid-import-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "BAD_REQUEST",
+			status: 400,
+		});
+		expect(
+			db.queries.some((query) => query.text.startsWith("WITH selected AS")),
+		).toBe(false);
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("INSERT INTO dataset_draft_items"),
+			),
+		).toBe(false);
+	});
+
+	it("requires a revision before importing into an existing shared draft", async () => {
+		const db = curationReplayDb({ requestHash: "", replay: false });
+		await expect(
+			importDatasetDraftItems(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				items: [
+					{
+						project_id: PROJECT,
+						item_key: "new-item",
+						input: { question: "hello" },
+					},
+				],
+				idempotency_key: "missing-revision-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			status: 409,
+		});
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("ON CONFLICT (draft_id, item_key) DO UPDATE"),
+			),
+		).toBe(false);
+	});
+
+	it("derives a stable capture item key for retries without a caller item key", async () => {
+		const captured: Array<Record<string, unknown>> = [];
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
+			captureSource: async () => ({
+				input_text: "question",
+				output_text: null,
+			}),
+			captureDatasetDraftItem: async (
+				_db: unknown,
+				input: Record<string, unknown>,
+			) => {
+				captured.push(input);
+				return { item: null, revision: 2, idempotent: true };
+			},
+		} as never);
+		const request = {
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => '"1"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "capture-retry-key" }
+								: { source_trace_id: "a".repeat(32) },
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		};
+
+		await handlers.handleCaptureDatasetDraftItem(request as never);
+		await handlers.handleCaptureDatasetDraftItem(request as never);
+		expect(captured).toHaveLength(2);
+		expect(captured[0]?.item_key).toBe(captured[1]?.item_key);
+		expect(captured[0]?.item_key).toMatch(/^capture-[0-9a-f]{32}$/);
+	});
+
+	it("does not create a draft or item when a capture source is missing", async () => {
+		let captured = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
+			captureSource: async () => null,
+			captureDatasetDraftItem: async () => {
+				captured = true;
+				return { item: null, revision: 1, idempotent: false };
+			},
+		} as never);
+		const response = await handlers.handleCaptureDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => undefined,
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "missing-source-key" }
+								: { source_trace_id: "a".repeat(32) },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(404);
+		expect(captured).toBe(false);
+	});
+
+	it("replays capture before reading a retained source again", async () => {
+		let sourceRead = false;
+		let captured = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			getDatasetCurationReplay: async () => ({
+				draft_id: "55555555-5555-4555-8555-555555555555",
+				revision: 7,
+				item_ids: ["66666666-6666-4666-8666-666666666666"],
+			}),
+			captureSource: async () => {
+				sourceRead = true;
+				return null;
+			},
+			captureDatasetDraftItem: async () => {
+				captured = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handleCaptureDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => '"4"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "response-loss-capture-key" }
+								: { source_trace_id: "a".repeat(32) },
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			revision: 7,
+			idempotent: true,
+		});
+		expect(sourceRead).toBe(false);
+		expect(captured).toBe(false);
+	});
+
+	it("replays import before rereading retained source rows", async () => {
+		let sourceRead = false;
+		let imported = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			getDatasetCurationReplay: async () => ({
+				draft_id: "55555555-5555-4555-8555-555555555555",
+				revision: 7,
+				item_ids: ["66666666-6666-4666-8666-666666666666"],
+			}),
+			captureSource: async () => {
+				sourceRead = true;
+				return null;
+			},
+			importDatasetDraftItems: async () => {
+				imported = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handleImportDatasetDraftItems({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				header: () => '"4"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "response-loss-import-key" }
+								: {
+										items: [
+											{
+												item_key: "captured",
+												input: { question: "caller value" },
+												source_trace_id: "a".repeat(32),
+											},
+										],
+									},
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			revision: 7,
+			idempotent: true,
+			items: [],
+		});
+		expect(sourceRead).toBe(false);
+		expect(imported).toBe(false);
+	});
+
 	it("lists only datasets for the requested project", async () => {
 		const db = fakeDb([
 			{ rows: [] },
@@ -330,7 +1038,7 @@ describe("dataset repository", () => {
 			authorization,
 		});
 		expect(DatasetDraftItem.safeParse(result).success).toBe(true);
-		expect(result).toEqual({
+		expect(result).toMatchObject({
 			id: "33333333-3333-4333-8333-333333333333",
 			item_key: "stable",
 			input: { question: "hello" },
@@ -339,6 +1047,259 @@ describe("dataset repository", () => {
 			source_trace_id: "trace",
 			source_observation_id: null,
 			position: 0,
+			validation_version: 1,
+			state: "reviewed",
+			capture_context: {},
+		});
+		const revision = db.queries.find((query) =>
+			query.text.startsWith("INSERT INTO dataset_draft_item_revisions"),
+		);
+		expect(revision?.text).toContain("dataset_id");
+		expect(revision?.values?.slice(0, 3)).toEqual([
+			PROJECT,
+			DATASET,
+			"33333333-3333-4333-8333-333333333333",
+		]);
+	});
+
+	it("returns draft-item revision history with the stable item ID and action actor", async () => {
+		const draftItemId = "33333333-3333-4333-8333-333333333333";
+		const revisionId = "44444444-4444-4444-8444-444444444444";
+		const actorId = "55555555-5555-4555-8555-555555555555";
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: PROJECT }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT revision.*"))
+					return {
+						rows: [
+							{
+								id: revisionId,
+								draft_item_id: draftItemId,
+								item_id: draftItemId,
+								item_revision: 3,
+								item_key: "stable",
+								position: 0,
+								validation_version: 1,
+								state: "reviewed",
+								input: { question: "hello" },
+								expected_output: null,
+								metadata: {},
+								external_id: null,
+								source_trace_id: null,
+								source_observation_id: null,
+								feedback_score_id: null,
+								capture_context: {},
+								action: "reviewed",
+								actor_id: actorId,
+								created_at: NOW,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const result = await getDatasetDraftItemRevisions(
+			{ connect: async () => client } as never,
+			{
+				project_id: PROJECT,
+				slug: "golden",
+				item_id: draftItemId,
+				authorization: { ...authorization, operation: "product_read" },
+			},
+		);
+
+		expect(result.items[0]).toMatchObject({
+			id: draftItemId,
+			item_revision: 3,
+			action: "reviewed",
+			actor_id: actorId,
+		});
+		expect(result.items[0]?.id).not.toBe(revisionId);
+		expect(DatasetDraftItemRevision.safeParse(result.items[0]).success).toBe(
+			true,
+		);
+		expect(
+			queries.some((sql) => sql.includes("dataset_lifecycle_audit_events")),
+		).toBe(false);
+	});
+
+	it("returns revision history for the immutable published item UUID", async () => {
+		const draftItemId = "33333333-3333-4333-8333-333333333333";
+		const publishedItemId = "66666666-6666-4666-8666-666666666666";
+		const actorId = "55555555-5555-4555-8555-555555555555";
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string, values?: unknown[]) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: PROJECT }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT revision.*")) {
+					expect(values).toEqual([PROJECT, "golden", publishedItemId]);
+					return {
+						rows: [
+							{
+								id: "44444444-4444-4444-8444-444444444444",
+								draft_item_id: draftItemId,
+								dataset_version_item_id: publishedItemId,
+								item_id: publishedItemId,
+								item_revision: 3,
+								item_key: "stable",
+								position: 0,
+								validation_version: 1,
+								state: "reviewed",
+								input: { question: "hello" },
+								expected_output: null,
+								metadata: {},
+								external_id: null,
+								source_trace_id: null,
+								source_observation_id: null,
+								feedback_score_id: null,
+								capture_context: {},
+								action: "reviewed",
+								actor_id: actorId,
+								created_at: NOW,
+							},
+						],
+					};
+				}
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const result = await getDatasetDraftItemRevisions(
+			{ connect: async () => client } as never,
+			{
+				project_id: PROJECT,
+				slug: "golden",
+				item_id: publishedItemId,
+				authorization: { ...authorization, operation: "product_read" },
+			},
+		);
+
+		expect(result.items[0]).toMatchObject({
+			id: publishedItemId,
+			item_revision: 3,
+			action: "reviewed",
+			actor_id: actorId,
+		});
+		const historyQuery = queries.find((sql) =>
+			sql.startsWith("SELECT revision.*"),
+		);
+		expect(historyQuery).toContain("dataset_version_item_id");
+		expect(historyQuery).not.toContain("JOIN dataset_draft_items");
+		expect(
+			queries.some((sql) => sql.includes("dataset_lifecycle_audit_events")),
+		).toBe(false);
+	});
+
+	it("returns retained history after its draft is discarded", async () => {
+		const draftItemId = "33333333-3333-4333-8333-333333333333";
+		const actorId = "55555555-5555-4555-8555-555555555555";
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: PROJECT }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT revision.*"))
+					return {
+						rows: [
+							{
+								id: "44444444-4444-4444-8444-444444444444",
+								draft_item_id: draftItemId,
+								item_id: draftItemId,
+								item_revision: 1,
+								item_key: "discarded",
+								position: 0,
+								validation_version: 1,
+								state: "draft",
+								input: { question: "hello" },
+								expected_output: null,
+								metadata: {},
+								external_id: null,
+								source_trace_id: null,
+								source_observation_id: null,
+								feedback_score_id: null,
+								capture_context: {},
+								action: "upserted",
+								actor_id: actorId,
+								created_at: NOW,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const result = await getDatasetDraftItemRevisions(
+			{ connect: async () => client } as never,
+			{
+				project_id: PROJECT,
+				slug: "golden",
+				item_id: draftItemId,
+				authorization: { ...authorization, operation: "product_read" },
+			},
+		);
+
+		expect(result.items[0]).toMatchObject({
+			id: draftItemId,
+			action: "upserted",
+			actor_id: actorId,
+		});
+		const historyQuery = queries.find((sql) =>
+			sql.startsWith("SELECT revision.*"),
+		);
+		expect(historyQuery).not.toContain("JOIN dataset_drafts");
+		expect(
+			queries.some((sql) => sql.includes("dataset_lifecycle_audit_events")),
+		).toBe(false);
+	});
+
+	it("serves draft-item revision history with product-read authorization", async () => {
+		let received: Record<string, unknown> | undefined;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			getDatasetDraftItemRevisions: async (_db, input) => {
+				received = input;
+				return { items: [] };
+			},
+		} as never);
+		const response = await handlers.handleListDatasetDraftItemRevisions({
+			get: () => ({
+				actor: "test",
+				actorId: authorization.actor_id,
+				organizationId: authorization.organization_id,
+			}),
+			req: {
+				valid: (part: string) =>
+					part === "param"
+						? {
+								slug: "golden",
+								itemId: "33333333-3333-4333-8333-333333333333",
+							}
+						: { project_id: PROJECT },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(received).toMatchObject({
+			project_id: PROJECT,
+			authorization: { operation: "product_read" },
 		});
 	});
 
@@ -569,6 +1530,11 @@ describe("dataset repository", () => {
 			),
 		);
 		expect(reset?.values).toEqual([PROJECT, "golden"]);
+		expect(
+			db.queries.some((query) =>
+				query.text.includes("DELETE FROM dataset_draft_item_revisions"),
+			),
+		).toBe(false);
 	});
 
 	it("publishes the complete draft as a new immutable snapshot and consumes it", async () => {
@@ -586,6 +1552,7 @@ describe("dataset repository", () => {
 					},
 				],
 			},
+			{ rows: [] },
 			{ rows: [{ version_id: "version", item_count: 2 }] },
 			{ rows: [] },
 			{ rows: [] },
@@ -605,6 +1572,9 @@ describe("dataset repository", () => {
 			"FROM dataset_draft_items WHERE draft_id = $5",
 		);
 		expect(snapshot?.text).toContain("INSERT INTO dataset_version_items");
+		expect(snapshot?.text).toContain(
+			"UPDATE dataset_draft_item_revisions revision SET dataset_version_item_id = copied.id",
+		);
 		expect(
 			db.queries.some((query) =>
 				query.text.includes(
@@ -717,13 +1687,15 @@ describe("dataset repository", () => {
 		expect(deletion.status).toBe(409);
 	});
 
-	it("documents draft ETags and the required If-Match revision", () => {
+	it("documents draft ETags and required or creation-only If-Match revisions", () => {
 		const app = new OpenAPIHono();
 		app.openapi(createDatasetDraft, handleCreateDatasetDraft);
 		app.openapi(getDatasetDraftRoute, handleGetDatasetDraft);
 		app.openapi(putDatasetDraftItem, handlePutDatasetDraftItem);
 		app.openapi(deleteDatasetDraftItemRoute, handleDeleteDatasetDraftItem);
 		app.openapi(publishDatasetDraftRoute, async () => new Response());
+		app.openapi(importDatasetDraftItemsRoute, async () => new Response());
+		app.openapi(captureDatasetDraftItemRoute, async () => new Response());
 		const document = app.getOpenAPIDocument({
 			openapi: "3.1.0",
 			info: { title: "test", version: "1" },
@@ -741,6 +1713,12 @@ describe("dataset repository", () => {
 		const remove = document.paths?.[
 			"/v1/datasets/by-slug/{slug}/draft/items/{itemId}"
 		]?.delete as any;
+		const imported = document.paths?.[
+			"/v1/datasets/by-slug/{slug}/draft/import"
+		]?.post as any;
+		const captured = document.paths?.[
+			"/v1/datasets/by-slug/{slug}/draft/capture"
+		]?.post as any;
 		expect(remove.responses["204"].headers.ETag).toBeDefined();
 		expect(remove.parameters).toEqual(
 			expect.arrayContaining([
@@ -760,6 +1738,16 @@ describe("dataset repository", () => {
 				}),
 			]),
 		);
+		for (const operation of [imported, captured])
+			expect(operation.parameters).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						in: "header",
+						name: "if-match",
+						required: false,
+					}),
+				]),
+			);
 		app.openapi(deleteDatasetItemRoute, async () => new Response());
 		const legacy = app.getOpenAPIDocument({
 			openapi: "3.1.0",
@@ -830,7 +1818,7 @@ describe("dataset repository", () => {
 		const handlers = createDatasetRouteHandlers({
 			pool: () => ({}) as never,
 			authorizeDatasetWrite: async () => {},
-			targetExists: async () => false,
+			captureSource: async () => null,
 			upsertDatasetDraftItem: async () => {
 				written = true;
 				return {} as never;
@@ -858,6 +1846,178 @@ describe("dataset repository", () => {
 		expect(written).toBe(false);
 	});
 
+	it("replaces manual provenance payloads with a server capture", async () => {
+		let written: unknown;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			captureSource: async () => ({
+				input_text: '{"question":"server value"}',
+				output_text: '{"answer":"server value"}',
+			}),
+			upsertDatasetDraftItem: async (_db, input) => {
+				written = input;
+				return {
+					id: "33333333-3333-4333-8333-333333333333",
+					item_key: "stable",
+					input: {},
+					expected_output: null,
+					metadata: {},
+					position: 0,
+				};
+			},
+		} as never);
+		const response = await handlers.handlePutDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => '"1"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden", itemKey: "stable" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: {
+									input: { question: "caller value" },
+									expected_output: { answer: "caller value" },
+									source_trace_id: "a".repeat(32),
+								},
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(written).toMatchObject({
+			input: { question: "server value" },
+			expected_output: { answer: "server value" },
+			capture: true,
+			capture_context: { kind: "trace" },
+		});
+	});
+
+	it("imports provenance only from a scoped server capture", async () => {
+		let imported: unknown;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
+			captureSource: async (input) => {
+				expect(input).toEqual({
+					organization_id: authorization.organization_id,
+					project_id: PROJECT,
+					trace_id: "a".repeat(32),
+					observation_id: "observation-1",
+				});
+				return {
+					input_text: '{"question":"server value"}',
+					output_text: '{"answer":"redact me"}',
+				};
+			},
+			importDatasetDraftItems: async (_db, input) => {
+				imported = input;
+				return { items: [], revision: 2, idempotent: false };
+			},
+		} as never);
+		const response = await handlers.handleImportDatasetDraftItems({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => undefined,
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "import-key" }
+								: {
+										items: [
+											{
+												item_key: "captured",
+												input: { question: "caller value" },
+												expected_output: { answer: "caller value" },
+												source_trace_id: "a".repeat(32),
+												source_observation_id: "observation-1",
+											},
+										],
+									},
+			},
+			header() {},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(imported).toMatchObject({
+			items: [
+				{
+					input: { question: "server value" },
+					expected_output: { answer: "redact me" },
+					capture: true,
+					capture_context: { kind: "observation" },
+				},
+			],
+			idempotency_items: [
+				{
+					input: { question: "caller value" },
+					expected_output: { answer: "caller value" },
+				},
+			],
+		});
+	});
+
+	it("rejects missing import provenance before writing", async () => {
+		let imported = false;
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			getDatasetCurationReplay: async () => null,
+			captureSource: async () => null,
+			importDatasetDraftItems: async () => {
+				imported = true;
+				return {} as never;
+			},
+		} as never);
+		const response = await handlers.handleImportDatasetDraftItems({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => undefined,
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: part === "header"
+								? { "idempotency-key": "import-key" }
+								: {
+										items: [
+											{
+												item_key: "missing",
+												input: {},
+												source_trace_id: "a".repeat(32),
+											},
+										],
+									},
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+		expect(response.status).toBe(404);
+		expect(imported).toBe(false);
+	});
+
 	it("authorizes draft writes before probing source provenance", async () => {
 		let checked = false;
 		const handlers = createDatasetRouteHandlers({
@@ -868,9 +2028,9 @@ describe("dataset repository", () => {
 					"Project is not available",
 				);
 			},
-			targetExists: async () => {
+			captureSource: async () => {
 				checked = true;
-				return true;
+				return { input_text: "{}", output_text: "" };
 			},
 		} as never);
 		const response = await handlers.handlePutDatasetDraftItem({

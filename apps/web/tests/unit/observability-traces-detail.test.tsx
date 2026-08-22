@@ -135,10 +135,16 @@ vi.mock("../../src/hooks/useTraceStream", async () => {
 });
 
 let selectedProjectId: string | null = null;
+let selectedProjectRole: "user" | "read_only" = "user";
 
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useOptionalProjectSelection: () =>
-		selectedProjectId ? { selectedProjectId } : null,
+		selectedProjectId
+			? {
+					selectedProjectId,
+					selectedProject: { project_role: selectedProjectRole },
+				}
+			: null,
 }));
 
 // We mock `@tanstack/react-router` so we can supply our own `useParams` /
@@ -207,6 +213,7 @@ beforeEach(() => {
 	handleByTraceId.clear();
 	projectIdByTraceId.clear();
 	selectedProjectId = null;
+	selectedProjectRole = "user";
 	setRoute(VALID_ID);
 });
 
@@ -316,6 +323,27 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
 		expect(projectIdByTraceId.get(VALID_ID)).toBe(PROJECT_ID);
+	});
+
+	it("hides trace and observation feedback controls from read-only project users", async () => {
+		selectedProjectId = PROJECT_ID;
+		selectedProjectRole = "read_only";
+		renderAt(VALID_ID);
+
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		await act(async () => {
+			handleByTraceId.get(VALID_ID)!.callbacks!.onSnapshot({
+				observations: [makeObservation()],
+			});
+		});
+
+		expect(screen.queryByLabelText("Thumbs up trace")).not.toBeInTheDocument();
+		expect(
+			screen.queryByLabelText("Thumbs up Observation"),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Add to dataset" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("clears the prior project's snapshot and observation feedback controls before the new snapshot arrives", async () => {

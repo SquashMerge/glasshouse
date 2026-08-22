@@ -158,8 +158,20 @@ import {
 	handleCreateDatasetDraft,
 	getDatasetDraft,
 	handleGetDatasetDraft,
+	validateDatasetDraft,
+	handleValidateDatasetDraft,
+	importDatasetDraftItems,
+	handleImportDatasetDraftItems,
+	captureDatasetDraftItem,
+	handleCaptureDatasetDraftItem,
+	reorderDatasetDraftItems,
+	handleReorderDatasetDraftItems,
 	putDatasetDraftItem,
 	handlePutDatasetDraftItem,
+	reviewDatasetDraftItem,
+	handleReviewDatasetDraftItem,
+	listDatasetDraftItemRevisions,
+	handleListDatasetDraftItemRevisions,
 	deleteDatasetDraftItem,
 	handleDeleteDatasetDraftItem,
 	archiveDataset,
@@ -317,7 +329,13 @@ register(getDatasetBySlug, handleGetDatasetBySlug);
 register(patchDatasetBySlug, handlePatchDatasetBySlug);
 register(createDatasetDraft, handleCreateDatasetDraft);
 register(getDatasetDraft, handleGetDatasetDraft);
+register(validateDatasetDraft, handleValidateDatasetDraft);
+register(importDatasetDraftItems, handleImportDatasetDraftItems);
+register(captureDatasetDraftItem, handleCaptureDatasetDraftItem);
+register(reorderDatasetDraftItems, handleReorderDatasetDraftItems);
 register(putDatasetDraftItem, handlePutDatasetDraftItem);
+register(reviewDatasetDraftItem, handleReviewDatasetDraftItem);
+register(listDatasetDraftItemRevisions, handleListDatasetDraftItemRevisions);
 register(deleteDatasetDraftItem, handleDeleteDatasetDraftItem);
 register(archiveDataset, handleArchiveDataset);
 register(discardDatasetDraft, handleDiscardDatasetDraft);

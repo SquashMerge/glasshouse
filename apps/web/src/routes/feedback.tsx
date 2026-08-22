@@ -10,8 +10,9 @@ import {
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { Skeleton } from "../components/ui/skeleton";
 import { PageMessage } from "./prompts";
 import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
 export function FeedbackPage() {
@@ -39,6 +40,7 @@ export function FeedbackPage() {
 				Select a project to review feedback.
 			</PageMessage>
 		);
+	const canCurate = selectedProject.project_role !== "read_only";
 	return (
 		<div className="space-y-6">
 			<div>
@@ -132,6 +134,7 @@ export function FeedbackPage() {
 						key={item.id}
 						item={item}
 						projectId={selectedProjectId!}
+						canCurate={canCurate}
 						onUpdated={() =>
 							void client.invalidateQueries({ queryKey: ["feedback"] })
 						}
@@ -141,35 +144,26 @@ export function FeedbackPage() {
 		</div>
 	);
 }
-function object(value: string, label: string) {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(value);
-	} catch {
-		throw new Error(`${label} must be valid JSON object`);
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-		throw new Error(`${label} must be a JSON object`);
-	return parsed as Record<string, unknown>;
-}
 function FeedbackRow({
 	item,
 	projectId,
+	canCurate,
 	onUpdated,
 }: {
 	item: Feedback;
 	projectId: string;
+	canCurate: boolean;
 	onUpdated: () => void;
 }) {
 	const datasets = useQuery({
 		queryKey: ["datasets", projectId],
 		queryFn: () => listDatasets(projectId),
+		enabled: canCurate,
 	});
 	const [datasetId, setDatasetId] = React.useState("");
-	const [input, setInput] = React.useState("{}");
-	const [expected, setExpected] = React.useState("{}");
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
+	const promotionKey = React.useRef<string | null>(null);
 	async function transition(status: string) {
 		if (pending) return;
 		try {
@@ -188,13 +182,14 @@ function FeedbackRow({
 		try {
 			setError("");
 			setPending(true);
+			promotionKey.current ??= crypto.randomUUID();
 			await promoteFeedback({
 				project_id: projectId,
 				id: item.id,
 				dataset_id: datasetId,
-				input: object(input, "Dataset input"),
-				expected_output: object(expected, "Expected output"),
+				idempotency_key: promotionKey.current,
 			});
+			promotionKey.current = null;
 			onUpdated();
 		} catch (cause) {
 			setError((cause as Error).message);
@@ -224,7 +219,7 @@ function FeedbackRow({
 				<p className="whitespace-pre-wrap text-sm">{item.comment}</p>
 			)}
 			<div className="flex flex-wrap gap-2">
-				{item.status !== "added_to_dataset" && (
+				{canCurate && item.status !== "added_to_dataset" && (
 					<>
 						<Button
 							size="sm"
@@ -244,8 +239,35 @@ function FeedbackRow({
 						</Button>
 					</>
 				)}
-				{item.status === "reviewed" && (
+				{canCurate && item.status === "reviewed" && (
 					<>
+						{datasets.isLoading && !datasets.data && (
+							<Skeleton
+								className="h-8 w-40"
+								role="status"
+								aria-label="Loading datasets"
+							/>
+						)}
+						{datasets.isError && !datasets.data && (
+							<Alert variant="destructive" aria-live="assertive">
+								<AlertTitle>Datasets could not be loaded</AlertTitle>
+								<AlertDescription className="flex flex-wrap items-center gap-2">
+									<span>
+										{datasets.error instanceof Error
+											? datasets.error.message
+											: "Unable to load datasets."}
+									</span>
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={datasets.isFetching}
+										onClick={() => void datasets.refetch()}
+									>
+										{datasets.isFetching ? "Retrying..." : "Retry datasets"}
+									</Button>
+								</AlertDescription>
+							</Alert>
+						)}
 						<label className="sr-only" htmlFor={`feedback-dataset-${item.id}`}>
 							Dataset
 						</label>
@@ -253,7 +275,13 @@ function FeedbackRow({
 							id={`feedback-dataset-${item.id}`}
 							className="h-8 w-auto text-sm"
 							value={datasetId}
-							onChange={(event) => setDatasetId(event.target.value)}
+							disabled={
+								datasets.isLoading || (datasets.isError && !datasets.data)
+							}
+							onChange={(event) => {
+								promotionKey.current = null;
+								setDatasetId(event.target.value);
+							}}
 						>
 							<option value="">Choose dataset</option>
 							{datasets.data?.items.map((dataset) => (
@@ -262,20 +290,9 @@ function FeedbackRow({
 								</option>
 							))}
 						</Select>
-						<Input
-							className="h-8 w-40 text-xs"
-							value={input}
-							onChange={(event) => setInput(event.target.value)}
-							aria-label="Dataset input JSON"
-							disabled={pending}
-						/>
-						<Input
-							className="h-8 w-40 text-xs"
-							value={expected}
-							onChange={(event) => setExpected(event.target.value)}
-							aria-label="Expected output JSON"
-							disabled={pending}
-						/>
+						<span className="text-xs text-muted-foreground">
+							Server captures the redacted source into a reviewable draft item.
+						</span>
 						<Button
 							size="sm"
 							disabled={!datasetId || pending}
