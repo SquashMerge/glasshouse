@@ -2487,6 +2487,125 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
+	"retention deletes an eligible old dataset while preserving an old versioned dataset",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl });
+		const fixture = await seedProjectAuditLockRace(pool);
+		const retention = await pool.connect();
+		const protectedDatasetId = randomUUID();
+		const eligibleDatasetId = randomUUID();
+		const versionId = randomUUID();
+		let retentionStarted = false;
+		try {
+			await pool.query(
+				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, 'retention-versioned', 'Versioned retention dataset', now() - interval '2 days'), ($3, $2, 'retention-eligible', 'Eligible retention dataset', now() - interval '2 days')",
+				[protectedDatasetId, fixture.projectId, eligibleDatasetId],
+			);
+			await pool.query(
+				"INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES ($1, $2, $3, 1, 0, $4)",
+				[versionId, fixture.projectId, protectedDatasetId, "0".repeat(64)],
+			);
+
+			await retention.query("BEGIN");
+			retentionStarted = true;
+			expect(
+				await deleteSafeDatasetRetentionBatch(
+					retention,
+					fixture.projectId,
+					new Date(),
+					10,
+					randomUUID(),
+					randomUUID(),
+				),
+			).toEqual({ deleted: 1, skipped: 1 });
+			await retention.query("COMMIT");
+			retentionStarted = false;
+			expect(
+				(
+					await pool.query<{ id: string }>(
+						"SELECT id FROM datasets WHERE project_id = $1 ORDER BY id",
+						[fixture.projectId],
+					)
+				).rows,
+			).toEqual([{ id: protectedDatasetId }]);
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_versions WHERE id = $1 AND dataset_id = $2",
+						[versionId, protectedDatasetId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+			expect(
+				(
+					await pool.query<{ count: number }>(
+						"SELECT count(*)::int AS count FROM dataset_tombstones WHERE project_id = $1 AND slug = 'retention-eligible'",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+		} finally {
+			if (retentionStarted) await retention.query("ROLLBACK").catch(() => {});
+			retention.release();
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				await cleanup.query("SET LOCAL session_replication_role = replica");
+				await cleanup.query(
+					"DELETE FROM dataset_versions WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("DELETE FROM datasets WHERE project_id = $1", [
+					fixture.projectId,
+				]);
+				await cleanup.query(
+					"DELETE FROM dataset_lifecycle_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_tombstones WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"UPDATE projects SET status = 'archived' WHERE id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM project_actor_grants WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("DELETE FROM projects WHERE id = $1", [
+					fixture.projectId,
+				]);
+				await cleanup.query(
+					"DELETE FROM organization_memberships WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM organization_actor_roles WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM actor_identities WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query("DELETE FROM actors WHERE id IN ($1, $2)", [
+					fixture.managerActorId,
+					fixture.ownerActorId,
+				]);
+				await cleanup.query("COMMIT");
+			} catch (cause) {
+				await cleanup.query("ROLLBACK").catch(() => {});
+				throw cause;
+			} finally {
+				cleanup.release();
+			}
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
 	"retention holds the creation slug lock until its tombstone commits",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
