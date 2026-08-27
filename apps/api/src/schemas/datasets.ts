@@ -42,6 +42,7 @@ export const Dataset = z
 		name: z.string(),
 		description: z.string().nullable(),
 		tags: z.array(z.string()),
+		revision: z.number().int().positive(),
 		latest_published_version: z.number().int().positive().nullable(),
 		archived_at: z.string().datetime().nullable(),
 		item_count: z.number().int().nonnegative(),
@@ -129,6 +130,32 @@ export const DatasetItemIdParams = z
 	.strict();
 
 export const DatasetProjectQuery = ProjectIdQuery;
+export const DatasetListQuery = DatasetProjectQuery.extend({
+	include_archived: z.coerce.boolean().optional(),
+})
+	.strict()
+	.openapi("DatasetListQuery");
+export const DatasetExportQuery = DatasetProjectQuery.extend({
+	format: z.enum(["csv", "jsonl"]),
+	representation: z.enum(["draft", "version"]),
+	version: z.coerce.number().int().positive().optional(),
+})
+	.strict()
+	.superRefine((value, ctx) => {
+		if (value.representation === "version" && value.version === undefined)
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["version"],
+				message: "An immutable version export requires version",
+			});
+		if (value.representation === "draft" && value.version !== undefined)
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["version"],
+				message: "Draft exports do not accept version",
+			});
+	})
+	.openapi("DatasetExportQuery");
 export const DatasetSlugParam = z
 	.object({
 		slug: DatasetSlug.openapi({ param: { name: "slug", in: "path" } }),
@@ -145,6 +172,10 @@ export const DatasetMetadataUpdate = z
 		(value) => Object.keys(value).length > 0,
 		"At least one field is required",
 	);
+export const DatasetTombstone = z
+	.object({ confirmation_slug: DatasetSlug })
+	.strict()
+	.openapi("DatasetTombstone");
 export const DatasetDraft = z
 	.object({
 		id: z.string().uuid(),
@@ -215,24 +246,6 @@ export const DatasetDraftImport = z
 			.max(500),
 	})
 	.strict()
-	.superRefine((value, ctx) => {
-		const itemKeys = new Set<string>();
-		for (const [index, item] of value.items.entries()) {
-			if (itemKeys.has(item.item_key))
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["items", index, "item_key"],
-					message: "Each import item_key must be unique",
-				});
-			else itemKeys.add(item.item_key);
-			if (item.source_observation_id && !item.source_trace_id)
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["items", index, "source_observation_id"],
-					message: "Observation provenance requires a trace",
-				});
-		}
-	})
 	.openapi("DatasetDraftImport");
 export const DatasetDraftCapture = z
 	.object({

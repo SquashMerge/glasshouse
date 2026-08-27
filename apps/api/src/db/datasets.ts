@@ -67,7 +67,11 @@ export async function lockDatasetSlugForCreate(
 
 export async function authorizeDatasetWrite(
 	db: Transactional,
-	input: { project_id: string; authorization: ProjectAuthorization },
+	input: {
+		project_id: string;
+		include_archived?: boolean;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	const client = await db.connect();
 	try {
@@ -156,6 +160,7 @@ function dataset(row: Row) {
 		name: text(row, "name"),
 		description: nullableText(row, "description"),
 		tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+		revision: Number(row.lifecycle_revision ?? 1),
 		latest_published_version:
 			row.latest_published_version == null
 				? null
@@ -290,7 +295,11 @@ async function getDatasetRow(
 
 export async function listDatasets(
 	db: Transactional,
-	input: { project_id: string; authorization: ProjectAuthorization },
+	input: {
+		project_id: string;
+		include_archived?: boolean;
+		authorization: ProjectAuthorization;
+	},
 ) {
 	const client = await db.connect();
 	try {
@@ -304,7 +313,9 @@ export async function listDatasets(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
-			`SELECT d.*, COALESCE((SELECT v.item_count FROM dataset_versions v WHERE v.dataset_id = d.id AND v.version = d.latest_published_version), 0)::int AS item_count FROM datasets d JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $1 AND d.archived_at IS NULL ORDER BY d.created_at DESC`,
+			input.include_archived
+				? `SELECT d.*, COALESCE((SELECT v.item_count FROM dataset_versions v WHERE v.dataset_id = d.id AND v.version = d.latest_published_version), 0)::int AS item_count FROM datasets d JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $1 ORDER BY d.created_at DESC`
+				: `SELECT d.*, COALESCE((SELECT v.item_count FROM dataset_versions v WHERE v.dataset_id = d.id AND v.version = d.latest_published_version), 0)::int AS item_count FROM datasets d JOIN projects p ON p.id = d.project_id AND p.status = 'active' WHERE d.project_id = $1 AND d.archived_at IS NULL ORDER BY d.created_at DESC`,
 			[input.project_id],
 		);
 		await client.query("COMMIT");
@@ -536,6 +547,7 @@ export async function updateDatasetMetadata(
 		name?: string;
 		description?: string | null;
 		tags?: string[];
+		revision: number;
 		authorization: ProjectAuthorization;
 	},
 ) {
@@ -551,8 +563,45 @@ export async function updateDatasetMetadata(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await lockProjectAuditProvenance(client, input.project_id);
+		const current = await client.query(
+			"SELECT * FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL FOR UPDATE",
+			[input.project_id, input.slug],
+		);
+		if (!current.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		requireDatasetRevision(current.rows[0] as Row, input.revision, [
+			...(input.name === undefined || input.name === current.rows[0].name
+				? []
+				: [
+						{
+							field: "name",
+							current: current.rows[0].name,
+							requested: input.name,
+						},
+					]),
+			...(input.description === undefined ||
+			input.description === current.rows[0].description
+				? []
+				: [
+						{
+							field: "description",
+							current: current.rows[0].description,
+							requested: input.description,
+						},
+					]),
+			...(input.tags === undefined ||
+			stableJson(input.tags) === stableJson(current.rows[0].tags)
+				? []
+				: [
+						{
+							field: "tags",
+							current: current.rows[0].tags,
+							requested: input.tags,
+						},
+					]),
+		]);
 		const result = await client.query(
-			`UPDATE datasets SET name = COALESCE($3, name), description = CASE WHEN $4::boolean THEN $5 ELSE description END, tags = COALESCE($6::jsonb, tags), updated_at = now() WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL RETURNING *, COALESCE((SELECT v.item_count FROM dataset_versions v WHERE v.dataset_id = datasets.id AND v.version = datasets.latest_published_version), 0)::int AS item_count`,
+			`UPDATE datasets SET name = COALESCE($3, name), description = CASE WHEN $4::boolean THEN $5 ELSE description END, tags = COALESCE($6::jsonb, tags), lifecycle_revision = lifecycle_revision + 1, updated_at = now() WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL RETURNING *, COALESCE((SELECT v.item_count FROM dataset_versions v WHERE v.dataset_id = datasets.id AND v.version = datasets.latest_published_version), 0)::int AS item_count`,
 			[
 				input.project_id,
 				input.slug,
@@ -730,6 +779,43 @@ export function datasetCurationRequestHash(value: unknown): string {
 	return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
+function draftItemFieldDiff(
+	row: Row | undefined,
+	input: DraftItemWriteInput,
+): DatasetFieldDiff[] {
+	const requested = {
+		input: input.input,
+		expected_output: input.expected_output ?? null,
+		metadata: input.metadata ?? {},
+		external_id: input.external_id ?? null,
+		source_trace_id: input.source_trace_id ?? null,
+		source_observation_id: input.source_observation_id ?? null,
+	};
+	if (!row)
+		return [
+			{
+				field: "item_key",
+				current: null,
+				requested: input.item_key,
+			},
+		];
+	const current = {
+		input: jsonObject(row, "input"),
+		expected_output:
+			row.expected_output == null ? null : jsonObject(row, "expected_output"),
+		metadata: jsonObjectOrEmpty(row, "metadata"),
+		external_id: nullableText(row, "external_id"),
+		source_trace_id: nullableText(row, "source_trace_id"),
+		source_observation_id: nullableText(row, "source_observation_id"),
+	};
+	return (Object.keys(requested) as Array<keyof typeof requested>).flatMap(
+		(field) =>
+			stableJson(current[field]) === stableJson(requested[field])
+				? []
+				: [{ field, current: current[field], requested: requested[field] }],
+	);
+}
+
 async function lockDatasetDraft(
 	client: Pick<PoolClient, "query">,
 	projectId: string,
@@ -762,10 +848,7 @@ async function curationDraft(
 	}
 	const result = await getOrCreateDatasetDraftInTransaction(client, input);
 	if (!result.created)
-		throw new DatasetRepositoryError(
-			"CONFLICT",
-			"Draft revision is required when a shared draft already exists",
-		);
+		throw revisionConflict(Number(result.row.revision), undefined, []);
 	return result.row;
 }
 
@@ -799,12 +882,57 @@ async function lockCurationDatasetById(
 	return text(row as Row, "id");
 }
 
-function requireDraftRevision(row: Row, revision: number | undefined): void {
+type DatasetFieldDiff = {
+	field: string;
+	current: unknown;
+	requested: unknown;
+};
+
+function revisionConflict(
+	currentRevision: number,
+	requestedRevision: number | undefined,
+	fieldDiff: DatasetFieldDiff[],
+): DatasetRepositoryError {
+	return new DatasetRepositoryError(
+		"CONFLICT",
+		"Dataset draft has changed; refresh and retry",
+		undefined,
+		{
+			current_revision: currentRevision,
+			field_diff:
+				fieldDiff.length > 0
+					? fieldDiff
+					: [
+							{
+								field: "revision",
+								current: currentRevision,
+								requested: requestedRevision ?? null,
+							},
+						],
+		},
+	);
+}
+
+function requireDraftRevision(
+	row: Row,
+	revision: number | undefined,
+	fieldDiff: DatasetFieldDiff[] = [],
+): void {
 	if (revision === undefined) return;
 	if (Number(row.revision) !== revision)
-		throw new DatasetRepositoryError(
-			"CONFLICT",
-			"Dataset draft has changed; refresh and retry",
+		throw revisionConflict(Number(row.revision), revision, fieldDiff);
+}
+
+function requireDatasetRevision(
+	row: Row,
+	revision: number,
+	fieldDiff: DatasetFieldDiff[] = [],
+): void {
+	if (Number(row.lifecycle_revision ?? 1) !== revision)
+		throw revisionConflict(
+			Number(row.lifecycle_revision ?? 1),
+			revision,
+			fieldDiff,
 		);
 }
 
@@ -888,7 +1016,7 @@ async function writeDraftItem(
 	draft: Row,
 	input: DraftItemWriteInput,
 	authorization: ProjectAuthorization,
-	options: { capture: boolean; action: DraftItemRevisionAction },
+	options: { redact: boolean; action: DraftItemRevisionAction },
 ) {
 	let payload: DatasetDraftItemInput = {
 		input: input.input,
@@ -899,7 +1027,7 @@ async function writeDraftItem(
 		source_observation_id: input.source_observation_id ?? null,
 	};
 	let captureContext = input.capture_context ?? {};
-	if (options.capture) {
+	if (options.redact) {
 		const policy = await approvedRedaction(
 			client as Pick<Pool, "query">,
 			authorization.organization_id,
@@ -981,7 +1109,20 @@ export async function mutateDatasetDraftItemInTransaction(
 	)
 		throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 	const draftRow = await lockDatasetDraft(client, input.project_id, input.slug);
-	requireDraftRevision(draftRow, input.revision);
+	if (
+		input.revision !== undefined &&
+		Number(draftRow.revision) !== input.revision
+	) {
+		const current = await client.query(
+			"SELECT * FROM dataset_draft_items WHERE draft_id = $1 AND item_key = $2 FOR KEY SHARE",
+			[text(draftRow, "id"), input.item_key],
+		);
+		requireDraftRevision(
+			draftRow,
+			input.revision,
+			draftItemFieldDiff(current.rows[0] as Row | undefined, input),
+		);
+	}
 	const action = input.action ?? "upserted";
 	const item = await writeDraftItem(
 		client,
@@ -989,7 +1130,7 @@ export async function mutateDatasetDraftItemInTransaction(
 		input,
 		input.authorization,
 		{
-			capture: input.capture ?? false,
+			redact: input.capture ?? false,
 			action,
 		},
 	);
@@ -1583,11 +1724,34 @@ export async function importDatasetDraftItems(
 		if (validationErrors.length)
 			throw persistedValidationFailure(validationErrors);
 		const draftRow = await curationDraft(client, input);
+		const existing = await client.query(
+			"SELECT item_key FROM dataset_draft_items WHERE draft_id = $1 AND item_key = ANY($2::text[]) FOR KEY SHARE",
+			[text(draftRow, "id"), input.items.map((item) => item.item_key)],
+		);
+		const existingItemKeys = new Set(
+			existing.rows.map((row) => text(row as Row, "item_key")),
+		);
+		const existingKeyErrors = input.items.flatMap((item, index) =>
+			existingItemKeys.has(item.item_key)
+				? [
+						{
+							item_id: null,
+							item_key: item.item_key,
+							field: `items/${index}/item_key`,
+							code: "DUPLICATE_ITEM_KEY",
+							message:
+								"Import item_key already exists in the shared draft; choose a new key",
+						},
+					]
+				: [],
+		);
+		if (existingKeyErrors.length)
+			throw persistedValidationFailure(existingKeyErrors);
 		const items = [];
 		for (const item of input.items)
 			items.push(
 				await writeDraftItem(client, draftRow, item, input.authorization, {
-					capture: item.capture ?? false,
+					redact: true,
 					action: "imported",
 				}),
 			);
@@ -1684,7 +1848,7 @@ export async function captureDatasetDraftItemInTransaction(
 		input,
 		input.authorization,
 		{
-			capture: true,
+			redact: true,
 			action: "captured",
 		},
 	);
@@ -1763,11 +1927,9 @@ export async function deleteDatasetDraftItem(
 		const row = selected.rows[0];
 		if (!row)
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset draft not found");
-		if (Number(row.revision) !== input.revision)
-			throw new DatasetRepositoryError(
-				"CONFLICT",
-				"Dataset draft has changed; refresh and retry",
-			);
+		requireDraftRevision(row as Row, input.revision, [
+			{ field: "item_id", current: input.item_key, requested: "delete" },
+		]);
 		const linked = await client.query(
 			"SELECT 1 FROM feedback_reviews WHERE dataset_draft_item_id = $1 FOR KEY SHARE",
 			[input.item_key],
@@ -1888,11 +2050,9 @@ export async function publishDatasetDraft(
 		const row = selected.rows[0];
 		if (!row)
 			throw new DatasetRepositoryError("NOT_FOUND", "Dataset draft not found");
-		if (Number(row.revision) !== input.revision)
-			throw new DatasetRepositoryError(
-				"CONFLICT",
-				"Dataset draft has changed; refresh and retry",
-			);
+		requireDraftRevision(row as Row, input.revision, [
+			{ field: "publication", current: "draft changed", requested: "publish" },
+		]);
 		const draftItems = await client.query(
 			"SELECT * FROM dataset_draft_items WHERE draft_id = $1 ORDER BY position, item_key FOR KEY SHARE",
 			[row.id],
@@ -1905,7 +2065,7 @@ export async function publishDatasetDraft(
 			throw persistedValidationFailure(validationErrors);
 		const version = Number(row.latest_published_version ?? 0) + 1;
 		const snapshot = await client.query(
-			`WITH inserted AS (INSERT INTO dataset_versions (project_id, dataset_id, version, item_count, content_hash, created_via, published_by, published_draft_revision) SELECT $1, $2, $3, COUNT(*)::int, encode(digest(jsonb_build_object('schema', $4::jsonb, 'items', COALESCE(jsonb_agg(jsonb_build_object('item_key', item_key, 'validation_version', validation_version, 'state', state, 'input', input, 'expected_output', expected_output, 'metadata', metadata, 'external_id', external_id, 'source_trace_id', source_trace_id, 'source_observation_id', source_observation_id, 'feedback_score_id', feedback_score_id, 'capture_context', capture_context, 'created_by', created_by, 'reviewed_by', reviewed_by, 'reviewed_at', reviewed_at) ORDER BY position, item_key), '[]'::jsonb))::text, 'sha256'), 'hex'), 'draft_publish', $6::uuid, $7 FROM dataset_draft_items WHERE draft_id = $5 RETURNING id), copied AS (INSERT INTO dataset_version_items (project_id, dataset_version_id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at) SELECT $1, inserted.id, i.item_key, i.position, i.validation_version, i.state, i.input, i.expected_output, i.metadata, i.external_id, i.source_trace_id, i.source_observation_id, i.feedback_score_id, i.capture_context, i.created_by, i.reviewed_by, i.reviewed_at FROM inserted JOIN dataset_draft_items i ON i.draft_id = $5 RETURNING id, item_key), linked_revisions AS (UPDATE dataset_draft_item_revisions revision SET dataset_version_item_id = copied.id FROM copied JOIN dataset_draft_items item ON item.project_id = $1 AND item.draft_id = $5 AND item.item_key = copied.item_key WHERE revision.project_id = $1 AND revision.dataset_id = $2 AND revision.draft_item_id = item.id RETURNING revision.id) UPDATE datasets SET latest_published_version = $3, updated_at = now() WHERE id = $2 RETURNING (SELECT id FROM inserted) AS version_id, (SELECT COUNT(*)::int FROM copied) AS item_count`,
+			`WITH inserted AS (INSERT INTO dataset_versions (project_id, dataset_id, version, item_count, content_hash, created_via, published_by, published_draft_revision) SELECT $1, $2, $3, COUNT(*)::int, encode(digest(jsonb_build_object('schema', $4::jsonb, 'items', COALESCE(jsonb_agg(jsonb_build_object('item_key', item_key, 'validation_version', validation_version, 'state', state, 'input', input, 'expected_output', expected_output, 'metadata', metadata, 'external_id', external_id, 'source_trace_id', source_trace_id, 'source_observation_id', source_observation_id, 'feedback_score_id', feedback_score_id, 'capture_context', capture_context, 'created_by', created_by, 'reviewed_by', reviewed_by, 'reviewed_at', reviewed_at) ORDER BY position, item_key), '[]'::jsonb))::text, 'sha256'), 'hex'), 'draft_publish', $6::uuid, $7 FROM dataset_draft_items WHERE draft_id = $5 RETURNING id), copied AS (INSERT INTO dataset_version_items (project_id, dataset_version_id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at) SELECT $1, inserted.id, i.item_key, i.position, i.validation_version, i.state, i.input, i.expected_output, i.metadata, i.external_id, i.source_trace_id, i.source_observation_id, i.feedback_score_id, i.capture_context, i.created_by, i.reviewed_by, i.reviewed_at FROM inserted JOIN dataset_draft_items i ON i.draft_id = $5 RETURNING id, item_key), linked_revisions AS (UPDATE dataset_draft_item_revisions revision SET dataset_version_item_id = copied.id FROM copied JOIN dataset_draft_items item ON item.project_id = $1 AND item.draft_id = $5 AND item.item_key = copied.item_key WHERE revision.project_id = $1 AND revision.dataset_id = $2 AND revision.draft_item_id = item.id RETURNING revision.id) UPDATE datasets SET latest_published_version = $3, lifecycle_revision = lifecycle_revision + 1, updated_at = now() WHERE id = $2 RETURNING (SELECT id FROM inserted) AS version_id, (SELECT COUNT(*)::int FROM copied) AS item_count`,
 			[
 				input.project_id,
 				row.dataset_id,
@@ -1949,6 +2109,7 @@ export async function archiveDataset(
 	input: {
 		project_id: string;
 		slug: string;
+		revision: number;
 		authorization: ProjectAuthorization;
 	},
 ) {
@@ -1964,8 +2125,17 @@ export async function archiveDataset(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		await lockProjectAuditProvenance(client, input.project_id);
+		const current = await client.query(
+			"SELECT * FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL FOR UPDATE",
+			[input.project_id, input.slug],
+		);
+		if (!current.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		requireDatasetRevision(current.rows[0] as Row, input.revision, [
+			{ field: "archived_at", current: null, requested: "archive" },
+		]);
 		const result = await client.query(
-			"UPDATE datasets SET archived_at = now(), archived_by = $3, updated_at = now() WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL RETURNING id",
+			"UPDATE datasets SET archived_at = now(), archived_by = $3, lifecycle_revision = lifecycle_revision + 1, updated_at = now() WHERE project_id = $1 AND slug = $2 AND archived_at IS NULL RETURNING id, lifecycle_revision",
 			[input.project_id, input.slug, input.authorization.actor_id],
 		);
 		if (!result.rows[0])
@@ -1981,6 +2151,381 @@ export async function archiveDataset(
 			],
 		);
 		await client.query("COMMIT");
+		return { revision: Number(result.rows[0].lifecycle_revision) };
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		throw normalizeError(cause);
+	} finally {
+		client.release();
+	}
+}
+
+export async function restoreDataset(
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		revision: number;
+		authorization: ProjectAuthorization;
+	},
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await lockProjectAuditProvenance(client, input.project_id);
+		const current = await client.query(
+			"SELECT * FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NOT NULL FOR UPDATE",
+			[input.project_id, input.slug],
+		);
+		if (!current.rows[0])
+			throw new DatasetRepositoryError(
+				"NOT_FOUND",
+				"Archived dataset not found",
+			);
+		requireDatasetRevision(current.rows[0] as Row, input.revision, [
+			{ field: "archived_at", current: "archived", requested: "restore" },
+		]);
+		const restored = await client.query(
+			"UPDATE datasets SET archived_at = NULL, archived_by = NULL, lifecycle_revision = lifecycle_revision + 1, updated_at = now() WHERE id = $1 RETURNING id, lifecycle_revision",
+			[text(current.rows[0] as Row, "id")],
+		);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type) VALUES ($1, $2, $3, $4, $5, 'restored')",
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				text(current.rows[0] as Row, "id"),
+				input.slug,
+				input.authorization.actor_id,
+			],
+		);
+		await client.query("COMMIT");
+		return { revision: Number(restored.rows[0]?.lifecycle_revision) };
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		throw normalizeError(cause);
+	} finally {
+		client.release();
+	}
+}
+
+type DatasetTombstoneDependencies = {
+	immutable_versions: number;
+	historical_runs: number;
+	queued_runs: number;
+	scheduled_runs: number;
+	retention_holds: number;
+	benchmark_suites: number;
+	feedback_links: number;
+};
+
+function tombstoneDependencies(row: Row): DatasetTombstoneDependencies {
+	return {
+		immutable_versions: Number(row.immutable_versions ?? 0),
+		historical_runs: Number(row.historical_runs ?? 0),
+		queued_runs: Number(row.queued_runs ?? 0),
+		scheduled_runs: Number(row.scheduled_runs ?? 0),
+		retention_holds: Number(row.retention_holds ?? 0),
+		benchmark_suites: Number(row.benchmark_suites ?? 0),
+		feedback_links: Number(row.feedback_links ?? 0),
+	};
+}
+
+function hasTombstoneDependencies(
+	value: DatasetTombstoneDependencies,
+): boolean {
+	return Object.values(value).some((count) => count > 0);
+}
+
+export async function tombstoneDataset(
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		revision: number;
+		authorization: ProjectAuthorization;
+	},
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		await lockProjectAuditProvenance(client, input.project_id);
+		const current = await client.query(
+			"SELECT * FROM datasets WHERE project_id = $1 AND slug = $2 AND archived_at IS NOT NULL FOR UPDATE",
+			[input.project_id, input.slug],
+		);
+		if (!current.rows[0])
+			throw new DatasetRepositoryError(
+				"CONFLICT",
+				"Archive the dataset before tombstoning it",
+			);
+		const datasetRow = current.rows[0] as Row;
+		requireDatasetRevision(datasetRow, input.revision, [
+			{ field: "archived_at", current: "archived", requested: "tombstone" },
+		]);
+		const dependencyResult = await client.query(
+			`SELECT
+				(SELECT count(*)::int FROM dataset_versions WHERE dataset_id = $1) AS immutable_versions,
+				(SELECT count(*)::int FROM experiments WHERE dataset_id = $1 AND status IN ('completed', 'failed', 'cancelled')) AS historical_runs,
+				(SELECT count(*)::int FROM experiments WHERE dataset_id = $1 AND status IN ('pending', 'running')) AS queued_runs,
+				0::int AS scheduled_runs,
+				(SELECT count(*)::int FROM dataset_retention_holds WHERE project_id = $2 AND dataset_id = $1 AND released_at IS NULL) AS retention_holds,
+				(SELECT count(*)::int FROM benchmark_suites WHERE dataset_id = $1) AS benchmark_suites,
+				(SELECT count(*)::int FROM feedback_reviews WHERE dataset_id = $1) AS feedback_links`,
+			[text(datasetRow, "id"), input.project_id],
+		);
+		const dependencies = tombstoneDependencies(
+			(dependencyResult.rows[0] ?? {}) as Row,
+		);
+		if (hasTombstoneDependencies(dependencies))
+			throw new DatasetRepositoryError(
+				"CONFLICT",
+				"Dataset cannot be tombstoned while immutable versions, runs, retention holds, or retained links remain",
+				undefined,
+				dependencies,
+			);
+		await client.query(
+			"INSERT INTO dataset_tombstones (project_id, slug) VALUES ($1, $2) ON CONFLICT (project_id, slug) DO NOTHING",
+			[input.project_id, input.slug],
+		);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type) VALUES ($1, $2, $3, $4, $5, 'tombstoned')",
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				text(datasetRow, "id"),
+				input.slug,
+				input.authorization.actor_id,
+			],
+		);
+		await client.query(
+			"DELETE FROM dataset_item_input_quarantine WHERE project_id = $1 AND dataset_id = $2",
+			[input.project_id, text(datasetRow, "id")],
+		);
+		const deleted = await client.query(
+			"DELETE FROM datasets WHERE id = $1 AND project_id = $2 RETURNING id",
+			[text(datasetRow, "id"), input.project_id],
+		);
+		if (!deleted.rows[0])
+			throw new DatasetRepositoryError("NOT_FOUND", "Dataset not found");
+		await client.query("COMMIT");
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		throw normalizeError(cause);
+	} finally {
+		client.release();
+	}
+}
+
+export const DATASET_EXPORT_MAX_ITEMS = 500;
+export const DATASET_EXPORT_MAX_BYTES = 1_048_576;
+
+type DatasetExportItem = {
+	item_key: string;
+	input: JsonObject;
+	expected_output: JsonObject | null;
+	metadata: JsonObject;
+	external_id: string | null;
+	source_trace_id: string | null;
+	source_observation_id: string | null;
+	feedback_score_id: string | null;
+	capture_context: JsonObject;
+	curated_by: string | null;
+	reviewed_by: string | null;
+	reviewed_at: string | null;
+};
+
+function csvField(value: unknown): string {
+	const text = typeof value === "string" ? value : JSON.stringify(value);
+	return `"${text.replaceAll('"', '""')}"`;
+}
+
+function redactedExportItem(
+	row: Row,
+	redaction: ReturnType<typeof policyRedactionOptions>,
+): DatasetExportItem {
+	const input = redactDatasetCapture(jsonObject(row, "input"), redaction).value;
+	const expected =
+		row.expected_output == null
+			? null
+			: redactDatasetCapture(jsonObject(row, "expected_output"), redaction)
+					.value;
+	const metadata = redactDatasetCapture(
+		jsonObjectOrEmpty(row, "metadata"),
+		redaction,
+	).value;
+	return {
+		item_key: text(row, "item_key"),
+		input,
+		expected_output: expected,
+		metadata,
+		external_id: nullableText(row, "external_id"),
+		source_trace_id: nullableText(row, "source_trace_id"),
+		source_observation_id: nullableText(row, "source_observation_id"),
+		feedback_score_id: nullableText(row, "feedback_score_id"),
+		capture_context: jsonObjectOrEmpty(row, "capture_context"),
+		curated_by: nullableText(row, "curated_by"),
+		reviewed_by: nullableText(row, "reviewed_by"),
+		reviewed_at: nullableTimestamp(row, "reviewed_at"),
+	};
+}
+
+function encodeDatasetExport(
+	items: DatasetExportItem[],
+	format: "csv" | "jsonl",
+): string {
+	if (format === "jsonl")
+		return items.map((item) => JSON.stringify(item)).join("\n") + "\n";
+	const fields = [
+		"item_key",
+		"input",
+		"expected_output",
+		"metadata",
+		"external_id",
+		"source_trace_id",
+		"source_observation_id",
+		"feedback_score_id",
+		"capture_context",
+		"curated_by",
+		"reviewed_by",
+		"reviewed_at",
+	] as const;
+	return (
+		[
+			fields.join(","),
+			...items.map((item) =>
+				fields.map((field) => csvField(item[field])).join(","),
+			),
+		].join("\n") + "\n"
+	);
+}
+
+export async function exportDataset(
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		format: "csv" | "jsonl";
+		representation: "draft" | "version";
+		version?: number;
+		authorization: ProjectAuthorization;
+	},
+): Promise<{
+	body: string;
+	content_type: "text/csv" | "application/x-ndjson";
+	filename: string;
+}> {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		if (
+			!(await lockActiveAuthorizedProject(
+				client,
+				input.project_id,
+				input.authorization,
+			))
+		)
+			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
+		const source =
+			input.representation === "version"
+				? await client.query(
+						`SELECT dataset.id AS dataset_id, dataset.slug, version.id AS source_id, version.version
+					 FROM datasets dataset
+					 JOIN dataset_versions version ON version.dataset_id = dataset.id AND version.project_id = dataset.project_id
+					 WHERE dataset.project_id = $1 AND dataset.slug = $2 AND version.version = $3`,
+						[input.project_id, input.slug, input.version],
+					)
+				: await client.query(
+						`SELECT dataset.id AS dataset_id, dataset.slug, draft.id AS source_id, draft.revision AS version
+					 FROM datasets dataset
+					 JOIN dataset_drafts draft ON draft.dataset_id = dataset.id AND draft.project_id = dataset.project_id
+					 WHERE dataset.project_id = $1 AND dataset.slug = $2`,
+						[input.project_id, input.slug],
+					);
+		const sourceRow = source.rows[0] as Row | undefined;
+		if (!sourceRow)
+			throw new DatasetRepositoryError(
+				"NOT_FOUND",
+				input.representation === "draft"
+					? "Dataset draft not found"
+					: "Dataset version not found",
+			);
+		const items = await client.query(
+			input.representation === "version"
+				? "SELECT item_key, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at FROM dataset_version_items WHERE project_id = $1 AND dataset_version_id = $2 ORDER BY position, item_key"
+				: "SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, created_by, updated_by, created_by AS curated_by, reviewed_by, reviewed_at FROM dataset_draft_items WHERE project_id = $1 AND draft_id = $2 ORDER BY position, item_key",
+			[input.project_id, text(sourceRow, "source_id")],
+		);
+		if (input.representation === "draft") {
+			const validationErrors = validatePersistedDraftItems(
+				items.rows as Row[],
+				true,
+			);
+			if (validationErrors.length)
+				throw persistedValidationFailure(validationErrors);
+		}
+		if (items.rows.length > DATASET_EXPORT_MAX_ITEMS)
+			throw new DatasetRepositoryError(
+				"BAD_REQUEST",
+				`Dataset export exceeds the ${DATASET_EXPORT_MAX_ITEMS}-item limit`,
+				undefined,
+				{ max_items: DATASET_EXPORT_MAX_ITEMS, item_count: items.rows.length },
+			);
+		const policy = await approvedRedaction(
+			client as Pick<Pool, "query">,
+			input.authorization.organization_id,
+			input.project_id,
+		);
+		const redaction = policyRedactionOptions(
+			policy ?? { mode: "none", keys: [] },
+		);
+		const body = encodeDatasetExport(
+			items.rows.map((row) => redactedExportItem(row as Row, redaction)),
+			input.format,
+		);
+		const byteLength = new TextEncoder().encode(body).byteLength;
+		if (byteLength > DATASET_EXPORT_MAX_BYTES)
+			throw new DatasetRepositoryError(
+				"BAD_REQUEST",
+				`Dataset export exceeds the ${DATASET_EXPORT_MAX_BYTES}-byte limit`,
+				undefined,
+				{ max_bytes: DATASET_EXPORT_MAX_BYTES, byte_length: byteLength },
+			);
+		await lockProjectAuditProvenance(client, input.project_id);
+		await client.query(
+			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, item_count) VALUES ($1, $2, $3, $4, $5, 'exported', $6)",
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				text(sourceRow, "dataset_id"),
+				text(sourceRow, "slug"),
+				input.authorization.actor_id,
+				items.rows.length,
+			],
+		);
+		await client.query("COMMIT");
+		return {
+			body,
+			content_type:
+				input.format === "csv" ? "text/csv" : "application/x-ndjson",
+			filename: `${text(sourceRow, "slug")}-${input.representation}-${String(sourceRow.version)}.${input.format === "jsonl" ? "jsonl" : "csv"}`,
+		};
 	} catch (cause) {
 		await client.query("ROLLBACK");
 		throw normalizeError(cause);

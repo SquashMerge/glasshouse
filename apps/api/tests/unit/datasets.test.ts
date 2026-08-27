@@ -10,6 +10,7 @@ import {
 	deleteDatasetDraftItem,
 	deleteDatasetItem,
 	discardDatasetDraft,
+	exportDataset,
 	getDataset,
 	getDatasetBySlug,
 	getDatasetCurationReplay,
@@ -23,6 +24,7 @@ import {
 	listPublishedDatasetItems,
 	listDatasetVersions,
 	publishDatasetDraft,
+	tombstoneDataset,
 	updateDatasetMetadata,
 	upsertDatasetDraftItem,
 } from "../../src/db/datasets";
@@ -31,6 +33,7 @@ import {
 	createDatasetDraft,
 	createDatasetRouteHandlers,
 	deleteDatasetDraftItem as deleteDatasetDraftItemRoute,
+	exportDataset as exportDatasetRoute,
 	deleteDatasetItem as deleteDatasetItemRoute,
 	getDatasetDraft as getDatasetDraftRoute,
 	handleCreateDatasetDraft,
@@ -42,6 +45,8 @@ import {
 	listPublishedDatasetItems as listPublishedDatasetItemsRoute,
 	publishDatasetDraft as publishDatasetDraftRoute,
 	putDatasetDraftItem,
+	restoreDataset as restoreDatasetRoute,
+	tombstoneDataset as tombstoneDatasetRoute,
 } from "../../src/routes/datasets";
 import {
 	DatasetCreate,
@@ -51,6 +56,7 @@ import {
 	DatasetDraftItemParam,
 	DatasetDraftItemRevision,
 	DatasetDraftItemUpsert,
+	DatasetExportQuery,
 	DatasetItem,
 	DatasetItemCreate,
 	DatasetVersion,
@@ -294,7 +300,7 @@ describe("dataset contracts", () => {
 		).toBe(false);
 	});
 
-	it("rejects duplicate item keys in one import", () => {
+	it("defers duplicate import keys to the atomic per-row repository validation", () => {
 		expect(
 			DatasetDraftImport.safeParse({
 				items: [
@@ -302,7 +308,7 @@ describe("dataset contracts", () => {
 					{ item_key: "same", input: { question: "second" } },
 				],
 			}).success,
-		).toBe(false);
+		).toBe(true);
 	});
 
 	it("normalizes direct upsert item keys like imports and rejects blank keys", () => {
@@ -637,6 +643,68 @@ describe("dataset repository", () => {
 		).toBe(false);
 	});
 
+	it("atomically rejects import keys that already exist in the shared draft", async () => {
+		const queries: string[] = [];
+		const client = {
+			query: async (sql: string) => {
+				queries.push(sql);
+				if (sql.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: PROJECT }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.startsWith("SELECT id FROM datasets WHERE project_id"))
+					return { rows: [{ id: DATASET }] };
+				if (sql.startsWith("SELECT dr.* FROM dataset_drafts"))
+					return {
+						rows: [
+							{
+								id: "55555555-5555-4555-8555-555555555555",
+								dataset_id: DATASET,
+								revision: 4,
+							},
+						],
+					};
+				if (sql.startsWith("SELECT item_key FROM dataset_draft_items"))
+					return { rows: [{ item_key: "existing" }] };
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		await expect(
+			importDatasetDraftItems({ connect: async () => client } as never, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 4,
+				items: [
+					{
+						project_id: PROJECT,
+						item_key: "existing",
+						input: { question: "must not overwrite" },
+					},
+				],
+				idempotency_key: "existing-import-key",
+				authorization,
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "BAD_REQUEST",
+			details: {
+				errors: [
+					expect.objectContaining({
+						item_key: "existing",
+						field: "items/0/item_key",
+						code: "DUPLICATE_ITEM_KEY",
+					}),
+				],
+			},
+		});
+		expect(
+			queries.some((query) =>
+				query.includes("ON CONFLICT (draft_id, item_key) DO UPDATE"),
+			),
+		).toBe(false);
+	});
+
 	it("validates an import before creating a missing draft", async () => {
 		const db = curationReplayDb({ requestHash: "", replay: false });
 		await expect(
@@ -686,6 +754,16 @@ describe("dataset repository", () => {
 		).rejects.toMatchObject<DatasetRepositoryError>({
 			code: "CONFLICT",
 			status: 409,
+			details: {
+				current_revision: 4,
+				field_diff: [
+					expect.objectContaining({
+						field: "revision",
+						current: 4,
+						requested: null,
+					}),
+				],
+			},
 		});
 		expect(
 			db.queries.some((query) =>
@@ -1431,13 +1509,15 @@ describe("dataset repository", () => {
 			{ rows: [] },
 			{ rows: [{ id: PROJECT }] },
 			{ rows: [] },
-			{ rows: [{ ...datasetRow, item_count: 3 }] },
+			{ rows: [datasetRow] },
+			{ rows: [{ ...datasetRow, item_count: 3, lifecycle_revision: 2 }] },
 		]);
 		await expect(
 			updateDatasetMetadata(db, {
 				project_id: PROJECT,
 				slug: "golden",
 				name: "Golden updated",
+				revision: 1,
 				authorization,
 			}),
 		).resolves.toMatchObject({ item_count: 3 });
@@ -2175,5 +2255,209 @@ describe("dataset repository", () => {
 		} as never);
 		expect(response.status).toBe(404);
 		expect(checked).toBe(false);
+	});
+
+	it("returns the current revision and field-level diff for stale draft writes", async () => {
+		const handlers = createDatasetRouteHandlers({
+			pool: () => ({}) as never,
+			authorizeDatasetWrite: async () => {},
+			upsertDatasetDraftItem: async () => {
+				throw new DatasetRepositoryError(
+					"CONFLICT",
+					"Dataset draft has changed; refresh and retry",
+					undefined,
+					{
+						current_revision: 7,
+						field_diff: [
+							{
+								field: "input",
+								current: { question: "newer" },
+								requested: { question: "stale" },
+							},
+						],
+					},
+				);
+			},
+		} as never);
+		const response = await handlers.handlePutDatasetDraftItem({
+			get: () => ({
+				actor: "test",
+				organizationId: authorization.organization_id,
+				actorId: authorization.actor_id,
+			}),
+			req: {
+				header: () => '"4"',
+				valid: (part: string) =>
+					part === "param"
+						? { slug: "golden", itemKey: "stable" }
+						: part === "query"
+							? { project_id: PROJECT }
+							: { input: { question: "stale" } },
+			},
+			json: (body: unknown, status?: number) =>
+				new Response(JSON.stringify(body), { status }),
+		} as never);
+
+		expect(response.status).toBe(409);
+		await expect(response.json()).resolves.toMatchObject({
+			details: {
+				current_revision: 7,
+				field_diff: [
+					expect.objectContaining({
+						field: "input",
+						current: { question: "newer" },
+						requested: { question: "stale" },
+					}),
+				],
+			},
+		});
+	});
+
+	it("validates the bounded CSV and JSONL export contract", () => {
+		for (const format of ["csv", "jsonl"])
+			expect(
+				DatasetExportQuery.safeParse({
+					project_id: PROJECT,
+					format,
+					representation: "version",
+					version: 1,
+				}).success,
+			).toBe(true);
+		expect(
+			DatasetExportQuery.safeParse({
+				project_id: PROJECT,
+				format: "json",
+				representation: "version",
+				version: 1,
+			}).success,
+		).toBe(false);
+	});
+
+	it("exports only a complete redacted project-scoped representation with provenance", async () => {
+		const queries: string[] = [];
+		const result = await exportDataset(
+			{
+				connect: async () => ({
+					query: async (sql: string) => {
+						queries.push(sql);
+						if (sql.includes("p.status = ANY($3::text[])"))
+							return { rows: [{ id: PROJECT }] };
+						if (sql.startsWith("SELECT authorization_allows_project"))
+							return { rows: [{ allowed: true }] };
+						if (sql.includes("FROM datasets dataset"))
+							return {
+								rows: [
+									{
+										dataset_id: DATASET,
+										slug: "golden",
+										source_id: "55555555-5555-4555-8555-555555555555",
+										version: 1,
+									},
+								],
+							};
+						if (sql.includes("FROM dataset_version_items"))
+							return {
+								rows: [
+									{
+										item_key: "case-1",
+										input: { question: "do not disclose" },
+										expected_output: { answer: "do not disclose" },
+										metadata: { source: "manual" },
+										external_id: "origin-1",
+										source_trace_id: "trace-1",
+										source_observation_id: null,
+										feedback_score_id: null,
+										capture_context: { redaction_applied: true },
+										curated_by: authorization.actor_id,
+										reviewed_by: null,
+										reviewed_at: null,
+									},
+								],
+							};
+						if (sql.includes("governance_policy_versions"))
+							return { rows: [{ redaction: { mode: "all_text", keys: [] } }] };
+						return { rows: [] };
+					},
+					release() {},
+				}),
+			} as never,
+			{
+				project_id: PROJECT,
+				slug: "golden",
+				format: "jsonl",
+				representation: "version",
+				version: 1,
+				authorization: { ...authorization, operation: "destructive" },
+			},
+		);
+
+		expect(result.content_type).toBe("application/x-ndjson");
+		expect(result.body).toContain('"source_trace_id":"trace-1"');
+		expect(result.body).not.toContain("do not disclose");
+		expect(queries.some((query) => query.includes("'exported'"))).toBe(true);
+	});
+
+	it("blocks tombstoning when immutable evidence, runs, or a retention hold remain", async () => {
+		const db = fakeDb([
+			{ rows: [] },
+			{ rows: [{ id: PROJECT }] },
+			{ rows: [] },
+			{
+				rows: [
+					{
+						...datasetRow,
+						archived_at: NOW,
+						lifecycle_revision: 1,
+					},
+				],
+			},
+			{
+				rows: [
+					{
+						id: DATASET,
+						immutable_versions: 1,
+						historical_runs: 1,
+						queued_runs: 1,
+						scheduled_runs: 0,
+						retention_holds: 1,
+					},
+				],
+			},
+		]);
+		await expect(
+			tombstoneDataset(db, {
+				project_id: PROJECT,
+				slug: "golden",
+				revision: 1,
+				authorization: { ...authorization, operation: "destructive" },
+			}),
+		).rejects.toMatchObject<DatasetRepositoryError>({
+			code: "CONFLICT",
+			details: expect.objectContaining({
+				immutable_versions: 1,
+				historical_runs: 1,
+				queued_runs: 1,
+				retention_holds: 1,
+			}),
+		});
+		expect(
+			db.queries.some((query) => query.text.startsWith("DELETE FROM datasets")),
+		).toBe(false);
+	});
+
+	it("registers lifecycle export, restore, and tombstone endpoints", () => {
+		const app = new OpenAPIHono();
+		app.openapi(exportDatasetRoute, async () => new Response());
+		app.openapi(restoreDatasetRoute, async () => new Response());
+		app.openapi(tombstoneDatasetRoute, async () => new Response());
+		const paths = app.getOpenAPIDocument({
+			openapi: "3.1.0",
+			info: { title: "test", version: "1" },
+		}).paths;
+		expect(paths?.["/v1/datasets/by-slug/{slug}/export"]?.get).toBeDefined();
+		expect(paths?.["/v1/datasets/by-slug/{slug}/restore"]?.post).toBeDefined();
+		expect(
+			paths?.["/v1/datasets/by-slug/{slug}/tombstone"]?.delete,
+		).toBeDefined();
 	});
 });

@@ -12,6 +12,7 @@ import {
 	deleteDatasetDraftItem as deleteDatasetDraftItemRecord,
 	deleteDatasetItem as deleteDatasetItemRecord,
 	discardDatasetDraft as discardDatasetDraftRecord,
+	exportDataset as exportDatasetRecord,
 	getDatasetBySlug as getDatasetBySlugRecord,
 	getDatasetVersion as getDatasetVersionRecord,
 	getDatasetDraftItemRevisions as getDatasetDraftItemRevisionsRecord,
@@ -26,9 +27,11 @@ import {
 	listPublishedDatasetItems as listPublishedDatasetItemsRecord,
 	publishDatasetDraft as publishDatasetDraftRecord,
 	reorderDatasetDraftItems as reorderDatasetDraftItemsRecord,
+	restoreDataset as restoreDatasetRecord,
 	reviewDatasetDraftItem as reviewDatasetDraftItemRecord,
 	updateDatasetMetadata as updateDatasetMetadataRecord,
 	upsertDatasetDraftItem as upsertDatasetDraftItemRecord,
+	tombstoneDataset as tombstoneDatasetRecord,
 	validateDatasetDraft as validateDatasetDraftRecord,
 } from "../db/datasets.js";
 import { pgPool } from "../db/postgres.js";
@@ -56,13 +59,16 @@ import {
 	DatasetDraftPublish,
 	DatasetDraftValidation,
 	DatasetErrorResponses,
+	DatasetExportQuery,
 	DatasetIdParam,
 	DatasetItem,
 	DatasetItemCreate,
 	DatasetItemIdParams,
+	DatasetListQuery,
 	DatasetMetadataUpdate,
 	DatasetProjectQuery,
 	DatasetSlugParam,
+	DatasetTombstone,
 	DatasetVersion,
 	DatasetVersionList,
 	DatasetVersionParam,
@@ -147,7 +153,7 @@ export const listDatasets = createRoute({
 	tags: [tag],
 	summary: "List project datasets",
 	security: [{ basicAuth: [] }],
-	request: { query: DatasetProjectQuery },
+	request: { query: DatasetListQuery },
 	responses: {
 		200: {
 			description: "OK",
@@ -155,6 +161,17 @@ export const listDatasets = createRoute({
 		},
 		...DatasetErrorResponses,
 	},
+});
+const IfMatchDatasetRevision = z.object({
+	"if-match": DraftRevisionEtag.openapi({
+		param: {
+			name: "if-match",
+			in: "header",
+			required: true,
+			description:
+				"Quoted current Dataset lifecycle revision. Conflicts return the current revision and field-level diff.",
+		},
+	}),
 });
 export const createDataset = createRoute({
 	method: "post",
@@ -265,6 +282,7 @@ export const patchDatasetBySlug = createRoute({
 	request: {
 		params: DatasetSlugParam,
 		query: DatasetProjectQuery,
+		headers: IfMatchDatasetRevision,
 		body: {
 			content: { "application/json": { schema: DatasetMetadataUpdate } },
 		},
@@ -272,6 +290,7 @@ export const patchDatasetBySlug = createRoute({
 	responses: {
 		200: {
 			description: "Updated",
+			headers: DraftRevisionHeaders,
 			content: { "application/json": { schema: Dataset } },
 		},
 		...DatasetErrorResponses,
@@ -472,8 +491,74 @@ export const archiveDataset = createRoute({
 	tags: [tag],
 	summary: "Archive a dataset",
 	security: [{ basicAuth: [] }],
-	request: { params: DatasetSlugParam, query: DatasetProjectQuery },
-	responses: { 204: { description: "Archived" }, ...DatasetErrorResponses },
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		headers: IfMatchDatasetRevision,
+	},
+	responses: {
+		204: { description: "Archived", headers: DraftRevisionHeaders },
+		...DatasetErrorResponses,
+	},
+});
+export const restoreDataset = createRoute({
+	method: "post",
+	path: "/v1/datasets/by-slug/{slug}/restore",
+	tags: [tag],
+	summary: "Restore an archived dataset",
+	description:
+		"Requires Project Admin access and the current Dataset lifecycle ETag.",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		headers: IfMatchDatasetRevision,
+	},
+	responses: {
+		204: { description: "Restored", headers: DraftRevisionHeaders },
+		...DatasetErrorResponses,
+	},
+});
+export const tombstoneDataset = createRoute({
+	method: "delete",
+	path: "/v1/datasets/by-slug/{slug}/tombstone",
+	tags: [tag],
+	summary:
+		"Permanently tombstone an archived dataset without retained evidence",
+	description:
+		"Requires Project Admin access. The server rejects hard deletion while immutable versions, runs, retention holds, benchmark links, or feedback links remain.",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: DatasetSlugParam,
+		query: DatasetProjectQuery,
+		headers: IfMatchDatasetRevision,
+		body: { content: { "application/json": { schema: DatasetTombstone } } },
+	},
+	responses: { 204: { description: "Tombstoned" }, ...DatasetErrorResponses },
+});
+export const exportDataset = createRoute({
+	method: "get",
+	path: "/v1/datasets/by-slug/{slug}/export",
+	tags: [tag],
+	summary: "Export a redacted Dataset draft or immutable version",
+	description:
+		"Requires Project Admin access. CSV and JSONL exports are project-scoped, preserve safe provenance, and reject requests over 500 items or 1,048,576 bytes before output begins.",
+	security: [{ basicAuth: [] }],
+	request: { params: DatasetSlugParam, query: DatasetExportQuery },
+	responses: {
+		200: {
+			description: "Complete redacted export",
+			headers: z.object({
+				"Content-Disposition": z.string(),
+				"X-Astraea-Dataset-Export-Limit": z.string(),
+			}),
+			content: {
+				"text/csv": { schema: z.string() },
+				"application/x-ndjson": { schema: z.string() },
+			},
+		},
+		...DatasetErrorResponses,
+	},
 });
 export const discardDatasetDraft = createRoute({
 	method: "post",
@@ -546,6 +631,7 @@ export type DatasetRouteDependencies = {
 	deleteDatasetItem: typeof deleteDatasetItemRecord;
 	getDatasetBySlug: typeof getDatasetBySlugRecord;
 	getDatasetCurationReplay: typeof getDatasetCurationReplayRecord;
+	exportDataset: typeof exportDatasetRecord;
 	updateDatasetMetadata: typeof updateDatasetMetadataRecord;
 	getOrCreateDatasetDraft: typeof getOrCreateDatasetDraftRecord;
 	getDatasetDraft: typeof getDatasetDraftRecord;
@@ -554,11 +640,13 @@ export type DatasetRouteDependencies = {
 	importDatasetDraftItems: typeof importDatasetDraftItemsRecord;
 	captureDatasetDraftItem: typeof captureDatasetDraftItemRecord;
 	reorderDatasetDraftItems: typeof reorderDatasetDraftItemsRecord;
+	restoreDataset: typeof restoreDatasetRecord;
 	reviewDatasetDraftItem: typeof reviewDatasetDraftItemRecord;
 	getDatasetDraftItemRevisions: typeof getDatasetDraftItemRevisionsRecord;
 	deleteDatasetDraftItem: typeof deleteDatasetDraftItemRecord;
 	authorizeDatasetWrite: typeof authorizeDatasetWriteRecord;
 	archiveDataset: typeof archiveDatasetRecord;
+	tombstoneDataset: typeof tombstoneDatasetRecord;
 	discardDatasetDraft: typeof discardDatasetDraftRecord;
 	publishDatasetDraft: typeof publishDatasetDraftRecord;
 	listDatasetVersions: typeof listDatasetVersionsRecord;
@@ -624,6 +712,7 @@ const production: DatasetRouteDependencies = {
 	deleteDatasetItem: deleteDatasetItemRecord,
 	getDatasetBySlug: getDatasetBySlugRecord,
 	getDatasetCurationReplay: getDatasetCurationReplayRecord,
+	exportDataset: exportDatasetRecord,
 	updateDatasetMetadata: updateDatasetMetadataRecord,
 	getOrCreateDatasetDraft: getOrCreateDatasetDraftRecord,
 	getDatasetDraft: getDatasetDraftRecord,
@@ -632,11 +721,13 @@ const production: DatasetRouteDependencies = {
 	importDatasetDraftItems: importDatasetDraftItemsRecord,
 	captureDatasetDraftItem: captureDatasetDraftItemRecord,
 	reorderDatasetDraftItems: reorderDatasetDraftItemsRecord,
+	restoreDataset: restoreDatasetRecord,
 	reviewDatasetDraftItem: reviewDatasetDraftItemRecord,
 	getDatasetDraftItemRevisions: getDatasetDraftItemRevisionsRecord,
 	deleteDatasetDraftItem: deleteDatasetDraftItemRecord,
 	authorizeDatasetWrite: authorizeDatasetWriteRecord,
 	archiveDataset: archiveDatasetRecord,
+	tombstoneDataset: tombstoneDatasetRecord,
 	discardDatasetDraft: discardDatasetDraftRecord,
 	publishDatasetDraft: publishDatasetDraftRecord,
 	listDatasetVersions: listDatasetVersionsRecord,
@@ -695,9 +786,12 @@ export function createDatasetRouteHandlers(
 				return c.json(
 					await dependencies.listDatasets(dependencies.pool(), {
 						project_id: c.req.valid("query").project_id,
+						include_archived: c.req.valid("query").include_archived,
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_read",
+							c.req.valid("query").include_archived
+								? "destructive"
+								: "product_read",
 						),
 					}),
 				);
@@ -727,17 +821,27 @@ export function createDatasetRouteHandlers(
 			c: Parameters<RouteHandler<typeof patchDatasetBySlug>>[0],
 		) => {
 			try {
-				return c.json(
-					await dependencies.updateDatasetMetadata(dependencies.pool(), {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current Dataset revision",
+					);
+				const value = await dependencies.updateDatasetMetadata(
+					dependencies.pool(),
+					{
 						project_id: c.req.valid("query").project_id,
 						slug: c.req.valid("param").slug,
+						revision: Number(match),
 						...c.req.valid("json"),
 						authorization: projectAuthorization(
 							trustedTenant(c),
 							"curation_write",
 						),
-					}),
+					},
 				);
+				c.header("ETag", `\"${value.revision}\"`);
+				return c.json(value);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}
@@ -1107,12 +1211,94 @@ export function createDatasetRouteHandlers(
 			c: Parameters<RouteHandler<typeof archiveDataset>>[0],
 		) => {
 			try {
-				await dependencies.archiveDataset(dependencies.pool(), {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current Dataset revision",
+					);
+				const result = await dependencies.archiveDataset(dependencies.pool(), {
 					project_id: c.req.valid("query").project_id,
 					slug: c.req.valid("param").slug,
+					revision: Number(match),
+					authorization: projectAuthorization(trustedTenant(c), "destructive"),
+				});
+				c.header("ETag", `\"${result.revision}\"`);
+				return c.body(null, 204);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleRestoreDataset: async (
+			c: Parameters<RouteHandler<typeof restoreDataset>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current Dataset revision",
+					);
+				const result = await dependencies.restoreDataset(dependencies.pool(), {
+					project_id: c.req.valid("query").project_id,
+					slug: c.req.valid("param").slug,
+					revision: Number(match),
+					authorization: projectAuthorization(trustedTenant(c), "destructive"),
+				});
+				c.header("ETag", `\"${result.revision}\"`);
+				return c.body(null, 204);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleTombstoneDataset: async (
+			c: Parameters<RouteHandler<typeof tombstoneDataset>>[0],
+		) => {
+			try {
+				const match = c.req.header("if-match")?.replace(/^"|"$/g, "");
+				if (!match || !/^\d+$/.test(match))
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"If-Match must contain the current Dataset revision",
+					);
+				const slug = c.req.valid("param").slug;
+				if (c.req.valid("json").confirmation_slug !== slug)
+					throw new DatasetRepositoryError(
+						"BAD_REQUEST",
+						"confirmation_slug must match the Dataset slug",
+					);
+				await dependencies.tombstoneDataset(dependencies.pool(), {
+					project_id: c.req.valid("query").project_id,
+					slug,
+					revision: Number(match),
 					authorization: projectAuthorization(trustedTenant(c), "destructive"),
 				});
 				return c.body(null, 204);
+			} catch (cause) {
+				return errorResponse(c, cause);
+			}
+		},
+		handleExportDataset: async (
+			c: Parameters<RouteHandler<typeof exportDataset>>[0],
+		) => {
+			try {
+				const query = c.req.valid("query");
+				const result = await dependencies.exportDataset(dependencies.pool(), {
+					project_id: query.project_id,
+					slug: c.req.valid("param").slug,
+					format: query.format,
+					representation: query.representation,
+					version: query.version,
+					authorization: projectAuthorization(trustedTenant(c), "destructive"),
+				});
+				return new Response(result.body, {
+					headers: {
+						"content-type": `${result.content_type}; charset=utf-8`,
+						"content-disposition": `attachment; filename=\"${result.filename}\"`,
+						"x-astraea-dataset-export-limit": "500 items; 1048576 bytes",
+						"cache-control": "no-store",
+					},
+				});
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}
@@ -1314,6 +1500,9 @@ export const {
 	handleListDatasetDraftItemRevisions,
 	handleDeleteDatasetDraftItem,
 	handleArchiveDataset,
+	handleRestoreDataset,
+	handleTombstoneDataset,
+	handleExportDataset,
 	handleDiscardDatasetDraft,
 	handlePublishDatasetDraft,
 	handleListDatasetVersions,
