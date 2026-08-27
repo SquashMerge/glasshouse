@@ -164,6 +164,13 @@ test("migration fixture clears prior feedback probes before testing protected pr
 	);
 });
 
+test("project-deletion probe accepts an earlier lifecycle-retention guard", () => {
+	const lifecycleRetentionRejection =
+		"EXCEPTION WHEN foreign_key_violation OR SQLSTATE '55000' THEN";
+
+	expect(migrationAssertion).toContain(lifecycleRetentionRejection);
+});
+
 test("post-upgrade dataset retention audit fixture seeds complete tenant aggregates", () => {
 	const relaxDefaultProjectConstraint =
 		"ALTER TABLE organizations ALTER COLUMN default_project_id DROP NOT NULL;";

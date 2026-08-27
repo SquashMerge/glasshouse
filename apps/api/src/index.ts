@@ -62,12 +62,18 @@ function projectOperationForRequest(
 	path: string,
 	method: string,
 ): ProjectOperation {
-	if (method === "GET" || method === "HEAD") return "product_read";
 	if (path.startsWith("/v1/datasets/")) {
-		if (method === "DELETE" && /^\/v1\/datasets\/by-slug\/[^/]+$/.test(path))
+		if (
+			(method === "DELETE" && /^\/v1\/datasets\/by-slug\/[^/]+$/.test(path)) ||
+			/^\/v1\/datasets\/by-slug\/[^/]+\/(?:export|restore|tombstone)$/.test(
+				path,
+			)
+		)
 			return "destructive";
+		if (method === "GET" || method === "HEAD") return "product_read";
 		return "curation_write";
 	}
+	if (method === "GET" || method === "HEAD") return "product_read";
 	if (path === "/v1/datasets") return "curation_write";
 	if (path.startsWith("/v1/feedback")) return "curation_write";
 	if (path.startsWith("/v1/governance/")) return "governed";

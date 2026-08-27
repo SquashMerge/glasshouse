@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	deleteDatasetDraftItem,
+	exportDataset,
 	discardDatasetDraft,
 	getDatasetVersion,
 	importDatasetDraftItems,
 	publishDatasetDraft,
+	restoreDataset,
+	tombstoneDataset,
 	upsertDatasetDraftItem,
 } from "../../src/lib/api";
 import { setCredentials } from "../../src/lib/auth";
@@ -247,5 +250,67 @@ describe("dataset API client", () => {
 			`/v1/datasets/by-slug/golden/draft/publish?project_id=${PROJECT_ID}`,
 		);
 		expect(new Headers(request.headers).get("if-match")).toBe('"4"');
+	});
+
+	it("uses lifecycle ETags for restore and typed confirmation for tombstoning", async () => {
+		fetchMock
+			.mockResolvedValueOnce(new Response(null, { status: 204 }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		await restoreDataset({
+			project_id: PROJECT_ID,
+			slug: "golden",
+			revision: 3,
+		});
+		await tombstoneDataset({
+			project_id: PROJECT_ID,
+			slug: "golden",
+			revision: 4,
+			confirmation_slug: "golden",
+		});
+		const [, restoreRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			`/v1/datasets/by-slug/golden/restore?project_id=${PROJECT_ID}`,
+		);
+		expect(new Headers(restoreRequest.headers).get("if-match")).toBe('"3"');
+		const [, tombstoneRequest] = fetchMock.mock.calls[1] as [
+			string,
+			RequestInit,
+		];
+		expect(fetchMock.mock.calls[1]?.[0]).toBe(
+			`/v1/datasets/by-slug/golden/tombstone?project_id=${PROJECT_ID}`,
+		);
+		expect(new Headers(tombstoneRequest.headers).get("if-match")).toBe('"4"');
+		expect(tombstoneRequest.body).toBe(
+			JSON.stringify({ confirmation_slug: "golden" }),
+		);
+	});
+
+	it("reads the redacted CSV or JSONL export only after a successful response", async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response('{"item_key":"safe"}\n', {
+				status: 200,
+				headers: {
+					"content-type": "application/x-ndjson",
+					"content-disposition":
+						'attachment; filename="golden-version-1.jsonl"',
+				},
+			}),
+		);
+		await expect(
+			exportDataset({
+				project_id: PROJECT_ID,
+				slug: "golden",
+				format: "jsonl",
+				representation: "version",
+				version: 1,
+			}),
+		).resolves.toEqual({
+			body: '{"item_key":"safe"}\n',
+			content_type: "application/x-ndjson",
+			filename: "golden-version-1.jsonl",
+		});
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
+			`/v1/datasets/by-slug/golden/export?project_id=${PROJECT_ID}&format=jsonl&representation=version&version=1`,
+		);
 	});
 });
