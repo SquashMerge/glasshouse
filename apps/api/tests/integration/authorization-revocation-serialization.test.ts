@@ -2487,23 +2487,38 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
-	"retention deletes an eligible old dataset while preserving an old versioned dataset",
+	"retention preserves active holds while deleting released-hold and ordinary datasets",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl });
 		const fixture = await seedProjectAuditLockRace(pool);
 		const retention = await pool.connect();
-		const protectedDatasetId = randomUUID();
-		const eligibleDatasetId = randomUUID();
-		const versionId = randomUUID();
+		const activeHeldDatasetId = randomUUID();
+		const releasedHeldDatasetId = randomUUID();
+		const ordinaryDatasetId = randomUUID();
+		const activeHoldId = randomUUID();
+		const releasedHoldId = randomUUID();
 		let retentionStarted = false;
 		try {
 			await pool.query(
-				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, 'retention-versioned', 'Versioned retention dataset', now() - interval '2 days'), ($3, $2, 'retention-eligible', 'Eligible retention dataset', now() - interval '2 days')",
-				[protectedDatasetId, fixture.projectId, eligibleDatasetId],
+				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, 'retention-active-hold', 'Active hold retention dataset', now() - interval '2 days'), ($3, $2, 'retention-released-hold', 'Released hold retention dataset', now() - interval '2 days'), ($4, $2, 'retention-ordinary', 'Ordinary retention dataset', now() - interval '2 days')",
+				[
+					activeHeldDatasetId,
+					fixture.projectId,
+					releasedHeldDatasetId,
+					ordinaryDatasetId,
+				],
 			);
 			await pool.query(
-				"INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES ($1, $2, $3, 1, 0, $4)",
-				[versionId, fixture.projectId, protectedDatasetId, "0".repeat(64)],
+				"INSERT INTO dataset_retention_holds (id, organization_id, project_id, dataset_id, reason, created_by, released_by, released_at) VALUES ($1, $2, $3, $4, 'Active retention hold', $5, NULL, NULL), ($6, $2, $3, $7, 'Released retention hold', $5, $5, now() - interval '1 day')",
+				[
+					activeHoldId,
+					fixture.organizationId,
+					fixture.projectId,
+					activeHeldDatasetId,
+					fixture.managerActorId,
+					releasedHoldId,
+					releasedHeldDatasetId,
+				],
 			);
 
 			await retention.query("BEGIN");
@@ -2517,7 +2532,7 @@ test.skipIf(!databaseUrl)(
 					randomUUID(),
 					randomUUID(),
 				),
-			).toEqual({ deleted: 1, skipped: 1 });
+			).toEqual({ deleted: 2, skipped: 1 });
 			await retention.query("COMMIT");
 			retentionStarted = false;
 			expect(
@@ -2527,23 +2542,26 @@ test.skipIf(!databaseUrl)(
 						[fixture.projectId],
 					)
 				).rows,
-			).toEqual([{ id: protectedDatasetId }]);
+			).toEqual([{ id: activeHeldDatasetId }]);
 			expect(
 				(
-					await pool.query<{ count: number }>(
-						"SELECT count(*)::int AS count FROM dataset_versions WHERE id = $1 AND dataset_id = $2",
-						[versionId, protectedDatasetId],
-					)
-				).rows[0]?.count,
-			).toBe(1);
-			expect(
-				(
-					await pool.query<{ count: number }>(
-						"SELECT count(*)::int AS count FROM dataset_tombstones WHERE project_id = $1 AND slug = 'retention-eligible'",
+					await pool.query<{ id: string; released_at: Date | null }>(
+						"SELECT id, released_at FROM dataset_retention_holds WHERE project_id = $1 ORDER BY id",
 						[fixture.projectId],
 					)
-				).rows[0]?.count,
-			).toBe(1);
+				).rows,
+			).toEqual([{ id: activeHoldId, released_at: null }]);
+			expect(
+				(
+					await pool.query<{ slug: string }>(
+						"SELECT slug FROM dataset_tombstones WHERE project_id = $1 ORDER BY slug",
+						[fixture.projectId],
+					)
+				).rows,
+			).toEqual([
+				{ slug: "retention-ordinary" },
+				{ slug: "retention-released-hold" },
+			]);
 		} finally {
 			if (retentionStarted) await retention.query("ROLLBACK").catch(() => {});
 			retention.release();
@@ -2552,7 +2570,7 @@ test.skipIf(!databaseUrl)(
 				await cleanup.query("BEGIN");
 				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
-					"DELETE FROM dataset_versions WHERE project_id = $1",
+					"DELETE FROM dataset_retention_holds WHERE project_id = $1",
 					[fixture.projectId],
 				);
 				await cleanup.query("DELETE FROM datasets WHERE project_id = $1", [

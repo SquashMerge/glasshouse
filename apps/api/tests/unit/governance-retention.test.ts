@@ -163,7 +163,13 @@ describe("governance retention", () => {
 			"deleted_quarantined_items AS (DELETE FROM dataset_item_input_quarantine q USING candidates c WHERE q.project_id = $1 AND q.dataset_id = c.id RETURNING q.id)",
 		);
 		expect(deletion).toContain(
+			"deleted_released_holds AS (DELETE FROM dataset_retention_holds h USING candidates c WHERE h.project_id = $1 AND h.dataset_id = c.id AND h.released_at IS NOT NULL RETURNING h.id)",
+		);
+		expect(deletion).toContain(
 			"(SELECT count(*) FROM deleted_quarantined_items) >= 0",
+		);
+		expect(deletion).toContain(
+			"(SELECT count(*) FROM deleted_released_holds) >= 0",
 		);
 		expect(deletion).not.toContain("deleted_version_items");
 		expect(deletion).not.toContain("deleted_versions");
