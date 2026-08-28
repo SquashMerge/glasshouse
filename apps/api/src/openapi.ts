@@ -176,6 +176,12 @@ import {
 	handleDeleteDatasetDraftItem,
 	archiveDataset,
 	handleArchiveDataset,
+	restoreDataset,
+	handleRestoreDataset,
+	tombstoneDataset,
+	handleTombstoneDataset,
+	exportDataset,
+	handleExportDataset,
 	discardDatasetDraft,
 	handleDiscardDatasetDraft,
 	publishDatasetDraft,
@@ -342,6 +348,9 @@ register(reviewDatasetDraftItem, handleReviewDatasetDraftItem);
 register(listDatasetDraftItemRevisions, handleListDatasetDraftItemRevisions);
 register(deleteDatasetDraftItem, handleDeleteDatasetDraftItem);
 register(archiveDataset, handleArchiveDataset);
+register(restoreDataset, handleRestoreDataset);
+register(tombstoneDataset, handleTombstoneDataset);
+register(exportDataset, handleExportDataset);
 register(discardDatasetDraft, handleDiscardDatasetDraft);
 register(publishDatasetDraft, handlePublishDatasetDraft);
 register(listDatasetVersions, handleListDatasetVersions);
