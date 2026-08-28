@@ -19,11 +19,13 @@ import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Input } from "../components/ui/input";
 import {
 	ApiError,
+	archiveDataset,
 	type ApiValidationIssue,
 	createDataset,
 	createDatasetDraft,
 	type DatasetItem,
 	deleteDatasetDraftItem,
+	exportDataset,
 	getDataset,
 	getDatasetDraft,
 	getDatasetVersion,
@@ -34,8 +36,10 @@ import {
 	listDatasets,
 	publishDatasetDraft,
 	reorderDatasetDraftItems,
+	restoreDataset,
 	reviewDatasetDraftItem,
 	upsertDatasetDraftItem,
+	tombstoneDataset,
 	validateDatasetDraft,
 } from "../lib/api";
 import { PageMessage } from "./prompts";
@@ -47,9 +51,18 @@ export function DatasetsPage() {
 	const [description, setDescription] = React.useState("");
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
+	const [lifecycleError, setLifecycleError] = React.useState("");
+	const [pendingDatasetId, setPendingDatasetId] = React.useState<string | null>(
+		null,
+	);
+	const [tombstoneDatasetId, setTombstoneDatasetId] = React.useState<
+		string | null
+	>(null);
+	const [tombstoneConfirmation, setTombstoneConfirmation] = React.useState("");
+	const canAdmin = selectedProject?.project_role === "admin";
 	const query = useQuery({
-		queryKey: ["datasets", selectedProjectId],
-		queryFn: () => listDatasets(selectedProjectId!),
+		queryKey: ["datasets", selectedProjectId, canAdmin],
+		queryFn: () => listDatasets(selectedProjectId!, canAdmin),
 		enabled: Boolean(selectedProjectId),
 	});
 	if (!selectedProject)
@@ -59,6 +72,78 @@ export function DatasetsPage() {
 			</PageMessage>
 		);
 	const canCurate = selectedProject.project_role !== "read_only";
+	async function archive(dataset: {
+		id: string;
+		slug: string;
+		revision: number;
+	}) {
+		if (pendingDatasetId) return;
+		try {
+			setLifecycleError("");
+			setPendingDatasetId(dataset.id);
+			await archiveDataset({
+				project_id: selectedProjectId!,
+				slug: dataset.slug,
+				revision: dataset.revision,
+			});
+			await client.invalidateQueries({
+				queryKey: ["datasets", selectedProjectId],
+			});
+		} catch (cause) {
+			setLifecycleError((cause as Error).message);
+		} finally {
+			setPendingDatasetId(null);
+		}
+	}
+	async function restore(dataset: {
+		id: string;
+		slug: string;
+		revision: number;
+	}) {
+		if (pendingDatasetId) return;
+		try {
+			setLifecycleError("");
+			setPendingDatasetId(dataset.id);
+			await restoreDataset({
+				project_id: selectedProjectId!,
+				slug: dataset.slug,
+				revision: dataset.revision,
+			});
+			await client.invalidateQueries({
+				queryKey: ["datasets", selectedProjectId],
+			});
+		} catch (cause) {
+			setLifecycleError((cause as Error).message);
+		} finally {
+			setPendingDatasetId(null);
+		}
+	}
+	async function tombstone(dataset: {
+		id: string;
+		slug: string;
+		revision: number;
+	}) {
+		if (pendingDatasetId) return;
+		try {
+			setLifecycleError("");
+			setPendingDatasetId(dataset.id);
+			await tombstoneDataset({
+				project_id: selectedProjectId!,
+				slug: dataset.slug,
+				revision: dataset.revision,
+				confirmation_slug: tombstoneConfirmation,
+			});
+			setTombstoneDatasetId(null);
+			setTombstoneConfirmation("");
+			await client.invalidateQueries({
+				queryKey: ["datasets", selectedProjectId],
+			});
+		} catch (cause) {
+			setLifecycleError((cause as Error).message);
+		} finally {
+			setPendingDatasetId(null);
+		}
+	}
 	async function submit() {
 		if (pending) return;
 		try {
@@ -121,6 +206,11 @@ export function DatasetsPage() {
 					{error}
 				</p>
 			)}
+			{lifecycleError && (
+				<p className="text-sm text-destructive" role="alert">
+					{lifecycleError}
+				</p>
+			)}
 			{query.isLoading && !query.data && (
 				<ListLoadingSkeleton testId="dataset-list-skeleton" />
 			)}
@@ -153,20 +243,100 @@ export function DatasetsPage() {
 			)}
 			<ul className="divide-y rounded border">
 				{query.data?.items.map((dataset) => (
-					<li key={dataset.id}>
-						<Link
-							className="block p-4 hover:bg-muted/50"
-							to="/datasets/$id"
-							params={{ id: dataset.id }}
-						>
-							<strong>{dataset.name}</strong>
-							<span className="ml-3 text-sm text-muted-foreground">
-								{dataset.item_count} cases
-							</span>
-							<p className="text-sm text-muted-foreground">
-								{dataset.description}
-							</p>
-						</Link>
+					<li key={dataset.id} className="p-4">
+						<div className="flex flex-wrap items-start justify-between gap-3">
+							{dataset.archived_at ? (
+								<div>
+									<strong>{dataset.name}</strong>
+									<Badge className="ml-3" variant="secondary">
+										Archived
+									</Badge>
+									<p className="mt-1 text-sm text-muted-foreground">
+										{dataset.description}
+									</p>
+								</div>
+							) : (
+								<Link
+									className="block hover:text-primary"
+									to="/datasets/$id"
+									params={{ id: dataset.id }}
+								>
+									<strong>{dataset.name}</strong>
+									<span className="ml-3 text-sm text-muted-foreground">
+										{dataset.item_count} cases
+									</span>
+									<p className="mt-1 text-sm text-muted-foreground">
+										{dataset.description}
+									</p>
+								</Link>
+							)}
+							{canAdmin && (
+								<div className="flex flex-wrap items-center gap-2">
+									{dataset.archived_at ? (
+										<>
+											<Button
+												size="sm"
+												variant="outline"
+												disabled={pendingDatasetId !== null}
+												onClick={() => void restore(dataset)}
+											>
+												{pendingDatasetId === dataset.id
+													? "Restoring..."
+													: "Restore"}
+											</Button>
+											<Button
+												size="sm"
+												variant="destructive"
+												disabled={pendingDatasetId !== null}
+												onClick={() => {
+													setTombstoneDatasetId(dataset.id);
+													setTombstoneConfirmation("");
+												}}
+											>
+												Tombstone
+											</Button>
+										</>
+									) : (
+										<Button
+											size="sm"
+											variant="outline"
+											disabled={pendingDatasetId !== null}
+											onClick={() => void archive(dataset)}
+										>
+											{pendingDatasetId === dataset.id
+												? "Archiving..."
+												: "Archive"}
+										</Button>
+									)}
+								</div>
+							)}
+						</div>
+						{canAdmin && tombstoneDatasetId === dataset.id && (
+							<div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+								<label className="sr-only" htmlFor={`tombstone-${dataset.id}`}>
+									Confirm Dataset slug
+								</label>
+								<Input
+									id={`tombstone-${dataset.id}`}
+									value={tombstoneConfirmation}
+									onChange={(event) =>
+										setTombstoneConfirmation(event.target.value)
+									}
+									placeholder={`Type ${dataset.slug} to permanently tombstone`}
+								/>
+								<Button
+									size="sm"
+									variant="destructive"
+									disabled={
+										pendingDatasetId !== null ||
+										tombstoneConfirmation !== dataset.slug
+									}
+									onClick={() => void tombstone(dataset)}
+								>
+									Permanently tombstone
+								</Button>
+							</div>
+						)}
 					</li>
 				))}
 			</ul>
@@ -302,6 +472,10 @@ export function DatasetDetailPage() {
 	const [externalId, setExternalId] = React.useState("");
 	const [importValue, setImportValue] = React.useState("");
 	const [error, setError] = React.useState("");
+	const [conflict, setConflict] = React.useState<{
+		currentRevision: number;
+		fieldDiff: Array<{ field: string; current: unknown; requested: unknown }>;
+	} | null>(null);
 	const [validationErrors, setValidationErrors] = React.useState<
 		Array<{ item_key: string | null; field: string; message: string }>
 	>([]);
@@ -323,15 +497,54 @@ export function DatasetDetailPage() {
 		null,
 	);
 	const canCurate = selectedProject?.project_role !== "read_only";
+	const canAdmin = selectedProject?.project_role === "admin";
 	const importAttempt = React.useRef<{
 		idempotency_key: string;
 		revision: number | undefined;
 	} | null>(null);
 
 	function recordError(cause: unknown) {
-		if (cause instanceof ApiError && cause.status === 409)
+		if (cause instanceof ApiError && cause.status === 409) {
 			setError("This draft changed elsewhere. Refresh the draft and retry.");
-		else setError((cause as Error).message);
+			if (
+				typeof cause.details?.current_revision === "number" &&
+				Array.isArray(cause.details.field_diff)
+			)
+				setConflict({
+					currentRevision: cause.details.current_revision,
+					fieldDiff: cause.details.field_diff,
+				});
+		} else {
+			setConflict(null);
+			setError((cause as Error).message);
+		}
+	}
+	async function downloadExport(
+		format: "csv" | "jsonl",
+		representation: "draft" | "version",
+	) {
+		try {
+			setError("");
+			const result = await exportDataset({
+				project_id: selectedProjectId!,
+				slug: dataset.data!.slug,
+				format,
+				representation,
+				...(representation === "version"
+					? { version: dataset.data!.latest_published_version! }
+					: {}),
+			});
+			const url = URL.createObjectURL(
+				new Blob([result.body], { type: result.content_type }),
+			);
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = result.filename;
+			link.click();
+			URL.revokeObjectURL(url);
+		} catch (cause) {
+			recordError(cause);
+		}
 	}
 	function importValidation(cause: unknown): ApiValidationIssue[] {
 		if (!(cause instanceof ApiError)) return [];
@@ -642,7 +855,66 @@ export function DatasetDetailPage() {
 						No published version yet.
 					</p>
 				)}
+				{canAdmin && (
+					<div className="mt-3 flex flex-wrap gap-2">
+						{dataset.data?.latest_published_version && (
+							<>
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => void downloadExport("csv", "version")}
+								>
+									Export version CSV
+								</Button>
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => void downloadExport("jsonl", "version")}
+								>
+									Export version JSONL
+								</Button>
+							</>
+						)}
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => void downloadExport("jsonl", "draft")}
+						>
+							Export draft JSONL
+						</Button>
+					</div>
+				)}
 			</div>
+			{conflict && (
+				<Alert variant="destructive" role="alert">
+					<AlertTitle>Shared draft changed</AlertTitle>
+					<AlertDescription className="space-y-3">
+						<p>
+							The current revision is {conflict.currentRevision}. Astraea did
+							not merge your changes automatically.
+						</p>
+						<ul className="list-disc space-y-1 pl-5 text-xs">
+							{conflict.fieldDiff.map((field) => (
+								<li key={field.field}>
+									{field.field}: current {JSON.stringify(field.current)};
+									requested {JSON.stringify(field.requested)}
+								</li>
+							))}
+						</ul>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={pending}
+							onClick={() => {
+								setConflict(null);
+								void refreshDraft();
+							}}
+						>
+							Refresh current draft
+						</Button>
+					</AlertDescription>
+				</Alert>
+			)}
 			{canCurate && (
 				<Card>
 					<CardHeader>

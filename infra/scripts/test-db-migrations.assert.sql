@@ -445,7 +445,9 @@ BEGIN
     BEGIN
         DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';
         RAISE EXCEPTION 'project deletion removed a prompt tombstone';
-    EXCEPTION WHEN foreign_key_violation THEN
+    EXCEPTION WHEN foreign_key_violation OR SQLSTATE '55000' THEN
+        -- Dataset lifecycle retention may reject this first; either guard must
+        -- leave the protected project and prompt tombstone intact.
         NULL;
     END;
     BEGIN

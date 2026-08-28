@@ -703,6 +703,26 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0072_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0072.assert.sql"
 
+UPGRADE_0073_DATABASE="${POSTGRES_DB}_0073_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0073_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0073_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0073_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0073_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0073.fixture.sql"
+for migration in \
+  "$ROOT/infra/db/migrations/0073_dataset_collaborative_lifecycle_governance.sql" \
+  "$ROOT/infra/db/migrations/0073_dataset_collaborative_lifecycle_governance.sql"; do
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0073_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0073_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0073.assert.sql"
+
 UPGRADE_0050_NULL_ORGANIZATION_DATABASE="${POSTGRES_DB}_0050_null_organization"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE"
 for migration in "$ROOT"/infra/db/migrations/*.sql; do

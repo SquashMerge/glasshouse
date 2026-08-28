@@ -56,7 +56,7 @@ Project
 
 - **Dataset:** project-scoped named collection with a stable slug, description, tags, and version history. It is not itself a runnable snapshot.
 - **Dataset draft:** editable working copy of the next dataset version. An Admin, or a User with access to the Project, can change it; a Read-only user cannot. A draft can be discarded; it is never selected by a run.
-- **Dataset draft curation:** manual and import rows use the same versioned validation contract. Any row that carries Trace or Observation provenance rereads that selected source on the server, applies the active redaction policy, stores safe project-scoped provenance and an explicit review state, and never publishes a Dataset.
+- **Dataset draft curation:** manual and import rows use the same versioned validation contract. Imports are atomic: duplicate keys in the submitted batch or the shared draft return per-row errors and never upsert or partially overwrite content. Any row that carries Trace or Observation provenance rereads that selected source on the server, applies the active redaction policy, stores safe project-scoped provenance and an explicit review state, and never publishes a Dataset.
 - **Dataset version:** immutable ordered snapshot of items plus its schema/mapping contract. Displayed as `support-regression@12`.
 - **Dataset item:** one test case. `input` is sent to the target; `expected_output` and `metadata` are evaluator inputs. Item identity remains stable across versions when carried forward.
 - **Evaluation:** stable reusable definition, for example “Support quality gate.” It has a version history just as a prompt does.
@@ -212,9 +212,9 @@ type EvaluationDefinition = {
 - **Publish is atomic:** validation, hash generation, version allocation, snapshot creation, and `latest_published_version` update commit together.
 - **Run resolution is atomic:** a transaction resolves the Evaluation version, Dataset selector, target snapshot, evaluator versions, and deterministic sample. The resolved values are written before work is queued. A Manifest version is required only after the P4 Agent target is selected.
 - **Ordering is data:** item order is preserved in a dataset version and used for deterministic sampling/reporting; it is not incidental database insertion order.
-- **Draft collision default:** one shared draft per dataset. Save uses an ETag/revision; conflicting edits require refresh/merge. V2 may add personal drafts, but not before conflict visibility works.
-- **External-key upsert:** API/SDK upserts match `item_key` only. The server never deduplicates cases by JSON equality or model output.
-- **Delete behavior:** archive datasets/evaluations by default. A version referenced by a run cannot be physically removed. Hard delete requires no versions/runs or a privileged retention job.
+- **Draft collision default:** one shared draft per Dataset. Save uses an ETag/revision; a conflict returns the current revision and a field-level current/requested diff. Clients must require an explicit refresh and retry; the server and UI never auto-merge curator changes. V2 may add personal drafts, but not before conflict visibility works.
+- **External-key upsert:** the direct draft-item API upserts by `item_key` only. Import is deliberately different: an existing key is a row-level conflict so a bulk review cannot silently overwrite shared content. The server never deduplicates cases by JSON equality or model output.
+- **Delete behavior:** archive Datasets by default. Project Admins alone may restore, export, or tombstone a Dataset. Tombstoning is a typed-slug-confirmed hard deletion and is rejected while immutable versions, historical/queued/scheduled runs, retention holds, benchmark links, or feedback links remain. A successful tombstone reserves the slug permanently.
 
 Draft item removal uses `DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemId}` with the draft `If-Match` ETag. Legacy `/items/{id}` write endpoints remain deprecated and return `409`; published versions are immutable.
 - **Project isolation:** every lookup and foreign key includes project scope; cross-project attachment returns `404`, not an existence leak.
@@ -243,6 +243,9 @@ POST   /v1/datasets/by-slug/{slug}/draft/import?project_id= # CSV/JSONL/trace se
 POST   /v1/datasets/by-slug/{slug}/draft/validate?project_id=
 POST   /v1/datasets/by-slug/{slug}/draft/publish?project_id=
 POST   /v1/datasets/by-slug/{slug}/draft/discard?project_id=
+GET    /v1/datasets/by-slug/{slug}/export?project_id=&format=csv|jsonl&representation=draft|version&version=
+POST   /v1/datasets/by-slug/{slug}/restore?project_id= # Project Admin, If-Match Dataset revision
+DELETE /v1/datasets/by-slug/{slug}/tombstone?project_id= # Project Admin, typed slug + If-Match Dataset revision
 
 # Evaluations (reusable definitions) and runs
 GET    /v1/evaluations?project_id=
@@ -348,9 +351,9 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 
 ### Imports and exports
 
-- UI accepts CSV and JSONL. CSV import requires an explicit mapping review; JSONL accepts canonical `DatasetCase` directly.
-- SDK/API batch upsert supports JSONL streaming and a server-side import job for large suites. Maximum synchronous batch is 500 items; larger imports return `202` and an import-job event stream.
-- Export always names a concrete version: JSONL canonical cases, optional CSV flattening, and a manifest containing schema/version/content hash. Never export an ambiguous “latest” by default.
+- Draft import uses the canonical API item shape and is capped at 500 rows. It runs the same authorization, validation, source-provenance reread, redaction, revision-history, and audit controls as manual curation. Duplicate submitted keys and keys already in the shared draft reject the entire request with `items/{row}/item_key` errors; import never silently upserts or partially overwrites a draft.
+- Project Admin export requires an explicit `representation=draft` or `representation=version`; immutable-version export also requires its explicit version. Only CSV and JSONL are available. Every export is project-scoped, applies the currently approved redaction policy to input, expected output, and metadata, and preserves safe actor/source identifiers and capture context.
+- Exports are generated in memory only after the complete representation is checked against a 500-item and 1,048,576-byte limit. Requests over either limit fail before any output is sent, rather than returning a partial file.
 
 ## UX information architecture
 

@@ -20,6 +20,13 @@ The first policy contract is deliberately narrow:
 5. Run one bounded batch. PostgreSQL deletion batches are capped at 500 rows; the UI uses 100. ClickHouse counts trace groups, not physical rows: each selected group is wholly pre-cutoff and the entire trace/observation mutation is capped at the requested physical-row budget. Oversized trace groups are skipped and reported.
 6. Review the safe run summary and server events (`governance.retention_completed`). Audit records contain actor, project/version IDs, counts, and duration only.
 
+## Dataset lifecycle
+
+- Dataset export, restore, and tombstone require a Project Admin. Export supports only redacted, project-scoped CSV or JSONL for an explicitly selected draft or immutable version. It preserves safe provenance identifiers and is rejected before response generation above 500 items or 1,048,576 bytes.
+- Archive is the normal retirement path. Restore and metadata/lifecycle mutations require the current quoted ETag revision. A `409` includes the current revision and field-level diff; refresh and make an explicit retry decision. Do not retry by merging values automatically.
+- Tombstone is a hard deletion with a typed Dataset-slug confirmation. It is prohibited while an immutable version, historical/queued/scheduled run, active Dataset retention hold, benchmark link, or feedback link remains. The tombstone reserves the slug after deletion. Use the conflict counts to resolve or retain dependencies; do not remove historical evidence to make a Dataset deletable.
+- Retention does not delete Datasets with immutable versions or active Dataset retention holds. This intentionally favors explainable historical execution over automatic content removal.
+
 ## Recovery and evidence
 
 Retention commits its `running` run and start audit record before any external mutation. Every destructive stage holds the active-project/manager lock while it rechecks the effective policy and commits stage evidence; approval, archival, and membership changes use the same project lock. Any retained-audit operation locks memberships, then Project rows, then the Project audit UUID; startup finalization first locks the Project/run rows before its audit UUID. Startup deterministically terminalizes every interrupted run with one failure audit record; review its run/audit record, correct infrastructure, then issue a new run. Deletion predicates are time-based and project-scoped, so reruns are idempotent for already-deleted records. Historical ClickHouse rows without ownership are never selected or attributed.

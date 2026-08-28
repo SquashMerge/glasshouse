@@ -18,6 +18,12 @@ export interface ApiValidationIssue {
 
 export interface ApiErrorDetails {
 	errors?: ApiValidationIssue[];
+	current_revision?: number;
+	field_diff?: Array<{
+		field: string;
+		current: unknown;
+		requested: unknown;
+	}>;
 }
 
 export class ApiError extends Error {
@@ -70,6 +76,7 @@ export interface Dataset {
 	name: string;
 	description: string | null;
 	tags: string[];
+	revision: number;
 	latest_published_version: number | null;
 	archived_at: string | null;
 	item_count: number;
@@ -204,17 +211,21 @@ export async function getDatasetDraft(input: {
 export async function updateDatasetMetadata(input: {
 	project_id: string;
 	slug: string;
+	revision: number;
 	name?: string;
 	description?: string | null;
 	tags?: string[];
 }): Promise<Dataset> {
-	const { project_id, slug, ...body } = input;
+	const { project_id, slug, revision, ...body } = input;
 	return responseJson(
 		await authedFetch(
 			`/v1/datasets/by-slug/${encodeURIComponent(slug)}${buildQs({ project_id })}`,
 			{
 				method: "PATCH",
-				headers: { "content-type": "application/json" },
+				headers: {
+					"content-type": "application/json",
+					"if-match": `"${revision}"`,
+				},
 				body: JSON.stringify(body),
 			},
 		),
@@ -429,6 +440,72 @@ export async function publishDatasetDraft(input: {
 		"publishDatasetDraft",
 	);
 }
+export async function archiveDataset(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id })}`,
+		{ method: "DELETE", headers: { "if-match": `"${input.revision}"` } },
+	);
+	if (!response.ok) await responseJson<never>(response, "archiveDataset");
+}
+export async function restoreDataset(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/restore${buildQs({ project_id: input.project_id })}`,
+		{ method: "POST", headers: { "if-match": `"${input.revision}"` } },
+	);
+	if (!response.ok) await responseJson<never>(response, "restoreDataset");
+}
+export async function tombstoneDataset(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+	confirmation_slug: string;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/tombstone${buildQs({ project_id: input.project_id })}`,
+		{
+			method: "DELETE",
+			headers: {
+				"content-type": "application/json",
+				"if-match": `"${input.revision}"`,
+			},
+			body: JSON.stringify({ confirmation_slug: input.confirmation_slug }),
+		},
+	);
+	if (!response.ok) await responseJson<never>(response, "tombstoneDataset");
+}
+export async function exportDataset(input: {
+	project_id: string;
+	slug: string;
+	format: "csv" | "jsonl";
+	representation: "draft" | "version";
+	version?: number;
+}): Promise<{ body: string; content_type: string; filename: string }> {
+	const response = await authedFetch(
+		`/v1/datasets/by-slug/${encodeURIComponent(input.slug)}/export${buildQs({
+			project_id: input.project_id,
+			format: input.format,
+			representation: input.representation,
+			version: input.version,
+		})}`,
+	);
+	if (!response.ok) return responseJson<never>(response, "exportDataset");
+	const disposition = response.headers.get("content-disposition") ?? "";
+	const filename =
+		disposition.match(/filename="([^"]+)"/)?.[1] ?? "dataset-export";
+	return {
+		body: await response.text(),
+		content_type: response.headers.get("content-type") ?? "text/plain",
+		filename,
+	};
+}
 export async function deleteDatasetDraftItem(input: {
 	project_id: string;
 	slug: string;
@@ -496,9 +573,15 @@ export interface Feedback {
 }
 export async function listDatasets(
 	project_id: string,
+	include_archived = false,
 ): Promise<{ items: Dataset[]; total: number }> {
 	return responseJson(
-		await authedFetch(`/v1/datasets${buildQs({ project_id })}`),
+		await authedFetch(
+			`/v1/datasets${buildQs({
+				project_id,
+				include_archived: include_archived ? "true" : undefined,
+			})}`,
+		),
 		"listDatasets",
 	);
 }

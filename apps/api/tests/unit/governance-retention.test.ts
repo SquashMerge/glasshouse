@@ -141,6 +141,12 @@ describe("governance retention", () => {
 		const deletion = statements.find((statement) =>
 			statement.startsWith("WITH candidates"),
 		);
+		expect(deletion).toContain(
+			"NOT EXISTS (SELECT 1 FROM dataset_versions v WHERE v.dataset_id = d.id)",
+		);
+		expect(deletion).toContain(
+			"NOT EXISTS (SELECT 1 FROM dataset_retention_holds h WHERE h.project_id = d.project_id AND h.dataset_id = d.id AND h.released_at IS NULL)",
+		);
 		expect(deletion).not.toContain("DELETE FROM feedback_reviews");
 		expect(deletion).toContain(
 			"NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id)",
@@ -157,8 +163,16 @@ describe("governance retention", () => {
 			"deleted_quarantined_items AS (DELETE FROM dataset_item_input_quarantine q USING candidates c WHERE q.project_id = $1 AND q.dataset_id = c.id RETURNING q.id)",
 		);
 		expect(deletion).toContain(
+			"deleted_released_holds AS (DELETE FROM dataset_retention_holds h USING candidates c WHERE h.project_id = $1 AND h.dataset_id = c.id AND h.released_at IS NOT NULL RETURNING h.id)",
+		);
+		expect(deletion).toContain(
 			"(SELECT count(*) FROM deleted_quarantined_items) >= 0",
 		);
+		expect(deletion).toContain(
+			"(SELECT count(*) FROM deleted_released_holds) >= 0",
+		);
+		expect(deletion).not.toContain("deleted_version_items");
+		expect(deletion).not.toContain("deleted_versions");
 		expect(deletion).not.toContain("dataset_lifecycle_audit_events");
 		expect(statements[0]).toContain("lock_project_audit_provenance");
 		expect(statements[1]).toContain("dataset_retention_run_id");

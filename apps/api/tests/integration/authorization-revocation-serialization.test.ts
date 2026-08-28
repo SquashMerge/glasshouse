@@ -2487,6 +2487,143 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
+	"retention preserves active holds while deleting released-hold and ordinary datasets",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl });
+		const fixture = await seedProjectAuditLockRace(pool);
+		const retention = await pool.connect();
+		const activeHeldDatasetId = randomUUID();
+		const releasedHeldDatasetId = randomUUID();
+		const ordinaryDatasetId = randomUUID();
+		const activeHoldId = randomUUID();
+		const releasedHoldId = randomUUID();
+		let retentionStarted = false;
+		try {
+			await pool.query(
+				"INSERT INTO datasets (id, project_id, slug, name, created_at) VALUES ($1, $2, 'retention-active-hold', 'Active hold retention dataset', now() - interval '2 days'), ($3, $2, 'retention-released-hold', 'Released hold retention dataset', now() - interval '2 days'), ($4, $2, 'retention-ordinary', 'Ordinary retention dataset', now() - interval '2 days')",
+				[
+					activeHeldDatasetId,
+					fixture.projectId,
+					releasedHeldDatasetId,
+					ordinaryDatasetId,
+				],
+			);
+			await pool.query(
+				"INSERT INTO dataset_retention_holds (id, organization_id, project_id, dataset_id, reason, created_by, released_by, released_at) VALUES ($1, $2, $3, $4, 'Active retention hold', $5, NULL, NULL), ($6, $2, $3, $7, 'Released retention hold', $5, $5, now() - interval '1 day')",
+				[
+					activeHoldId,
+					fixture.organizationId,
+					fixture.projectId,
+					activeHeldDatasetId,
+					fixture.managerActorId,
+					releasedHoldId,
+					releasedHeldDatasetId,
+				],
+			);
+
+			await retention.query("BEGIN");
+			retentionStarted = true;
+			expect(
+				await deleteSafeDatasetRetentionBatch(
+					retention,
+					fixture.projectId,
+					new Date(),
+					10,
+					randomUUID(),
+					randomUUID(),
+				),
+			).toEqual({ deleted: 2, skipped: 1 });
+			await retention.query("COMMIT");
+			retentionStarted = false;
+			expect(
+				(
+					await pool.query<{ id: string }>(
+						"SELECT id FROM datasets WHERE project_id = $1 ORDER BY id",
+						[fixture.projectId],
+					)
+				).rows,
+			).toEqual([{ id: activeHeldDatasetId }]);
+			expect(
+				(
+					await pool.query<{ id: string; released_at: Date | null }>(
+						"SELECT id, released_at FROM dataset_retention_holds WHERE project_id = $1 ORDER BY id",
+						[fixture.projectId],
+					)
+				).rows,
+			).toEqual([{ id: activeHoldId, released_at: null }]);
+			expect(
+				(
+					await pool.query<{ slug: string }>(
+						"SELECT slug FROM dataset_tombstones WHERE project_id = $1 ORDER BY slug",
+						[fixture.projectId],
+					)
+				).rows,
+			).toEqual([
+				{ slug: "retention-ordinary" },
+				{ slug: "retention-released-hold" },
+			]);
+		} finally {
+			if (retentionStarted) await retention.query("ROLLBACK").catch(() => {});
+			retention.release();
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				await cleanup.query("SET LOCAL session_replication_role = replica");
+				await cleanup.query(
+					"DELETE FROM dataset_retention_holds WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("DELETE FROM datasets WHERE project_id = $1", [
+					fixture.projectId,
+				]);
+				await cleanup.query(
+					"DELETE FROM dataset_lifecycle_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM dataset_tombstones WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"UPDATE projects SET status = 'archived' WHERE id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM project_actor_grants WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("DELETE FROM projects WHERE id = $1", [
+					fixture.projectId,
+				]);
+				await cleanup.query(
+					"DELETE FROM organization_memberships WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM organization_actor_roles WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query(
+					"DELETE FROM actor_identities WHERE organization_id = $1",
+					[fixture.organizationId],
+				);
+				await cleanup.query("DELETE FROM actors WHERE id IN ($1, $2)", [
+					fixture.managerActorId,
+					fixture.ownerActorId,
+				]);
+				await cleanup.query("COMMIT");
+			} catch (cause) {
+				await cleanup.query("ROLLBACK").catch(() => {});
+				throw cause;
+			} finally {
+				cleanup.release();
+			}
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
 	"retention holds the creation slug lock until its tombstone commits",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
