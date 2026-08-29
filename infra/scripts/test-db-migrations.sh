@@ -812,6 +812,9 @@ for migration in \
 done
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0074.backfill.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0074.upgrade.sql"
 for migration in \
   "$ROOT/infra/db/migrations/0075_evaluation_definition_contract_audit_integrity.sql" \
