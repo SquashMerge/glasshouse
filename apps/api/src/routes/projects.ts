@@ -379,30 +379,6 @@ async function requireOrganizationPolicy(
 		throw cause;
 	}
 }
-async function role(
-	c: Context,
-	projectId?: string,
-	manager = false,
-	owner = false,
-) {
-	const tenant = trustedTenant(c);
-	const pool = pgPool();
-	const result = projectId
-		? await pool.query<{ role: string | null }>(
-				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.id = $1 AND p.organization_id = $2",
-				[projectId, tenant.organizationId, tenant.actorId],
-			)
-		: await pool.query<{ role: string }>(
-				"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1",
-				[tenant.organizationId, tenant.actorId],
-			);
-	const value = result.rows[0]?.role;
-	if (!value) throw new Error("Not found");
-	if (owner && value !== "owner") throw new Error("Forbidden");
-	if (manager && value !== "manager" && value !== "owner")
-		throw new Error("Forbidden");
-	return { ...tenant, projectRole: value as "owner" | "manager" | "member" };
-}
 export async function handleGetMe(c: Context) {
 	try {
 		const tenant = trustedTenant(c);
@@ -777,9 +753,9 @@ export async function handleGetProject(c: Context) {
 	try {
 		const params = (c.req as any).valid("param");
 		await requireProjectPolicy(c, params.id, "product_read");
-		const tenant = await role(c, params.id);
+		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<Row>(
-			"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role, authorization_allows_project(p.organization_id, p.id, $3, 'project_manage') AS can_manage, authorization_allows_project(p.organization_id, p.id, $3, 'governed') AS can_govern FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE p.id = $1 AND p.organization_id = $2 AND (om.role = 'owner' OR pm.actor_subject IS NOT NULL)",
+			"SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, p.id = o.default_project_id AS is_default, access.effective_role AS project_role, authorization_allows_project(p.organization_id, p.id, $3, 'project_manage') AS can_manage, authorization_allows_project(p.organization_id, p.id, $3, 'governed') AS can_govern FROM projects p JOIN organizations o ON o.id = p.organization_id JOIN LATERAL authorization_effective_project_role(p.organization_id, p.id, $3) access ON true WHERE p.id = $1 AND p.organization_id = $2 AND access.effective_role IS NOT NULL AND authorization_allows_project(p.organization_id, p.id, $3, 'product_read')",
 			[params.id, tenant.organizationId, tenant.actorId],
 		);
 		if (!rows.rows[0]) throw new Error("Not found");
@@ -839,7 +815,7 @@ async function serializedLifecycle(c: Context, status: "active" | "archived") {
 			const authorized = await client.query<{
 				project_role: Row["project_role"];
 			}>(
-				"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS project_role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $2) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $2) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status <> 'deleting' AND (om.role = 'owner' OR pm.role = 'manager') AND authorization_allows_project($3, $1, $2, 'project_manage') FOR UPDATE OF p, om",
+				"SELECT access.effective_role AS project_role FROM projects p JOIN LATERAL authorization_effective_project_role(p.organization_id, p.id, $2) access ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status <> 'deleting' AND access.effective_role IS NOT NULL AND authorization_allows_project($3, $1, $2, 'project_manage') FOR UPDATE OF p",
 				[id, tenant.actorId, tenant.organizationId],
 			);
 			if (!authorized.rows[0]) throw new Error("Not found");

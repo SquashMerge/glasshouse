@@ -175,6 +175,22 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 		values.includes(OTHER_PROJECT)
 	)
 		return { rows: [] };
+	if (sql.startsWith("SELECT access.effective_role AS project_role")) {
+		const [projectId, actorId] = values;
+		if (projectId === OTHER_PROJECT) return { rows: [] };
+		return {
+			rows: [
+				{
+					project_role:
+						actorId === actorIds.owner
+							? "admin"
+							: actorId === actorIds.manager
+								? "user"
+								: "read_only",
+				},
+			],
+		};
+	}
 	if (
 		sql.includes("COALESCE(pm.role, '')") ||
 		sql.includes("CASE WHEN om.role = 'owner' THEN 'owner'")
@@ -286,6 +302,7 @@ const {
 	archiveProject,
 	deleteOrganizationMember,
 	deleteProject,
+	getProject,
 	getProjectDeletionStatus,
 	deleteProjectMember,
 	handleArchiveProject,
@@ -296,6 +313,7 @@ const {
 	handleDeleteProjectMember,
 	handleGetProjectAuditEvents,
 	handleGetMe,
+	handleGetProject,
 	handleListProjectMembers,
 	handleListProjects,
 	handleListOrganizationMembers,
@@ -344,6 +362,7 @@ api.openapi(deleteProject, handleDeleteProject);
 api.openapi(getProjectDeletionStatus, handleGetProjectDeletionStatus);
 api.openapi(getMe, handleGetMe);
 api.openapi(listProjects, handleListProjects);
+api.openapi(getProject, handleGetProject);
 api.openapi(updateProject, handleUpdateProject);
 api.openapi(archiveProject, handleArchiveProject);
 api.openapi(restoreProject, handleRestoreProject);
@@ -737,6 +756,74 @@ describe("project authorization routes", () => {
 		);
 	});
 
+	it("keeps durable User project detail and lifecycle access without a legacy projection", async () => {
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (sql.startsWith("SELECT pm.actor_subject FROM project_memberships"))
+				return { rows: [] };
+			if (sql.includes("CASE WHEN om.role = 'owner' THEN 'owner'"))
+				return { rows: [] };
+			if (
+				sql.startsWith("SELECT p.id, p.name, p.slug") &&
+				sql.includes("authorization_effective_project_role")
+			)
+				return {
+					rows: [
+						{
+							id: PROJECT,
+							name: "Renamed",
+							slug: "project",
+							status: "active",
+							created_at: createdAt,
+							archived_at: null,
+							project_role: "user",
+							can_manage: true,
+							can_govern: true,
+							is_default: false,
+						},
+					],
+				};
+			if (
+				sql.startsWith("SELECT access.effective_role AS project_role") &&
+				sql.includes("authorization_effective_project_role")
+			)
+				return { rows: [{ project_role: "user" }] };
+			if (
+				sql.startsWith("SELECT authorization_allows_project") &&
+				sql.includes("AS can_manage")
+			)
+				return { rows: [{ can_manage: true, can_govern: true }] };
+			return defaultQuery(sql, values);
+		});
+
+		const rename = await request("manager", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ name: "Renamed" }),
+		});
+		const detail = await request("manager", `/v1/projects/${PROJECT}`);
+		const archive = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/archive`,
+			{ method: "POST" },
+		);
+		const restore = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/restore`,
+			{ method: "POST" },
+		);
+
+		expect(rename.status).toBe(200);
+		for (const response of [detail, archive, restore]) {
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual(
+				expect.objectContaining({
+					id: PROJECT,
+					project_role: "user",
+					can_manage: true,
+				}),
+			);
+		}
+	});
+
 	it("uses the verified actor ID for durable project authorization", async () => {
 		const verifiedActorId = "33333333-3333-4333-8333-333333333333";
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
@@ -1087,15 +1174,28 @@ describe("project authorization routes", () => {
 
 		const statements = query.mock.calls.map(([sql]) => sql);
 		expect(statements).toContainEqual(
-			expect.stringContaining(
-				"LEFT JOIN LATERAL (SELECT role FROM project_memberships",
-			),
+			expect.stringContaining("SELECT actor_id FROM organization_actor_roles"),
 		);
 		expect(statements).toContainEqual(
-			expect.stringContaining("FOR UPDATE OF p, om"),
+			expect.stringContaining("SELECT actor_id FROM project_actor_grants"),
 		);
-		expect(statements).not.toContainEqual(
-			expect.stringContaining("FOR UPDATE OF p, om, pm"),
+		const durableAuthorization = statements.find((statement) =>
+			statement.startsWith("SELECT access.effective_role AS project_role"),
+		);
+		expect(durableAuthorization).toContain(
+			"authorization_effective_project_role(p.organization_id, p.id, $2)",
+		);
+		expect(durableAuthorization).toContain(
+			"p.id = $1 AND p.organization_id = $3",
+		);
+		expect(durableAuthorization).toContain(
+			"authorization_allows_project($3, $1, $2, 'project_manage')",
+		);
+		expect(durableAuthorization).toContain("FOR UPDATE OF p");
+		expect(statements).toContainEqual(
+			expect.stringContaining(
+				"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2",
+			),
 		);
 		expect(statements).toContainEqual(
 			expect.stringContaining("UPDATE experiments SET status = 'cancelled'"),

@@ -37,10 +37,12 @@ const POLICY_B = "44444444-4444-4444-8444-444444444444";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((next) => {
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((next, fail) => {
 		resolve = next;
+		reject = fail;
 	});
-	return { promise, resolve };
+	return { promise, resolve, reject };
 }
 
 function policy(id: string) {
@@ -129,6 +131,135 @@ describe("GovernancePage project-scoped mutations", () => {
 		expect(
 			screen.getByRole("button", { name: "Run one bounded batch" }),
 		).toBeDisabled();
+	});
+
+	it("preserves the selected project's preview when an earlier preview fails", async () => {
+		const delayed = deferred<{
+			policy_version_id: string;
+			counts: Record<string, number>;
+			preview_id: string;
+			preview_expires_at: string;
+		}>();
+		api.previewGovernanceRetention
+			.mockImplementationOnce(() => delayed.promise)
+			.mockResolvedValueOnce({
+				policy_version_id: POLICY_B,
+				counts: { traces: 7 },
+				preview_id: "77777777-7777-4777-8777-777777777777",
+				preview_expires_at: "2099-08-29T20:00:00.000Z",
+			});
+		const page = renderPage();
+		await screen.findByTestId("active-policy-card");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Preview eligible counts" }),
+		);
+
+		selection.projectId = PROJECT_B;
+		page.rerender(
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
+				<GovernancePage />
+			</QueryClientProvider>,
+		);
+		await screen.findByTestId("active-policy-card");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Preview eligible counts" }),
+		);
+		expect(await screen.findByText("traces: 7")).toBeVisible();
+
+		delayed.reject(new Error("Project A preview failed"));
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		const runButton = screen.getByRole("button", {
+			name: "Run one bounded batch",
+		});
+		expect(runButton).toBeEnabled();
+		fireEvent.click(runButton);
+		await waitFor(() =>
+			expect(api.runGovernanceRetention.mock.calls[0]?.[0]).toEqual({
+				project_id: PROJECT_B,
+				policy_version_id: POLICY_B,
+				preview_id: "77777777-7777-4777-8777-777777777777",
+				batch_size: 100,
+			}),
+		);
+	});
+
+	it("preserves the selected project's preview when an earlier run fails", async () => {
+		const delayed = deferred<{
+			policy_version_id: string;
+			counts: Record<string, number>;
+			run_id: string;
+			status: string;
+		}>();
+		api.previewGovernanceRetention.mockImplementation((projectId: string) =>
+			Promise.resolve({
+				policy_version_id: projectId === PROJECT_A ? POLICY_A : POLICY_B,
+				counts: { traces: projectId === PROJECT_A ? 4 : 8 },
+				preview_id:
+					projectId === PROJECT_A
+						? "55555555-5555-4555-8555-555555555555"
+						: "88888888-8888-4888-8888-888888888888",
+				preview_expires_at: "2099-08-29T20:00:00.000Z",
+			}),
+		);
+		api.runGovernanceRetention
+			.mockImplementationOnce(() => delayed.promise)
+			.mockResolvedValueOnce({
+				policy_version_id: POLICY_B,
+				counts: { traces: 8 },
+				run_id: "99999999-9999-4999-8999-999999999999",
+				status: "completed",
+			});
+		const page = renderPage();
+		await screen.findByTestId("active-policy-card");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Preview eligible counts" }),
+		);
+		expect(await screen.findByText("traces: 4")).toBeVisible();
+		fireEvent.click(
+			screen.getByRole("button", { name: "Run one bounded batch" }),
+		);
+
+		selection.projectId = PROJECT_B;
+		page.rerender(
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
+				<GovernancePage />
+			</QueryClientProvider>,
+		);
+		await screen.findByTestId("active-policy-card");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Preview eligible counts" }),
+		);
+		expect(await screen.findByText("traces: 8")).toBeVisible();
+
+		delayed.reject(new Error("Project A retention run failed"));
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		const runButton = screen.getByRole("button", {
+			name: "Run one bounded batch",
+		});
+		expect(runButton).toBeEnabled();
+		fireEvent.click(runButton);
+		await waitFor(() =>
+			expect(api.runGovernanceRetention.mock.calls[1]?.[0]).toEqual({
+				project_id: PROJECT_B,
+				policy_version_id: POLICY_B,
+				preview_id: "88888888-8888-4888-8888-888888888888",
+				batch_size: 100,
+			}),
+		);
 	});
 
 	it("passes the server-issued preview authorization into a bounded run", async () => {

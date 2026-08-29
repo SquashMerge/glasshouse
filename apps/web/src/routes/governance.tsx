@@ -103,7 +103,8 @@ export function GovernancePage() {
 			setPreviewId(result.preview_id);
 			setPreviewExpiresAt(result.preview_expires_at);
 		},
-		onError: () => {
+		onError: (_error, projectId) => {
+			if (projectId !== selectedProjectIdRef.current) return;
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
 			setPreviewExpiresAt(null);
@@ -119,7 +120,8 @@ export function GovernancePage() {
 			setPreviewExpiresAt(null);
 			refresh(variables.project_id);
 		},
-		onError: () => {
+		onError: (_error, variables) => {
+			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
 			setPreviewExpiresAt(null);
