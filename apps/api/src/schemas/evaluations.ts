@@ -84,13 +84,32 @@ export const EvaluationCreate = z
 	})
 	.strict()
 	.openapi("EvaluationCreate");
-export const EvaluationDraft = EvaluationDefinitionInput.extend({
+const EvaluationDraftFields = {
 	evaluation_id: z.string().uuid(),
 	project_id: z.string().uuid(),
 	revision: z.number().int().positive(),
 	updated_at: z.string().datetime(),
-})
-	.strict()
+};
+export const EvaluationDraft = z
+	.discriminatedUnion("definition_contract", [
+		EvaluationDefinitionInput.extend({
+			...EvaluationDraftFields,
+			definition_contract: z.literal("v1"),
+		}).strict(),
+		z
+			.object({
+				...EvaluationDraftFields,
+				definition_contract: z.literal("legacy_incomplete"),
+				dataset_version_id: z.string().uuid(),
+				sampling: z.record(z.string(), z.unknown()),
+				evaluator: z.record(z.string(), z.unknown()),
+				target: z.record(z.string(), z.unknown()),
+				execution_defaults: z.record(z.string(), z.unknown()),
+				limits: z.record(z.string(), z.unknown()),
+				thresholds: z.record(z.string(), z.unknown()),
+			})
+			.strict(),
+	])
 	.openapi("EvaluationDraft");
 const EvaluationDefinitionVersionFields = {
 	id: z.string().uuid(),

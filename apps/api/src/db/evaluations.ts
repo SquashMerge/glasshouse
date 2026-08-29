@@ -109,12 +109,18 @@ function definitionFields(row: Row) {
 	};
 }
 function definition(row: Row) {
+	const fields = definitionFields(row);
+	const parsed = EvaluationDefinitionInput.safeParse(fields);
 	return {
-		...definitionFields(row),
+		...fields,
 		evaluation_id: text(row, "evaluation_id"),
 		project_id: text(row, "project_id"),
 		revision: Number(row.revision),
 		updated_at: time(row, "updated_at"),
+		definition_contract:
+			parsed.success && canonical(parsed.data) === canonical(fields)
+				? ("v1" as const)
+				: ("legacy_incomplete" as const),
 	};
 }
 function version(row: Row) {

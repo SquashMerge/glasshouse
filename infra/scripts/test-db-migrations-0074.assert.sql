@@ -79,6 +79,9 @@ BEGIN
           AND evaluator = '{"kind":"exact_match","version":"v1"}'::jsonb
           AND sampling = '{"strategy":"first_n","sample_size":100,"seed":0}'::jsonb
           AND limits = '{"max_cost_usd":10,"max_duration_seconds":3600}'::jsonb
+          AND target = '{"kind":"configured_llm"}'::jsonb
+          AND execution_defaults = '{}'::jsonb
+          AND thresholds = '{}'::jsonb
     ) THEN
         RAISE EXCEPTION '0075 upgrade fixture did not reproduce the incomplete legacy draft';
     END IF;

@@ -580,6 +580,71 @@ function EvaluationDraftAuthoring({
 	const [saving, setSaving] = React.useState(false);
 	React.useEffect(() => {
 		if (!draft.data) return;
+		if (draft.data.definition_contract === "legacy_incomplete") {
+			const value = (field: Record<string, unknown>, key: string) => field[key];
+			setModel(
+				typeof value(draft.data.target, "model") === "string"
+					? (value(draft.data.target, "model") as string)
+					: "",
+			);
+			setSystemPrompt(
+				typeof value(draft.data.target, "system_prompt") === "string"
+					? (value(draft.data.target, "system_prompt") as string)
+					: "",
+			);
+			setDatasetVersion(draft.data.dataset_version_id);
+			setSampleSize(
+				typeof value(draft.data.sampling, "sample_size") === "number"
+					? String(value(draft.data.sampling, "sample_size"))
+					: "",
+			);
+			setSeed(
+				typeof value(draft.data.sampling, "seed") === "number"
+					? String(value(draft.data.sampling, "seed"))
+					: "",
+			);
+			setEvaluator(
+				value(draft.data.evaluator, "kind") === "contains"
+					? "contains"
+					: "exact_match",
+			);
+			setExpectedOutputPath(
+				typeof value(draft.data.evaluator, "expected_output_path") === "string"
+					? (value(draft.data.evaluator, "expected_output_path") as string)
+					: "",
+			);
+			setOutputPath(
+				typeof value(draft.data.evaluator, "output_path") === "string"
+					? (value(draft.data.evaluator, "output_path") as string)
+					: "",
+			);
+			setTemperature(
+				typeof value(draft.data.execution_defaults, "temperature") === "number"
+					? String(value(draft.data.execution_defaults, "temperature"))
+					: "",
+			);
+			setMaxTokens(
+				typeof value(draft.data.execution_defaults, "max_tokens") === "number"
+					? String(value(draft.data.execution_defaults, "max_tokens"))
+					: "",
+			);
+			setMaxCost(
+				typeof value(draft.data.limits, "max_cost_usd") === "number"
+					? String(value(draft.data.limits, "max_cost_usd"))
+					: "",
+			);
+			setMaxDuration(
+				typeof value(draft.data.limits, "max_duration_seconds") === "number"
+					? String(value(draft.data.limits, "max_duration_seconds"))
+					: "",
+			);
+			setMinimumPassRate(
+				typeof value(draft.data.thresholds, "minimum_pass_rate") === "number"
+					? String(value(draft.data.thresholds, "minimum_pass_rate"))
+					: "",
+			);
+			return;
+		}
 		setModel(draft.data.target.model ?? "");
 		setSystemPrompt(draft.data.target.system_prompt ?? "");
 		setDatasetVersion(draft.data.dataset_version_id);
@@ -690,6 +755,12 @@ function EvaluationDraftAuthoring({
 			<p className="text-sm font-medium">
 				Definition draft (revision {draft.data.revision})
 			</p>
+			{draft.data.definition_contract === "legacy_incomplete" && (
+				<p className="text-sm text-muted-foreground">
+					This upgraded draft is incomplete. Review and save a complete
+					definition before publishing.
+				</p>
+			)}
 			<label
 				className="block space-y-2 text-sm"
 				htmlFor={`evaluation-draft-dataset-${slug}`}

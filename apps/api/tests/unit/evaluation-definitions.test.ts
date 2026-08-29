@@ -6,6 +6,7 @@ import {
 	listEvaluationLegacyLinks,
 	publishEvaluationDraft,
 	transitionEvaluationLifecycle,
+	updateEvaluationDraft,
 } from "../../src/db/evaluations";
 import { EvaluationDefinitionInput } from "../../src/schemas/evaluations";
 
@@ -64,7 +65,7 @@ describe("Evaluation definitions", () => {
 		])
 			expect(EvaluationDefinitionInput.safeParse(invalid).success).toBe(false);
 	});
-	it("reads a 0074 draft after 0075 but requires a complete replacement before publish", async () => {
+	it("reads a 0074 draft after 0075 as incomplete and requires a complete replacement before publish", async () => {
 		const legacy = {
 			evaluation_id: "33333333-3333-4333-8333-333333333333",
 			project_id: "44444444-4444-4444-8444-444444444444",
@@ -78,6 +79,16 @@ describe("Evaluation definitions", () => {
 			limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
 			thresholds: {},
 		};
+		const typed = { ...legacy, ...definition, revision: 2 };
+		const published = {
+			id: "22222222-2222-4222-8222-222222222222",
+			...typed,
+			version: 1,
+			content_hash: definitionHash(definition),
+			published_draft_revision: 2,
+			created_at: legacy.updated_at,
+		};
+		let draftRow = legacy;
 		const queries: string[] = [];
 		const client = {
 			query: async (sql: string) => {
@@ -87,7 +98,14 @@ describe("Evaluation definitions", () => {
 				if (sql.startsWith("SELECT p.id FROM projects"))
 					return { rows: [{ id: legacy.project_id }] };
 				if (sql.startsWith("SELECT d.* FROM evaluation_definition_drafts"))
-					return { rows: [legacy] };
+					return { rows: [draftRow] };
+				if (sql.startsWith("UPDATE evaluation_definition_drafts")) {
+					draftRow = typed;
+					return { rows: [typed] };
+				}
+				if (sql.startsWith("SELECT v.*")) return { rows: [] };
+				if (sql.startsWith("INSERT INTO evaluation_definition_versions"))
+					return { rows: [published] };
 				return { rows: [] };
 			},
 			release() {},
@@ -105,8 +123,13 @@ describe("Evaluation definitions", () => {
 			{ connect: async () => client } as never,
 			input,
 		);
-		expect(draft.evaluator).toEqual(legacy.evaluator);
-		expect(draft.sampling).toEqual(legacy.sampling);
+		expect(draft).toMatchObject({
+			definition_contract: "legacy_incomplete",
+			evaluator: legacy.evaluator,
+			target: legacy.target,
+			execution_defaults: legacy.execution_defaults,
+			thresholds: legacy.thresholds,
+		});
 		await expect(
 			publishEvaluationDraft({ connect: async () => client } as never, {
 				...input,
@@ -122,6 +145,21 @@ describe("Evaluation definitions", () => {
 				sql.startsWith("INSERT INTO evaluation_definition_versions"),
 			),
 		).toBe(false);
+		const updated = await updateEvaluationDraft(
+			{ connect: async () => client } as never,
+			{ ...input, revision: legacy.revision, definition },
+		);
+		expect(updated).toMatchObject({ definition_contract: "v1", revision: 2 });
+		const result = await publishEvaluationDraft(
+			{ connect: async () => client } as never,
+			{ ...input, revision: updated.revision },
+		);
+		expect(result).toMatchObject({ definition_contract: "v1", version: 1 });
+		expect(
+			queries.some((sql) =>
+				sql.startsWith("INSERT INTO evaluation_definition_versions"),
+			),
+		).toBe(true);
 	});
 	it("publishes an immutable version without draft-only serialization fields", async () => {
 		const published = {

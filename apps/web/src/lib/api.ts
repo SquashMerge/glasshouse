@@ -164,7 +164,25 @@ export interface EvaluationDraft extends EvaluationDefinition {
 	project_id: string;
 	revision: number;
 	updated_at: string;
+	definition_contract: "v1";
 }
+export interface LegacyIncompleteEvaluationDraft {
+	evaluation_id: string;
+	project_id: string;
+	revision: number;
+	updated_at: string;
+	definition_contract: "legacy_incomplete";
+	dataset_version_id: string;
+	sampling: Record<string, unknown>;
+	evaluator: Record<string, unknown>;
+	target: Record<string, unknown>;
+	execution_defaults: Record<string, unknown>;
+	limits: Record<string, unknown>;
+	thresholds: Record<string, unknown>;
+}
+export type EvaluationDraftResponse =
+	| EvaluationDraft
+	| LegacyIncompleteEvaluationDraft;
 export interface EvaluationDefinitionVersion {
 	id: string;
 	evaluation_id: string;
@@ -263,7 +281,7 @@ export async function createEvaluation(input: {
 export async function getEvaluationDraft(input: {
 	project_id: string;
 	slug: string;
-}): Promise<EvaluationDraft> {
+}): Promise<EvaluationDraftResponse> {
 	return responseJson(
 		await authedFetch(
 			`/v1/evaluations/${encodeURIComponent(input.slug)}/draft${buildQs({ project_id: input.project_id })}`,

@@ -25,6 +25,7 @@ import {
 import {
 	EvaluationDefinitionInput,
 	EvaluationDefinitionVersion,
+	EvaluationDraft,
 } from "../../src/schemas/evaluations";
 
 describe("evaluation route contract", () => {
@@ -84,7 +85,7 @@ describe("evaluation route contract", () => {
 			}).success,
 		).toBe(true);
 	});
-	it("keeps upgraded incomplete drafts out of the typed publish contract", () => {
+	it("documents upgraded incomplete drafts separately from the typed replacement contract", () => {
 		const upgradedLegacyDraft = {
 			dataset_version_id: "44444444-4444-4444-8444-444444444444",
 			sampling: { strategy: "first_n", sample_size: 100, seed: 0 },
@@ -94,11 +95,19 @@ describe("evaluation route contract", () => {
 			limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
 			thresholds: {},
 		};
-		const parsedLegacyDraft =
-			EvaluationDefinitionInput.safeParse(upgradedLegacyDraft);
-		expect(parsedLegacyDraft.success).toBe(true);
-		if (!parsedLegacyDraft.success) return;
-		expect(parsedLegacyDraft.data).not.toEqual(upgradedLegacyDraft);
+		expect(
+			EvaluationDraft.safeParse({
+				...upgradedLegacyDraft,
+				evaluation_id: "11111111-1111-4111-8111-111111111111",
+				project_id: "22222222-2222-4222-8222-222222222222",
+				revision: 1,
+				updated_at: "2026-01-01T00:00:00.000Z",
+				definition_contract: "legacy_incomplete",
+			}).success,
+		).toBe(true);
+		expect(
+			EvaluationDefinitionInput.safeParse(upgradedLegacyDraft).success,
+		).toBe(true);
 		expect(
 			EvaluationDefinitionInput.safeParse({
 				...upgradedLegacyDraft,

@@ -272,7 +272,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			),
 		);
 	});
-	it("saves an existing draft with only definition fields and its current ETag revision", async () => {
+	it("upgrades an incomplete 0075 draft with its GET ETag", async () => {
 		listEvaluations.mockResolvedValue({
 			items: [
 				{
@@ -287,23 +287,31 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			evaluation_id: "66666666-6666-4666-8666-666666666666",
 			project_id: PROJECT_ONE,
 			revision: 3,
+			definition_contract: "legacy_incomplete",
 			dataset_version_id: "77777777-7777-4777-8777-777777777777",
 			sampling: { strategy: "first_n", sample_size: 1, seed: 0 },
 			evaluator: {
 				kind: "exact_match",
-				version: "v1",
-				expected_output_path: "$.expected_output",
-				output_path: "$.output",
 			},
-			target: { kind: "configured_llm", model: null, system_prompt: null },
-			execution_defaults: { temperature: 0, max_tokens: null },
+			target: { kind: "configured_llm" },
+			execution_defaults: {},
 			limits: { max_cost_usd: 1, max_duration_seconds: 1 },
-			thresholds: { minimum_pass_rate: null },
+			thresholds: {},
 			updated_at: "2026-01-01T00:00:00.000Z",
 		});
 		updateEvaluationDraft.mockResolvedValue({});
 		renderPage();
 		await screen.findByLabelText("Draft model");
+		expect(screen.getByText(/This upgraded draft is incomplete/)).toBeTruthy();
+		fireEvent.change(screen.getByLabelText("Expected output path"), {
+			target: { value: "$.expected_output" },
+		});
+		fireEvent.change(screen.getByLabelText("Output path"), {
+			target: { value: "$.output" },
+		});
+		fireEvent.change(screen.getAllByLabelText("Temperature")[0]!, {
+			target: { value: "0" },
+		});
 		fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
 		await waitFor(() =>
 			expect(updateEvaluationDraft).toHaveBeenCalledWith({
