@@ -82,6 +82,8 @@ export function EvaluationsPage() {
 	});
 	const [evaluationName, setEvaluationName] = React.useState("");
 	const [evaluationSlug, setEvaluationSlug] = React.useState("");
+	const [definitionDatasetVersionId, setDefinitionDatasetVersionId] =
+		React.useState("");
 	const [definitionPending, setDefinitionPending] = React.useState(false);
 	const [definitionError, setDefinitionError] = React.useState("");
 	const [name, setName] = React.useState("");
@@ -132,9 +134,8 @@ export function EvaluationsPage() {
 		}
 	}
 	async function define() {
-		const datasetVersion = selectedVersions.data?.items[0];
 		if (
-			!datasetVersion ||
+			!definitionDatasetVersionId ||
 			!evaluationName ||
 			!evaluationSlug ||
 			definitionPending
@@ -143,12 +144,12 @@ export function EvaluationsPage() {
 		try {
 			setDefinitionError("");
 			setDefinitionPending(true);
-			const created = await createEvaluation({
+			await createEvaluation({
 				project_id: selectedProjectId!,
 				slug: evaluationSlug,
 				name: evaluationName,
 				definition: {
-					dataset_version_id: datasetVersion.id,
+					dataset_version_id: definitionDatasetVersionId,
 					sampling: { strategy: "first_n", sample_size: 100, seed: 0 },
 					evaluator: {
 						kind: evaluator as "exact_match" | "contains",
@@ -169,16 +170,12 @@ export function EvaluationsPage() {
 					thresholds: { minimum_pass_rate: null },
 				},
 			});
-			await publishEvaluationDraft({
-				project_id: selectedProjectId!,
-				slug: created.evaluation.slug,
-				revision: created.draft.revision,
-			});
 			await client.invalidateQueries({
 				queryKey: ["evaluation-definitions", selectedProjectId],
 			});
 			setEvaluationName("");
 			setEvaluationSlug("");
+			setDefinitionDatasetVersionId("");
 		} catch (cause) {
 			setDefinitionError((cause as Error).message);
 		} finally {
@@ -196,9 +193,27 @@ export function EvaluationsPage() {
 			<section className="grid gap-2 rounded border p-4">
 				<h2 className="text-lg font-medium">Reusable definition</h2>
 				<p className="text-sm text-muted-foreground">
-					Publishes an immutable definition using the latest available Dataset
-					Version. It does not start a run.
+					Create a revisioned draft against an immutable Dataset Version, then
+					publish it separately. It does not start a run.
 				</p>
+				<label
+					className="block space-y-2 text-sm"
+					htmlFor="evaluation-definition-dataset"
+				>
+					Definition dataset
+					<Select
+						id="evaluation-definition-dataset"
+						value={datasetId}
+						onChange={(event) => setDatasetId(event.target.value)}
+					>
+						<option value="">Choose dataset</option>
+						{datasets.data?.items.map((dataset) => (
+							<option key={dataset.id} value={dataset.id}>
+								{dataset.name}
+							</option>
+						))}
+					</Select>
+				</label>
 				<label
 					className="block space-y-2 text-sm"
 					htmlFor="evaluation-definition-name"
@@ -209,6 +224,26 @@ export function EvaluationsPage() {
 						value={evaluationName}
 						onChange={(event) => setEvaluationName(event.target.value)}
 					/>
+				</label>
+				<label
+					className="block space-y-2 text-sm"
+					htmlFor="evaluation-definition-dataset-version"
+				>
+					Dataset Version
+					<Select
+						id="evaluation-definition-dataset-version"
+						value={definitionDatasetVersionId}
+						onChange={(event) =>
+							setDefinitionDatasetVersionId(event.target.value)
+						}
+					>
+						<option value="">Choose immutable Dataset Version</option>
+						{selectedVersions.data?.items.map((item) => (
+							<option key={item.id} value={item.id}>
+								Version {item.version}
+							</option>
+						))}
+					</Select>
 				</label>
 				<label
 					className="block space-y-2 text-sm"
@@ -251,15 +286,14 @@ export function EvaluationsPage() {
 						selectedVersions.isLoading ||
 						(!selectedVersions.isError &&
 							!selectedVersions.data?.items.length) ||
+						!definitionDatasetVersionId ||
 						!evaluationName ||
 						!evaluationSlug ||
 						definitionPending
 					}
 					onClick={() => void define()}
 				>
-					{definitionPending
-						? "Publishing..."
-						: "Create and publish definition"}
+					{definitionPending ? "Creating..." : "Create definition draft"}
 				</Button>
 				{evaluations.data?.items.length ? (
 					<ul
@@ -526,12 +560,42 @@ function EvaluationDraftAuthoring({
 		queryFn: () => getEvaluationDraft({ project_id: projectId, slug }),
 	});
 	const [model, setModel] = React.useState("");
+	const [systemPrompt, setSystemPrompt] = React.useState("");
+	const [datasetVersion, setDatasetVersion] = React.useState("");
+	const [sampleSize, setSampleSize] = React.useState("100");
+	const [seed, setSeed] = React.useState("0");
+	const [evaluator, setEvaluator] = React.useState<"exact_match" | "contains">(
+		"exact_match",
+	);
+	const [expectedOutputPath, setExpectedOutputPath] =
+		React.useState("$.expected_output");
+	const [outputPath, setOutputPath] = React.useState("$.output");
+	const [temperature, setTemperature] = React.useState("0");
+	const [maxTokens, setMaxTokens] = React.useState("");
+	const [maxCost, setMaxCost] = React.useState("10");
+	const [maxDuration, setMaxDuration] = React.useState("3600");
+	const [minimumPassRate, setMinimumPassRate] = React.useState("");
+	const [publishing, setPublishing] = React.useState(false);
 	const [error, setError] = React.useState("");
 	const [saving, setSaving] = React.useState(false);
-	React.useEffect(
-		() => setModel(draft.data?.target.model ?? ""),
-		[draft.data?.target.model],
-	);
+	React.useEffect(() => {
+		if (!draft.data) return;
+		setModel(draft.data.target.model ?? "");
+		setSystemPrompt(draft.data.target.system_prompt ?? "");
+		setDatasetVersion(draft.data.dataset_version_id);
+		setSampleSize(String(draft.data.sampling.sample_size));
+		setSeed(String(draft.data.sampling.seed));
+		setEvaluator(draft.data.evaluator.kind);
+		setExpectedOutputPath(draft.data.evaluator.expected_output_path);
+		setOutputPath(draft.data.evaluator.output_path);
+		setTemperature(String(draft.data.execution_defaults.temperature));
+		setMaxTokens(draft.data.execution_defaults.max_tokens?.toString() ?? "");
+		setMaxCost(String(draft.data.limits.max_cost_usd));
+		setMaxDuration(String(draft.data.limits.max_duration_seconds));
+		setMinimumPassRate(
+			draft.data.thresholds.minimum_pass_rate?.toString() ?? "",
+		);
+	}, [draft.data]);
 	if (draft.isError)
 		return (
 			<p className="text-destructive" role="alert">
@@ -551,13 +615,34 @@ function EvaluationDraftAuthoring({
 			setError("");
 			setSaving(true);
 			const definition = {
-				dataset_version_id: draft.data!.dataset_version_id,
-				sampling: draft.data!.sampling,
-				evaluator: draft.data!.evaluator,
-				target: { ...draft.data!.target, model: model || null },
-				execution_defaults: draft.data!.execution_defaults,
-				limits: draft.data!.limits,
-				thresholds: draft.data!.thresholds,
+				dataset_version_id: datasetVersion,
+				sampling: {
+					strategy: "first_n" as const,
+					sample_size: Number(sampleSize),
+					seed: Number(seed),
+				},
+				evaluator: {
+					kind: evaluator,
+					version: "v1" as const,
+					expected_output_path: expectedOutputPath,
+					output_path: outputPath,
+				},
+				target: {
+					kind: "configured_llm" as const,
+					model: model || null,
+					system_prompt: systemPrompt || null,
+				},
+				execution_defaults: {
+					temperature: Number(temperature),
+					max_tokens: maxTokens ? Number(maxTokens) : null,
+				},
+				limits: {
+					max_cost_usd: Number(maxCost),
+					max_duration_seconds: Number(maxDuration),
+				},
+				thresholds: {
+					minimum_pass_rate: minimumPassRate ? Number(minimumPassRate) : null,
+				},
 			};
 			await updateEvaluationDraft({
 				project_id: projectId,
@@ -578,8 +663,140 @@ function EvaluationDraftAuthoring({
 			setSaving(false);
 		}
 	}
+	async function publish() {
+		try {
+			setError("");
+			setPublishing(true);
+			await publishEvaluationDraft({
+				project_id: projectId,
+				slug,
+				revision: draft.data!.revision,
+			});
+			await client.invalidateQueries({
+				queryKey: ["evaluation-versions", projectId, slug],
+			});
+		} catch (cause) {
+			setError(
+				(cause as Error).message.includes("revision")
+					? "This draft changed elsewhere. Reload it before publishing."
+					: (cause as Error).message,
+			);
+		} finally {
+			setPublishing(false);
+		}
+	}
 	return (
-		<div className="space-y-2">
+		<div className="grid gap-3 rounded border p-3">
+			<p className="text-sm font-medium">
+				Definition draft (revision {draft.data.revision})
+			</p>
+			<label
+				className="block space-y-2 text-sm"
+				htmlFor={`evaluation-draft-dataset-${slug}`}
+			>
+				Dataset Version ID
+				<Input
+					id={`evaluation-draft-dataset-${slug}`}
+					value={datasetVersion}
+					onChange={(event) => setDatasetVersion(event.target.value)}
+				/>
+			</label>
+			<div className="grid gap-3 sm:grid-cols-2">
+				<label className="block space-y-2 text-sm">
+					Sample size
+					<Input
+						type="number"
+						min="1"
+						value={sampleSize}
+						onChange={(event) => setSampleSize(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Deterministic seed
+					<Input
+						type="number"
+						min="0"
+						value={seed}
+						onChange={(event) => setSeed(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Evaluator
+					<Select
+						value={evaluator}
+						onChange={(event) =>
+							setEvaluator(event.target.value as "exact_match" | "contains")
+						}
+					>
+						<option value="exact_match">Exact match v1</option>
+						<option value="contains">Contains v1</option>
+					</Select>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Expected output path
+					<Input
+						value={expectedOutputPath}
+						onChange={(event) => setExpectedOutputPath(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Output path
+					<Input
+						value={outputPath}
+						onChange={(event) => setOutputPath(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Temperature
+					<Input
+						type="number"
+						min="0"
+						max="2"
+						step="0.1"
+						value={temperature}
+						onChange={(event) => setTemperature(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Max tokens (optional)
+					<Input
+						type="number"
+						min="1"
+						value={maxTokens}
+						onChange={(event) => setMaxTokens(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Cost limit (USD)
+					<Input
+						type="number"
+						min="0.01"
+						step="0.01"
+						value={maxCost}
+						onChange={(event) => setMaxCost(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Duration limit (seconds)
+					<Input
+						type="number"
+						min="1"
+						value={maxDuration}
+						onChange={(event) => setMaxDuration(event.target.value)}
+					/>
+				</label>
+				<label className="block space-y-2 text-sm">
+					Minimum pass rate (optional)
+					<Input
+						type="number"
+						min="0"
+						max="1"
+						step="0.01"
+						value={minimumPassRate}
+						onChange={(event) => setMinimumPassRate(event.target.value)}
+					/>
+				</label>
+			</div>
 			<label
 				className="block space-y-2 text-sm"
 				htmlFor={`evaluation-draft-model-${slug}`}
@@ -589,6 +806,17 @@ function EvaluationDraftAuthoring({
 					id={`evaluation-draft-model-${slug}`}
 					value={model}
 					onChange={(event) => setModel(event.target.value)}
+				/>
+			</label>
+			<label
+				className="block space-y-2 text-sm"
+				htmlFor={`evaluation-draft-system-${slug}`}
+			>
+				System prompt (optional)
+				<Input
+					id={`evaluation-draft-system-${slug}`}
+					value={systemPrompt}
+					onChange={(event) => setSystemPrompt(event.target.value)}
 				/>
 			</label>
 			{error && (
@@ -610,6 +838,13 @@ function EvaluationDraftAuthoring({
 				onClick={() => void save()}
 			>
 				{saving ? "Saving..." : "Save draft"}
+			</Button>
+			<Button
+				size="sm"
+				disabled={saving || publishing}
+				onClick={() => void publish()}
+			>
+				{publishing ? "Publishing..." : "Publish immutable version"}
 			</Button>
 		</div>
 	);
@@ -770,6 +1005,17 @@ export function EvaluationDefinitionDetailPage() {
 		queryFn: () => getEvaluation({ project_id: selectedProjectId!, slug }),
 		enabled: Boolean(selectedProjectId),
 	});
+	const versions = useQuery({
+		queryKey: ["evaluation-versions", selectedProjectId, slug],
+		queryFn: () =>
+			listEvaluationVersions({ project_id: selectedProjectId!, slug }),
+		enabled: Boolean(selectedProjectId),
+	});
+	const draft = useQuery({
+		queryKey: ["evaluation-draft", selectedProjectId, slug],
+		queryFn: () => getEvaluationDraft({ project_id: selectedProjectId!, slug }),
+		enabled: Boolean(selectedProjectId),
+	});
 	if (detail.isLoading && !detail.data)
 		return (
 			<DetailLoadingSkeleton testId="evaluation-definition-detail-skeleton" />
@@ -800,6 +1046,54 @@ export function EvaluationDefinitionDetailPage() {
 				</p>
 			</div>
 			{detail.data.description && <p>{detail.data.description}</p>}
+			<section
+				className="space-y-3 rounded border p-4"
+				aria-label="Definition draft"
+			>
+				<h2 className="text-lg font-medium">Draft</h2>
+				{draft.isError ? (
+					<p className="text-destructive" role="alert">
+						Unable to load draft.{" "}
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => void draft.refetch()}
+						>
+							Retry
+						</Button>
+					</p>
+				) : draft.data ? (
+					<EvaluationDraftAuthoring
+						projectId={selectedProjectId!}
+						slug={slug}
+					/>
+				) : (
+					<p className="text-sm text-muted-foreground">Loading draft...</p>
+				)}
+			</section>
+			<section
+				className="space-y-3 rounded border p-4"
+				aria-label="Immutable definition history"
+			>
+				<h2 className="text-lg font-medium">Immutable version history</h2>
+				{versions.isError ? (
+					<p className="text-destructive" role="alert">
+						Unable to load immutable version history.{" "}
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => void versions.refetch()}
+						>
+							Retry
+						</Button>
+					</p>
+				) : (
+					<EvaluationVersionInspection
+						projectId={selectedProjectId!}
+						slug={slug}
+					/>
+				)}
+			</section>
 			<p className="text-sm text-muted-foreground">
 				Created {new Date(detail.data.created_at).toLocaleString()}
 			</p>

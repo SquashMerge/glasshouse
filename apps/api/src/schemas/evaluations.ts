@@ -67,6 +67,9 @@ export const Evaluation = z
 		slug: Slug,
 		name: z.string(),
 		description: z.string().nullable(),
+		lifecycle_revision: z.number().int().positive(),
+		archived_at: z.string().datetime().nullable(),
+		tombstoned_at: z.string().datetime().nullable(),
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
 	})
@@ -142,6 +145,12 @@ export const EvaluationLegacyLinkList = z
 	.strict()
 	.openapi("EvaluationLegacyLinkList");
 export const EvaluationProjectQuery = ProjectIdQuery;
+export const EvaluationListQuery = ProjectIdQuery.extend({
+	include_archived: z.coerce.boolean().optional().default(false),
+}).strict();
+export const EvaluationTombstone = z
+	.object({ confirmation_slug: Slug })
+	.strict();
 export const EvaluationIdParam = z.object({ id: z.string().uuid() }).strict();
 export const EvaluationSlugParam = z.object({ slug: Slug }).strict();
 export const EvaluationVersionParam = EvaluationSlugParam.extend({

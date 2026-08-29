@@ -29,7 +29,13 @@ import {
 } from "./routes/experiments.js";
 import {
 	createEvaluationRoute,
+	archiveEvaluationRoute,
+	restoreEvaluationRoute,
+	tombstoneEvaluationRoute,
 	handleCreateEvaluation,
+	handleArchiveEvaluation,
+	handleRestoreEvaluation,
+	handleTombstoneEvaluation,
 	getEvaluationDraftRoute,
 	handleGetEvaluationDraft,
 	getEvaluationRoute,
@@ -303,6 +309,9 @@ register(cancelExperiment, handleCancelExperiment);
 
 register(createEvaluationRoute, handleCreateEvaluation);
 register(listEvaluationsRoute, handleListEvaluations);
+register(archiveEvaluationRoute, handleArchiveEvaluation);
+register(restoreEvaluationRoute, handleRestoreEvaluation);
+register(tombstoneEvaluationRoute, handleTombstoneEvaluation);
 register(listEvaluationLegacyLinksRoute, handleListEvaluationLegacyLinks);
 register(getEvaluationRoute, handleGetEvaluation);
 register(getEvaluationDraftRoute, handleGetEvaluationDraft);

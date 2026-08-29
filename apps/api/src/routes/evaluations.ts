@@ -8,9 +8,11 @@ import {
 	getEvaluationVersion,
 	listEvaluationLegacyLinks,
 	listEvaluations,
+	listEvaluationsIncludingArchived,
 	listEvaluationVersions,
 	publishEvaluationDraft,
 	updateEvaluationDraft,
+	transitionEvaluationLifecycle,
 } from "../db/evaluations.js";
 import { pgPool } from "../db/postgres.js";
 import { projectAuthorization } from "../db/project-authorization.js";
@@ -24,10 +26,12 @@ import {
 	EvaluationErrorResponses,
 	EvaluationSlugParam,
 	EvaluationLegacyLinkList,
+	EvaluationListQuery,
 	EvaluationList,
 	EvaluationProjectQuery,
 	EvaluationVersionList,
 	EvaluationVersionParam,
+	EvaluationTombstone,
 } from "../schemas/evaluations.js";
 import { trustedTenant } from "../tenancy.js";
 
@@ -88,12 +92,63 @@ export const listEvaluationsRoute = createRoute({
 	tags: [tag],
 	summary: "List stable Evaluations",
 	security: [{ basicAuth: [] }],
-	request: { query: EvaluationProjectQuery },
+	request: { query: EvaluationListQuery },
 	responses: {
 		200: {
 			description: "OK",
 			content: { "application/json": { schema: EvaluationList } },
 		},
+		...EvaluationErrorResponses,
+	},
+});
+export const archiveEvaluationRoute = createRoute({
+	method: "delete",
+	path: "/v1/evaluations/{slug}",
+	tags: [tag],
+	summary: "Archive an Evaluation",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: EvaluationSlugParam,
+		query: EvaluationProjectQuery,
+		headers: IfMatch,
+	},
+	responses: {
+		204: { description: "Archived", headers: z.object({ ETag: Etag }) },
+		...EvaluationErrorResponses,
+	},
+});
+export const restoreEvaluationRoute = createRoute({
+	method: "post",
+	path: "/v1/evaluations/{slug}/restore",
+	tags: [tag],
+	summary: "Restore an archived Evaluation",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: EvaluationSlugParam,
+		query: EvaluationProjectQuery,
+		headers: IfMatch,
+	},
+	responses: {
+		204: { description: "Restored", headers: z.object({ ETag: Etag }) },
+		...EvaluationErrorResponses,
+	},
+});
+export const tombstoneEvaluationRoute = createRoute({
+	method: "delete",
+	path: "/v1/evaluations/{slug}/tombstone",
+	tags: [tag],
+	summary: "Irreversibly tombstone an archived Evaluation",
+	description:
+		"Retains immutable Definition Versions and content-safe audit evidence; a tombstone cannot be restored or edited.",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: EvaluationSlugParam,
+		query: EvaluationProjectQuery,
+		headers: IfMatch,
+		body: { content: { "application/json": { schema: EvaluationTombstone } } },
+	},
+	responses: {
+		204: { description: "Tombstoned" },
 		...EvaluationErrorResponses,
 	},
 });
@@ -226,7 +281,7 @@ const revision = (value: string | undefined) => {
 };
 const authorization = (
 	c: Context,
-	operation: "product_read" | "curation_write",
+	operation: "product_read" | "curation_write" | "destructive",
 ) => projectAuthorization(trustedTenant(c), operation);
 export const handleCreateEvaluation = async (c: any) => {
 	try {
@@ -244,12 +299,56 @@ export const handleCreateEvaluation = async (c: any) => {
 };
 export const handleListEvaluations = async (c: any) => {
 	try {
+		const query = c.req.valid("query");
 		return c.json(
-			await listEvaluations(pgPool(), {
-				project_id: c.req.valid("query").project_id,
-				authorization: authorization(c, "product_read"),
-			}),
+			await (query.include_archived
+				? listEvaluationsIncludingArchived(pgPool(), {
+						project_id: query.project_id,
+						authorization: authorization(c, "destructive"),
+					})
+				: listEvaluations(pgPool(), {
+						project_id: query.project_id,
+						authorization: authorization(c, "product_read"),
+					})),
 		);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+async function lifecycle(c: any, action: "archive" | "restore" | "tombstone") {
+	const slug = c.req.valid("param").slug;
+	if (action === "tombstone" && c.req.valid("json").confirmation_slug !== slug)
+		throw new EvaluationRepositoryError(
+			"BAD_REQUEST",
+			"confirmation_slug must match the Evaluation stable ID",
+		);
+	const value = await transitionEvaluationLifecycle(pgPool(), {
+		project_id: c.req.valid("query").project_id,
+		slug,
+		revision: revision(c.req.header("if-match")),
+		action,
+		authorization: authorization(c, "destructive"),
+	});
+	c.header("ETag", `\"${value.lifecycle_revision}\"`);
+	return c.body(null, 204);
+}
+export const handleArchiveEvaluation = async (c: any) => {
+	try {
+		return await lifecycle(c, "archive");
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+export const handleRestoreEvaluation = async (c: any) => {
+	try {
+		return await lifecycle(c, "restore");
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+export const handleTombstoneEvaluation = async (c: any) => {
+	try {
+		return await lifecycle(c, "tombstone");
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}

@@ -4,6 +4,7 @@ import {
 	getEvaluationVersion,
 	listEvaluationLegacyLinks,
 	publishEvaluationDraft,
+	transitionEvaluationLifecycle,
 } from "../../src/db/evaluations";
 import { EvaluationDefinitionInput } from "../../src/schemas/evaluations";
 
@@ -171,6 +172,57 @@ describe("Evaluation definitions", () => {
 			"definition_version_id",
 			"content_hash",
 		]).not.toContain("target");
+	});
+	it("archives only at the current lifecycle revision and retains an audit event", async () => {
+		const queries: string[] = [];
+		const result = await transitionEvaluationLifecycle(
+			{
+				connect: async () => ({
+					query: async (sql: string) => {
+						queries.push(sql);
+						if (sql.startsWith("SELECT authorization_allows_project"))
+							return { rows: [{ allowed: true }] };
+						if (sql.startsWith("SELECT p.id FROM projects"))
+							return { rows: [{ id: "project" }] };
+						if (sql.startsWith("UPDATE evaluations"))
+							return {
+								rows: [
+									{
+										id: "evaluation",
+										project_id: "project",
+										slug: "quality",
+										name: "Quality",
+										description: null,
+										lifecycle_revision: 2,
+										archived_at: new Date(),
+										tombstoned_at: null,
+										created_at: new Date(),
+										updated_at: new Date(),
+									},
+								],
+							};
+						return { rows: [] };
+					},
+					release() {},
+				}),
+			} as never,
+			{
+				project_id: "project",
+				slug: "quality",
+				revision: 1,
+				action: "archive",
+				authorization: {
+					organization_id: "organization",
+					actor_id: "actor",
+					operation: "destructive",
+				},
+			},
+		);
+		expect(result.lifecycle_revision).toBe(2);
+		expect(queries.some((sql) => sql.includes("archived_at IS NULL"))).toBe(
+			true,
+		);
+		expect(queries.some((sql) => sql.includes("'archived'"))).toBe(false);
 	});
 	it("reads post-migration legacy experiments directly without inventing evidence", async () => {
 		const queries: string[] = [];

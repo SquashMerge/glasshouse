@@ -87,6 +87,10 @@ function evaluation(row: Row) {
 		slug: text(row, "slug"),
 		name: text(row, "name"),
 		description: row.description == null ? null : text(row, "description"),
+		lifecycle_revision: Number(row.lifecycle_revision ?? 1),
+		archived_at: row.archived_at == null ? null : time(row, "archived_at"),
+		tombstoned_at:
+			row.tombstoned_at == null ? null : time(row, "tombstoned_at"),
 		created_at: time(row, "created_at"),
 		updated_at: time(row, "updated_at"),
 	};
@@ -248,6 +252,26 @@ export async function listEvaluations(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
+				"SELECT * FROM evaluations WHERE project_id=$1 AND archived_at IS NULL ORDER BY created_at DESC",
+				[input.project_id],
+			);
+			return {
+				items: r.rows.map(evaluation),
+				total: r.rowCount ?? r.rows.length,
+			};
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function listEvaluationsIncludingArchived(
+	db: Transactional,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
 				"SELECT * FROM evaluations WHERE project_id=$1 ORDER BY created_at DESC",
 				[input.project_id],
 			);
@@ -325,8 +349,9 @@ export async function updateEvaluationDraft(
 	try {
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
+			const active = " AND archived_at IS NULL";
 			const r = await client.query(
-				"UPDATE evaluation_definition_drafts SET dataset_version_id=$4, sampling=$5::jsonb, evaluator=$6::jsonb, target=$7::jsonb, execution_defaults=$8::jsonb, limits=$9::jsonb, thresholds=$10::jsonb, revision=revision+1, updated_by=$11, updated_at=now() WHERE evaluation_id=(SELECT id FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2) AND project_id=$2 AND revision=$3 RETURNING *",
+				`UPDATE evaluation_definition_drafts SET dataset_version_id=$4, sampling=$5::jsonb, evaluator=$6::jsonb, target=$7::jsonb, execution_defaults=$8::jsonb, limits=$9::jsonb, thresholds=$10::jsonb, revision=revision+1, updated_by=$11, updated_at=now() WHERE evaluation_id=(SELECT id FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2${active}) AND project_id=$2 AND revision=$3 RETURNING *`,
 				[
 					input.slug,
 					input.project_id,
@@ -384,7 +409,7 @@ export async function publishEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const draft = await client.query(
-				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2 FOR UPDATE OF d",
+				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2 AND e.archived_at IS NULL FOR UPDATE OF d",
 				[input.slug, input.project_id],
 			);
 			if (!draft.rows[0])
@@ -444,6 +469,63 @@ export async function publishEvaluationDraft(
 				],
 			);
 			return version(inserted.rows[0]);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function transitionEvaluationLifecycle(
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		revision: number;
+		action: "archive" | "restore" | "tombstone";
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const predicate =
+				input.action === "archive"
+					? "archived_at IS NULL"
+					: input.action === "restore"
+						? "archived_at IS NOT NULL AND tombstoned_at IS NULL"
+						: "archived_at IS NOT NULL AND tombstoned_at IS NULL";
+			const set =
+				input.action === "archive"
+					? "archived_at=now()"
+					: input.action === "restore"
+						? "archived_at=NULL"
+						: "tombstoned_at=now()";
+			const result = await client.query(
+				`UPDATE evaluations SET ${set}, lifecycle_revision=lifecycle_revision+1, updated_at=now() WHERE (slug=$1 OR id::text=$1) AND project_id=$2 AND lifecycle_revision=$3 AND ${predicate} RETURNING *`,
+				[input.slug, input.project_id, input.revision],
+			);
+			if (!result.rows[0])
+				throw new EvaluationRepositoryError(
+					"CONFLICT",
+					"Evaluation lifecycle changed or cannot make that transition",
+				);
+			const row = result.rows[0] as Row;
+			const eventType =
+				input.action === "archive"
+					? "archived"
+					: input.action === "restore"
+						? "restored"
+						: "tombstoned";
+			await client.query(
+				"INSERT INTO evaluation_audit_events (organization_id, project_id, evaluation_id, actor_id, event_type) VALUES ($1,$2,$3,$4,$5)",
+				[
+					input.authorization.organization_id,
+					input.project_id,
+					text(row, "id"),
+					input.authorization.actor_id,
+					eventType,
+				],
+			);
+			return evaluation(row);
 		});
 	} catch (cause) {
 		throw normalize(cause);

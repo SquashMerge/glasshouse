@@ -2,10 +2,16 @@ import { describe, expect, it } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import {
 	createEvaluationRoute,
+	archiveEvaluationRoute,
+	restoreEvaluationRoute,
+	tombstoneEvaluationRoute,
 	getEvaluationDraftRoute,
 	getEvaluationRoute,
 	getEvaluationVersionRoute,
 	handleCreateEvaluation,
+	handleArchiveEvaluation,
+	handleRestoreEvaluation,
+	handleTombstoneEvaluation,
 	handleGetEvaluation,
 	handleGetEvaluationDraft,
 	handleGetEvaluationVersion,
@@ -22,6 +28,9 @@ describe("evaluation route contract", () => {
 	it("documents query-scoped create and slug-scoped draft and version paths", () => {
 		const app = new OpenAPIHono();
 		app.openapi(createEvaluationRoute, handleCreateEvaluation);
+		app.openapi(archiveEvaluationRoute, handleArchiveEvaluation);
+		app.openapi(restoreEvaluationRoute, handleRestoreEvaluation);
+		app.openapi(tombstoneEvaluationRoute, handleTombstoneEvaluation);
 		app.openapi(getEvaluationRoute, handleGetEvaluation);
 		app.openapi(getEvaluationDraftRoute, handleGetEvaluationDraft);
 		app.openapi(putEvaluationDraftRoute, handlePutEvaluationDraft);
@@ -46,6 +55,10 @@ describe("evaluation route contract", () => {
 			document.paths?.["/v1/evaluations/{slug}/versions/{version}"]?.get,
 		).toBeDefined();
 		expect(document.paths?.["/v1/evaluations/{id}/draft"]).toBeUndefined();
+		expect(document.paths?.["/v1/evaluations/{slug}"]?.delete).toBeDefined();
+		expect(
+			document.paths?.["/v1/evaluations/{slug}/tombstone"]?.delete,
+		).toBeDefined();
 	});
 	it("documents legacy immutable snapshots without fabricating the typed contract", () => {
 		expect(

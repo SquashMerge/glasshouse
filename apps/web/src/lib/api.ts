@@ -153,6 +153,9 @@ export interface Evaluation {
 	slug: string;
 	name: string;
 	description: string | null;
+	lifecycle_revision: number;
+	archived_at: string | null;
+	tombstoned_at: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -181,11 +184,55 @@ export interface EvaluationDefinitionVersion {
 }
 export async function listEvaluations(
 	project_id: string,
+	include_archived = false,
 ): Promise<{ items: Evaluation[]; total: number }> {
 	return responseJson(
-		await authedFetch(`/v1/evaluations${buildQs({ project_id })}`),
+		await authedFetch(
+			`/v1/evaluations${buildQs({ project_id, include_archived: include_archived ? "true" : undefined })}`,
+		),
 		"listEvaluations",
 	);
+}
+export async function archiveEvaluation(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/evaluations/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id })}`,
+		{ method: "DELETE", headers: { "if-match": `\"${input.revision}\"` } },
+	);
+	if (!response.ok) await responseJson<never>(response, "archiveEvaluation");
+}
+export async function restoreEvaluation(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/evaluations/${encodeURIComponent(input.slug)}/restore${buildQs({ project_id: input.project_id })}`,
+		{ method: "POST", headers: { "if-match": `\"${input.revision}\"` } },
+	);
+	if (!response.ok) await responseJson<never>(response, "restoreEvaluation");
+}
+export async function tombstoneEvaluation(input: {
+	project_id: string;
+	slug: string;
+	revision: number;
+	confirmation_slug: string;
+}): Promise<void> {
+	const response = await authedFetch(
+		`/v1/evaluations/${encodeURIComponent(input.slug)}/tombstone${buildQs({ project_id: input.project_id })}`,
+		{
+			method: "DELETE",
+			headers: {
+				"content-type": "application/json",
+				"if-match": `\"${input.revision}\"`,
+			},
+			body: JSON.stringify({ confirmation_slug: input.confirmation_slug }),
+		},
+	);
+	if (!response.ok) await responseJson<never>(response, "tombstoneEvaluation");
 }
 export async function getEvaluation(input: {
 	project_id: string;

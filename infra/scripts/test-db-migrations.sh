@@ -263,6 +263,9 @@ run_audit_lock_order_serialization_check
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0076.assert.sql"
 
 UPGRADE_0039_DATABASE="${POSTGRES_DB}_0039_upgrade"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0039_DATABASE"

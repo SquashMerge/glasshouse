@@ -184,7 +184,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		);
 
 		renderPage();
-		await screen.findByRole("option", { name: "Project One dataset" });
+		await screen.findAllByRole("option", { name: "Project One dataset" });
 		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
 
 		expect(runButton()).toBeDisabled();
@@ -199,7 +199,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 	it("clears an invalid dataset selection after switching projects", async () => {
 		listPublishedDatasetItems.mockResolvedValue(validItems);
 		const page = renderPage();
-		await screen.findByRole("option", { name: "Project One dataset" });
+		await screen.findAllByRole("option", { name: "Project One dataset" });
 		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
 		await waitFor(() => expect(runButton()).toBeEnabled());
 
@@ -215,7 +215,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			</QueryClientProvider>,
 		);
 
-		await screen.findByRole("option", { name: "Project Two dataset" });
+		await screen.findAllByRole("option", { name: "Project Two dataset" });
 		await waitFor(() => expect(datasetSelect()).toHaveValue(""));
 		expect(runButton()).toBeDisabled();
 		expect(listPublishedDatasetItems).not.toHaveBeenCalledWith({
@@ -228,7 +228,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		listPublishedDatasetItems.mockResolvedValue(validItems);
 		renderPage();
 
-		await screen.findByRole("option", { name: "Project One dataset" });
+		await screen.findAllByRole("option", { name: "Project One dataset" });
 		for (const label of [
 			"Dataset",
 			"Evaluation name",
@@ -245,7 +245,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		listDatasetVersions.mockRejectedValueOnce(new Error("offline"));
 		listPublishedDatasetItems.mockResolvedValue(validItems);
 		renderPage();
-		await screen.findByRole("option", { name: "Project One dataset" });
+		await screen.findAllByRole("option", { name: "Project One dataset" });
 		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
 		const alert = await screen.findByRole("alert");
 		expect(alert).toHaveTextContent("Unable to load Dataset Versions");
@@ -260,7 +260,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 	it("alerts and retries when selected published items cannot load", async () => {
 		listPublishedDatasetItems.mockRejectedValueOnce(new Error("offline"));
 		renderPage();
-		await screen.findByRole("option", { name: "Project One dataset" });
+		await screen.findAllByRole("option", { name: "Project One dataset" });
 		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
 		const alert = await screen.findByRole("alert");
 		expect(alert).toHaveTextContent("Unable to load published dataset items");
