@@ -164,6 +164,25 @@ jobs:
       - name: Start application stack
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
 
+      - name: Verify startup migrations are complete after application boot and restart
+        run: |
+          set -euo pipefail
+          compose=(docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml)
+          expected_postgres="$(find infra/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+          expected_clickhouse="$(find infra/db/clickhouse -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+
+          verify_migrations() {
+            actual_postgres="$("${compose[@]}" exec -T postgres psql -U astraea -d astraea -Atqc 'SELECT count(*) FROM pgmigrations')"
+            actual_clickhouse="$("${compose[@]}" exec -T clickhouse clickhouse-client --user astraea --password astraea-ci-password --database astraea --query 'SELECT count() FROM astraea_schema_migrations')"
+            test "$actual_postgres" = "$expected_postgres"
+            test "$actual_clickhouse" = "$expected_clickhouse"
+          }
+
+          verify_migrations
+          "${compose[@]}" restart api
+          "${compose[@]}" up --detach --no-deps --wait --wait-timeout 180 api
+          verify_migrations
+
       - name: Verify idempotent ClickHouse migrations
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'
 
