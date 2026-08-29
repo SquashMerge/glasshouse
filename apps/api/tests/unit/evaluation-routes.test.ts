@@ -15,9 +15,11 @@ import {
 	handleGetEvaluation,
 	handleGetEvaluationDraft,
 	handleGetEvaluationVersion,
+	handleListEvaluations,
 	handleListEvaluationVersions,
 	handlePublishEvaluationDraft,
 	handlePutEvaluationDraft,
+	listEvaluationsRoute,
 	listEvaluationVersionsRoute,
 	publishEvaluationDraftRoute,
 	putEvaluationDraftRoute,
@@ -26,9 +28,76 @@ import {
 	EvaluationDefinitionInput,
 	EvaluationDefinitionVersion,
 	EvaluationDraft,
+	EvaluationListQuery,
 } from "../../src/schemas/evaluations";
 
+const projectId = "11111111-1111-4111-8111-111111111111";
+
 describe("evaluation route contract", () => {
+	it("strictly parses include_archived query values", () => {
+		expect(EvaluationListQuery.parse({ project_id: projectId })).toEqual({
+			project_id: projectId,
+			include_archived: false,
+		});
+		expect(
+			EvaluationListQuery.parse({
+				project_id: projectId,
+				include_archived: "true",
+			}),
+		).toMatchObject({ include_archived: true });
+		expect(
+			EvaluationListQuery.parse({
+				project_id: projectId,
+				include_archived: "false",
+			}),
+		).toMatchObject({ include_archived: false });
+		expect(
+			EvaluationListQuery.safeParse({
+				project_id: projectId,
+				include_archived: "yes",
+			}).success,
+		).toBe(false);
+	});
+	it("passes only strict include_archived values to the list route", async () => {
+		const parsedQueries: Array<{
+			project_id: string;
+			include_archived: boolean;
+		}> = [];
+		const app = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		app.openapi(listEvaluationsRoute, (c) => {
+			parsedQueries.push(c.req.valid("query"));
+			return c.json({ items: [], total: 0 });
+		});
+
+		for (const [suffix, include_archived] of [
+			["", false],
+			["&include_archived=true", true],
+			["&include_archived=false", false],
+		] as const) {
+			const response = await app.request(
+				`http://test/v1/evaluations?project_id=${projectId}${suffix}`,
+			);
+			expect(response.status).toBe(200);
+			expect(parsedQueries.at(-1)).toEqual({
+				project_id: projectId,
+				include_archived,
+			});
+		}
+
+		const invalid = await app.request(
+			`http://test/v1/evaluations?project_id=${projectId}&include_archived=yes`,
+		);
+		expect(invalid.status).toBe(400);
+		expect(parsedQueries).toHaveLength(3);
+	});
 	it("documents query-scoped create and slug-scoped draft and version paths", () => {
 		const app = new OpenAPIHono();
 		app.openapi(createEvaluationRoute, handleCreateEvaluation);
@@ -39,6 +108,7 @@ describe("evaluation route contract", () => {
 		app.openapi(getEvaluationDraftRoute, handleGetEvaluationDraft);
 		app.openapi(putEvaluationDraftRoute, handlePutEvaluationDraft);
 		app.openapi(publishEvaluationDraftRoute, handlePublishEvaluationDraft);
+		app.openapi(listEvaluationsRoute, handleListEvaluations);
 		app.openapi(listEvaluationVersionsRoute, handleListEvaluationVersions);
 		app.openapi(getEvaluationVersionRoute, handleGetEvaluationVersion);
 		const document = app.getOpenAPIDocument({

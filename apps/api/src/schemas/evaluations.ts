@@ -165,7 +165,11 @@ export const EvaluationLegacyLinkList = z
 	.openapi("EvaluationLegacyLinkList");
 export const EvaluationProjectQuery = ProjectIdQuery;
 export const EvaluationListQuery = ProjectIdQuery.extend({
-	include_archived: z.coerce.boolean().optional().default(false),
+	include_archived: z
+		.enum(["true", "false"])
+		.optional()
+		.default("false")
+		.transform((value) => value === "true"),
 }).strict();
 export const EvaluationTombstone = z
 	.object({ confirmation_slug: Slug })
