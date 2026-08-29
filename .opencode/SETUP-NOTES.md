@@ -15,7 +15,7 @@ Do not put real credentials, local paths, auth-state locations, copied diagnosti
 
 - Bun workspace: Hono API in `apps/api` and React/Vite web app in `apps/web`.
 - PostgreSQL stores transactional data; ClickHouse stores trace/OLAP data; Valkey is the Redis-compatible queue/cache service.
-- Production runs the ordered PostgreSQL and ClickHouse migration runners before the API starts. They remain separate schema systems and local host development invokes their runners explicitly.
+- Production runs the PostgreSQL and ClickHouse migration runners concurrently before every API start; the API starts only after both succeed. PostgreSQL tracks applied migrations, while ClickHouse records checksum-verified changesets so later starts skip already-applied SQL. They remain separate schema systems and local host development invokes their runners explicitly.
 - Python is isolated to compute-heavy integrations such as the GEPA worker; keep credentials at the worker/deployment boundary.
 
 ## Prerequisites
@@ -71,7 +71,7 @@ make down
 # Stops the full local stack when finished.
 ```
 
-The dashboard is available at `http://localhost:5173`; API documentation is at `http://localhost:3000/reference` unless ports were changed in `infra/.env`.
+The dashboard is available at `http://localhost:5173`; API documentation is at `http://localhost:3000/reference` unless ports were changed in `infra/.env`. PostgreSQL, ClickHouse, and Valkey are published on loopback only, so their development ports are not reachable from other hosts by default.
 
 ### Fast local API and frontend iteration
 
@@ -88,7 +88,7 @@ make dev-frontend
 # Runs the Vite app on the host and proxies API routes to the local backend.
 ```
 
-Before starting a local API against fresh `deps-up` data services, apply both schema systems from the host process. `make dev-backend` does not run either migration runner:
+`make dev-backend` runs both schema systems concurrently before it starts the API watcher. They run once for each explicit `make dev-backend` invocation, not for every watch-triggered source reload. Run either command below only when intentionally applying a single schema system:
 
 ```sh
 bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run db:migrate'
