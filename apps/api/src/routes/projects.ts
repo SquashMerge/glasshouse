@@ -384,11 +384,10 @@ export async function handleGetMe(c: Context) {
 		const tenant = trustedTenant(c);
 		const pool = pgPool();
 		const membership = await pool.query<{
-			role: "owner" | "member";
-			durable_role: "admin" | "user" | "read_only" | null;
+			durable_role: "admin" | "user" | "read_only";
 			default_project_id: string;
 		}>(
-			"SELECT om.role, durable.role AS durable_role, o.default_project_id FROM organization_memberships om JOIN organizations o ON o.id = om.organization_id JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN organization_actor_roles durable ON durable.organization_id = om.organization_id AND durable.actor_id = $2 WHERE om.organization_id = $1",
+			"SELECT role.role AS durable_role, o.default_project_id FROM organizations o JOIN organization_actor_roles role ON role.organization_id = o.id AND role.actor_id = $2 JOIN actor_identities identity ON identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace = 'basic:v1' WHERE o.id = $1",
 			[tenant.organizationId, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
@@ -397,9 +396,7 @@ export async function handleGetMe(c: Context) {
 			actor_subject: tenant.actor,
 			actor_id: tenant.actorId,
 			organization_id: tenant.organizationId,
-			organization_role:
-				membership.rows[0].durable_role ??
-				publicOrganizationRole(membership.rows[0].role),
+			organization_role: membership.rows[0].durable_role,
 			can_recover_admin: canRecoverAdmin(tenant),
 			effective_organization_role_id: `organization:${membership.rows[0].durable_role === "admin" ? "admin" : "user"}`,
 			default_project_id: membership.rows[0].default_project_id,
@@ -413,7 +410,7 @@ export async function handleListProjects(c: Context) {
 	try {
 		const tenant = trustedTenant(c);
 		const membership = await pgPool().query(
-			"SELECT om.role FROM organization_memberships om JOIN actor_identities identity ON identity.actor_id = $2 AND identity.organization_id = om.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) WHERE om.organization_id = $1",
+			"SELECT 1 FROM organization_actor_roles role JOIN actor_identities identity ON identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace = 'basic:v1' WHERE role.organization_id = $1 AND role.actor_id = $2",
 			[tenant.organizationId, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
@@ -518,7 +515,7 @@ export async function handleCreateProject(c: Context) {
 			tenant.organizationId,
 			tenant,
 			"organization_manage",
-			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_actor_roles WHERE organization_id = $3 AND actor_id = $5 AND authorization_allows_organization($3, $5, 'organization_manage') FOR UPDATE), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, $3, $4, 'manager' FROM p), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p), lifecycle AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
+			"WITH authorization AS MATERIALIZED (SELECT role.actor_id FROM organization_actor_roles role JOIN actor_identities identity ON identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace = 'basic:v1' WHERE role.organization_id = $3 AND role.actor_id = $5 AND authorization_allows_organization($3, $5, 'organization_manage') FOR UPDATE OF role), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT p.id, $3, membership.actor_subject, 'manager' FROM p JOIN actor_identities identity ON identity.organization_id = $3 AND identity.actor_id = $5 AND identity.provider_namespace = 'basic:v1' JOIN organization_memberships membership ON membership.organization_id = $3 AND basic_auth_identity_matches($3, membership.actor_subject, identity.actor_id)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p), lifecycle AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
 			[
 				input.name,
 				input.slug,
@@ -563,7 +560,7 @@ export async function handleSetDefaultProject(c: Context) {
 				throw new Error("Forbidden");
 			await lockProjectAuditProvenance(client, project_id);
 			const updated = await client.query<Row>(
-				"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $4) AND role = 'owner' AND authorization_allows_organization($1, $4, 'destructive') FOR UPDATE), selected AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $2 AND p.organization_id = $1 AND p.status = 'active' FOR UPDATE), changed AS (UPDATE organizations SET default_project_id = $2, updated_at = now() WHERE id = $1 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM selected) RETURNING id), audit AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'default_changed' FROM changed) SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, true AS is_default, 'owner'::text AS project_role FROM projects p WHERE p.id = $2 AND EXISTS (SELECT 1 FROM changed)",
+				"WITH authorization AS MATERIALIZED (SELECT role.actor_id FROM organization_actor_roles role WHERE role.organization_id = $1 AND role.actor_id = $4 AND authorization_allows_organization($1, $4, 'destructive') FOR UPDATE OF role), selected AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $2 AND p.organization_id = $1 AND p.status = 'active' FOR UPDATE), changed AS (UPDATE organizations SET default_project_id = $2, updated_at = now() WHERE id = $1 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM selected) RETURNING id), audit AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'default_changed' FROM changed) SELECT p.id, p.name, p.slug, p.status, p.created_at, p.archived_at, true AS is_default, 'admin'::text AS project_role FROM projects p WHERE p.id = $2 AND EXISTS (SELECT 1 FROM changed)",
 				[tenant.organizationId, project_id, tenant.actor, tenant.actorId],
 			);
 			if (!updated.rows[0]) throw new Error("Not found");
@@ -611,7 +608,7 @@ export async function handleDeleteProject(c: Context) {
 				name: string;
 				status: Row["status"];
 			}>(
-				"SELECT p.name, p.status FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE p.id = $1 AND p.organization_id = $2 AND ((p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')) OR (p.status <> 'deleting' AND om.role = 'owner')) AND authorization_allows_project($2, $1, $3, 'destructive') FOR UPDATE OF p, om",
+				"SELECT p.name, p.status FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND authorization_allows_project($2, $1, $3, 'destructive') FOR UPDATE OF p",
 				[id, tenant.organizationId, tenant.actorId],
 			);
 			if (!target.rows[0]) throw new Error("Not found");
@@ -740,7 +737,7 @@ export async function handleGetProjectDeletionStatus(c: Context) {
 		await requireProjectPolicy(c, id, "destructive");
 		const tenant = trustedTenant(c);
 		const result = await pgPool().query<DeletionJob>(
-			"SELECT j.status, j.traces_cleaned_at, j.observations_cleaned_at, j.completed_at, j.attempt_count FROM project_deletion_jobs j JOIN projects p ON p.id = j.project_id AND p.organization_id = j.organization_id JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE j.project_id = $1 AND j.organization_id = $2 AND p.status = 'deleting' AND (om.role = 'owner' OR pm.role = 'manager')",
+			"SELECT j.status, j.traces_cleaned_at, j.observations_cleaned_at, j.completed_at, j.attempt_count FROM project_deletion_jobs j JOIN projects p ON p.id = j.project_id AND p.organization_id = j.organization_id WHERE j.project_id = $1 AND j.organization_id = $2 AND p.status = 'deleting' AND authorization_allows_project($2, $1, $3, 'destructive')",
 			[id, tenant.organizationId, tenant.actorId],
 		);
 		if (!result.rows[0]) throw new Error("Not found");
@@ -895,7 +892,7 @@ export async function handleListProjectMembers(c: Context) {
 			role: "manager" | "member";
 			created_at: Date;
 		}>(
-			"SELECT pm.actor_subject, pm.role, pm.created_at FROM project_memberships pm WHERE pm.project_id = $1 AND EXISTS (SELECT 1 FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $2) LEFT JOIN project_memberships actor_pm ON actor_pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_pm.actor_subject, $2) WHERE p.id = $1 AND p.organization_id = $3 AND (om.role = 'owner' OR actor_pm.role = 'manager')) ORDER BY pm.actor_subject",
+			"SELECT pm.actor_subject, pm.role, pm.created_at FROM project_memberships pm WHERE pm.project_id = $1 AND EXISTS (SELECT 1 FROM projects p WHERE p.id = $1 AND p.organization_id = $3 AND authorization_allows_project($3, $1, $2, 'project_manage')) ORDER BY pm.actor_subject",
 			[id, tenant.actorId, tenant.organizationId],
 		);
 		return c.json({
@@ -950,7 +947,7 @@ export async function handlePutProjectMember(c: Context) {
 			id,
 			tenant,
 			"project_manage",
-			"WITH authorization AS MATERIALIZED (SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $6) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $6) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $2 AND p.status <> 'deleting' AND (om.role = 'owner' OR pm.role = 'manager') AND authorization_allows_project($2, $1, $6, 'project_manage') FOR UPDATE OF p, om), mutation AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT $1, $2, $3, $4 FROM authorization WHERE EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND actor_subject = $3) ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE project_memberships.role IS DISTINCT FROM EXCLUDED.role RETURNING actor_subject, role, created_at, (xmax = 0) AS created), membership AS (SELECT actor_subject, role, created_at FROM mutation UNION ALL SELECT pm.actor_subject, pm.role, pm.created_at FROM project_memberships pm WHERE pm.project_id = $1 AND pm.actor_subject = $3 AND EXISTS (SELECT 1 FROM authorization) AND NOT EXISTS (SELECT 1 FROM mutation)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $2, $1, $5, CASE WHEN created THEN 'project_membership_created' ELSE 'project_membership_updated' END FROM mutation) SELECT * FROM membership",
+			"WITH authorization AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.status <> 'deleting' AND authorization_allows_project($2, $1, $6, 'project_manage') FOR UPDATE OF p), mutation AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT $1, $2, $3, $4 FROM authorization WHERE EXISTS (SELECT 1 FROM organization_memberships WHERE organization_id = $2 AND actor_subject = $3) ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE project_memberships.role IS DISTINCT FROM EXCLUDED.role RETURNING actor_subject, role, created_at, (xmax = 0) AS created), membership AS (SELECT actor_subject, role, created_at FROM mutation UNION ALL SELECT pm.actor_subject, pm.role, pm.created_at FROM project_memberships pm WHERE pm.project_id = $1 AND pm.actor_subject = $3 AND EXISTS (SELECT 1 FROM authorization) AND NOT EXISTS (SELECT 1 FROM mutation)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $2, $1, $5, CASE WHEN created THEN 'project_membership_created' ELSE 'project_membership_updated' END FROM mutation) SELECT * FROM membership",
 			[
 				id,
 				tenant.organizationId,
@@ -981,7 +978,7 @@ export async function handleDeleteProjectMember(c: Context) {
 			id,
 			tenant,
 			"project_manage",
-			"WITH authorization AS MATERIALIZED (SELECT p.id FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $5) LEFT JOIN LATERAL (SELECT role FROM project_memberships WHERE project_id = p.id AND basic_auth_identity_matches(p.organization_id, actor_subject, $5) FOR UPDATE) pm ON true WHERE p.id = $1 AND p.organization_id = $3 AND p.status <> 'deleting' AND (om.role = 'owner' OR pm.role = 'manager') AND authorization_allows_project($3, $1, $5, 'project_manage') FOR UPDATE OF p, om), deleted AS (DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) RETURNING project_id), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, project_id, $4, 'project_membership_removed' FROM deleted) SELECT * FROM deleted",
+			"WITH authorization AS MATERIALIZED (SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $3 AND p.status <> 'deleting' AND authorization_allows_project($3, $1, $5, 'project_manage') FOR UPDATE OF p), deleted AS (DELETE FROM project_memberships WHERE project_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) RETURNING project_id), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, project_id, $4, 'project_membership_removed' FROM deleted) SELECT * FROM deleted",
 			[id, actor, tenant.organizationId, tenant.actor, tenant.actorId],
 			["active", "archived"],
 			actor,
@@ -1008,7 +1005,7 @@ export async function handlePutOrganizationMember(c: Context) {
 			tenant.organizationId,
 			tenant,
 			"organization_manage",
-			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $5) AND role = 'owner' AND authorization_allows_organization($1, $5, 'organization_manage') FOR UPDATE), locked_projects AS MATERIALIZED (SELECT id, status, slug, created_at FROM projects WHERE organization_id = $1 FOR UPDATE), unfrozen AS MATERIALIZED (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM locked_projects WHERE status = 'deleting')), audit_project AS MATERIALIZED (SELECT id FROM locked_projects ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1), mutation AS (INSERT INTO organization_memberships (organization_id, actor_subject, role) SELECT $1, $2, $3 FROM authorization CROSS JOIN unfrozen WHERE EXISTS (SELECT 1 FROM locked_projects) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE organization_memberships.role IS DISTINCT FROM EXCLUDED.role RETURNING actor_subject, role, created_at, (xmax = 0) AS created), membership AS (SELECT actor_subject, role, created_at FROM mutation UNION ALL SELECT om.actor_subject, om.role, om.created_at FROM organization_memberships om WHERE om.organization_id = $1 AND om.actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM locked_projects) AND EXISTS (SELECT 1 FROM unfrozen) AND NOT EXISTS (SELECT 1 FROM mutation)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, audit_project.id, $4, CASE WHEN created THEN 'organization_membership_created' ELSE 'organization_membership_updated' END FROM mutation CROSS JOIN audit_project) SELECT * FROM membership",
+			"WITH authorization AS MATERIALIZED (SELECT role.actor_id FROM organization_actor_roles role WHERE role.organization_id = $1 AND role.actor_id = $5 AND authorization_allows_organization($1, $5, 'organization_manage') FOR UPDATE OF role), locked_projects AS MATERIALIZED (SELECT id, status, slug, created_at FROM projects WHERE organization_id = $1 FOR UPDATE), unfrozen AS MATERIALIZED (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM locked_projects WHERE status = 'deleting')), audit_project AS MATERIALIZED (SELECT id FROM locked_projects ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1), mutation AS (INSERT INTO organization_memberships (organization_id, actor_subject, role) SELECT $1, $2, $3 FROM authorization CROSS JOIN unfrozen WHERE EXISTS (SELECT 1 FROM locked_projects) ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE organization_memberships.role IS DISTINCT FROM EXCLUDED.role RETURNING actor_subject, role, created_at, (xmax = 0) AS created), membership AS (SELECT actor_subject, role, created_at FROM mutation UNION ALL SELECT om.actor_subject, om.role, om.created_at FROM organization_memberships om WHERE om.organization_id = $1 AND om.actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM locked_projects) AND EXISTS (SELECT 1 FROM unfrozen) AND NOT EXISTS (SELECT 1 FROM mutation)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, audit_project.id, $4, CASE WHEN created THEN 'organization_membership_created' ELSE 'organization_membership_updated' END FROM mutation CROSS JOIN audit_project) SELECT * FROM membership",
 			[tenant.organizationId, actor, targetRole, tenant.actor, tenant.actorId],
 			actor,
 		);
@@ -1032,7 +1029,7 @@ export async function handleListOrganizationMembers(c: Context) {
 			role: "owner" | "member";
 			created_at: Date;
 		}>(
-			"SELECT om.actor_subject, om.role, om.created_at FROM organization_memberships om WHERE om.organization_id = $1 AND EXISTS (SELECT 1 FROM organization_memberships actor_om WHERE actor_om.organization_id = $1 AND basic_auth_identity_matches($1, actor_om.actor_subject, $2) AND actor_om.role = 'owner') ORDER BY om.actor_subject",
+			"SELECT om.actor_subject, om.role, om.created_at FROM organization_memberships om WHERE om.organization_id = $1 AND authorization_allows_organization($1, $2, 'organization_manage') ORDER BY om.actor_subject",
 			[tenant.organizationId, tenant.actorId],
 		);
 		return c.json({
@@ -1055,7 +1052,7 @@ export async function handleDeleteOrganizationMember(c: Context) {
 			tenant.organizationId,
 			tenant,
 			"organization_manage",
-			"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $4) AND role = 'owner' AND authorization_allows_organization($1, $4, 'organization_manage') FOR UPDATE), locked_projects AS MATERIALIZED (SELECT id, status, slug, created_at FROM projects WHERE organization_id = $1 FOR UPDATE), unfrozen AS MATERIALIZED (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM locked_projects WHERE status = 'deleting')), audit_project AS MATERIALIZED (SELECT id FROM locked_projects ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1), deleted AS (DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM locked_projects) AND EXISTS (SELECT 1 FROM unfrozen) RETURNING actor_subject), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, audit_project.id, $3, 'organization_membership_removed' FROM deleted CROSS JOIN audit_project) SELECT * FROM deleted",
+			"WITH authorization AS MATERIALIZED (SELECT role.actor_id FROM organization_actor_roles role WHERE role.organization_id = $1 AND role.actor_id = $4 AND authorization_allows_organization($1, $4, 'organization_manage') FOR UPDATE OF role), locked_projects AS MATERIALIZED (SELECT id, status, slug, created_at FROM projects WHERE organization_id = $1 FOR UPDATE), unfrozen AS MATERIALIZED (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM locked_projects WHERE status = 'deleting')), audit_project AS MATERIALIZED (SELECT id FROM locked_projects ORDER BY (slug = 'default') DESC, created_at, id LIMIT 1), deleted AS (DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2 AND EXISTS (SELECT 1 FROM authorization) AND EXISTS (SELECT 1 FROM locked_projects) AND EXISTS (SELECT 1 FROM unfrozen) RETURNING actor_subject), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $1, audit_project.id, $3, 'organization_membership_removed' FROM deleted CROSS JOIN audit_project) SELECT * FROM deleted",
 			[tenant.organizationId, actor, tenant.actor, tenant.actorId],
 			actor,
 		);
