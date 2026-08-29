@@ -189,6 +189,7 @@ export interface EvaluationDefinitionVersion {
 	project_id: string;
 	version: number;
 	content_hash: string;
+	published_by: string;
 	published_draft_revision: number;
 	created_at: string;
 	definition_contract: "v1" | "legacy_untyped";

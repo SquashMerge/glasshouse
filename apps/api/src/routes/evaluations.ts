@@ -71,7 +71,10 @@ export const createEvaluationRoute = createRoute({
 	security: [{ basicAuth: [] }],
 	request: {
 		query: EvaluationProjectQuery,
-		body: { content: { "application/json": { schema: EvaluationCreate } } },
+		body: {
+			content: { "application/json": { schema: EvaluationCreate } },
+			required: true,
+		},
 	},
 	responses: {
 		201: {
@@ -145,7 +148,10 @@ export const tombstoneEvaluationRoute = createRoute({
 		params: EvaluationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
-		body: { content: { "application/json": { schema: EvaluationTombstone } } },
+		body: {
+			content: { "application/json": { schema: EvaluationTombstone } },
+			required: true,
+		},
 	},
 	responses: {
 		204: { description: "Tombstoned" },
@@ -195,6 +201,7 @@ export const putEvaluationDraftRoute = createRoute({
 		headers: IfMatch,
 		body: {
 			content: { "application/json": { schema: EvaluationDefinitionInput } },
+			required: true,
 		},
 	},
 	responses: {

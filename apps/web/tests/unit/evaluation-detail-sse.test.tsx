@@ -7,6 +7,9 @@ const sse = vi.hoisted(() => ({
 	onMessage: vi.fn(),
 	calls: [] as unknown[][],
 }));
+const selection = vi.hoisted(() => ({
+	projectRole: "user" as "admin" | "user" | "read_only",
+}));
 const {
 	cancelExperiment,
 	experimentResults,
@@ -30,6 +33,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
 		selectedProjectId: "11111111-1111-4111-8111-111111111111",
+		selectedProject: { project_role: selection.projectRole },
 	}),
 }));
 vi.mock("../../src/lib/api", () => ({
@@ -66,6 +70,7 @@ afterEach(() => {
 	cleanup();
 	vi.resetAllMocks();
 	sse.calls.length = 0;
+	selection.projectRole = "user";
 });
 
 describe("evaluation detail lifecycle stream", () => {
@@ -105,5 +110,30 @@ describe("evaluation detail lifecycle stream", () => {
 				false,
 			),
 		);
+	});
+	it("hides run cancellation for a Read-only project role", async () => {
+		selection.projectRole = "read_only";
+		getExperiment.mockResolvedValue(experiment);
+		experimentResults.mockResolvedValue({ items: [] });
+		experimentSummary.mockResolvedValue({
+			experiment_id: experiment.id,
+			total: 4,
+			passed: 3,
+			failed: 1,
+			pass_rate: 0.75,
+			avg_duration_ms: 42,
+		});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<EvaluationDetailPage />
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText("Status: running");
+		expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+		expect(cancelExperiment).not.toHaveBeenCalled();
 	});
 });

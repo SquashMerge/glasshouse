@@ -85,6 +85,7 @@ describe("Evaluation definitions", () => {
 			...typed,
 			version: 1,
 			content_hash: definitionHash(definition),
+			published_by: "66666666-6666-4666-8666-666666666666",
 			published_draft_revision: 2,
 			created_at: legacy.updated_at,
 		};
@@ -169,6 +170,7 @@ describe("Evaluation definitions", () => {
 			...definition,
 			version: 1,
 			content_hash: definitionHash(definition),
+			published_by: "66666666-6666-4666-8666-666666666666",
 			published_draft_revision: 1,
 			created_at: new Date("2026-01-01T00:00:00.000Z"),
 		};
@@ -224,6 +226,7 @@ describe("Evaluation definitions", () => {
 			sampling: null,
 			limits: null,
 			content_hash: "b".repeat(64),
+			published_by: "66666666-6666-4666-8666-666666666666",
 			published_draft_revision: 1,
 			created_at: new Date("2026-01-01T00:00:00.000Z"),
 		};

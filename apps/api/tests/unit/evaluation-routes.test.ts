@@ -251,6 +251,7 @@ describe("evaluation route contract", () => {
 			project_id: projectId,
 			version: 1,
 			content_hash: "a".repeat(64),
+			published_by: actorId,
 			published_draft_revision: 1,
 			created_at: now,
 		};
@@ -357,6 +358,78 @@ describe("evaluation route contract", () => {
 			postgresSpy.mockRestore();
 		}
 	});
+	it("returns the stored publishing Actor ID from the publish response", async () => {
+		const evaluationId = "44444444-4444-4444-8444-444444444444";
+		const publishedBy = "55555555-5555-4555-8555-555555555555";
+		const now = new Date("2026-08-29T00:00:00.000Z");
+		const draft = {
+			...definition,
+			evaluation_id: evaluationId,
+			project_id: projectId,
+			revision: 1,
+			updated_at: now,
+		};
+		const published = {
+			...definition,
+			id: "66666666-6666-4666-8666-666666666666",
+			evaluation_id: evaluationId,
+			project_id: projectId,
+			version: 1,
+			content_hash: "a".repeat(64),
+			published_by: publishedBy,
+			published_draft_revision: 1,
+			created_at: now,
+		};
+		const query = async (sql: string) => {
+			if (sql.startsWith("SELECT p.id FROM projects"))
+				return { rows: [{ id: projectId }] };
+			if (sql.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			if (sql.startsWith("SELECT d.* FROM evaluation_definition_drafts"))
+				return { rows: [draft] };
+			if (sql.startsWith("SELECT v.* FROM evaluation_definition_versions"))
+				return { rows: [] };
+			if (sql.startsWith("INSERT INTO evaluation_definition_versions"))
+				return { rows: [published] };
+			return { rows: [] };
+		};
+		const postgresSpy = spyOn(postgres, "pgPool").mockReturnValue({
+			connect: async () => ({ query, release() {} }),
+		} as never);
+		const app = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		app.use("/v1/*", async (c, next) => {
+			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+				actor: "publisher",
+				actorId,
+				organizationId,
+			});
+			await next();
+		});
+		app.openapi(publishEvaluationDraftRoute, handlePublishEvaluationDraft);
+
+		try {
+			const response = await app.request(
+				`http://test/v1/evaluations/quality-check/draft/publish?project_id=${projectId}`,
+				{ method: "POST", headers: { "if-match": '"1"' } },
+			);
+
+			expect(response.status).toBe(201);
+			const body = await response.json();
+			expect(body).toMatchObject({ published_by: publishedBy });
+			expect(body.published_by).not.toBe(actorId);
+			expect(body).not.toHaveProperty("published_by_subject");
+		} finally {
+			postgresSpy.mockRestore();
+		}
+	});
 	it("documents query-scoped create and slug-scoped draft and version paths", () => {
 		const app = new OpenAPIHono();
 		app.openapi(createEvaluationRoute, handleCreateEvaluation);
@@ -374,6 +447,28 @@ describe("evaluation route contract", () => {
 			openapi: "3.0.0",
 			info: { title: "test", version: "1" },
 		});
+		const contract = JSON.parse(JSON.stringify(document)) as {
+			components?: {
+				schemas?: Record<
+					string,
+					{ properties?: Record<string, { description?: string }> }
+				>;
+			};
+			paths?: Record<
+				string,
+				Record<
+					string,
+					{
+						requestBody?: { required?: boolean };
+						parameters?: Array<{
+							name?: string;
+							in?: string;
+							schema?: { description?: string };
+						}>;
+					}
+				>
+			>;
+		};
 		expect(
 			document.paths?.["/v1/evaluations"]?.post?.parameters,
 		).toContainEqual(
@@ -383,6 +478,24 @@ describe("evaluation route contract", () => {
 				required: true,
 			}),
 		);
+		for (const [path, method] of [
+			["/v1/evaluations", "post"],
+			["/v1/evaluations/{slug}/draft", "put"],
+			["/v1/evaluations/{slug}/tombstone", "delete"],
+		] as const)
+			expect(contract.paths?.[path]?.[method]?.requestBody?.required).toBe(
+				true,
+			);
+		expect(
+			contract.components?.schemas?.EvaluationCreate?.properties?.slug
+				?.description,
+		).toContain("UUID-shaped values");
+		const detailSlug = contract.paths?.[
+			"/v1/evaluations/{slug}"
+		]?.get?.parameters?.find(
+			(parameter) => parameter.name === "slug" && parameter.in === "path",
+		);
+		expect(detailSlug?.schema?.description).toContain("UUID Evaluation ID");
 		expect(document.paths?.["/v1/evaluations/{slug}/draft"]?.put).toBeDefined();
 		expect(
 			document.paths?.["/v1/evaluations/{slug}/versions/{version}"]?.get,
@@ -409,6 +522,7 @@ describe("evaluation route contract", () => {
 				limits: null,
 				thresholds: {},
 				content_hash: "b".repeat(64),
+				published_by: "55555555-5555-4555-8555-555555555555",
 				published_draft_revision: 1,
 				created_at: "2026-01-01T00:00:00.000Z",
 			}).success,

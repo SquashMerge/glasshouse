@@ -17,6 +17,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
 		selectedProjectId: "11111111-1111-4111-8111-111111111111",
+		selectedProject: { project_role: "user" },
 	}),
 }));
 vi.mock("../../src/lib/api", () => ({
@@ -77,6 +78,7 @@ describe("EvaluationDefinitionDetailPage", () => {
 					project_id: "11111111-1111-4111-8111-111111111111",
 					version: 1,
 					content_hash: "a".repeat(64),
+					published_by: "55555555-5555-4555-8555-555555555555",
 					published_draft_revision: 1,
 					created_at: "2026-01-01T00:00:00.000Z",
 					definition_contract: "v1",
@@ -117,6 +119,11 @@ describe("EvaluationDefinitionDetailPage", () => {
 		expect(await screen.findByRole("heading", { name: "Draft" })).toBeTruthy();
 		expect(
 			screen.getByRole("heading", { name: "Immutable version history" }),
+		).toBeTruthy();
+		expect(
+			await screen.findByText(
+				"Published by 55555555-5555-4555-8555-555555555555",
+			),
 		).toBeTruthy();
 		expect(await screen.findByDisplayValue("Be precise")).toBeTruthy();
 	});

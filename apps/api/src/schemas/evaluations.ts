@@ -8,14 +8,21 @@ const EvaluationReservedSlugs = new Set(["compatibility"]);
 const EvaluationIdentifier = z
 	.string()
 	.max(64)
-	.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+	.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+	.openapi({ example: "support-quality-gate" });
 const Slug = EvaluationIdentifier.refine(
 	(value) => !UUID_SHAPED_EVALUATION_IDENTIFIER.test(value),
 	"Evaluation slug must not be UUID-shaped",
-).refine(
-	(value) => !EvaluationReservedSlugs.has(value),
-	"Evaluation slug is reserved",
-);
+)
+	.refine(
+		(value) => !EvaluationReservedSlugs.has(value),
+		"Evaluation slug is reserved",
+	)
+	.openapi({
+		description:
+			"Canonical Evaluation slug. UUID-shaped values and the reserved `compatibility` value are rejected when creating an Evaluation.",
+		example: "support-quality-gate",
+	});
 const JsonPath = z
 	.string()
 	.regex(/^\$\.[A-Za-z0-9_.-]+$/)
@@ -127,6 +134,7 @@ const EvaluationDefinitionVersionFields = {
 	project_id: z.string().uuid(),
 	version: z.number().int().positive(),
 	content_hash: z.string().regex(/^[a-f0-9]{64}$/),
+	published_by: z.string().uuid(),
 	published_draft_revision: z.number().int().positive(),
 	created_at: z.string().datetime(),
 };
@@ -186,7 +194,13 @@ export const EvaluationTombstone = z
 	.strict();
 export const EvaluationIdParam = z.object({ id: z.string().uuid() }).strict();
 export const EvaluationSlugParam = z
-	.object({ slug: EvaluationIdentifier })
+	.object({
+		slug: EvaluationIdentifier.openapi({
+			param: { name: "slug", in: "path" },
+			description:
+				"Evaluation selector. Accepts a canonical slug or a UUID Evaluation ID for compatibility detail lookups.",
+		}),
+	})
 	.strict();
 export const EvaluationVersionParam = EvaluationSlugParam.extend({
 	version: z.coerce.number().int().positive(),

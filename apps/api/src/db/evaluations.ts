@@ -148,6 +148,7 @@ function version(row: Row) {
 		thresholds: object(row, "thresholds"),
 		version: Number(row.version),
 		content_hash: text(row, "content_hash"),
+		published_by: text(row, "published_by"),
 		published_draft_revision: Number(row.published_draft_revision),
 		created_at: time(row, "created_at"),
 	};

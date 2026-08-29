@@ -2,6 +2,7 @@ import * as React from "react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	archiveEvaluation,
 	cancelExperiment,
 	createEvaluation,
 	createExperiment,
@@ -20,6 +21,8 @@ import {
 	listDatasetVersions,
 	listPublishedDatasetItems,
 	publishEvaluationDraft,
+	restoreEvaluation,
+	tombstoneEvaluation,
 	updateEvaluationDraft,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
@@ -35,6 +38,10 @@ import { useEventSource } from "../hooks/useEventSource";
 export function EvaluationsPage() {
 	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const client = useQueryClient();
+	const canCurate =
+		selectedProject?.project_role === "admin" ||
+		selectedProject?.project_role === "user";
+	const canAdmin = selectedProject?.project_role === "admin";
 	const datasets = useQuery({
 		queryKey: ["datasets", selectedProjectId],
 		queryFn: () => listDatasets(selectedProjectId!),
@@ -46,8 +53,8 @@ export function EvaluationsPage() {
 		enabled: Boolean(selectedProjectId),
 	});
 	const evaluations = useQuery({
-		queryKey: ["evaluation-definitions", selectedProjectId],
-		queryFn: () => listEvaluations(selectedProjectId!),
+		queryKey: ["evaluation-definitions", selectedProjectId, canAdmin],
+		queryFn: () => listEvaluations(selectedProjectId!, canAdmin),
 		enabled: Boolean(selectedProjectId),
 	});
 	const legacyLinks = useQuery({
@@ -56,8 +63,11 @@ export function EvaluationsPage() {
 		enabled: Boolean(selectedProjectId),
 	});
 	const [datasetId, setDatasetId] = React.useState("");
+	const [definitionDatasetVersionId, setDefinitionDatasetVersionId] =
+		React.useState("");
 	React.useEffect(() => {
 		setDatasetId("");
+		setDefinitionDatasetVersionId("");
 	}, [selectedProjectId]);
 	const selectedDataset = datasets.data?.items.find(
 		(dataset) => dataset.id === datasetId,
@@ -82,8 +92,6 @@ export function EvaluationsPage() {
 	});
 	const [evaluationName, setEvaluationName] = React.useState("");
 	const [evaluationSlug, setEvaluationSlug] = React.useState("");
-	const [definitionDatasetVersionId, setDefinitionDatasetVersionId] =
-		React.useState("");
 	const [definitionPending, setDefinitionPending] = React.useState(false);
 	const [definitionError, setDefinitionError] = React.useState("");
 	const [name, setName] = React.useState("");
@@ -93,6 +101,14 @@ export function EvaluationsPage() {
 	const [temperature, setTemperature] = React.useState("0");
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
+	const [lifecycleError, setLifecycleError] = React.useState("");
+	const [pendingLifecycleSlug, setPendingLifecycleSlug] = React.useState<
+		string | null
+	>(null);
+	const [tombstoneEvaluationSlug, setTombstoneEvaluationSlug] = React.useState<
+		string | null
+	>(null);
+	const [tombstoneConfirmation, setTombstoneConfirmation] = React.useState("");
 	const missing =
 		selectedItems.data?.items.filter((item) => !item.expected_output).length ??
 		0;
@@ -102,14 +118,23 @@ export function EvaluationsPage() {
 			selectedItems.data.items.length > 0 &&
 			missing === 0,
 	);
+	const selectedDefinitionDatasetVersion = Boolean(
+		selectedVersions.data?.items.some(
+			(item) => item.id === definitionDatasetVersionId,
+		),
+	);
 	if (!selectedProject)
 		return (
 			<PageMessage title="Evaluations">
 				Select a project to run evaluations.
 			</PageMessage>
 		);
+	function selectDataset(value: string) {
+		setDatasetId(value);
+		setDefinitionDatasetVersionId("");
+	}
 	async function run() {
-		if (!selectedItemsValid || pending) return;
+		if (!canCurate || !selectedItemsValid || pending) return;
 		try {
 			setError("");
 			setPending(true);
@@ -135,7 +160,9 @@ export function EvaluationsPage() {
 	}
 	async function define() {
 		if (
+			!canCurate ||
 			!definitionDatasetVersionId ||
+			!selectedDefinitionDatasetVersion ||
 			!evaluationName ||
 			!evaluationSlug ||
 			definitionPending
@@ -182,6 +209,75 @@ export function EvaluationsPage() {
 			setDefinitionPending(false);
 		}
 	}
+	async function archive(evaluation: {
+		slug: string;
+		lifecycle_revision: number;
+	}) {
+		if (!canAdmin || pendingLifecycleSlug) return;
+		try {
+			setLifecycleError("");
+			setPendingLifecycleSlug(evaluation.slug);
+			await archiveEvaluation({
+				project_id: selectedProjectId!,
+				slug: evaluation.slug,
+				revision: evaluation.lifecycle_revision,
+			});
+			await client.invalidateQueries({
+				queryKey: ["evaluation-definitions", selectedProjectId],
+			});
+		} catch (cause) {
+			setLifecycleError((cause as Error).message);
+		} finally {
+			setPendingLifecycleSlug(null);
+		}
+	}
+	async function restore(evaluation: {
+		slug: string;
+		lifecycle_revision: number;
+	}) {
+		if (!canAdmin || pendingLifecycleSlug) return;
+		try {
+			setLifecycleError("");
+			setPendingLifecycleSlug(evaluation.slug);
+			await restoreEvaluation({
+				project_id: selectedProjectId!,
+				slug: evaluation.slug,
+				revision: evaluation.lifecycle_revision,
+			});
+			await client.invalidateQueries({
+				queryKey: ["evaluation-definitions", selectedProjectId],
+			});
+		} catch (cause) {
+			setLifecycleError((cause as Error).message);
+		} finally {
+			setPendingLifecycleSlug(null);
+		}
+	}
+	async function tombstone(evaluation: {
+		slug: string;
+		lifecycle_revision: number;
+	}) {
+		if (!canAdmin || pendingLifecycleSlug) return;
+		try {
+			setLifecycleError("");
+			setPendingLifecycleSlug(evaluation.slug);
+			await tombstoneEvaluation({
+				project_id: selectedProjectId!,
+				slug: evaluation.slug,
+				revision: evaluation.lifecycle_revision,
+				confirmation_slug: tombstoneConfirmation,
+			});
+			setTombstoneEvaluationSlug(null);
+			setTombstoneConfirmation("");
+			await client.invalidateQueries({
+				queryKey: ["evaluation-definitions", selectedProjectId],
+			});
+		} catch (cause) {
+			setLifecycleError((cause as Error).message);
+		} finally {
+			setPendingLifecycleSlug(null);
+		}
+	}
 	return (
 		<div className="space-y-6">
 			<div>
@@ -192,109 +288,119 @@ export function EvaluationsPage() {
 			</div>
 			<section className="grid gap-2 rounded border p-4">
 				<h2 className="text-lg font-medium">Reusable definition</h2>
-				<p className="text-sm text-muted-foreground">
-					Create a revisioned draft against an immutable Dataset Version, then
-					publish it separately. It does not start a run.
-				</p>
-				<label
-					className="block space-y-2 text-sm"
-					htmlFor="evaluation-definition-dataset"
-				>
-					Definition dataset
-					<Select
-						id="evaluation-definition-dataset"
-						value={datasetId}
-						onChange={(event) => setDatasetId(event.target.value)}
-					>
-						<option value="">Choose dataset</option>
-						{datasets.data?.items.map((dataset) => (
-							<option key={dataset.id} value={dataset.id}>
-								{dataset.name}
-							</option>
-						))}
-					</Select>
-				</label>
-				<label
-					className="block space-y-2 text-sm"
-					htmlFor="evaluation-definition-name"
-				>
-					Definition name
-					<Input
-						id="evaluation-definition-name"
-						value={evaluationName}
-						onChange={(event) => setEvaluationName(event.target.value)}
-					/>
-				</label>
-				<label
-					className="block space-y-2 text-sm"
-					htmlFor="evaluation-definition-dataset-version"
-				>
-					Dataset Version
-					<Select
-						id="evaluation-definition-dataset-version"
-						value={definitionDatasetVersionId}
-						onChange={(event) =>
-							setDefinitionDatasetVersionId(event.target.value)
-						}
-					>
-						<option value="">Choose immutable Dataset Version</option>
-						{selectedVersions.data?.items.map((item) => (
-							<option key={item.id} value={item.id}>
-								Version {item.version}
-							</option>
-						))}
-					</Select>
-				</label>
-				<label
-					className="block space-y-2 text-sm"
-					htmlFor="evaluation-definition-slug"
-				>
-					Stable ID
-					<Input
-						id="evaluation-definition-slug"
-						value={evaluationSlug}
-						onChange={(event) => setEvaluationSlug(event.target.value)}
-						pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-					/>
-				</label>
-				{selectedVersions.isError && (
-					<p className="text-sm text-destructive" role="alert">
-						Unable to load Dataset Versions.{" "}
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => void selectedVersions.refetch()}
-						>
-							Retry
-						</Button>
-					</p>
-				)}
-				{selectedDataset &&
-					!selectedVersions.isError &&
-					!selectedVersions.data?.items.length && (
-						<p className="text-sm text-destructive">
-							Publish a Dataset Version before creating a reusable definition.
+				{canCurate ? (
+					<>
+						<p className="text-sm text-muted-foreground">
+							Create a revisioned draft against an immutable Dataset Version,
+							then publish it separately. It does not start a run.
 						</p>
-					)}
-				{definitionError && (
-					<p className="text-sm text-destructive" role="alert">
-						{definitionError}
+						<label
+							className="block space-y-2 text-sm"
+							htmlFor="evaluation-definition-dataset"
+						>
+							Definition dataset
+							<Select
+								id="evaluation-definition-dataset"
+								value={datasetId}
+								onChange={(event) => selectDataset(event.target.value)}
+							>
+								<option value="">Choose dataset</option>
+								{datasets.data?.items.map((dataset) => (
+									<option key={dataset.id} value={dataset.id}>
+										{dataset.name}
+									</option>
+								))}
+							</Select>
+						</label>
+						<label
+							className="block space-y-2 text-sm"
+							htmlFor="evaluation-definition-name"
+						>
+							Definition name
+							<Input
+								id="evaluation-definition-name"
+								value={evaluationName}
+								onChange={(event) => setEvaluationName(event.target.value)}
+							/>
+						</label>
+						<label
+							className="block space-y-2 text-sm"
+							htmlFor="evaluation-definition-dataset-version"
+						>
+							Dataset Version
+							<Select
+								id="evaluation-definition-dataset-version"
+								value={definitionDatasetVersionId}
+								onChange={(event) =>
+									setDefinitionDatasetVersionId(event.target.value)
+								}
+							>
+								<option value="">Choose immutable Dataset Version</option>
+								{selectedVersions.data?.items.map((item) => (
+									<option key={item.id} value={item.id}>
+										Version {item.version}
+									</option>
+								))}
+							</Select>
+						</label>
+						<label
+							className="block space-y-2 text-sm"
+							htmlFor="evaluation-definition-slug"
+						>
+							Stable ID
+							<Input
+								id="evaluation-definition-slug"
+								value={evaluationSlug}
+								onChange={(event) => setEvaluationSlug(event.target.value)}
+								pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+							/>
+						</label>
+						{selectedVersions.isError && (
+							<p className="text-sm text-destructive" role="alert">
+								Unable to load Dataset Versions.{" "}
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => void selectedVersions.refetch()}
+								>
+									Retry
+								</Button>
+							</p>
+						)}
+						{selectedDataset &&
+							!selectedVersions.isError &&
+							!selectedVersions.data?.items.length && (
+								<p className="text-sm text-destructive">
+									Publish a Dataset Version before creating a reusable
+									definition.
+								</p>
+							)}
+						{definitionError && (
+							<p className="text-sm text-destructive" role="alert">
+								{definitionError}
+							</p>
+						)}
+						<Button
+							disabled={
+								selectedVersions.isLoading ||
+								(!selectedVersions.isError &&
+									!selectedVersions.data?.items.length) ||
+								!selectedDefinitionDatasetVersion ||
+								!evaluationName ||
+								!evaluationSlug ||
+								definitionPending
+							}
+							onClick={() => void define()}
+						>
+							{definitionPending ? "Creating..." : "Create definition draft"}
+						</Button>
+					</>
+				) : (
+					<p className="text-sm text-muted-foreground">
+						Read-only project access can inspect published definitions and
+						version history.
 					</p>
 				)}
-				<Button
-					disabled={
-						selectedVersions.isLoading ||
-						(!selectedVersions.isError &&
-							!selectedVersions.data?.items.length) ||
-						!definitionDatasetVersionId ||
-						!evaluationName ||
-						!evaluationSlug ||
-						definitionPending
-					}
-					onClick={() => void define()}
-				>
-					{definitionPending ? "Creating..." : "Create definition draft"}
-				</Button>
 				{evaluations.data?.items.length ? (
 					<ul
 						className="space-y-1 text-sm"
@@ -302,26 +408,120 @@ export function EvaluationsPage() {
 					>
 						{evaluations.data.items.map((item) => (
 							<li key={item.id} className="space-y-1">
-								<Link
-									className="font-medium underline"
-									to="/evaluation-definitions/$slug"
-									params={{ slug: item.slug }}
-								>
-									{item.name}
-								</Link>{" "}
-								<span className="text-muted-foreground">({item.slug})</span>
-								<EvaluationVersionInspection
-									projectId={selectedProjectId!}
-									slug={item.slug}
-								/>
-								<EvaluationDraftAuthoring
-									projectId={selectedProjectId!}
-									slug={item.slug}
-								/>
+								<div className="flex flex-wrap items-center gap-2">
+									{item.archived_at ? (
+										<>
+											<strong>{item.name}</strong>
+											<span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+												Archived
+											</span>
+											<span className="text-muted-foreground">
+												({item.slug})
+											</span>
+										</>
+									) : (
+										<>
+											<Link
+												className="font-medium underline"
+												to="/evaluation-definitions/$slug"
+												params={{ slug: item.slug }}
+											>
+												{item.name}
+											</Link>
+											<span className="text-muted-foreground">
+												({item.slug})
+											</span>
+										</>
+									)}
+									{canAdmin && (
+										<div className="flex flex-wrap items-center gap-2">
+											{item.archived_at ? (
+												<>
+													<Button
+														size="sm"
+														variant="outline"
+														disabled={pendingLifecycleSlug !== null}
+														onClick={() => void restore(item)}
+													>
+														{pendingLifecycleSlug === item.slug
+															? "Restoring..."
+															: "Restore"}
+													</Button>
+													<Button
+														size="sm"
+														variant="destructive"
+														disabled={pendingLifecycleSlug !== null}
+														onClick={() => {
+															setTombstoneEvaluationSlug(item.slug);
+															setTombstoneConfirmation("");
+														}}
+													>
+														Tombstone
+													</Button>
+												</>
+											) : (
+												<Button
+													size="sm"
+													variant="outline"
+													disabled={pendingLifecycleSlug !== null}
+													onClick={() => void archive(item)}
+												>
+													{pendingLifecycleSlug === item.slug
+														? "Archiving..."
+														: "Archive"}
+												</Button>
+											)}
+										</div>
+									)}
+								</div>
+								{canAdmin && tombstoneEvaluationSlug === item.slug && (
+									<div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+										<label className="sr-only" htmlFor={`tombstone-${item.id}`}>
+											Confirm Evaluation stable ID
+										</label>
+										<Input
+											id={`tombstone-${item.id}`}
+											value={tombstoneConfirmation}
+											onChange={(event) =>
+												setTombstoneConfirmation(event.target.value)
+											}
+											placeholder={`Type ${item.slug} to permanently tombstone`}
+										/>
+										<Button
+											size="sm"
+											variant="destructive"
+											disabled={
+												pendingLifecycleSlug !== null ||
+												tombstoneConfirmation !== item.slug
+											}
+											onClick={() => void tombstone(item)}
+										>
+											Permanently tombstone
+										</Button>
+									</div>
+								)}
+								{!item.archived_at && (
+									<>
+										<EvaluationVersionInspection
+											projectId={selectedProjectId!}
+											slug={item.slug}
+										/>
+										<EvaluationDraftAuthoring
+											canCurate={canCurate}
+											projectId={selectedProjectId!}
+											slug={item.slug}
+										/>
+									</>
+								)}
 							</li>
 						))}
 					</ul>
 				) : null}
+				{lifecycleError && (
+					<p className="text-sm text-destructive" role="alert">
+						{lifecycleError}
+					</p>
+				)}
 				{legacyLinks.data?.items.length ? (
 					<div
 						className="space-y-1 text-sm"
@@ -339,104 +539,109 @@ export function EvaluationsPage() {
 					</div>
 				) : null}
 			</section>
-			<section className="grid gap-2 rounded border p-4">
-				<h2 className="text-lg font-medium">Ad-hoc run</h2>
-				<label className="block space-y-2 text-sm" htmlFor="evaluation-dataset">
-					Dataset
-					<Select
-						id="evaluation-dataset"
-						value={datasetId}
-						onChange={(event) => setDatasetId(event.target.value)}
+			{canCurate && (
+				<section className="grid gap-2 rounded border p-4">
+					<h2 className="text-lg font-medium">Ad-hoc run</h2>
+					<label
+						className="block space-y-2 text-sm"
+						htmlFor="evaluation-dataset"
 					>
-						<option value="">Choose dataset</option>
-						{datasets.data?.items.map((dataset) => (
-							<option key={dataset.id} value={dataset.id}>
-								{dataset.name}
-							</option>
-						))}
-					</Select>
-				</label>
-				<label className="block space-y-2 text-sm">
-					Evaluation name
-					<Input
-						value={name}
-						onChange={(event) => setName(event.target.value)}
-					/>
-				</label>
-				<label className="block space-y-2 text-sm">
-					Model (optional)
-					<Input
-						value={model}
-						onChange={(event) => setModel(event.target.value)}
-					/>
-				</label>
-				<label className="block space-y-2 text-sm">
-					System prompt (optional)
-					<Input
-						value={systemPrompt}
-						onChange={(event) => setSystemPrompt(event.target.value)}
-					/>
-				</label>
-				<label
-					className="block space-y-2 text-sm"
-					htmlFor="evaluation-evaluator"
-				>
-					Evaluator
-					<Select
-						id="evaluation-evaluator"
-						value={evaluator}
-						onChange={(event) => setEvaluator(event.target.value)}
-					>
-						<option value="exact_match">Exact match</option>
-						<option value="contains">Contains</option>
-					</Select>
-				</label>
-				<label className="block space-y-2 text-sm">
-					Temperature
-					<Input
-						type="number"
-						min="0"
-						max="2"
-						step="0.1"
-						value={temperature}
-						onChange={(event) => setTemperature(event.target.value)}
-					/>
-				</label>
-				{missing > 0 && (
-					<p className="text-sm text-destructive">
-						{missing} dataset case{missing === 1 ? "" : "s"} need expected
-						output before this evaluation can run.
-					</p>
-				)}
-				{selectedDataset && selectedItems.data?.items.length === 0 && (
-					<p className="text-sm text-destructive">
-						Publish at least one dataset case before this evaluation can run.
-					</p>
-				)}
-				{selectedDataset && selectedItems.isError && (
-					<p className="text-sm text-destructive" role="alert">
-						Unable to load published dataset items.{" "}
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => void selectedItems.refetch()}
+						Dataset
+						<Select
+							id="evaluation-dataset"
+							value={datasetId}
+							onChange={(event) => selectDataset(event.target.value)}
 						>
-							Retry
-						</Button>
-					</p>
-				)}
-				{error && (
-					<p className="text-sm text-destructive" role="alert">
-						{error}
-					</p>
-				)}
-				<Button
-					disabled={!selectedItemsValid || pending}
-					onClick={() => void run()}
-				>
-					{pending ? "Starting..." : "Run evaluation"}
-				</Button>
-			</section>
+							<option value="">Choose dataset</option>
+							{datasets.data?.items.map((dataset) => (
+								<option key={dataset.id} value={dataset.id}>
+									{dataset.name}
+								</option>
+							))}
+						</Select>
+					</label>
+					<label className="block space-y-2 text-sm">
+						Evaluation name
+						<Input
+							value={name}
+							onChange={(event) => setName(event.target.value)}
+						/>
+					</label>
+					<label className="block space-y-2 text-sm">
+						Model (optional)
+						<Input
+							value={model}
+							onChange={(event) => setModel(event.target.value)}
+						/>
+					</label>
+					<label className="block space-y-2 text-sm">
+						System prompt (optional)
+						<Input
+							value={systemPrompt}
+							onChange={(event) => setSystemPrompt(event.target.value)}
+						/>
+					</label>
+					<label
+						className="block space-y-2 text-sm"
+						htmlFor="evaluation-evaluator"
+					>
+						Evaluator
+						<Select
+							id="evaluation-evaluator"
+							value={evaluator}
+							onChange={(event) => setEvaluator(event.target.value)}
+						>
+							<option value="exact_match">Exact match</option>
+							<option value="contains">Contains</option>
+						</Select>
+					</label>
+					<label className="block space-y-2 text-sm">
+						Temperature
+						<Input
+							type="number"
+							min="0"
+							max="2"
+							step="0.1"
+							value={temperature}
+							onChange={(event) => setTemperature(event.target.value)}
+						/>
+					</label>
+					{missing > 0 && (
+						<p className="text-sm text-destructive">
+							{missing} dataset case{missing === 1 ? "" : "s"} need expected
+							output before this evaluation can run.
+						</p>
+					)}
+					{selectedDataset && selectedItems.data?.items.length === 0 && (
+						<p className="text-sm text-destructive">
+							Publish at least one dataset case before this evaluation can run.
+						</p>
+					)}
+					{selectedDataset && selectedItems.isError && (
+						<p className="text-sm text-destructive" role="alert">
+							Unable to load published dataset items.{" "}
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => void selectedItems.refetch()}
+							>
+								Retry
+							</Button>
+						</p>
+					)}
+					{error && (
+						<p className="text-sm text-destructive" role="alert">
+							{error}
+						</p>
+					)}
+					<Button
+						disabled={!selectedItemsValid || pending}
+						onClick={() => void run()}
+					>
+						{pending ? "Starting..." : "Run evaluation"}
+					</Button>
+				</section>
+			)}
 			{(datasets.isError ||
 				experiments.isError ||
 				evaluations.isError ||
@@ -529,14 +734,16 @@ function EvaluationVersionInspection({
 				aria-label="Evaluation definition versions"
 			>
 				{versions.data?.items.map((item) => (
-					<Button
-						key={item.id}
-						variant="outline"
-						size="sm"
-						onClick={() => setSelectedVersion(item.version)}
-					>
-						Version {item.version}
-					</Button>
+					<div key={item.id} className="flex items-center gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => setSelectedVersion(item.version)}
+						>
+							Version {item.version}
+						</Button>
+						<span className="text-xs">Published by {item.published_by}</span>
+					</div>
 				))}
 			</div>
 			{detail.data && (
@@ -548,9 +755,11 @@ function EvaluationVersionInspection({
 	);
 }
 function EvaluationDraftAuthoring({
+	canCurate,
 	projectId,
 	slug,
 }: {
+	canCurate: boolean;
 	projectId: string;
 	slug: string;
 }) {
@@ -675,7 +884,19 @@ function EvaluationDraftAuthoring({
 			</p>
 		);
 	if (!draft.data) return null;
+	if (!canCurate)
+		return (
+			<div className="grid gap-2 rounded border p-3">
+				<p className="text-sm font-medium">
+					Definition draft (revision {draft.data.revision})
+				</p>
+				<p className="text-sm text-muted-foreground">
+					Read-only project access cannot edit or publish definition drafts.
+				</p>
+			</div>
+		);
 	async function save() {
+		if (!canCurate || saving) return;
 		try {
 			setError("");
 			setSaving(true);
@@ -729,6 +950,7 @@ function EvaluationDraftAuthoring({
 		}
 	}
 	async function publish() {
+		if (!canCurate || saving || publishing) return;
 		try {
 			setError("");
 			setPublishing(true);
@@ -922,8 +1144,11 @@ function EvaluationDraftAuthoring({
 }
 export function EvaluationDetailPage() {
 	const { id } = useParams({ from: "/protected/evaluations/$id" });
-	const { selectedProjectId } = useProjectSelection();
+	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const client = useQueryClient();
+	const canCurate =
+		selectedProject?.project_role === "admin" ||
+		selectedProject?.project_role === "user";
 	const experiment = useQuery({
 		queryKey: ["experiment", selectedProjectId, id],
 		queryFn: () => getExperiment({ project_id: selectedProjectId!, id }),
@@ -978,7 +1203,7 @@ export function EvaluationDetailPage() {
 		);
 	if (!experiment.data) return null;
 	async function cancel() {
-		if (cancelling) return;
+		if (!canCurate || cancelling) return;
 		try {
 			setCancelError("");
 			setCancelling(true);
@@ -1008,7 +1233,7 @@ export function EvaluationDetailPage() {
 			>
 				Source dataset
 			</Link>
-			{active && (
+			{active && canCurate && (
 				<Button
 					className="ml-3"
 					variant="outline"
@@ -1070,7 +1295,10 @@ export function EvaluationDefinitionDetailPage() {
 	const { slug } = useParams({
 		from: "/protected/evaluation-definitions/$slug",
 	});
-	const { selectedProjectId } = useProjectSelection();
+	const { selectedProjectId, selectedProject } = useProjectSelection();
+	const canCurate =
+		selectedProject?.project_role === "admin" ||
+		selectedProject?.project_role === "user";
 	const detail = useQuery({
 		queryKey: ["evaluation", selectedProjectId, slug],
 		queryFn: () => getEvaluation({ project_id: selectedProjectId!, slug }),
@@ -1135,6 +1363,7 @@ export function EvaluationDefinitionDetailPage() {
 					</p>
 				) : draft.data ? (
 					<EvaluationDraftAuthoring
+						canCurate={canCurate}
 						projectId={selectedProjectId!}
 						slug={slug}
 					/>
