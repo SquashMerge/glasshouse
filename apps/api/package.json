@@ -19,7 +19,7 @@
     "test:clickhouse": "bun test tests/integration/clickhouse-schema.test.ts",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
-    "db:migrate": "node-pg-migrate up --migrations-dir ../../infra/db/migrations --migration-file-language sql && bun run src/db/bootstrap-authorization.ts",
+    "db:migrate": "node-pg-migrate up --advisory-lock-mode wait --migrations-dir ../../infra/db/migrations --migration-file-language sql && bun run src/db/bootstrap-authorization.ts",
     "ch:migrate": "bun run src/db/clickhouse-migrate.ts",
     "openapi:snapshot": "bun run ../../infra/codegen/snapshot.ts",
     "codegen:ts": "bun x --bun --package=typescript@5.9.3 --package=openapi-typescript@7.13.0 openapi-typescript ../../openapi.yaml --output ../../clients/ts/api.d.ts --enum --immutable --empty-objects false",

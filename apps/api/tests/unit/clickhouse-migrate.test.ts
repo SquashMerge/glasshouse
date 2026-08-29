@@ -210,4 +210,35 @@ describe("ClickHouse migrations", () => {
 			"end",
 		]);
 	});
+
+	it("closes the PostgreSQL session when advisory unlock fails", async () => {
+		const calls: string[] = [];
+		const lockClient = {
+			connect: async () => {
+				calls.push("connect");
+			},
+			query: async (query: string) => {
+				calls.push(query);
+				if (query.includes("pg_advisory_unlock"))
+					throw new Error("unlock failed");
+			},
+			end: async () => {
+				calls.push("end");
+			},
+		} as unknown as Client;
+
+		await expect(
+			withClickHouseMigrationLock(
+				async () => undefined,
+				() => lockClient,
+			),
+		).rejects.toThrow("unlock failed");
+
+		expect(calls).toEqual([
+			"connect",
+			"SELECT pg_advisory_lock(hashtext($1))",
+			"SELECT pg_advisory_unlock(hashtext($1))",
+			"end",
+		]);
+	});
 });

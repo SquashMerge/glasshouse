@@ -37,11 +37,14 @@ export async function withClickHouseMigrationLock<T>(
 		acquired = true;
 		return await run();
 	} finally {
-		if (acquired)
-			await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [
-				migrationLockName,
-			]);
-		await lockClient.end();
+		try {
+			if (acquired)
+				await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [
+					migrationLockName,
+				]);
+		} finally {
+			await lockClient.end();
+		}
 	}
 }
 
