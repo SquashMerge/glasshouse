@@ -384,9 +384,9 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 |---|---|---|
 | `/evaluations` | Find reusable recipes | target, dataset binding, evaluator count, latest version, last run, gate/schedule status. |
 | `/evaluations/new` | Build definition | stepper: target → dataset → mappings → evaluators → defaults/review. |
-| `/evaluations/:slug` | Definition overview | resolved/declared binding, used Dataset/target cards, version history, Run now, runs table. |
-| `/evaluations/:slug/edit` | New definition draft | structured editor; changes never mutate published revision. |
-| `/evaluation-runs/:id` | Investigate an execution | immutable provenance header, live progress, result table, filters, side-by-side baseline comparison. |
+| `/evaluation-definitions/:slug` | Definition overview | resolved/declared binding, used Dataset/target cards, version history, Run now, runs table. |
+| `/evaluation-definitions/:slug/edit` | New definition draft | structured editor; changes never mutate published revision. |
+| `/evaluations/:id` | Investigate an execution | immutable provenance header, live progress, result table, filters, side-by-side baseline comparison. This preserves bookmarked legacy Experiment run links. |
 
 ### Critical interaction rules
 

@@ -270,7 +270,7 @@ export function EvaluationsPage() {
 							<li key={item.id} className="space-y-1">
 								<Link
 									className="font-medium underline"
-									to="/evaluations/$slug"
+									to="/evaluation-definitions/$slug"
 									params={{ slug: item.slug }}
 								>
 									{item.name}
@@ -433,7 +433,7 @@ export function EvaluationsPage() {
 						<li key={experiment.id}>
 							<Link
 								className="block p-4 hover:bg-muted/50"
-								to="/evaluation-runs/$id"
+								to="/evaluations/$id"
 								params={{ id: experiment.id }}
 							>
 								<strong>{experiment.name || "Untitled evaluation"}</strong>
@@ -550,14 +550,20 @@ function EvaluationDraftAuthoring({
 		try {
 			setError("");
 			setSaving(true);
+			const definition = {
+				dataset_version_id: draft.data!.dataset_version_id,
+				sampling: draft.data!.sampling,
+				evaluator: draft.data!.evaluator,
+				target: { ...draft.data!.target, model: model || null },
+				execution_defaults: draft.data!.execution_defaults,
+				limits: draft.data!.limits,
+				thresholds: draft.data!.thresholds,
+			};
 			await updateEvaluationDraft({
 				project_id: projectId,
 				slug,
 				revision: draft.data!.revision,
-				definition: {
-					...draft.data!,
-					target: { ...draft.data!.target, model: model || null },
-				},
+				definition,
 			});
 			await client.invalidateQueries({
 				queryKey: ["evaluation-draft", projectId, slug],
@@ -609,7 +615,7 @@ function EvaluationDraftAuthoring({
 	);
 }
 export function EvaluationDetailPage() {
-	const { id } = useParams({ from: "/protected/evaluation-runs/$id" });
+	const { id } = useParams({ from: "/protected/evaluations/$id" });
 	const { selectedProjectId } = useProjectSelection();
 	const client = useQueryClient();
 	const experiment = useQuery({
@@ -755,7 +761,9 @@ export function EvaluationDetailPage() {
 	);
 }
 export function EvaluationDefinitionDetailPage() {
-	const { slug } = useParams({ from: "/protected/evaluations/$slug" });
+	const { slug } = useParams({
+		from: "/protected/evaluation-definitions/$slug",
+	});
 	const { selectedProjectId } = useProjectSelection();
 	const detail = useQuery({
 		queryKey: ["evaluation", selectedProjectId, slug],

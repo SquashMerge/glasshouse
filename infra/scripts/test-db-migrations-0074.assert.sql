@@ -75,7 +75,7 @@ BEGIN
         RAISE EXCEPTION '0075 allowed evaluation audit delete';
     EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
     END;
-    IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'experiment') THEN
+    IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'experiment' AND legacy_id = '74000000-0000-4000-8000-000000000008') THEN
         RAISE EXCEPTION '0074 did not preserve truthful experiment legacy links';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'benchmark_suite' AND legacy_id = '74000000-0000-4000-8000-000000000007') THEN

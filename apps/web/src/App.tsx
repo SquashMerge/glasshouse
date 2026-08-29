@@ -109,12 +109,12 @@ const evaluationsRoute = createRoute({
 });
 const evaluationDetailRoute = createRoute({
 	getParentRoute: () => protectedRoute,
-	path: "/evaluations/$slug",
+	path: "/evaluation-definitions/$slug",
 	component: EvaluationDefinitionDetailPage,
 });
 const evaluationRunDetailRoute = createRoute({
 	getParentRoute: () => protectedRoute,
-	path: "/evaluation-runs/$id",
+	path: "/evaluations/$id",
 	component: EvaluationDetailPage,
 });
 const feedbackRoute = createRoute({

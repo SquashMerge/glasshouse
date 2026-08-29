@@ -272,7 +272,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			),
 		);
 	});
-	it("saves an existing draft with its current ETag revision and reports stale conflicts", async () => {
+	it("saves an existing draft with only definition fields and its current ETag revision", async () => {
 		listEvaluations.mockResolvedValue({
 			items: [
 				{
@@ -301,26 +301,44 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			thresholds: { minimum_pass_rate: null },
 			updated_at: "2026-01-01T00:00:00.000Z",
 		});
-		updateEvaluationDraft.mockRejectedValue(
-			new Error("Evaluation draft is at revision 4"),
-		);
+		updateEvaluationDraft.mockResolvedValue({});
 		renderPage();
 		await screen.findByLabelText("Draft model");
 		fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
 		await waitFor(() =>
-			expect(updateEvaluationDraft).toHaveBeenCalledWith(
-				expect.objectContaining({
-					project_id: PROJECT_ONE,
-					slug: "quality",
-					revision: 3,
-				}),
-			),
+			expect(updateEvaluationDraft).toHaveBeenCalledWith({
+				project_id: PROJECT_ONE,
+				slug: "quality",
+				revision: 3,
+				definition: {
+					dataset_version_id: "77777777-7777-4777-8777-777777777777",
+					sampling: { strategy: "first_n", sample_size: 1, seed: 0 },
+					evaluator: {
+						kind: "exact_match",
+						version: "v1",
+						expected_output_path: "$.expected_output",
+						output_path: "$.output",
+					},
+					target: {
+						kind: "configured_llm",
+						model: null,
+						system_prompt: null,
+					},
+					execution_defaults: { temperature: 0, max_tokens: null },
+					limits: { max_cost_usd: 1, max_duration_seconds: 1 },
+					thresholds: { minimum_pass_rate: null },
+				},
+			}),
 		);
+		updateEvaluationDraft.mockRejectedValueOnce(
+			new Error("Evaluation draft is at revision 4"),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"This draft changed elsewhere",
 		);
 	});
-	it("navigates reusable definitions by stable slug", async () => {
+	it("navigates reusable definitions by stable slug without consuming legacy run URLs", async () => {
 		listEvaluations.mockResolvedValue({
 			items: [
 				{
@@ -336,6 +354,6 @@ describe("EvaluationsPage project-scoped datasets", () => {
 
 		expect(
 			await screen.findByRole("link", { name: "Quality check" }),
-		).toHaveAttribute("href", "/evaluations/quality-check");
+		).toHaveAttribute("href", "/evaluation-definitions/quality-check");
 	});
 });

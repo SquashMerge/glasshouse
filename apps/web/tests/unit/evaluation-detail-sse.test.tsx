@@ -19,9 +19,13 @@ const {
 	getExperiment: vi.fn(),
 }));
 
+const useParams = vi.hoisted(() =>
+	vi.fn(() => ({ id: "33333333-3333-4333-8333-333333333333" })),
+);
+
 vi.mock("@tanstack/react-router", () => ({
 	Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-	useParams: () => ({ id: "33333333-3333-4333-8333-333333333333" }),
+	useParams,
 }));
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
@@ -86,6 +90,9 @@ describe("evaluation detail lifecycle stream", () => {
 		);
 
 		expect(await screen.findByText("3 / 4 passed (75%)")).toBeTruthy();
+		expect(useParams).toHaveBeenCalledWith({
+			from: "/protected/evaluations/$id",
+		});
 		expect(sse.calls[0]?.[0]).toBe(`/v1/experiments/${experiment.id}/events`);
 		await act(async () => {
 			sse.onMessage({
