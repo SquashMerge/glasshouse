@@ -115,7 +115,7 @@ Bun resolves newly added direct and transitive npm packages only after they have
 
 ### `make dev`
 
-Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. The API applies its ordered PostgreSQL and ClickHouse schema migrations before it starts, so a healthy API has both data stores ready for requests.
+Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Every API start runs the PostgreSQL and ClickHouse migration runners concurrently and starts serving only after both succeed; PostgreSQL tracks applied migrations and ClickHouse checksum-verifies changesets before skipping ones it has already applied.
 
 ### Local dev (deps in Docker, api + web via bun)
 
@@ -132,12 +132,7 @@ make dev-backend
 make dev-frontend
 ```
 
-The local api connects to Postgres / ClickHouse / Valkey on `localhost` (the ports docker compose maps to the host). Before starting the local API against fresh data services, run both host-local migration commands below. They use the same migration runners as the production image and can reach the separate `deps-up` Compose project:
-
-```sh
-bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run db:migrate'
-bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run ch:migrate'
-```
+The local api connects to Postgres / ClickHouse / Valkey on `localhost` (the ports docker compose maps to the host). `make dev-backend` runs the same concurrent migration step before starting its watcher, so a fresh `deps-up` stack is migrated automatically. Watch-triggered source reloads do not repeat migrations.
 
 The Vite dev server proxies `/v1/*`, `/openapi.json`, `/reference`, and `/health` to `localhost:3000`.
 
