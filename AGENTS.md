@@ -27,7 +27,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 - The repository is a Bun workspace. The user-facing API is TypeScript/Hono, the web app is TypeScript/React/Vite, PostgreSQL stores transactional application data, and ClickHouse stores trace/OLAP data.
 - Python is intentionally isolated to compute-heavy integrations such as the GEPA worker. Keep the TypeScript API boundary and Python worker boundary explicit; do not move GEPA/provider credentials into API request bodies, job records, logs, or SSE payloads.
-- The production API image runs PostgreSQL and ClickHouse migrations before starting the server: `bun run db:migrate && bun run ch:migrate && bun run src/index.ts`. Local `make dev-backend` runs the API directly and does not apply migrations automatically; run the relevant migration command separately when a schema may be behind.
+- Every API start runs PostgreSQL and ClickHouse migrations concurrently before serving: `bun run migrate && bun run src/index.ts`. PostgreSQL tracks applied migrations, while ClickHouse checksum-verifies applied changesets and skips them on later starts. `make dev-backend` uses the same startup contract; the watch process itself does not re-run migrations on each source reload.
 - Docker Compose is invoked with the repository root as its project directory. Preserve root-relative build contexts and ensure every runtime dependency used by startup commands is present in the production image.
 
 ## Database migrations and seeded data

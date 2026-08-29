@@ -1,17 +1,46 @@
-import { createClient, type ClickHouseClient } from "@clickhouse/client";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createClient, type ClickHouseClient } from "@clickhouse/client";
 import { clickhouseUrl } from "./clickhouse.js";
 import { logger } from "../lib/logger.js";
 
 const migrationsDirectory = fileURLToPath(
 	new URL("../../../../infra/db/clickhouse/", import.meta.url),
 );
+const migrationTable = "astraea_schema_migrations";
+
+type AppliedMigration = {
+	migration: string;
+	checksum: string;
+};
 
 function migrationFiles(): string[] {
 	return readdirSync(migrationsDirectory)
 		.filter((file) => /^\d+_.+\.sql$/.test(file))
 		.sort();
+}
+
+function checksum(source: string): string {
+	return createHash("sha256").update(source).digest("hex");
+}
+
+async function appliedMigrations(
+	client: ClickHouseClient,
+): Promise<Map<string, string>> {
+	await client.command({
+		query: `CREATE TABLE IF NOT EXISTS ${migrationTable} (migration String, checksum String, applied_at DateTime DEFAULT now()) ENGINE = MergeTree ORDER BY migration`,
+	});
+	const result = await client.query({
+		query: `SELECT migration, checksum FROM ${migrationTable}`,
+		format: "JSONEachRow",
+	});
+	return new Map(
+		(await result.json<AppliedMigration>()).map(({ migration, checksum }) => [
+			migration,
+			checksum,
+		]),
+	);
 }
 
 export async function applyClickHouseMigrations(
@@ -23,13 +52,27 @@ export async function applyClickHouseMigrations(
 	}),
 ): Promise<void> {
 	try {
+		const applied = await appliedMigrations(client);
 		for (const file of migrationFiles()) {
-			const statements = readFileSync(`${migrationsDirectory}/${file}`, "utf8")
+			const source = readFileSync(`${migrationsDirectory}/${file}`, "utf8");
+			const migrationChecksum = checksum(source);
+			const previousChecksum = applied.get(file);
+			if (previousChecksum) {
+				if (previousChecksum !== migrationChecksum)
+					throw new Error(`ClickHouse migration checksum changed: ${file}`);
+				logger.info("clickhouse.migration.skipped", { migration: file });
+				continue;
+			}
+			const statements = source
 				.replace(/^--.*$/gm, "")
 				.split(";")
 				.map((statement) => statement.trim())
 				.filter((statement) => statement.length > 0);
 			for (const query of statements) await client.command({ query });
+			await client.command({
+				query: `INSERT INTO ${migrationTable} (migration, checksum) VALUES ({migration:String}, {checksum:String})`,
+				query_params: { migration: file, checksum: migrationChecksum },
+			});
 			logger.info("clickhouse.migration.applied", { migration: file });
 		}
 	} finally {

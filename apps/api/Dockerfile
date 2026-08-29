@@ -24,4 +24,4 @@ ENV API_PORT=3000
 ENV GEPA_PYTHON=/opt/gepa/bin/python
 EXPOSE 3000
 USER bun
-CMD ["sh", "-c", "cd apps/api && bun run db:migrate && bun run ch:migrate && bun run src/index.ts"]
+CMD ["sh", "-c", "cd apps/api && bun run start"]

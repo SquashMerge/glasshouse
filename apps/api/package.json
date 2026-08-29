@@ -5,10 +5,11 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
+    "dev": "bun run migrate && bun run --watch src/index.ts",
     "build": "bun build src/index.ts --target=bun --outdir=dist",
     "typecheck": "tsc --noEmit",
-    "start": "bun run src/index.ts",
+    "migrate": "bun run --parallel db:migrate ch:migrate",
+    "start": "bun run migrate && bun run src/index.ts",
     "lint": "biome lint src tests",
     "format": "biome format --write src tests",
     "format:check": "biome format src tests",
