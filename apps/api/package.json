@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "migrate": "bun run --parallel db:migrate ch:migrate",
     "start": "bun run migrate && bun run src/index.ts",
-    "lint": "biome lint src tests",
+    "lint": "biome lint src tests --error-on-warnings",
     "format": "biome format --write src tests",
     "format:check": "biome format src tests",
     "test": "bun test",

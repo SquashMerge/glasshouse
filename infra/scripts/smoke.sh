@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Astraea end-to-end smoke (AC1-AC10 for phase-2-ingest-and-viewer).
+# Astraea smoke checks for an already-running stack.
 # Exits 0 on full pass, non-zero on first failure.
 
 # CRLF guard: re-exec through a normalized copy if checked out with \r.
@@ -12,10 +12,8 @@ fi
 
 set -euo pipefail
 
-COMPOSE="${COMPOSE:-docker compose -f infra/compose.yaml}"
 WEB_PORT="${WEB_PORT:-5173}"
 API_PORT="${API_PORT:-3000}"
-BASE_WEB="http://localhost:${WEB_PORT}"
 BASE_API="http://localhost:${API_PORT}"
 
 # Auth: pull creds from infra/.env (sourced by make dev-backend).
@@ -69,7 +67,6 @@ grep -q '"ok":true' /tmp/astraea_login.json || fail "/v1/auth/login body missing
 ok "POST /v1/auth/login returns 200 { ok: true }"
 
 step "AC1: POST /v1/otel/v1/traces with gen_ai.* attrs persists to ClickHouse"
-TRACE_ID="smoke-trace-$(date +%s%N)"
 OTLP_PAYLOAD=$(cat <<EOF
 {
   "resource_spans": [{

@@ -55,7 +55,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 - GEPA optimization has two model roles (`task_lm` and `reflection_lm`), explicit examples, and a bounded `max_metric_calls` budget. The UI must collect real evaluation input/answer data; never restore fabricated placeholders.
 - Model identifiers must be checked against the exact `GEPA_ALLOWED_MODELS` allowlist. Provider API credentials belong only in the ignored `infra/.env` or deployment secret store.
-- `GEPA_WORKER_MODE=cli` is development-only and runs the locally authenticated OpenAI Codex CLI. It requires the API to run on the same host as Codex (`make deps-up` plus `make dev-backend`, not the Dockerized `make dev` path), a local Python environment with `worker/requirements.txt` installed, and `GEPA_PYTHON` pointing to that interpreter.
+- `GEPA_WORKER_MODE=cli` is development-only and runs the locally authenticated OpenAI Codex CLI. It requires the API to run on the same host as Codex (`make deps-up` plus `make dev-backend`, not the Dockerized `make dev` path), a local Python environment with `worker/requirements.lock` installed using `--require-hashes`, and `GEPA_PYTHON` pointing to that interpreter.
 - Candidate publication must preserve the full message snapshot while deriving canonical `prompt_versions.content` from the optimized target role. Add a system-target regression test whenever this path changes.
 
 ## Review and verification
