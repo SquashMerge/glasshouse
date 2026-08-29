@@ -4,11 +4,14 @@ import { Button } from "../components/ui/button";
 import {
 	Card,
 	CardContent,
+	CardDescription,
 	CardHeader,
 	CardTitle,
 } from "../components/ui/card";
+import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Select } from "../components/ui/select";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	approveGovernancePolicy,
@@ -39,6 +42,10 @@ export function GovernancePage() {
 		string | null
 	>(null);
 	const [previewId, setPreviewId] = React.useState<string | null>(null);
+	const [previewExpiresAt, setPreviewExpiresAt] = React.useState<string | null>(
+		null,
+	);
+	const [previewExpired, setPreviewExpired] = React.useState(false);
 	const effective = useQuery({
 		queryKey: ["governance-policy", selectedProjectId],
 		queryFn: () => getEffectiveGovernancePolicy(selectedProjectId!),
@@ -72,6 +79,7 @@ export function GovernancePage() {
 			setPreview(null);
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
+			setPreviewExpiresAt(null);
 			refresh(variables.project_id);
 		},
 	});
@@ -82,6 +90,7 @@ export function GovernancePage() {
 			setPreview(null);
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
+			setPreviewExpiresAt(null);
 			refresh(variables.project_id);
 		},
 	});
@@ -92,6 +101,12 @@ export function GovernancePage() {
 			setPreview(result.counts);
 			setPreviewedPolicyId(result.policy_version_id);
 			setPreviewId(result.preview_id);
+			setPreviewExpiresAt(result.preview_expires_at);
+		},
+		onError: () => {
+			setPreviewedPolicyId(null);
+			setPreviewId(null);
+			setPreviewExpiresAt(null);
 		},
 	});
 	const run = useMutation({
@@ -101,13 +116,38 @@ export function GovernancePage() {
 			setPreview(result.counts);
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
+			setPreviewExpiresAt(null);
 			refresh(variables.project_id);
 		},
+		onError: () => {
+			setPreviewedPolicyId(null);
+			setPreviewId(null);
+			setPreviewExpiresAt(null);
+		},
 	});
+	React.useEffect(() => {
+		if (!previewExpiresAt) {
+			setPreviewExpired(false);
+			return;
+		}
+		const expiresAt = Date.parse(previewExpiresAt);
+		const remaining = expiresAt - Date.now();
+		if (!Number.isFinite(expiresAt) || remaining <= 0) {
+			setPreviewExpired(true);
+			return;
+		}
+		setPreviewExpired(false);
+		const timeout = window.setTimeout(
+			() => setPreviewExpired(true),
+			Math.min(remaining, 2_147_483_647),
+		);
+		return () => window.clearTimeout(timeout);
+	}, [previewExpiresAt]);
 	React.useEffect(() => {
 		setPreview(null);
 		setPreviewedPolicyId(null);
 		setPreviewId(null);
+		setPreviewExpiresAt(null);
 		draft.reset();
 		approve.reset();
 		previewMutation.reset();
@@ -139,49 +179,186 @@ export function GovernancePage() {
 			</PageMessage>
 		);
 	const policy = effective.data?.policy;
+	const policyVersions = history.data?.items ?? [];
+	const pendingDrafts = policyVersions.filter(
+		(version) => !version.approved_at,
+	);
+	const approvedHistory = policyVersions.filter(
+		(version) => version.approved_at && version.id !== policy?.id,
+	);
 	return (
-		<div className="space-y-6">
+		<div className="space-y-8">
 			<div>
 				<h1 className="text-2xl font-semibold tracking-tight">Governance</h1>
 				<p className="text-sm text-muted-foreground">
-					Approved policies govern future ingress redaction and bounded
-					retention. Drafts have no runtime effect.
+					Review policy state, approve drafts, and run bounded retention.
 				</p>
 			</div>
+			<section
+				className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]"
+				aria-label="Policy status"
+			>
+				<Card data-testid="active-policy-card" className="border-primary/30">
+					<CardHeader>
+						<div className="flex flex-wrap items-start justify-between gap-3">
+							<div className="space-y-1.5">
+								<CardTitle className="text-xl">
+									Active approved policy
+								</CardTitle>
+								<CardDescription>
+									This is the policy currently enforced for ingress and
+									retention.
+								</CardDescription>
+							</div>
+							<Badge variant={policy ? "success" : "outline"}>
+								{policy ? "Active" : "Not configured"}
+							</Badge>
+						</div>
+					</CardHeader>
+					<CardContent>
+						{policy ? (
+							<div className="space-y-5">
+								<div className="flex flex-wrap items-baseline justify-between gap-2">
+									<p className="text-lg font-semibold">
+										Version {policy.version}
+									</p>
+									<code className="text-xs text-muted-foreground">
+										{policy.content_hash.slice(0, 12)}
+									</code>
+								</div>
+								<dl className="grid gap-3 sm:grid-cols-2">
+									<div className="rounded-md bg-muted/50 p-3">
+										<dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+											Retention
+										</dt>
+										<dd className="mt-1 text-sm">
+											{retentionSummary(policy.retention)}
+										</dd>
+									</div>
+									<div className="rounded-md bg-muted/50 p-3">
+										<dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+											Ingress redaction
+										</dt>
+										<dd className="mt-1 text-sm">
+											{redactionSummary(policy.redaction)}
+										</dd>
+									</div>
+								</dl>
+								<p className="text-xs text-muted-foreground">
+									Approved by {policy.approved_by} on{" "}
+									{new Date(policy.approved_at!).toLocaleString()}.
+								</p>
+							</div>
+						) : (
+							<p className="text-sm text-muted-foreground">
+								No approved policy is active. Retention cannot run until a draft
+								is approved.
+							</p>
+						)}
+					</CardContent>
+				</Card>
+
+				<Card>
+					<CardHeader>
+						<div className="flex flex-wrap items-start justify-between gap-3">
+							<div className="space-y-1.5">
+								<CardTitle className="text-xl">
+									Drafts awaiting approval
+								</CardTitle>
+								<CardDescription>
+									Drafts have no runtime effect until they are approved.
+								</CardDescription>
+							</div>
+							<Badge variant="secondary">
+								{pendingDrafts.length}{" "}
+								{pendingDrafts.length === 1 ? "draft" : "drafts"}
+							</Badge>
+						</div>
+					</CardHeader>
+					<CardContent className="space-y-4">
+						{pendingDrafts.length ? (
+							pendingDrafts.map((version) => {
+								const activates = !policy || version.version > policy.version;
+								return (
+									<div
+										key={version.id}
+										className="space-y-4 rounded-md border border-border p-4"
+										data-testid={`draft-policy-${version.id}`}
+									>
+										<div className="flex flex-wrap items-center justify-between gap-2">
+											<p className="font-semibold">Version {version.version}</p>
+											<Badge variant="secondary">Draft</Badge>
+										</div>
+										<dl className="grid gap-3 text-sm sm:grid-cols-2">
+											<div>
+												<dt className="text-xs text-muted-foreground">
+													Retention
+												</dt>
+												<dd className="mt-1">
+													{retentionSummary(version.retention)}
+												</dd>
+											</div>
+											<div>
+												<dt className="text-xs text-muted-foreground">
+													Ingress redaction
+												</dt>
+												<dd className="mt-1">
+													{redactionSummary(version.redaction)}
+												</dd>
+											</div>
+										</dl>
+										<div className="space-y-2 border-t border-border pt-3">
+											<p className="text-sm font-medium">
+												Next action: Review and approve this draft.
+											</p>
+											<p className="text-sm text-muted-foreground">
+												{activates
+													? "Approval activates it as the current policy."
+													: "Approval records this version; the newer approved policy remains active."}
+											</p>
+											<Button
+												size="sm"
+												type="button"
+												disabled={approve.isPending}
+												onClick={() =>
+													approve.mutate({
+														project_id: selectedProjectId,
+														id: version.id,
+													})
+												}
+											>
+												{activates
+													? `Approve and activate version ${version.version}`
+													: `Approve version ${version.version}`}
+											</Button>
+										</div>
+									</div>
+								);
+							})
+						) : (
+							<p className="text-sm text-muted-foreground">
+								No drafts are waiting for approval.
+							</p>
+						)}
+						{approve.isSuccess && (
+							<p className="text-sm" role="status">
+								Draft approved. The active policy has been refreshed.
+							</p>
+						)}
+						{approve.isError && (
+							<p className="text-sm text-destructive" role="alert">
+								Draft approval failed. Review the policy state and retry.
+							</p>
+						)}
+					</CardContent>
+				</Card>
+			</section>
 			<Card>
 				<CardHeader>
-					<CardTitle>Effective policy</CardTitle>
-				</CardHeader>
-				<CardContent className="space-y-2 text-sm">
-					{policy ? (
-						<>
-							<p>
-								Approved version {policy.version} by {policy.approved_by} on{" "}
-								{new Date(policy.approved_at!).toLocaleString()}.
-							</p>
-							<p>
-								Redaction: {policy.redaction.mode}, version hash{" "}
-								{policy.content_hash.slice(0, 12)}.
-							</p>
-							<p>
-								Retention:{" "}
-								{Object.entries(policy.retention)
-									.map(([name, days]) => `${name} ${days} days`)
-									.join(", ") || "none"}
-								.
-							</p>
-						</>
-					) : (
-						<p className="text-muted-foreground">
-							No approved policy. No retention will run and ingress keeps its
-							current unmodified fields.
-						</p>
-					)}
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Create immutable draft</CardTitle>
+					<CardTitle className="text-xl">Create policy draft</CardTitle>
+					<CardDescription>
+						Creates an immutable draft without changing the active policy.
+					</CardDescription>
 				</CardHeader>
 				<CardContent>
 					<form
@@ -222,19 +399,18 @@ export function GovernancePage() {
 						/>
 						<div className="grid gap-2">
 							<Label htmlFor="redaction-mode">Ingress redaction</Label>
-							<select
+							<Select
 								id="redaction-mode"
 								value={mode}
 								onChange={(event) =>
 									setMode(event.target.value as "none" | "all_text")
 								}
-								className="h-9 rounded-md border border-input bg-background px-2"
 							>
 								<option value="all_text">
 									Replace all trace input/output text
 								</option>
 								<option value="none">Keep trace input/output text</option>
-							</select>
+							</Select>
 						</div>
 						<div className="grid gap-2 sm:col-span-2">
 							<Label htmlFor="redaction-keys">Attribute keys to redact</Label>
@@ -249,19 +425,21 @@ export function GovernancePage() {
 								never rewritten.
 							</p>
 						</div>
-						<Button type="submit" disabled={draft.isPending}>
-							Create draft
-						</Button>
-						{draft.isSuccess && (
-							<p className="text-sm" role="status">
-								Draft created.
-							</p>
-						)}
-						{draft.isError && (
-							<p className="text-sm text-destructive" role="alert">
-								The policy draft could not be created.
-							</p>
-						)}
+						<div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+							<Button type="submit" disabled={draft.isPending}>
+								Create draft
+							</Button>
+							{draft.isSuccess && (
+								<p className="text-sm" role="status">
+									Draft created and ready for review.
+								</p>
+							)}
+							{draft.isError && (
+								<p className="text-sm text-destructive" role="alert">
+									The policy draft could not be created.
+								</p>
+							)}
+						</div>
 					</form>
 				</CardContent>
 			</Card>
@@ -280,7 +458,13 @@ export function GovernancePage() {
 							type="button"
 							variant="outline"
 							disabled={!policy || previewMutation.isPending}
-							onClick={() => previewMutation.mutate(selectedProjectId)}
+							onClick={() => {
+								setPreview(null);
+								setPreviewedPolicyId(null);
+								setPreviewId(null);
+								setPreviewExpiresAt(null);
+								previewMutation.mutate(selectedProjectId);
+							}}
 						>
 							Preview eligible counts
 						</Button>
@@ -291,7 +475,8 @@ export function GovernancePage() {
 								!policy ||
 								run.isPending ||
 								previewedPolicyId !== policy.id ||
-								!previewId
+								!previewId ||
+								previewExpired
 							}
 							onClick={() =>
 								run.mutate({
@@ -310,6 +495,20 @@ export function GovernancePage() {
 							{Object.entries(preview)
 								.map(([name, count]) => `${name}: ${count}`)
 								.join(", ") || "No eligible data."}
+						</p>
+					)}
+					{previewExpiresAt && (
+						<p
+							className={
+								previewExpired
+									? "text-sm text-destructive"
+									: "text-sm text-muted-foreground"
+							}
+							role={previewExpired ? "alert" : "status"}
+						>
+							{previewExpired
+								? "Preview expired. Preview eligible counts again before running retention."
+								: `Preview authorization expires ${new Date(previewExpiresAt).toLocaleString()}.`}
 						</p>
 					)}
 					{previewMutation.isError && (
@@ -366,47 +565,34 @@ export function GovernancePage() {
 			</Card>
 			<Card>
 				<CardHeader>
-					<CardTitle>Version history</CardTitle>
+					<CardTitle className="text-xl">Approved policy history</CardTitle>
+					<CardDescription>
+						Previous approvals remain available as policy evidence.
+					</CardDescription>
 				</CardHeader>
 				<CardContent>
-					<ul className="space-y-3 text-sm">
-						{history.data?.items.map((version) => (
-							<li
-								key={version.id}
-								className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3"
-							>
-								<span>
-									v{version.version}{" "}
-									{version.approved_at
-										? `approved by ${version.approved_by}`
-										: `draft by ${version.created_by}`}
-								</span>
-								{!version.approved_at && (
-									<Button
-										size="sm"
-										type="button"
-										disabled={approve.isPending}
-										onClick={() =>
-											approve.mutate({
-												project_id: selectedProjectId,
-												id: version.id,
-											})
-										}
-									>
-										Approve draft
-									</Button>
-								)}
-							</li>
-						))}
-					</ul>
-					{approve.isSuccess && (
-						<p className="text-sm" role="status">
-							Draft approved.
-						</p>
-					)}
-					{approve.isError && (
-						<p className="text-sm text-destructive" role="alert">
-							Draft approval failed. Retry when ready.
+					{approvedHistory.length ? (
+						<ul className="space-y-3 text-sm">
+							{approvedHistory.map((version) => (
+								<li
+									key={version.id}
+									className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-3 last:border-0 last:pb-0"
+								>
+									<div>
+										<p className="font-medium">Version {version.version}</p>
+										<p className="mt-1 text-muted-foreground">
+											{retentionSummary(version.retention)}
+										</p>
+									</div>
+									<p className="text-xs text-muted-foreground">
+										Approved by {version.approved_by}
+									</p>
+								</li>
+							))}
+						</ul>
+					) : (
+						<p className="text-sm text-muted-foreground">
+							No previous approved policies.
 						</p>
 					)}
 				</CardContent>
@@ -438,4 +624,29 @@ function Field({
 			/>
 		</div>
 	);
+}
+
+function retentionSummary(
+	retention: Partial<Record<"traces" | "datasets" | "feedback", number>>,
+): string {
+	const values = (["traces", "datasets", "feedback"] as const).flatMap(
+		(name) => {
+			const days = retention[name];
+			return days === undefined ? [] : [`${name} ${days} days`];
+		},
+	);
+	return values.join(", ") || "No automated retention";
+}
+
+function redactionSummary(redaction: {
+	mode: "none" | "all_text";
+	keys: string[];
+}): string {
+	const mode =
+		redaction.mode === "all_text"
+			? "All trace input/output text"
+			: "Trace input/output text retained";
+	return redaction.keys.length
+		? `${mode}; ${redaction.keys.length} attribute ${redaction.keys.length === 1 ? "key" : "keys"}`
+		: mode;
 }

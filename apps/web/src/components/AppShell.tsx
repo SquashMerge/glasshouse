@@ -14,7 +14,10 @@ import {
 	LuChartLine,
 	LuMessageSquare,
 	LuCheck,
+	LuFolderKanban,
 	LuSettings,
+	LuShieldCheck,
+	LuUsers,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
@@ -90,6 +93,8 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	}
 
 	const width = collapsed ? "w-14" : "w-14 sm:w-56";
+	const settingsActive =
+		isActive("/governance") || isActive("/access") || isActive("/projects");
 
 	return (
 		<div className="flex bg-background text-foreground">
@@ -258,39 +263,73 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						collapsed={collapsed}
 					/>
 					<SidebarLink
-						to="/governance"
-						label="Governance"
-						icon={<LuSettings className="h-4 w-4" />}
-						active={isActive("/governance")}
-						collapsed={collapsed}
-					/>
-					{(organizationRole === "admin" || canRecoverAdmin) && (
-						<SidebarLink
-							to="/access"
-							label="Access"
-							icon={<LuSettings className="h-4 w-4" />}
-							active={isActive("/access")}
-							collapsed={collapsed}
-						/>
-					)}
-					<SidebarLink
-						to="/projects"
-						label={
-							organizationRole === "admin"
-								? "Create / manage projects"
-								: "Manage projects"
-						}
-						icon={<LuSettings className="h-4 w-4" />}
-						active={isActive("/projects")}
-						collapsed={collapsed}
-					/>
-					<SidebarLink
 						to="/prompts"
 						label="Prompts"
 						icon={<LuFileText className="h-4 w-4" />}
 						active={isActive("/prompts")}
 						collapsed={collapsed}
 					/>
+					<div
+						role="group"
+						aria-label="Settings"
+						data-active={settingsActive ? "true" : "false"}
+						className={cn(
+							"mt-1 flex w-full flex-col gap-1 border-t border-border pt-2",
+							collapsed ? "items-center" : "items-center sm:items-stretch",
+						)}
+					>
+						<div
+							className={cn(
+								"flex h-9 w-9 shrink-0 items-center justify-center rounded-md px-0 text-sm font-medium",
+								settingsActive ? "text-foreground" : "text-muted-foreground",
+								!collapsed &&
+									"sm:h-auto sm:w-auto sm:justify-start sm:gap-2 sm:px-2 sm:py-1.5",
+							)}
+							title="Settings"
+							aria-hidden="true"
+						>
+							<span className="flex h-4 w-4 shrink-0 items-center justify-center">
+								<LuSettings className="h-4 w-4" />
+							</span>
+							<span
+								className={cn("hidden truncate", !collapsed && "sm:inline")}
+							>
+								Settings
+							</span>
+						</div>
+						<div
+							className={cn(
+								"flex flex-col gap-1",
+								collapsed
+									? "items-center"
+									: "items-center sm:ml-3 sm:items-stretch sm:border-l sm:border-border sm:pl-2",
+							)}
+						>
+							<SidebarLink
+								to="/governance"
+								label="Governance"
+								icon={<LuShieldCheck className="h-4 w-4" />}
+								active={isActive("/governance")}
+								collapsed={collapsed}
+							/>
+							{(organizationRole === "admin" || canRecoverAdmin) && (
+								<SidebarLink
+									to="/access"
+									label="Access"
+									icon={<LuUsers className="h-4 w-4" />}
+									active={isActive("/access")}
+									collapsed={collapsed}
+								/>
+							)}
+							<SidebarLink
+								to="/projects"
+								label="Projects"
+								icon={<LuFolderKanban className="h-4 w-4" />}
+								active={isActive("/projects")}
+								collapsed={collapsed}
+							/>
+						</div>
+					</div>
 				</nav>
 
 				{collapsed && (

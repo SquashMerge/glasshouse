@@ -7,10 +7,28 @@ const projectId = "11111111-1111-4111-8111-111111111111";
 const otherProjectId = "22222222-2222-4222-8222-222222222222";
 const policyId = "33333333-3333-4333-8333-333333333333";
 const verifiedActorId = "33333333-3333-4333-8333-333333333333";
+const previewId = "55555555-5555-4555-8555-555555555555";
+const previewExpiresAt = new Date("2026-08-29T20:00:00.000Z");
 const calls: string[] = [];
 const previewConsumeValues: string[][] = [];
 let approvalConflict = false;
 let permittedActorId = verifiedActorId;
+let approvedPolicyAvailable = false;
+let legacyManagerProjection = true;
+
+function approvedPolicy() {
+	return {
+		id: policyId,
+		version: 1,
+		retention: { feedback: 30 },
+		redaction: { mode: "none", keys: [] },
+		content_hash: "a".repeat(64),
+		created_by: "manager",
+		created_at: new Date("2026-01-01T00:00:00Z"),
+		approved_by: "manager",
+		approved_at: new Date("2026-01-01T00:00:00Z"),
+	};
+}
 
 const query = mock(async (statement: string, values: string[] = []) => {
 	calls.push(statement);
@@ -42,6 +60,7 @@ const query = mock(async (statement: string, values: string[] = []) => {
 	}
 	if (statement.startsWith("SELECT CASE WHEN om.role")) {
 		if (values[0] === otherProjectId) return { rows: [] };
+		if (!legacyManagerProjection) return { rows: [] };
 		return { rows: [{ role: values[2] === "member" ? "member" : "manager" }] };
 	}
 	if (statement.includes("p.status = ANY($3::text[])"))
@@ -66,21 +85,7 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		statement.includes("JOIN governance_policy_approvals a ON") &&
 		!statement.includes("LEFT JOIN governance_policy_approvals")
 	)
-		return {
-			rows: [
-				{
-					id: policyId,
-					version: 1,
-					retention: {},
-					redaction: { mode: "none", keys: [] },
-					content_hash: "a".repeat(64),
-					created_by: "manager",
-					created_at: new Date("2026-01-01T00:00:00Z"),
-					approved_by: "manager",
-					approved_at: new Date("2026-01-01T00:00:00Z"),
-				},
-			],
-		};
+		return { rows: [approvedPolicy()] };
 	if (
 		statement.startsWith("SELECT v.id, v.version") &&
 		statement.includes("WHERE v.id")
@@ -100,7 +105,18 @@ const query = mock(async (statement: string, values: string[] = []) => {
 				},
 			],
 		};
+	if (
+		statement.startsWith("SELECT v.id, v.version") &&
+		statement.includes("LEFT JOIN governance_policy_approvals")
+	)
+		return { rows: approvedPolicyAvailable ? [approvedPolicy()] : [] };
 	if (statement.startsWith("SELECT v.id, v.version")) return { rows: [] };
+	if (
+		statement.startsWith("SELECT count(*)::text AS count FROM feedback_reviews")
+	)
+		return { rows: [{ count: "7" }] };
+	if (statement.startsWith("INSERT INTO governance_retention_previews"))
+		return { rows: [{ id: previewId, expires_at: previewExpiresAt }] };
 	if (statement.startsWith("INSERT INTO governance_policy_approvals"))
 		return { rows: approvalConflict ? [] : [{ approved_at: new Date() }] };
 	return { rows: [] };
@@ -162,6 +178,45 @@ function request(actor: string, path: string, init?: RequestInit) {
 }
 
 describe("governance route guards", () => {
+	it("issues a complete preview for a durable governed actor without a legacy role projection", async () => {
+		calls.length = 0;
+		approvedPolicyAvailable = true;
+		legacyManagerProjection = false;
+		try {
+			const response = await request(
+				"manager",
+				"/v1/governance/retention/preview",
+				{
+					method: "POST",
+					headers: { "x-test-actor-id": verifiedActorId },
+					body: JSON.stringify({ project_id: projectId }),
+				},
+			);
+
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual({
+				policy_version_id: policyId,
+				counts: { feedback: 7 },
+				preview_id: previewId,
+				preview_expires_at: previewExpiresAt.toISOString(),
+			});
+			expect(calls.some((call) => call.includes("'retention_previewed'"))).toBe(
+				true,
+			);
+			const projectLock = calls.findIndex((call) =>
+				call.includes("p.status = ANY($3::text[])"),
+			);
+			const auditLock = calls.findIndex((call) =>
+				call.startsWith("SELECT lock_project_audit_provenance"),
+			);
+			expect(projectLock).toBeGreaterThanOrEqual(0);
+			expect(auditLock).toBeGreaterThan(projectLock);
+		} finally {
+			approvedPolicyAvailable = false;
+			legacyManagerProjection = true;
+		}
+	});
+
 	it("rejects members, cross-project access, and unapproved retention previews", async () => {
 		calls.length = 0;
 		for (const [actor, target, status] of [
@@ -193,7 +248,10 @@ describe("governance route guards", () => {
 		expect(effective.status).toBe(200);
 		const history = calls.find((call) => call.startsWith("SELECT v.id"));
 		expect(history).toContain("p.status = 'active'");
-		expect(history).toContain("om.role = 'owner' OR pm.role = 'manager'");
+		expect(history).toContain(
+			"authorization_allows_project(gp.organization_id, gp.project_id, $3, 'governed')",
+		);
+		expect(history).not.toContain("organization_memberships");
 
 		calls.length = 0;
 		const runs = await request(
@@ -203,7 +261,10 @@ describe("governance route guards", () => {
 		expect(runs.status).toBe(200);
 		const summary = calls.find((call) => call.startsWith("SELECT r.id"));
 		expect(summary).toContain("p.status = 'active'");
-		expect(summary).toContain("om.role = 'owner' OR pm.role = 'manager'");
+		expect(summary).toContain(
+			"authorization_allows_project(r.organization_id, r.project_id, $3, 'governed')",
+		);
+		expect(summary).not.toContain("organization_memberships");
 	});
 
 	it("commits policy approval and its immutable audit event together", async () => {

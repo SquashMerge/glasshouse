@@ -15,7 +15,7 @@ const actorIds = {
 	"cross-org-manager": "66666666-6666-4666-8666-666666666666",
 } as const;
 const defaultQuery = async (sql: string, values: string[] = []) => {
-	if (sql.includes("authorization_effective_project_role")) {
+	if (sql.startsWith("SELECT decision.effective_role")) {
 		const [, projectId, actorId, operation] = values;
 		const role =
 			actorId === actorIds.owner
@@ -693,7 +693,51 @@ describe("project authorization routes", () => {
 		expect(member.status).toBe(200);
 	});
 
-	it("uses the verified actor ID for legacy project memberships", async () => {
+	it("lets a durable Admin create a project without a legacy owner projection", async () => {
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (
+				sql.startsWith("WITH authorization AS MATERIALIZED") &&
+				sql.includes("INSERT INTO projects") &&
+				sql.includes("role = 'owner'")
+			)
+				return { rows: [] };
+			return defaultQuery(sql, values);
+		});
+
+		const response = await request("owner", "/v1/projects", {
+			method: "POST",
+			body: JSON.stringify({ name: "New Project", slug: "new-project" }),
+		});
+
+		expect(response.status).toBe(201);
+		expect(await response.json()).toEqual(
+			expect.objectContaining({ name: "New Project", slug: "new-project" }),
+		);
+	});
+
+	it("lets a durable Admin update a project without a legacy manager projection", async () => {
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (
+				sql.startsWith("WITH authorization AS MATERIALIZED") &&
+				sql.includes("UPDATE projects") &&
+				sql.includes("om.role = 'owner' OR pm.role = 'manager'")
+			)
+				return { rows: [] };
+			return defaultQuery(sql, values);
+		});
+
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ name: "Renamed" }),
+		});
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual(
+			expect.objectContaining({ id: PROJECT, name: "Renamed" }),
+		);
+	});
+
+	it("uses the verified actor ID for durable project authorization", async () => {
 		const verifiedActorId = "33333333-3333-4333-8333-333333333333";
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
 			if (sql.includes("authorization AS MATERIALIZED")) {
@@ -735,7 +779,10 @@ describe("project authorization routes", () => {
 			(sql as string).includes("authorization AS MATERIALIZED"),
 		)!;
 		expect(sql).toContain(
-			"basic_auth_identity_matches(p.organization_id, om.actor_subject, $6)",
+			"authorization_effective_project_role(p.organization_id, p.id, $6)",
+		);
+		expect(sql).toContain(
+			"authorization_allows_project($4, $3, $6, 'project_manage')",
 		);
 		expect(values).toContain(verifiedActorId);
 	});
