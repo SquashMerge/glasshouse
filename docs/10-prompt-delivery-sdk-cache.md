@@ -209,9 +209,10 @@ cache_mode         default | bypass | refresh | offline
 - **Offline:** use only a matching immutable local entry or a supplied signed
   fallback bundle with a still-valid delivery capability; never use a label
   whose final resolution cannot be known.
-- **Error fallback:** return a stale entry only inside `max_stale`; then use an
-  explicit immutable fallback bundle if allowed, otherwise raise a typed
-  `PromptUnavailable` error.
+- **Error fallback:** return a stale entry only inside `max_stale`; then use a
+  signed fallback bundle only when it carries a verified, currently valid
+  delivery capability bound to the same client and immutable Prompt identity.
+  Otherwise raise a typed `PromptUnavailable` error.
 
 A fallback is a `PromptBundle` with an immutable identity and content hash, not
 a bare prompt string. This preserves trace/evaluation provenance and makes a
@@ -224,9 +225,10 @@ provenance.
 `PromptBundle/v1` is a signed, canonical payload containing: schema version;
 canonical control-plane origin; Project ID; immutable Prompt identity; messages,
 safe validated settings, and cache policy; `issued_at` and absolute `not_after`;
-delivery authorization epoch; signer key ID; and the content hash. The SDK
-serializes the payload with the defined canonical JSON algorithm and verifies an
-Ed25519 signature over those bytes.
+the complete server-signed delivery capability; signer key ID; and the content
+hash. The bundle `not_after` may not exceed the embedded capability's
+`not_after`. The SDK serializes the payload with the defined canonical JSON
+algorithm and verifies an Ed25519 signature over those bytes.
 
 Trusted public keys are bootstrapped from the authenticated control plane and
 rotated by key ID with bounded overlap; SDK configuration may pin the initial
