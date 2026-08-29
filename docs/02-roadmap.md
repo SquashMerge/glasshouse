@@ -328,6 +328,11 @@ as a **narrow identity/version contract**, not a framework-integration flood:
   provider-prefix-cache adapters. See
   [`docs/10-prompt-delivery-sdk-cache.md`](10-prompt-delivery-sdk-cache.md).
 
+The three-language prompt-delivery core is an explicit, bounded exception to
+the single Agent-execution-target rule: it is one shared transport/render/cache
+contract with conformance fixtures, not three framework integrations or Agent
+execution paths. Framework breadth remains P5 work.
+
 Normal onboarding stays low-friction: OTLP configuration and SDK
 `register(agent)`/introspection are preferred; agent manifests are generated
 artifacts for export, audit, or GitOps—not user-authored YAML required at setup.

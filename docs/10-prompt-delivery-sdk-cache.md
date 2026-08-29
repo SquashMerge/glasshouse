@@ -174,26 +174,41 @@ choice for applications where restart survival has more value than the local
 storage risk. It is not a cross-language shared SQLite database: each SDK owns
 its runtime-local storage and concurrency semantics.
 
-### Freshness and availability
+### Freshness, authorization, and availability
 
 Each `resolve` call accepts a policy with explicit, bounded behavior:
 
 ```text
-fresh_ttl          default 60 seconds; a fresh entry returns immediately
-max_stale          caller-selected bounded outage window; stale is never indefinite
+fresh_ttl          default 60 seconds; a fresh entry returns immediately only while its delivery capability is valid
+max_stale          caller-selected bounded outage window, capped by the delivery capability; stale is never indefinite
 revalidate         background by default; blocking only when caller selects strict mode
 cache_mode         default | bypass | refresh | offline
 ```
 
-- **Fresh:** return immediately; no network request.
+- **Delivery capability:** every resolution carries a server-signed,
+  project-scoped capability containing the control-plane origin, authenticated
+  client identity, resolved Prompt identity, authorization epoch, and short,
+  absolute `not_after` time. It uses the same trusted-key/rotation mechanism as
+  a signed fallback bundle. The SDK verifies it and checks it *before every
+  cache return*. It must reauthorize with the control plane before it expires,
+  and must fail closed if the clock is unsafe or the capability is expired. The
+  server advances/rejects the epoch when delivery access is revoked, the Project
+  is archived/deleted, or the prompt is deleted. The server defines a hard
+  maximum capability lifetime that callers cannot extend. This deliberately
+  bounds—not erases—the authorization-revocation window; a local cache is never
+  an indefinite authorization grant.
+- **Fresh:** return immediately only while the associated delivery capability
+  is valid; otherwise reauthorize before returning the entry.
 - **Stale while revalidate:** return the last known immutable resolution and
-  initiate one background conditional fetch. This preserves the request path
-  while converging deployments. Langfuse documents the same high-availability
+  initiate one background conditional fetch, but only while its delivery
+  capability remains valid. This preserves the request path while converging
+  deployments. Langfuse documents the same high-availability
   stale-while-revalidate pattern for prompt SDK retrieval.[2]
 - **Strict:** wait for revalidation and fail rather than using stale data. Use
   this for CI, evaluation, or a release gate—not the normal production path.
 - **Offline:** use only a matching immutable local entry or a supplied signed
-  fallback bundle; never use a label whose final resolution cannot be known.
+  fallback bundle with a still-valid delivery capability; never use a label
+  whose final resolution cannot be known.
 - **Error fallback:** return a stale entry only inside `max_stale`; then use an
   explicit immutable fallback bundle if allowed, otherwise raise a typed
   `PromptUnavailable` error.
@@ -204,6 +219,25 @@ fallback reviewable. A development-only escape hatch may accept an inline
 fallback, but it must be visibly untracked and must not claim managed-prompt
 provenance.
 
+#### Signed fallback bundles
+
+`PromptBundle/v1` is a signed, canonical payload containing: schema version;
+canonical control-plane origin; Project ID; immutable Prompt identity; messages,
+safe validated settings, and cache policy; `issued_at` and absolute `not_after`;
+delivery authorization epoch; signer key ID; and the content hash. The SDK
+serializes the payload with the defined canonical JSON algorithm and verifies an
+Ed25519 signature over those bytes.
+
+Trusted public keys are bootstrapped from the authenticated control plane and
+rotated by key ID with bounded overlap; SDK configuration may pin the initial
+key set for an offline deployment. Verification is fail-closed: the signature,
+key ID, issuer/origin, Project, content hash, schema version, clock window, and
+authorization epoch must all match the configured client and requested prompt.
+No private key, raw credential, or arbitrary user-provided public key belongs in
+the bundle or ordinary SDK configuration. A bundle that fails verification may
+only be used as an explicitly unmanaged local fallback and may not emit managed
+prompt provenance.
+
 ### Cache keys, invalidation, and eviction
 
 There are two different cache records:
@@ -212,8 +246,9 @@ There are two different cache records:
    label)` to a resolved immutable identity plus validator and freshness state.
    They are revalidated and may be locally invalidated.
 2. **Immutable records** use `(origin, client fingerprint, project, slug,
-   version, content_hash)`. They are correct until evicted because a published
-   version never changes.
+   version, content_hash)`. Their content identity remains correct until
+   evicted because a published version never changes, but they are never
+   eligible to serve without a current delivery capability.
 
 This split is the primary invalidation mechanism: a label promotion creates a
 new selector result and a new immutable record. It avoids an unsafe distributed
@@ -336,11 +371,17 @@ covering:
 - response schema and canonical content-hash verification;
 - fresh, stale, strict, offline, fallback, and `304` behavior under a fake
   clock;
+- delivery-capability expiry, role revocation, prompt-delivery-permission
+  removal, Project archive/delete, and prompt deletion; each must prevent a
+  cache return before the next local use after the capability boundary;
 - single-flight revalidation and bounded LRU/byte/token eviction;
 - label promotion race: stale label result, new immutable resolution, and
   concurrent callers;
 - template rendering parity and error behavior; and
 - OTLP provenance emission with no rendered-variable leakage.
+- signed-bundle canonicalization, signature/key rotation, origin/Project/hash
+  binding, expiration/epoch rejection, and a proof that an unverified bundle
+  cannot emit managed provenance.
 
 Python, TypeScript, and Java may differ in idiom (sync/async APIs, threads,
 coroutines), but they may not differ in the above observable behavior. SDK
@@ -359,8 +400,11 @@ and Agent foundations—not as a shortcut around them.
 2. **Read path:** add the SDK delivery endpoint and one generated client; prove
    authorization, missing-scope behavior, immutable-version selection, label
    resolution, and `304` semantics with migration/integration coverage.
-3. **SDK core:** ship parity-capable Python, TypeScript, and Java resolution,
-   local rendering, provenance, L1 cache, fallback bundles, and cache metrics.
+3. **SDK core:** implement one reference SDK, then ship the same bounded
+   delivery core in Python, TypeScript, and Java: resolution, local rendering,
+   provenance, L1 cache, verified fallback bundles, and cache metrics. This is
+   deliberately a cross-language contract package—not three framework/Agent
+   execution integrations—and it must remain free of framework introspection.
 4. **Optional durable cache:** add it only after threat modeling, operational
    documentation, corruption tests, size-bound tests, and a safe key-storage
    story for each runtime.
@@ -386,6 +430,11 @@ P4 prompt delivery is not complete until all of these are true:
   event is lost, and no SDK promises global instantaneous invalidation;
 - cache data is bounded, segregated, integrity-checked, and free of rendered
   user/request content;
+- local cache and offline use are always gated by a checked, bounded
+  server-signed delivery capability; revocation/archive/deletion cannot become
+  an indefinite cached authorization decision;
+- a fallback bundle can emit managed provenance only after fail-closed signature,
+  origin/Project/hash, expiry, and authorization-epoch verification;
 - Python, TypeScript, and Java pass the same conformance suite; and
 - provider-cache claims are backed by provider response telemetry and a
   documented capability matrix, not inference from local-cache behavior.
