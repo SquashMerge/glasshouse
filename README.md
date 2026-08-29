@@ -115,7 +115,7 @@ Bun resolves newly added direct and transitive npm packages only after they have
 
 ### `make dev`
 
-Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Every API start runs the PostgreSQL and ClickHouse migration runners concurrently and starts serving only after both succeed; PostgreSQL tracks applied migrations and ClickHouse checksum-verifies changesets before skipping ones it has already applied.
+Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Every API start validates PostgreSQL migration filenames, then runs the PostgreSQL and ClickHouse migration runners concurrently and starts serving only after both succeed; PostgreSQL tracks applied migrations and ClickHouse checksum-verifies changesets before skipping ones it has already applied.
 
 ### Local dev (deps in Docker, api + web via bun)
 
