@@ -72,6 +72,16 @@ BEGIN
     ) THEN
         RAISE EXCEPTION '0075 rewrote immutable legacy-untyped definition content or hash';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM evaluation_definition_drafts
+        WHERE evaluation_id = fixture_evaluation_id
+          AND evaluator = '{"kind":"exact_match","version":"v1"}'::jsonb
+          AND sampling = '{"strategy":"first_n","sample_size":100,"seed":0}'::jsonb
+          AND limits = '{"max_cost_usd":10,"max_duration_seconds":3600}'::jsonb
+    ) THEN
+        RAISE EXCEPTION '0075 upgrade fixture did not reproduce the incomplete legacy draft';
+    END IF;
     BEGIN
         UPDATE evaluation_definition_versions SET version = 2 WHERE id = version_id;
         RAISE EXCEPTION '0074 allowed immutable version mutation';

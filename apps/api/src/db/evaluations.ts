@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { EvaluationDefinitionInput } from "../schemas/evaluations.js";
 import {
 	lockActiveAuthorizedProject,
 	type ProjectAuthorization,
@@ -423,7 +424,7 @@ export async function publishEvaluationDraft(
 					"CONFLICT",
 					`Evaluation draft is at revision ${row.revision}`,
 				);
-			const value: Definition = {
+			const value = {
 				dataset_version_id: text(row, "dataset_version_id"),
 				sampling: object(row, "sampling"),
 				evaluator: object(row, "evaluator"),
@@ -432,7 +433,14 @@ export async function publishEvaluationDraft(
 				limits: object(row, "limits"),
 				thresholds: object(row, "thresholds"),
 			};
-			const hash = definitionHash(value);
+			const parsed = EvaluationDefinitionInput.safeParse(value);
+			if (!parsed.success || canonical(parsed.data) !== canonical(value))
+				throw new EvaluationRepositoryError(
+					"BAD_REQUEST",
+					"Evaluation draft must be replaced with a complete typed Definition before publishing",
+				);
+			const complete = parsed.data as Definition;
+			const hash = definitionHash(complete);
 			const existing = await client.query(
 				"SELECT v.* FROM evaluation_definition_versions v WHERE v.evaluation_id=$1 AND v.content_hash=$2",
 				[text(row, "evaluation_id"), hash],
@@ -445,13 +453,13 @@ export async function publishEvaluationDraft(
 					text(row, "evaluation_id"),
 					input.authorization.organization_id,
 					input.project_id,
-					value.dataset_version_id,
-					JSON.stringify(value.sampling),
-					JSON.stringify(value.evaluator),
-					JSON.stringify(value.target),
-					JSON.stringify(value.execution_defaults),
-					JSON.stringify(value.limits),
-					JSON.stringify(value.thresholds),
+					complete.dataset_version_id,
+					JSON.stringify(complete.sampling),
+					JSON.stringify(complete.evaluator),
+					JSON.stringify(complete.target),
+					JSON.stringify(complete.execution_defaults),
+					JSON.stringify(complete.limits),
+					JSON.stringify(complete.thresholds),
 					hash,
 					input.authorization.actor_id,
 					input.revision,

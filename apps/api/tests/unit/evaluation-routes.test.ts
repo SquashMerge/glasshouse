@@ -22,7 +22,10 @@ import {
 	publishEvaluationDraftRoute,
 	putEvaluationDraftRoute,
 } from "../../src/routes/evaluations";
-import { EvaluationDefinitionVersion } from "../../src/schemas/evaluations";
+import {
+	EvaluationDefinitionInput,
+	EvaluationDefinitionVersion,
+} from "../../src/schemas/evaluations";
 
 describe("evaluation route contract", () => {
 	it("documents query-scoped create and slug-scoped draft and version paths", () => {
@@ -78,6 +81,39 @@ describe("evaluation route contract", () => {
 				content_hash: "b".repeat(64),
 				published_draft_revision: 1,
 				created_at: "2026-01-01T00:00:00.000Z",
+			}).success,
+		).toBe(true);
+	});
+	it("keeps upgraded incomplete drafts out of the typed publish contract", () => {
+		const upgradedLegacyDraft = {
+			dataset_version_id: "44444444-4444-4444-8444-444444444444",
+			sampling: { strategy: "first_n", sample_size: 100, seed: 0 },
+			evaluator: { kind: "exact_match", version: "v1" },
+			target: { kind: "configured_llm" },
+			execution_defaults: {},
+			limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
+			thresholds: {},
+		};
+		const parsedLegacyDraft =
+			EvaluationDefinitionInput.safeParse(upgradedLegacyDraft);
+		expect(parsedLegacyDraft.success).toBe(true);
+		if (!parsedLegacyDraft.success) return;
+		expect(parsedLegacyDraft.data).not.toEqual(upgradedLegacyDraft);
+		expect(
+			EvaluationDefinitionInput.safeParse({
+				...upgradedLegacyDraft,
+				evaluator: {
+					...upgradedLegacyDraft.evaluator,
+					expected_output_path: "$.expected_output",
+					output_path: "$.output",
+				},
+				target: {
+					...upgradedLegacyDraft.target,
+					model: null,
+					system_prompt: null,
+				},
+				execution_defaults: { temperature: 0, max_tokens: null },
+				thresholds: { minimum_pass_rate: null },
 			}).success,
 		).toBe(true);
 	});
