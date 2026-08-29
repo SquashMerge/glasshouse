@@ -34,7 +34,7 @@ export function validateMigrationFilenames(
 			continue;
 		}
 
-		const prefix = match[1];
+		const prefix = String(Number(match[1])).padStart(4, "0");
 		const names = namesByPrefix.get(prefix) ?? [];
 		names.push(filename);
 		namesByPrefix.set(prefix, names);

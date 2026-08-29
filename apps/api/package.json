@@ -19,7 +19,7 @@
     "test:clickhouse": "bun test tests/integration/clickhouse-schema.test.ts",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
-    "db:migrate": "bun run ../../infra/scripts/verify-pg-migration-filenames.ts && node-pg-migrate up --migrations-dir ../../infra/db/migrations --migration-file-language sql --check-order=false && bun run src/db/bootstrap-authorization.ts",
+    "db:migrate": "bun run ../../infra/scripts/verify-pg-migration-filenames.ts && migration_order_mode=$(bun run ../../infra/scripts/pg-migration-order-mode.ts) && if [ \"$migration_order_mode\" = \"legacy-0023-inversion\" ]; then node-pg-migrate up --migrations-dir ../../infra/db/migrations --migration-file-language sql --check-order=false; elif [ \"$migration_order_mode\" = \"strict\" ]; then node-pg-migrate up --migrations-dir ../../infra/db/migrations --migration-file-language sql; else echo \"Unexpected PostgreSQL migration order mode: $migration_order_mode\" >&2; exit 1; fi && bun run src/db/bootstrap-authorization.ts",
     "ch:migrate": "bun run src/db/clickhouse-migrate.ts",
     "openapi:snapshot": "bun run ../../infra/codegen/snapshot.ts",
     "codegen:ts": "bun x --bun --package=typescript@5.9.3 --package=openapi-typescript@7.13.0 openapi-typescript ../../openapi.yaml --output ../../clients/ts/api.d.ts --enum --immutable --empty-objects false",

@@ -15,6 +15,10 @@ test("db:migrate validates filenames and tolerates the known legacy ordering inv
 	expect(packageJson.scripts["db:migrate"]).toContain(
 		"bun run ../../infra/scripts/verify-pg-migration-filenames.ts",
 	);
+	expect(packageJson.scripts["db:migrate"]).toContain(
+		"pg-migration-order-mode.ts",
+	);
+	expect(packageJson.scripts["db:migrate"]).toContain("legacy-0023-inversion");
 	expect(packageJson.scripts["db:migrate"]).toContain("--check-order=false");
 });
 

@@ -26,6 +26,18 @@ test("rejects a newly introduced duplicate migration prefix", () => {
 	]);
 });
 
+test("normalizes numeric prefixes before detecting duplicates", () => {
+	expect(
+		validateMigrationFilenames([
+			"00023_reintroduced_collision.sql",
+			"0023_project_workspace_authorization.sql",
+			"0023_prompt_optimization_metric_calls.sql",
+		]),
+	).toEqual([
+		"Duplicate PostgreSQL migration prefix 0023: 00023_reintroduced_collision.sql, 0023_project_workspace_authorization.sql, 0023_prompt_optimization_metric_calls.sql",
+	]);
+});
+
 test("rejects filenames that the PostgreSQL runner would not treat as migrations", () => {
 	expect(validateMigrationFilenames(["0074-invalid.sql"])).toEqual([
 		"Invalid PostgreSQL migration filename: 0074-invalid.sql",
