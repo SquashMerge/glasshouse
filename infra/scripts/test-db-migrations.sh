@@ -813,6 +813,7 @@ done
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0074.backfill.assert.sql"
+# Insert the 0074-era snapshot before 0075 adds nullable typed version fields.
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0074.upgrade.sql"

@@ -55,9 +55,23 @@ DECLARE
     fixture_evaluation_id UUID := '74000000-0000-4000-8000-000000000005';
     version_id UUID := '74000000-0000-4000-8000-000000000006';
 BEGIN
-	IF EXISTS (SELECT 1 FROM evaluation_definition_versions WHERE id = version_id AND (evaluator <> '{"kind":"exact_match"}'::jsonb OR sampling IS NOT NULL OR limits IS NOT NULL OR content_hash <> repeat('b', 64))) THEN
-		RAISE EXCEPTION '0075 rewrote immutable published definition content or hash';
-	END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM evaluation_definition_versions
+        WHERE id = version_id
+          AND (
+              dataset_version_id IS DISTINCT FROM '74000000-0000-4000-8000-000000000004'::uuid
+              OR evaluator IS DISTINCT FROM '{"kind":"exact_match"}'::jsonb
+              OR target IS DISTINCT FROM '{"kind":"configured_llm"}'::jsonb
+              OR execution_defaults IS DISTINCT FROM '{}'::jsonb
+              OR thresholds IS DISTINCT FROM '{}'::jsonb
+              OR sampling IS NOT NULL
+              OR limits IS NOT NULL
+              OR content_hash IS DISTINCT FROM repeat('b', 64)
+          )
+    ) THEN
+        RAISE EXCEPTION '0075 rewrote immutable legacy-untyped definition content or hash';
+    END IF;
     BEGIN
         UPDATE evaluation_definition_versions SET version = 2 WHERE id = version_id;
         RAISE EXCEPTION '0074 allowed immutable version mutation';
