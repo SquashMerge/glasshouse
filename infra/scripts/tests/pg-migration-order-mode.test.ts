@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { selectMigrationOrderMode } from "../pg-migration-order-mode";
+import {
+	migrationLedgerSql,
+	selectMigrationOrderMode,
+} from "../pg-migration-order-mode";
 
 const migrationNames = [
 	"0022_experiment_task_ledger",
@@ -23,6 +26,12 @@ test("permits only the recorded 0023 migration inversion", () => {
 			"0024_prompt_optimization_heldout",
 		]),
 	).toBe("legacy-0023-inversion");
+});
+
+test("reads the same public migration ledger as node-pg-migrate", () => {
+	expect(migrationLedgerSql).toBe(
+		"SELECT name FROM public.pgmigrations ORDER BY run_on ASC, id ASC",
+	);
 });
 
 test("keeps normal order enforcement for every other history", () => {

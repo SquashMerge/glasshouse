@@ -5,6 +5,8 @@ export type MigrationOrderMode = "strict" | "legacy-0023-inversion";
 
 const projectWorkspaceMigration = "0023_project_workspace_authorization";
 const promptMetricCallsMigration = "0023_prompt_optimization_metric_calls";
+export const migrationLedgerSql =
+	"SELECT name FROM public.pgmigrations ORDER BY run_on ASC, id ASC";
 
 export function sortMigrationNames(names: readonly string[]): string[] {
 	return [...names].sort((left, right) => {
@@ -69,7 +71,7 @@ export async function detectMigrationOrderMode(
 		if (!migrationTable.rows[0]?.table_name) return "strict";
 
 		const runMigrations = await client.query<{ name: string }>(
-			"SELECT name FROM pgmigrations ORDER BY run_on ASC, id ASC",
+			migrationLedgerSql,
 		);
 		return selectMigrationOrderMode(
 			readdirSync(migrationDirectory)
