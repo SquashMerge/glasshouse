@@ -42,21 +42,31 @@ const SAFE_WORKER_FAILURE_KINDS = new Set([
 	"UnknownError",
 	"ValueError",
 ]);
+const SAFE_WORKER_FAILURE_SITE = /^(?:astraea_worker|gepa):[1-9][0-9]{0,5}$/u;
 
 export function diagnosticSummary(
 	diagnostic: string,
 ): Record<string, number | string> {
 	if (!diagnostic) return {};
-	const failureKind = diagnostic
+	const failure = diagnostic
 		.split("\n")
 		.map((line) => line.trim())
 		.find((line) => line.startsWith(WORKER_FAILURE_PREFIX))
 		?.slice(WORKER_FAILURE_PREFIX.length);
+	const [failureKind, failureSite, ...extraFailureParts] =
+		failure?.split(" ") ?? [];
+	const hasSafeFailureSite =
+		extraFailureParts.length === 0 &&
+		failureSite !== undefined &&
+		SAFE_WORKER_FAILURE_SITE.test(failureSite);
+	const hasSafeFailureKind =
+		failureKind !== undefined && SAFE_WORKER_FAILURE_KINDS.has(failureKind);
 	return {
 		diagnostic_bytes: new TextEncoder().encode(diagnostic).byteLength,
 		diagnostic_lines: diagnostic.split("\n").filter(Boolean).length,
-		...(failureKind && SAFE_WORKER_FAILURE_KINDS.has(failureKind)
-			? { worker_failure_kind: failureKind }
+		...(hasSafeFailureKind ? { worker_failure_kind: failureKind } : {}),
+		...(hasSafeFailureKind && hasSafeFailureSite
+			? { worker_failure_site: failureSite }
 			: {}),
 	};
 }

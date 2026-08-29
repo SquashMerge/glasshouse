@@ -5,6 +5,7 @@ import math
 import os
 import re
 import sys
+import traceback
 import unicodedata
 
 if __package__:
@@ -140,6 +141,22 @@ SAFE_OPTIMIZATION_FAILURE_KINDS = {
 def safe_optimization_failure_kind(error):
     kind = type(error).__name__
     return kind if kind in SAFE_OPTIMIZATION_FAILURE_KINDS else "UnknownError"
+
+
+def safe_optimization_failure_site(error):
+    frames = traceback.extract_tb(error.__traceback__)
+    if not frames:
+        return None
+    frame = frames[-1]
+    if frame.lineno < 1:
+        return None
+    filename = os.path.realpath(frame.filename)
+    worker_directory = os.path.realpath(os.path.dirname(__file__))
+    if filename.startswith(f"{worker_directory}{os.sep}"):
+        return f"astraea_worker:{frame.lineno}"
+    if "gepa" in filename.split(os.sep):
+        return f"gepa:{frame.lineno}"
+    return None
 
 
 def allowed_models():
@@ -447,5 +464,9 @@ except DevCliLlmError:
     sys.stderr.write("GEPA development CLI failed")
     sys.exit(1)
 except Exception as error:
-    sys.stderr.write(f"ASTRAEA_GEPA_FAILURE {safe_optimization_failure_kind(error)}")
+    kind = safe_optimization_failure_kind(error)
+    site = safe_optimization_failure_site(error)
+    sys.stderr.write(
+        f"ASTRAEA_GEPA_FAILURE {kind}" + (f" {site}" if site else "")
+    )
     sys.exit(1)
