@@ -129,7 +129,7 @@ jobs:
           wait "$first"
           wait "$second"
           expected="$(find infra/db/clickhouse -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
-          actual="$(curl --fail --silent --show-error --user astraea:astraea-ci-password --data-binary 'SELECT count() FROM astraea_schema_migrations FORMAT TabSeparated' http://localhost:8123/)"
+          actual="$(curl --fail --silent --show-error --user astraea:astraea-ci-password --data-binary 'SELECT count() FROM astraea_schema_migrations FORMAT TabSeparated' 'http://localhost:8123/?database=astraea')"
           test "$actual" = "$expected"
 
       - name: Verify ClickHouse schema

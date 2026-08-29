@@ -22,7 +22,7 @@
     "codegen": "bun run openapi:snapshot && bun --filter @astraea/api codegen:ts && bun --filter @astraea/api codegen:py",
     "format": "bun --filter '*' format",
     "format:check": "bun --filter '*' format:check",
-    "test:supply-chain": "bun test infra/scripts/tests/verify-dependency-release-age.test.ts infra/scripts/tests/verify-startup-migrations-ci.test.ts",
+    "test:supply-chain": "bun test infra/scripts/tests/verify-dependency-release-age.test.ts infra/scripts/tests/verify-startup-migrations-ci.test.ts infra/scripts/tests/verify-migration-locks.test.ts",
     "verify:dependency-release-age": "bun run infra/scripts/verify-dependency-release-age.ts"
   },
   "overrides": {
