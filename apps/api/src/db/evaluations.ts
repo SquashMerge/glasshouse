@@ -303,7 +303,7 @@ export async function getEvaluation(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT * FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2",
+				"SELECT * FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2 AND archived_at IS NULL",
 				[input.slug, input.project_id],
 			);
 			if (!r.rows[0])
@@ -329,7 +329,7 @@ export async function getEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2",
+				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2 AND e.archived_at IS NULL",
 				[input.slug, input.project_id],
 			);
 			if (!r.rows[0])
@@ -557,9 +557,20 @@ export async function listEvaluationVersions(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 ORDER BY v.version DESC",
+				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 AND e.archived_at IS NULL ORDER BY v.version DESC",
 				[input.slug, input.project_id],
 			);
+			if (r.rows.length === 0) {
+				const evaluation = await client.query(
+					"SELECT 1 FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2 AND archived_at IS NULL",
+					[input.slug, input.project_id],
+				);
+				if (!evaluation.rows[0])
+					throw new EvaluationRepositoryError(
+						"NOT_FOUND",
+						"Evaluation not found",
+					);
+			}
 			return { items: r.rows.map(version) };
 		});
 	} catch (cause) {
@@ -579,7 +590,7 @@ export async function getEvaluationVersion(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 AND v.version=$3",
+				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 AND v.version=$3 AND e.archived_at IS NULL",
 				[input.slug, input.project_id, input.version],
 			);
 			if (!r.rows[0])

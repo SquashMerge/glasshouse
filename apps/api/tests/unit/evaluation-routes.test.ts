@@ -1,5 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import * as postgres from "../../src/db/postgres";
+import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
 import {
 	createEvaluationRoute,
 	archiveEvaluationRoute,
@@ -32,6 +34,8 @@ import {
 } from "../../src/schemas/evaluations";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
+const organizationId = "22222222-2222-4222-8222-222222222222";
+const actorId = "33333333-3333-4333-8333-333333333333";
 
 describe("evaluation route contract", () => {
 	it("strictly parses include_archived query values", () => {
@@ -97,6 +101,136 @@ describe("evaluation route contract", () => {
 		);
 		expect(invalid.status).toBe(400);
 		expect(parsedQueries).toHaveLength(3);
+	});
+	it("returns non-enumerating 404s for archived Evaluation direct reads", async () => {
+		const queries: string[] = [];
+		const now = new Date("2026-08-29T00:00:00.000Z");
+		const evaluationId = "44444444-4444-4444-8444-444444444444";
+		const definition = {
+			dataset_version_id: "55555555-5555-4555-8555-555555555555",
+			sampling: { strategy: "first_n", sample_size: 100, seed: 0 },
+			evaluator: {
+				kind: "exact_match",
+				version: "v1",
+				expected_output_path: "$.expected_output",
+				output_path: "$.output",
+			},
+			target: {
+				kind: "configured_llm",
+				model: "model",
+				system_prompt: null,
+			},
+			execution_defaults: { temperature: 0, max_tokens: null },
+			limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
+			thresholds: { minimum_pass_rate: null },
+		};
+		const archivedEvaluation = {
+			id: evaluationId,
+			project_id: projectId,
+			slug: "archived-evaluation",
+			name: "Archived evaluation",
+			description: null,
+			lifecycle_revision: 2,
+			archived_at: now,
+			tombstoned_at: null,
+			created_at: now,
+			updated_at: now,
+		};
+		const archivedDraft = {
+			...definition,
+			evaluation_id: evaluationId,
+			project_id: projectId,
+			revision: 1,
+			updated_at: now,
+		};
+		const archivedVersion = {
+			...definition,
+			id: "66666666-6666-4666-8666-666666666666",
+			evaluation_id: evaluationId,
+			project_id: projectId,
+			version: 1,
+			content_hash: "a".repeat(64),
+			published_draft_revision: 1,
+			created_at: now,
+		};
+		const query = async (sql: string) => {
+			queries.push(sql);
+			if (sql.startsWith("SELECT p.id FROM projects"))
+				return { rows: [{ id: projectId }] };
+			if (sql.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			if (sql.startsWith("SELECT * FROM evaluations"))
+				return {
+					rows: sql.includes("archived_at IS NULL") ? [] : [archivedEvaluation],
+				};
+			if (sql.startsWith("SELECT d.* FROM evaluation_definition_drafts"))
+				return {
+					rows: sql.includes("e.archived_at IS NULL") ? [] : [archivedDraft],
+				};
+			if (sql.startsWith("SELECT v.* FROM evaluation_definition_versions"))
+				return {
+					rows: sql.includes("e.archived_at IS NULL") ? [] : [archivedVersion],
+				};
+			if (sql.startsWith("SELECT 1 FROM evaluations"))
+				return {
+					rows: sql.includes("archived_at IS NULL") ? [] : [{ exists: 1 }],
+				};
+			return { rows: [] };
+		};
+		const postgresSpy = spyOn(postgres, "pgPool").mockReturnValue({
+			connect: async () => ({ query, release() {} }),
+		} as never);
+		const app = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		app.use("/v1/*", async (c, next) => {
+			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+				actor: "reader",
+				actorId,
+				organizationId,
+			});
+			await next();
+		});
+		app.openapi(getEvaluationRoute, handleGetEvaluation);
+		app.openapi(getEvaluationDraftRoute, handleGetEvaluationDraft);
+		app.openapi(listEvaluationVersionsRoute, handleListEvaluationVersions);
+		app.openapi(getEvaluationVersionRoute, handleGetEvaluationVersion);
+
+		try {
+			for (const [path, statement] of [
+				["/v1/evaluations/archived-evaluation", "SELECT * FROM evaluations"],
+				[
+					"/v1/evaluations/archived-evaluation/draft",
+					"SELECT d.* FROM evaluation_definition_drafts",
+				],
+				[
+					"/v1/evaluations/archived-evaluation/versions",
+					"SELECT v.* FROM evaluation_definition_versions",
+				],
+				[
+					"/v1/evaluations/archived-evaluation/versions/1",
+					"SELECT v.* FROM evaluation_definition_versions",
+				],
+			] as const) {
+				queries.length = 0;
+				const response = await app.request(
+					`http://test${path}?project_id=${projectId}`,
+				);
+
+				expect(response.status).toBe(404);
+				expect(await response.json()).toMatchObject({ code: "NOT_FOUND" });
+				const query = queries.find((sql) => sql.startsWith(statement));
+				expect(query).toContain("archived_at IS NULL");
+			}
+		} finally {
+			postgresSpy.mockRestore();
+		}
 	});
 	it("documents query-scoped create and slug-scoped draft and version paths", () => {
 		const app = new OpenAPIHono();
