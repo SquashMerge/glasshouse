@@ -50,6 +50,7 @@ const SAFE_ERROR_CODES = new Set([
 	"PAYLOAD_TOO_LARGE",
 	"UNAUTHORIZED",
 ]);
+const POSTGRES_SQLSTATE = /^[0-9]{2}[0-9A-Z]{3}$/u;
 
 function isError(error: unknown): error is Error {
 	try {
@@ -77,7 +78,8 @@ function errorType(error: unknown): string {
 
 function safeErrorCode(error: Error): string | undefined {
 	const code = safelyRead(() => (error as Error & { code?: unknown }).code);
-	return typeof code === "string" && SAFE_ERROR_CODES.has(code)
+	return typeof code === "string" &&
+		(SAFE_ERROR_CODES.has(code) || POSTGRES_SQLSTATE.test(code))
 		? code
 		: undefined;
 }

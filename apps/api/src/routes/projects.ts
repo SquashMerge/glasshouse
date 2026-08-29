@@ -36,6 +36,7 @@ import {
 	withLockPhaseTransaction,
 	type AuthorizedProjectStatus,
 } from "../db/project-authorization.js";
+import { logger } from "../lib/logger.js";
 
 const Id = z.string().uuid();
 const projectParams = z.object({ id: Id });
@@ -347,6 +348,7 @@ function failure(c: Context, error: unknown): Response {
 			{ code: "NOT_FOUND", message: "Project is not available" },
 			404,
 		);
+	logger.error("projects.request_failed", error);
 	return c.json({ code: "INTERNAL", message: "Project operation failed" }, 500);
 }
 async function requireProjectPolicy(

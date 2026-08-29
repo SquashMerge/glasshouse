@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
 import { resolveAuthorizedProjectScope } from "../../src/tenancy";
+import { logger } from "../../src/lib/logger";
 
 const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -373,6 +374,33 @@ beforeEach(() => {
 });
 
 describe("project authorization routes", () => {
+	it("logs the safe SQLSTATE when project creation has an internal database failure", async () => {
+		const originalError = logger.error;
+		const errors: Array<{ event: string; cause: unknown }> = [];
+		logger.error = (event, cause) => errors.push({ event, cause });
+		const secret = "password=do-not-log";
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (sql.includes("INSERT INTO projects"))
+				throw Object.assign(new Error(secret), { code: "42P01" });
+			return defaultQuery(sql, values);
+		});
+		try {
+			const response = await request("owner", "/v1/projects", {
+				method: "POST",
+				body: JSON.stringify({ name: "New Project", slug: "new-project" }),
+			});
+			expect(response.status).toBe(500);
+			expect(errors).toEqual([
+				{
+					event: "projects.request_failed",
+					cause: expect.objectContaining({ code: "42P01" }),
+				},
+			]);
+		} finally {
+			logger.error = originalError;
+		}
+	});
+
 	it("sets an active same-organization default and permanently deletes only a confirmed non-default project", async () => {
 		const setDefault = await request(
 			"owner",

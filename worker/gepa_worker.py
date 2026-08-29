@@ -127,6 +127,21 @@ class RemainingMetricCallsStopper:
         return self._adapter.remaining_metric_calls < self._minimum_iteration_calls
 
 
+SAFE_OPTIMIZATION_FAILURE_KINDS = {
+    "AssertionError",
+    "AttributeError",
+    "KeyError",
+    "RuntimeError",
+    "TypeError",
+    "ValueError",
+}
+
+
+def safe_optimization_failure_kind(error):
+    kind = type(error).__name__
+    return kind if kind in SAFE_OPTIMIZATION_FAILURE_KINDS else "UnknownError"
+
+
 def allowed_models():
     models = [model.strip() for model in os.environ.get("GEPA_ALLOWED_MODELS", "").split(",") if model.strip()]
     if not models:
@@ -431,6 +446,6 @@ try:
 except DevCliLlmError:
     sys.stderr.write("GEPA development CLI failed")
     sys.exit(1)
-except Exception:
-    sys.stderr.write("GEPA optimization failed")
+except Exception as error:
+    sys.stderr.write(f"ASTRAEA_GEPA_FAILURE {safe_optimization_failure_kind(error)}")
     sys.exit(1)

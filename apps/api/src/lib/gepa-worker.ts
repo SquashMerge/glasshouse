@@ -32,11 +32,32 @@ function workerPath(): string {
 	return new URL("../../../../worker/gepa_worker.py", import.meta.url).pathname;
 }
 
-function diagnosticSummary(diagnostic: string): Record<string, number> {
+const WORKER_FAILURE_PREFIX = "ASTRAEA_GEPA_FAILURE ";
+const SAFE_WORKER_FAILURE_KINDS = new Set([
+	"AssertionError",
+	"AttributeError",
+	"KeyError",
+	"RuntimeError",
+	"TypeError",
+	"UnknownError",
+	"ValueError",
+]);
+
+export function diagnosticSummary(
+	diagnostic: string,
+): Record<string, number | string> {
 	if (!diagnostic) return {};
+	const failureKind = diagnostic
+		.split("\n")
+		.map((line) => line.trim())
+		.find((line) => line.startsWith(WORKER_FAILURE_PREFIX))
+		?.slice(WORKER_FAILURE_PREFIX.length);
 	return {
 		diagnostic_bytes: new TextEncoder().encode(diagnostic).byteLength,
 		diagnostic_lines: diagnostic.split("\n").filter(Boolean).length,
+		...(failureKind && SAFE_WORKER_FAILURE_KINDS.has(failureKind)
+			? { worker_failure_kind: failureKind }
+			: {}),
 	};
 }
 
