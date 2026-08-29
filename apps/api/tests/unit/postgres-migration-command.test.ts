@@ -12,14 +12,18 @@ test("db:migrate validates filenames and tolerates the known legacy ordering inv
 		readFileSync(resolve(import.meta.dir, "../../package.json"), "utf8"),
 	) as { scripts: Record<string, string> };
 
-	expect(packageJson.scripts["db:migrate"]).toContain(
+	const migrationCommand = packageJson.scripts["db:migrate"];
+	expect(migrationCommand).toContain(
 		"bun run ../../infra/scripts/verify-pg-migration-filenames.ts",
 	);
-	expect(packageJson.scripts["db:migrate"]).toContain(
-		"pg-migration-order-mode.ts",
+	expect(migrationCommand).toContain("pg-migration-order-mode.ts");
+	expect(migrationCommand).toContain("legacy-0023-inversion");
+	expect(migrationCommand).toMatch(
+		/legacy-0023-inversion.*node-pg-migrate up --advisory-lock-mode wait.*--check-order=false/,
 	);
-	expect(packageJson.scripts["db:migrate"]).toContain("legacy-0023-inversion");
-	expect(packageJson.scripts["db:migrate"]).toContain("--check-order=false");
+	expect(migrationCommand).toMatch(
+		/strict.*node-pg-migrate up --advisory-lock-mode wait.*--migration-file-language sql/,
+	);
 });
 
 test("migration harness upgrades a database that recorded the prior 0023 order", () => {
