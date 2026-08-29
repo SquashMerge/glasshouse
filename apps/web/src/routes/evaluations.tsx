@@ -9,6 +9,7 @@ import {
 	experimentResults,
 	experimentSummary,
 	getExperiment,
+	getEvaluationDraft,
 	listDatasets,
 	listExperiments,
 	listEvaluations,
@@ -18,6 +19,7 @@ import {
 	listDatasetVersions,
 	listPublishedDatasetItems,
 	publishEvaluationDraft,
+	updateEvaluationDraft,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
@@ -168,7 +170,7 @@ export function EvaluationsPage() {
 			});
 			await publishEvaluationDraft({
 				project_id: selectedProjectId!,
-				id: created.evaluation.id,
+				slug: created.evaluation.slug,
 				revision: created.draft.revision,
 			});
 			await client.invalidateQueries({
@@ -269,7 +271,11 @@ export function EvaluationsPage() {
 								<span className="text-muted-foreground">({item.slug})</span>
 								<EvaluationVersionInspection
 									projectId={selectedProjectId!}
-									evaluationId={item.id}
+									slug={item.slug}
+								/>
+								<EvaluationDraftAuthoring
+									projectId={selectedProjectId!}
+									slug={item.slug}
 								/>
 							</li>
 						))}
@@ -366,6 +372,18 @@ export function EvaluationsPage() {
 						Publish at least one dataset case before this evaluation can run.
 					</p>
 				)}
+				{selectedDataset && selectedItems.isError && (
+					<p className="text-sm text-destructive" role="alert">
+						Unable to load published dataset items.{" "}
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => void selectedItems.refetch()}
+						>
+							Retry
+						</Button>
+					</p>
+				)}
 				{error && (
 					<p className="text-sm text-destructive" role="alert">
 						{error}
@@ -425,26 +443,27 @@ export function EvaluationsPage() {
 }
 function EvaluationVersionInspection({
 	projectId,
-	evaluationId,
+	slug,
 }: {
 	projectId: string;
-	evaluationId: string;
+	slug: string;
 }) {
+	const [selectedVersion, setSelectedVersion] = React.useState<number>();
 	const versions = useQuery({
-		queryKey: ["evaluation-versions", projectId, evaluationId],
-		queryFn: () =>
-			listEvaluationVersions({ project_id: projectId, id: evaluationId }),
+		queryKey: ["evaluation-versions", projectId, slug],
+		queryFn: () => listEvaluationVersions({ project_id: projectId, slug }),
 	});
 	const latest = versions.data?.items[0];
+	const version = selectedVersion ?? latest?.version;
 	const detail = useQuery({
-		queryKey: ["evaluation-version", projectId, evaluationId, latest?.version],
+		queryKey: ["evaluation-version", projectId, slug, version],
 		queryFn: () =>
 			getEvaluationVersion({
 				project_id: projectId,
-				id: evaluationId,
-				version: latest!.version,
+				slug,
+				version: version!,
 			}),
-		enabled: Boolean(latest),
+		enabled: Boolean(version),
 	});
 	if (versions.isError || detail.isError)
 		return (
@@ -463,10 +482,123 @@ function EvaluationVersionInspection({
 		);
 	if (!latest) return null;
 	return (
-		<p className="text-muted-foreground">
-			Version {latest.version}:{" "}
-			{detail.data?.content_hash ?? latest.content_hash}
-		</p>
+		<div className="space-y-2 text-muted-foreground">
+			<div
+				className="flex flex-wrap gap-1"
+				aria-label="Evaluation definition versions"
+			>
+				{versions.data?.items.map((item) => (
+					<Button
+						key={item.id}
+						variant="outline"
+						size="sm"
+						onClick={() => setSelectedVersion(item.version)}
+					>
+						Version {item.version}
+					</Button>
+				))}
+			</div>
+			{detail.data && (
+				<pre className="overflow-auto rounded border p-2 text-xs">
+					{JSON.stringify(detail.data, null, 2)}
+				</pre>
+			)}
+		</div>
+	);
+}
+function EvaluationDraftAuthoring({
+	projectId,
+	slug,
+}: {
+	projectId: string;
+	slug: string;
+}) {
+	const client = useQueryClient();
+	const draft = useQuery({
+		queryKey: ["evaluation-draft", projectId, slug],
+		queryFn: () => getEvaluationDraft({ project_id: projectId, slug }),
+	});
+	const [model, setModel] = React.useState("");
+	const [error, setError] = React.useState("");
+	const [saving, setSaving] = React.useState(false);
+	React.useEffect(
+		() => setModel(draft.data?.target.model ?? ""),
+		[draft.data?.target.model],
+	);
+	if (draft.isError)
+		return (
+			<p className="text-destructive" role="alert">
+				Unable to load draft.{" "}
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => void draft.refetch()}
+				>
+					Retry
+				</Button>
+			</p>
+		);
+	if (!draft.data) return null;
+	async function save() {
+		try {
+			setError("");
+			setSaving(true);
+			await updateEvaluationDraft({
+				project_id: projectId,
+				slug,
+				revision: draft.data!.revision,
+				definition: {
+					...draft.data!,
+					target: { ...draft.data!.target, model: model || null },
+				},
+			});
+			await client.invalidateQueries({
+				queryKey: ["evaluation-draft", projectId, slug],
+			});
+		} catch (cause) {
+			setError(
+				(cause as Error).message.includes("revision")
+					? "This draft changed elsewhere. Reload it before saving."
+					: (cause as Error).message,
+			);
+		} finally {
+			setSaving(false);
+		}
+	}
+	return (
+		<div className="space-y-2">
+			<label
+				className="block space-y-2 text-sm"
+				htmlFor={`evaluation-draft-model-${slug}`}
+			>
+				Draft model
+				<Input
+					id={`evaluation-draft-model-${slug}`}
+					value={model}
+					onChange={(event) => setModel(event.target.value)}
+				/>
+			</label>
+			{error && (
+				<p className="text-destructive" role="alert">
+					{error}{" "}
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => void draft.refetch()}
+					>
+						Reload
+					</Button>
+				</p>
+			)}
+			<Button
+				variant="outline"
+				size="sm"
+				disabled={saving}
+				onClick={() => void save()}
+			>
+				{saving ? "Saving..." : "Save draft"}
+			</Button>
+		</div>
 	);
 }
 export function EvaluationDetailPage() {

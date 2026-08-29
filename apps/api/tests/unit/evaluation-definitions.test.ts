@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	definitionHash,
+	listEvaluationLegacyLinks,
 	publishEvaluationDraft,
 } from "../../src/db/evaluations";
 import { EvaluationDefinitionInput } from "../../src/schemas/evaluations";
@@ -82,7 +83,7 @@ describe("Evaluation definitions", () => {
 					return { rows: [{ allowed: true }] };
 				if (sql.startsWith("SELECT p.id FROM projects"))
 					return { rows: [{ id: published.project_id }] };
-				if (sql.startsWith("SELECT * FROM evaluation_definition_drafts"))
+				if (sql.startsWith("SELECT d.* FROM evaluation_definition_drafts"))
 					return { rows: [draft] };
 				if (sql.startsWith("SELECT v.*")) return { rows: [] };
 				if (sql.startsWith("INSERT INTO evaluation_definition_versions"))
@@ -95,7 +96,7 @@ describe("Evaluation definitions", () => {
 			{ connect: async () => client } as never,
 			{
 				project_id: published.project_id,
-				id: published.evaluation_id,
+				slug: "evaluation",
 				revision: 1,
 				authorization: {
 					organization_id: "55555555-5555-4555-8555-555555555555",
@@ -118,5 +119,49 @@ describe("Evaluation definitions", () => {
 			"definition_version_id",
 			"content_hash",
 		]).not.toContain("target");
+	});
+	it("reads post-migration legacy experiments directly without inventing evidence", async () => {
+		const queries: string[] = [];
+		const result = await listEvaluationLegacyLinks(
+			{
+				connect: async () => ({
+					query: async (sql: string) => {
+						queries.push(sql);
+						if (sql.startsWith("SELECT authorization_allows_project"))
+							return { rows: [{ allowed: true }] };
+						if (sql.startsWith("SELECT p.id FROM projects"))
+							return { rows: [{ id: "project" }] };
+						return {
+							rows: [
+								{
+									legacy_kind: "experiment",
+									legacy_id: "22222222-2222-4222-8222-222222222222",
+									dataset_id: "33333333-3333-4333-8333-333333333333",
+									created_at: "2026-01-01T00:00:00.000Z",
+								},
+							],
+						};
+					},
+					release() {},
+				}),
+			} as never,
+			{
+				project_id: "project",
+				authorization: {
+					organization_id: "organization",
+					actor_id: "actor",
+					operation: "product_read",
+				},
+			},
+		);
+		expect(result.items[0]).toMatchObject({
+			compatibility: "legacy_ad_hoc",
+			legacy_kind: "experiment",
+		});
+		expect(
+			queries.some((query) =>
+				query.includes("FROM experiments WHERE project_id=$1"),
+			),
+		).toBe(true);
 	});
 });

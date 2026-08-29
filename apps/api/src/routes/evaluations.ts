@@ -22,7 +22,7 @@ import {
 	EvaluationDefinitionVersion,
 	EvaluationDraft,
 	EvaluationErrorResponses,
-	EvaluationIdParam,
+	EvaluationSlugParam,
 	EvaluationLegacyLinkList,
 	EvaluationList,
 	EvaluationProjectQuery,
@@ -66,6 +66,7 @@ export const createEvaluationRoute = createRoute({
 	summary: "Create a stable Evaluation and its draft",
 	security: [{ basicAuth: [] }],
 	request: {
+		query: EvaluationProjectQuery,
 		body: { content: { "application/json": { schema: EvaluationCreate } } },
 	},
 	responses: {
@@ -98,11 +99,11 @@ export const listEvaluationsRoute = createRoute({
 });
 export const getEvaluationRoute = createRoute({
 	method: "get",
-	path: "/v1/evaluations/{id}",
+	path: "/v1/evaluations/{slug}",
 	tags: [tag],
 	summary: "Get an Evaluation",
 	security: [{ basicAuth: [] }],
-	request: { params: EvaluationIdParam, query: EvaluationProjectQuery },
+	request: { params: EvaluationSlugParam, query: EvaluationProjectQuery },
 	responses: {
 		200: {
 			description: "OK",
@@ -113,11 +114,11 @@ export const getEvaluationRoute = createRoute({
 });
 export const getEvaluationDraftRoute = createRoute({
 	method: "get",
-	path: "/v1/evaluations/{id}/draft",
+	path: "/v1/evaluations/{slug}/draft",
 	tags: [tag],
 	summary: "Get the editable Evaluation definition",
 	security: [{ basicAuth: [] }],
-	request: { params: EvaluationIdParam, query: EvaluationProjectQuery },
+	request: { params: EvaluationSlugParam, query: EvaluationProjectQuery },
 	responses: {
 		200: {
 			description: "OK",
@@ -129,12 +130,12 @@ export const getEvaluationDraftRoute = createRoute({
 });
 export const putEvaluationDraftRoute = createRoute({
 	method: "put",
-	path: "/v1/evaluations/{id}/draft",
+	path: "/v1/evaluations/{slug}/draft",
 	tags: [tag],
 	summary: "Replace an Evaluation definition draft",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: EvaluationIdParam,
+		params: EvaluationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
 		body: {
@@ -152,12 +153,12 @@ export const putEvaluationDraftRoute = createRoute({
 });
 export const publishEvaluationDraftRoute = createRoute({
 	method: "post",
-	path: "/v1/evaluations/{id}/draft/publish",
+	path: "/v1/evaluations/{slug}/draft/publish",
 	tags: [tag],
 	summary: "Publish an immutable Evaluation Definition Version",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: EvaluationIdParam,
+		params: EvaluationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
 	},
@@ -171,11 +172,11 @@ export const publishEvaluationDraftRoute = createRoute({
 });
 export const listEvaluationVersionsRoute = createRoute({
 	method: "get",
-	path: "/v1/evaluations/{id}/versions",
+	path: "/v1/evaluations/{slug}/versions",
 	tags: [tag],
 	summary: "List immutable Evaluation Definition Versions",
 	security: [{ basicAuth: [] }],
-	request: { params: EvaluationIdParam, query: EvaluationProjectQuery },
+	request: { params: EvaluationSlugParam, query: EvaluationProjectQuery },
 	responses: {
 		200: {
 			description: "OK",
@@ -186,7 +187,7 @@ export const listEvaluationVersionsRoute = createRoute({
 });
 export const getEvaluationVersionRoute = createRoute({
 	method: "get",
-	path: "/v1/evaluations/{id}/versions/{version}",
+	path: "/v1/evaluations/{slug}/versions/{version}",
 	tags: [tag],
 	summary: "Get an immutable Evaluation Definition Version",
 	security: [{ basicAuth: [] }],
@@ -232,6 +233,7 @@ export const handleCreateEvaluation = async (c: any) => {
 		const body = c.req.valid("json");
 		const value = await createEvaluation(pgPool(), {
 			...body,
+			project_id: c.req.valid("query").project_id,
 			authorization: authorization(c, "curation_write"),
 		});
 		c.header("ETag", `\"${value.draft.revision}\"`);
@@ -257,7 +259,7 @@ export const handleGetEvaluation = async (c: any) => {
 		return c.json(
 			await getEvaluation(pgPool(), {
 				project_id: c.req.valid("query").project_id,
-				id: c.req.valid("param").id,
+				slug: c.req.valid("param").slug,
 				authorization: authorization(c, "product_read"),
 			}),
 		);
@@ -269,7 +271,7 @@ export const handleGetEvaluationDraft = async (c: any) => {
 	try {
 		const value = await getEvaluationDraft(pgPool(), {
 			project_id: c.req.valid("query").project_id,
-			id: c.req.valid("param").id,
+			slug: c.req.valid("param").slug,
 			authorization: authorization(c, "product_read"),
 		});
 		c.header("ETag", `\"${value.revision}\"`);
@@ -282,7 +284,7 @@ export const handlePutEvaluationDraft = async (c: any) => {
 	try {
 		const value = await updateEvaluationDraft(pgPool(), {
 			project_id: c.req.valid("query").project_id,
-			id: c.req.valid("param").id,
+			slug: c.req.valid("param").slug,
 			revision: revision(c.req.header("if-match")),
 			definition: c.req.valid("json"),
 			authorization: authorization(c, "curation_write"),
@@ -298,7 +300,7 @@ export const handlePublishEvaluationDraft = async (c: any) => {
 		return c.json(
 			await publishEvaluationDraft(pgPool(), {
 				project_id: c.req.valid("query").project_id,
-				id: c.req.valid("param").id,
+				slug: c.req.valid("param").slug,
 				revision: revision(c.req.header("if-match")),
 				authorization: authorization(c, "curation_write"),
 			}),
@@ -313,7 +315,7 @@ export const handleListEvaluationVersions = async (c: any) => {
 		return c.json(
 			await listEvaluationVersions(pgPool(), {
 				project_id: c.req.valid("query").project_id,
-				id: c.req.valid("param").id,
+				slug: c.req.valid("param").slug,
 				authorization: authorization(c, "product_read"),
 			}),
 		);

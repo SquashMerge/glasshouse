@@ -10,9 +10,6 @@ ALTER TABLE evaluation_definition_versions
 UPDATE evaluation_definition_drafts
 SET evaluator = evaluator || '{"version":"v1"}'::jsonb
 WHERE NOT evaluator ? 'version';
-UPDATE evaluation_definition_versions
-SET evaluator = evaluator || '{"version":"v1"}'::jsonb
-WHERE NOT evaluator ? 'version';
 
 CREATE OR REPLACE FUNCTION prevent_evaluation_audit_event_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$

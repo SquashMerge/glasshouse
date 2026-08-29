@@ -92,10 +92,12 @@ function evaluation(row: Row) {
 	};
 }
 function definitionFields(row: Row) {
+	const evaluator = object(row, "evaluator");
 	return {
 		dataset_version_id: text(row, "dataset_version_id"),
 		sampling: object(row, "sampling"),
-		evaluator: object(row, "evaluator"),
+		// Versions created before the typed evaluator contract remain immutable.
+		evaluator: { version: "v1", ...evaluator },
 		target: object(row, "target"),
 		execution_defaults: object(row, "execution_defaults"),
 		limits: object(row, "limits"),
@@ -250,7 +252,7 @@ export async function getEvaluation(
 	db: Transactional,
 	input: {
 		project_id: string;
-		id: string;
+		slug: string;
 		authorization: ProjectAuthorization;
 	},
 ) {
@@ -258,8 +260,8 @@ export async function getEvaluation(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT * FROM evaluations WHERE id=$1 AND project_id=$2",
-				[input.id, input.project_id],
+				"SELECT * FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2",
+				[input.slug, input.project_id],
 			);
 			if (!r.rows[0])
 				throw new EvaluationRepositoryError(
@@ -276,7 +278,7 @@ export async function getEvaluationDraft(
 	db: Transactional,
 	input: {
 		project_id: string;
-		id: string;
+		slug: string;
 		authorization: ProjectAuthorization;
 	},
 ) {
@@ -284,8 +286,8 @@ export async function getEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE d.evaluation_id=$1 AND d.project_id=$2",
-				[input.id, input.project_id],
+				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2",
+				[input.slug, input.project_id],
 			);
 			if (!r.rows[0])
 				throw new EvaluationRepositoryError(
@@ -302,7 +304,7 @@ export async function updateEvaluationDraft(
 	db: Transactional,
 	input: {
 		project_id: string;
-		id: string;
+		slug: string;
 		revision: number;
 		definition: Definition;
 		authorization: ProjectAuthorization;
@@ -312,9 +314,9 @@ export async function updateEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"UPDATE evaluation_definition_drafts SET dataset_version_id=$4, sampling=$5::jsonb, evaluator=$6::jsonb, target=$7::jsonb, execution_defaults=$8::jsonb, limits=$9::jsonb, thresholds=$10::jsonb, revision=revision+1, updated_by=$11, updated_at=now() WHERE evaluation_id=$1 AND project_id=$2 AND revision=$3 RETURNING *",
+				"UPDATE evaluation_definition_drafts SET dataset_version_id=$4, sampling=$5::jsonb, evaluator=$6::jsonb, target=$7::jsonb, execution_defaults=$8::jsonb, limits=$9::jsonb, thresholds=$10::jsonb, revision=revision+1, updated_by=$11, updated_at=now() WHERE evaluation_id=(SELECT id FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2) AND project_id=$2 AND revision=$3 RETURNING *",
 				[
-					input.id,
+					input.slug,
 					input.project_id,
 					input.revision,
 					input.definition.dataset_version_id,
@@ -329,8 +331,8 @@ export async function updateEvaluationDraft(
 			);
 			if (!r.rows[0]) {
 				const current = await client.query(
-					"SELECT revision FROM evaluation_definition_drafts WHERE evaluation_id=$1 AND project_id=$2",
-					[input.id, input.project_id],
+					"SELECT d.revision FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2",
+					[input.slug, input.project_id],
 				);
 				if (current.rows[0])
 					throw new EvaluationRepositoryError(
@@ -347,7 +349,7 @@ export async function updateEvaluationDraft(
 				[
 					input.authorization.organization_id,
 					input.project_id,
-					input.id,
+					text(r.rows[0] as Row, "evaluation_id"),
 					input.authorization.actor_id,
 				],
 			);
@@ -361,7 +363,7 @@ export async function publishEvaluationDraft(
 	db: Transactional,
 	input: {
 		project_id: string;
-		id: string;
+		slug: string;
 		revision: number;
 		authorization: ProjectAuthorization;
 	},
@@ -370,8 +372,8 @@ export async function publishEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const draft = await client.query(
-				"SELECT * FROM evaluation_definition_drafts WHERE evaluation_id=$1 AND project_id=$2 FOR UPDATE",
-				[input.id, input.project_id],
+				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2 FOR UPDATE OF d",
+				[input.slug, input.project_id],
 			);
 			if (!draft.rows[0])
 				throw new EvaluationRepositoryError(
@@ -396,14 +398,14 @@ export async function publishEvaluationDraft(
 			const hash = definitionHash(value);
 			const existing = await client.query(
 				"SELECT v.* FROM evaluation_definition_versions v WHERE v.evaluation_id=$1 AND v.content_hash=$2",
-				[input.id, hash],
+				[text(row, "evaluation_id"), hash],
 			);
 			if (existing.rows[0]) return version(existing.rows[0]);
 			const inserted = await client.query(
 				"INSERT INTO evaluation_definition_versions (id, evaluation_id, organization_id, project_id, version, dataset_version_id, sampling, evaluator, target, execution_defaults, limits, thresholds, content_hash, published_by, published_draft_revision) VALUES ($1,$2,$3,$4,(SELECT coalesce(max(version),0)+1 FROM evaluation_definition_versions WHERE evaluation_id=$2),$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13,$14) RETURNING *",
 				[
 					randomUUID(),
-					input.id,
+					text(row, "evaluation_id"),
 					input.authorization.organization_id,
 					input.project_id,
 					value.dataset_version_id,
@@ -423,7 +425,7 @@ export async function publishEvaluationDraft(
 				[
 					input.authorization.organization_id,
 					input.project_id,
-					input.id,
+					text(row, "evaluation_id"),
 					input.authorization.actor_id,
 					inserted.rows[0].id,
 					hash,
@@ -439,7 +441,7 @@ export async function listEvaluationVersions(
 	db: Transactional,
 	input: {
 		project_id: string;
-		id: string;
+		slug: string;
 		authorization: ProjectAuthorization;
 	},
 ) {
@@ -447,8 +449,8 @@ export async function listEvaluationVersions(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT * FROM evaluation_definition_versions WHERE evaluation_id=$1 AND project_id=$2 ORDER BY version DESC",
-				[input.id, input.project_id],
+				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 ORDER BY v.version DESC",
+				[input.slug, input.project_id],
 			);
 			return { items: r.rows.map(version) };
 		});
@@ -460,7 +462,7 @@ export async function getEvaluationVersion(
 	db: Transactional,
 	input: {
 		project_id: string;
-		id: string;
+		slug: string;
 		version: number;
 		authorization: ProjectAuthorization;
 	},
@@ -469,8 +471,8 @@ export async function getEvaluationVersion(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT * FROM evaluation_definition_versions WHERE evaluation_id=$1 AND project_id=$2 AND version=$3",
-				[input.id, input.project_id, input.version],
+				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 AND v.version=$3",
+				[input.slug, input.project_id, input.version],
 			);
 			if (!r.rows[0])
 				throw new EvaluationRepositoryError(
@@ -491,7 +493,7 @@ export async function listEvaluationLegacyLinks(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT legacy_kind, legacy_id, dataset_id, created_at FROM evaluation_legacy_links WHERE project_id=$1 ORDER BY created_at DESC",
+				"SELECT legacy_kind, legacy_id, dataset_id, created_at FROM (SELECT legacy_kind, legacy_id, dataset_id, created_at FROM evaluation_legacy_links WHERE project_id=$1 UNION SELECT 'experiment'::text, id, dataset_id, created_at FROM experiments WHERE project_id=$1 UNION SELECT 'benchmark_suite'::text, id, dataset_id, created_at FROM benchmark_suites WHERE project_id=$1) links ORDER BY created_at DESC",
 				[input.project_id],
 			);
 			return {

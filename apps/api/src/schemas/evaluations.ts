@@ -74,7 +74,6 @@ export const Evaluation = z
 	.openapi("Evaluation");
 export const EvaluationCreate = z
 	.object({
-		project_id: z.string().uuid(),
 		slug: Slug,
 		name: z.string().trim().min(1).max(120),
 		description: z.string().trim().max(1000).nullable().optional(),
@@ -125,7 +124,8 @@ export const EvaluationLegacyLinkList = z
 	.openapi("EvaluationLegacyLinkList");
 export const EvaluationProjectQuery = ProjectIdQuery;
 export const EvaluationIdParam = z.object({ id: z.string().uuid() }).strict();
-export const EvaluationVersionParam = EvaluationIdParam.extend({
+export const EvaluationSlugParam = z.object({ slug: Slug }).strict();
+export const EvaluationVersionParam = EvaluationSlugParam.extend({
 	version: z.coerce.number().int().positive(),
 }).strict();
 export const EvaluationErrorResponses = {

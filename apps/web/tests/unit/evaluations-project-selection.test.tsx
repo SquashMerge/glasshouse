@@ -21,6 +21,10 @@ const {
 	listEvaluations,
 	listEvaluationLegacyLinks,
 	listDatasetVersions,
+	getEvaluationDraft,
+	updateEvaluationDraft,
+	listEvaluationVersions,
+	getEvaluationVersion,
 } = vi.hoisted(() => ({
 	createExperiment: vi.fn(),
 	listPublishedDatasetItems: vi.fn(),
@@ -29,6 +33,10 @@ const {
 	listEvaluations: vi.fn(),
 	listEvaluationLegacyLinks: vi.fn(),
 	listDatasetVersions: vi.fn(),
+	getEvaluationDraft: vi.fn(),
+	updateEvaluationDraft: vi.fn(),
+	listEvaluationVersions: vi.fn(),
+	getEvaluationVersion: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -51,6 +59,10 @@ vi.mock("../../src/lib/api", () => ({
 	listEvaluations,
 	listEvaluationLegacyLinks,
 	listDatasetVersions,
+	getEvaluationDraft,
+	updateEvaluationDraft,
+	listEvaluationVersions,
+	getEvaluationVersion,
 }));
 
 import { EvaluationsPage } from "../../src/routes/evaluations";
@@ -136,6 +148,10 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		listEvaluations.mockResolvedValue({ items: [], total: 0 });
 		listEvaluationLegacyLinks.mockResolvedValue({ items: [] });
 		listDatasetVersions.mockResolvedValue({ items: [] });
+		getEvaluationDraft.mockReset();
+		updateEvaluationDraft.mockReset();
+		listEvaluationVersions.mockResolvedValue({ items: [] });
+		getEvaluationVersion.mockReset();
 		listPublishedDatasetItems.mockReset();
 		createExperiment.mockReset();
 	});
@@ -223,6 +239,69 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			expect(listDatasetVersions.mock.calls.length).toBeGreaterThan(
 				callsBeforeRetry,
 			),
+		);
+	});
+	it("alerts and retries when selected published items cannot load", async () => {
+		listPublishedDatasetItems.mockRejectedValueOnce(new Error("offline"));
+		renderPage();
+		await screen.findByRole("option", { name: "Project One dataset" });
+		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("Unable to load published dataset items");
+		const callsBeforeRetry = listPublishedDatasetItems.mock.calls.length;
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await waitFor(() =>
+			expect(listPublishedDatasetItems.mock.calls.length).toBeGreaterThan(
+				callsBeforeRetry,
+			),
+		);
+	});
+	it("saves an existing draft with its current ETag revision and reports stale conflicts", async () => {
+		listEvaluations.mockResolvedValue({
+			items: [
+				{
+					id: "66666666-6666-4666-8666-666666666666",
+					slug: "quality",
+					name: "Quality",
+				},
+			],
+			total: 1,
+		});
+		getEvaluationDraft.mockResolvedValue({
+			evaluation_id: "66666666-6666-4666-8666-666666666666",
+			project_id: PROJECT_ONE,
+			revision: 3,
+			dataset_version_id: "77777777-7777-4777-8777-777777777777",
+			sampling: { strategy: "first_n", sample_size: 1, seed: 0 },
+			evaluator: {
+				kind: "exact_match",
+				version: "v1",
+				expected_output_path: "$.expected_output",
+				output_path: "$.output",
+			},
+			target: { kind: "configured_llm", model: null, system_prompt: null },
+			execution_defaults: { temperature: 0, max_tokens: null },
+			limits: { max_cost_usd: 1, max_duration_seconds: 1 },
+			thresholds: { minimum_pass_rate: null },
+			updated_at: "2026-01-01T00:00:00.000Z",
+		});
+		updateEvaluationDraft.mockRejectedValue(
+			new Error("Evaluation draft is at revision 4"),
+		);
+		renderPage();
+		await screen.findByLabelText("Draft model");
+		fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+		await waitFor(() =>
+			expect(updateEvaluationDraft).toHaveBeenCalledWith(
+				expect.objectContaining({
+					project_id: PROJECT_ONE,
+					slug: "quality",
+					revision: 3,
+				}),
+			),
+		);
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"This draft changed elsewhere",
 		);
 	});
 });

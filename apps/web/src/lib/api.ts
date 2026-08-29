@@ -187,30 +187,33 @@ export async function createEvaluation(input: {
 	definition: EvaluationDefinition;
 }): Promise<{ evaluation: Evaluation; draft: EvaluationDraft }> {
 	return responseJson(
-		await authedFetch("/v1/evaluations", jsonRequest(input)),
+		await authedFetch(
+			`/v1/evaluations${buildQs({ project_id: input.project_id })}`,
+			jsonRequest({ ...input, project_id: undefined }),
+		),
 		"createEvaluation",
 	);
 }
 export async function getEvaluationDraft(input: {
 	project_id: string;
-	id: string;
+	slug: string;
 }): Promise<EvaluationDraft> {
 	return responseJson(
 		await authedFetch(
-			`/v1/evaluations/${input.id}/draft${buildQs({ project_id: input.project_id })}`,
+			`/v1/evaluations/${encodeURIComponent(input.slug)}/draft${buildQs({ project_id: input.project_id })}`,
 		),
 		"getEvaluationDraft",
 	);
 }
 export async function updateEvaluationDraft(input: {
 	project_id: string;
-	id: string;
+	slug: string;
 	revision: number;
 	definition: EvaluationDefinition;
 }): Promise<EvaluationDraft> {
 	return responseJson(
 		await authedFetch(
-			`/v1/evaluations/${input.id}/draft${buildQs({ project_id: input.project_id })}`,
+			`/v1/evaluations/${encodeURIComponent(input.slug)}/draft${buildQs({ project_id: input.project_id })}`,
 			{
 				method: "PUT",
 				headers: {
@@ -225,12 +228,12 @@ export async function updateEvaluationDraft(input: {
 }
 export async function publishEvaluationDraft(input: {
 	project_id: string;
-	id: string;
+	slug: string;
 	revision: number;
 }): Promise<EvaluationDefinitionVersion> {
 	return responseJson(
 		await authedFetch(
-			`/v1/evaluations/${input.id}/draft/publish${buildQs({ project_id: input.project_id })}`,
+			`/v1/evaluations/${encodeURIComponent(input.slug)}/draft/publish${buildQs({ project_id: input.project_id })}`,
 			{ method: "POST", headers: { "if-match": `\"${input.revision}\"` } },
 		),
 		"publishEvaluationDraft",
@@ -238,23 +241,23 @@ export async function publishEvaluationDraft(input: {
 }
 export async function listEvaluationVersions(input: {
 	project_id: string;
-	id: string;
+	slug: string;
 }): Promise<{ items: EvaluationDefinitionVersion[] }> {
 	return responseJson(
 		await authedFetch(
-			`/v1/evaluations/${input.id}/versions${buildQs({ project_id: input.project_id })}`,
+			`/v1/evaluations/${encodeURIComponent(input.slug)}/versions${buildQs({ project_id: input.project_id })}`,
 		),
 		"listEvaluationVersions",
 	);
 }
 export async function getEvaluationVersion(input: {
 	project_id: string;
-	id: string;
+	slug: string;
 	version: number;
 }): Promise<EvaluationDefinitionVersion> {
 	return responseJson(
 		await authedFetch(
-			`/v1/evaluations/${input.id}/versions/${input.version}${buildQs({ project_id: input.project_id })}`,
+			`/v1/evaluations/${encodeURIComponent(input.slug)}/versions/${input.version}${buildQs({ project_id: input.project_id })}`,
 		),
 		"getEvaluationVersion",
 	);
