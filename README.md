@@ -124,7 +124,7 @@ bun install --frozen-lockfile
 
 ### `make dev`
 
-Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Every API start runs the PostgreSQL and ClickHouse migration runners concurrently and starts serving only after both succeed; PostgreSQL waits for the `node-pg-migrate` advisory lock before applying or verifying migrations, while ClickHouse checksum-verifies changesets before skipping ones it has already applied. ClickHouse schema application is serialized with a PostgreSQL advisory lock, so multiple API instances sharing the same PostgreSQL and ClickHouse instances cannot apply one changeset concurrently.
+Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Every API start validates PostgreSQL migration filenames, then runs the PostgreSQL and ClickHouse migration runners concurrently and starts serving only after both succeed. PostgreSQL waits for the `node-pg-migrate` advisory lock before applying or verifying migrations, while ClickHouse checksum-verifies changesets before skipping ones it has already applied. ClickHouse schema application is serialized with a PostgreSQL advisory lock, so multiple API instances sharing the same PostgreSQL and ClickHouse instances cannot apply one changeset concurrently.
 
 ### Local dev (deps in Docker, api + web via bun)
 

@@ -32,7 +32,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 ## Database migrations and seeded data
 
-- Every PostgreSQL schema or required-bootstrap-data change must include a new, monotonically numbered SQL migration under `infra/db/migrations/`. Do not edit an already-applied migration to change live behavior.
+- Every PostgreSQL schema or required-bootstrap-data change must include a new, monotonically numbered SQL migration under `infra/db/migrations/` whose numeric prefix is unused. Do not edit an already-applied migration to change live behavior. `bun run test:pg-migration-filenames` rejects new duplicate prefixes; the only exceptions are documented historical collisions.
 - Use the existing `node-pg-migrate` path (`apps/api` script `db:migrate`) and keep migrations safe for both fresh and already-populated databases. Prefer `IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, and deterministic backfills where appropriate; do not silently overwrite user data.
 - When adding a required tenant, project, role, configuration row, or other bootstrap record, decide explicitly how fresh installs and existing installs receive it. For example, adding the `projects` resource required migration `0015_default_project.sql` to insert the `default` project with `ON CONFLICT (slug) DO NOTHING`; application code alone was insufficient for fresh databases.
 - Add migration fixture/assert coverage under `infra/scripts/` for constraints, indexes, backfills, and seeded rows. Run `make test-db-migrations` when changing migration behavior, plus the API tests and typecheck.
