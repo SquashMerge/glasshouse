@@ -633,8 +633,13 @@ class DevCliLlmTests(unittest.TestCase):
     def test_worker_reports_a_safe_failure_site_for_a_type_error(self):
         with tempfile.TemporaryDirectory() as directory:
             gepa_directory = Path(directory) / "gepa"
+            gepa_metadata_directory = Path(directory) / "gepa-0.1.4.dist-info"
             default_adapter_directory = gepa_directory / "adapters" / "default_adapter"
             default_adapter_directory.mkdir(parents=True)
+            gepa_metadata_directory.mkdir()
+            (gepa_metadata_directory / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: gepa\nVersion: 0.1.4\n"
+            )
             (gepa_directory / "__init__.py").write_text(
                 "def optimize(**kwargs):\n"
                 "    raise TypeError('provider token must not be logged')\n"
@@ -676,7 +681,7 @@ class DevCliLlmTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertRegex(
             result.stderr,
-            r"ASTRAEA_GEPA_FAILURE TypeError gepa:[1-9][0-9]*$",
+            r"ASTRAEA_GEPA_RUNTIME 0\.1\.4\nASTRAEA_GEPA_FAILURE TypeError gepa:[1-9][0-9]*$",
         )
         self.assertNotIn("provider token", result.stderr)
 

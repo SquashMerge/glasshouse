@@ -123,13 +123,14 @@ describe("GEPA worker adapter", () => {
 	it("records only the allowlisted worker failure kind", () => {
 		expect(
 			diagnosticSummary(
-				"ASTRAEA_GEPA_FAILURE RuntimeError gepa:123\nprovider token must not be retained",
+				"ASTRAEA_GEPA_RUNTIME 0.1.4\nASTRAEA_GEPA_FAILURE RuntimeError gepa:123\nprovider token must not be retained",
 			),
 		).toEqual({
-			diagnostic_bytes: 78,
-			diagnostic_lines: 2,
+			diagnostic_bytes: 105,
+			diagnostic_lines: 3,
 			worker_failure_kind: "RuntimeError",
 			worker_failure_site: "gepa:123",
+			worker_gepa_version: "0.1.4",
 		});
 		expect(
 			diagnosticSummary(

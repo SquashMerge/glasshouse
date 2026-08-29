@@ -7,6 +7,7 @@ import re
 import sys
 import traceback
 import unicodedata
+from importlib.metadata import PackageNotFoundError, version as distribution_version
 
 if __package__:
     from .dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
@@ -136,6 +137,14 @@ SAFE_OPTIMIZATION_FAILURE_KINDS = {
     "TypeError",
     "ValueError",
 }
+
+
+def safe_gepa_runtime_version():
+    try:
+        value = distribution_version("gepa")
+    except PackageNotFoundError:
+        return None
+    return value if re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", value) else None
 
 
 def safe_optimization_failure_kind(error):
@@ -466,6 +475,9 @@ except DevCliLlmError:
 except Exception as error:
     kind = safe_optimization_failure_kind(error)
     site = safe_optimization_failure_site(error)
+    runtime_version = safe_gepa_runtime_version()
+    if runtime_version:
+        sys.stderr.write(f"ASTRAEA_GEPA_RUNTIME {runtime_version}\n")
     sys.stderr.write(
         f"ASTRAEA_GEPA_FAILURE {kind}" + (f" {site}" if site else "")
     )
