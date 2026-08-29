@@ -249,10 +249,12 @@ STORAGE:
   S3 / MinIO                     (raw blobs, multimodal attachments, exports)
   SQLite                         (dev mode single-binary, zero deps)
 
-SDKs:
-  hermes-sdk (Python) — openapi-python-client + framework adapters
-  @hermes/sdk (TypeScript) — openapi-fetch + framework adapters
-  Both derive types from same OpenAPI YAML
+SDKs (planned P4 delivery core):
+  astraea-sdk-python (Python) — generated transport + delivery wrapper
+  @astraea/sdk (TypeScript) — generated transport + delivery wrapper
+  astraea-sdk-java (Java) — generated transport + delivery wrapper
+  All three derive transport types from one OpenAPI contract and share delivery conformance fixtures.
+  Framework adapters remain later P5 work; see docs/10-prompt-delivery-sdk-cache.md.
 
 LICENSE:
   MIT core

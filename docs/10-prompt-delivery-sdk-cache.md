@@ -142,13 +142,18 @@ cache key must include the control-plane origin, authenticated-client identity
 fingerprint, and project ID, as well as the selector or resolved immutable
 identity. It must never contain the raw credential.
 
-The response includes a strong validator for the resolved immutable identity.
-SDKs use `If-None-Match` for revalidation and treat `304 Not Modified` as a
-fresh confirmation of the same object. Label changes must result in a changed
-response validator and a new immutable identity. Management authorization,
-prompt editing, label promotion, and SDK delivery are separate permissions;
-P4 must define the operation-by-role matrix and reject a direct/stale request
-at the server boundary.
+Every `200 OK` resolution response includes a strong validator for the resolved
+immutable identity **and** a server-signed delivery capability. SDKs use
+`If-None-Match` for revalidation. A `304 Not Modified` is a fresh confirmation
+only when it also includes a newly verified delivery-capability header bound to
+the same client, Project, and immutable identity; it may renew authorization
+time but must not change the identity. An SDK must reject a bodyless `304`
+without that header and must never extend freshness or capability expiry from a
+validator alone. Label changes must result in a changed response validator and
+a new immutable identity. Management authorization, prompt editing, label
+promotion, and SDK delivery are separate permissions; P4 must define the
+operation-by-role matrix and reject a direct/stale request at the server
+boundary.
 
 The API must return typed, non-content-bearing failures for missing scope,
 invalid selector combinations, an inaccessible Project, a missing prompt, and
@@ -372,7 +377,8 @@ covering:
 - selector validation, URL encoding, mandatory project scope, and typed errors;
 - response schema and canonical content-hash verification;
 - fresh, stale, strict, offline, fallback, and `304` behavior under a fake
-  clock;
+  clock, including a `304` with missing, expired, revoked, or wrong-identity
+  delivery capability;
 - delivery-capability expiry, role revocation, prompt-delivery-permission
   removal, Project archive/delete, and prompt deletion; each must prevent a
   cache return before the next local use after the capability boundary;
