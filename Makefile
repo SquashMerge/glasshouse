@@ -1,15 +1,15 @@
 SHELL := /bin/bash
 COMPOSE := docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml
 COMPOSE_DEPS := docker compose --project-directory . --env-file infra/.env -f infra/compose.deps.yaml
-COMPOSE_DEV := docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml -f infra/compose.override.yaml
+
 
 .PHONY: help dev build down logs ps db-migrate test-db-migrations ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-api-integration test-web test-e2e test lint typecheck format install seed-traces seed-traces-reset
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## Install all workspace deps with bun
-	bun install
+install: ## Install all workspace deps from the committed Bun lockfile
+	bun install --frozen-lockfile
 
 setup-tools: ## Install pinned dev tool versions via asdf (reads .tool-versions)
 	bash infra/scripts/setup-tools.sh
@@ -78,7 +78,7 @@ codegen: openapi-snapshot ## Regenerate typed TS + Python clients (depends on sn
 	cd apps/api && bun run codegen:ts
 	cd apps/api && bun run codegen:py
 
-smoke: ## End-to-end smoke (AC1+AC2+AC9+AC10)
+smoke: ## Run smoke checks against an already-running stack
 	bash infra/scripts/smoke.sh
 
 doctor: ## Verify env, tools, and runtime readiness
