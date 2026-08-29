@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createEvaluation,
+	getEvaluation,
 	getEvaluationDraft,
 	getEvaluationVersion,
 	listEvaluationVersions,
@@ -38,13 +39,14 @@ describe("evaluation API client contract", () => {
 		fetchMock.mockImplementation(() => Promise.resolve(json()));
 	});
 	afterEach(() => vi.unstubAllGlobals());
-	it("uses query-scoped create and stable slug draft/version paths", async () => {
+	it("uses query-scoped create and stable slug detail/draft/version paths", async () => {
 		await createEvaluation({
 			project_id,
 			slug: "quality-check",
 			name: "Quality",
 			definition,
 		});
+		await getEvaluation({ project_id, slug: "quality-check" });
 		await getEvaluationDraft({ project_id, slug: "quality-check" });
 		await updateEvaluationDraft({
 			project_id,
@@ -74,6 +76,12 @@ describe("evaluation API client contract", () => {
 					name: "Quality",
 					definition,
 				}),
+				etag: undefined,
+			},
+			{
+				url: `/v1/evaluations/quality-check?project_id=${project_id}`,
+				method: "GET",
+				body: undefined,
 				etag: undefined,
 			},
 			{

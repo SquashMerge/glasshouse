@@ -96,8 +96,7 @@ function definitionFields(row: Row) {
 	return {
 		dataset_version_id: text(row, "dataset_version_id"),
 		sampling: object(row, "sampling"),
-		// Versions created before the typed evaluator contract remain immutable.
-		evaluator: { version: "v1", ...evaluator },
+		evaluator,
 		target: object(row, "target"),
 		execution_defaults: object(row, "execution_defaults"),
 		limits: object(row, "limits"),
@@ -114,11 +113,24 @@ function definition(row: Row) {
 	};
 }
 function version(row: Row) {
+	const sampling = row.sampling == null ? null : object(row, "sampling");
+	const limits = row.limits == null ? null : object(row, "limits");
+	const evaluator = object(row, "evaluator");
 	return {
 		id: text(row, "id"),
 		evaluation_id: text(row, "evaluation_id"),
 		project_id: text(row, "project_id"),
-		...definitionFields(row),
+		dataset_version_id: text(row, "dataset_version_id"),
+		definition_contract:
+			sampling && limits && typeof evaluator.version === "string"
+				? ("v1" as const)
+				: ("legacy_untyped" as const),
+		sampling,
+		evaluator,
+		target: object(row, "target"),
+		execution_defaults: object(row, "execution_defaults"),
+		limits,
+		thresholds: object(row, "thresholds"),
 		version: Number(row.version),
 		content_hash: text(row, "content_hash"),
 		published_draft_revision: Number(row.published_draft_revision),

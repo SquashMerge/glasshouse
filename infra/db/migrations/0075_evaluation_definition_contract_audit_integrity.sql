@@ -4,8 +4,8 @@ ALTER TABLE evaluation_definition_drafts
     ADD COLUMN IF NOT EXISTS sampling JSONB NOT NULL DEFAULT '{"strategy":"first_n","sample_size":100,"seed":0}'::jsonb,
     ADD COLUMN IF NOT EXISTS limits JSONB NOT NULL DEFAULT '{"max_cost_usd":10,"max_duration_seconds":3600}'::jsonb;
 ALTER TABLE evaluation_definition_versions
-    ADD COLUMN IF NOT EXISTS sampling JSONB NOT NULL DEFAULT '{"strategy":"first_n","sample_size":100,"seed":0}'::jsonb,
-    ADD COLUMN IF NOT EXISTS limits JSONB NOT NULL DEFAULT '{"max_cost_usd":10,"max_duration_seconds":3600}'::jsonb;
+    ADD COLUMN IF NOT EXISTS sampling JSONB,
+    ADD COLUMN IF NOT EXISTS limits JSONB;
 
 UPDATE evaluation_definition_drafts
 SET evaluator = evaluator || '{"version":"v1"}'::jsonb

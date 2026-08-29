@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	definitionHash,
+	getEvaluationVersion,
 	listEvaluationLegacyLinks,
 	publishEvaluationDraft,
 } from "../../src/db/evaluations";
@@ -108,6 +109,57 @@ describe("Evaluation definitions", () => {
 		expect(result).toMatchObject({ id: published.id, version: 1 });
 		expect(result).not.toHaveProperty("revision");
 		expect(result).not.toHaveProperty("updated_at");
+		expect(result).toHaveProperty("definition_contract", "v1");
+	});
+	it("serializes pre-contract versions as their exact immutable legacy snapshot", async () => {
+		const legacy = {
+			id: "22222222-2222-4222-8222-222222222222",
+			evaluation_id: "33333333-3333-4333-8333-333333333333",
+			project_id: "44444444-4444-4444-8444-444444444444",
+			version: 1,
+			dataset_version_id: "11111111-1111-4111-8111-111111111111",
+			evaluator: { kind: "exact_match" },
+			target: { kind: "configured_llm" },
+			execution_defaults: {},
+			thresholds: {},
+			sampling: null,
+			limits: null,
+			content_hash: "b".repeat(64),
+			published_draft_revision: 1,
+			created_at: new Date("2026-01-01T00:00:00.000Z"),
+		};
+		const result = await getEvaluationVersion(
+			{
+				connect: async () => ({
+					query: async (sql: string) => {
+						if (sql.startsWith("SELECT authorization_allows_project"))
+							return { rows: [{ allowed: true }] };
+						if (sql.startsWith("SELECT p.id FROM projects"))
+							return { rows: [{ id: legacy.project_id }] };
+						return { rows: [legacy] };
+					},
+					release() {},
+				}),
+			} as never,
+			{
+				project_id: legacy.project_id,
+				slug: "legacy-evaluation",
+				version: 1,
+				authorization: {
+					organization_id: "55555555-5555-4555-8555-555555555555",
+					actor_id: "66666666-6666-4666-8666-666666666666",
+					operation: "product_read",
+				},
+			},
+		);
+		expect(result).toMatchObject({
+			definition_contract: "legacy_untyped",
+			evaluator: legacy.evaluator,
+			sampling: null,
+			limits: null,
+			content_hash: legacy.content_hash,
+		});
+		expect(result.evaluator).not.toHaveProperty("version");
 	});
 	it("keeps target content out of audit payload contracts", () => {
 		expect(Object.keys(definition)).toContain("target");

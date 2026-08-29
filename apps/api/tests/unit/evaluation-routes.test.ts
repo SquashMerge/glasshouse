@@ -16,6 +16,7 @@ import {
 	publishEvaluationDraftRoute,
 	putEvaluationDraftRoute,
 } from "../../src/routes/evaluations";
+import { EvaluationDefinitionVersion } from "../../src/schemas/evaluations";
 
 describe("evaluation route contract", () => {
 	it("documents query-scoped create and slug-scoped draft and version paths", () => {
@@ -45,5 +46,26 @@ describe("evaluation route contract", () => {
 			document.paths?.["/v1/evaluations/{slug}/versions/{version}"]?.get,
 		).toBeDefined();
 		expect(document.paths?.["/v1/evaluations/{id}/draft"]).toBeUndefined();
+	});
+	it("documents legacy immutable snapshots without fabricating the typed contract", () => {
+		expect(
+			EvaluationDefinitionVersion.safeParse({
+				id: "11111111-1111-4111-8111-111111111111",
+				evaluation_id: "22222222-2222-4222-8222-222222222222",
+				project_id: "33333333-3333-4333-8333-333333333333",
+				version: 1,
+				dataset_version_id: "44444444-4444-4444-8444-444444444444",
+				definition_contract: "legacy_untyped",
+				sampling: null,
+				evaluator: { kind: "exact_match" },
+				target: { kind: "configured_llm" },
+				execution_defaults: {},
+				limits: null,
+				thresholds: {},
+				content_hash: "b".repeat(64),
+				published_draft_revision: 1,
+				created_at: "2026-01-01T00:00:00.000Z",
+			}).success,
+		).toBe(true);
 	});
 });

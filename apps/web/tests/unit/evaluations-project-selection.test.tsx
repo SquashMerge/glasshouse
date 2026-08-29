@@ -40,7 +40,23 @@ const {
 }));
 
 vi.mock("@tanstack/react-router", () => ({
-	Link: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+	Link: ({
+		children,
+		to,
+		params,
+	}: {
+		children: React.ReactNode;
+		to: string;
+		params?: { id?: string; slug?: string };
+	}) => (
+		<a
+			href={to
+				.replace("$id", params?.id ?? "")
+				.replace("$slug", params?.slug ?? "")}
+		>
+			{children}
+		</a>
+	),
 }));
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
@@ -303,5 +319,23 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"This draft changed elsewhere",
 		);
+	});
+	it("navigates reusable definitions by stable slug", async () => {
+		listEvaluations.mockResolvedValue({
+			items: [
+				{
+					id: "66666666-6666-4666-8666-666666666666",
+					slug: "quality-check",
+					name: "Quality check",
+				},
+			],
+			total: 1,
+		});
+		listPublishedDatasetItems.mockResolvedValue(validItems);
+		renderPage();
+
+		expect(
+			await screen.findByRole("link", { name: "Quality check" }),
+		).toHaveAttribute("href", "/evaluations/quality-check");
 	});
 });

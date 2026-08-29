@@ -14,7 +14,11 @@ import { NewPromptPage } from "./routes/prompts-new";
 import { PromptDetailPage } from "./routes/prompts-detail";
 import { EditPromptPage } from "./routes/prompts-edit";
 import { DatasetsPage, DatasetDetailPage } from "./routes/datasets";
-import { EvaluationsPage, EvaluationDetailPage } from "./routes/evaluations";
+import {
+	EvaluationDefinitionDetailPage,
+	EvaluationDetailPage,
+	EvaluationsPage,
+} from "./routes/evaluations";
 import { FeedbackPage } from "./routes/feedback";
 import { ProjectsPage } from "./routes/projects";
 import { GovernancePage } from "./routes/governance";
@@ -105,7 +109,12 @@ const evaluationsRoute = createRoute({
 });
 const evaluationDetailRoute = createRoute({
 	getParentRoute: () => protectedRoute,
-	path: "/evaluations/$id",
+	path: "/evaluations/$slug",
+	component: EvaluationDefinitionDetailPage,
+});
+const evaluationRunDetailRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/evaluation-runs/$id",
 	component: EvaluationDetailPage,
 });
 const feedbackRoute = createRoute({
@@ -144,6 +153,7 @@ const router = createRouter({
 			datasetDetailRoute,
 			evaluationsRoute,
 			evaluationDetailRoute,
+			evaluationRunDetailRoute,
 			feedbackRoute,
 			projectsRoute,
 			governanceRoute,

@@ -162,7 +162,7 @@ export interface EvaluationDraft extends EvaluationDefinition {
 	revision: number;
 	updated_at: string;
 }
-export interface EvaluationDefinitionVersion extends EvaluationDefinition {
+export interface EvaluationDefinitionVersion {
 	id: string;
 	evaluation_id: string;
 	project_id: string;
@@ -170,6 +170,14 @@ export interface EvaluationDefinitionVersion extends EvaluationDefinition {
 	content_hash: string;
 	published_draft_revision: number;
 	created_at: string;
+	definition_contract: "v1" | "legacy_untyped";
+	dataset_version_id: string;
+	sampling: EvaluationDefinition["sampling"] | null;
+	evaluator: Record<string, unknown>;
+	target: Record<string, unknown>;
+	execution_defaults: Record<string, unknown>;
+	limits: EvaluationDefinition["limits"] | null;
+	thresholds: Record<string, unknown>;
 }
 export async function listEvaluations(
 	project_id: string,
@@ -177,6 +185,17 @@ export async function listEvaluations(
 	return responseJson(
 		await authedFetch(`/v1/evaluations${buildQs({ project_id })}`),
 		"listEvaluations",
+	);
+}
+export async function getEvaluation(input: {
+	project_id: string;
+	slug: string;
+}): Promise<Evaluation> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/${encodeURIComponent(input.slug)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getEvaluation",
 	);
 }
 export async function createEvaluation(input: {

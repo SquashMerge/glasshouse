@@ -9,6 +9,7 @@ import {
 	experimentResults,
 	experimentSummary,
 	getExperiment,
+	getEvaluation,
 	getEvaluationDraft,
 	listDatasets,
 	listExperiments,
@@ -267,7 +268,13 @@ export function EvaluationsPage() {
 					>
 						{evaluations.data.items.map((item) => (
 							<li key={item.id} className="space-y-1">
-								{item.name}{" "}
+								<Link
+									className="font-medium underline"
+									to="/evaluations/$slug"
+									params={{ slug: item.slug }}
+								>
+									{item.name}
+								</Link>{" "}
 								<span className="text-muted-foreground">({item.slug})</span>
 								<EvaluationVersionInspection
 									projectId={selectedProjectId!}
@@ -426,7 +433,7 @@ export function EvaluationsPage() {
 						<li key={experiment.id}>
 							<Link
 								className="block p-4 hover:bg-muted/50"
-								to="/evaluations/$id"
+								to="/evaluation-runs/$id"
 								params={{ id: experiment.id }}
 							>
 								<strong>{experiment.name || "Untitled evaluation"}</strong>
@@ -602,7 +609,7 @@ function EvaluationDraftAuthoring({
 	);
 }
 export function EvaluationDetailPage() {
-	const { id } = useParams({ from: "/protected/evaluations/$id" });
+	const { id } = useParams({ from: "/protected/evaluation-runs/$id" });
 	const { selectedProjectId } = useProjectSelection();
 	const client = useQueryClient();
 	const experiment = useQuery({
@@ -744,6 +751,50 @@ export function EvaluationDetailPage() {
 					</li>
 				))}
 			</ul>
+		</div>
+	);
+}
+export function EvaluationDefinitionDetailPage() {
+	const { slug } = useParams({ from: "/protected/evaluations/$slug" });
+	const { selectedProjectId } = useProjectSelection();
+	const detail = useQuery({
+		queryKey: ["evaluation", selectedProjectId, slug],
+		queryFn: () => getEvaluation({ project_id: selectedProjectId!, slug }),
+		enabled: Boolean(selectedProjectId),
+	});
+	if (detail.isLoading && !detail.data)
+		return (
+			<DetailLoadingSkeleton testId="evaluation-definition-detail-skeleton" />
+		);
+	if (detail.isError)
+		return (
+			<PageMessage title="Evaluation">
+				Unable to load evaluation definition.{" "}
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => void detail.refetch()}
+				>
+					Retry
+				</Button>
+			</PageMessage>
+		);
+	if (!detail.data) return null;
+	return (
+		<div className="space-y-5">
+			<Link className="text-sm underline" to="/evaluations">
+				Evaluations
+			</Link>
+			<div>
+				<h1 className="text-2xl font-semibold">{detail.data.name}</h1>
+				<p className="text-sm text-muted-foreground">
+					Stable ID: {detail.data.slug}
+				</p>
+			</div>
+			{detail.data.description && <p>{detail.data.description}</p>}
+			<p className="text-sm text-muted-foreground">
+				Created {new Date(detail.data.created_at).toLocaleString()}
+			</p>
 		</div>
 	);
 }
