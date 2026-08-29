@@ -71,6 +71,38 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
   UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun run --cwd "$ROOT/apps/api" db:migrate
 
+# Reproduce the production history where the original 0023 prompt migration was
+# recorded before the later 0023 workspace migration existed in the repository.
+LEGACY_0023_ORDER_DATABASE="${POSTGRES_DB}_legacy_0023_order"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$LEGACY_0023_ORDER_DATABASE"
+legacy_migration_index=0
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  migration_name="$(basename "$migration" .sql)"
+  [[ "$migration_name" == "0023_project_workspace_authorization" ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$LEGACY_0023_ORDER_DATABASE" < "$migration"
+  docker exec "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$LEGACY_0023_ORDER_DATABASE" \
+    --command "CREATE TABLE IF NOT EXISTS pgmigrations (id SERIAL PRIMARY KEY, name varchar(255) NOT NULL, run_on timestamp NOT NULL); INSERT INTO pgmigrations (name, run_on) SELECT '$migration_name', timestamp '2026-01-01 00:00:00' + ($legacy_migration_index * interval '1 second') WHERE NOT EXISTS (SELECT 1 FROM pgmigrations WHERE name = '$migration_name');"
+  legacy_migration_index=$((legacy_migration_index + 1))
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$LEGACY_0023_ORDER_DATABASE" \
+  < "$ROOT/infra/db/migrations/0023_prompt_optimization_metric_calls.sql"
+docker exec "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$LEGACY_0023_ORDER_DATABASE" \
+  --command "INSERT INTO pgmigrations (name, run_on) VALUES ('0023_prompt_optimization_metric_calls', timestamp '2026-01-01 00:00:00' + ($legacy_migration_index * interval '1 second'));"
+DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$LEGACY_0023_ORDER_DATABASE" \
+  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+  bun run --cwd "$ROOT/apps/api" db:migrate
+docker exec "$CONTAINER" \
+  psql --tuples-only --no-align --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$LEGACY_0023_ORDER_DATABASE" \
+  --command "SELECT to_regclass('public.project_memberships'), EXISTS (SELECT 1 FROM pgmigrations WHERE name = '0023_project_workspace_authorization');" \
+  | grep -q 'project_memberships|t'
+DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$LEGACY_0023_ORDER_DATABASE" \
+  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+  bun run --cwd "$ROOT/apps/api" db:migrate
+
 # These races require two live PostgreSQL connections. Keeping them here makes
 # the revocation linearization checks mandatory in the Docker-backed CI job.
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
