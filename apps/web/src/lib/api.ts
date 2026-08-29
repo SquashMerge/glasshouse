@@ -129,6 +129,89 @@ export interface DatasetVersion extends DatasetVersionSummary {
 		created_at: string;
 	}>;
 }
+export interface EvaluationDefinition {
+	dataset_version_id: string;
+	evaluator: {
+		kind: "exact_match" | "contains";
+		expected_output_path: string;
+		output_path: string;
+	};
+	target: {
+		kind: "configured_llm";
+		model: string | null;
+		system_prompt: string | null;
+	};
+	execution_defaults: { temperature: number; max_tokens: number | null };
+	thresholds: { minimum_pass_rate: number | null };
+}
+export interface Evaluation {
+	id: string;
+	project_id: string;
+	slug: string;
+	name: string;
+	description: string | null;
+	created_at: string;
+	updated_at: string;
+}
+export interface EvaluationDraft extends EvaluationDefinition {
+	evaluation_id: string;
+	project_id: string;
+	revision: number;
+	updated_at: string;
+}
+export interface EvaluationDefinitionVersion extends EvaluationDefinition {
+	id: string;
+	evaluation_id: string;
+	project_id: string;
+	version: number;
+	content_hash: string;
+	published_draft_revision: number;
+	created_at: string;
+}
+export async function listEvaluations(
+	project_id: string,
+): Promise<{ items: Evaluation[]; total: number }> {
+	return responseJson(
+		await authedFetch(`/v1/evaluations${buildQs({ project_id })}`),
+		"listEvaluations",
+	);
+}
+export async function createEvaluation(input: {
+	project_id: string;
+	slug: string;
+	name: string;
+	description?: string | null;
+	definition: EvaluationDefinition;
+}): Promise<{ evaluation: Evaluation; draft: EvaluationDraft }> {
+	return responseJson(
+		await authedFetch("/v1/evaluations", jsonRequest(input)),
+		"createEvaluation",
+	);
+}
+export async function getEvaluationDraft(input: {
+	project_id: string;
+	id: string;
+}): Promise<EvaluationDraft> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/${input.id}/draft${buildQs({ project_id: input.project_id })}`,
+		),
+		"getEvaluationDraft",
+	);
+}
+export async function publishEvaluationDraft(input: {
+	project_id: string;
+	id: string;
+	revision: number;
+}): Promise<EvaluationDefinitionVersion> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/${input.id}/draft/publish${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST", headers: { "if-match": `\"${input.revision}\"` } },
+		),
+		"publishEvaluationDraft",
+	);
+}
 export async function listDatasetVersions(input: {
 	project_id: string;
 	slug: string;

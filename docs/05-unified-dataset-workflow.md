@@ -1,6 +1,10 @@
 # Unified Dataset Workflow
 
-**Status:** proposed implementation contract for roadmap P2/P3; it deliberately precedes the planned Agent Registry.
+## Evaluation definitions
+
+`/v1/evaluations` creates a stable, project-scoped Evaluation identity with one ETag-revisioned definition draft. Publishing the draft creates an immutable, content-hashed Definition Version bound to a concrete immutable Dataset Version; publication is idempotent for equivalent canonical content. Definitions use only typed baseline evaluator mappings, a configured-LLM target selector, execution defaults, and thresholds. They do not admit or execute runs. Existing Experiments and benchmark suites remain explicitly legacy ad-hoc structural records and are never assigned invented historical Dataset Version, target, evaluator, sample, or result evidence.
+
+**Status:** P2 Dataset lifecycle is implemented; P3.1 Evaluation identity and Definition Versions are implemented and deliberately precede the planned Agent Registry.
 **Scope:** one project-scoped dataset system for dashboard-authored and SDK/API-authored evaluations.
 
 ## Decision summary

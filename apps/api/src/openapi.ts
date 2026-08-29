@@ -28,6 +28,12 @@ import {
 	handleCancelExperiment,
 } from "./routes/experiments.js";
 import {
+	createEvaluationRoute, handleCreateEvaluation, getEvaluationDraftRoute, handleGetEvaluationDraft,
+	getEvaluationRoute, handleGetEvaluation, handleListEvaluations, handleListEvaluationVersions,
+	handlePublishEvaluationDraft, handlePutEvaluationDraft, listEvaluationsRoute,
+	listEvaluationVersionsRoute, publishEvaluationDraftRoute, putEvaluationDraftRoute,
+} from "./routes/evaluations.js";
+import {
 	listTraces,
 	handleListTraces,
 	getTrace,
@@ -280,6 +286,14 @@ register(getExperimentResults, handleGetExperimentResults);
 register(getExperimentSummary, handleGetExperimentSummary);
 register(getExperimentEvents, handleGetExperimentEvents);
 register(cancelExperiment, handleCancelExperiment);
+
+register(createEvaluationRoute, handleCreateEvaluation);
+register(listEvaluationsRoute, handleListEvaluations);
+register(getEvaluationRoute, handleGetEvaluation);
+register(getEvaluationDraftRoute, handleGetEvaluationDraft);
+register(putEvaluationDraftRoute, handlePutEvaluationDraft);
+register(publishEvaluationDraftRoute, handlePublishEvaluationDraft);
+register(listEvaluationVersionsRoute, handleListEvaluationVersions);
 
 register(listBenchmarkSuites, handleListBenchmarkSuites);
 register(createBenchmarkSuiteRoute, handleCreateBenchmarkSuite);

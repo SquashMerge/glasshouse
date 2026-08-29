@@ -1,0 +1,439 @@
+import { createHash, randomUUID } from "node:crypto";
+import type { Pool, PoolClient } from "pg";
+import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
+
+type Transactional = Pick<Pool, "connect">;
+type Row = Record<string, unknown>;
+type Definition = {
+	dataset_version_id: string;
+	evaluator: Row;
+	target: Row;
+	execution_defaults: Row;
+	thresholds: Row;
+};
+
+export class EvaluationRepositoryError extends Error {
+	readonly status: 400 | 404 | 409 | 500;
+	constructor(
+		readonly code: "BAD_REQUEST" | "NOT_FOUND" | "CONFLICT" | "INTERNAL",
+		message: string,
+		cause?: unknown,
+	) {
+		super(message, { cause });
+		this.name = "EvaluationRepositoryError";
+		this.status =
+			code === "BAD_REQUEST"
+				? 400
+				: code === "NOT_FOUND"
+					? 404
+					: code === "CONFLICT"
+						? 409
+						: 500;
+	}
+}
+function normalize(cause: unknown) {
+	if (cause instanceof EvaluationRepositoryError) return cause;
+	if (
+		typeof cause === "object" &&
+		cause !== null &&
+		"code" in cause &&
+		(cause.code === "23505" || cause.code === "55000")
+	)
+		return new EvaluationRepositoryError(
+			"CONFLICT",
+			"Evaluation definition changed or already exists",
+			cause,
+		);
+	if (
+		typeof cause === "object" &&
+		cause !== null &&
+		"code" in cause &&
+		cause.code === "23503"
+	)
+		return new EvaluationRepositoryError(
+			"NOT_FOUND",
+			"Referenced Dataset Version not found",
+			cause,
+		);
+	return new EvaluationRepositoryError(
+		"INTERNAL",
+		"Evaluation operation failed",
+		cause,
+	);
+}
+const text = (row: Row, key: string) => {
+	if (typeof row[key] !== "string")
+		throw new EvaluationRepositoryError("INTERNAL", `Invalid ${key}`);
+	return row[key] as string;
+};
+const time = (row: Row, key: string) =>
+	row[key] instanceof Date ? (row[key] as Date).toISOString() : text(row, key);
+const object = (row: Row, key: string): Row => {
+	const value =
+		typeof row[key] === "string" ? JSON.parse(row[key] as string) : row[key];
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		throw new EvaluationRepositoryError("INTERNAL", `Invalid ${key}`);
+	return value as Row;
+};
+function evaluation(row: Row) {
+	return {
+		id: text(row, "id"),
+		project_id: text(row, "project_id"),
+		slug: text(row, "slug"),
+		name: text(row, "name"),
+		description: row.description == null ? null : text(row, "description"),
+		created_at: time(row, "created_at"),
+		updated_at: time(row, "updated_at"),
+	};
+}
+function definition(row: Row) {
+	return {
+		evaluation_id: text(row, "evaluation_id"),
+		project_id: text(row, "project_id"),
+		dataset_version_id: text(row, "dataset_version_id"),
+		evaluator: object(row, "evaluator"),
+		target: object(row, "target"),
+		execution_defaults: object(row, "execution_defaults"),
+		thresholds: object(row, "thresholds"),
+		revision: Number(row.revision),
+		updated_at: time(row, "updated_at"),
+	};
+}
+function version(row: Row) {
+	return {
+		id: text(row, "id"),
+		...definition(row),
+		version: Number(row.version),
+		content_hash: text(row, "content_hash"),
+		published_draft_revision: Number(row.published_draft_revision),
+		created_at: time(row, "created_at"),
+	};
+}
+function canonical(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+	if (value && typeof value === "object")
+		return `{${Object.entries(value as Row)
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`)
+			.join(",")}}`;
+	return JSON.stringify(value);
+}
+export function definitionHash(value: Definition) {
+	return createHash("sha256").update(canonical(value)).digest("hex");
+}
+async function transaction<T>(
+	db: Transactional,
+	callback: (client: PoolClient) => Promise<T>,
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		const value = await callback(client);
+		await client.query("COMMIT");
+		return value;
+	} catch (cause) {
+		await client.query("ROLLBACK").catch(() => {});
+		throw cause;
+	} finally {
+		client.release();
+	}
+}
+async function authorize(
+	client: PoolClient,
+	projectId: string,
+	authorization: ProjectAuthorization,
+) {
+	if (!(await lockActiveAuthorizedProject(client, projectId, authorization)))
+		throw new EvaluationRepositoryError("NOT_FOUND", "Evaluation not found");
+}
+
+export async function createEvaluation(
+	db: Transactional,
+	input: {
+		project_id: string;
+		slug: string;
+		name: string;
+		description?: string | null;
+		definition: Definition;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const inserted = await client.query(
+				"INSERT INTO evaluations (id, organization_id, project_id, slug, name, description, created_by) SELECT $1, organization_id, id, $3, $4, $5, $6 FROM projects WHERE id=$2 RETURNING *",
+				[
+					randomUUID(),
+					input.project_id,
+					input.slug,
+					input.name,
+					input.description ?? null,
+					input.authorization.actor_id,
+				],
+			);
+			if (!inserted.rows[0])
+				throw new EvaluationRepositoryError(
+					"NOT_FOUND",
+					"Evaluation not found",
+				);
+			const id = text(inserted.rows[0], "id");
+			const draft = await client.query(
+				"INSERT INTO evaluation_definition_drafts (evaluation_id, organization_id, project_id, dataset_version_id, evaluator, target, execution_defaults, thresholds, updated_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9) RETURNING *",
+				[
+					id,
+					input.authorization.organization_id,
+					input.project_id,
+					input.definition.dataset_version_id,
+					JSON.stringify(input.definition.evaluator),
+					JSON.stringify(input.definition.target),
+					JSON.stringify(input.definition.execution_defaults),
+					JSON.stringify(input.definition.thresholds),
+					input.authorization.actor_id,
+				],
+			);
+			await client.query(
+				"INSERT INTO evaluation_audit_events (organization_id, project_id, evaluation_id, actor_id, event_type) VALUES ($1,$2,$3,$4,'created')",
+				[
+					input.authorization.organization_id,
+					input.project_id,
+					id,
+					input.authorization.actor_id,
+				],
+			);
+			return {
+				evaluation: evaluation(inserted.rows[0]),
+				draft: definition(draft.rows[0] as Row),
+			};
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function listEvaluations(
+	db: Transactional,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
+				"SELECT * FROM evaluations WHERE project_id=$1 ORDER BY created_at DESC",
+				[input.project_id],
+			);
+			return {
+				items: r.rows.map(evaluation),
+				total: r.rowCount ?? r.rows.length,
+			};
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function getEvaluation(
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
+				"SELECT * FROM evaluations WHERE id=$1 AND project_id=$2",
+				[input.id, input.project_id],
+			);
+			if (!r.rows[0])
+				throw new EvaluationRepositoryError(
+					"NOT_FOUND",
+					"Evaluation not found",
+				);
+			return evaluation(r.rows[0]);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function getEvaluationDraft(
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
+				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE d.evaluation_id=$1 AND d.project_id=$2",
+				[input.id, input.project_id],
+			);
+			if (!r.rows[0])
+				throw new EvaluationRepositoryError(
+					"NOT_FOUND",
+					"Evaluation draft not found",
+				);
+			return definition(r.rows[0]);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function updateEvaluationDraft(
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		revision: number;
+		definition: Definition;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
+				"UPDATE evaluation_definition_drafts SET dataset_version_id=$4, evaluator=$5::jsonb, target=$6::jsonb, execution_defaults=$7::jsonb, thresholds=$8::jsonb, revision=revision+1, updated_by=$9, updated_at=now() WHERE evaluation_id=$1 AND project_id=$2 AND revision=$3 RETURNING *",
+				[
+					input.id,
+					input.project_id,
+					input.revision,
+					input.definition.dataset_version_id,
+					JSON.stringify(input.definition.evaluator),
+					JSON.stringify(input.definition.target),
+					JSON.stringify(input.definition.execution_defaults),
+					JSON.stringify(input.definition.thresholds),
+					input.authorization.actor_id,
+				],
+			);
+			if (!r.rows[0]) {
+				const current = await client.query(
+					"SELECT revision FROM evaluation_definition_drafts WHERE evaluation_id=$1 AND project_id=$2",
+					[input.id, input.project_id],
+				);
+				if (current.rows[0])
+					throw new EvaluationRepositoryError(
+						"CONFLICT",
+						`Evaluation draft is at revision ${current.rows[0].revision}`,
+					);
+				throw new EvaluationRepositoryError(
+					"NOT_FOUND",
+					"Evaluation draft not found",
+				);
+			}
+			await client.query(
+				"INSERT INTO evaluation_audit_events (organization_id, project_id, evaluation_id, actor_id, event_type) VALUES ($1,$2,$3,$4,'draft_updated')",
+				[
+					input.authorization.organization_id,
+					input.project_id,
+					input.id,
+					input.authorization.actor_id,
+				],
+			);
+			return definition(r.rows[0]);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function publishEvaluationDraft(
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		revision: number;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const draft = await client.query(
+				"SELECT * FROM evaluation_definition_drafts WHERE evaluation_id=$1 AND project_id=$2 FOR UPDATE",
+				[input.id, input.project_id],
+			);
+			if (!draft.rows[0])
+				throw new EvaluationRepositoryError(
+					"NOT_FOUND",
+					"Evaluation draft not found",
+				);
+			const row = draft.rows[0] as Row;
+			if (Number(row.revision) !== input.revision)
+				throw new EvaluationRepositoryError(
+					"CONFLICT",
+					`Evaluation draft is at revision ${row.revision}`,
+				);
+			const value: Definition = {
+				dataset_version_id: text(row, "dataset_version_id"),
+				evaluator: object(row, "evaluator"),
+				target: object(row, "target"),
+				execution_defaults: object(row, "execution_defaults"),
+				thresholds: object(row, "thresholds"),
+			};
+			const hash = definitionHash(value);
+			const existing = await client.query(
+				"SELECT v.* FROM evaluation_definition_versions v WHERE v.evaluation_id=$1 AND v.content_hash=$2",
+				[input.id, hash],
+			);
+			if (existing.rows[0]) return version(existing.rows[0]);
+			const inserted = await client.query(
+				"INSERT INTO evaluation_definition_versions (id, evaluation_id, organization_id, project_id, version, dataset_version_id, evaluator, target, execution_defaults, thresholds, content_hash, published_by, published_draft_revision) VALUES ($1,$2,$3,$4,(SELECT coalesce(max(version),0)+1 FROM evaluation_definition_versions WHERE evaluation_id=$2),$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12) RETURNING *",
+				[
+					randomUUID(),
+					input.id,
+					input.authorization.organization_id,
+					input.project_id,
+					value.dataset_version_id,
+					JSON.stringify(value.evaluator),
+					JSON.stringify(value.target),
+					JSON.stringify(value.execution_defaults),
+					JSON.stringify(value.thresholds),
+					hash,
+					input.authorization.actor_id,
+					input.revision,
+				],
+			);
+			await client.query(
+				"INSERT INTO evaluation_audit_events (organization_id, project_id, evaluation_id, actor_id, event_type, definition_version_id, content_hash) VALUES ($1,$2,$3,$4,'definition_published',$5,$6)",
+				[
+					input.authorization.organization_id,
+					input.project_id,
+					input.id,
+					input.authorization.actor_id,
+					inserted.rows[0].id,
+					hash,
+				],
+			);
+			return version(inserted.rows[0]);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function listEvaluationVersions(
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
+				"SELECT * FROM evaluation_definition_versions WHERE evaluation_id=$1 AND project_id=$2 ORDER BY version DESC",
+				[input.id, input.project_id],
+			);
+			return { items: r.rows.map(version) };
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}

@@ -804,7 +804,9 @@ docker exec --interactive "$CONTAINER" \
   < "$ROOT/infra/scripts/test-db-migrations-0074.pre.assert.sql"
 for migration in \
   "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql" \
-  "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql"; do
+  "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql" \
+  "$ROOT/infra/db/migrations/0074_evaluation_identity_definition_versions.sql" \
+  "$ROOT/infra/db/migrations/0074_evaluation_identity_definition_versions.sql"; do
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" < "$migration"
 done

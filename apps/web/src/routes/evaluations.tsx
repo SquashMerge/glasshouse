@@ -3,6 +3,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	cancelExperiment,
+	createEvaluation,
 	createExperiment,
 	experimentEventsUrl,
 	experimentResults,
@@ -10,7 +11,10 @@ import {
 	getExperiment,
 	listDatasets,
 	listExperiments,
+	listEvaluations,
+	listDatasetVersions,
 	listPublishedDatasetItems,
+	publishEvaluationDraft,
 } from "../lib/api";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
@@ -35,6 +39,11 @@ export function EvaluationsPage() {
 		queryFn: () => listExperiments(selectedProjectId!),
 		enabled: Boolean(selectedProjectId),
 	});
+	const evaluations = useQuery({
+		queryKey: ["evaluation-definitions", selectedProjectId],
+		queryFn: () => listEvaluations(selectedProjectId!),
+		enabled: Boolean(selectedProjectId),
+	});
 	const [datasetId, setDatasetId] = React.useState("");
 	React.useEffect(() => {
 		setDatasetId("");
@@ -51,6 +60,19 @@ export function EvaluationsPage() {
 			}),
 		enabled: Boolean(selectedProjectId && selectedDataset),
 	});
+	const selectedVersions = useQuery({
+		queryKey: ["dataset-versions", selectedProjectId, selectedDataset?.slug],
+		queryFn: () =>
+			listDatasetVersions({
+				project_id: selectedProjectId!,
+				slug: selectedDataset!.slug,
+			}),
+		enabled: Boolean(selectedProjectId && selectedDataset),
+	});
+	const [evaluationName, setEvaluationName] = React.useState("");
+	const [evaluationSlug, setEvaluationSlug] = React.useState("");
+	const [definitionPending, setDefinitionPending] = React.useState(false);
+	const [definitionError, setDefinitionError] = React.useState("");
 	const [name, setName] = React.useState("");
 	const [model, setModel] = React.useState("");
 	const [systemPrompt, setSystemPrompt] = React.useState("");
@@ -98,6 +120,57 @@ export function EvaluationsPage() {
 			setPending(false);
 		}
 	}
+	async function define() {
+		const datasetVersion = selectedVersions.data?.items[0];
+		if (
+			!datasetVersion ||
+			!evaluationName ||
+			!evaluationSlug ||
+			definitionPending
+		)
+			return;
+		try {
+			setDefinitionError("");
+			setDefinitionPending(true);
+			const created = await createEvaluation({
+				project_id: selectedProjectId!,
+				slug: evaluationSlug,
+				name: evaluationName,
+				definition: {
+					dataset_version_id: datasetVersion.id,
+					evaluator: {
+						kind: evaluator as "exact_match" | "contains",
+						expected_output_path: "$.expected_output",
+						output_path: "$.output",
+					},
+					target: {
+						kind: "configured_llm",
+						model: model || null,
+						system_prompt: systemPrompt || null,
+					},
+					execution_defaults: {
+						temperature: Number(temperature),
+						max_tokens: null,
+					},
+					thresholds: { minimum_pass_rate: null },
+				},
+			});
+			await publishEvaluationDraft({
+				project_id: selectedProjectId!,
+				id: created.evaluation.id,
+				revision: created.draft.revision,
+			});
+			await client.invalidateQueries({
+				queryKey: ["evaluation-definitions", selectedProjectId],
+			});
+			setEvaluationName("");
+			setEvaluationSlug("");
+		} catch (cause) {
+			setDefinitionError((cause as Error).message);
+		} finally {
+			setDefinitionPending(false);
+		}
+	}
 	return (
 		<div className="space-y-6">
 			<div>
@@ -107,6 +180,73 @@ export function EvaluationsPage() {
 				</p>
 			</div>
 			<section className="grid gap-2 rounded border p-4">
+				<h2 className="text-lg font-medium">Reusable definition</h2>
+				<p className="text-sm text-muted-foreground">
+					Publishes an immutable definition using the latest available Dataset
+					Version. It does not start a run.
+				</p>
+				<label
+					className="block space-y-2 text-sm"
+					htmlFor="evaluation-definition-name"
+				>
+					Definition name
+					<Input
+						id="evaluation-definition-name"
+						value={evaluationName}
+						onChange={(event) => setEvaluationName(event.target.value)}
+					/>
+				</label>
+				<label
+					className="block space-y-2 text-sm"
+					htmlFor="evaluation-definition-slug"
+				>
+					Stable ID
+					<Input
+						id="evaluation-definition-slug"
+						value={evaluationSlug}
+						onChange={(event) => setEvaluationSlug(event.target.value)}
+						pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+					/>
+				</label>
+				{selectedDataset && !selectedVersions.data?.items.length && (
+					<p className="text-sm text-destructive">
+						Publish a Dataset Version before creating a reusable definition.
+					</p>
+				)}
+				{definitionError && (
+					<p className="text-sm text-destructive" role="alert">
+						{definitionError}
+					</p>
+				)}
+				<Button
+					disabled={
+						!selectedVersions.data?.items.length ||
+						!evaluationName ||
+						!evaluationSlug ||
+						definitionPending
+					}
+					onClick={() => void define()}
+				>
+					{definitionPending
+						? "Publishing..."
+						: "Create and publish definition"}
+				</Button>
+				{evaluations.data?.items.length ? (
+					<ul
+						className="space-y-1 text-sm"
+						aria-label="Published evaluation definitions"
+					>
+						{evaluations.data.items.map((item) => (
+							<li key={item.id}>
+								{item.name}{" "}
+								<span className="text-muted-foreground">({item.slug})</span>
+							</li>
+						))}
+					</ul>
+				) : null}
+			</section>
+			<section className="grid gap-2 rounded border p-4">
+				<h2 className="text-lg font-medium">Ad-hoc run</h2>
 				<label className="block space-y-2 text-sm" htmlFor="evaluation-dataset">
 					Dataset
 					<Select
