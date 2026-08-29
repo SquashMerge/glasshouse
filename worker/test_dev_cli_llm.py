@@ -580,6 +580,53 @@ class DevCliLlmTests(unittest.TestCase):
                 },
             )
 
+    def test_worker_reports_a_safe_optimization_exception_kind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gepa_directory = Path(directory) / "gepa"
+            default_adapter_directory = gepa_directory / "adapters" / "default_adapter"
+            default_adapter_directory.mkdir(parents=True)
+            (gepa_directory / "__init__.py").write_text(
+                "def optimize(**kwargs):\n"
+                "    raise RuntimeError('provider token must not be logged')\n"
+            )
+            (gepa_directory / "adapters" / "__init__.py").write_text("")
+            (default_adapter_directory / "__init__.py").write_text("")
+            (default_adapter_directory / "default_adapter.py").write_text(
+                "class DefaultAdapter:\n"
+                "    def __init__(self, model): self.model = model\n"
+            )
+            request = {
+                "source": "Answer {{item}}",
+                "target": "system",
+                "evaluator": {"type": "default_adapter"},
+                "dataset": optimization_dataset(
+                    [{"input": "training input", "answer": "expected answer"}],
+                    [{"input": "heldout input", "answer": "expected answer"}],
+                ),
+                "model_config": {
+                    "task_lm": "task-model",
+                    "reflection_lm": "reflection-model",
+                },
+                "provider_dispatch_key": PROVIDER_DISPATCH_KEY,
+                "budget": {"max_metric_calls": 2},
+            }
+            result = subprocess.run(
+                [sys.executable, Path(__file__).with_name("gepa_worker.py")],
+                input=json.dumps(request),
+                text=True,
+                capture_output=True,
+                env={
+                    "GEPA_WORKER_MODE": "cli",
+                    "GEPA_ALLOWED_MODELS": "task-model,reflection-model",
+                    "PYTHONPATH": directory,
+                },
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "ASTRAEA_GEPA_FAILURE RuntimeError")
+        self.assertNotIn("provider token", result.stderr)
+
     def test_real_gepa_minimum_dataset_stops_within_metric_budget(self):
         runtime = os.environ.get("GEPA_PYTHON", sys.executable)
         installed = subprocess.run(

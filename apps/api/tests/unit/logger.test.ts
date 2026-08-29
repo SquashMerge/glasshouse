@@ -44,6 +44,26 @@ describe("structured logger", () => {
 		expect(records[0]?.error).toBeUndefined();
 	});
 
+	it("records a PostgreSQL SQLSTATE without leaking its error message", () => {
+		process.env.LOG_LEVEL = "debug";
+		const records: Array<Record<string, unknown>> = [];
+		console.error = (line: string) => records.push(JSON.parse(line));
+		const secret = "password=do-not-log";
+		logger.error(
+			"projects.request_failed",
+			Object.assign(new Error(secret), { code: "42P01" }),
+		);
+
+		expect(records).toEqual([
+			expect.objectContaining({
+				event: "projects.request_failed",
+				error_type: "Error",
+				error_code: "42P01",
+			}),
+		]);
+		expect(JSON.stringify(records)).not.toContain(secret);
+	});
+
 	it("bounds circular and deep cause chains to type-only metadata", () => {
 		process.env.LOG_LEVEL = "debug";
 		const records: Array<Record<string, unknown>> = [];
