@@ -688,8 +688,13 @@ class DevCliLlmTests(unittest.TestCase):
     def test_worker_does_not_emit_an_arbitrary_exception_filename(self):
         with tempfile.TemporaryDirectory() as directory:
             gepa_directory = Path(directory) / "gepa"
+            malformed_gepa_metadata_directory = Path(directory) / "gepa-invalid.dist-info"
             default_adapter_directory = gepa_directory / "adapters" / "default_adapter"
             default_adapter_directory.mkdir(parents=True)
+            malformed_gepa_metadata_directory.mkdir()
+            (malformed_gepa_metadata_directory / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: gepa\n"
+            )
             (gepa_directory / "__init__.py").write_text(
                 "def optimize(**kwargs):\n"
                 '    exec(compile("raise TypeError(\'untrusted filename must not leak\')", "provider-token.py", "exec"))\n'

@@ -7,7 +7,7 @@ import re
 import sys
 import traceback
 import unicodedata
-from importlib.metadata import PackageNotFoundError, version as distribution_version
+from importlib.metadata import version as distribution_version
 
 if __package__:
     from .dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
@@ -142,7 +142,9 @@ SAFE_OPTIMIZATION_FAILURE_KINDS = {
 def safe_gepa_runtime_version():
     try:
         value = distribution_version("gepa")
-    except PackageNotFoundError:
+    except Exception:
+        return None
+    if not isinstance(value, str):
         return None
     return value if re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", value) else None
 
