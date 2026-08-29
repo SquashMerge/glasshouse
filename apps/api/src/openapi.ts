@@ -66,23 +66,35 @@ import {
 import {
 	archiveProject,
 	createProject,
+	deleteOrganizationMember,
 	deleteProject,
+	deleteProjectMember,
 	getProjectDeletionStatus,
 	getMe,
 	getProject,
 	handleArchiveProject,
 	handleCreateProject,
+	handleDeleteOrganizationMember,
 	handleDeleteProject,
+	handleDeleteProjectMember,
 	handleGetProjectDeletionStatus,
 	handleGetMe,
 	handleGetProject,
 	handleGetProjectAuditEvents,
+	handleListOrganizationMembers,
+	handleListProjectMembers,
 	handleListProjects,
+	handlePutOrganizationMember,
+	handlePutProjectMember,
 	handleRestoreProject,
 	handleUpdateProject,
 	handleSetDefaultProject,
+	listOrganizationMembers,
 	listProjectAuditEvents,
+	listProjectMembers,
 	listProjects,
+	putOrganizationMember,
+	putProjectMember,
 	restoreProject,
 	setDefaultProject,
 	updateProject,
@@ -306,7 +318,13 @@ register(getProject, handleGetProject);
 register(updateProject, handleUpdateProject);
 register(archiveProject, handleArchiveProject);
 register(restoreProject, handleRestoreProject);
+register(listProjectMembers, handleListProjectMembers);
 register(listProjectAuditEvents, handleGetProjectAuditEvents);
+register(putProjectMember, handlePutProjectMember);
+register(deleteProjectMember, handleDeleteProjectMember);
+register(putOrganizationMember, handlePutOrganizationMember);
+register(listOrganizationMembers, handleListOrganizationMembers);
+register(deleteOrganizationMember, handleDeleteOrganizationMember);
 register(listAdminActors, handleListAdminActors);
 register(setAdminActorRole, handleSetAdminActorRole);
 register(listProjectGrants, handleListProjectGrants);
