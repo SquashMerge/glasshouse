@@ -131,8 +131,10 @@ export interface DatasetVersion extends DatasetVersionSummary {
 }
 export interface EvaluationDefinition {
 	dataset_version_id: string;
+	sampling: { strategy: "first_n"; sample_size: number; seed: number };
 	evaluator: {
 		kind: "exact_match" | "contains";
+		version: "v1";
 		expected_output_path: string;
 		output_path: string;
 	};
@@ -142,6 +144,7 @@ export interface EvaluationDefinition {
 		system_prompt: string | null;
 	};
 	execution_defaults: { temperature: number; max_tokens: number | null };
+	limits: { max_cost_usd: number; max_duration_seconds: number };
 	thresholds: { minimum_pass_rate: number | null };
 }
 export interface Evaluation {
@@ -199,6 +202,27 @@ export async function getEvaluationDraft(input: {
 		"getEvaluationDraft",
 	);
 }
+export async function updateEvaluationDraft(input: {
+	project_id: string;
+	id: string;
+	revision: number;
+	definition: EvaluationDefinition;
+}): Promise<EvaluationDraft> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/${input.id}/draft${buildQs({ project_id: input.project_id })}`,
+			{
+				method: "PUT",
+				headers: {
+					"content-type": "application/json",
+					"if-match": `"${input.revision}"`,
+				},
+				body: JSON.stringify(input.definition),
+			},
+		),
+		"updateEvaluationDraft",
+	);
+}
 export async function publishEvaluationDraft(input: {
 	project_id: string;
 	id: string;
@@ -210,6 +234,46 @@ export async function publishEvaluationDraft(input: {
 			{ method: "POST", headers: { "if-match": `\"${input.revision}\"` } },
 		),
 		"publishEvaluationDraft",
+	);
+}
+export async function listEvaluationVersions(input: {
+	project_id: string;
+	id: string;
+}): Promise<{ items: EvaluationDefinitionVersion[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/${input.id}/versions${buildQs({ project_id: input.project_id })}`,
+		),
+		"listEvaluationVersions",
+	);
+}
+export async function getEvaluationVersion(input: {
+	project_id: string;
+	id: string;
+	version: number;
+}): Promise<EvaluationDefinitionVersion> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/${input.id}/versions/${input.version}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getEvaluationVersion",
+	);
+}
+export interface EvaluationLegacyLink {
+	legacy_kind: "experiment" | "benchmark_suite";
+	legacy_id: string;
+	dataset_id: string | null;
+	compatibility: "legacy_ad_hoc";
+	created_at: string;
+}
+export async function listEvaluationLegacyLinks(
+	project_id: string,
+): Promise<{ items: EvaluationLegacyLink[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/compatibility${buildQs({ project_id })}`,
+		),
+		"listEvaluationLegacyLinks",
 	);
 }
 export async function listDatasetVersions(input: {

@@ -14,3 +14,5 @@ INSERT INTO datasets (id, project_id, slug, name) VALUES
     ('74000000-0000-4000-8000-000000000003', '74000000-0000-4000-8000-000000000002', 'definition-data', 'Definition data');
 INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES
     ('74000000-0000-4000-8000-000000000004', '74000000-0000-4000-8000-000000000002', '74000000-0000-4000-8000-000000000003', 1, 0, repeat('a', 64));
+INSERT INTO benchmark_suites (id, project_id, dataset_id, name) VALUES
+    ('74000000-0000-4000-8000-000000000007', '74000000-0000-4000-8000-000000000002', '74000000-0000-4000-8000-000000000003', 'Definition compatibility suite');

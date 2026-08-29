@@ -806,7 +806,8 @@ for migration in \
   "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql" \
   "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql" \
   "$ROOT/infra/db/migrations/0074_evaluation_identity_definition_versions.sql" \
-  "$ROOT/infra/db/migrations/0074_evaluation_identity_definition_versions.sql"; do
+  "$ROOT/infra/db/migrations/0075_evaluation_definition_contract_audit_integrity.sql" \
+  "$ROOT/infra/db/migrations/0075_evaluation_definition_contract_audit_integrity.sql"; do
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" < "$migration"
 done

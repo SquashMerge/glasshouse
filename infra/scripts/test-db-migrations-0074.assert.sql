@@ -52,21 +52,36 @@ $$;
 DO $$
 DECLARE
     fixture_project_id UUID := '74000000-0000-4000-8000-000000000002';
-    evaluation_id UUID := '74000000-0000-4000-8000-000000000005';
+    fixture_evaluation_id UUID := '74000000-0000-4000-8000-000000000005';
     version_id UUID := '74000000-0000-4000-8000-000000000006';
 BEGIN
     INSERT INTO evaluations (id, organization_id, project_id, slug, name, created_by)
-    VALUES (evaluation_id, '00000000-0000-4000-8000-000000000001', fixture_project_id, 'fixture-evaluation', 'Fixture evaluation', '74000000-0000-4000-8000-000000000001');
+    VALUES (fixture_evaluation_id, '00000000-0000-4000-8000-000000000001', fixture_project_id, 'fixture-evaluation', 'Fixture evaluation', '74000000-0000-4000-8000-000000000001');
     INSERT INTO evaluation_definition_drafts (evaluation_id, organization_id, project_id, dataset_version_id, evaluator, target, execution_defaults, thresholds, updated_by)
-    VALUES (evaluation_id, '00000000-0000-4000-8000-000000000001', fixture_project_id, '74000000-0000-4000-8000-000000000004', '{"kind":"exact_match"}', '{"kind":"configured_llm"}', '{}', '{}', '74000000-0000-4000-8000-000000000001');
+    VALUES (fixture_evaluation_id, '00000000-0000-4000-8000-000000000001', fixture_project_id, '74000000-0000-4000-8000-000000000004', '{"kind":"exact_match"}', '{"kind":"configured_llm"}', '{}', '{}', '74000000-0000-4000-8000-000000000001');
     INSERT INTO evaluation_definition_versions (id, evaluation_id, organization_id, project_id, version, dataset_version_id, evaluator, target, execution_defaults, thresholds, content_hash, published_by, published_draft_revision)
-    VALUES (version_id, evaluation_id, '00000000-0000-4000-8000-000000000001', fixture_project_id, 1, '74000000-0000-4000-8000-000000000004', '{"kind":"exact_match"}', '{"kind":"configured_llm"}', '{}', '{}', repeat('b', 64), '74000000-0000-4000-8000-000000000001', 1);
+    VALUES (version_id, fixture_evaluation_id, '00000000-0000-4000-8000-000000000001', fixture_project_id, 1, '74000000-0000-4000-8000-000000000004', '{"kind":"exact_match"}', '{"kind":"configured_llm"}', '{}', '{}', repeat('b', 64), '74000000-0000-4000-8000-000000000001', 1);
     BEGIN
         UPDATE evaluation_definition_versions SET version = 2 WHERE id = version_id;
         RAISE EXCEPTION '0074 allowed immutable version mutation';
     EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
     END;
+    INSERT INTO evaluation_audit_events (organization_id, project_id, evaluation_id, actor_id, event_type)
+    VALUES ('00000000-0000-4000-8000-000000000001', fixture_project_id, fixture_evaluation_id, '74000000-0000-4000-8000-000000000001', 'created');
+    BEGIN
+        UPDATE evaluation_audit_events SET event_type = 'draft_updated' WHERE evaluation_id = fixture_evaluation_id;
+        RAISE EXCEPTION '0075 allowed evaluation audit update';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+    BEGIN
+        DELETE FROM evaluation_audit_events WHERE evaluation_id = fixture_evaluation_id;
+        RAISE EXCEPTION '0075 allowed evaluation audit delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
     IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'experiment') THEN
         RAISE EXCEPTION '0074 did not preserve truthful experiment legacy links';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'benchmark_suite' AND legacy_id = '74000000-0000-4000-8000-000000000007') THEN
+        RAISE EXCEPTION '0074 did not preserve truthful benchmark suite legacy links';
     END IF;
 END $$;

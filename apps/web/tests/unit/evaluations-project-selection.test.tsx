@@ -18,11 +18,17 @@ const {
 	listPublishedDatasetItems,
 	listDatasets,
 	listExperiments,
+	listEvaluations,
+	listEvaluationLegacyLinks,
+	listDatasetVersions,
 } = vi.hoisted(() => ({
 	createExperiment: vi.fn(),
 	listPublishedDatasetItems: vi.fn(),
 	listDatasets: vi.fn(),
 	listExperiments: vi.fn(),
+	listEvaluations: vi.fn(),
+	listEvaluationLegacyLinks: vi.fn(),
+	listDatasetVersions: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -42,6 +48,9 @@ vi.mock("../../src/lib/api", () => ({
 	listPublishedDatasetItems,
 	listDatasets,
 	listExperiments,
+	listEvaluations,
+	listEvaluationLegacyLinks,
+	listDatasetVersions,
 }));
 
 import { EvaluationsPage } from "../../src/routes/evaluations";
@@ -124,6 +133,9 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			Promise.resolve(datasets[projectId as keyof typeof datasets]),
 		);
 		listExperiments.mockResolvedValue({ items: [], total: 0 });
+		listEvaluations.mockResolvedValue({ items: [], total: 0 });
+		listEvaluationLegacyLinks.mockResolvedValue({ items: [] });
+		listDatasetVersions.mockResolvedValue({ items: [] });
 		listPublishedDatasetItems.mockReset();
 		createExperiment.mockReset();
 	});
@@ -195,6 +207,22 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		}
 		expect(screen.getByLabelText("Dataset")).toHaveClass(
 			"focus-visible:ring-2",
+		);
+	});
+	it("shows an alert and retry when Dataset Version fetching fails without disabling publish", async () => {
+		listDatasetVersions.mockRejectedValueOnce(new Error("offline"));
+		listPublishedDatasetItems.mockResolvedValue(validItems);
+		renderPage();
+		await screen.findByRole("option", { name: "Project One dataset" });
+		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("Unable to load Dataset Versions");
+		const callsBeforeRetry = listDatasetVersions.mock.calls.length;
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await waitFor(() =>
+			expect(listDatasetVersions.mock.calls.length).toBeGreaterThan(
+				callsBeforeRetry,
+			),
 		);
 	});
 });

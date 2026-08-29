@@ -13,6 +13,7 @@ const JsonPath = z
 export const EvaluationEvaluator = z
 	.object({
 		kind: z.enum(["exact_match", "contains"]),
+		version: z.literal("v1"),
 		expected_output_path: JsonPath.default("$.expected_output"),
 		output_path: JsonPath.default("$.output"),
 	})
@@ -30,6 +31,19 @@ export const EvaluationExecutionDefaults = z
 		max_tokens: z.number().int().min(1).max(32768).nullable().default(null),
 	})
 	.strict();
+export const EvaluationSampling = z
+	.object({
+		strategy: z.literal("first_n"),
+		sample_size: z.number().int().min(1).max(10000),
+		seed: z.number().int().min(0).max(2147483647),
+	})
+	.strict();
+export const EvaluationLimits = z
+	.object({
+		max_cost_usd: z.number().positive().max(10000),
+		max_duration_seconds: z.number().int().min(1).max(86400),
+	})
+	.strict();
 export const EvaluationThresholds = z
 	.object({
 		minimum_pass_rate: z.number().min(0).max(1).nullable().default(null),
@@ -38,9 +52,11 @@ export const EvaluationThresholds = z
 export const EvaluationDefinitionInput = z
 	.object({
 		dataset_version_id: z.string().uuid(),
+		sampling: EvaluationSampling,
 		evaluator: EvaluationEvaluator,
 		target: EvaluationTarget,
 		execution_defaults: EvaluationExecutionDefaults,
+		limits: EvaluationLimits,
 		thresholds: EvaluationThresholds,
 	})
 	.strict();
@@ -93,8 +109,25 @@ export const EvaluationVersionList = z
 	.object({ items: z.array(EvaluationDefinitionVersion) })
 	.strict()
 	.openapi("EvaluationVersionList");
+export const EvaluationLegacyLink = z
+	.object({
+		legacy_kind: z.enum(["experiment", "benchmark_suite"]),
+		legacy_id: z.string().uuid(),
+		dataset_id: z.string().uuid().nullable(),
+		compatibility: z.literal("legacy_ad_hoc"),
+		created_at: z.string().datetime(),
+	})
+	.strict()
+	.openapi("EvaluationLegacyLink");
+export const EvaluationLegacyLinkList = z
+	.object({ items: z.array(EvaluationLegacyLink) })
+	.strict()
+	.openapi("EvaluationLegacyLinkList");
 export const EvaluationProjectQuery = ProjectIdQuery;
 export const EvaluationIdParam = z.object({ id: z.string().uuid() }).strict();
+export const EvaluationVersionParam = EvaluationIdParam.extend({
+	version: z.coerce.number().int().positive(),
+}).strict();
 export const EvaluationErrorResponses = {
 	400: {
 		description: "Bad request",

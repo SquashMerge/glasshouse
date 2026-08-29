@@ -5,6 +5,8 @@ import {
 	EvaluationRepositoryError,
 	getEvaluation,
 	getEvaluationDraft,
+	getEvaluationVersion,
+	listEvaluationLegacyLinks,
 	listEvaluations,
 	listEvaluationVersions,
 	publishEvaluationDraft,
@@ -21,9 +23,11 @@ import {
 	EvaluationDraft,
 	EvaluationErrorResponses,
 	EvaluationIdParam,
+	EvaluationLegacyLinkList,
 	EvaluationList,
 	EvaluationProjectQuery,
 	EvaluationVersionList,
+	EvaluationVersionParam,
 } from "../schemas/evaluations.js";
 import { trustedTenant } from "../tenancy.js";
 
@@ -180,6 +184,36 @@ export const listEvaluationVersionsRoute = createRoute({
 		...EvaluationErrorResponses,
 	},
 });
+export const getEvaluationVersionRoute = createRoute({
+	method: "get",
+	path: "/v1/evaluations/{id}/versions/{version}",
+	tags: [tag],
+	summary: "Get an immutable Evaluation Definition Version",
+	security: [{ basicAuth: [] }],
+	request: { params: EvaluationVersionParam, query: EvaluationProjectQuery },
+	responses: {
+		200: {
+			description: "OK",
+			content: { "application/json": { schema: EvaluationDefinitionVersion } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+export const listEvaluationLegacyLinksRoute = createRoute({
+	method: "get",
+	path: "/v1/evaluations/compatibility",
+	tags: [tag],
+	summary: "List structural legacy evaluation compatibility links",
+	security: [{ basicAuth: [] }],
+	request: { query: EvaluationProjectQuery },
+	responses: {
+		200: {
+			description: "OK",
+			content: { "application/json": { schema: EvaluationLegacyLinkList } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
 const revision = (value: string | undefined) => {
 	const match = value?.match(/^"(\d+)"$/);
 	if (!match)
@@ -280,6 +314,31 @@ export const handleListEvaluationVersions = async (c: any) => {
 			await listEvaluationVersions(pgPool(), {
 				project_id: c.req.valid("query").project_id,
 				id: c.req.valid("param").id,
+				authorization: authorization(c, "product_read"),
+			}),
+		);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+export const handleGetEvaluationVersion = async (c: any) => {
+	try {
+		return c.json(
+			await getEvaluationVersion(pgPool(), {
+				project_id: c.req.valid("query").project_id,
+				...c.req.valid("param"),
+				authorization: authorization(c, "product_read"),
+			}),
+		);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+export const handleListEvaluationLegacyLinks = async (c: any) => {
+	try {
+		return c.json(
+			await listEvaluationLegacyLinks(pgPool(), {
+				project_id: c.req.valid("query").project_id,
 				authorization: authorization(c, "product_read"),
 			}),
 		);

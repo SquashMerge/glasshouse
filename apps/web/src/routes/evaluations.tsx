@@ -12,6 +12,9 @@ import {
 	listDatasets,
 	listExperiments,
 	listEvaluations,
+	listEvaluationLegacyLinks,
+	listEvaluationVersions,
+	getEvaluationVersion,
 	listDatasetVersions,
 	listPublishedDatasetItems,
 	publishEvaluationDraft,
@@ -42,6 +45,11 @@ export function EvaluationsPage() {
 	const evaluations = useQuery({
 		queryKey: ["evaluation-definitions", selectedProjectId],
 		queryFn: () => listEvaluations(selectedProjectId!),
+		enabled: Boolean(selectedProjectId),
+	});
+	const legacyLinks = useQuery({
+		queryKey: ["evaluation-compatibility", selectedProjectId],
+		queryFn: () => listEvaluationLegacyLinks(selectedProjectId!),
 		enabled: Boolean(selectedProjectId),
 	});
 	const [datasetId, setDatasetId] = React.useState("");
@@ -138,8 +146,10 @@ export function EvaluationsPage() {
 				name: evaluationName,
 				definition: {
 					dataset_version_id: datasetVersion.id,
+					sampling: { strategy: "first_n", sample_size: 100, seed: 0 },
 					evaluator: {
 						kind: evaluator as "exact_match" | "contains",
+						version: "v1",
 						expected_output_path: "$.expected_output",
 						output_path: "$.output",
 					},
@@ -152,6 +162,7 @@ export function EvaluationsPage() {
 						temperature: Number(temperature),
 						max_tokens: null,
 					},
+					limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
 					thresholds: { minimum_pass_rate: null },
 				},
 			});
@@ -208,11 +219,25 @@ export function EvaluationsPage() {
 						pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
 					/>
 				</label>
-				{selectedDataset && !selectedVersions.data?.items.length && (
-					<p className="text-sm text-destructive">
-						Publish a Dataset Version before creating a reusable definition.
+				{selectedVersions.isError && (
+					<p className="text-sm text-destructive" role="alert">
+						Unable to load Dataset Versions.{" "}
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => void selectedVersions.refetch()}
+						>
+							Retry
+						</Button>
 					</p>
 				)}
+				{selectedDataset &&
+					!selectedVersions.isError &&
+					!selectedVersions.data?.items.length && (
+						<p className="text-sm text-destructive">
+							Publish a Dataset Version before creating a reusable definition.
+						</p>
+					)}
 				{definitionError && (
 					<p className="text-sm text-destructive" role="alert">
 						{definitionError}
@@ -220,7 +245,9 @@ export function EvaluationsPage() {
 				)}
 				<Button
 					disabled={
-						!selectedVersions.data?.items.length ||
+						selectedVersions.isLoading ||
+						(!selectedVersions.isError &&
+							!selectedVersions.data?.items.length) ||
 						!evaluationName ||
 						!evaluationSlug ||
 						definitionPending
@@ -237,12 +264,32 @@ export function EvaluationsPage() {
 						aria-label="Published evaluation definitions"
 					>
 						{evaluations.data.items.map((item) => (
-							<li key={item.id}>
+							<li key={item.id} className="space-y-1">
 								{item.name}{" "}
 								<span className="text-muted-foreground">({item.slug})</span>
+								<EvaluationVersionInspection
+									projectId={selectedProjectId!}
+									evaluationId={item.id}
+								/>
 							</li>
 						))}
 					</ul>
+				) : null}
+				{legacyLinks.data?.items.length ? (
+					<div
+						className="space-y-1 text-sm"
+						aria-label="Legacy evaluation compatibility"
+					>
+						<p className="font-medium">Legacy compatibility</p>
+						{legacyLinks.data.items.map((link) => (
+							<p key={`${link.legacy_kind}-${link.legacy_id}`}>
+								{link.legacy_kind === "experiment"
+									? "Experiment"
+									: "Benchmark suite"}
+								: {link.compatibility}
+							</p>
+						))}
+					</div>
 				) : null}
 			</section>
 			<section className="grid gap-2 rounded border p-4">
@@ -331,14 +378,22 @@ export function EvaluationsPage() {
 					{pending ? "Starting..." : "Run evaluation"}
 				</Button>
 			</section>
-			{(datasets.isError || experiments.isError) && (
+			{(datasets.isError ||
+				experiments.isError ||
+				evaluations.isError ||
+				legacyLinks.isError) && (
 				<PageMessage title="Evaluations">
 					Unable to load evaluations.{" "}
 					<Button
 						variant="outline"
 						size="sm"
 						onClick={() =>
-							void Promise.all([datasets.refetch(), experiments.refetch()])
+							void Promise.all([
+								datasets.refetch(),
+								experiments.refetch(),
+								evaluations.refetch(),
+								legacyLinks.refetch(),
+							])
 						}
 					>
 						Retry
@@ -366,6 +421,52 @@ export function EvaluationsPage() {
 				</ul>
 			)}
 		</div>
+	);
+}
+function EvaluationVersionInspection({
+	projectId,
+	evaluationId,
+}: {
+	projectId: string;
+	evaluationId: string;
+}) {
+	const versions = useQuery({
+		queryKey: ["evaluation-versions", projectId, evaluationId],
+		queryFn: () =>
+			listEvaluationVersions({ project_id: projectId, id: evaluationId }),
+	});
+	const latest = versions.data?.items[0];
+	const detail = useQuery({
+		queryKey: ["evaluation-version", projectId, evaluationId, latest?.version],
+		queryFn: () =>
+			getEvaluationVersion({
+				project_id: projectId,
+				id: evaluationId,
+				version: latest!.version,
+			}),
+		enabled: Boolean(latest),
+	});
+	if (versions.isError || detail.isError)
+		return (
+			<p className="text-destructive" role="alert">
+				Unable to load immutable version.{" "}
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() =>
+						void Promise.all([versions.refetch(), detail.refetch()])
+					}
+				>
+					Retry
+				</Button>
+			</p>
+		);
+	if (!latest) return null;
+	return (
+		<p className="text-muted-foreground">
+			Version {latest.version}:{" "}
+			{detail.data?.content_hash ?? latest.content_hash}
+		</p>
 	);
 }
 export function EvaluationDetailPage() {

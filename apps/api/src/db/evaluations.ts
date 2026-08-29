@@ -9,9 +9,11 @@ type Transactional = Pick<Pool, "connect">;
 type Row = Record<string, unknown>;
 type Definition = {
 	dataset_version_id: string;
+	sampling: Row;
 	evaluator: Row;
 	target: Row;
 	execution_defaults: Row;
+	limits: Row;
 	thresholds: Row;
 };
 
@@ -89,15 +91,22 @@ function evaluation(row: Row) {
 		updated_at: time(row, "updated_at"),
 	};
 }
-function definition(row: Row) {
+function definitionFields(row: Row) {
 	return {
-		evaluation_id: text(row, "evaluation_id"),
-		project_id: text(row, "project_id"),
 		dataset_version_id: text(row, "dataset_version_id"),
+		sampling: object(row, "sampling"),
 		evaluator: object(row, "evaluator"),
 		target: object(row, "target"),
 		execution_defaults: object(row, "execution_defaults"),
+		limits: object(row, "limits"),
 		thresholds: object(row, "thresholds"),
+	};
+}
+function definition(row: Row) {
+	return {
+		...definitionFields(row),
+		evaluation_id: text(row, "evaluation_id"),
+		project_id: text(row, "project_id"),
 		revision: Number(row.revision),
 		updated_at: time(row, "updated_at"),
 	};
@@ -105,7 +114,9 @@ function definition(row: Row) {
 function version(row: Row) {
 	return {
 		id: text(row, "id"),
-		...definition(row),
+		evaluation_id: text(row, "evaluation_id"),
+		project_id: text(row, "project_id"),
+		...definitionFields(row),
 		version: Number(row.version),
 		content_hash: text(row, "content_hash"),
 		published_draft_revision: Number(row.published_draft_revision),
@@ -182,15 +193,17 @@ export async function createEvaluation(
 				);
 			const id = text(inserted.rows[0], "id");
 			const draft = await client.query(
-				"INSERT INTO evaluation_definition_drafts (evaluation_id, organization_id, project_id, dataset_version_id, evaluator, target, execution_defaults, thresholds, updated_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9) RETURNING *",
+				"INSERT INTO evaluation_definition_drafts (evaluation_id, organization_id, project_id, dataset_version_id, sampling, evaluator, target, execution_defaults, limits, thresholds, updated_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11) RETURNING *",
 				[
 					id,
 					input.authorization.organization_id,
 					input.project_id,
 					input.definition.dataset_version_id,
+					JSON.stringify(input.definition.sampling),
 					JSON.stringify(input.definition.evaluator),
 					JSON.stringify(input.definition.target),
 					JSON.stringify(input.definition.execution_defaults),
+					JSON.stringify(input.definition.limits),
 					JSON.stringify(input.definition.thresholds),
 					input.authorization.actor_id,
 				],
@@ -299,15 +312,17 @@ export async function updateEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"UPDATE evaluation_definition_drafts SET dataset_version_id=$4, evaluator=$5::jsonb, target=$6::jsonb, execution_defaults=$7::jsonb, thresholds=$8::jsonb, revision=revision+1, updated_by=$9, updated_at=now() WHERE evaluation_id=$1 AND project_id=$2 AND revision=$3 RETURNING *",
+				"UPDATE evaluation_definition_drafts SET dataset_version_id=$4, sampling=$5::jsonb, evaluator=$6::jsonb, target=$7::jsonb, execution_defaults=$8::jsonb, limits=$9::jsonb, thresholds=$10::jsonb, revision=revision+1, updated_by=$11, updated_at=now() WHERE evaluation_id=$1 AND project_id=$2 AND revision=$3 RETURNING *",
 				[
 					input.id,
 					input.project_id,
 					input.revision,
 					input.definition.dataset_version_id,
+					JSON.stringify(input.definition.sampling),
 					JSON.stringify(input.definition.evaluator),
 					JSON.stringify(input.definition.target),
 					JSON.stringify(input.definition.execution_defaults),
+					JSON.stringify(input.definition.limits),
 					JSON.stringify(input.definition.thresholds),
 					input.authorization.actor_id,
 				],
@@ -371,9 +386,11 @@ export async function publishEvaluationDraft(
 				);
 			const value: Definition = {
 				dataset_version_id: text(row, "dataset_version_id"),
+				sampling: object(row, "sampling"),
 				evaluator: object(row, "evaluator"),
 				target: object(row, "target"),
 				execution_defaults: object(row, "execution_defaults"),
+				limits: object(row, "limits"),
 				thresholds: object(row, "thresholds"),
 			};
 			const hash = definitionHash(value);
@@ -383,16 +400,18 @@ export async function publishEvaluationDraft(
 			);
 			if (existing.rows[0]) return version(existing.rows[0]);
 			const inserted = await client.query(
-				"INSERT INTO evaluation_definition_versions (id, evaluation_id, organization_id, project_id, version, dataset_version_id, evaluator, target, execution_defaults, thresholds, content_hash, published_by, published_draft_revision) VALUES ($1,$2,$3,$4,(SELECT coalesce(max(version),0)+1 FROM evaluation_definition_versions WHERE evaluation_id=$2),$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12) RETURNING *",
+				"INSERT INTO evaluation_definition_versions (id, evaluation_id, organization_id, project_id, version, dataset_version_id, sampling, evaluator, target, execution_defaults, limits, thresholds, content_hash, published_by, published_draft_revision) VALUES ($1,$2,$3,$4,(SELECT coalesce(max(version),0)+1 FROM evaluation_definition_versions WHERE evaluation_id=$2),$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13,$14) RETURNING *",
 				[
 					randomUUID(),
 					input.id,
 					input.authorization.organization_id,
 					input.project_id,
 					value.dataset_version_id,
+					JSON.stringify(value.sampling),
 					JSON.stringify(value.evaluator),
 					JSON.stringify(value.target),
 					JSON.stringify(value.execution_defaults),
+					JSON.stringify(value.limits),
 					JSON.stringify(value.thresholds),
 					hash,
 					input.authorization.actor_id,
@@ -432,6 +451,58 @@ export async function listEvaluationVersions(
 				[input.id, input.project_id],
 			);
 			return { items: r.rows.map(version) };
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function getEvaluationVersion(
+	db: Transactional,
+	input: {
+		project_id: string;
+		id: string;
+		version: number;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
+				"SELECT * FROM evaluation_definition_versions WHERE evaluation_id=$1 AND project_id=$2 AND version=$3",
+				[input.id, input.project_id, input.version],
+			);
+			if (!r.rows[0])
+				throw new EvaluationRepositoryError(
+					"NOT_FOUND",
+					"Evaluation definition version not found",
+				);
+			return version(r.rows[0]);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+export async function listEvaluationLegacyLinks(
+	db: Transactional,
+	input: { project_id: string; authorization: ProjectAuthorization },
+) {
+	try {
+		return await transaction(db, async (client) => {
+			await authorize(client, input.project_id, input.authorization);
+			const r = await client.query(
+				"SELECT legacy_kind, legacy_id, dataset_id, created_at FROM evaluation_legacy_links WHERE project_id=$1 ORDER BY created_at DESC",
+				[input.project_id],
+			);
+			return {
+				items: r.rows.map((row: Row) => ({
+					legacy_kind: text(row, "legacy_kind"),
+					legacy_id: text(row, "legacy_id"),
+					dataset_id: row.dataset_id == null ? null : text(row, "dataset_id"),
+					compatibility: "legacy_ad_hoc" as const,
+					created_at: time(row, "created_at"),
+				})),
+			};
 		});
 	} catch (cause) {
 		throw normalize(cause);
