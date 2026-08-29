@@ -173,31 +173,20 @@ GET  /v1/experiments/{id}/events       # SSE stream of live progress
 
 ---
 
-## 6. SDK Prompt Management — 3-Tier Cache
+## 6. SDK Prompt Delivery and Cache Policy (planned P4)
 
-```python
-# 5-method API
-prompt = client.prompts.get(
-    name, *,
-    env="production",              # default per project
-    version=12,                    # optional pin by version number or commit hash
-    cache_ttl_seconds=60,
-    fallback="default prompt...",  # explicit fallback if API + cache miss
-    skip_cache=False,
-)
-rendered = prompt.compile(variables={...})
-```
+The future Python, TypeScript, and Java SDKs will resolve a managed prompt to
+an immutable `(project_id, slug, version, content_hash)` identity, render it
+locally, and emit that identity as generation provenance. They cache prompt
+**definitions**, not rendered prompts or model responses.
 
-**Three-tier cache:**
-```
-L1: In-process memory LRU  (60s TTL, stale-while-revalidate, sub-ms hits)
-L2: On-disk SQLite WAL     (1h TTL, survives restart)
-L3: HTTP fetch from platform (timeout 10s, 2 retries)
-```
-
-**Fallback ladder:** cache hit → stale-on-error → explicit `fallback=` → throw.
-
-**Local cache schema:** SQLite (atomic writes, concurrent reads, language-agnostic) with content-hash-based tamper detection. NOT JSON (no atomic writes), NOT pickle (RCE risk).
+The required baseline is a bounded in-process cache with stale-while-revalidate
+and a content-hash-verified fallback bundle. A durable local cache is optional,
+not a mandatory cross-language SQLite tier. Provider prefix caching is a
+best-effort adapter capability; it cannot promise provider hits, retention, or
+global eviction. The canonical proposal, API contract, tenancy rules,
+invalidation/eviction model, and acceptance gates are in
+[`docs/10-prompt-delivery-sdk-cache.md`](10-prompt-delivery-sdk-cache.md).
 
 ---
 

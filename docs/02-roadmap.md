@@ -322,7 +322,11 @@ as a **narrow identity/version contract**, not a framework-integration flood:
 - explicit, role-authorized version history and diffing;
 - Evaluation Runs pinned to a resolved Agent/manifest version;
 - a generic/HTTP target or one carefully selected SDK path only after its
-  execution boundary is hardened.
+  execution boundary is hardened; and
+- prompt delivery in the Python, TypeScript, and Java SDKs: immutable
+  resolution, local rendering/provenance, a bounded definition cache, and
+  provider-prefix-cache adapters. See
+  [`docs/10-prompt-delivery-sdk-cache.md`](10-prompt-delivery-sdk-cache.md).
 
 Normal onboarding stays low-friction: OTLP configuration and SDK
 `register(agent)`/introspection are preferred; agent manifests are generated
