@@ -2,10 +2,20 @@ import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "./common.js";
 import { ProjectIdQuery } from "./prompts.js";
 
-const Slug = z
+const UUID_SHAPED_EVALUATION_IDENTIFIER =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const EvaluationReservedSlugs = new Set(["compatibility"]);
+const EvaluationIdentifier = z
 	.string()
 	.max(64)
 	.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const Slug = EvaluationIdentifier.refine(
+	(value) => !UUID_SHAPED_EVALUATION_IDENTIFIER.test(value),
+	"Evaluation slug must not be UUID-shaped",
+).refine(
+	(value) => !EvaluationReservedSlugs.has(value),
+	"Evaluation slug is reserved",
+);
 const JsonPath = z
 	.string()
 	.regex(/^\$\.[A-Za-z0-9_.-]+$/)
@@ -172,10 +182,12 @@ export const EvaluationListQuery = ProjectIdQuery.extend({
 		.transform((value) => value === "true"),
 }).strict();
 export const EvaluationTombstone = z
-	.object({ confirmation_slug: Slug })
+	.object({ confirmation_slug: EvaluationIdentifier })
 	.strict();
 export const EvaluationIdParam = z.object({ id: z.string().uuid() }).strict();
-export const EvaluationSlugParam = z.object({ slug: Slug }).strict();
+export const EvaluationSlugParam = z
+	.object({ slug: EvaluationIdentifier })
+	.strict();
 export const EvaluationVersionParam = EvaluationSlugParam.extend({
 	version: z.coerce.number().int().positive(),
 }).strict();

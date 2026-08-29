@@ -17,6 +17,10 @@ type Definition = {
 	limits: Row;
 	thresholds: Row;
 };
+const UUID_SHAPED_EVALUATION_IDENTIFIER =
+	"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+const evaluationIdentifierPredicate = (table = "") =>
+	`(CASE WHEN $1 ~ '${UUID_SHAPED_EVALUATION_IDENTIFIER}' THEN ${table}id::text=$1 ELSE ${table}slug=$1 END)`;
 
 export class EvaluationRepositoryError extends Error {
 	readonly status: 400 | 404 | 409 | 500;
@@ -303,7 +307,7 @@ export async function getEvaluation(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT * FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2 AND archived_at IS NULL",
+				`SELECT * FROM evaluations WHERE ${evaluationIdentifierPredicate()} AND project_id=$2 AND archived_at IS NULL`,
 				[input.slug, input.project_id],
 			);
 			if (!r.rows[0])
@@ -329,7 +333,7 @@ export async function getEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2 AND e.archived_at IS NULL",
+				`SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE ${evaluationIdentifierPredicate("e.")} AND d.project_id=$2 AND e.archived_at IS NULL`,
 				[input.slug, input.project_id],
 			);
 			if (!r.rows[0])
@@ -356,9 +360,8 @@ export async function updateEvaluationDraft(
 	try {
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
-			const active = " AND archived_at IS NULL";
 			const r = await client.query(
-				`UPDATE evaluation_definition_drafts SET dataset_version_id=$4, sampling=$5::jsonb, evaluator=$6::jsonb, target=$7::jsonb, execution_defaults=$8::jsonb, limits=$9::jsonb, thresholds=$10::jsonb, revision=revision+1, updated_by=$11, updated_at=now() WHERE evaluation_id=(SELECT id FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2${active}) AND project_id=$2 AND revision=$3 RETURNING *`,
+				`UPDATE evaluation_definition_drafts SET dataset_version_id=$4, sampling=$5::jsonb, evaluator=$6::jsonb, target=$7::jsonb, execution_defaults=$8::jsonb, limits=$9::jsonb, thresholds=$10::jsonb, revision=revision+1, updated_by=$11, updated_at=now() WHERE evaluation_id=(SELECT id FROM evaluations WHERE ${evaluationIdentifierPredicate()} AND project_id=$2 AND archived_at IS NULL) AND project_id=$2 AND revision=$3 RETURNING *`,
 				[
 					input.slug,
 					input.project_id,
@@ -375,7 +378,7 @@ export async function updateEvaluationDraft(
 			);
 			if (!r.rows[0]) {
 				const current = await client.query(
-					"SELECT d.revision FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2",
+					`SELECT d.revision FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE ${evaluationIdentifierPredicate("e.")} AND d.project_id=$2 AND e.archived_at IS NULL`,
 					[input.slug, input.project_id],
 				);
 				if (current.rows[0])
@@ -416,7 +419,7 @@ export async function publishEvaluationDraft(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const draft = await client.query(
-				"SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND d.project_id=$2 AND e.archived_at IS NULL FOR UPDATE OF d",
+				`SELECT d.* FROM evaluation_definition_drafts d JOIN evaluations e ON e.id=d.evaluation_id AND e.project_id=d.project_id WHERE ${evaluationIdentifierPredicate("e.")} AND d.project_id=$2 AND e.archived_at IS NULL FOR UPDATE OF d`,
 				[input.slug, input.project_id],
 			);
 			if (!draft.rows[0])
@@ -514,7 +517,7 @@ export async function transitionEvaluationLifecycle(
 						? "archived_at=NULL"
 						: "tombstoned_at=now()";
 			const result = await client.query(
-				`UPDATE evaluations SET ${set}, lifecycle_revision=lifecycle_revision+1, updated_at=now() WHERE (slug=$1 OR id::text=$1) AND project_id=$2 AND lifecycle_revision=$3 AND ${predicate} RETURNING *`,
+				`UPDATE evaluations SET ${set}, lifecycle_revision=lifecycle_revision+1, updated_at=now() WHERE ${evaluationIdentifierPredicate()} AND project_id=$2 AND lifecycle_revision=$3 AND ${predicate} RETURNING *`,
 				[input.slug, input.project_id, input.revision],
 			);
 			if (!result.rows[0])
@@ -557,12 +560,12 @@ export async function listEvaluationVersions(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 AND e.archived_at IS NULL ORDER BY v.version DESC",
+				`SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE ${evaluationIdentifierPredicate("e.")} AND v.project_id=$2 AND e.archived_at IS NULL ORDER BY v.version DESC`,
 				[input.slug, input.project_id],
 			);
 			if (r.rows.length === 0) {
 				const evaluation = await client.query(
-					"SELECT 1 FROM evaluations WHERE (slug=$1 OR id::text=$1) AND project_id=$2 AND archived_at IS NULL",
+					`SELECT 1 FROM evaluations WHERE ${evaluationIdentifierPredicate()} AND project_id=$2 AND archived_at IS NULL`,
 					[input.slug, input.project_id],
 				);
 				if (!evaluation.rows[0])
@@ -590,7 +593,7 @@ export async function getEvaluationVersion(
 		return await transaction(db, async (client) => {
 			await authorize(client, input.project_id, input.authorization);
 			const r = await client.query(
-				"SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE (e.slug=$1 OR e.id::text=$1) AND v.project_id=$2 AND v.version=$3 AND e.archived_at IS NULL",
+				`SELECT v.* FROM evaluation_definition_versions v JOIN evaluations e ON e.id=v.evaluation_id AND e.project_id=v.project_id WHERE ${evaluationIdentifierPredicate("e.")} AND v.project_id=$2 AND v.version=$3 AND e.archived_at IS NULL`,
 				[input.slug, input.project_id, input.version],
 			);
 			if (!r.rows[0])

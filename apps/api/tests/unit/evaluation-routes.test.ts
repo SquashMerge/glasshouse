@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { getEvaluation } from "../../src/db/evaluations";
 import * as postgres from "../../src/db/postgres";
 import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
 import {
@@ -21,6 +22,7 @@ import {
 	handleListEvaluationVersions,
 	handlePublishEvaluationDraft,
 	handlePutEvaluationDraft,
+	listEvaluationLegacyLinksRoute,
 	listEvaluationsRoute,
 	listEvaluationVersionsRoute,
 	publishEvaluationDraftRoute,
@@ -30,12 +32,32 @@ import {
 	EvaluationDefinitionInput,
 	EvaluationDefinitionVersion,
 	EvaluationDraft,
+	EvaluationCreate,
 	EvaluationListQuery,
+	EvaluationSlugParam,
 } from "../../src/schemas/evaluations";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const organizationId = "22222222-2222-4222-8222-222222222222";
 const actorId = "33333333-3333-4333-8333-333333333333";
+const definition = {
+	dataset_version_id: "55555555-5555-4555-8555-555555555555",
+	sampling: { strategy: "first_n", sample_size: 100, seed: 0 },
+	evaluator: {
+		kind: "exact_match",
+		version: "v1",
+		expected_output_path: "$.expected_output",
+		output_path: "$.output",
+	},
+	target: {
+		kind: "configured_llm",
+		model: "model",
+		system_prompt: null,
+	},
+	execution_defaults: { temperature: 0, max_tokens: null },
+	limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
+	thresholds: { minimum_pass_rate: null },
+};
 
 describe("evaluation route contract", () => {
 	it("strictly parses include_archived query values", () => {
@@ -102,28 +124,107 @@ describe("evaluation route contract", () => {
 		expect(invalid.status).toBe(400);
 		expect(parsedQueries).toHaveLength(3);
 	});
+	it("rejects UUID-shaped slugs while retaining UUID Evaluation detail IDs", async () => {
+		const evaluationId = "44444444-4444-4444-8444-444444444444";
+		const now = new Date("2026-08-29T00:00:00.000Z");
+		const queries: string[] = [];
+		const query = async (sql: string) => {
+			queries.push(sql);
+			if (sql.startsWith("SELECT p.id FROM projects"))
+				return { rows: [{ id: projectId }] };
+			if (sql.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			if (sql.startsWith("SELECT * FROM evaluations"))
+				return {
+					rows: [
+						{
+							id: evaluationId,
+							project_id: projectId,
+							slug: "stable-evaluation",
+							name: "Stable Evaluation",
+							description: null,
+							lifecycle_revision: 1,
+							archived_at: null,
+							tombstoned_at: null,
+							created_at: now,
+							updated_at: now,
+						},
+					],
+				};
+			return { rows: [] };
+		};
+
+		const value = await getEvaluation(
+			{ connect: async () => ({ query, release() {} }) } as never,
+			{
+				project_id: projectId,
+				slug: evaluationId,
+				authorization: {
+					organization_id: organizationId,
+					actor_id: actorId,
+					operation: "product_read",
+				},
+			},
+		);
+
+		expect(value).toMatchObject({
+			id: evaluationId,
+			slug: "stable-evaluation",
+		});
+		const detailQuery = queries.find((sql) =>
+			sql.startsWith("SELECT * FROM evaluations"),
+		);
+		expect(detailQuery).toContain(
+			"CASE WHEN $1 ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN id::text=$1 ELSE slug=$1 END",
+		);
+		expect(
+			EvaluationCreate.safeParse({
+				slug: evaluationId,
+				name: "UUID-shaped slug",
+				definition,
+			}).success,
+		).toBe(false);
+		expect(EvaluationSlugParam.safeParse({ slug: evaluationId }).success).toBe(
+			true,
+		);
+	});
+	it("reserves compatibility for the static legacy-link route", async () => {
+		expect(
+			EvaluationCreate.safeParse({
+				slug: "compatibility",
+				name: "Compatibility",
+				definition,
+			}).success,
+		).toBe(false);
+
+		let detailCalls = 0;
+		const app = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		app.openapi(listEvaluationLegacyLinksRoute, (c) => c.json({ items: [] }));
+		app.openapi(getEvaluationRoute, (c) => {
+			detailCalls += 1;
+			return c.json({ path: c.req.path });
+		});
+
+		const response = await app.request(
+			`http://test/v1/evaluations/compatibility?project_id=${projectId}`,
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ items: [] });
+		expect(detailCalls).toBe(0);
+	});
 	it("returns non-enumerating 404s for archived Evaluation direct reads", async () => {
 		const queries: string[] = [];
 		const now = new Date("2026-08-29T00:00:00.000Z");
 		const evaluationId = "44444444-4444-4444-8444-444444444444";
-		const definition = {
-			dataset_version_id: "55555555-5555-4555-8555-555555555555",
-			sampling: { strategy: "first_n", sample_size: 100, seed: 0 },
-			evaluator: {
-				kind: "exact_match",
-				version: "v1",
-				expected_output_path: "$.expected_output",
-				output_path: "$.output",
-			},
-			target: {
-				kind: "configured_llm",
-				model: "model",
-				system_prompt: null,
-			},
-			execution_defaults: { temperature: 0, max_tokens: null },
-			limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
-			thresholds: { minimum_pass_rate: null },
-		};
 		const archivedEvaluation = {
 			id: evaluationId,
 			project_id: projectId,
@@ -167,6 +268,10 @@ describe("evaluation route contract", () => {
 				return {
 					rows: sql.includes("e.archived_at IS NULL") ? [] : [archivedDraft],
 				};
+			if (sql.startsWith("SELECT d.revision FROM evaluation_definition_drafts"))
+				return {
+					rows: sql.includes("e.archived_at IS NULL") ? [] : [{ revision: 1 }],
+				};
 			if (sql.startsWith("SELECT v.* FROM evaluation_definition_versions"))
 				return {
 					rows: sql.includes("e.archived_at IS NULL") ? [] : [archivedVersion],
@@ -199,6 +304,7 @@ describe("evaluation route contract", () => {
 		});
 		app.openapi(getEvaluationRoute, handleGetEvaluation);
 		app.openapi(getEvaluationDraftRoute, handleGetEvaluationDraft);
+		app.openapi(putEvaluationDraftRoute, handlePutEvaluationDraft);
 		app.openapi(listEvaluationVersionsRoute, handleListEvaluationVersions);
 		app.openapi(getEvaluationVersionRoute, handleGetEvaluationVersion);
 
@@ -228,6 +334,25 @@ describe("evaluation route contract", () => {
 				const query = queries.find((sql) => sql.startsWith(statement));
 				expect(query).toContain("archived_at IS NULL");
 			}
+
+			queries.length = 0;
+			const update = await app.request(
+				`http://test/v1/evaluations/archived-evaluation/draft?project_id=${projectId}`,
+				{
+					method: "PUT",
+					headers: {
+						"content-type": "application/json",
+						"if-match": '"1"',
+					},
+					body: JSON.stringify(definition),
+				},
+			);
+			expect(update.status).toBe(404);
+			expect(await update.json()).toMatchObject({ code: "NOT_FOUND" });
+			const fallback = queries.find((sql) =>
+				sql.startsWith("SELECT d.revision FROM evaluation_definition_drafts"),
+			);
+			expect(fallback).toContain("e.archived_at IS NULL");
 		} finally {
 			postgresSpy.mockRestore();
 		}
