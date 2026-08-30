@@ -4,6 +4,10 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
     command: sleep infinity
+    volumes:
+      # Compose-based devcontainers do not receive the default workspace bind
+      # mount. Declare it explicitly so postCreateCommand runs in the repo.
+      - ..:/workspaces/astraea:cached
     env_file:
       - ../infra/.env
     environment:
