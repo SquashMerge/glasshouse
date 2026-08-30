@@ -33,6 +33,7 @@ function workerPath(): string {
 }
 
 const WORKER_FAILURE_PREFIX = "ASTRAEA_GEPA_FAILURE ";
+const WORKER_RUNTIME_PREFIX = "ASTRAEA_GEPA_RUNTIME ";
 const SAFE_WORKER_FAILURE_KINDS = new Set([
 	"AssertionError",
 	"AttributeError",
@@ -42,21 +43,37 @@ const SAFE_WORKER_FAILURE_KINDS = new Set([
 	"UnknownError",
 	"ValueError",
 ]);
+const SAFE_WORKER_FAILURE_SITE = /^(?:astraea_worker|gepa):[1-9][0-9]{0,5}$/u;
+const SAFE_WORKER_GEPA_VERSION = /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/u;
 
 export function diagnosticSummary(
 	diagnostic: string,
 ): Record<string, number | string> {
 	if (!diagnostic) return {};
-	const failureKind = diagnostic
-		.split("\n")
-		.map((line) => line.trim())
+	const lines = diagnostic.split("\n").map((line) => line.trim());
+	const failure = lines
 		.find((line) => line.startsWith(WORKER_FAILURE_PREFIX))
 		?.slice(WORKER_FAILURE_PREFIX.length);
+	const gepaVersion = lines
+		.find((line) => line.startsWith(WORKER_RUNTIME_PREFIX))
+		?.slice(WORKER_RUNTIME_PREFIX.length);
+	const [failureKind, failureSite, ...extraFailureParts] =
+		failure?.split(" ") ?? [];
+	const hasSafeFailureSite =
+		extraFailureParts.length === 0 &&
+		failureSite !== undefined &&
+		SAFE_WORKER_FAILURE_SITE.test(failureSite);
+	const hasSafeFailureKind =
+		failureKind !== undefined && SAFE_WORKER_FAILURE_KINDS.has(failureKind);
 	return {
 		diagnostic_bytes: new TextEncoder().encode(diagnostic).byteLength,
 		diagnostic_lines: diagnostic.split("\n").filter(Boolean).length,
-		...(failureKind && SAFE_WORKER_FAILURE_KINDS.has(failureKind)
-			? { worker_failure_kind: failureKind }
+		...(hasSafeFailureKind ? { worker_failure_kind: failureKind } : {}),
+		...(hasSafeFailureKind && hasSafeFailureSite
+			? { worker_failure_site: failureSite }
+			: {}),
+		...(gepaVersion && SAFE_WORKER_GEPA_VERSION.test(gepaVersion)
+			? { worker_gepa_version: gepaVersion }
 			: {}),
 	};
 }
