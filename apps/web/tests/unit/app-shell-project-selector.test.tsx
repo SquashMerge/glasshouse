@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const selection = vi.hoisted(() => ({
 	isLoading: false,
 	selectProject: vi.fn(),
+	organizationRole: "admin" as "admin" | "user" | "read_only",
+	canRecoverAdmin: false,
 }));
 
 const projects = [
@@ -48,6 +50,8 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 		selectedProject: projects[0],
 		isLoading: selection.isLoading,
 		error: null,
+		organizationRole: selection.organizationRole,
+		canRecoverAdmin: selection.canRecoverAdmin,
 		selectProject: selection.selectProject,
 		retry: vi.fn(),
 	}),
@@ -65,6 +69,8 @@ describe("AppShell project selector", () => {
 		window.localStorage.clear();
 		selection.isLoading = false;
 		selection.selectProject.mockReset();
+		selection.organizationRole = "admin";
+		selection.canRecoverAdmin = false;
 	});
 
 	afterEach(cleanup);
@@ -88,6 +94,61 @@ describe("AppShell project selector", () => {
 		expect(selection.selectProject).toHaveBeenCalledWith(
 			"11111111-1111-4111-8111-111111111111",
 		);
+	});
+
+	it("places the Settings group last after Prompts with nested route links", () => {
+		render(
+			<AppShell currentPath="/governance">
+				<div>Page</div>
+			</AppShell>,
+		);
+
+		const navigation = screen.getByRole("navigation", { name: "Sections" });
+		const settings = within(navigation).getByRole("group", {
+			name: "Settings",
+		});
+		expect(navigation.lastElementChild).toBe(settings);
+		expect(
+			screen
+				.getByRole("link", { name: "Prompts" })
+				.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		expect(settings).toHaveAttribute("data-active", "true");
+		expect(
+			within(settings).queryByRole("button", { name: "Settings" }),
+		).toBeNull();
+		const settingsLinks = within(settings).getAllByRole("link");
+		expect(
+			settingsLinks.map((link) => link.getAttribute("aria-label")),
+		).toEqual(["Governance", "Access", "Projects"]);
+		expect(settingsLinks.map((link) => link.getAttribute("href"))).toEqual([
+			"/governance",
+			"/access",
+			"/projects",
+		]);
+		expect(settingsLinks[0]).toHaveAttribute("aria-current", "page");
+		const icons = settingsLinks.map(
+			(link) => link.querySelector("svg")?.innerHTML,
+		);
+		expect(new Set(icons).size).toBe(3);
+	});
+
+	it("keeps Access hidden inside Settings without Admin or recovery access", () => {
+		selection.organizationRole = "user";
+		render(
+			<AppShell currentPath="/projects">
+				<div>Page</div>
+			</AppShell>,
+		);
+
+		const settings = screen.getByRole("group", { name: "Settings" });
+		expect(
+			within(settings).getByRole("link", { name: "Governance" }),
+		).toBeVisible();
+		expect(
+			within(settings).getByRole("link", { name: "Projects" }),
+		).toHaveAttribute("aria-current", "page");
+		expect(within(settings).queryByRole("link", { name: "Access" })).toBeNull();
 	});
 
 	it("keeps compact project switching accessible by mouse and keyboard", () => {

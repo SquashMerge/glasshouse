@@ -15,7 +15,7 @@ const actorIds = {
 	"cross-org-manager": "66666666-6666-4666-8666-666666666666",
 } as const;
 const defaultQuery = async (sql: string, values: string[] = []) => {
-	if (sql.includes("authorization_effective_project_role")) {
+	if (sql.startsWith("SELECT decision.effective_role")) {
 		const [, projectId, actorId, operation] = values;
 		const role =
 			actorId === actorIds.owner
@@ -175,6 +175,22 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 		values.includes(OTHER_PROJECT)
 	)
 		return { rows: [] };
+	if (sql.startsWith("SELECT access.effective_role AS project_role")) {
+		const [projectId, actorId] = values;
+		if (projectId === OTHER_PROJECT) return { rows: [] };
+		return {
+			rows: [
+				{
+					project_role:
+						actorId === actorIds.owner
+							? "admin"
+							: actorId === actorIds.manager
+								? "user"
+								: "read_only",
+				},
+			],
+		};
+	}
 	if (
 		sql.includes("COALESCE(pm.role, '')") ||
 		sql.includes("CASE WHEN om.role = 'owner' THEN 'owner'")
@@ -286,6 +302,7 @@ const {
 	archiveProject,
 	deleteOrganizationMember,
 	deleteProject,
+	getProject,
 	getProjectDeletionStatus,
 	deleteProjectMember,
 	handleArchiveProject,
@@ -296,6 +313,7 @@ const {
 	handleDeleteProjectMember,
 	handleGetProjectAuditEvents,
 	handleGetMe,
+	handleGetProject,
 	handleListProjectMembers,
 	handleListProjects,
 	handleListOrganizationMembers,
@@ -344,6 +362,7 @@ api.openapi(deleteProject, handleDeleteProject);
 api.openapi(getProjectDeletionStatus, handleGetProjectDeletionStatus);
 api.openapi(getMe, handleGetMe);
 api.openapi(listProjects, handleListProjects);
+api.openapi(getProject, handleGetProject);
 api.openapi(updateProject, handleUpdateProject);
 api.openapi(archiveProject, handleArchiveProject);
 api.openapi(restoreProject, handleRestoreProject);
@@ -693,7 +712,386 @@ describe("project authorization routes", () => {
 		expect(member.status).toBe(200);
 	});
 
-	it("uses the verified actor ID for legacy project memberships", async () => {
+	it("uses durable Admin authorization when no legacy caller membership exists", async () => {
+		const durableActor = {
+			actorId: actorIds.owner,
+			canonicalSubject: "owner",
+			role: "admin",
+		};
+		const legacyOrganizationMemberships = new Map([
+			["member", "member" as const],
+		]);
+		let createdLegacyCallerMembership = false;
+		const deletionJob = {
+			status: "pending",
+			traces_cleaned_at: null,
+			observations_cleaned_at: null,
+			completed_at: null,
+			attempt_count: 1,
+		};
+
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (
+				sql.startsWith("SELECT om.actor_subject FROM organization_memberships")
+			)
+				return { rows: [] };
+			if (sql.startsWith("SELECT actor_subject FROM organization_memberships"))
+				return {
+					rows:
+						values[2] && legacyOrganizationMemberships.has(values[2])
+							? [{ actor_subject: values[2] }]
+							: [],
+				};
+			if (sql.startsWith("SELECT pm.actor_subject FROM project_memberships"))
+				return {
+					rows: values[3] === "member" ? [{ actor_subject: "member" }] : [],
+				};
+			if (sql.startsWith("SELECT actor_id FROM organization_actor_roles"))
+				return { rows: [{ actor_id: durableActor.actorId }] };
+			if (sql.startsWith("SELECT om.role")) return { rows: [] };
+			if (
+				sql.startsWith("SELECT role.role AS durable_role") &&
+				sql.includes("FROM organizations")
+			)
+				return {
+					rows: [
+						{
+							durable_role: durableActor.role,
+							default_project_id: OTHER_PROJECT,
+						},
+					],
+				};
+			if (
+				sql.startsWith("SELECT 1 FROM organization_actor_roles role") &&
+				sql.includes("JOIN actor_identities")
+			)
+				return { rows: [{ "?column?": 1 }] };
+			if (
+				sql.startsWith("SELECT p.id, p.name, p.slug") &&
+				sql.includes("ORDER BY p.created_at")
+			)
+				return {
+					rows: [
+						{
+							id: PROJECT,
+							name: "Project One",
+							slug: "project-one",
+							status: "active",
+							created_at: createdAt,
+							archived_at: null,
+							project_role: durableActor.role,
+							can_manage: true,
+							can_govern: true,
+							is_default: false,
+						},
+					],
+				};
+			if (sql.includes("INSERT INTO projects")) {
+				const resolvesLegacySubject =
+					sql.includes("JOIN actor_identities identity") &&
+					sql.includes("JOIN organization_memberships membership");
+				const legacySubject = [...legacyOrganizationMemberships.keys()].find(
+					(subject) => subject === durableActor.canonicalSubject,
+				);
+				if (!resolvesLegacySubject && !legacySubject)
+					throw Object.assign(new Error("legacy membership parent missing"), {
+						code: "23503",
+					});
+				createdLegacyCallerMembership = Boolean(legacySubject);
+				return defaultQuery(sql, values);
+			}
+			if (
+				sql.includes("UPDATE organizations SET default_project_id") &&
+				sql.includes("FROM organization_memberships")
+			)
+				return { rows: [] };
+			if (sql.startsWith("SELECT pm.actor_subject, pm.role, pm.created_at"))
+				return sql.includes("JOIN organization_memberships om")
+					? { rows: [] }
+					: {
+							rows: [
+								{
+									actor_subject: "member",
+									role: "member",
+									created_at: createdAt,
+								},
+							],
+						};
+			if (
+				sql.includes("INSERT INTO project_memberships") &&
+				sql.includes("project_membership_created")
+			) {
+				if (sql.includes("JOIN organization_memberships om"))
+					return { rows: [] };
+				return defaultQuery(sql, values);
+			}
+			if (
+				sql.includes("DELETE FROM project_memberships") &&
+				sql.includes("project_membership_removed")
+			) {
+				if (sql.includes("JOIN organization_memberships om"))
+					return { rows: [] };
+				return defaultQuery(sql, values);
+			}
+			if (
+				sql.includes("INSERT INTO organization_memberships") &&
+				sql.includes("organization_membership_created")
+			) {
+				if (
+					sql.startsWith(
+						"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships",
+					)
+				)
+					return { rows: [] };
+				return defaultQuery(sql, values);
+			}
+			if (sql.startsWith("SELECT om.actor_subject, om.role, om.created_at"))
+				return sql.includes("actor_om")
+					? { rows: [] }
+					: {
+							rows: [...legacyOrganizationMemberships].map(
+								([actor_subject, role]) => ({
+									actor_subject,
+									role,
+									created_at: createdAt,
+								}),
+							),
+						};
+			if (
+				sql.includes("DELETE FROM organization_memberships") &&
+				sql.includes("organization_membership_removed")
+			) {
+				if (
+					sql.startsWith(
+						"WITH authorization AS MATERIALIZED (SELECT 1 FROM organization_memberships",
+					)
+				)
+					return { rows: [] };
+				return defaultQuery(sql, values);
+			}
+			if (sql.startsWith("SELECT p.name, p.status FROM projects"))
+				return sql.includes("JOIN organization_memberships")
+					? { rows: [] }
+					: defaultQuery(sql, values);
+			if (
+				sql.startsWith(
+					"SELECT j.status, j.traces_cleaned_at, j.observations_cleaned_at",
+				)
+			)
+				return sql.includes("JOIN organization_memberships")
+					? { rows: [] }
+					: { rows: [{ ...deletionJob }] };
+			return defaultQuery(sql, values);
+		});
+		command.mockImplementationOnce(async () => {
+			throw new Error("ClickHouse mutation failed");
+		});
+
+		const me = await request("owner", "/v1/me");
+		const list = await request("owner", "/v1/projects");
+		const create = await request("owner", "/v1/projects", {
+			method: "POST",
+			body: JSON.stringify({ name: "New Project", slug: "new-project" }),
+		});
+		const archive = await request("owner", `/v1/projects/${PROJECT}/archive`, {
+			method: "POST",
+		});
+		const restore = await request("owner", `/v1/projects/${PROJECT}/restore`, {
+			method: "POST",
+		});
+		const selectProject = await request(
+			"owner",
+			"/v1/organizations/current/default-project",
+			{
+				method: "PATCH",
+				body: JSON.stringify({ project_id: PROJECT }),
+			},
+		);
+		const projectMembers = await request(
+			"owner",
+			`/v1/projects/${PROJECT}/members`,
+		);
+		const putProjectMemberResponse = await request(
+			"owner",
+			`/v1/projects/${PROJECT}/members/member`,
+			{
+				method: "PUT",
+				body: JSON.stringify({ actor_subject: "member", role: "read_only" }),
+			},
+		);
+		const deleteProjectMemberResponse = await request(
+			"owner",
+			`/v1/projects/${PROJECT}/members/member`,
+			{ method: "DELETE" },
+		);
+		const putOrganizationMemberResponse = await request(
+			"owner",
+			"/v1/organization/members/member",
+			{
+				method: "PUT",
+				body: JSON.stringify({ actor_subject: "member", role: "user" }),
+			},
+		);
+		const organizationMembers = await request(
+			"owner",
+			"/v1/organization/members",
+		);
+		const deleteOrganizationMemberResponse = await request(
+			"owner",
+			"/v1/organization/members/member",
+			{ method: "DELETE" },
+		);
+		const failedDeletion = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+		const deletionStatusResponse = await request(
+			"owner",
+			`/v1/projects/${PROJECT}/deletion`,
+		);
+		const retriedDeletion = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+		const projectMemberItems = projectMembers.ok
+			? ((await projectMembers.json()) as { items: unknown[] }).items.length
+			: null;
+		const organizationMemberItems = organizationMembers.ok
+			? ((await organizationMembers.json()) as { items: unknown[] }).items
+					.length
+			: null;
+
+		expect({
+			me: me.status,
+			list: list.status,
+			create: create.status,
+			archive: archive.status,
+			restore: restore.status,
+			selectProject: selectProject.status,
+			projectMembers: [projectMembers.status, projectMemberItems],
+			putProjectMember: putProjectMemberResponse.status,
+			deleteProjectMember: deleteProjectMemberResponse.status,
+			putOrganizationMember: putOrganizationMemberResponse.status,
+			organizationMembers: [
+				organizationMembers.status,
+				organizationMemberItems,
+			],
+			deleteOrganizationMember: deleteOrganizationMemberResponse.status,
+			failedDeletion: failedDeletion.status,
+			deletionStatus: deletionStatusResponse.status,
+			retriedDeletion: retriedDeletion.status,
+		}).toEqual({
+			me: 200,
+			list: 200,
+			create: 201,
+			archive: 200,
+			restore: 200,
+			selectProject: 200,
+			projectMembers: [200, 1],
+			putProjectMember: 200,
+			deleteProjectMember: 204,
+			putOrganizationMember: 200,
+			organizationMembers: [200, 1],
+			deleteOrganizationMember: 204,
+			failedDeletion: 409,
+			deletionStatus: 200,
+			retriedDeletion: 204,
+		});
+		expect(createdLegacyCallerMembership).toBe(false);
+		expect(command).toHaveBeenCalledTimes(3);
+	});
+
+	it("lets a durable Admin update a project without a legacy manager projection", async () => {
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (
+				sql.startsWith("WITH authorization AS MATERIALIZED") &&
+				sql.includes("UPDATE projects") &&
+				sql.includes("om.role = 'owner' OR pm.role = 'manager'")
+			)
+				return { rows: [] };
+			return defaultQuery(sql, values);
+		});
+
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ name: "Renamed" }),
+		});
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual(
+			expect.objectContaining({ id: PROJECT, name: "Renamed" }),
+		);
+	});
+
+	it("keeps durable User project detail and lifecycle access without a legacy projection", async () => {
+		query.mockImplementation(async (sql: string, values: string[] = []) => {
+			if (sql.startsWith("SELECT pm.actor_subject FROM project_memberships"))
+				return { rows: [] };
+			if (sql.includes("CASE WHEN om.role = 'owner' THEN 'owner'"))
+				return { rows: [] };
+			if (
+				sql.startsWith("SELECT p.id, p.name, p.slug") &&
+				sql.includes("authorization_effective_project_role")
+			)
+				return {
+					rows: [
+						{
+							id: PROJECT,
+							name: "Renamed",
+							slug: "project",
+							status: "active",
+							created_at: createdAt,
+							archived_at: null,
+							project_role: "user",
+							can_manage: true,
+							can_govern: true,
+							is_default: false,
+						},
+					],
+				};
+			if (
+				sql.startsWith("SELECT access.effective_role AS project_role") &&
+				sql.includes("authorization_effective_project_role")
+			)
+				return { rows: [{ project_role: "user" }] };
+			if (
+				sql.startsWith("SELECT authorization_allows_project") &&
+				sql.includes("AS can_manage")
+			)
+				return { rows: [{ can_manage: true, can_govern: true }] };
+			return defaultQuery(sql, values);
+		});
+
+		const rename = await request("manager", `/v1/projects/${PROJECT}`, {
+			method: "PATCH",
+			body: JSON.stringify({ name: "Renamed" }),
+		});
+		const detail = await request("manager", `/v1/projects/${PROJECT}`);
+		const archive = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/archive`,
+			{ method: "POST" },
+		);
+		const restore = await request(
+			"manager",
+			`/v1/projects/${PROJECT}/restore`,
+			{ method: "POST" },
+		);
+
+		expect(rename.status).toBe(200);
+		for (const response of [detail, archive, restore]) {
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual(
+				expect.objectContaining({
+					id: PROJECT,
+					project_role: "user",
+					can_manage: true,
+				}),
+			);
+		}
+	});
+
+	it("uses the verified actor ID for durable project authorization", async () => {
 		const verifiedActorId = "33333333-3333-4333-8333-333333333333";
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
 			if (sql.includes("authorization AS MATERIALIZED")) {
@@ -735,7 +1133,10 @@ describe("project authorization routes", () => {
 			(sql as string).includes("authorization AS MATERIALIZED"),
 		)!;
 		expect(sql).toContain(
-			"basic_auth_identity_matches(p.organization_id, om.actor_subject, $6)",
+			"authorization_effective_project_role(p.organization_id, p.id, $6)",
+		);
+		expect(sql).toContain(
+			"authorization_allows_project($4, $3, $6, 'project_manage')",
 		);
 		expect(values).toContain(verifiedActorId);
 	});
@@ -1040,15 +1441,28 @@ describe("project authorization routes", () => {
 
 		const statements = query.mock.calls.map(([sql]) => sql);
 		expect(statements).toContainEqual(
-			expect.stringContaining(
-				"LEFT JOIN LATERAL (SELECT role FROM project_memberships",
-			),
+			expect.stringContaining("SELECT actor_id FROM organization_actor_roles"),
 		);
 		expect(statements).toContainEqual(
-			expect.stringContaining("FOR UPDATE OF p, om"),
+			expect.stringContaining("SELECT actor_id FROM project_actor_grants"),
 		);
-		expect(statements).not.toContainEqual(
-			expect.stringContaining("FOR UPDATE OF p, om, pm"),
+		const durableAuthorization = statements.find((statement) =>
+			statement.startsWith("SELECT access.effective_role AS project_role"),
+		);
+		expect(durableAuthorization).toContain(
+			"authorization_effective_project_role(p.organization_id, p.id, $2)",
+		);
+		expect(durableAuthorization).toContain(
+			"p.id = $1 AND p.organization_id = $3",
+		);
+		expect(durableAuthorization).toContain(
+			"authorization_allows_project($3, $1, $2, 'project_manage')",
+		);
+		expect(durableAuthorization).toContain("FOR UPDATE OF p");
+		expect(statements).toContainEqual(
+			expect.stringContaining(
+				"SELECT p.id FROM projects p WHERE p.id = $1 AND p.organization_id = $2",
+			),
 		);
 		expect(statements).toContainEqual(
 			expect.stringContaining("UPDATE experiments SET status = 'cancelled'"),

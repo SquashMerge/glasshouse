@@ -21,6 +21,7 @@ import {
 	setAdminActorRole,
 	setProjectGrant,
 	type AdminActor,
+	type CurrentActor,
 } from "../lib/api";
 
 const shortActor = (actorId: string) => actorId.slice(0, 8);
@@ -97,11 +98,19 @@ export function AdminAccessPage() {
 				retry={actorQuery.refetch}
 			/>
 		);
-	if (actorQuery.data?.organization_role !== "admin")
+	const currentActor = actorQuery.data;
+	if (!currentActor)
+		return (
+			<PageError
+				message="Access status could not be loaded."
+				retry={actorQuery.refetch}
+			/>
+		);
+	if (currentActor.organization_role !== "admin")
 		return (
 			<div className="space-y-6">
 				<PageHeader />
-				{actorQuery.data?.can_recover_admin ? (
+				{currentActor.can_recover_admin ? (
 					<RecoveryCard
 						open={recoveryOpen}
 						confirmation={confirmation}
@@ -159,8 +168,8 @@ export function AdminAccessPage() {
 				<CardHeader>
 					<CardTitle>Organization actors</CardTitle>
 					<p className="text-sm text-muted-foreground">
-						Roles are bound to durable actor IDs. Admins have organization-wide
-						authority.
+						Roles stay bound to durable actors. Your signed-in username is shown
+						when available.
 					</p>
 				</CardHeader>
 				<CardContent className="space-y-3">
@@ -173,6 +182,7 @@ export function AdminAccessPage() {
 							<ActorRoleRow
 								key={actor.actor_id}
 								actor={actor}
+								currentActor={currentActor}
 								disabled={roleMutation.isPending}
 								onChange={(role) =>
 									roleMutation.mutate({ actorId: actor.actor_id, role })
@@ -266,7 +276,10 @@ export function AdminAccessPage() {
 										key={grant.actor_id}
 										className="flex flex-wrap items-center justify-between gap-3"
 									>
-										<span className="font-mono text-sm">{grant.actor_id}</span>
+										<ActorIdentifier
+											actorId={grant.actor_id}
+											currentActor={currentActor}
+										/>
 										<div className="flex items-center gap-3">
 											<span className="text-sm text-muted-foreground">
 												{grant.role === "read_only" ? "Read-only" : "User"}
@@ -424,22 +437,24 @@ function PageError({ message, retry }: { message: string; retry: () => void }) {
 
 function ActorRoleRow({
 	actor,
+	currentActor,
 	disabled,
 	onChange,
 }: {
 	actor: AdminActor;
+	currentActor: CurrentActor;
 	disabled: boolean;
 	onChange: (role: Exclude<AdminActor["organization_role"], null>) => void;
 }) {
+	const subject = actorSubject(actor.actor_id, currentActor);
+	const controlName = subject ?? `actor ${shortActor(actor.actor_id)}`;
 	return (
 		<div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
-			<span className="font-mono text-sm">{actor.actor_id}</span>
+			<ActorIdentifier actorId={actor.actor_id} currentActor={currentActor} />
 			<Label className="flex items-center gap-2 text-sm">
-				<span className="sr-only">
-					Role for actor {shortActor(actor.actor_id)}
-				</span>
+				<span className="sr-only">Role for {controlName}</span>
 				<Select
-					aria-label={`Role for actor ${shortActor(actor.actor_id)}`}
+					aria-label={`Role for ${controlName}`}
 					value={actor.organization_role ?? ""}
 					disabled={disabled}
 					onChange={(event) =>
@@ -460,5 +475,44 @@ function ActorRoleRow({
 				</Select>
 			</Label>
 		</div>
+	);
+}
+
+function actorSubject(
+	actorId: string,
+	currentActor: Pick<CurrentActor, "actor_id" | "actor_subject">,
+): string | null {
+	if (actorId !== currentActor.actor_id) return null;
+	return currentActor.actor_subject.trim() || null;
+}
+
+function ActorIdentifier({
+	actorId,
+	currentActor,
+}: {
+	actorId: string;
+	currentActor: Pick<CurrentActor, "actor_id" | "actor_subject">;
+}) {
+	const subject = actorSubject(actorId, currentActor);
+	if (subject)
+		return (
+			<span
+				className="flex min-w-0 items-baseline gap-2"
+				aria-label={`${subject}, current user`}
+			>
+				<span className="truncate text-sm font-medium">{subject}</span>
+				<span className="text-xs text-muted-foreground" aria-hidden="true">
+					(you)
+				</span>
+			</span>
+		);
+	return (
+		<span
+			className="font-mono text-sm"
+			aria-label={`Actor ID ${actorId}`}
+			title={actorId}
+		>
+			Actor {shortActor(actorId)}
+		</span>
 	);
 }

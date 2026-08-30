@@ -148,13 +148,6 @@ async function manager(c: Context, projectId: string) {
 		if (cause instanceof TenantScopeError) throw new Error("Not found");
 		throw cause;
 	}
-	const result = await pgPool().query<{ role: string | null }>(
-		"SELECT CASE WHEN om.role = 'owner' THEN 'owner' ELSE pm.role END AS role FROM projects p JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject WHERE p.id = $1 AND p.organization_id = $2 AND p.status = 'active'",
-		[projectId, tenant.organizationId, tenant.actorId],
-	);
-	if (!result.rows[0]?.role) throw new Error("Not found");
-	if (!["owner", "manager"].includes(result.rows[0].role))
-		throw new Error("Forbidden");
 	return tenant;
 }
 async function versions(
@@ -163,7 +156,7 @@ async function versions(
 	actorId: string,
 ) {
 	return pgPool().query<VersionRow>(
-		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies gp ON gp.id = v.policy_id JOIN projects p ON p.id = gp.project_id AND p.status = 'active' JOIN organization_memberships om ON om.organization_id = p.organization_id JOIN actor_identities identity ON identity.actor_id = $3 AND identity.organization_id = p.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(om.actor_subject) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_canonical_subject(pm.actor_subject) = identity.canonical_subject LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE gp.project_id = $1 AND gp.organization_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') ORDER BY v.version DESC",
+		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies gp ON gp.id = v.policy_id JOIN projects p ON p.id = gp.project_id AND p.organization_id = gp.organization_id AND p.status = 'active' LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE gp.project_id = $1 AND gp.organization_id = $2 AND authorization_allows_project(gp.organization_id, gp.project_id, $3, 'governed') ORDER BY v.version DESC",
 		[projectId, organizationId, actorId],
 	);
 }
@@ -415,7 +408,7 @@ export async function handleListRetentionRuns(c: Context) {
 			completed_at: Date | null;
 			duration_ms: number | null;
 		}>(
-			"SELECT r.id, r.policy_version_id, r.status, r.counts, r.started_at, r.completed_at, CASE WHEN r.completed_at IS NULL THEN NULL ELSE GREATEST(0, round(EXTRACT(epoch FROM r.completed_at - r.started_at) * 1000)::integer) END AS duration_ms FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id AND p.status = 'active' JOIN organization_memberships om ON om.organization_id = p.organization_id AND basic_auth_identity_matches(p.organization_id, om.actor_subject, $3) LEFT JOIN project_memberships pm ON pm.project_id = p.id AND basic_auth_identity_matches(p.organization_id, pm.actor_subject, $3) WHERE r.organization_id = $1 AND r.project_id = $2 AND (om.role = 'owner' OR pm.role = 'manager') ORDER BY r.started_at DESC, r.id DESC LIMIT 50",
+			"SELECT r.id, r.policy_version_id, r.status, r.counts, r.started_at, r.completed_at, CASE WHEN r.completed_at IS NULL THEN NULL ELSE GREATEST(0, round(EXTRACT(epoch FROM r.completed_at - r.started_at) * 1000)::integer) END AS duration_ms FROM governance_retention_runs r JOIN projects p ON p.id = r.project_id AND p.organization_id = r.organization_id AND p.status = 'active' WHERE r.organization_id = $1 AND r.project_id = $2 AND authorization_allows_project(r.organization_id, r.project_id, $3, 'governed') ORDER BY r.started_at DESC, r.id DESC LIMIT 50",
 			[tenant.organizationId, project_id, tenant.actorId],
 		);
 		return c.json({
