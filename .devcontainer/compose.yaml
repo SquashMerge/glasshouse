@@ -1,0 +1,74 @@
+services:
+  workspace:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    command: sleep infinity
+    env_file:
+      - ../infra/.env
+    environment:
+      ASTRAEA_CONTAINER_NETWORK: "1"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_HTTP_PORT: "8123"
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - ../infra/.env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    platform: linux/amd64
+    env_file:
+      - ../infra/.env
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --timeout=2 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 12
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    env_file:
+      - ../infra/.env
+    command: ["sh", "-ec", "exec valkey-server /usr/local/etc/valkey/valkey.conf --requirepass \"$${VALKEY_PASSWORD}\""]
+    volumes:
+      - ../infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$${VALKEY_PASSWORD}\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  valkey-data:

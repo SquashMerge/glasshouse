@@ -147,6 +147,10 @@ The Vite dev server proxies `/v1/*`, `/openapi.json`, `/reference`, and `/health
 
 Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 
+### Isolated OpenCode development with Dev Containers
+
+For concurrent AI-assisted development, Astraea provides a Compose-based devcontainer at `.devcontainer/`. It runs PostgreSQL, ClickHouse, and Valkey on the branch container network without publishing their ports to the host. With the `opencode-devcontainers` plugin configured, start an isolated branch with `/devcontainer <branch-name>` and use `make devcontainer-db-migrate` / `make devcontainer-ch-schema` for migrations. See [`.devcontainer/README.md`](.devcontainer/README.md) for the complete workflow and required `infra/.env` setup.
+
 ### URLs after `make dev` (or local workflow)
 
 | URL | Purpose |

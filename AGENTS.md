@@ -30,6 +30,12 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 - Every API start runs PostgreSQL and ClickHouse migrations concurrently before serving: `bun run migrate && bun run src/index.ts`. PostgreSQL waits for its migration advisory lock, while ClickHouse takes a PostgreSQL advisory lock, checksum-verifies applied changesets, and skips them on later starts. `make dev-backend` uses the same startup contract; the watch process itself does not re-run migrations on each source reload.
 - Docker Compose is invoked with the repository root as its project directory. Preserve root-relative build contexts and ensure every runtime dependency used by startup commands is present in the production image.
 
+## Isolated OpenCode execution
+
+- For any OpenCode build, test, install, migration, or service command, activate this repository's `/devcontainer <branch>` workspace first. It supplies isolated PostgreSQL, ClickHouse, and Valkey services; do not fall back to host Docker or host-local services.
+- In a targeted devcontainer, use `make devcontainer-db-migrate` and `make devcontainer-ch-schema` for migrations. `db-migrate` and `ch-schema` are host-Docker targets.
+- If the devcontainer cannot start, stop and report the engine/configuration blocker instead of running verification against host services.
+
 ## Database migrations and seeded data
 
 - Every PostgreSQL schema or required-bootstrap-data change must include a new, monotonically numbered SQL migration under `infra/db/migrations/` whose numeric prefix is unused. Do not edit an already-applied migration to change live behavior. `bun run test:pg-migration-filenames` rejects new duplicate prefixes; the only exceptions are documented historical collisions.
