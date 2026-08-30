@@ -154,7 +154,7 @@ export const tombstoneEvaluationRoute = createRoute({
 		},
 	},
 	responses: {
-		204: { description: "Tombstoned" },
+		204: { description: "Tombstoned", headers: z.object({ ETag: Etag }) },
 		...EvaluationErrorResponses,
 	},
 });

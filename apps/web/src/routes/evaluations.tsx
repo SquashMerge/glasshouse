@@ -409,7 +409,17 @@ export function EvaluationsPage() {
 						{evaluations.data.items.map((item) => (
 							<li key={item.id} className="space-y-1">
 								<div className="flex flex-wrap items-center gap-2">
-									{item.archived_at ? (
+									{item.tombstoned_at ? (
+										<>
+											<strong>{item.name}</strong>
+											<span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+												Tombstoned
+											</span>
+											<span className="text-muted-foreground">
+												({item.slug})
+											</span>
+										</>
+									) : item.archived_at ? (
 										<>
 											<strong>{item.name}</strong>
 											<span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
@@ -433,7 +443,7 @@ export function EvaluationsPage() {
 											</span>
 										</>
 									)}
-									{canAdmin && (
+									{canAdmin && !item.tombstoned_at && (
 										<div className="flex flex-wrap items-center gap-2">
 											{item.archived_at ? (
 												<>
@@ -474,6 +484,12 @@ export function EvaluationsPage() {
 										</div>
 									)}
 								</div>
+								{item.tombstoned_at && (
+									<p className="text-sm text-muted-foreground">
+										Terminal state. Definition Versions and audit evidence are
+										retained but are not enumerable or directly readable.
+									</p>
+								)}
 								{canAdmin && tombstoneEvaluationSlug === item.slug && (
 									<div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
 										<label className="sr-only" htmlFor={`tombstone-${item.id}`}>
@@ -500,7 +516,7 @@ export function EvaluationsPage() {
 										</Button>
 									</div>
 								)}
-								{!item.archived_at && (
+								{!item.archived_at && !item.tombstoned_at && (
 									<>
 										<EvaluationVersionInspection
 											projectId={selectedProjectId!}

@@ -5,15 +5,38 @@
 `/v1/evaluations` creates a stable, project-scoped Evaluation identity with one ETag-revisioned definition draft. Publishing the draft creates an immutable, content-hashed Definition Version bound to a concrete immutable Dataset Version; publication is idempotent for equivalent canonical content and returns its stored durable publishing Actor ID as `published_by`. Definitions use only typed baseline evaluator mappings, a configured-LLM target selector, execution defaults, and thresholds. They do not admit or execute runs. Pre-contract Definition Versions are returned with `definition_contract: "legacy_untyped"`; their stored evaluator JSON, absent sampling/limits, and original content hash are never synthesized or changed. Existing Experiments and benchmark suites remain explicitly legacy ad-hoc structural records and are never assigned invented historical Dataset Version, target, evaluator, sample, or result evidence.
 
 **Status:** P2 Dataset lifecycle is implemented; P3.1 Evaluation identity and Definition Versions are implemented and deliberately precede the planned Agent Registry.
-**Scope:** one project-scoped dataset system for dashboard-authored and SDK/API-authored evaluations.
 
-## Decision summary
+**Shipped Evaluation API:**
 
-Astraea datasets work like prompts: a stable, named resource has immutable versions. A **Dataset** is the reusable logical collection; a **Dataset version** is the exact immutable item snapshot consumed by an evaluation. An **Evaluation definition** is a reusable, versioned recipe that binds one target selector, one dataset selector, mappings, evaluators, and execution defaults. An **Evaluation run** is one execution of a definition revision against resolved immutable versions.
+```http
+GET    /v1/evaluations?project_id=
+POST   /v1/evaluations?project_id=
+GET    /v1/evaluations/compatibility?project_id=
+GET    /v1/evaluations/{slug}?project_id=
+DELETE /v1/evaluations/{slug}?project_id=                   # archive, If-Match
+POST   /v1/evaluations/{slug}/restore?project_id=           # restore, If-Match
+DELETE /v1/evaluations/{slug}/tombstone?project_id=         # tombstone, If-Match + confirmation_slug
+GET    /v1/evaluations/{slug}/draft?project_id=
+PUT    /v1/evaluations/{slug}/draft?project_id=             # If-Match
+POST   /v1/evaluations/{slug}/draft/publish?project_id=     # If-Match
+GET    /v1/evaluations/{slug}/versions?project_id=
+GET    /v1/evaluations/{slug}/versions/{version}?project_id=
+```
 
-The target selector deliberately supports the current configured-LLM execution target before the Agent Registry exists. A future Agent/Manifest target uses the same selector and resolution boundary rather than creating a second Evaluation model. The dashboard and SDK use the same API and entities. There is no separate “UI dataset” or “SDK dataset,” and no eval may execute a mutable draft.
+Archive, restore, and tombstone `204` responses return their quoted lifecycle
+`ETag`.
 
-### Opinionated defaults
+**Future boundary:** Evaluation Run routes, run resolution/execution, schedules, gates, and SDK invocation below are planned P3/P5 work. Existing `/v1/experiments` remains the distinct legacy ad-hoc execution API; it is not a shipped Evaluation Run alias.
+
+**Scope:** one project-scoped Dataset and Evaluation Definition foundation shared by the dashboard and REST API; this document preserves the future SDK and Evaluation Run roadmap separately.
+
+## Decision summary (target model)
+
+Astraea datasets work like prompts: a stable, named resource has immutable versions. A **Dataset** is the reusable logical collection; a **Dataset version** is the exact immutable item snapshot consumed by an evaluation. An **Evaluation definition** is a reusable, versioned recipe that binds one target selector, one dataset selector, mappings, evaluators, and execution defaults. A future **Evaluation run** is one execution of a definition revision against resolved immutable versions.
+
+The shipped Definition target selector supports the configured-LLM contract before the Agent Registry exists. A future Agent/Manifest target uses the same selector and resolution boundary rather than creating a second Evaluation model. The dashboard and REST API use the same Evaluation identity/Definition Version entities; SDK and Evaluation Run execution remain future work. There is no separate “UI dataset” or “SDK dataset,” and no future Evaluation Run may execute a mutable draft.
+
+### Target defaults for future execution
 
 | Decision | Default | Why |
 |---|---|---|
@@ -24,7 +47,7 @@ The target selector deliberately supports the current configured-LLM execution t
 | Dataset identity | Project-local immutable `slug`, human-editable `name`; a deleted slug is tombstoned | Stable code references and no accidental identity reuse. |
 | Authoring provenance | Each version records `created_via` (`ui`, `api`, `sdk`, `trace_import`, `csv_import`) and actor/source metadata | Makes ownership and change origin visible without splitting products. |
 | Execution | A definition revision resolves exactly one immutable target snapshot and one Dataset version before queueing; the target may be the current configured-LLM contract or, later, an Agent/Manifest version | This is the unit compared in results/CI. |
-| Existing terminology | UI calls the reusable object **Evaluation** and its execution **Run**; current `/v1/experiments` remains a compatibility alias for a run during migration | Avoids breaking MVP clients while giving users one consistent vocabulary. |
+| Existing terminology | The shipped reusable object is **Evaluation**; current `/v1/experiments` remains a distinct legacy ad-hoc execution API until future Evaluation Runs ship | Avoids breaking MVP clients while giving users one consistent vocabulary. |
 
 ## Jobs to be done
 
@@ -43,13 +66,13 @@ Project
  │   └─ Dataset version 1..n (published immutable snapshot)
  │       └─ Dataset item snapshot 1..n
  ├─ Evaluation target
- │   ├─ configured-LLM target snapshot (P3)
+ │   ├─ configured-LLM Definition selector (shipped)
  │   └─ Agent → Manifest version (P4; planned)
  ├─ Evaluation (stable reusable definition)
  │   └─ Evaluation definition version 1..n (immutable recipe)
  │       ├─ target selector → resolved target snapshot at run time
  │       └─ dataset selector → resolved Dataset version at run time
- └─ Evaluation run (formerly Experiment)
+ └─ Evaluation run (future P3; distinct from current Experiment)
      ├─ resolved evaluation-definition version
      ├─ resolved dataset version
      ├─ resolved target snapshot (and manifest version when applicable)
@@ -65,7 +88,7 @@ Project
 - **Dataset item:** one test case. `input` is sent to the target; `expected_output` and `metadata` are evaluator inputs. Item identity remains stable across versions when carried forward.
 - **Evaluation:** stable reusable definition, for example “Support quality gate.” It has a version history just as a prompt does.
 - **Evaluation definition version:** immutable target selector, dataset selector, evaluator configuration, mappings, and run defaults. Displayed as `support-quality-gate@4`.
-- **Evaluation run:** an execution and its results. It records all resolved IDs/hashes; it is the thing called an `experiment` by the existing MVP API/database.
+- **Evaluation run (future P3):** the planned execution and its results. It records all resolved IDs/hashes; the existing MVP API/database term is the distinct legacy **Experiment**.
 
 ### P1 authorization prerequisites
 
@@ -86,7 +109,7 @@ The API, worker, SSE subscription, and UI must all enforce this matrix. A
 Read-only client must receive a server-side authorization failure for every
 mutation or execution attempt, including a stale or hand-crafted request.
 
-## User journeys
+## Target user journeys (future Evaluation Run workflow)
 
 ### 1. Create a UI-authored regression dataset and run it
 
@@ -123,7 +146,11 @@ mutation or execution attempt, including a stale or hand-crafted request.
 3. Astraea resolves the already-pinned definition and returns a run ID. CI waits for completion and evaluates the configured threshold.
 4. If a user later edits either object, Astraea creates `dataset@9` and/or `evaluation@4`; CI continues using `@3` until its code is changed. The UI makes this intentional divergence obvious.
 
-## Data model and invariants
+## Data model and target execution invariants
+
+The Evaluation Run tables, resolution fields, and execution invariants in this
+section are future contract work; they do not describe a shipped Evaluation Run
+endpoint.
 
 ### Logical tables
 
@@ -225,7 +252,16 @@ Draft item removal uses `DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemId}
 
 ## API and SDK surface
 
-All operations use the existing `/v1` auth/project conventions and generated OpenAPI clients. **Every new endpoint below requires exactly one `?project_id=<UUID>` selector, including POST, detail, SSE, and cancel.** The SDK supplies that selector from its explicit Project configuration; the server still verifies membership and applies Project-scoped resource predicates. The current Dataset endpoints remain available during migration under the explicit body-scoped compatibility rule below; new endpoints make draft/version semantics explicit.
+The shipped Evaluation identity/Definition Version API is listed above. The
+Dataset and Experiment entries below document existing or retained migration
+surfaces. Only the Evaluation execution routes and SDK surface are future target
+contracts; they are not currently generated or available. **Every new endpoint
+below requires exactly one `?project_id=<UUID>` selector, including POST,
+detail, SSE, and cancel.** The SDK supplies that selector from its explicit
+Project configuration; the server still verifies membership and applies
+Project-scoped resource predicates. The current Dataset endpoints remain
+available during migration under the explicit body-scoped compatibility rule
+below; new endpoints make draft/version semantics explicit.
 
 ### REST
 
@@ -251,16 +287,9 @@ GET    /v1/datasets/by-slug/{slug}/export?project_id=&format=csv|jsonl&represent
 POST   /v1/datasets/by-slug/{slug}/restore?project_id= # Project Admin, If-Match Dataset revision
 DELETE /v1/datasets/by-slug/{slug}/tombstone?project_id= # Project Admin, typed slug + If-Match Dataset revision
 
-# Evaluations (reusable definitions) and runs
-GET    /v1/evaluations?project_id=
-POST   /v1/evaluations?project_id=            # create logical evaluation + draft definition
-GET    /v1/evaluations/{slug}?project_id=
+# Future Evaluation execution (shipped identity/Definition Version routes are listed above)
 PATCH  /v1/evaluations/{slug}?project_id=      # metadata only
-GET    /v1/evaluations/{slug}/versions?project_id=
-GET    /v1/evaluations/{slug}/draft?project_id=
-PUT    /v1/evaluations/{slug}/draft?project_id=
 POST   /v1/evaluations/{slug}/draft/validate?project_id=
-POST   /v1/evaluations/{slug}/draft/publish?project_id=
 POST   /v1/evaluations/{slug}/runs?project_id= # body may choose definition version and run overrides
 GET    /v1/evaluation-runs/{id}?project_id=
 GET    /v1/evaluation-runs/{id}/results?project_id=
@@ -268,14 +297,14 @@ GET    /v1/evaluation-runs/{id}/summary?project_id=
 GET    /v1/evaluation-runs/{id}/events?project_id= # SSE
 POST   /v1/evaluation-runs/{id}/cancel?project_id=
 
-# Temporary Experiment compatibility alias/read model (one minor version)
+# Existing Experiment execution API (shipped legacy ad-hoc surface, not an Evaluation Run alias)
 POST   /v1/experiments                         # legacy JSON-body project_id adapter; optional query must normalize equal
 GET    /v1/experiments?project_id=               # legacy run collection/read model
-GET    /v1/experiments/{id}?project_id=          # alias for EvaluationRun
-GET    /v1/experiments/{id}/results?project_id=  # alias for EvaluationRun results
-GET    /v1/experiments/{id}/summary?project_id=  # alias for EvaluationRun summary
-GET    /v1/experiments/{id}/events?project_id=   # alias for EvaluationRun SSE
-POST   /v1/experiments/{id}/cancel?project_id=   # alias for EvaluationRun cancellation
+GET    /v1/experiments/{id}?project_id=          # legacy execution detail
+GET    /v1/experiments/{id}/results?project_id=  # legacy execution results
+GET    /v1/experiments/{id}/summary?project_id=  # legacy execution summary
+GET    /v1/experiments/{id}/events?project_id=   # legacy execution SSE
+POST   /v1/experiments/{id}/cancel?project_id=   # legacy execution cancellation
 ```
 
 `POST /v1/datasets` accepts `slug` optionally; new clients supply `?project_id=<UUID>`, while the compatibility adapter accepts the existing body `project_id` and rejects a nonmatching query/body pair. The server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. `POST /v1/datasets/by-slug/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
@@ -295,7 +324,7 @@ neither selector is present, it fails before routing. Retained `GET` and
 selector. OpenAPI and generated SDKs expose the legacy body-scoped POST shapes
 as deprecated adapters and the query-scoped shapes as the new contract.
 
-`POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
+The future `POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
 
 ```json
 {
@@ -306,9 +335,12 @@ as deprecated adapters and the query-scoped shapes as the new contract.
 }
 ```
 
-Overrides are permitted in manual/API runs and displayed as **Run overrides**. CI-gate tokens must reject dataset or target overrides unless the evaluation definition explicitly permits them. `latest_published` is resolved at request time and the resulting version is stored on the run.
+For that future route, overrides are permitted in manual/API runs and displayed
+as **Run overrides**. CI-gate tokens must reject dataset or target overrides
+unless the evaluation definition explicitly permits them. `latest_published` is
+resolved at request time and the resulting version is stored on the run.
 
-### Python SDK
+### Future Python SDK
 
 ```python
 from astraea import Astraea
@@ -351,7 +383,11 @@ evaluation.publish({
 })
 ```
 
-TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish` require idempotency keys by default in CI mode. `evaluate(dataset=...)` remains a convenience method but creates an **ad hoc run**; it must return the generated snapshot/definition IDs and should not become a second durable definition model.
+Planned TypeScript SDK support mirrors these nouns and methods. SDK `ensure`,
+`upsert`, and `publish` require idempotency keys by default in CI mode.
+`evaluate(dataset=...)` remains a convenience method but creates an **ad hoc
+run**; it must return the generated snapshot/definition IDs and should not
+become a second durable definition model.
 
 ### Imports and exports
 
@@ -360,6 +396,10 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 - Exports are generated in memory only after the complete representation is checked against a 500-item and 1,048,576-byte limit. Requests over either limit fail before any output is sent, rather than returning a partial file.
 
 ## UX information architecture
+
+The existing dashboard exposes the shipped Definition foundation. Screens and
+interaction rules below that depend on Evaluation Runs, schedules, gates, or
+SDK execution are future UX work.
 
 ### Global navigation
 
@@ -399,15 +439,18 @@ TypeScript mirrors these nouns and methods. SDK `ensure`, `upsert`, and `publish
 - Trace provenance is a link/chip with an access-aware empty state (“source expired or unavailable”), never a copied hidden payload.
 - Users need not choose a JSON Schema expert mode for simple cases. The default grid exposes detected fields; **Schema & mappings** is an advanced drawer with a stable canonical preview.
 
-## Migration from the current MVP
+## Migration and remaining execution work
 
 1. **Preserve reads:** existing `datasets`/`dataset_items` remain readable. Backfill each existing dataset as `dataset@1`, preserving item UUID as `item_key`, order by `created_at, id`, and existing trace provenance.
 2. **Add snapshot tables:** introduce Dataset/Evaluation version and draft tables in a new migration; do not alter past migrations. Every tenant-bearing child table gets a non-null `project_id`, composite Project-scoped foreign keys, `slug`, `latest_published_version`, audit/provenance fields, and tombstones. Backfill scope only from validated parents; delete or safely terminalize ambiguous legacy rows rather than assigning a Project by guesswork.
 3. **Adapt experiments:** add `project_id`, `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, a resolved target snapshot, and optional future `manifest_version_id` fields to Experiments. Use composite Project-scoped foreign keys for every resolved attachment. Backfill legacy Experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
-4. **API compatibility:** retain the current UUID Dataset routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. `GET /v1/datasets/by-slug/{slug}/versions` and its `{version}` detail provide read-only immutable-version inspection. Retained `POST /v1/datasets` and `POST /v1/datasets/{id}/items` use the body-scoped adapter above; an optional query selector must match the body selector. For the same window, retain the complete Experiment surface as query-scoped aliases for Evaluation Runs: `GET /v1/experiments?project_id=<UUID>`, `GET /v1/experiments/{id}?project_id=<UUID>`, `GET /v1/experiments/{id}/results?project_id=<UUID>`, `GET /v1/experiments/{id}/summary?project_id=<UUID>`, `GET /v1/experiments/{id}/events?project_id=<UUID>`, and `POST /v1/experiments/{id}/cancel?project_id=<UUID>`; retained `POST /v1/experiments` uses the body-scoped adapter. New Experiments return a `versioned` resolved Dataset Version ID; pre-version rows report `legacy_unversioned` and no resolved ID. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
-5. **UI rollout:** ship datasets/versioning first; then evaluation definitions; then switch “Run experiment” labels to “Run evaluation.” Keep `Experiment` only in technical compatibility/API deprecation notices.
+4. **API compatibility:** retain the current UUID Dataset routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. `GET /v1/datasets/by-slug/{slug}/versions` and its `{version}` detail provide read-only immutable-version inspection. Retained `POST /v1/datasets` and `POST /v1/datasets/{id}/items` use the body-scoped adapter above; an optional query selector must match the body selector. Retain the complete Experiment execution surface while future Evaluation Run work is implemented: `GET /v1/experiments?project_id=<UUID>`, `GET /v1/experiments/{id}?project_id=<UUID>`, `GET /v1/experiments/{id}/results?project_id=<UUID>`, `GET /v1/experiments/{id}/summary?project_id=<UUID>`, `GET /v1/experiments/{id}/events?project_id=<UUID>`, and `POST /v1/experiments/{id}/cancel?project_id=<UUID>`; retained `POST /v1/experiments` uses the body-scoped adapter. New Experiments return a `versioned` resolved Dataset Version ID; pre-version rows report `legacy_unversioned` and no resolved ID. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
+5. **UI rollout:** Dataset/versioning and Evaluation identity/Definition Version
+   routes are shipped. Future Evaluation Run work can switch “Run experiment”
+   labels to “Run evaluation”; keep `Experiment` only in technical
+   compatibility/API deprecation notices.
 
-## Acceptance criteria
+## Acceptance criteria for remaining work
 
 ### Dataset lifecycle
 

@@ -470,6 +470,44 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Tombstone" })).toBeTruthy();
 	});
+	it("renders a tombstoned Evaluation as a terminal retained-evidence state", async () => {
+		selection.projectRole = "admin";
+		listEvaluations.mockResolvedValue({
+			items: [
+				{
+					id: "66666666-6666-4666-8666-666666666666",
+					slug: "tombstoned-definition",
+					name: "Tombstoned definition",
+					archived_at: "2026-08-29T00:00:00.000Z",
+					tombstoned_at: "2026-08-29T01:00:00.000Z",
+					lifecycle_revision: 3,
+				},
+			],
+			total: 1,
+		});
+		renderPage();
+
+		expect(await screen.findByText("Tombstoned")).toBeTruthy();
+		expect(
+			screen.getByText(
+				"Terminal state. Definition Versions and audit evidence are retained but are not enumerable or directly readable.",
+			),
+		).toBeTruthy();
+		expect(
+			screen.queryByRole("link", { name: "Tombstoned definition" }),
+		).toBeNull();
+		expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Tombstone" })).toBeNull();
+		expect(getEvaluationDraft).not.toHaveBeenCalledWith({
+			project_id: PROJECT_ONE,
+			slug: "tombstoned-definition",
+		});
+		expect(listEvaluationVersions).not.toHaveBeenCalledWith({
+			project_id: PROJECT_ONE,
+			slug: "tombstoned-definition",
+		});
+	});
 	it("hides Evaluation mutation controls from a Read-only project role", async () => {
 		selection.projectRole = "read_only";
 		listEvaluations.mockResolvedValue({

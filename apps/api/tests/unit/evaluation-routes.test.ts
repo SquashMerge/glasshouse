@@ -460,6 +460,15 @@ describe("evaluation route contract", () => {
 					string,
 					{
 						requestBody?: { required?: boolean };
+						responses?: Record<
+							string,
+							{
+								headers?: Record<
+									string,
+									{ required?: boolean; schema?: Record<string, unknown> }
+								>;
+							}
+						>;
 						parameters?: Array<{
 							name?: string;
 							in?: string;
@@ -505,6 +514,14 @@ describe("evaluation route contract", () => {
 		expect(
 			document.paths?.["/v1/evaluations/{slug}/tombstone"]?.delete,
 		).toBeDefined();
+		expect(
+			contract.paths?.["/v1/evaluations/{slug}/tombstone"]?.delete?.responses?.[
+				"204"
+			]?.headers?.ETag,
+		).toEqual({
+			required: true,
+			schema: { type: "string", pattern: '^"\\d+"$' },
+		});
 	});
 	it("documents legacy immutable snapshots without fabricating the typed contract", () => {
 		expect(
