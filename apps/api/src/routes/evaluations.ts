@@ -28,6 +28,7 @@ import {
 	EvaluationLegacyLinkList,
 	EvaluationListQuery,
 	EvaluationList,
+	EvaluationMutationSlugParam,
 	EvaluationProjectQuery,
 	EvaluationVersionList,
 	EvaluationVersionParam,
@@ -111,7 +112,7 @@ export const archiveEvaluationRoute = createRoute({
 	summary: "Archive an Evaluation",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: EvaluationSlugParam,
+		params: EvaluationMutationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
 	},
@@ -127,7 +128,7 @@ export const restoreEvaluationRoute = createRoute({
 	summary: "Restore an archived Evaluation",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: EvaluationSlugParam,
+		params: EvaluationMutationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
 	},
@@ -145,7 +146,7 @@ export const tombstoneEvaluationRoute = createRoute({
 		"Retains immutable Definition Versions and content-safe audit evidence; a tombstone cannot be restored or edited.",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: EvaluationSlugParam,
+		params: EvaluationMutationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
 		body: {
@@ -196,7 +197,7 @@ export const putEvaluationDraftRoute = createRoute({
 	summary: "Replace an Evaluation definition draft",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: EvaluationSlugParam,
+		params: EvaluationMutationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
 		body: {
@@ -220,7 +221,7 @@ export const publishEvaluationDraftRoute = createRoute({
 	summary: "Publish an immutable Evaluation Definition Version",
 	security: [{ basicAuth: [] }],
 	request: {
-		params: EvaluationSlugParam,
+		params: EvaluationMutationSlugParam,
 		query: EvaluationProjectQuery,
 		headers: IfMatch,
 	},

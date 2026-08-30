@@ -4,6 +4,8 @@
 
 `/v1/evaluations` creates a stable, project-scoped Evaluation identity with one ETag-revisioned definition draft. Publishing the draft creates an immutable, content-hashed Definition Version bound to a concrete immutable Dataset Version; publication is idempotent for equivalent canonical content and returns its stored durable publishing Actor ID as `published_by`. Definitions use only typed baseline evaluator mappings, a configured-LLM target selector, execution defaults, and thresholds. They do not admit or execute runs. Pre-contract Definition Versions are returned with `definition_contract: "legacy_untyped"`; their stored evaluator JSON, absent sampling/limits, and original content hash are never synthesized or changed. Existing Experiments and benchmark suites remain explicitly legacy ad-hoc structural records and are never assigned invented historical Dataset Version, target, evaluator, sample, or result evidence.
 
+Canonical Evaluation slugs are required for archive, restore, tombstone, draft replacement, and publication. UUID Evaluation IDs remain a read-only compatibility selector for Evaluation, draft, and immutable-version detail or inspection requests.
+
 **Status:** P2 Dataset lifecycle is implemented; P3.1 Evaluation identity and Definition Versions are implemented and deliberately precede the planned Agent Registry.
 
 **Shipped Evaluation API:**

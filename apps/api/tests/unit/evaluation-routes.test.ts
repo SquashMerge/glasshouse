@@ -34,6 +34,7 @@ import {
 	EvaluationDraft,
 	EvaluationCreate,
 	EvaluationListQuery,
+	EvaluationMutationSlugParam,
 	EvaluationSlugParam,
 } from "../../src/schemas/evaluations";
 
@@ -183,6 +184,78 @@ describe("evaluation route contract", () => {
 				name: "UUID-shaped slug",
 				definition,
 			}).success,
+		).toBe(false);
+		expect(EvaluationSlugParam.safeParse({ slug: evaluationId }).success).toBe(
+			true,
+		);
+	});
+	it("accepts UUID compatibility selectors only for read detail and inspection routes", async () => {
+		const evaluationId = "44444444-4444-4444-8444-444444444444";
+		let mutationCalls = 0;
+		const app = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		for (const route of [
+			archiveEvaluationRoute,
+			restoreEvaluationRoute,
+			tombstoneEvaluationRoute,
+			putEvaluationDraftRoute,
+			publishEvaluationDraftRoute,
+		])
+			app.openapi(route, () => {
+				mutationCalls += 1;
+				return new Response(null, { status: 204 });
+			});
+
+		for (const [path, init] of [
+			[
+				`/v1/evaluations/${evaluationId}?project_id=${projectId}`,
+				{ method: "DELETE", headers: { "if-match": '"1"' } },
+			],
+			[
+				`/v1/evaluations/${evaluationId}/restore?project_id=${projectId}`,
+				{ method: "POST", headers: { "if-match": '"1"' } },
+			],
+			[
+				`/v1/evaluations/${evaluationId}/tombstone?project_id=${projectId}`,
+				{
+					method: "DELETE",
+					headers: {
+						"content-type": "application/json",
+						"if-match": '"1"',
+					},
+					body: JSON.stringify({ confirmation_slug: evaluationId }),
+				},
+			],
+			[
+				`/v1/evaluations/${evaluationId}/draft?project_id=${projectId}`,
+				{
+					method: "PUT",
+					headers: {
+						"content-type": "application/json",
+						"if-match": '"1"',
+					},
+					body: JSON.stringify(definition),
+				},
+			],
+			[
+				`/v1/evaluations/${evaluationId}/draft/publish?project_id=${projectId}`,
+				{ method: "POST", headers: { "if-match": '"1"' } },
+			],
+		] as const) {
+			const response = await app.request(`http://test${path}`, init);
+			expect(response.status).toBe(400);
+		}
+
+		expect(mutationCalls).toBe(0);
+		expect(
+			EvaluationMutationSlugParam.safeParse({ slug: evaluationId }).success,
 		).toBe(false);
 		expect(EvaluationSlugParam.safeParse({ slug: evaluationId }).success).toBe(
 			true,
@@ -505,6 +578,14 @@ describe("evaluation route contract", () => {
 			(parameter) => parameter.name === "slug" && parameter.in === "path",
 		);
 		expect(detailSlug?.schema?.description).toContain("UUID Evaluation ID");
+		const mutationSlug = contract.paths?.[
+			"/v1/evaluations/{slug}/draft"
+		]?.put?.parameters?.find(
+			(parameter) => parameter.name === "slug" && parameter.in === "path",
+		);
+		expect(mutationSlug?.schema?.description).toContain(
+			"UUID Evaluation IDs are accepted only by read",
+		);
 		expect(document.paths?.["/v1/evaluations/{slug}/draft"]?.put).toBeDefined();
 		expect(
 			document.paths?.["/v1/evaluations/{slug}/versions/{version}"]?.get,

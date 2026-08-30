@@ -202,6 +202,15 @@ export const EvaluationSlugParam = z
 		}),
 	})
 	.strict();
+export const EvaluationMutationSlugParam = z
+	.object({
+		slug: Slug.openapi({
+			param: { name: "slug", in: "path" },
+			description:
+				"Canonical Evaluation slug. UUID Evaluation IDs are accepted only by read detail and inspection endpoints.",
+		}),
+	})
+	.strict();
 export const EvaluationVersionParam = EvaluationSlugParam.extend({
 	version: z.coerce.number().int().positive(),
 }).strict();

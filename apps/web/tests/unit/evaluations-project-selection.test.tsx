@@ -319,6 +319,72 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			),
 		);
 	});
+	it("keeps definition creation settings separate from the ad-hoc run form", async () => {
+		listDatasetVersions.mockResolvedValue({
+			items: [{ id: DATASET_VERSION_ONE, version: 1 }],
+		});
+		createEvaluation.mockResolvedValue({});
+		renderPage();
+
+		await screen.findAllByRole("option", { name: "Project One dataset" });
+		fireEvent.change(screen.getByLabelText("Definition dataset"), {
+			target: { value: DATASET_ONE },
+		});
+		await screen.findByRole("option", { name: "Version 1" });
+		fireEvent.change(screen.getByLabelText("Definition name"), {
+			target: { value: "Project One quality" },
+		});
+		fireEvent.change(screen.getByLabelText("Stable ID"), {
+			target: { value: "project-one-quality" },
+		});
+		fireEvent.change(screen.getByLabelText("Dataset Version"), {
+			target: { value: DATASET_VERSION_ONE },
+		});
+		fireEvent.change(screen.getByLabelText("Definition model (optional)"), {
+			target: { value: "definition-model" },
+		});
+		fireEvent.change(
+			screen.getByLabelText("Definition system prompt (optional)"),
+			{ target: { value: "definition prompt" } },
+		);
+		fireEvent.change(screen.getByLabelText("Definition evaluator"), {
+			target: { value: "contains" },
+		});
+		fireEvent.change(screen.getByLabelText("Definition temperature"), {
+			target: { value: "0.4" },
+		});
+
+		fireEvent.change(screen.getByLabelText("Model (optional)"), {
+			target: { value: "run-model" },
+		});
+		fireEvent.change(screen.getByLabelText("System prompt (optional)"), {
+			target: { value: "run prompt" },
+		});
+		fireEvent.change(screen.getByLabelText("Evaluator"), {
+			target: { value: "exact_match" },
+		});
+		fireEvent.change(screen.getByLabelText("Temperature"), {
+			target: { value: "1.2" },
+		});
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "Create definition draft" }),
+		);
+		await waitFor(() =>
+			expect(createEvaluation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					definition: expect.objectContaining({
+						evaluator: expect.objectContaining({ kind: "contains" }),
+						target: expect.objectContaining({
+							model: "definition-model",
+							system_prompt: "definition prompt",
+						}),
+						execution_defaults: expect.objectContaining({ temperature: 0.4 }),
+					}),
+				}),
+			),
+		);
+	});
 
 	it("keeps visible evaluation labels consistently separated from controls", async () => {
 		listPublishedDatasetItems.mockResolvedValue(validItems);
@@ -342,7 +408,9 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		listPublishedDatasetItems.mockResolvedValue(validItems);
 		renderPage();
 		await screen.findAllByRole("option", { name: "Project One dataset" });
-		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
+		fireEvent.change(screen.getByLabelText("Definition dataset"), {
+			target: { value: DATASET_ONE },
+		});
 		const alert = await screen.findByRole("alert");
 		expect(alert).toHaveTextContent("Unable to load Dataset Versions");
 		const callsBeforeRetry = listDatasetVersions.mock.calls.length;
