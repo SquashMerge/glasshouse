@@ -5,7 +5,9 @@ import math
 import os
 import re
 import sys
+import traceback
 import unicodedata
+from importlib.metadata import version as distribution_version
 
 if __package__:
     from .dev_cli_llm import DevCliLlmError, reflection_lm_for_model, task_lm_for_model
@@ -125,6 +127,47 @@ class RemainingMetricCallsStopper:
 
     def __call__(self, _state):
         return self._adapter.remaining_metric_calls < self._minimum_iteration_calls
+
+
+SAFE_OPTIMIZATION_FAILURE_KINDS = {
+    "AssertionError",
+    "AttributeError",
+    "KeyError",
+    "RuntimeError",
+    "TypeError",
+    "ValueError",
+}
+
+
+def safe_gepa_runtime_version():
+    try:
+        value = distribution_version("gepa")
+    except Exception:
+        return None
+    if not isinstance(value, str):
+        return None
+    return value if re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", value) else None
+
+
+def safe_optimization_failure_kind(error):
+    kind = type(error).__name__
+    return kind if kind in SAFE_OPTIMIZATION_FAILURE_KINDS else "UnknownError"
+
+
+def safe_optimization_failure_site(error):
+    frames = traceback.extract_tb(error.__traceback__)
+    if not frames:
+        return None
+    frame = frames[-1]
+    if frame.lineno < 1:
+        return None
+    filename = os.path.realpath(frame.filename)
+    worker_directory = os.path.realpath(os.path.dirname(__file__))
+    if filename.startswith(f"{worker_directory}{os.sep}"):
+        return f"astraea_worker:{frame.lineno}"
+    if "gepa" in filename.split(os.sep):
+        return f"gepa:{frame.lineno}"
+    return None
 
 
 def allowed_models():
@@ -431,6 +474,13 @@ try:
 except DevCliLlmError:
     sys.stderr.write("GEPA development CLI failed")
     sys.exit(1)
-except Exception:
-    sys.stderr.write("GEPA optimization failed")
+except Exception as error:
+    kind = safe_optimization_failure_kind(error)
+    site = safe_optimization_failure_site(error)
+    runtime_version = safe_gepa_runtime_version()
+    if runtime_version:
+        sys.stderr.write(f"ASTRAEA_GEPA_RUNTIME {runtime_version}\n")
+    sys.stderr.write(
+        f"ASTRAEA_GEPA_FAILURE {kind}" + (f" {site}" if site else "")
+    )
     sys.exit(1)

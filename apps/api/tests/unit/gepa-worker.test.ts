@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
 	MAX_OPTIMIZATION_CANDIDATE_BYTES,
+	diagnosticSummary,
 	parseWorkerResult,
 	readWorkerDiagnostics,
 	readWorkerOutput,
@@ -117,6 +118,33 @@ describe("GEPA worker adapter", () => {
 				throw new Error("telemetry persistence failed");
 			}),
 		).rejects.toThrow("telemetry persistence failed");
+	});
+
+	it("records only the allowlisted worker failure kind", () => {
+		expect(
+			diagnosticSummary(
+				"ASTRAEA_GEPA_RUNTIME 0.1.4\nASTRAEA_GEPA_FAILURE RuntimeError gepa:123\nprovider token must not be retained",
+			),
+		).toEqual({
+			diagnostic_bytes: 105,
+			diagnostic_lines: 3,
+			worker_failure_kind: "RuntimeError",
+			worker_failure_site: "gepa:123",
+			worker_gepa_version: "0.1.4",
+		});
+		expect(
+			diagnosticSummary(
+				"ASTRAEA_GEPA_FAILURE RuntimeError provider-token.py:1",
+			),
+		).toEqual({
+			diagnostic_bytes: 53,
+			diagnostic_lines: 1,
+			worker_failure_kind: "RuntimeError",
+		});
+		expect(diagnosticSummary("ASTRAEA_GEPA_FAILURE TokenSecret")).toEqual({
+			diagnostic_bytes: 32,
+			diagnostic_lines: 1,
+		});
 	});
 
 	it("logs only bounded worker diagnostic metadata on failure", async () => {
