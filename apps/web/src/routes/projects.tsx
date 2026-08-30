@@ -28,14 +28,16 @@ export function ProjectsPage() {
 	const [editing, setEditing] = React.useState<Project | null>(null);
 	const [editedName, setEditedName] = React.useState("");
 	const [editedSlug, setEditedSlug] = React.useState("");
-	const [operationFailed, setOperationFailed] = React.useState(false);
+	const [operationError, setOperationError] = React.useState<string | null>(
+		null,
+	);
 	const [deleting, setDeleting] = React.useState<Project | null>(null);
 	const [confirmationName, setConfirmationName] = React.useState("");
 	const isOwner = organizationRole === "admin";
 	const canManage = (project: Project) => project.can_manage;
 
-	function failed() {
-		setOperationFailed(true);
+	function failed(error: unknown) {
+		setOperationError(projectOperationError(error));
 	}
 	function replaceProject(project: Project) {
 		queryClient.setQueryData<{ items: Project[]; total: number }>(
@@ -144,9 +146,9 @@ export function ProjectsPage() {
 					Manage the projects you can access.
 				</p>
 			</div>
-			{operationFailed && (
+			{operationError && !deleting && (
 				<p className="text-sm text-destructive" role="alert">
-					Project operation could not be completed.
+					{operationError}
 				</p>
 			)}
 			{isOwner && (
@@ -154,7 +156,7 @@ export function ProjectsPage() {
 					className="flex flex-wrap items-end gap-3"
 					onSubmit={(event) => {
 						event.preventDefault();
-						setOperationFailed(false);
+						setOperationError(null);
 						createMutation.mutate({ name, slug });
 					}}
 				>
@@ -199,7 +201,7 @@ export function ProjectsPage() {
 				onEditedName={setEditedName}
 				onEditedSlug={setEditedSlug}
 				onSave={(project) => {
-					setOperationFailed(false);
+					setOperationError(null);
 					updateMutation.mutate({
 						id: project.id,
 						name: editedName,
@@ -207,21 +209,21 @@ export function ProjectsPage() {
 					});
 				}}
 				onArchive={(project) => {
-					setOperationFailed(false);
+					setOperationError(null);
 					archiveMutation.mutate(project.id);
 				}}
 				onRestore={(project) => {
-					setOperationFailed(false);
+					setOperationError(null);
 					restoreMutation.mutate(project.id);
 				}}
 				onSetDefault={(project) => {
-					setOperationFailed(false);
+					setOperationError(null);
 					defaultMutation.mutate(project.id);
 				}}
 				onDelete={(project) => {
 					setDeleting(project);
 					setConfirmationName("");
-					setOperationFailed(false);
+					setOperationError(null);
 				}}
 			/>
 			{archived.length > 0 && (
@@ -242,7 +244,7 @@ export function ProjectsPage() {
 						onEditedName={setEditedName}
 						onEditedSlug={setEditedSlug}
 						onSave={(project) => {
-							setOperationFailed(false);
+							setOperationError(null);
 							updateMutation.mutate({
 								id: project.id,
 								name: editedName,
@@ -251,7 +253,7 @@ export function ProjectsPage() {
 						}}
 						onArchive={() => {}}
 						onRestore={(project) => {
-							setOperationFailed(false);
+							setOperationError(null);
 							restoreMutation.mutate(project.id);
 						}}
 						onSetDefault={() => {}}
@@ -293,7 +295,7 @@ export function ProjectsPage() {
 						className="w-full max-w-md space-y-4 rounded-lg border border-border bg-background p-6 shadow-lg"
 						onSubmit={(event) => {
 							event.preventDefault();
-							setOperationFailed(false);
+							setOperationError(null);
 							deleteMutation.mutate({
 								id: deleting.id,
 								confirmation_name: confirmationName,
@@ -309,6 +311,11 @@ export function ProjectsPage() {
 								data. This cannot be undone.
 							</p>
 						</div>
+						{operationError && (
+							<p className="text-sm text-destructive" role="alert">
+								{operationError}
+							</p>
+						)}
 						<label className="grid gap-2 text-sm font-medium">
 							Type {deleting.name} to confirm
 							<input
@@ -352,7 +359,7 @@ function DeletingProjectRecovery({
 }: {
 	project: Project;
 	canManage: boolean;
-	onFailure: () => void;
+	onFailure: (error: unknown) => void;
 	onRecovered: () => void;
 }) {
 	const [confirmationName, setConfirmationName] = React.useState("");
@@ -525,15 +532,17 @@ function ProjectList({
 								</Button>
 							)}
 							{project.status === "active" ? (
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={() => onArchive(project)}
-									aria-label={`Archive ${project.name}`}
-								>
-									Archive
-								</Button>
+								!project.is_default && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={() => onArchive(project)}
+										aria-label={`Archive ${project.name}`}
+									>
+										Archive
+									</Button>
+								)
 							) : (
 								<Button
 									type="button"
@@ -551,4 +560,19 @@ function ProjectList({
 			))}
 		</div>
 	);
+}
+
+function projectOperationError(error: unknown): string {
+	const code =
+		typeof error === "object" && error !== null && "code" in error
+			? (error as { code?: unknown }).code
+			: undefined;
+	if (code === "FORBIDDEN")
+		return "You no longer have permission to manage projects. Refresh your access and retry.";
+	if (
+		error instanceof Error &&
+		(code === "BAD_REQUEST" || code === "CONFLICT" || code === "NOT_FOUND")
+	)
+		return error.message;
+	return "Project operation could not be completed. Refresh the page and retry.";
 }

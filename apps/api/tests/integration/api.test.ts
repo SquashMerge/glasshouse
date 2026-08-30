@@ -75,6 +75,34 @@ describe("API integration: health + openapi", () => {
 		expect(document.paths?.["/v1/otel/v1/traces"]?.post).toBeDefined();
 	});
 
+	it("production OpenAPI excludes legacy subject-keyed membership operations", async () => {
+		const res = await apiApp.fetch(new Request("http://x/openapi.json"));
+		expect(res.status).toBe(200);
+		const document = (await res.json()) as {
+			paths?: Record<string, Record<string, unknown>>;
+		};
+		const legacyOperations = [
+			["/v1/projects/{id}/members", "get"],
+			["/v1/projects/{id}/members/{actor}", "put"],
+			["/v1/projects/{id}/members/{actor}", "delete"],
+			["/v1/organization/members/{actor}", "put"],
+			["/v1/organization/members", "get"],
+			["/v1/organization/members/{actor}", "delete"],
+		] as const;
+		for (const [path, method] of legacyOperations)
+			expect(document.paths?.[path]?.[method]).toBeUndefined();
+
+		const durableOperations = [
+			["/v1/admin/actors", "get"],
+			["/v1/admin/actors/{actorId}/role", "put"],
+			["/v1/admin/projects/{projectId}/grants", "get"],
+			["/v1/admin/projects/{projectId}/grants/{actorId}", "put"],
+			["/v1/admin/projects/{projectId}/grants/{actorId}", "delete"],
+		] as const;
+		for (const [path, method] of durableOperations)
+			expect(document.paths?.[path]?.[method]).toBeDefined();
+	});
+
 	it("GET /reference returns 200 without auth", async () => {
 		const res = await apiApp.fetch(new Request("http://x/reference"));
 		expect(res.status).toBe(200);
