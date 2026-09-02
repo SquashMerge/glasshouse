@@ -11,6 +11,7 @@ POSTGRES_DB="astraea_migrations"
 cleanup() {
   [[ -n "${UUID_LOCK_PID:-}" ]] && kill "$UUID_LOCK_PID" >/dev/null 2>&1 || true
   [[ -n "${UUID_INSERT_PID:-}" ]] && kill "$UUID_INSERT_PID" >/dev/null 2>&1 || true
+  [[ -n "${MIGRATION_LOCK_HOLDER_PID:-}" ]] && kill "$MIGRATION_LOCK_HOLDER_PID" >/dev/null 2>&1 || true
 	[[ -n "${ADMIN_AUDIT_LOCK_PID:-}" ]] && kill "$ADMIN_AUDIT_LOCK_PID" >/dev/null 2>&1 || true
 	[[ -n "${ADMIN_AUDIT_INSERT_PID:-}" ]] && kill "$ADMIN_AUDIT_INSERT_PID" >/dev/null 2>&1 || true
 	[[ -n "${ORDER_HOLDER_PID:-}" ]] && kill "$ORDER_HOLDER_PID" >/dev/null 2>&1 || true
@@ -64,12 +65,45 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations.fixture.sql"
 
-DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
-  bun run --cwd "$ROOT/apps/api" db:migrate
-DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
-  bun run --cwd "$ROOT/apps/api" db:migrate
+run_db_migrate() {
+  DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
+    UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+    bun run --cwd "$ROOT/apps/api" db:migrate
+}
+
+# node-pg-migrate 9 uses this documented stable advisory-lock ID. Hold it
+# first so both independently-started runners must wait rather than fail.
+docker exec "$CONTAINER" \
+  psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  --command "SELECT pg_advisory_lock(7241865325823964); SELECT pg_sleep(2)" >/dev/null &
+MIGRATION_LOCK_HOLDER_PID=$!
+for _ in {1..50}; do
+  migration_lock_held="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT pg_try_advisory_lock(7241865325823964)")"
+  [[ "$migration_lock_held" == "f" ]] && break
+  sleep 0.1
+done
+if [[ "$migration_lock_held" != "f" ]]; then
+  echo "node-pg-migrate advisory-lock holder did not acquire its lock" >&2
+  exit 1
+fi
+
+run_db_migrate &
+FIRST_MIGRATION_PID=$!
+run_db_migrate &
+SECOND_MIGRATION_PID=$!
+for _ in {1..50}; do
+  migration_waiter="$(docker exec "$CONTAINER" psql --tuples-only --no-align --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --command "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted)")"
+  [[ "$migration_waiter" == "t" ]] && break
+  sleep 0.1
+done
+if [[ "$migration_waiter" != "t" ]]; then
+  echo "concurrent node-pg-migrate runner did not wait for the advisory lock" >&2
+  exit 1
+fi
+wait "$MIGRATION_LOCK_HOLDER_PID"
+MIGRATION_LOCK_HOLDER_PID=
+wait "$FIRST_MIGRATION_PID"
+wait "$SECOND_MIGRATION_PID"
 
 # Reproduce the production history where the original 0023 prompt migration was
 # recorded before the later 0023 workspace migration existed in the repository.

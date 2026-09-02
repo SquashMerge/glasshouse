@@ -27,7 +27,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 - The repository is a Bun workspace. The user-facing API is TypeScript/Hono, the web app is TypeScript/React/Vite, PostgreSQL stores transactional application data, and ClickHouse stores trace/OLAP data.
 - Python is intentionally isolated to compute-heavy integrations such as the GEPA worker. Keep the TypeScript API boundary and Python worker boundary explicit; do not move GEPA/provider credentials into API request bodies, job records, logs, or SSE payloads.
-- Every API start runs PostgreSQL and ClickHouse migrations concurrently before serving: `bun run migrate && bun run src/index.ts`. PostgreSQL tracks applied migrations, while ClickHouse checksum-verifies applied changesets and skips them on later starts. `make dev-backend` uses the same startup contract; the watch process itself does not re-run migrations on each source reload.
+- Every API start runs PostgreSQL and ClickHouse migrations concurrently before serving: `bun run migrate && bun run src/index.ts`. PostgreSQL waits for its migration advisory lock, while ClickHouse takes a PostgreSQL advisory lock, checksum-verifies applied changesets, and skips them on later starts. `make dev-backend` uses the same startup contract; the watch process itself does not re-run migrations on each source reload.
 - Docker Compose is invoked with the repository root as its project directory. Preserve root-relative build contexts and ensure every runtime dependency used by startup commands is present in the production image.
 
 ## Database migrations and seeded data
@@ -56,7 +56,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 - GEPA optimization has two model roles (`task_lm` and `reflection_lm`), explicit examples, and a bounded `max_metric_calls` budget. The UI must collect real evaluation input/answer data; never restore fabricated placeholders.
 - Model identifiers must be checked against the exact `GEPA_ALLOWED_MODELS` allowlist. Provider API credentials belong only in the ignored `infra/.env` or deployment secret store.
-- `GEPA_WORKER_MODE=cli` is development-only and runs the locally authenticated OpenAI Codex CLI. It requires the API to run on the same host as Codex (`make deps-up` plus `make dev-backend`, not the Dockerized `make dev` path), a local Python environment with `worker/requirements.txt` installed, and `GEPA_PYTHON` pointing to that interpreter.
+- `GEPA_WORKER_MODE=cli` is development-only and runs the locally authenticated OpenAI Codex CLI. It requires the API to run on the same host as Codex (`make deps-up` plus `make dev-backend`, not the Dockerized `make dev` path), a local Python environment with `worker/requirements.lock` installed using `--require-hashes`, and `GEPA_PYTHON` pointing to that interpreter.
 - Candidate publication must preserve the full message snapshot while deriving canonical `prompt_versions.content` from the optimized target role. Add a system-target regression test whenever this path changes.
 
 ## Review and verification

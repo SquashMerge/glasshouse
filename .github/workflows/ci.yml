@@ -30,7 +30,7 @@ jobs:
           - check: test
             command: bun run test
           - check: worker-test
-            command: python3 -m pip install --user --disable-pip-version-check -r worker/requirements.txt && python3 -m unittest worker.test_dev_cli_llm
+            command: python3 -m pip install --user --disable-pip-version-check --require-hashes -r worker/requirements.lock && python3 -m unittest worker.test_dev_cli_llm
           - check: build
             command: bun run build
           - check: compose-paths
@@ -75,6 +75,19 @@ jobs:
     name: ClickHouse schema
     runs-on: ubuntu-latest
     services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: astraea
+          POSTGRES_PASSWORD: astraea-ci-password
+          POSTGRES_DB: astraea
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U astraea -d astraea"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
       clickhouse:
         image: clickhouse/clickhouse-server:24-alpine
         env:
@@ -101,18 +114,27 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Apply ClickHouse migrations twice
+      - name: Apply ClickHouse migrations concurrently
         env:
+          DATABASE_URL: postgres://astraea:astraea-ci-password@localhost:5432/astraea
           CLICKHOUSE_URL: http://localhost:8123
           CLICKHOUSE_USER: astraea
           CLICKHOUSE_PASSWORD: astraea-ci-password
           CLICKHOUSE_DB: astraea
         run: |
-          bun --filter @astraea/api ch:migrate
-          bun --filter @astraea/api ch:migrate
+          bun --filter @astraea/api ch:migrate &
+          first=$!
+          bun --filter @astraea/api ch:migrate &
+          second=$!
+          wait "$first"
+          wait "$second"
+          expected="$(find infra/db/clickhouse -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+          actual="$(curl --fail --silent --show-error --user astraea:astraea-ci-password --data-binary 'SELECT count() FROM astraea_schema_migrations FORMAT TabSeparated' 'http://localhost:8123/?database=astraea')"
+          test "$actual" = "$expected"
 
       - name: Verify ClickHouse schema
         env:
+          DATABASE_URL: postgres://astraea:astraea-ci-password@localhost:5432/astraea
           CLICKHOUSE_URL: http://localhost:8123
           CLICKHOUSE_USER: astraea
           CLICKHOUSE_PASSWORD: astraea-ci-password
@@ -163,6 +185,25 @@ jobs:
 
       - name: Start application stack
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
+
+      - name: Verify startup migrations are complete after application boot and restart
+        run: |
+          set -euo pipefail
+          compose=(docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml)
+          expected_postgres="$(find infra/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+          expected_clickhouse="$(find infra/db/clickhouse -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
+
+          verify_migrations() {
+            actual_postgres="$("${compose[@]}" exec -T postgres psql -U astraea -d astraea -Atqc 'SELECT count(*) FROM pgmigrations')"
+            actual_clickhouse="$("${compose[@]}" exec -T clickhouse clickhouse-client --user astraea --password astraea-ci-password --database astraea --query 'SELECT count() FROM astraea_schema_migrations')"
+            test "$actual_postgres" = "$expected_postgres"
+            test "$actual_clickhouse" = "$expected_clickhouse"
+          }
+
+          verify_migrations
+          "${compose[@]}" restart api
+          "${compose[@]}" up --detach --no-deps --wait --wait-timeout 180 api
+          verify_migrations
 
       - name: Verify idempotent ClickHouse migrations
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'

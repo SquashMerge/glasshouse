@@ -69,6 +69,7 @@ MIT core. A sealed `enterprise/` wheel for premium features (SSO, RBAC, AI-assis
 ### Prerequisites
 
 - Docker (with Compose v2.13+ for `depends_on condition: service_healthy`)
+- GNU Make (all documented local workflows use `make`)
 - Bun 1.3.14+ (replaces both the package manager and the runtime; install from [bun.sh](https://bun.sh))
 - Node.js 22.12+ (required by local migration tooling; install from [nodejs.org](https://nodejs.org/))
 - uv (for the Python codegen client; install from [docs.astral.sh/uv](https://docs.astral.sh/uv/))
@@ -113,9 +114,17 @@ Bun resolves newly added direct and transitive npm packages only after they have
 
 `make doctor` checks the minimum versions after install.
 
+Before the first local startup, create and populate the gitignored environment file, then install the exact committed Bun dependency graph:
+
+```sh
+cp infra/.env.example infra/.env
+# Replace every CHANGE_ME value in infra/.env with a local development secret.
+bun install --frozen-lockfile
+```
+
 ### `make dev`
 
-Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Every API start validates PostgreSQL migration filenames, then runs the PostgreSQL and ClickHouse migration runners concurrently and starts serving only after both succeed; PostgreSQL tracks applied migrations and ClickHouse checksum-verifies changesets before skipping ones it has already applied.
+Brings up the full stack (Postgres + ClickHouse + Valkey + Hono API + Vite web) with healthchecks and waits for all services to be ready. Every API start validates PostgreSQL migration filenames, then runs the PostgreSQL and ClickHouse migration runners concurrently and starts serving only after both succeed. PostgreSQL waits for the `node-pg-migrate` advisory lock before applying or verifying migrations, while ClickHouse checksum-verifies changesets before skipping ones it has already applied. ClickHouse schema application is serialized with a PostgreSQL advisory lock, so multiple API instances sharing the same PostgreSQL and ClickHouse instances cannot apply one changeset concurrently.
 
 ### Local dev (deps in Docker, api + web via bun)
 
@@ -208,7 +217,7 @@ For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenti
 
    ```sh
    uv venv worker/.venv
-   uv pip install --python worker/.venv/bin/python -r worker/requirements.txt
+   uv pip install --python worker/.venv/bin/python --require-hashes -r worker/requirements.lock
    ```
 
 3. Add the development settings to the gitignored `infra/.env` file:
@@ -275,7 +284,7 @@ infra/scripts/seed-traces.sh --help
 
 ### `make smoke`
 
-Runs the end-to-end smoke (AC1 + AC2 + AC4 + AC7): brings up the stack, checks the health and OpenAPI endpoints, verifies the supported collection roots, and runs the Playwright dashboard test (asserts title, links visible, zero console errors during page load).
+Runs smoke checks against an already-running stack. It verifies health, the OpenAPI collection roots, the API reference, authentication boundaries, OTLP ingestion/querying, malformed-OTLP rejection, and the Playwright dashboard smoke test.
 
 ## Docs
 

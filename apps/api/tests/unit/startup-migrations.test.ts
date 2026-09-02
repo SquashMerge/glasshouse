@@ -17,6 +17,9 @@ describe("production startup", () => {
 		expect(packageJson.scripts.migrate).toBe(
 			"bun run --parallel db:migrate ch:migrate",
 		);
+		expect(packageJson.scripts["db:migrate"]).toContain(
+			"--advisory-lock-mode wait",
+		);
 		expect(packageJson.scripts.start).toBe(
 			"bun run migrate && bun run src/index.ts",
 		);
