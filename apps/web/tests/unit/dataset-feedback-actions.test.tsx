@@ -369,13 +369,13 @@ describe("dataset feedback actions", () => {
 		expect(second.trace_id).toBe("trace-b");
 	});
 
-	it("records an optional positive comment while requiring a negative reason", async () => {
+	it("records a trimmed positive comment while requiring a negative reason", async () => {
 		createFeedback.mockResolvedValue({});
 		render(
 			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
 		);
 		fireEvent.change(screen.getByLabelText("Comment"), {
-			target: { value: "Useful response" },
+			target: { value: " Useful response " },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "Thumbs up trace" }));
 		await waitFor(() => expect(createFeedback).toHaveBeenCalledTimes(1));
