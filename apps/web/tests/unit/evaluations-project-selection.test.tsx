@@ -436,7 +436,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			),
 		);
 	});
-	it("upgrades an incomplete 0075 draft with its GET ETag", async () => {
+	it("upgrades an incomplete 0076 draft with its GET ETag", async () => {
 		listEvaluations.mockResolvedValue({
 			items: [
 				{

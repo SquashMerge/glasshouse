@@ -18,6 +18,6 @@ BEGIN
               WHERE id = '74000000-0000-4000-8000-000000000007'
           )
     ) <> 2 THEN
-        RAISE EXCEPTION '0074 did not backfill both legacy_ad_hoc structural evaluation links';
+        RAISE EXCEPTION '0075 did not backfill both legacy_ad_hoc structural evaluation links';
     END IF;
 END $$;

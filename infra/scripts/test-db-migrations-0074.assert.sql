@@ -70,7 +70,7 @@ BEGIN
               OR content_hash IS DISTINCT FROM repeat('b', 64)
           )
     ) THEN
-        RAISE EXCEPTION '0075 rewrote immutable legacy-untyped definition content or hash';
+        RAISE EXCEPTION '0076 rewrote immutable legacy-untyped definition content or hash';
     END IF;
     IF NOT EXISTS (
         SELECT 1
@@ -83,29 +83,29 @@ BEGIN
           AND execution_defaults = '{}'::jsonb
           AND thresholds = '{}'::jsonb
     ) THEN
-        RAISE EXCEPTION '0075 upgrade fixture did not reproduce the incomplete legacy draft';
+        RAISE EXCEPTION '0076 upgrade fixture did not reproduce the incomplete legacy draft';
     END IF;
     BEGIN
         UPDATE evaluation_definition_versions SET version = 2 WHERE id = version_id;
-        RAISE EXCEPTION '0074 allowed immutable version mutation';
+        RAISE EXCEPTION '0075 allowed immutable version mutation';
     EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
     END;
     INSERT INTO evaluation_audit_events (organization_id, project_id, evaluation_id, actor_id, event_type)
     VALUES ('00000000-0000-4000-8000-000000000001', fixture_project_id, fixture_evaluation_id, '74000000-0000-4000-8000-000000000001', 'created');
     BEGIN
         UPDATE evaluation_audit_events SET event_type = 'draft_updated' WHERE evaluation_id = fixture_evaluation_id;
-        RAISE EXCEPTION '0075 allowed evaluation audit update';
+        RAISE EXCEPTION '0076 allowed evaluation audit update';
     EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
     END;
     BEGIN
         DELETE FROM evaluation_audit_events WHERE evaluation_id = fixture_evaluation_id;
-        RAISE EXCEPTION '0075 allowed evaluation audit delete';
+        RAISE EXCEPTION '0076 allowed evaluation audit delete';
     EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
     END;
     IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'experiment' AND legacy_id = '74000000-0000-4000-8000-000000000008') THEN
-        RAISE EXCEPTION '0074 did not preserve truthful experiment legacy links';
+        RAISE EXCEPTION '0075 did not preserve truthful experiment legacy links';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'benchmark_suite' AND legacy_id = '74000000-0000-4000-8000-000000000007') THEN
-        RAISE EXCEPTION '0074 did not preserve truthful benchmark suite legacy links';
+        RAISE EXCEPTION '0075 did not preserve truthful benchmark suite legacy links';
     END IF;
 END $$;

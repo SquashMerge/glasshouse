@@ -65,7 +65,7 @@ describe("Evaluation definitions", () => {
 		])
 			expect(EvaluationDefinitionInput.safeParse(invalid).success).toBe(false);
 	});
-	it("reads a 0074 draft after 0075 as incomplete and requires a complete replacement before publish", async () => {
+	it("reads a 0075 draft after 0076 as incomplete and requires a complete replacement before publish", async () => {
 		const legacy = {
 			evaluation_id: "33333333-3333-4333-8333-333333333333",
 			project_id: "44444444-4444-4444-8444-444444444444",
