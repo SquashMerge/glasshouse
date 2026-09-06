@@ -28,6 +28,32 @@ import {
 	handleCancelExperiment,
 } from "./routes/experiments.js";
 import {
+	createEvaluationRoute,
+	archiveEvaluationRoute,
+	restoreEvaluationRoute,
+	tombstoneEvaluationRoute,
+	handleCreateEvaluation,
+	handleArchiveEvaluation,
+	handleRestoreEvaluation,
+	handleTombstoneEvaluation,
+	getEvaluationDraftRoute,
+	handleGetEvaluationDraft,
+	getEvaluationRoute,
+	handleGetEvaluation,
+	handleListEvaluations,
+	handleListEvaluationVersions,
+	handleGetEvaluationVersion,
+	handleListEvaluationLegacyLinks,
+	handlePublishEvaluationDraft,
+	handlePutEvaluationDraft,
+	listEvaluationsRoute,
+	listEvaluationVersionsRoute,
+	getEvaluationVersionRoute,
+	listEvaluationLegacyLinksRoute,
+	publishEvaluationDraftRoute,
+	putEvaluationDraftRoute,
+} from "./routes/evaluations.js";
+import {
 	listTraces,
 	handleListTraces,
 	getTrace,
@@ -280,6 +306,19 @@ register(getExperimentResults, handleGetExperimentResults);
 register(getExperimentSummary, handleGetExperimentSummary);
 register(getExperimentEvents, handleGetExperimentEvents);
 register(cancelExperiment, handleCancelExperiment);
+
+register(createEvaluationRoute, handleCreateEvaluation);
+register(listEvaluationsRoute, handleListEvaluations);
+register(archiveEvaluationRoute, handleArchiveEvaluation);
+register(restoreEvaluationRoute, handleRestoreEvaluation);
+register(tombstoneEvaluationRoute, handleTombstoneEvaluation);
+register(listEvaluationLegacyLinksRoute, handleListEvaluationLegacyLinks);
+register(getEvaluationRoute, handleGetEvaluation);
+register(getEvaluationDraftRoute, handleGetEvaluationDraft);
+register(putEvaluationDraftRoute, handlePutEvaluationDraft);
+register(publishEvaluationDraftRoute, handlePublishEvaluationDraft);
+register(listEvaluationVersionsRoute, handleListEvaluationVersions);
+register(getEvaluationVersionRoute, handleGetEvaluationVersion);
 
 register(listBenchmarkSuites, handleListBenchmarkSuites);
 register(createBenchmarkSuiteRoute, handleCreateBenchmarkSuite);

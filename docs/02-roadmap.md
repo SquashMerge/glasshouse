@@ -1,6 +1,6 @@
 # Astraea product roadmap
 
-**Status:** Authoritative product sequencing as of `origin/main` at `4fff991`.
+**Status:** Authoritative product sequencing; shipped capability status is noted below.
 
 Astraea is an **agent-first observability and evaluation platform**. Its durable
 product promise is not a generic trace dashboard or a prompt playground: teams
@@ -53,27 +53,31 @@ that give an agent version meaning.
 | Platform foundation and typed API | Shipped | PostgreSQL, ClickHouse, Valkey, Hono, React dashboard, generated OpenAPI clients, migrations, and CI quality gates. |
 | OTLP ingestion and trace viewer | Shipped | Normalized GenAI/OpenInference traces, trace list/detail/search, project-scoped live updates, and trace-focused regression coverage. |
 | Prompt management and optimization | Shipped | Immutable prompt versions, labels/provenance, guarded GEPA workflows, review-required outcomes, and lifecycle/SSE coverage. |
-| Dataset, configured-LLM evaluation, and feedback first pass | Shipped | Project-scoped Dataset and trace/observation provenance, Experiment execution/results, benchmark runs, cancellation/recovery, and human-review workflow. |
+| Dataset lifecycle and Evaluation identity/Definition Version foundation | Shipped | Project-scoped Dataset lifecycle/versioning; stable Evaluation identity; ETag-protected definition drafts; immutable Definition Version publication/inspection; and archive/restore/tombstone lifecycle routes. |
+| Configured-LLM Experiment execution and feedback first pass | Shipped | Experiment execution/results, benchmark runs, cancellation/recovery, and human-review workflow. Existing Experiments remain legacy ad-hoc records; immutable Evaluation Run resolution/execution remains future P3 work. |
 | Project isolation and lifecycle | Shipped | Organization/Project membership, server-authorized Project selection, scoped REST/worker/SSE/telemetry behavior, governed project lifecycle, and deletion safeguards. |
 | Governance | Shipped | Project-scoped policy drafts/approval, ingress redaction, safe previews, bounded retention, and content-free audit evidence. |
 
-Shipped does **not** mean finished. The next roadmap deliberately hardens the
-first-pass Dataset, Evaluation, identity, and authorization contracts before
-adding Agent Registry breadth.
+Shipped does **not** mean finished. P2 Dataset lifecycle and the P3.1
+Evaluation identity/Definition Version route foundation are shipped. The next
+roadmap deliberately completes Evaluation Run execution and hardens the
+Dataset, identity, and authorization contracts before adding Agent Registry
+breadth.
 
-## Target P2/P3 product definition (not yet shipped)
+## Target P2/P3 product definition (remaining work)
 
-The current product is the first-pass loop: project-scoped mutable Datasets,
-configured-LLM Experiment runs, and human-feedback review. The following is the
-target loop for P2/P3; immutable Dataset versions and reusable Evaluation
-definitions do not exist in the shipped product yet.
+The current product combines the P2 Dataset lifecycle and P3.1 Evaluation
+identity/Definition Version route foundation with configured-LLM Experiment
+runs and human-feedback review. Dedicated Evaluation Run resolution, execution,
+evidence, schedules, and gates remain future work; the existing Experiment
+surface is not a shipped Evaluation Run alias.
 
 ```text
 Authorized user in an organization / Project
         ↓
 Observe production traces and human feedback
         ↓
-Curate a project-scoped mutable Dataset
+Curate a project-scoped Dataset
         ↓
 Run a configured-LLM Experiment
         ↓
@@ -89,9 +93,9 @@ Observe production traces and human feedback
         ↓
 Curate a governed, versioned Dataset
         ↓
-Publish a reusable, versioned Evaluation definition
+Publish a reusable, versioned Evaluation definition (P3.1 route foundation shipped)
         ↓
-Resolve immutable inputs and execute an Evaluation run
+Resolve immutable inputs and execute an Evaluation run (future P3 execution)
         ↓
 Inspect evidence, promote a deliberate improvement, repeat
 ```
@@ -260,16 +264,22 @@ Dataset foundation.
 
 ### P3 — Evaluation definitions and reproducible execution
 
-**Goal:** turn one-off Experiments into reliable, reusable Evaluation
-Definitions and Runs while continuing to use the current configured-LLM target
-where appropriate.
+**Status:** P3.1 stable Evaluation identity, revisioned definition drafts,
+immutable Definition Version publication/inspection, and lifecycle routes are
+shipped. Evaluation Run resolution/execution, evidence, schedules, and gates
+remain future work.
+
+**Goal:** complete the transition from one-off Experiments into reliable,
+reusable Evaluation Definitions and Runs while continuing to use the current
+configured-LLM target where appropriate.
 
 #### Scope
 
-1. **Separate definition from run.** An Evaluation is a stable named resource;
-   an immutable Evaluation Definition version contains Dataset binding,
-   evaluator settings/mappings, execution defaults, thresholds, and target
-   selector; an Evaluation Run is one resolved execution.
+1. **Separate definition from run.** The stable Evaluation identity and
+   immutable Definition Version half are shipped. Complete the Evaluation Run
+   half: an immutable Definition Version contains Dataset binding, evaluator
+   settings/mappings, execution defaults, thresholds, and target selector; an
+   Evaluation Run is one resolved execution.
 2. **Atomic resolution.** Before queueing, resolve and persist the exact
    Evaluation Definition version, Dataset version, target configuration,
    evaluator versions/settings, deterministic sample, Project, actor, and safe

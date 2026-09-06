@@ -49,3 +49,63 @@ BEGIN
     END IF;
 END
 $$;
+DO $$
+DECLARE
+    fixture_project_id UUID := '74000000-0000-4000-8000-000000000002';
+    fixture_evaluation_id UUID := '74000000-0000-4000-8000-000000000005';
+    version_id UUID := '74000000-0000-4000-8000-000000000006';
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM evaluation_definition_versions
+        WHERE id = version_id
+          AND (
+              dataset_version_id IS DISTINCT FROM '74000000-0000-4000-8000-000000000004'::uuid
+              OR evaluator IS DISTINCT FROM '{"kind":"exact_match"}'::jsonb
+              OR target IS DISTINCT FROM '{"kind":"configured_llm"}'::jsonb
+              OR execution_defaults IS DISTINCT FROM '{}'::jsonb
+              OR thresholds IS DISTINCT FROM '{}'::jsonb
+              OR sampling IS NOT NULL
+              OR limits IS NOT NULL
+              OR content_hash IS DISTINCT FROM repeat('b', 64)
+          )
+    ) THEN
+        RAISE EXCEPTION '0076 rewrote immutable legacy-untyped definition content or hash';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM evaluation_definition_drafts
+        WHERE evaluation_id = fixture_evaluation_id
+          AND evaluator = '{"kind":"exact_match","version":"v1"}'::jsonb
+          AND sampling = '{"strategy":"first_n","sample_size":100,"seed":0}'::jsonb
+          AND limits = '{"max_cost_usd":10,"max_duration_seconds":3600}'::jsonb
+          AND target = '{"kind":"configured_llm"}'::jsonb
+          AND execution_defaults = '{}'::jsonb
+          AND thresholds = '{}'::jsonb
+    ) THEN
+        RAISE EXCEPTION '0076 upgrade fixture did not reproduce the incomplete legacy draft';
+    END IF;
+    BEGIN
+        UPDATE evaluation_definition_versions SET version = 2 WHERE id = version_id;
+        RAISE EXCEPTION '0075 allowed immutable version mutation';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+    INSERT INTO evaluation_audit_events (organization_id, project_id, evaluation_id, actor_id, event_type)
+    VALUES ('00000000-0000-4000-8000-000000000001', fixture_project_id, fixture_evaluation_id, '74000000-0000-4000-8000-000000000001', 'created');
+    BEGIN
+        UPDATE evaluation_audit_events SET event_type = 'draft_updated' WHERE evaluation_id = fixture_evaluation_id;
+        RAISE EXCEPTION '0076 allowed evaluation audit update';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+    BEGIN
+        DELETE FROM evaluation_audit_events WHERE evaluation_id = fixture_evaluation_id;
+        RAISE EXCEPTION '0076 allowed evaluation audit delete';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+    IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'experiment' AND legacy_id = '74000000-0000-4000-8000-000000000008') THEN
+        RAISE EXCEPTION '0075 did not preserve truthful experiment legacy links';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM evaluation_legacy_links WHERE project_id = fixture_project_id AND legacy_kind = 'benchmark_suite' AND legacy_id = '74000000-0000-4000-8000-000000000007') THEN
+        RAISE EXCEPTION '0075 did not preserve truthful benchmark suite legacy links';
+    END IF;
+END $$;

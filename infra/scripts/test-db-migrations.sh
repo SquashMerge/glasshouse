@@ -263,6 +263,15 @@ run_audit_lock_order_serialization_check
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0077.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0078.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0079.assert.sql"
 
 UPGRADE_0039_DATABASE="${POSTGRES_DB}_0039_upgrade"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0039_DATABASE"
@@ -804,13 +813,48 @@ docker exec --interactive "$CONTAINER" \
   < "$ROOT/infra/scripts/test-db-migrations-0074.pre.assert.sql"
 for migration in \
   "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql" \
-  "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql"; do
+  "$ROOT/infra/db/migrations/0074_durable_project_restore_guard.sql" \
+  "$ROOT/infra/db/migrations/0075_evaluation_identity_definition_versions.sql" \
+  "$ROOT/infra/db/migrations/0075_evaluation_identity_definition_versions.sql"; do
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0075.backfill.assert.sql"
+# Insert the 0075-era snapshot before 0076 adds nullable typed version fields.
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0075.upgrade.sql"
+for migration in \
+  "$ROOT/infra/db/migrations/0076_evaluation_definition_contract_audit_integrity.sql" \
+  "$ROOT/infra/db/migrations/0076_evaluation_definition_contract_audit_integrity.sql"; do
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" < "$migration"
 done
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0074_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0074.assert.sql"
+
+UPGRADE_0079_DATABASE="${POSTGRES_DB}_0079_upgrade"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0079_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$migration" == *"/0079_"* ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0079_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0079_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0079.fixture.sql"
+for migration in \
+  "$ROOT/infra/db/migrations/0079_evaluation_slug_identity_guard.sql" \
+  "$ROOT/infra/db/migrations/0079_evaluation_slug_identity_guard.sql"; do
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0079_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$UPGRADE_0079_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0079.upgrade.assert.sql"
 
 UPGRADE_0050_NULL_ORGANIZATION_DATABASE="${POSTGRES_DB}_0050_null_organization"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0050_NULL_ORGANIZATION_DATABASE"

@@ -1,0 +1,6 @@
+INSERT INTO evaluations (id, organization_id, project_id, slug, name, created_by)
+VALUES ('74000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000001', '74000000-0000-4000-8000-000000000002', 'fixture-evaluation', 'Fixture evaluation', '74000000-0000-4000-8000-000000000001');
+INSERT INTO evaluation_definition_drafts (evaluation_id, organization_id, project_id, dataset_version_id, evaluator, target, execution_defaults, thresholds, updated_by)
+VALUES ('74000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000001', '74000000-0000-4000-8000-000000000002', '74000000-0000-4000-8000-000000000004', '{"kind":"exact_match"}', '{"kind":"configured_llm"}', '{}', '{}', '74000000-0000-4000-8000-000000000001');
+INSERT INTO evaluation_definition_versions (id, evaluation_id, organization_id, project_id, version, dataset_version_id, evaluator, target, execution_defaults, thresholds, content_hash, published_by, published_draft_revision)
+VALUES ('74000000-0000-4000-8000-000000000006', '74000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000001', '74000000-0000-4000-8000-000000000002', 1, '74000000-0000-4000-8000-000000000004', '{"kind":"exact_match"}', '{"kind":"configured_llm"}', '{}', '{}', repeat('b', 64), '74000000-0000-4000-8000-000000000001', 1);

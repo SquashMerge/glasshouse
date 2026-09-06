@@ -9,3 +9,12 @@ INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES
 
 INSERT INTO projects (id, name, slug, organization_id, status) VALUES
     ('74000000-0000-4000-8000-000000000002', 'Durable restore fixture', 'durable-restore-fixture', '00000000-0000-4000-8000-000000000001', 'archived');
+
+INSERT INTO datasets (id, project_id, slug, name) VALUES
+    ('74000000-0000-4000-8000-000000000003', '74000000-0000-4000-8000-000000000002', 'definition-data', 'Definition data');
+INSERT INTO dataset_versions (id, project_id, dataset_id, version, item_count, content_hash) VALUES
+    ('74000000-0000-4000-8000-000000000004', '74000000-0000-4000-8000-000000000002', '74000000-0000-4000-8000-000000000003', 1, 0, repeat('a', 64));
+INSERT INTO experiments (id, project_id, dataset_id, name, status, config) VALUES
+    ('74000000-0000-4000-8000-000000000008', '74000000-0000-4000-8000-000000000002', '74000000-0000-4000-8000-000000000003', 'Definition compatibility experiment', 'completed', '{}'::jsonb);
+INSERT INTO benchmark_suites (id, project_id, dataset_id, name) VALUES
+    ('74000000-0000-4000-8000-000000000007', '74000000-0000-4000-8000-000000000002', '74000000-0000-4000-8000-000000000003', 'Definition compatibility suite');
