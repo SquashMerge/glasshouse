@@ -256,7 +256,7 @@ describe("DatasetDetailPage draft lifecycle", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Add case to draft" }));
 
 		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"JSON Parse error",
+			/JSON Parse error|Unexpected token/,
 		);
 		expect(createDatasetDraft).not.toHaveBeenCalled();
 		expect(upsertDatasetDraftItem).not.toHaveBeenCalled();
