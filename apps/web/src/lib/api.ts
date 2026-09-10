@@ -347,6 +347,64 @@ export async function getEvaluationVersion(input: {
 		"getEvaluationVersion",
 	);
 }
+export interface EvaluationRun {
+	id: string;
+	organization_id: string;
+	project_id: string;
+	evaluation_id: string;
+	definition_version_id: string;
+	dataset_version_id: string;
+	dataset_id: string;
+	experiment_id: string;
+	benchmark_run_id: string | null;
+	status: "pending" | "running" | "completed" | "failed" | "cancelled";
+	requested_by_actor_id: string;
+	idempotency_key: string;
+	request_hash: string;
+	resolved_inputs_hash: string;
+	trigger_metadata: Record<string, unknown>;
+	snapshot: {
+		target: Record<string, unknown>;
+		target_version: string;
+		target_fingerprint: string;
+		evaluator: Record<string, unknown>;
+		evaluator_version: string;
+		execution_defaults: Record<string, unknown>;
+		thresholds: Record<string, unknown>;
+		sampling: Record<string, unknown>;
+		sample_identity: string;
+		ordered_item_snapshot: Array<Record<string, unknown>>;
+		resolved_inputs_hash: string;
+	};
+	created_at: string;
+	updated_at: string;
+	replayed: boolean;
+}
+export async function startEvaluationRun(input: {
+	project_id: string;
+	slug: string;
+	definition_version: number;
+	idempotency_key: string;
+	trigger_metadata?: Record<string, string | number | boolean | null>;
+}): Promise<EvaluationRun> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluations/${encodeURIComponent(input.slug)}/runs${buildQs({ project_id: input.project_id })}`,
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"idempotency-key": input.idempotency_key,
+				},
+				body: JSON.stringify({
+					definition_version: input.definition_version,
+					trigger_metadata: input.trigger_metadata ?? { source: "dashboard" },
+				}),
+			},
+		),
+		"startEvaluationRun",
+	);
+}
 export interface EvaluationLegacyLink {
 	legacy_kind: "experiment" | "benchmark_suite";
 	legacy_id: string;

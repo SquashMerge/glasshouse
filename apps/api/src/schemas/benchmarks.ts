@@ -40,6 +40,9 @@ export const BenchmarkRun = z
 export const BenchmarkRunCreate = z
 	.object({
 		project_id: Id,
+		evaluation_id: Id.optional(),
+		definition_version: z.number().int().positive().optional(),
+		idempotency_key: z.string().trim().min(1).max(200).optional(),
 		label: z.string().trim().min(1).max(160),
 		model: z.string().trim().min(1).max(200).optional(),
 		prompt_version: z.string().trim().max(200).nullable().optional(),

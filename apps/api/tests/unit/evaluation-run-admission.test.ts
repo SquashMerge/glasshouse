@@ -1,0 +1,260 @@
+import { describe, expect, it } from "bun:test";
+import {
+	admitEvaluationRun,
+	EvaluationRunRepositoryError,
+	type EvaluationRunAdmissionInput,
+} from "../../src/db/evaluation-runs";
+
+const projectId = "11111111-1111-4111-8111-111111111111";
+const organizationId = "00000000-0000-4000-8000-000000000001";
+const actorId = "22222222-2222-4222-8222-222222222222";
+const evaluationId = "33333333-3333-4333-8333-333333333333";
+const definitionVersionId = "44444444-4444-4444-8444-444444444444";
+const datasetVersionId = "55555555-5555-4555-8555-555555555555";
+const datasetId = "66666666-6666-4666-8666-666666666666";
+const experimentId = "77777777-7777-4777-8777-777777777777";
+const runId = "88888888-8888-4888-8888-888888888888";
+const itemOneId = "99999999-9999-4999-8999-999999999999";
+const itemTwoId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+const definitionRow = {
+	id: definitionVersionId,
+	evaluation_id: evaluationId,
+	evaluation_name: "Support quality",
+	organization_id: organizationId,
+	project_id: projectId,
+	version: 3,
+	dataset_version_id: datasetVersionId,
+	dataset_id: datasetId,
+	sampling: { strategy: "first_n", sample_size: 2, seed: 0 },
+	evaluator: {
+		kind: "exact_match",
+		version: "v1",
+		expected_output_path: "$.expected_output",
+		output_path: "$.output",
+	},
+	target: { kind: "configured_llm", model: "model-v1", system_prompt: null },
+	execution_defaults: { temperature: 0, max_tokens: null },
+	limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
+	thresholds: { minimum_pass_rate: null },
+};
+
+const selectedItems = [
+	{
+		id: itemOneId,
+		project_id: projectId,
+		dataset_version_id: datasetVersionId,
+		item_key: "first",
+		position: 0,
+		input: { question: "one" },
+		expected_output: { value: "one" },
+		metadata: { source: "test" },
+		source_trace_id: null,
+		source_observation_id: null,
+	},
+	{
+		id: itemTwoId,
+		project_id: projectId,
+		dataset_version_id: datasetVersionId,
+		item_key: "second",
+		position: 1,
+		input: { question: "two" },
+		expected_output: { value: "two" },
+		metadata: { source: "test" },
+		source_trace_id: null,
+		source_observation_id: null,
+	},
+];
+
+function admissionInput(
+	overrides: Partial<EvaluationRunAdmissionInput> = {},
+): EvaluationRunAdmissionInput {
+	return {
+		project_id: projectId,
+		evaluation_selector: "support-quality",
+		definition_version: 3,
+		idempotency_key: "run-once",
+		trigger_metadata: { source: "dashboard" },
+		authorization: {
+			organization_id: organizationId,
+			actor_id: actorId,
+			operation: "execute",
+		},
+		...overrides,
+	};
+}
+
+function transactionPool(options: {
+	existing?: Record<string, unknown>;
+	definition?: Record<string, unknown>;
+	items?: Record<string, unknown>[];
+}) {
+	const calls: Array<{ text: string; values: unknown[] }> = [];
+	const client = {
+		query: async (text: string, values: unknown[] = []) => {
+			calls.push({ text, values });
+			if (text.startsWith("SELECT p.id FROM projects"))
+				return { rows: [{ id: projectId }] };
+			if (text.startsWith("SELECT authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			if (text.includes("FROM evaluation_runs"))
+				return { rows: options.existing ? [options.existing] : [] };
+			if (text.includes("FROM evaluation_definition_versions"))
+				return { rows: options.definition ? [options.definition] : [] };
+			if (text.startsWith("SELECT item.* FROM dataset_version_items"))
+				return { rows: options.items ?? selectedItems };
+			if (text.startsWith("SELECT input.* FROM evaluation_run_inputs"))
+				return { rows: [] };
+			if (text.startsWith("INSERT INTO evaluation_runs"))
+				return {
+					rows: [
+						{
+							id: runId,
+							organization_id: organizationId,
+							project_id: projectId,
+							evaluation_id: evaluationId,
+							definition_version_id: definitionVersionId,
+							dataset_version_id: datasetVersionId,
+							status: "pending",
+							requested_by_actor_id: actorId,
+							idempotency_key: "run-once",
+							request_hash: values[8],
+							resolved_inputs_hash: values[9],
+							trigger_metadata: { source: "dashboard" },
+							created_at: new Date("2026-09-10T00:00:00.000Z"),
+							updated_at: new Date("2026-09-10T00:00:00.000Z"),
+						},
+					],
+				};
+			if (text.startsWith("INSERT INTO experiments"))
+				return {
+					rows: [
+						{
+							id: experimentId,
+							project_id: projectId,
+							dataset_id: datasetId,
+							status: "pending",
+						},
+					],
+				};
+			return { rows: [] };
+		},
+		release() {},
+	};
+	return { connect: async () => client, calls };
+}
+
+describe("Evaluation Run admission", () => {
+	it("resolves an immutable definition and ordered item snapshot before seeding work", async () => {
+		const db = transactionPool({ definition: definitionRow });
+
+		const result = await admitEvaluationRun(db as never, admissionInput());
+
+		expect(result).toMatchObject({
+			id: runId,
+			project_id: projectId,
+			evaluation_id: evaluationId,
+			definition_version_id: definitionVersionId,
+			dataset_version_id: datasetVersionId,
+			experiment_id: experimentId,
+			snapshot: {
+				sampling: definitionRow.sampling,
+				sample_identity: expect.any(String),
+				ordered_item_snapshot: selectedItems,
+			},
+		});
+		expect(db.calls.some((call) => call.text.includes("SERIALIZABLE"))).toBe(
+			true,
+		);
+		const definitionCall = db.calls.find((call) =>
+			call.text.includes("FROM evaluation_definition_versions"),
+		);
+		expect(definitionCall?.text).toContain("FOR UPDATE");
+		const insertRun = db.calls.find((call) =>
+			call.text.startsWith("INSERT INTO evaluation_runs"),
+		);
+		const insertExperiment = db.calls.find((call) =>
+			call.text.startsWith("INSERT INTO experiments"),
+		);
+		expect(insertRun).toBeDefined();
+		expect(insertExperiment).toBeDefined();
+		expect(db.calls.indexOf(insertRun!)).toBeLessThan(
+			db.calls.indexOf(insertExperiment!),
+		);
+	});
+
+	it("replays the same idempotency key without creating another run", async () => {
+		const firstDb = transactionPool({ definition: definitionRow });
+		const first = await admitEvaluationRun(firstDb as never, admissionInput());
+		const db = transactionPool({
+			existing: {
+				id: runId,
+				organization_id: organizationId,
+				project_id: projectId,
+				evaluation_id: evaluationId,
+				definition_version_id: definitionVersionId,
+				dataset_version_id: datasetVersionId,
+				dataset_id: datasetId,
+				experiment_id: experimentId,
+				status: "pending",
+				requested_by_actor_id: actorId,
+				idempotency_key: "run-once",
+				request_hash: first.request_hash,
+				resolved_inputs_hash: first.resolved_inputs_hash,
+				trigger_metadata: { source: "dashboard" },
+				created_at: new Date("2026-09-10T00:00:00.000Z"),
+				updated_at: new Date("2026-09-10T00:00:00.000Z"),
+			},
+		});
+
+		const result = await admitEvaluationRun(db as never, admissionInput());
+
+		expect(result).toMatchObject({ id: runId, replayed: true });
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+		expect(
+			db.calls.some((call) => call.text.startsWith("INSERT INTO experiments")),
+		).toBe(false);
+	});
+
+	it("rejects reuse of an idempotency key for a different immutable request", async () => {
+		const db = transactionPool({
+			existing: {
+				id: runId,
+				project_id: projectId,
+				request_hash: "different".repeat(8),
+			},
+		});
+
+		await expect(
+			admitEvaluationRun(
+				db as never,
+				admissionInput({ definition_version: 4 }),
+			),
+		).rejects.toMatchObject({ code: "CONFLICT" });
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+	});
+
+	it("fails closed when the definition or its Dataset Version is unavailable", async () => {
+		const db = transactionPool({ definition: undefined });
+
+		await expect(
+			admitEvaluationRun(db as never, admissionInput()),
+		).rejects.toBeInstanceOf(EvaluationRunRepositoryError);
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+		expect(
+			db.calls.some((call) => call.text.startsWith("INSERT INTO experiments")),
+		).toBe(false);
+	});
+});

@@ -54,23 +54,22 @@ that give an agent version meaning.
 | OTLP ingestion and trace viewer | Shipped | Normalized GenAI/OpenInference traces, trace list/detail/search, project-scoped live updates, and trace-focused regression coverage. |
 | Prompt management and optimization | Shipped | Immutable prompt versions, labels/provenance, guarded GEPA workflows, review-required outcomes, and lifecycle/SSE coverage. |
 | Dataset lifecycle and Evaluation identity/Definition Version foundation | Shipped | Project-scoped Dataset lifecycle/versioning; stable Evaluation identity; ETag-protected definition drafts; immutable Definition Version publication/inspection; and archive/restore/tombstone lifecycle routes. |
-| Configured-LLM Experiment execution and feedback first pass | Shipped | Experiment execution/results, benchmark runs, cancellation/recovery, and human-review workflow. Existing Experiments remain legacy ad-hoc records; immutable Evaluation Run resolution/execution remains future P3 work. |
+| Configured-LLM Experiment execution and feedback first pass | Shipped | Experiment execution/results, benchmark runs, cancellation/recovery, and human-review workflow. Existing Experiments remain legacy ad-hoc records; immutable Evaluation Run admission now resolves typed Definition Versions and sampled snapshots before execution. |
 | Project isolation and lifecycle | Shipped | Organization/Project membership, server-authorized Project selection, scoped REST/worker/SSE/telemetry behavior, governed project lifecycle, and deletion safeguards. |
 | Governance | Shipped | Project-scoped policy drafts/approval, ingress redaction, safe previews, bounded retention, and content-free audit evidence. |
 
-Shipped does **not** mean finished. P2 Dataset lifecycle and the P3.1
-Evaluation identity/Definition Version route foundation are shipped. The next
-roadmap deliberately completes Evaluation Run execution and hardens the
-Dataset, identity, and authorization contracts before adding Agent Registry
-breadth.
+Shipped does **not** mean finished. P2 Dataset lifecycle, the P3.1 Evaluation
+identity/Definition Version route foundation, and the initial P3.2 Evaluation
+Run admission path are shipped. The next roadmap hardens execution evidence,
+gates, and authorization before adding Agent Registry breadth.
 
 ## Target P2/P3 product definition (remaining work)
 
 The current product combines the P2 Dataset lifecycle and P3.1 Evaluation
-identity/Definition Version route foundation with configured-LLM Experiment
-runs and human-feedback review. Dedicated Evaluation Run resolution, execution,
-evidence, schedules, and gates remain future work; the existing Experiment
-surface is not a shipped Evaluation Run alias.
+identity/Definition Version route foundation with admitted configured-LLM
+Evaluation Runs, legacy Experiment runs, and human-feedback review. Evaluation
+Run evidence views, schedules, and gates remain future work; the existing
+Experiment surface is not a shipped Evaluation Run alias.
 
 ```text
 Authorized user in an organization / Project

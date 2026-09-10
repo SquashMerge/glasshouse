@@ -202,8 +202,10 @@ describe("durable experiment task ledger", () => {
 				experiment_id: experimentId,
 			}),
 		).resolves.toMatchObject({ dataset_item_id: snapshotItemId });
-		const itemQuery = db.calls.find((call) =>
-			call.text.startsWith("SELECT item.input, item.expected_output"),
+		const itemQuery = db.calls.find(
+			(call) =>
+				call.text.includes("FROM experiment_tasks") &&
+				call.text.includes("evaluation_run_items"),
 		);
 		expect(itemQuery?.text).toContain(
 			"item.dataset_version_id = experiment.resolved_dataset_version_id",

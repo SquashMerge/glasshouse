@@ -24,6 +24,9 @@ export const Experiment = z
 export const ExperimentCreate = z
 	.object({
 		project_id: z.string().uuid(),
+		evaluation_id: z.string().uuid().optional(),
+		definition_version: z.number().int().positive().optional(),
+		idempotency_key: z.string().trim().min(1).max(200).optional(),
 		agent_id: z.string().uuid().nullable().optional(),
 		dataset_id: z.string().uuid(),
 		name: z.string().trim().max(120).nullable().optional(),

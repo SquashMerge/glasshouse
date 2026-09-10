@@ -2,6 +2,7 @@ import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { getDataset, listPublishedDatasetItems } from "../db/datasets.js";
+import { admitEvaluationRun } from "../db/evaluation-runs.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
 	claimExperimentTask,
@@ -615,61 +616,98 @@ export function createExperimentHandlers(
 			try {
 				const body = c.req.valid("json");
 				const db = deps.pool();
-				await deps.getDataset(db, {
-					project_id: body.project_id,
-					id: body.dataset_id,
-					authorization: projectAuthorization(trustedTenant(c), "execute"),
-				});
-				const dataset = await deps.listPublishedDatasetItems(db, {
-					project_id: body.project_id,
-					dataset_id: body.dataset_id,
-					authorization: projectAuthorization(trustedTenant(c), "execute"),
-				});
 				if (
-					!dataset.items.length ||
-					dataset.items.some((item) => item.expected_output === null)
+					typeof body.evaluation_id !== "string" ||
+					typeof body.definition_version !== "number" ||
+					typeof body.idempotency_key !== "string"
 				)
 					throw new ExperimentRepositoryError(
 						"CONFLICT",
-						"Every dataset item needs expected output for this evaluator",
+						"The compatibility route requires evaluation_id, definition_version, and idempotency_key",
 					);
-				const row = await deps.createExperiment(db, {
-					...body,
+				if (
+					Object.keys(body.config).some((key) =>
+						["model", "system_prompt", "evaluator", "temperature"].includes(
+							key,
+						),
+					)
+				)
+					throw new ExperimentRepositoryError(
+						"CONFLICT",
+						"Experiment target configuration must come from the pinned Evaluation Definition Version",
+					);
+				const run = await admitEvaluationRun(db, {
+					project_id: body.project_id,
+					evaluation_selector: body.evaluation_id,
+					definition_version: body.definition_version,
+					idempotency_key: body.idempotency_key,
+					expected_dataset_id: body.dataset_id,
 					authorization: projectAuthorization(trustedTenant(c), "execute"),
 				});
-				const controller = new AbortController();
-				activeExperiments.set(
-					experimentKey(body.project_id, row.id),
-					controller,
-				);
-				void executeExperiment(
-					deps,
-					{
-						project_id: body.project_id,
-						experiment_id: row.id,
-						dataset_id: body.dataset_id,
-						config: body.config,
-					},
-					controller.signal,
-				)
-					.catch(async (cause) => {
-						logger.error("evaluation.failed", cause, {
-							experiment_id: row.id,
-							project_id: body.project_id,
-						});
-						await deps.updateExperiment(deps.pool(), {
-							project_id: body.project_id,
-							id: row.id,
-							status: controller.signal.aborted ? "cancelled" : "failed",
-							if_status: controller.signal.aborted
-								? ["pending", "running"]
-								: ["pending", "running"],
-						});
-					})
-					.finally(() =>
-						activeExperiments.delete(experimentKey(body.project_id, row.id)),
+				if (!run.replayed) {
+					const controller = new AbortController();
+					activeExperiments.set(
+						experimentKey(body.project_id, run.experiment_id),
+						controller,
 					);
-				return c.json(row, 201);
+					void executeExperiment(
+						deps,
+						{
+							project_id: body.project_id,
+							experiment_id: run.experiment_id,
+							dataset_id: run.dataset_id,
+							config: {
+								model: run.snapshot.target.model,
+								system_prompt: run.snapshot.target.system_prompt,
+								evaluator: run.snapshot.evaluator.kind,
+								temperature: run.snapshot.execution_defaults.temperature,
+								max_tokens: run.snapshot.execution_defaults.max_tokens,
+							},
+						},
+						controller.signal,
+					)
+						.catch(async (cause) => {
+							logger.error("evaluation.failed", cause, {
+								experiment_id: run.experiment_id,
+								project_id: body.project_id,
+							});
+							await deps.updateExperiment(deps.pool(), {
+								project_id: body.project_id,
+								id: run.experiment_id,
+								status: controller.signal.aborted ? "cancelled" : "failed",
+								if_status: controller.signal.aborted
+									? ["pending", "running"]
+									: ["pending", "running"],
+							});
+						})
+						.finally(() =>
+							activeExperiments.delete(
+								experimentKey(body.project_id, run.experiment_id),
+							),
+						);
+				}
+				return c.json(
+					{
+						id: run.experiment_id,
+						project_id: run.project_id,
+						agent_id: null,
+						dataset_id: run.dataset_id,
+						resolved_dataset_version_id: run.dataset_version_id,
+						dataset_input_binding: "versioned" as const,
+						name: body.name ?? null,
+						status: run.status,
+						config: {
+							model: run.snapshot.target.model,
+							system_prompt: run.snapshot.target.system_prompt,
+							evaluator: run.snapshot.evaluator.kind,
+							temperature: run.snapshot.execution_defaults.temperature,
+							max_tokens: run.snapshot.execution_defaults.max_tokens,
+						},
+						created_at: run.created_at,
+						updated_at: run.updated_at,
+					},
+					201,
+				);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}
