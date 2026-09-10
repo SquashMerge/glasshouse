@@ -40,10 +40,13 @@ export const BenchmarkRun = z
 export const BenchmarkRunCreate = z
 	.object({
 		project_id: Id,
+		evaluation_id: Id,
+		definition_version: z.number().int().positive(),
+		idempotency_key: z.string().trim().min(1).max(200),
 		label: z.string().trim().min(1).max(160),
 		model: z.string().trim().min(1).max(200).optional(),
 		prompt_version: z.string().trim().max(200).nullable().optional(),
-		config: z.record(z.string(), z.unknown()).default({}),
+		config: z.object({}).strict().default({}),
 	})
 	.strict()
 	.openapi("BenchmarkRunCreate");

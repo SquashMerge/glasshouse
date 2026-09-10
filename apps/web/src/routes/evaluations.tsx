@@ -5,7 +5,6 @@ import {
 	archiveEvaluation,
 	cancelExperiment,
 	createEvaluation,
-	createExperiment,
 	experimentEventsUrl,
 	experimentResults,
 	experimentSummary,
@@ -18,8 +17,8 @@ import {
 	listEvaluationLegacyLinks,
 	listEvaluationVersions,
 	getEvaluationVersion,
+	startEvaluationRun,
 	listDatasetVersions,
-	listPublishedDatasetItems,
 	publishEvaluationDraft,
 	restoreEvaluation,
 	tombstoneEvaluation,
@@ -62,29 +61,56 @@ export function EvaluationsPage() {
 		queryFn: () => listEvaluationLegacyLinks(selectedProjectId!),
 		enabled: Boolean(selectedProjectId),
 	});
-	const [runDatasetId, setRunDatasetId] = React.useState("");
 	const [definitionDatasetId, setDefinitionDatasetId] = React.useState("");
 	const [definitionDatasetVersionId, setDefinitionDatasetVersionId] =
 		React.useState("");
+	const [runEvaluationSlug, setRunEvaluationSlug] = React.useState("");
+	const [runDefinitionVersion, setRunDefinitionVersion] = React.useState("");
+	const [runIdempotencyKey, setRunIdempotencyKey] = React.useState<
+		string | null
+	>(null);
 	React.useEffect(() => {
-		setRunDatasetId("");
 		setDefinitionDatasetId("");
 		setDefinitionDatasetVersionId("");
+		setRunEvaluationSlug("");
+		setRunDefinitionVersion("");
+		setRunIdempotencyKey(null);
 	}, [selectedProjectId]);
-	const selectedRunDataset = datasets.data?.items.find(
-		(dataset) => dataset.id === runDatasetId,
-	);
 	const selectedDefinitionDataset = datasets.data?.items.find(
 		(dataset) => dataset.id === definitionDatasetId,
 	);
-	const selectedItems = useQuery({
-		queryKey: ["published-dataset-items", selectedProjectId, runDatasetId],
+	const selectedRunEvaluation = evaluations.data?.items.find(
+		(evaluation) => evaluation.slug === runEvaluationSlug,
+	);
+	const runVersions = useQuery({
+		queryKey: ["run-evaluation-versions", selectedProjectId, runEvaluationSlug],
 		queryFn: () =>
-			listPublishedDatasetItems({
+			listEvaluationVersions({
 				project_id: selectedProjectId!,
-				id: runDatasetId,
+				slug: runEvaluationSlug,
 			}),
-		enabled: Boolean(selectedProjectId && selectedRunDataset),
+		enabled: Boolean(selectedProjectId && selectedRunEvaluation),
+	});
+	const runVersionNumber = Number(runDefinitionVersion);
+	const runDefinition = useQuery({
+		queryKey: [
+			"run-evaluation-version",
+			selectedProjectId,
+			runEvaluationSlug,
+			runVersionNumber,
+		],
+		queryFn: () =>
+			getEvaluationVersion({
+				project_id: selectedProjectId!,
+				slug: runEvaluationSlug,
+				version: runVersionNumber,
+			}),
+		enabled: Boolean(
+			selectedProjectId &&
+				selectedRunEvaluation &&
+				Number.isInteger(runVersionNumber) &&
+				runVersionNumber > 0,
+		),
 	});
 	const selectedDefinitionVersions = useQuery({
 		queryKey: [
@@ -103,17 +129,12 @@ export function EvaluationsPage() {
 	const [evaluationSlug, setEvaluationSlug] = React.useState("");
 	const [definitionPending, setDefinitionPending] = React.useState(false);
 	const [definitionError, setDefinitionError] = React.useState("");
-	const [name, setName] = React.useState("");
 	const [definitionModel, setDefinitionModel] = React.useState("");
 	const [definitionSystemPrompt, setDefinitionSystemPrompt] =
 		React.useState("");
 	const [definitionEvaluator, setDefinitionEvaluator] =
 		React.useState("exact_match");
 	const [definitionTemperature, setDefinitionTemperature] = React.useState("0");
-	const [runModel, setRunModel] = React.useState("");
-	const [runSystemPrompt, setRunSystemPrompt] = React.useState("");
-	const [runEvaluator, setRunEvaluator] = React.useState("exact_match");
-	const [runTemperature, setRunTemperature] = React.useState("0");
 	const [error, setError] = React.useState("");
 	const [pending, setPending] = React.useState(false);
 	const [lifecycleError, setLifecycleError] = React.useState("");
@@ -124,14 +145,10 @@ export function EvaluationsPage() {
 		string | null
 	>(null);
 	const [tombstoneConfirmation, setTombstoneConfirmation] = React.useState("");
-	const missing =
-		selectedItems.data?.items.filter((item) => !item.expected_output).length ??
-		0;
-	const selectedItemsValid = Boolean(
-		selectedRunDataset &&
-			selectedItems.data &&
-			selectedItems.data.items.length > 0 &&
-			missing === 0,
+	const selectedRunValid = Boolean(
+		selectedRunEvaluation &&
+			runDefinition.data?.definition_contract === "v1" &&
+			!runDefinition.isError,
 	);
 	const selectedDefinitionDatasetVersion = Boolean(
 		selectedDefinitionVersions.data?.items.some(
@@ -149,21 +166,30 @@ export function EvaluationsPage() {
 		setDefinitionDatasetVersionId("");
 	}
 	async function run() {
-		if (!canCurate || !selectedItemsValid || pending) return;
+		if (
+			!canCurate ||
+			!selectedRunValid ||
+			!runEvaluationSlug ||
+			!Number.isInteger(runVersionNumber) ||
+			pending
+		)
+			return;
 		try {
 			setError("");
 			setPending(true);
-			await createExperiment({
+			await startEvaluationRun({
 				project_id: selectedProjectId!,
-				dataset_id: runDatasetId,
-				name,
-				config: {
-					...(runModel ? { model: runModel } : {}),
-					...(runSystemPrompt ? { system_prompt: runSystemPrompt } : {}),
-					evaluator: runEvaluator,
-					temperature: Number(runTemperature),
-				},
+				slug: runEvaluationSlug,
+				definition_version: runVersionNumber,
+				idempotency_key:
+					runIdempotencyKey ??
+					(() => {
+						const key = crypto.randomUUID();
+						setRunIdempotencyKey(key);
+						return key;
+					})(),
 			});
+			setRunIdempotencyKey(null);
 			await client.invalidateQueries({
 				queryKey: ["experiments", selectedProjectId],
 			});
@@ -628,90 +654,71 @@ export function EvaluationsPage() {
 				) : null}
 			</section>
 			{canCurate && (
-				<section className="grid gap-2 rounded border p-4">
-					<h2 className="text-lg font-medium">Ad-hoc run</h2>
+				<section className="grid gap-3 rounded border p-4">
+					<h2 className="text-lg font-medium">Start pinned evaluation run</h2>
+					<label className="block space-y-2 text-sm" htmlFor="run-evaluation">
+						Evaluation
+						<Select
+							id="run-evaluation"
+							value={runEvaluationSlug}
+							onChange={(event) => {
+								setRunEvaluationSlug(event.target.value);
+								setRunDefinitionVersion("");
+							}}
+						>
+							<option value="">Choose Evaluation</option>
+							{evaluations.data?.items
+								.filter((item) => !item.archived_at && !item.tombstoned_at)
+								.map((item) => (
+									<option key={item.id} value={item.slug}>
+										{item.name} ({item.slug})
+									</option>
+								))}
+						</Select>
+					</label>
 					<label
 						className="block space-y-2 text-sm"
-						htmlFor="evaluation-dataset"
+						htmlFor="run-definition-version"
 					>
-						Dataset
+						Immutable Definition Version
 						<Select
-							id="evaluation-dataset"
-							value={runDatasetId}
-							onChange={(event) => setRunDatasetId(event.target.value)}
+							id="run-definition-version"
+							value={runDefinitionVersion}
+							disabled={!selectedRunEvaluation || runVersions.isLoading}
+							onChange={(event) => setRunDefinitionVersion(event.target.value)}
 						>
-							<option value="">Choose dataset</option>
-							{datasets.data?.items.map((dataset) => (
-								<option key={dataset.id} value={dataset.id}>
-									{dataset.name}
+							<option value="">Choose version</option>
+							{runVersions.data?.items.map((item) => (
+								<option key={item.id} value={item.version}>
+									Version {item.version} ({item.definition_contract})
 								</option>
 							))}
 						</Select>
 					</label>
-					<label className="block space-y-2 text-sm">
-						Evaluation name
-						<Input
-							value={name}
-							onChange={(event) => setName(event.target.value)}
-						/>
-					</label>
-					<label className="block space-y-2 text-sm">
-						Model (optional)
-						<Input
-							value={runModel}
-							onChange={(event) => setRunModel(event.target.value)}
-						/>
-					</label>
-					<label className="block space-y-2 text-sm">
-						System prompt (optional)
-						<Input
-							value={runSystemPrompt}
-							onChange={(event) => setRunSystemPrompt(event.target.value)}
-						/>
-					</label>
-					<label
-						className="block space-y-2 text-sm"
-						htmlFor="evaluation-evaluator"
-					>
-						Evaluator
-						<Select
-							id="evaluation-evaluator"
-							value={runEvaluator}
-							onChange={(event) => setRunEvaluator(event.target.value)}
+					{runDefinition.data && (
+						<div
+							className="rounded bg-muted/40 p-3 text-sm"
+							aria-label="Pinned run inputs"
 						>
-							<option value="exact_match">Exact match</option>
-							<option value="contains">Contains</option>
-						</Select>
-					</label>
-					<label className="block space-y-2 text-sm">
-						Temperature
-						<Input
-							type="number"
-							min="0"
-							max="2"
-							step="0.1"
-							value={runTemperature}
-							onChange={(event) => setRunTemperature(event.target.value)}
-						/>
-					</label>
-					{missing > 0 && (
-						<p className="text-sm text-destructive">
-							{missing} dataset case{missing === 1 ? "" : "s"} need expected
-							output before this evaluation can run.
-						</p>
+							<p className="font-medium">
+								Pinned Definition Version {runDefinition.data.version}
+							</p>
+							<p>Dataset Version: {runDefinition.data.dataset_version_id}</p>
+							<p>
+								Sampling:{" "}
+								{runDefinition.data.sampling?.strategy ?? "unavailable"} /{" "}
+								{runDefinition.data.sampling?.sample_size ?? "unavailable"}{" "}
+								items
+							</p>
+						</div>
 					)}
-					{selectedRunDataset && selectedItems.data?.items.length === 0 && (
-						<p className="text-sm text-destructive">
-							Publish at least one dataset case before this evaluation can run.
-						</p>
-					)}
-					{selectedRunDataset && selectedItems.isError && (
+					{runDefinition.isError && (
 						<p className="text-sm text-destructive" role="alert">
-							Unable to load published dataset items.{" "}
+							Unable to load the selected immutable Definition Version.{" "}
 							<Button
 								variant="outline"
 								size="sm"
-								onClick={() => void selectedItems.refetch()}
+								onClick={() => void runDefinition.refetch()}
 							>
 								Retry
 							</Button>
@@ -723,7 +730,7 @@ export function EvaluationsPage() {
 						</p>
 					)}
 					<Button
-						disabled={!selectedItemsValid || pending}
+						disabled={!selectedRunValid || pending}
 						onClick={() => void run()}
 					>
 						{pending ? "Starting..." : "Run evaluation"}

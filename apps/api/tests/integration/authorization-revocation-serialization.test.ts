@@ -383,6 +383,24 @@ async function seedExecutionExperiment(pool: Pool) {
 	};
 }
 
+test.skipIf(!databaseUrl)(
+	"an unadmitted experiment can be ordinarily deleted",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+		const fixture = await seedExecutionExperiment(pool);
+		try {
+			const deleted = await pool.query<{ id: string }>(
+				"DELETE FROM experiments WHERE id = $1 RETURNING id",
+				[fixture.experimentId],
+			);
+			expect(deleted.rows).toEqual([{ id: fixture.experimentId }]);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
 async function seedProjectAuditLockRace(pool: Pool) {
 	const organizationId = randomUUID();
 	const projectId = randomUUID();

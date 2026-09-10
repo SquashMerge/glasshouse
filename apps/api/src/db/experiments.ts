@@ -433,14 +433,14 @@ export async function claimExperimentTask(
 			}
 			if (access.row.status !== "running") return null;
 			const candidate = await client.query(
-				"SELECT t.id, t.dataset_item_id, t.dataset_version_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND t.project_id=$2 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
+				"SELECT t.id, t.dataset_item_id, t.dataset_version_item_id, t.evaluation_run_item_id FROM experiment_tasks t WHERE t.experiment_id=$1 AND t.project_id=$2 AND (t.status='pending' OR (t.status='running' AND t.lease_expires_at <= now())) ORDER BY t.created_at ASC FOR UPDATE OF t SKIP LOCKED LIMIT 1",
 				[input.experiment_id, access.project_id],
 			);
 			const task = candidate.rows[0] as Row | undefined;
 			if (!task) return null;
 			const leaseToken = input.lease_token ?? randomUUID();
 			const claimed = await client.query(
-				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 AND project_id=$4 RETURNING id, dataset_item_id, dataset_version_item_id, lease_token",
+				"UPDATE experiment_tasks SET status='running', lease_token=$2::uuid, lease_expires_at=now() + ($3::integer * interval '1 second'), claimed_at=coalesce(claimed_at,now()), attempt_count=attempt_count+1, updated_at=now() WHERE id=$1 AND project_id=$4 RETURNING id, dataset_item_id, dataset_version_item_id, evaluation_run_item_id, lease_token",
 				[
 					text(task, "id"),
 					leaseToken,
@@ -451,7 +451,7 @@ export async function claimExperimentTask(
 			const claimedTask = claimed.rows[0] as Row | undefined;
 			if (!claimedTask) return null;
 			const item = await client.query(
-				"SELECT item.input, item.expected_output FROM experiment_tasks task JOIN experiments experiment ON experiment.id = task.experiment_id AND experiment.project_id = task.project_id JOIN dataset_version_items item ON item.id = task.dataset_version_item_id AND item.project_id = task.project_id AND item.dataset_version_id = experiment.resolved_dataset_version_id WHERE task.id = $1 AND task.project_id = $3 AND experiment.dataset_input_binding = 'versioned' UNION ALL SELECT input, expected_output FROM dataset_items WHERE id = $2 AND project_id = $3",
+				"SELECT CASE WHEN run_item.id IS NOT NULL THEN run_item.input ELSE item.input END AS input, CASE WHEN run_item.id IS NOT NULL THEN run_item.expected_output ELSE item.expected_output END AS expected_output FROM experiment_tasks task JOIN experiments experiment ON experiment.id = task.experiment_id AND experiment.project_id = task.project_id LEFT JOIN evaluation_run_items run_item ON run_item.id = task.evaluation_run_item_id AND run_item.run_id = experiment.evaluation_run_id AND run_item.project_id = task.project_id LEFT JOIN dataset_version_items item ON item.id = task.dataset_version_item_id AND item.project_id = task.project_id AND item.dataset_version_id = experiment.resolved_dataset_version_id WHERE task.id = $1 AND task.project_id = $3 AND experiment.dataset_input_binding = 'versioned' UNION ALL SELECT input, expected_output FROM dataset_items WHERE id = $2 AND project_id = $3",
 				[
 					text(claimedTask, "id"),
 					claimedTask.dataset_item_id ?? null,
@@ -541,17 +541,18 @@ export async function finalizeExperimentTask(
 			}
 			if (access.row.status !== "running") return false;
 			const finalized = await client.query(
-				"UPDATE experiment_tasks SET status=$4, lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id",
+				"UPDATE experiment_tasks SET status=$4, lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id, evaluation_run_item_id",
 				[input.task_id, input.experiment_id, input.lease_token, input.status],
 			);
 			const task = finalized.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),(SELECT project_id FROM experiments WHERE id=$1),$1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) ON CONFLICT DO NOTHING",
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, evaluation_run_item_id, agent_version, output, scores, duration_ms, status) VALUES (gen_random_uuid(),(SELECT project_id FROM experiments WHERE id=$1),$1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9) ON CONFLICT DO NOTHING",
 				[
 					text(task, "experiment_id"),
 					task.dataset_item_id ?? null,
 					task.dataset_version_item_id ?? null,
+					task.evaluation_run_item_id ?? null,
 					input.agent_version ?? null,
 					input.output == null ? null : JSON.stringify(input.output),
 					JSON.stringify(input.scores),
@@ -586,17 +587,18 @@ export async function reconcileUnknownExperimentTaskProviderDispatch(
 				return false;
 			}
 			const failed = await client.query(
-				"UPDATE experiment_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id",
+				"UPDATE experiment_tasks SET status='failed', lease_token=NULL, lease_expires_at=NULL, completed_at=now(), updated_at=now() WHERE id=$1 AND experiment_id=$2 AND lease_token=$3::uuid AND status='running' RETURNING experiment_id, dataset_item_id, dataset_version_item_id, evaluation_run_item_id",
 				[input.task_id, input.experiment_id, input.lease_token],
 			);
 			const task = failed.rows[0] as Row | undefined;
 			if (!task) return false;
 			await client.query(
-				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, output, scores, status) VALUES (gen_random_uuid(), (SELECT project_id FROM experiments WHERE id=$1), $1, $2, $3, NULL, '{}'::jsonb, 'failed') ON CONFLICT DO NOTHING",
+				"INSERT INTO experiment_results (id, project_id, experiment_id, dataset_item_id, dataset_version_item_id, evaluation_run_item_id, output, scores, status) VALUES (gen_random_uuid(), (SELECT project_id FROM experiments WHERE id=$1), $1, $2, $3, $4, NULL, '{}'::jsonb, 'failed') ON CONFLICT DO NOTHING",
 				[
 					text(task, "experiment_id"),
 					task.dataset_item_id ?? null,
 					task.dataset_version_item_id ?? null,
+					task.evaluation_run_item_id ?? null,
 				],
 			);
 			return true;
