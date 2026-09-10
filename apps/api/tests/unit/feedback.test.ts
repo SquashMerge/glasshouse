@@ -42,6 +42,62 @@ describe("feedback contract", () => {
 		expect(FeedbackCreate.safeParse({ ...base, value: 0 }).success).toBe(false);
 	});
 
+	it("persists and returns a typed comment from score metadata", async () => {
+		const comment = "Helpful first-pass trace";
+		const now = new Date("2026-09-10T12:00:00.000Z");
+		const inserted: unknown[][] = [];
+		const row = {
+			id: "33333333-3333-4333-8333-333333333333",
+			project_id: base.project_id,
+			trace_id: base.trace_id,
+			observation_id: null,
+			value: 1,
+			metadata: {
+				feedback: { schema_version: 1, sentiment: "positive", comment },
+			},
+			created_at: now,
+			status: "reviewed",
+			note: null,
+			dataset_id: null,
+			dataset_item_id: null,
+			dataset_draft_item_id: null,
+			updated_at: now,
+		};
+		const client = {
+			query: async (sql: string, values?: unknown[]) => {
+				if (sql.includes("FROM projects p WHERE"))
+					return { rows: [{ id: base.project_id }] };
+				if (sql.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (sql.includes("FROM feedback_idempotency")) return { rows: [] };
+				if (sql.startsWith("INSERT INTO scores")) {
+					inserted.push(values ?? []);
+					return { rows: [] };
+				}
+				if (sql.includes("JOIN feedback_reviews")) return { rows: [row] };
+				return { rows: [] };
+			},
+			release() {},
+		};
+		const result = await createFeedback(
+			{ connect: async () => client } as never,
+			{
+				...base,
+				value: 1,
+				metadata: {
+					feedback: { schema_version: 1, sentiment: "positive", comment },
+				},
+				idempotency_key: "typed-comment",
+				authorization,
+			},
+		);
+
+		expect(JSON.parse(String(inserted[0]?.[5]))).toEqual({
+			feedback: { schema_version: 1, sentiment: "positive", comment },
+		});
+		expect(result.comment).toBe(comment);
+	});
+
 	it("uses canonical request fields for idempotency", () => {
 		expect(requestHash(base)).toBe(requestHash({ ...base }));
 		expect(requestHash(base)).not.toBe(
