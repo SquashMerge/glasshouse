@@ -343,19 +343,6 @@ function itemSnapshot(item: Row) {
 	};
 }
 
-function admittedItemSnapshot(item: Row) {
-	return {
-		dataset_version_item_id: text(item, "dataset_version_item_id"),
-		item_key: text(item, "item_key"),
-		position: Number(item.position),
-		input: object(item.input, "input"),
-		expected_output: item.expected_output ?? null,
-		metadata: object(item.metadata ?? {}, "metadata"),
-		source_trace_id: item.source_trace_id ?? null,
-		source_observation_id: item.source_observation_id ?? null,
-	};
-}
-
 export async function admitEvaluationRun(
 	db: Transactional,
 	input: EvaluationRunAdmissionInput,
@@ -400,41 +387,28 @@ export async function admitEvaluationRun(
 					"SELECT input.* FROM evaluation_run_inputs input WHERE input.run_id=$1 AND input.project_id=$2",
 					[text(row, "id"), input.project_id],
 				);
-				const itemRows = await client.query(
-					"SELECT item.* FROM evaluation_run_items item WHERE item.run_id=$1 AND item.project_id=$2 ORDER BY item.position ASC, item.item_key ASC, item.id ASC",
-					[text(row, "id"), input.project_id],
-				);
 				const snapshotRow = snapshotRows.rows[0] as Row | undefined;
-				const snapshot = snapshotRow
-					? ({
-							target: object(snapshotRow.target, "target"),
-							target_version: text(snapshotRow, "target_version"),
-							target_fingerprint: text(snapshotRow, "target_fingerprint"),
-							evaluator: object(snapshotRow.evaluator, "evaluator"),
-							evaluator_version: text(snapshotRow, "evaluator_version"),
-							execution_defaults: object(
-								snapshotRow.execution_defaults,
-								"execution_defaults",
-							),
-							thresholds: object(snapshotRow.thresholds, "thresholds"),
-							sampling: object(snapshotRow.sampling, "sampling"),
-							sample_identity: text(snapshotRow, "sample_identity"),
-							ordered_item_snapshot: itemRows.rows.map(admittedItemSnapshot),
-							resolved_inputs_hash: text(snapshotRow, "resolved_inputs_hash"),
-						} satisfies ResolvedSnapshot)
-					: ({
-							target: {},
-							target_version: "unknown",
-							target_fingerprint: "",
-							evaluator: {},
-							evaluator_version: "unknown",
-							execution_defaults: {},
-							thresholds: {},
-							sampling: {},
-							sample_identity: "",
-							ordered_item_snapshot: itemRows.rows,
-							resolved_inputs_hash: text(row, "resolved_inputs_hash"),
-						} satisfies ResolvedSnapshot);
+				if (!snapshotRow || !Array.isArray(snapshotRow.ordered_item_snapshot))
+					throw new EvaluationRunRepositoryError(
+						"INTERNAL",
+						"Evaluation Run input snapshot is unavailable",
+					);
+				const snapshot: ResolvedSnapshot = {
+					target: object(snapshotRow.target, "target"),
+					target_version: text(snapshotRow, "target_version"),
+					target_fingerprint: text(snapshotRow, "target_fingerprint"),
+					evaluator: object(snapshotRow.evaluator, "evaluator"),
+					evaluator_version: text(snapshotRow, "evaluator_version"),
+					execution_defaults: object(
+						snapshotRow.execution_defaults,
+						"execution_defaults",
+					),
+					thresholds: object(snapshotRow.thresholds, "thresholds"),
+					sampling: object(snapshotRow.sampling, "sampling"),
+					sample_identity: text(snapshotRow, "sample_identity"),
+					ordered_item_snapshot: snapshotRow.ordered_item_snapshot,
+					resolved_inputs_hash: text(snapshotRow, "resolved_inputs_hash"),
+				};
 				return runFromRow(row, input, snapshot, true);
 			}
 
@@ -531,6 +505,10 @@ export async function admitEvaluationRun(
 				created_at: new Date(),
 				updated_at: new Date(),
 			};
+			await client.query(
+				"SELECT set_config('astraea.evaluation_run_admission_run_id', $1, true)",
+				[runId],
+			);
 			await client.query(
 				"INSERT INTO evaluation_run_inputs (run_id, organization_id, project_id, target, target_version, target_fingerprint, evaluator, evaluator_version, execution_defaults, thresholds, sampling, sample_identity, ordered_item_snapshot, resolved_inputs_hash) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14)",
 				[

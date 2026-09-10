@@ -136,16 +136,30 @@ END $$;
 CREATE OR REPLACE FUNCTION prevent_evaluation_run_input_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF current_setting('astraea.evaluation_run_admission_run_id', true)
+            IS DISTINCT FROM NEW.run_id::text
+            OR EXISTS (
+                SELECT 1
+                FROM experiments experiment
+                WHERE experiment.evaluation_run_id = NEW.run_id
+                  AND experiment.project_id = NEW.project_id
+            ) THEN
+            RAISE EXCEPTION 'evaluation run inputs can only be admitted once'
+                USING ERRCODE = '55000';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF TG_OP = 'DELETE' AND project_deletion_is_authorized(OLD.project_id) THEN RETURN OLD; END IF;
     RAISE EXCEPTION 'evaluation run inputs are immutable' USING ERRCODE = '55000';
 END $$;
 DROP TRIGGER IF EXISTS evaluation_run_inputs_immutable ON evaluation_run_inputs;
 CREATE TRIGGER evaluation_run_inputs_immutable
-BEFORE UPDATE OR DELETE ON evaluation_run_inputs
+BEFORE INSERT OR UPDATE OR DELETE ON evaluation_run_inputs
 FOR EACH ROW EXECUTE FUNCTION prevent_evaluation_run_input_mutation();
 DROP TRIGGER IF EXISTS evaluation_run_items_immutable ON evaluation_run_items;
 CREATE TRIGGER evaluation_run_items_immutable
-BEFORE UPDATE OR DELETE ON evaluation_run_items
+BEFORE INSERT OR UPDATE OR DELETE ON evaluation_run_items
 FOR EACH ROW EXECUTE FUNCTION prevent_evaluation_run_input_mutation();
 
 CREATE OR REPLACE FUNCTION prevent_evaluation_run_contract_mutation()
@@ -183,6 +197,7 @@ BEGIN
         NEW.resolved_dataset_version_id IS DISTINCT FROM OLD.resolved_dataset_version_id OR
         NEW.dataset_input_binding IS DISTINCT FROM OLD.dataset_input_binding OR
         NEW.config IS DISTINCT FROM OLD.config OR
+        NEW.requested_by_actor_id IS DISTINCT FROM OLD.requested_by_actor_id OR
         NEW.evaluation_run_id IS DISTINCT FROM OLD.evaluation_run_id
     ) THEN
         RAISE EXCEPTION 'evaluation run experiment contract is immutable' USING ERRCODE = '55000';

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
 	admitEvaluationRun,
 	EvaluationRunRepositoryError,
@@ -66,6 +68,14 @@ const selectedItems = [
 	},
 ];
 
+const migration = readFileSync(
+	resolve(
+		import.meta.dir,
+		"../../../../infra/db/migrations/0080_evaluation_run_admission.sql",
+	),
+	"utf8",
+);
+
 function admissionInput(
 	overrides: Partial<EvaluationRunAdmissionInput> = {},
 ): EvaluationRunAdmissionInput {
@@ -86,6 +96,8 @@ function admissionInput(
 
 function transactionPool(options: {
 	existing?: Record<string, unknown>;
+	snapshot?: Record<string, unknown>;
+	admittedItems?: Record<string, unknown>[];
 	definition?: Record<string, unknown>;
 	items?: Record<string, unknown>[];
 }) {
@@ -104,7 +116,9 @@ function transactionPool(options: {
 			if (text.startsWith("SELECT item.* FROM dataset_version_items"))
 				return { rows: options.items ?? selectedItems };
 			if (text.startsWith("SELECT input.* FROM evaluation_run_inputs"))
-				return { rows: [] };
+				return { rows: options.snapshot ? [options.snapshot] : [] };
+			if (text.startsWith("SELECT item.* FROM evaluation_run_items"))
+				return { rows: options.admittedItems ?? [] };
 			if (text.startsWith("INSERT INTO evaluation_runs"))
 				return {
 					rows: [
@@ -183,10 +197,21 @@ describe("Evaluation Run admission", () => {
 		);
 	});
 
-	it("replays the same idempotency key without creating another run", async () => {
+	it("replays the identical persisted snapshot without creating another run", async () => {
 		const firstDb = transactionPool({ definition: definitionRow });
 		const first = await admitEvaluationRun(firstDb as never, admissionInput());
+		const persistedInputs = firstDb.calls.find((call) =>
+			call.text.startsWith("INSERT INTO evaluation_run_inputs"),
+		)!.values;
 		const db = transactionPool({
+			snapshot: {
+				...first.snapshot,
+				ordered_item_snapshot: JSON.parse(persistedInputs[12] as string),
+			},
+			admittedItems: selectedItems.map(({ id, ...item }) => ({
+				...item,
+				dataset_version_item_id: id,
+			})),
 			existing: {
 				id: runId,
 				organization_id: organizationId,
@@ -210,6 +235,15 @@ describe("Evaluation Run admission", () => {
 		const result = await admitEvaluationRun(db as never, admissionInput());
 
 		expect(result).toMatchObject({ id: runId, replayed: true });
+		expect(result.snapshot).toEqual(first.snapshot);
+		expect(
+			db.calls.some(
+				(call) =>
+					call.text.includes("FROM evaluation_definition_versions") ||
+					call.text.includes("FROM dataset_version_items") ||
+					call.text.includes("FROM dataset_items"),
+			),
+		).toBe(false);
 		expect(
 			db.calls.some((call) =>
 				call.text.startsWith("INSERT INTO evaluation_runs"),
@@ -218,6 +252,17 @@ describe("Evaluation Run admission", () => {
 		expect(
 			db.calls.some((call) => call.text.startsWith("INSERT INTO experiments")),
 		).toBe(false);
+	});
+
+	it("fails closed when a replay has no persisted input snapshot", async () => {
+		const first = await admitEvaluationRun(
+			transactionPool({ definition: definitionRow }) as never,
+			admissionInput(),
+		);
+		const db = transactionPool({ existing: { ...first } });
+		await expect(
+			admitEvaluationRun(db as never, admissionInput()),
+		).rejects.toMatchObject({ code: "INTERNAL" });
 	});
 
 	it("rejects reuse of an idempotency key for a different immutable request", async () => {
@@ -256,5 +301,20 @@ describe("Evaluation Run admission", () => {
 		expect(
 			db.calls.some((call) => call.text.startsWith("INSERT INTO experiments")),
 		).toBe(false);
+	});
+
+	it("installs database fences for immutable run items and linked requester", () => {
+		expect(migration).toContain(
+			"current_setting('astraea.evaluation_run_admission_run_id', true)",
+		);
+		expect(migration).toContain(
+			"NEW.requested_by_actor_id IS DISTINCT FROM OLD.requested_by_actor_id",
+		);
+		expect(migration).toContain(
+			"BEFORE INSERT OR UPDATE OR DELETE ON evaluation_run_inputs",
+		);
+		expect(migration).toContain(
+			"BEFORE INSERT OR UPDATE OR DELETE ON evaluation_run_items",
+		);
 	});
 });
