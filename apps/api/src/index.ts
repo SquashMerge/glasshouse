@@ -80,6 +80,7 @@ function projectOperationForRequest(
 	if (path.startsWith("/v1/prompt-optimizations/") && path.endsWith("/promote"))
 		return "governed";
 	if (
+		(path.startsWith("/v1/evaluations/") && path.endsWith("/runs")) ||
 		path.startsWith("/v1/experiments") ||
 		path.startsWith("/v1/prompt-optimizations") ||
 		path.includes("/benchmark-runs") ||

@@ -24,18 +24,13 @@ export const Experiment = z
 export const ExperimentCreate = z
 	.object({
 		project_id: z.string().uuid(),
+		evaluation_id: z.string().uuid(),
+		definition_version: z.number().int().positive(),
+		idempotency_key: z.string().trim().min(1).max(200),
 		agent_id: z.string().uuid().nullable().optional(),
 		dataset_id: z.string().uuid(),
 		name: z.string().trim().max(120).nullable().optional(),
-		config: z
-			.object({
-				model: z.string().trim().min(1).max(200).optional(),
-				system_prompt: z.string().max(16000).optional(),
-				evaluator: z.enum(["exact_match", "contains"]).default("exact_match"),
-				temperature: z.number().min(0).max(2).default(0),
-			})
-			.passthrough()
-			.default(() => ({ evaluator: "exact_match" as const, temperature: 0 })),
+		config: z.object({}).strict().default({}),
 	})
 	.strict()
 	.openapi("ExperimentCreate");

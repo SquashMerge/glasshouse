@@ -249,7 +249,7 @@ export function FeedbackControls({
 }) {
 	const [reason, setReason] = React.useState("");
 	const [comment, setComment] = React.useState("");
-	const commentRef = React.useRef<HTMLInputElement>(null);
+	const commentRef = React.useRef("");
 	const [negative, setNegative] = React.useState(false);
 	const [message, setMessage] = React.useState("");
 	const [pending, setPending] = React.useState(false);
@@ -260,7 +260,7 @@ export function FeedbackControls({
 		idempotencyKeys.current = {};
 	}, [observationId, traceId]);
 	async function record(value: 1 | -1) {
-		const trimmedComment = (commentRef.current?.value ?? comment).trim();
+		const trimmedComment = commentRef.current.trim();
 		if (
 			!canCurate ||
 			pending ||
@@ -324,12 +324,14 @@ export function FeedbackControls({
 				Thumbs down
 			</Button>
 			<Input
-				ref={commentRef}
 				className="h-8 w-48"
 				placeholder="Optional comment"
 				aria-label="Comment"
 				value={comment}
-				onChange={(event) => setComment(event.target.value)}
+				onChange={(event) => {
+					commentRef.current = event.target.value;
+					setComment(event.target.value);
+				}}
 			/>
 			{negative && (
 				<>

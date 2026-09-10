@@ -1,6 +1,14 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
+	admitEvaluationRun,
+	EvaluationRunRepositoryError,
+} from "../db/evaluation-runs.js";
+import {
+	executeExperiment,
+	production as evaluationProduction,
+} from "./experiments.js";
+import {
 	createEvaluation,
 	EvaluationRepositoryError,
 	getEvaluation,
@@ -24,7 +32,6 @@ import {
 	EvaluationDefinitionVersion,
 	EvaluationDraft,
 	EvaluationErrorResponses,
-	EvaluationSlugParam,
 	EvaluationLegacyLinkList,
 	EvaluationListQuery,
 	EvaluationList,
@@ -33,6 +40,10 @@ import {
 	EvaluationVersionList,
 	EvaluationVersionParam,
 	EvaluationTombstone,
+	EvaluationRun,
+	EvaluationRunHeaders,
+	EvaluationRunStart,
+	EvaluationSlugParam,
 } from "../schemas/evaluations.js";
 import { trustedTenant } from "../tenancy.js";
 
@@ -47,11 +58,13 @@ const errorResponse = (c: Context, cause: unknown) => {
 	const error =
 		cause instanceof EvaluationRepositoryError
 			? cause
-			: new EvaluationRepositoryError(
-					"INTERNAL",
-					"Evaluation operation failed",
-					cause,
-				);
+			: cause instanceof EvaluationRunRepositoryError
+				? cause
+				: new EvaluationRepositoryError(
+						"INTERNAL",
+						"Evaluation operation failed",
+						cause,
+					);
 	if (error.status === 500) logger.error("evaluations.request_failed", cause);
 	return c.json(
 		{
@@ -233,6 +246,32 @@ export const publishEvaluationDraftRoute = createRoute({
 		...EvaluationErrorResponses,
 	},
 });
+export const startEvaluationRunRoute = createRoute({
+	method: "post",
+	path: "/v1/evaluations/{slug}/runs",
+	tags: [tag],
+	summary: "Admit and start a reproducible Evaluation Run",
+	description:
+		"Resolves an immutable Definition Version and Dataset Version snapshot before any work is queued. Retries with the same Idempotency-Key replay the original run.",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: EvaluationMutationSlugParam,
+		query: EvaluationProjectQuery,
+		headers: EvaluationRunHeaders,
+		body: {
+			content: { "application/json": { schema: EvaluationRunStart } },
+			required: true,
+		},
+	},
+	responses: {
+		202: {
+			description: "Run admitted and queued",
+			content: { "application/json": { schema: EvaluationRun } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+
 export const listEvaluationVersionsRoute = createRoute({
 	method: "get",
 	path: "/v1/evaluations/{slug}/versions",
@@ -417,13 +456,52 @@ export const handlePublishEvaluationDraft = async (c: any) => {
 		return errorResponse(c, cause);
 	}
 };
+export const handleStartEvaluationRun = async (c: any) => {
+	try {
+		const query = c.req.valid("query");
+		const params = c.req.valid("param");
+		const body = c.req.valid("json");
+		const headers = c.req.valid("header");
+		const run = await admitEvaluationRun(pgPool(), {
+			project_id: query.project_id,
+			evaluation_selector: params.slug,
+			definition_version: body.definition_version,
+			idempotency_key: headers["idempotency-key"],
+			trigger_metadata: body.trigger_metadata,
+			authorization: projectAuthorization(trustedTenant(c), "execute"),
+		});
+		if (!run.replayed)
+			void executeExperiment(evaluationProduction, {
+				project_id: run.project_id,
+				experiment_id: run.experiment_id,
+				dataset_id: run.dataset_id,
+				config: {
+					model: run.snapshot.target.model,
+					system_prompt: run.snapshot.target.system_prompt,
+					evaluator: run.snapshot.evaluator.kind,
+					temperature: run.snapshot.execution_defaults.temperature,
+					max_tokens: run.snapshot.execution_defaults.max_tokens,
+				},
+			}).catch((cause) =>
+				logger.error("evaluation.run_execution_failed", cause, {
+					run_id: run.id,
+					experiment_id: run.experiment_id,
+					project_id: run.project_id,
+				}),
+			);
+		return c.json(run, 202);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
 export const handleListEvaluationVersions = async (c: any) => {
 	try {
 		return c.json(
 			await listEvaluationVersions(pgPool(), {
 				project_id: c.req.valid("query").project_id,
 				slug: c.req.valid("param").slug,
-				authorization: authorization(c, "product_read"),
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
 			}),
 		);
 	} catch (cause) {

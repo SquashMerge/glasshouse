@@ -188,12 +188,32 @@ describe("evaluation MVP", () => {
 		expect(tenant?.actorId).not.toBe("00000000-0000-5000-8000-000000000001");
 	});
 
-	it("defaults to the exact-match evaluator and temperature", () => {
+	it("requires admission inputs and does not expose mutable run configuration", () => {
+		expect(() =>
+			ExperimentCreate.parse({
+				project_id: projectId,
+				dataset_id: datasetId,
+			}),
+		).toThrow();
+
 		const parsed = ExperimentCreate.parse({
 			project_id: projectId,
 			dataset_id: datasetId,
+			evaluation_id: "33333333-3333-4333-8333-333333333333",
+			definition_version: 1,
+			idempotency_key: "compatibility-run",
 		});
-		expect(parsed.config).toEqual({ evaluator: "exact_match", temperature: 0 });
+		expect(parsed.config).toEqual({});
+		expect(() =>
+			ExperimentCreate.parse({
+				project_id: projectId,
+				dataset_id: datasetId,
+				evaluation_id: "33333333-3333-4333-8333-333333333333",
+				definition_version: 1,
+				idempotency_key: "compatibility-run",
+				config: { model: "mutable-override" },
+			}),
+		).toThrow();
 	});
 
 	it("does not overwrite a concurrent cancellation with a terminal worker update", async () => {

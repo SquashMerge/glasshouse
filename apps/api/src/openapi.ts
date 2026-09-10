@@ -52,6 +52,8 @@ import {
 	listEvaluationLegacyLinksRoute,
 	publishEvaluationDraftRoute,
 	putEvaluationDraftRoute,
+	startEvaluationRunRoute,
+	handleStartEvaluationRun,
 } from "./routes/evaluations.js";
 import {
 	listTraces,
@@ -319,6 +321,7 @@ register(putEvaluationDraftRoute, handlePutEvaluationDraft);
 register(publishEvaluationDraftRoute, handlePublishEvaluationDraft);
 register(listEvaluationVersionsRoute, handleListEvaluationVersions);
 register(getEvaluationVersionRoute, handleGetEvaluationVersion);
+register(startEvaluationRunRoute, handleStartEvaluationRun);
 
 register(listBenchmarkSuites, handleListBenchmarkSuites);
 register(createBenchmarkSuiteRoute, handleCreateBenchmarkSuite);

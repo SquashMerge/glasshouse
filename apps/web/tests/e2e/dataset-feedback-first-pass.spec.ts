@@ -442,21 +442,11 @@ test("reviews negative feedback through the inbox without promoting a dataset ca
 	});
 });
 
-test("blocks an evaluation before an LLM run until its draft is published", async ({
+test("blocks an evaluation run until an Evaluation and immutable version are pinned", async ({
 	page,
 	request,
 }) => {
 	const project = await loginAndSelectE2eProject(page);
-	const dataset = await createDatasetInBrowser(
-		page,
-		unique("preflight-dataset"),
-	);
-	await addCaseInBrowser(
-		page,
-		dataset,
-		{ prompt: unique("missing-expected") },
-		null,
-	);
 	const before = await apiJson<{ total: number }>(
 		await request.get(`${API_BASE}/v1/experiments?project_id=${project.id}`, {
 			headers: { authorization: authorization() },
@@ -464,11 +454,10 @@ test("blocks an evaluation before an LLM run until its draft is published", asyn
 	);
 
 	await page.goto("/evaluations");
-	await page.locator("#evaluation-dataset").selectOption(dataset.id);
+	await expect(page.locator("#run-evaluation")).toHaveValue("");
+	await expect(page.locator("#run-definition-version")).toBeDisabled();
 	await expect(
-		page.getByText(
-			"Publish at least one dataset case before this evaluation can run.",
-		),
+		page.getByRole("button", { name: "Run evaluation" }),
 	).toBeVisible();
 	await expect(
 		page.getByRole("button", { name: "Run evaluation" }),

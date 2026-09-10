@@ -189,10 +189,77 @@ export const EvaluationListQuery = ProjectIdQuery.extend({
 		.default("false")
 		.transform((value) => value === "true"),
 }).strict();
+export const EvaluationStatus = z
+	.enum(["pending", "running", "completed", "failed", "cancelled"])
+	.openapi("EvaluationStatus");
 export const EvaluationTombstone = z
 	.object({ confirmation_slug: EvaluationIdentifier })
 	.strict();
 export const EvaluationIdParam = z.object({ id: z.string().uuid() }).strict();
+export const EvaluationRunStart = z
+	.object({
+		definition_version: z.number().int().positive(),
+		trigger_metadata: z
+			.record(
+				z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
+				z.union([
+					z.string().max(200),
+					z.number().finite(),
+					z.boolean(),
+					z.null(),
+				]),
+			)
+			.default({}),
+	})
+	.strict()
+	.openapi("EvaluationRunStart");
+export const EvaluationRunHeaders = z.object({
+	"idempotency-key": z
+		.string()
+		.trim()
+		.min(1)
+		.max(200)
+		.openapi({
+			param: { name: "idempotency-key", in: "header", required: true },
+		}),
+});
+export const EvaluationRun = z
+	.object({
+		id: z.string().uuid(),
+		organization_id: z.string().uuid(),
+		project_id: z.string().uuid(),
+		evaluation_id: z.string().uuid(),
+		definition_version_id: z.string().uuid(),
+		dataset_version_id: z.string().uuid(),
+		dataset_id: z.string().uuid(),
+		experiment_id: z.string().uuid(),
+		benchmark_run_id: z.string().uuid().nullable(),
+		status: EvaluationStatus,
+		requested_by_actor_id: z.string().uuid(),
+		idempotency_key: z.string(),
+		request_hash: z.string().regex(/^[a-f0-9]{64}$/),
+		resolved_inputs_hash: z.string().regex(/^[a-f0-9]{64}$/),
+		trigger_metadata: z.record(z.string(), z.unknown()),
+		snapshot: z.object({
+			target: z.record(z.string(), z.unknown()),
+			target_version: z.string(),
+			target_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+			evaluator: z.record(z.string(), z.unknown()),
+			evaluator_version: z.string(),
+			execution_defaults: z.record(z.string(), z.unknown()),
+			thresholds: z.record(z.string(), z.unknown()),
+			sampling: z.record(z.string(), z.unknown()),
+			sample_identity: z.string().regex(/^[a-f0-9]{64}$/),
+			ordered_item_snapshot: z.array(z.record(z.string(), z.unknown())),
+			resolved_inputs_hash: z.string().regex(/^[a-f0-9]{64}$/),
+		}),
+		created_at: z.string().datetime(),
+		updated_at: z.string().datetime(),
+		replayed: z.boolean(),
+	})
+	.strict()
+	.openapi("EvaluationRun");
+
 export const EvaluationSlugParam = z
 	.object({
 		slug: EvaluationIdentifier.openapi({

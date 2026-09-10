@@ -54,7 +54,7 @@ function authorizedContext(valid: (part: string) => unknown) {
 	};
 }
 
-test("public dataset and experiment mutations pass the admitted actor to transactional persistence", async () => {
+test("public experiment mutations reject unpinned legacy writes while dataset writes retain actor provenance", async () => {
 	let datasetInput: Record<string, unknown> | undefined;
 	const datasets = createDatasetRouteHandlers({
 		pool: () => ({}) as never,
@@ -120,24 +120,22 @@ test("public dataset and experiment mutations pass the admitted actor to transac
 		invokeLlm: async () => ({ output: {}, model: "test" }),
 		trace: async () => {},
 	} as never);
-	await experiments.handleCreateExperiment(
+	const experimentResponse = await experiments.handleCreateExperiment(
 		authorizedContext(() => ({
 			project_id: projectId,
 			dataset_id: datasetId,
 			config: {},
 		})) as never,
 	);
+	expect(experimentResponse.status).toBe(409);
+	expect(experimentInput).toBeUndefined();
 
 	expect(datasetInput?.authorization).toEqual({
 		organization_id: organizationId,
 		actor_id: actorId,
 		operation: "curation_write",
 	});
-	expect(experimentInput?.authorization).toEqual({
-		organization_id: organizationId,
-		actor_id: actorId,
-		operation: "execute",
-	});
+	expect(experimentInput).toBeUndefined();
 });
 
 test("all dataset mutations authorize inside their project FOR UPDATE decision", () => {
