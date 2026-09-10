@@ -2,11 +2,11 @@
 
 ## Evaluation definitions
 
-`/v1/evaluations` creates a stable, project-scoped Evaluation identity with one ETag-revisioned definition draft. Publishing the draft creates an immutable, content-hashed Definition Version bound to a concrete immutable Dataset Version; publication is idempotent for equivalent canonical content and returns its stored durable publishing Actor ID as `published_by`. Definitions use only typed baseline evaluator mappings, a configured-LLM target selector, execution defaults, and thresholds. They do not admit or execute runs. Pre-contract Definition Versions are returned with `definition_contract: "legacy_untyped"`; their stored evaluator JSON, absent sampling/limits, and original content hash are never synthesized or changed. Existing Experiments and benchmark suites remain explicitly legacy ad-hoc structural records and are never assigned invented historical Dataset Version, target, evaluator, sample, or result evidence.
+`/v1/evaluations` creates a stable, project-scoped Evaluation identity with one ETag-revisioned definition draft. Publishing the draft creates an immutable, content-hashed Definition Version bound to a concrete immutable Dataset Version; publication is idempotent for equivalent canonical content and returns its stored durable publishing Actor ID as `published_by`. Definitions use only typed baseline evaluator mappings, a configured-LLM target selector, execution defaults, and thresholds. `/v1/evaluations/{slug}/runs` admits and queues a reproducible run by resolving that immutable version and storing its target, evaluator, deterministic sample, and per-item snapshot before work starts. Pre-contract Definition Versions are returned with `definition_contract: "legacy_untyped"` and cannot be admitted; their stored evaluator JSON, absent sampling/limits, and original content hash are never synthesized or changed. Historical Experiments and benchmark suites remain explicit legacy ad-hoc structural records; new Experiment/benchmark start requests must provide admission fields and cannot seed from mutable Dataset rows.
 
 Canonical Evaluation slugs are required for archive, restore, tombstone, draft replacement, and publication. UUID Evaluation IDs remain a read-only compatibility selector for Evaluation, draft, and immutable-version detail or inspection requests.
 
-**Status:** P2 Dataset lifecycle is implemented; P3.1 Evaluation identity and Definition Versions are implemented and deliberately precede the planned Agent Registry.
+**Status:** P2 Dataset lifecycle, P3.1 Evaluation identity and Definition Versions, and the initial P3.2 Evaluation Run admission/execution path are implemented; the Agent Registry remains planned.
 
 **Shipped Evaluation API:**
 
@@ -28,7 +28,7 @@ GET    /v1/evaluations/{slug}/versions/{version}?project_id=
 Archive, restore, and tombstone `204` responses return their quoted lifecycle
 `ETag`.
 
-**Future boundary:** Evaluation Run routes, run resolution/execution, schedules, gates, and SDK invocation below are planned P3/P5 work. Existing `/v1/experiments` remains the distinct legacy ad-hoc execution API; it is not a shipped Evaluation Run alias.
+**Future boundary:** Evaluation Run schedules, gates, evidence views, and SDK invocation below remain planned P3/P5 work. Admission and configured-LLM execution are shipped through the Evaluation Run route; existing `/v1/experiments` remains the distinct legacy ad-hoc execution API and is not an alias.
 
 **Scope:** one project-scoped Dataset and Evaluation Definition foundation shared by the dashboard and REST API; this document preserves the future SDK and Evaluation Run roadmap separately.
 
@@ -36,7 +36,7 @@ Archive, restore, and tombstone `204` responses return their quoted lifecycle
 
 Astraea datasets work like prompts: a stable, named resource has immutable versions. A **Dataset** is the reusable logical collection; a **Dataset version** is the exact immutable item snapshot consumed by an evaluation. An **Evaluation definition** is a reusable, versioned recipe that binds one target selector, one dataset selector, mappings, evaluators, and execution defaults. A future **Evaluation run** is one execution of a definition revision against resolved immutable versions.
 
-The shipped Definition target selector supports the configured-LLM contract before the Agent Registry exists. A future Agent/Manifest target uses the same selector and resolution boundary rather than creating a second Evaluation model. The dashboard and REST API use the same Evaluation identity/Definition Version entities; SDK and Evaluation Run execution remain future work. There is no separate “UI dataset” or “SDK dataset,” and no future Evaluation Run may execute a mutable draft.
+The shipped Definition target selector supports the configured-LLM contract before the Agent Registry exists. A future Agent/Manifest target uses the same selector and resolution boundary rather than creating a second Evaluation model. The dashboard and REST API use the same Evaluation identity/Definition Version entities; SDK invocation remains future work. There is no separate “UI dataset” or “SDK dataset,” and no Evaluation Run may execute a mutable draft.
 
 ### Target defaults for future execution
 
@@ -49,7 +49,7 @@ The shipped Definition target selector supports the configured-LLM contract befo
 | Dataset identity | Project-local immutable `slug`, human-editable `name`; a deleted slug is tombstoned | Stable code references and no accidental identity reuse. |
 | Authoring provenance | Each version records `created_via` (`ui`, `api`, `sdk`, `trace_import`, `csv_import`) and actor/source metadata | Makes ownership and change origin visible without splitting products. |
 | Execution | A definition revision resolves exactly one immutable target snapshot and one Dataset version before queueing; the target may be the current configured-LLM contract or, later, an Agent/Manifest version | This is the unit compared in results/CI. |
-| Existing terminology | The shipped reusable object is **Evaluation**; current `/v1/experiments` remains a distinct legacy ad-hoc execution API until future Evaluation Runs ship | Avoids breaking MVP clients while giving users one consistent vocabulary. |
+| Existing terminology | The shipped reusable object is **Evaluation**; current `/v1/experiments` remains a distinct legacy ad-hoc execution API alongside Evaluation Runs | Avoids breaking MVP clients while giving users one consistent vocabulary. |
 
 ## Jobs to be done
 

@@ -17,8 +17,6 @@ const selection = vi.hoisted(() => ({
 const {
 	archiveEvaluation,
 	createEvaluation,
-	createExperiment,
-	listPublishedDatasetItems,
 	listDatasets,
 	listExperiments,
 	listEvaluations,
@@ -34,8 +32,6 @@ const {
 } = vi.hoisted(() => ({
 	archiveEvaluation: vi.fn(),
 	createEvaluation: vi.fn(),
-	createExperiment: vi.fn(),
-	listPublishedDatasetItems: vi.fn(),
 	listDatasets: vi.fn(),
 	listExperiments: vi.fn(),
 	listEvaluations: vi.fn(),
@@ -82,8 +78,6 @@ vi.mock("../../src/components/ProjectProvider", () => ({
 vi.mock("../../src/lib/api", () => ({
 	archiveEvaluation,
 	createEvaluation,
-	createExperiment,
-	listPublishedDatasetItems,
 	listDatasets,
 	listExperiments,
 	listEvaluations,
@@ -107,6 +101,24 @@ const DATASET_TWO = "44444444-4444-4444-8444-444444444444";
 const DATASET_THREE = "55555555-5555-4555-8555-555555555555";
 const DATASET_VERSION_ONE = "66666666-6666-4666-8666-666666666666";
 const DATASET_VERSION_THREE = "77777777-7777-4777-8777-777777777777";
+const EVALUATION_ONE = "88888888-8888-4888-8888-888888888888";
+const evaluationOne = {
+	id: EVALUATION_ONE,
+	project_id: PROJECT_ONE,
+	slug: "project-one-evaluation",
+	name: "Project One evaluation",
+	archived_at: null,
+	tombstoned_at: null,
+};
+const definitionVersionOne = {
+	id: "99999999-9999-4999-8999-999999999999",
+	evaluation_id: EVALUATION_ONE,
+	project_id: PROJECT_ONE,
+	version: 1,
+	definition_contract: "v1",
+	dataset_version_id: DATASET_VERSION_ONE,
+	sampling: { strategy: "first_n", sample_size: 1, seed: 0 },
+};
 
 const datasets = {
 	[PROJECT_ONE]: {
@@ -151,21 +163,6 @@ const datasets = {
 	},
 };
 
-const validItems = {
-	items: [
-		{
-			id: "55555555-5555-4555-8555-555555555555",
-			dataset_id: DATASET_ONE,
-			input: { question: "What is Astraea?" },
-			expected_output: { answer: "An evaluation platform" },
-			metadata: {},
-			source_trace_id: null,
-			source_observation_id: null,
-			created_at: "2026-07-29T00:00:00.000Z",
-		},
-	],
-};
-
 function renderPage() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
@@ -175,10 +172,6 @@ function renderPage() {
 			<EvaluationsPage />
 		</QueryClientProvider>,
 	);
-}
-
-function datasetSelect() {
-	return screen.getByLabelText("Dataset") as HTMLSelectElement;
 }
 
 function runButton() {
@@ -201,10 +194,8 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		updateEvaluationDraft.mockReset();
 		listEvaluationVersions.mockResolvedValue({ items: [] });
 		getEvaluationVersion.mockReset();
-		listPublishedDatasetItems.mockReset();
 		archiveEvaluation.mockReset();
 		createEvaluation.mockReset();
-		createExperiment.mockReset();
 		publishEvaluationDraft.mockReset();
 		restoreEvaluation.mockReset();
 		tombstoneEvaluation.mockReset();
@@ -212,34 +203,56 @@ describe("EvaluationsPage project-scoped datasets", () => {
 
 	afterEach(cleanup);
 
-	it("keeps Run disabled while the selected dataset items are loading", async () => {
-		let resolveItems: ((value: typeof validItems) => void) | undefined;
-		listPublishedDatasetItems.mockImplementation(
+	it("keeps Run disabled while the selected immutable version is loading", async () => {
+		let resolveVersion:
+			| ((value: typeof definitionVersionOne) => void)
+			| undefined;
+		listEvaluations.mockResolvedValue({ items: [evaluationOne], total: 1 });
+		listEvaluationVersions.mockResolvedValue({ items: [definitionVersionOne] });
+		getEvaluationVersion.mockImplementation(
 			() =>
-				new Promise<typeof validItems>((resolve) => {
-					resolveItems = resolve;
+				new Promise<typeof definitionVersionOne>((resolve) => {
+					resolveVersion = resolve;
 				}),
 		);
 
 		renderPage();
-		await screen.findAllByRole("option", { name: "Project One dataset" });
-		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
+		await screen.findByRole("option", {
+			name: "Project One evaluation (project-one-evaluation)",
+		});
+		fireEvent.change(screen.getByLabelText("Evaluation"), {
+			target: { value: evaluationOne.slug },
+		});
+		await screen.findByRole("option", { name: "Version 1 (v1)" });
+		fireEvent.change(screen.getByLabelText("Immutable Definition Version"), {
+			target: { value: "1" },
+		});
 
 		expect(runButton()).toBeDisabled();
-		resolveItems?.(validItems);
+		resolveVersion?.(definitionVersionOne);
 		await waitFor(() => expect(runButton()).toBeEnabled());
-		expect(listPublishedDatasetItems).toHaveBeenCalledWith({
+		expect(getEvaluationVersion).toHaveBeenCalledWith({
 			project_id: PROJECT_ONE,
-			id: DATASET_ONE,
+			slug: evaluationOne.slug,
+			version: 1,
 		});
 	});
 
-	it("clears an invalid dataset selection after switching projects", async () => {
-		listPublishedDatasetItems.mockResolvedValue(validItems);
+	it("clears an invalid Definition Version after switching projects", async () => {
+		listEvaluations.mockResolvedValue({ items: [evaluationOne], total: 1 });
+		listEvaluationVersions.mockResolvedValue({ items: [definitionVersionOne] });
+		getEvaluationVersion.mockResolvedValue(definitionVersionOne);
 		const page = renderPage();
-		await screen.findAllByRole("option", { name: "Project One dataset" });
-		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
-		await waitFor(() => expect(runButton()).toBeEnabled());
+		await screen.findByRole("option", {
+			name: "Project One evaluation (project-one-evaluation)",
+		});
+		fireEvent.change(screen.getByLabelText("Evaluation"), {
+			target: { value: evaluationOne.slug },
+		});
+		await screen.findByRole("option", { name: "Version 1 (v1)" });
+		fireEvent.change(screen.getByLabelText("Immutable Definition Version"), {
+			target: { value: "1" },
+		});
 
 		selection.projectId = PROJECT_TWO;
 		selection.projectName = "Project Two";
@@ -253,13 +266,13 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			</QueryClientProvider>,
 		);
 
-		await screen.findAllByRole("option", { name: "Project Two dataset" });
-		await waitFor(() => expect(datasetSelect()).toHaveValue(""));
+		await waitFor(() =>
+			expect(screen.getByLabelText("Evaluation")).toHaveValue(""),
+		);
+		expect(screen.getByLabelText("Immutable Definition Version")).toHaveValue(
+			"",
+		);
 		expect(runButton()).toBeDisabled();
-		expect(listPublishedDatasetItems).not.toHaveBeenCalledWith({
-			project_id: PROJECT_TWO,
-			id: DATASET_ONE,
-		});
 	});
 
 	it("clears a Definition Dataset Version when its Dataset changes", async () => {
@@ -319,10 +332,13 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			),
 		);
 	});
-	it("keeps definition creation settings separate from the ad-hoc run form", async () => {
+	it("keeps definition creation settings separate from pinned run selection", async () => {
 		listDatasetVersions.mockResolvedValue({
 			items: [{ id: DATASET_VERSION_ONE, version: 1 }],
 		});
+		listEvaluations.mockResolvedValue({ items: [evaluationOne], total: 1 });
+		listEvaluationVersions.mockResolvedValue({ items: [definitionVersionOne] });
+		getEvaluationVersion.mockResolvedValue(definitionVersionOne);
 		createEvaluation.mockResolvedValue({});
 		renderPage();
 
@@ -345,7 +361,9 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		});
 		fireEvent.change(
 			screen.getByLabelText("Definition system prompt (optional)"),
-			{ target: { value: "definition prompt" } },
+			{
+				target: { value: "definition prompt" },
+			},
 		);
 		fireEvent.change(screen.getByLabelText("Definition evaluator"), {
 			target: { value: "contains" },
@@ -354,58 +372,36 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			target: { value: "0.4" },
 		});
 
-		fireEvent.change(screen.getByLabelText("Model (optional)"), {
-			target: { value: "run-model" },
+		fireEvent.change(screen.getByLabelText("Evaluation"), {
+			target: { value: evaluationOne.slug },
 		});
-		fireEvent.change(screen.getByLabelText("System prompt (optional)"), {
-			target: { value: "run prompt" },
+		await screen.findByRole("option", { name: "Version 1 (v1)" });
+		fireEvent.change(screen.getByLabelText("Immutable Definition Version"), {
+			target: { value: "1" },
 		});
-		fireEvent.change(screen.getByLabelText("Evaluator"), {
-			target: { value: "exact_match" },
-		});
-		fireEvent.change(screen.getByLabelText("Temperature"), {
-			target: { value: "1.2" },
-		});
-
-		fireEvent.click(
-			screen.getByRole("button", { name: "Create definition draft" }),
-		);
-		await waitFor(() =>
-			expect(createEvaluation).toHaveBeenCalledWith(
-				expect.objectContaining({
-					definition: expect.objectContaining({
-						evaluator: expect.objectContaining({ kind: "contains" }),
-						target: expect.objectContaining({
-							model: "definition-model",
-							system_prompt: "definition prompt",
-						}),
-						execution_defaults: expect.objectContaining({ temperature: 0.4 }),
-					}),
-				}),
-			),
-		);
+		await waitFor(() => expect(runButton()).toBeEnabled());
+		expect(screen.queryByLabelText("Model (optional)")).toBeNull();
+		expect(screen.queryByLabelText("System prompt (optional)")).toBeNull();
 	});
 
-	it("keeps visible evaluation labels consistently separated from controls", async () => {
-		listPublishedDatasetItems.mockResolvedValue(validItems);
+	it("keeps visible pinned-run labels consistently separated from controls", async () => {
+		listEvaluations.mockResolvedValue({ items: [evaluationOne], total: 1 });
+		listEvaluationVersions.mockResolvedValue({ items: [definitionVersionOne] });
+		getEvaluationVersion.mockResolvedValue(definitionVersionOne);
 		renderPage();
 
-		await screen.findAllByRole("option", { name: "Project One dataset" });
-		for (const label of [
-			"Dataset",
-			"Evaluation name",
-			"Model (optional)",
-			"Evaluator",
-		]) {
+		await screen.findByRole("option", {
+			name: "Project One evaluation (project-one-evaluation)",
+		});
+		for (const label of ["Evaluation", "Immutable Definition Version"]) {
 			expect(screen.getByText(label)).toHaveClass("space-y-2");
 		}
-		expect(screen.getByLabelText("Dataset")).toHaveClass(
+		expect(screen.getByLabelText("Evaluation")).toHaveClass(
 			"focus-visible:ring-2",
 		);
 	});
 	it("shows an alert and retry when Dataset Version fetching fails without disabling publish", async () => {
 		listDatasetVersions.mockRejectedValueOnce(new Error("offline"));
-		listPublishedDatasetItems.mockResolvedValue(validItems);
 		renderPage();
 		await screen.findAllByRole("option", { name: "Project One dataset" });
 		fireEvent.change(screen.getByLabelText("Definition dataset"), {
@@ -421,17 +417,33 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			),
 		);
 	});
-	it("alerts and retries when selected published items cannot load", async () => {
-		listPublishedDatasetItems.mockRejectedValueOnce(new Error("offline"));
+	it("alerts and retries when the selected immutable version cannot load", async () => {
+		listEvaluations.mockResolvedValue({ items: [evaluationOne], total: 1 });
+		listEvaluationVersions.mockResolvedValue({ items: [definitionVersionOne] });
+		getEvaluationVersion
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValue(definitionVersionOne);
 		renderPage();
-		await screen.findAllByRole("option", { name: "Project One dataset" });
-		fireEvent.change(datasetSelect(), { target: { value: DATASET_ONE } });
-		const alert = await screen.findByRole("alert");
-		expect(alert).toHaveTextContent("Unable to load published dataset items");
-		const callsBeforeRetry = listPublishedDatasetItems.mock.calls.length;
-		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await screen.findByRole("option", {
+			name: "Project One evaluation (project-one-evaluation)",
+		});
+		fireEvent.change(screen.getByLabelText("Evaluation"), {
+			target: { value: evaluationOne.slug },
+		});
+		await screen.findByRole("option", { name: "Version 1 (v1)" });
+		fireEvent.change(screen.getByLabelText("Immutable Definition Version"), {
+			target: { value: "1" },
+		});
+		const alerts = await screen.findAllByRole("alert");
+		expect(
+			alerts.some((alert) =>
+				alert.textContent?.includes("Unable to load immutable version"),
+			),
+		).toBe(true);
+		const callsBeforeRetry = getEvaluationVersion.mock.calls.length;
+		fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]!);
 		await waitFor(() =>
-			expect(listPublishedDatasetItems.mock.calls.length).toBeGreaterThan(
+			expect(getEvaluationVersion.mock.calls.length).toBeGreaterThan(
 				callsBeforeRetry,
 			),
 		);
@@ -650,7 +662,6 @@ describe("EvaluationsPage project-scoped datasets", () => {
 			],
 			total: 1,
 		});
-		listPublishedDatasetItems.mockResolvedValue(validItems);
 		renderPage();
 
 		expect(

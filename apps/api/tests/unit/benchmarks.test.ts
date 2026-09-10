@@ -6,6 +6,7 @@ import {
 	createBenchmarkSuite,
 	listBenchmarkRuns,
 } from "../../src/db/benchmarks";
+import { BenchmarkRunCreate } from "../../src/schemas/benchmarks";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const otherProjectId = "99999999-9999-4999-8999-999999999999";
@@ -61,6 +62,25 @@ describe("benchmark evaluation execution", () => {
 		expect(createBenchmarkSuite.toString()).toContain(
 			"dataset.latest_published_version IS NOT NULL",
 		);
+	});
+
+	it("requires admission inputs and rejects mutable benchmark configuration", () => {
+		expect(() =>
+			BenchmarkRunCreate.parse({
+				project_id: projectId,
+				label: "baseline",
+			}),
+		).toThrow();
+		expect(() =>
+			BenchmarkRunCreate.parse({
+				project_id: projectId,
+				evaluation_id: "44444444-4444-4444-8444-444444444444",
+				definition_version: 1,
+				idempotency_key: "benchmark-once",
+				label: "baseline",
+				config: { model: "mutable-override" },
+			}),
+		).toThrow();
 	});
 
 	it("marks the experiment failed when background execution rejects", async () => {

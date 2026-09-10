@@ -2,12 +2,14 @@ import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import {
+	admitEvaluationRun,
+	EvaluationRunRepositoryError,
+} from "../db/evaluation-runs.js";
+import {
 	DatasetRepositoryError,
 	listPublishedDatasetItems,
 } from "../db/datasets.js";
-import { ExperimentRepositoryError } from "../db/experiments.js";
 import {
-	createBenchmarkRun,
 	createBenchmarkSuite,
 	getBenchmarkSuite,
 	listBenchmarkRuns,
@@ -45,11 +47,13 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 	const error =
 		cause instanceof BenchmarkRepositoryError
 			? cause
-			: new BenchmarkRepositoryError(
-					"INTERNAL",
-					"Benchmark operation failed",
-					cause,
-				);
+			: cause instanceof EvaluationRunRepositoryError
+				? cause
+				: new BenchmarkRepositoryError(
+						"INTERNAL",
+						"Benchmark operation failed",
+						cause,
+					);
 	if (error.status === 500) logger.error("benchmarks.request_failed", cause);
 	return c.json(
 		{
@@ -221,50 +225,69 @@ export const handleCreateBenchmarkRun = async (
 			id: suite_id,
 			authorization: projectAuthorization(trustedTenant(c), "execute"),
 		});
-		const config = { ...body.config, model: body.model ?? body.config.model };
 		const authorization = projectAuthorization(trustedTenant(c), "execute");
-		await requirePublishedGoldenDataset({
+		const hasAdmissionInputs =
+			body.evaluation_id !== undefined &&
+			body.definition_version !== undefined &&
+			body.idempotency_key !== undefined;
+		if (!hasAdmissionInputs)
+			throw new BenchmarkRepositoryError(
+				"CONFLICT",
+				"Benchmark runs now require an Evaluation Definition Version and idempotency_key",
+			);
+		if (Object.keys(body.config).length > 0)
+			throw new BenchmarkRepositoryError(
+				"CONFLICT",
+				"Benchmark target configuration must come from the pinned Evaluation Definition Version",
+			);
+		if (
+			body.evaluation_id === undefined ||
+			body.definition_version === undefined ||
+			body.idempotency_key === undefined
+		)
+			throw new BenchmarkRepositoryError(
+				"CONFLICT",
+				"Benchmark runs now require an Evaluation Definition Version and idempotency_key",
+			);
+		const run = await admitEvaluationRun(pgPool(), {
 			project_id,
-			dataset_id: suite.dataset_id,
+			evaluation_selector: body.evaluation_id,
+			definition_version: body.definition_version,
+			idempotency_key: body.idempotency_key,
+			expected_dataset_id: suite.dataset_id,
+			benchmark: {
+				suite_id,
+				label: body.label,
+				model: body.model ?? null,
+				prompt_version: body.prompt_version ?? null,
+			},
 			authorization,
 		});
-		let experiment: Awaited<ReturnType<typeof production.createExperiment>>;
-		try {
-			experiment = await production.createExperiment(pgPool(), {
+		const config = {
+			...run.snapshot.target,
+			evaluator: run.snapshot.evaluator.kind,
+			...run.snapshot.execution_defaults,
+		};
+		if (!run.replayed)
+			void executeBenchmarkExperiment({
 				project_id,
-				dataset_id: suite.dataset_id,
-				name: `benchmark:${body.label}`,
+				experiment_id: run.experiment_id,
+				dataset_id: run.dataset_id,
 				config,
-				authorization,
 			});
-		} catch (cause) {
-			if (
-				cause instanceof ExperimentRepositoryError &&
-				cause.code === "NOT_FOUND"
-			)
-				throw new BenchmarkRepositoryError(
-					"NOT_FOUND",
-					"Dataset not found",
-					cause,
-				);
-			throw cause;
-		}
-		const run = await createBenchmarkRun(pgPool(), {
-			project_id,
-			suite_id,
-			experiment_id: experiment.id,
-			label: body.label,
-			model: body.model ?? null,
-			prompt_version: body.prompt_version ?? null,
-			authorization,
-		});
-		void executeBenchmarkExperiment({
-			project_id,
-			experiment_id: experiment.id,
-			dataset_id: suite.dataset_id,
-			config,
-		});
-		return c.json(run, 202);
+		return c.json(
+			{
+				id: run.benchmark_run_id,
+				project_id,
+				suite_id,
+				experiment_id: run.experiment_id,
+				label: body.label,
+				model: body.model ?? run.snapshot.target.model,
+				prompt_version: body.prompt_version ?? null,
+				created_at: run.created_at,
+			},
+			202,
+		);
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}
