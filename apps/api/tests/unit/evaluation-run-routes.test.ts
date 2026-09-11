@@ -10,6 +10,20 @@ import {
 	getEvaluationRunEvidenceRoute,
 } from "../../src/routes/evaluations";
 import {
+	createEvaluationGateApprovalRoute,
+	getEvaluationGateApprovalRoute,
+	listEvaluationGateApprovalHistoryRoute,
+	getEvaluationGateRunRoute,
+	listEvaluationGateApprovalsRoute,
+	listEvaluationGateRunsRoute,
+	revokeEvaluationGateApprovalRoute,
+	startEvaluationGateRoute,
+} from "../../src/routes/evaluation-gates";
+import {
+	EvaluationGateApprovalCreate,
+	EvaluationGateRunStart,
+} from "../../src/schemas/evaluation-gates";
+import {
 	EvaluationRunStatus,
 	EvaluationRunCompare,
 	EvaluationRunCompareRequest,
@@ -372,5 +386,63 @@ describe("Evaluation Run lifecycle API", () => {
 				text.startsWith("SELECT * FROM evaluation_runs"),
 			),
 		);
+	});
+
+	it("documents Admin-approved pinned gate contracts and rejects mutable inputs", () => {
+		const app = new OpenAPIHono();
+		for (const route of [
+			createEvaluationGateApprovalRoute,
+			listEvaluationGateApprovalsRoute,
+			getEvaluationGateApprovalRoute,
+			listEvaluationGateApprovalHistoryRoute,
+			revokeEvaluationGateApprovalRoute,
+			startEvaluationGateRoute,
+			listEvaluationGateRunsRoute,
+			getEvaluationGateRunRoute,
+		])
+			app.openapi(route, () => new Response());
+		const document = app.getOpenAPIDocument({
+			openapi: "3.0.0",
+			info: { title: "test", version: "1" },
+		});
+		expect(
+			document.paths?.["/v1/evaluation-gates/approvals"]?.post,
+		).toBeDefined();
+		expect(
+			document.paths?.["/v1/evaluation-gates/approvals"]?.get,
+		).toBeDefined();
+		expect(
+			document.paths?.["/v1/evaluation-gates/approvals/{id}/history"]?.get,
+		).toBeDefined();
+		expect(
+			document.paths?.["/v1/evaluation-gates/approvals/{id}/revoke"]?.post,
+		).toBeDefined();
+		expect(document.paths?.["/v1/evaluation-gates/runs"]?.post).toBeDefined();
+		expect(
+			document.paths?.["/v1/evaluation-gates/runs/{id}"]?.get,
+		).toBeDefined();
+		expect(
+			EvaluationGateApprovalCreate.safeParse({
+				definition_version_id: "55555555-5555-4555-8555-555555555555",
+				gate_context: "ci",
+				reason: "approved immutable regression contract",
+			}).success,
+		).toBe(true);
+		expect(
+			EvaluationGateRunStart.safeParse({
+				approval_id: "11111111-1111-4111-8111-111111111111",
+				definition_version_id: "55555555-5555-4555-8555-555555555555",
+				dataset_version_id: "66666666-6666-4666-8666-666666666666",
+				gate_context: "release",
+			}).success,
+		).toBe(true);
+		expect(
+			EvaluationGateRunStart.safeParse({
+				approval_id: "11111111-1111-4111-8111-111111111111",
+				definition_version_id: "latest",
+				dataset_version_id: "66666666-6666-4666-8666-666666666666",
+				gate_context: "ci",
+			}).success,
+		).toBe(false);
 	});
 });

@@ -70,6 +70,24 @@ import {
 	handleGetEvaluationRunEvents,
 } from "./routes/evaluations.js";
 import {
+	createEvaluationGateApprovalRoute,
+	getEvaluationGateApprovalRoute,
+	getEvaluationGateRunRoute,
+	listEvaluationGateApprovalHistoryRoute,
+	handleCreateEvaluationGateApproval,
+	handleGetEvaluationGateApproval,
+	handleGetEvaluationGateRun,
+	handleListEvaluationGateApprovalHistory,
+	handleListEvaluationGateApprovals,
+	handleListEvaluationGateRuns,
+	handleRevokeEvaluationGateApproval,
+	handleStartEvaluationGate,
+	listEvaluationGateApprovalsRoute,
+	listEvaluationGateRunsRoute,
+	revokeEvaluationGateApprovalRoute,
+	startEvaluationGateRoute,
+} from "./routes/evaluation-gates.js";
+import {
 	listTraces,
 	handleListTraces,
 	getTrace,
@@ -343,6 +361,18 @@ register(getEvaluationRunRoute, handleGetEvaluationRun);
 register(cancelEvaluationRunRoute, handleCancelEvaluationRun);
 register(retryEvaluationRunRoute, handleRetryEvaluationRun);
 register(getEvaluationRunEventsRoute, handleGetEvaluationRunEvents);
+
+register(createEvaluationGateApprovalRoute, handleCreateEvaluationGateApproval);
+register(listEvaluationGateApprovalsRoute, handleListEvaluationGateApprovals);
+register(getEvaluationGateApprovalRoute, handleGetEvaluationGateApproval);
+register(
+	listEvaluationGateApprovalHistoryRoute,
+	handleListEvaluationGateApprovalHistory,
+);
+register(revokeEvaluationGateApprovalRoute, handleRevokeEvaluationGateApproval);
+register(startEvaluationGateRoute, handleStartEvaluationGate);
+register(listEvaluationGateRunsRoute, handleListEvaluationGateRuns);
+register(getEvaluationGateRunRoute, handleGetEvaluationGateRun);
 
 register(listBenchmarkSuites, handleListBenchmarkSuites);
 register(createBenchmarkSuiteRoute, handleCreateBenchmarkSuite);

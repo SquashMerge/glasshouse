@@ -4,9 +4,15 @@ import {
 	getEvaluation,
 	getEvaluationDraft,
 	getEvaluationVersion,
+	getEvaluationGateApprovalHistory,
 	listEvaluationRuns,
 	getEvaluationRunEvidence,
 	compareEvaluationRuns,
+	createEvaluationGateApproval,
+	listEvaluationGateApprovals,
+	listEvaluationGateRuns,
+	revokeEvaluationGateApproval,
+	startEvaluationGate,
 	listEvaluationVersions,
 	updateEvaluationDraft,
 } from "../../src/lib/api";
@@ -151,6 +157,91 @@ describe("evaluation API client contract", () => {
 				url: `/v1/evaluation-runs/compare?project_id=${project_id}`,
 				method: "POST",
 				body: JSON.stringify({ run_ids: [left, right] }),
+			},
+		]);
+	});
+	it("keeps approval and gate invocation calls project-scoped and idempotent", async () => {
+		const approval = "66666666-6666-4666-8666-666666666666";
+		const definitionVersion = "77777777-7777-4777-8777-777777777777";
+		const datasetVersion = "88888888-8888-4888-8888-888888888888";
+		await createEvaluationGateApproval({
+			project_id,
+			definition_version_id: definitionVersion,
+			gate_context: "ci",
+			reason: "release candidate",
+		});
+		await listEvaluationGateApprovals({ project_id, include_revoked: true });
+		await getEvaluationGateApprovalHistory({ project_id, id: approval });
+		await revokeEvaluationGateApproval({
+			project_id,
+			id: approval,
+			reason: "policy changed",
+		});
+		await startEvaluationGate({
+			project_id,
+			approval_id: approval,
+			definition_version_id: definitionVersion,
+			dataset_version_id: datasetVersion,
+			gate_context: "ci",
+			idempotency_key: "ci-build-123",
+			trigger_metadata: { source: "ci", build_number: 123 },
+		});
+		await listEvaluationGateRuns({ project_id, status: "pending", limit: 10 });
+		expect(
+			fetchMock.mock.calls.map(([url, init]) => ({
+				url,
+				method: init?.method ?? "GET",
+				body: init?.body,
+				idempotency:
+					new Headers(init?.headers).get("idempotency-key") ?? undefined,
+			})),
+		).toEqual([
+			{
+				url: `/v1/evaluation-gates/approvals?project_id=${project_id}`,
+				method: "POST",
+				body: JSON.stringify({
+					definition_version_id: definitionVersion,
+					gate_context: "ci",
+					reason: "release candidate",
+					supersedes_approval_id: undefined,
+				}),
+				idempotency: undefined,
+			},
+			{
+				url: `/v1/evaluation-gates/approvals?project_id=${project_id}&include_revoked=true`,
+				method: "GET",
+				body: undefined,
+				idempotency: undefined,
+			},
+			{
+				url: `/v1/evaluation-gates/approvals/${approval}/history?project_id=${project_id}`,
+				method: "GET",
+				body: undefined,
+				idempotency: undefined,
+			},
+			{
+				url: `/v1/evaluation-gates/approvals/${approval}/revoke?project_id=${project_id}`,
+				method: "POST",
+				body: JSON.stringify({ reason: "policy changed" }),
+				idempotency: undefined,
+			},
+			{
+				url: `/v1/evaluation-gates/runs?project_id=${project_id}`,
+				method: "POST",
+				body: JSON.stringify({
+					approval_id: approval,
+					definition_version_id: definitionVersion,
+					dataset_version_id: datasetVersion,
+					gate_context: "ci",
+					trigger_metadata: { source: "ci", build_number: 123 },
+				}),
+				idempotency: "ci-build-123",
+			},
+			{
+				url: `/v1/evaluation-gates/runs?project_id=${project_id}&status=pending&limit=10`,
+				method: "GET",
+				body: undefined,
+				idempotency: undefined,
 			},
 		]);
 	});

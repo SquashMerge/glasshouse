@@ -21,6 +21,12 @@ export type EvaluationRunAdmissionInput = {
 		model?: string | null;
 		prompt_version?: string | null;
 	};
+	gate?: {
+		approval_id: string;
+		definition_version_id: string;
+		dataset_version_id: string;
+		gate_context: "ci" | "release";
+	};
 	authorization: ProjectAuthorization;
 };
 
@@ -687,6 +693,7 @@ function requestHash(input: EvaluationRunAdmissionInput, metadata: Row) {
 		definition_version: input.definition_version,
 		expected_dataset_id: input.expected_dataset_id ?? null,
 		benchmark: input.benchmark ?? null,
+		gate: input.gate ?? null,
 		trigger_metadata: metadata,
 	});
 }
@@ -709,6 +716,57 @@ function definitionFields(row: Row) {
 		);
 	}
 	return parsed.data;
+}
+
+async function validateGateApproval(
+	client: PoolClient,
+	input: EvaluationRunAdmissionInput,
+): Promise<void> {
+	const gate = input.gate;
+	if (!gate) return;
+	const result = await client.query(
+		`SELECT approval.id, approval.definition_version_id, approval.dataset_version_id,
+		        approval.gate_context, approval.minimum_pass_rate,
+		        definition.evaluation_id, definition.version,
+		        definition.content_hash, dataset_version.content_hash AS dataset_content_hash
+		 FROM evaluation_gate_approvals approval
+		 JOIN evaluation_definition_versions definition
+		   ON definition.id=approval.definition_version_id
+		  AND definition.project_id=approval.project_id
+		 JOIN dataset_versions dataset_version
+		   ON dataset_version.id=approval.dataset_version_id
+		  AND dataset_version.project_id=approval.project_id
+		 WHERE approval.id=$1
+		   AND approval.organization_id=$2
+		   AND approval.project_id=$3
+		   AND approval.revoked_at IS NULL
+		   AND approval.gate_context=$4
+		   AND approval.definition_content_hash=definition.content_hash
+		   AND approval.dataset_content_hash=dataset_version.content_hash
+		 FOR UPDATE OF approval`,
+		[
+			gate.approval_id,
+			input.authorization.organization_id,
+			input.project_id,
+			gate.gate_context,
+		],
+	);
+	const row = result.rows[0] as Row | undefined;
+	if (!row)
+		throw new EvaluationRunRepositoryError(
+			"CONFLICT",
+			"Evaluation Gate approval is not active or is not available to this Project",
+		);
+	if (
+		text(row, "definition_version_id") !== gate.definition_version_id ||
+		text(row, "dataset_version_id") !== gate.dataset_version_id ||
+		text(row, "evaluation_id") !== input.evaluation_selector ||
+		Number(row.version) !== input.definition_version
+	)
+		throw new EvaluationRunRepositoryError(
+			"CONFLICT",
+			"Evaluation Gate invocation does not match its approved immutable Definition Version",
+		);
 }
 
 function snapshotFor(
@@ -892,8 +950,10 @@ export async function admitEvaluationRun(
 				return runFromRow(row, input, snapshot, true);
 			}
 
+			await validateGateApproval(client, input);
 			const definitionResult = await client.query(
-				`SELECT definition.*, evaluation.name AS evaluation_name, dataset_version.dataset_id
+				`SELECT definition.*, evaluation.name AS evaluation_name, dataset_version.dataset_id,
+				        dataset_version.content_hash AS dataset_content_hash
 				 FROM evaluation_definition_versions definition
 				 JOIN evaluations evaluation
 				   ON evaluation.id = definition.evaluation_id
@@ -915,6 +975,8 @@ export async function admitEvaluationRun(
 						SELECT 1 FROM benchmark_suites suite
 						WHERE suite.id=$5 AND suite.project_id=$1 AND suite.dataset_id=dataset.id
 				   ))
+				   AND ($6::uuid IS NULL OR definition.id=$6)
+				   AND ($7::uuid IS NULL OR definition.dataset_version_id=$7)
 				 FOR UPDATE OF definition, evaluation, dataset_version, dataset`,
 				[
 					input.project_id,
@@ -922,6 +984,8 @@ export async function admitEvaluationRun(
 					input.definition_version,
 					input.expected_dataset_id ?? null,
 					input.benchmark?.suite_id ?? null,
+					input.gate?.definition_version_id ?? null,
+					input.gate?.dataset_version_id ?? null,
 				],
 			);
 			const definitionRow = definitionResult.rows[0] as Row | undefined;
@@ -1058,6 +1122,59 @@ export async function admitEvaluationRun(
 						input.benchmark.label,
 						input.benchmark.model ?? snapshot.target.model,
 						input.benchmark.prompt_version ?? null,
+					],
+				);
+			}
+			if (input.gate) {
+				const minimumPassRate = definition.thresholds.minimum_pass_rate;
+				if (minimumPassRate === null)
+					throw new EvaluationRunRepositoryError(
+						"BAD_REQUEST",
+						"An Evaluation Gate requires a pinned minimum pass rate",
+					);
+				await client.query(
+					`INSERT INTO evaluation_gate_runs (
+						id, organization_id, project_id, approval_id, evaluation_run_id,
+						evaluation_id, definition_version_id, dataset_version_id,
+						definition_content_hash, dataset_content_hash, target_fingerprint,
+						evaluator_fingerprint, gate_context, minimum_pass_rate,
+						requested_by_actor_id, idempotency_key
+					) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+					[
+						randomUUID(),
+						input.authorization.organization_id,
+						input.project_id,
+						input.gate.approval_id,
+						runId,
+						text(definitionRow, "evaluation_id"),
+						text(definitionRow, "id"),
+						definition.dataset_version_id,
+						text(definitionRow, "content_hash"),
+						text(definitionRow, "dataset_content_hash"),
+						snapshot.target_fingerprint,
+						snapshot.evaluator_fingerprint,
+						input.gate.gate_context,
+						minimumPassRate,
+						input.authorization.actor_id,
+						input.idempotency_key,
+					],
+				);
+				await client.query(
+					`INSERT INTO evaluation_gate_audit_events (
+						organization_id, project_id, approval_id, gate_run_id,
+						evaluation_run_id, definition_version_id, actor_id,
+						event_type, gate_context, outcome_status
+					) SELECT $1, $2, $3, gate.id, $4, $5, $6, 'invoked', $7, 'pending'
+					  FROM evaluation_gate_runs gate
+					 WHERE gate.evaluation_run_id=$4 AND gate.project_id=$2`,
+					[
+						input.authorization.organization_id,
+						input.project_id,
+						input.gate.approval_id,
+						runId,
+						text(definitionRow, "id"),
+						input.authorization.actor_id,
+						input.gate.gate_context,
 					],
 				);
 			}

@@ -15,7 +15,12 @@ import {
 	getEvaluationRunStatus,
 	listEvaluationRuns,
 	compareEvaluationRuns,
+	createEvaluationGateApproval,
 	getEvaluationDraft,
+	listEvaluationGateApprovals,
+	listEvaluationGateRuns,
+	revokeEvaluationGateApproval,
+	startEvaluationGate,
 	listDatasets,
 	listExperiments,
 	listEvaluations,
@@ -757,6 +762,13 @@ export function EvaluationsPage() {
 				<EvaluationRunHistory
 					projectId={selectedProjectId}
 					onInspect={setStartedRunId}
+				/>
+			)}
+			{selectedProjectId && (
+				<EvaluationGatePanel
+					canAdmin={canAdmin}
+					onInspect={setStartedRunId}
+					projectId={selectedProjectId}
 				/>
 			)}
 			{(datasets.isError ||
@@ -1988,5 +2000,273 @@ export function EvaluationDefinitionDetailPage() {
 				Created {new Date(detail.data.created_at).toLocaleString()}
 			</p>
 		</div>
+	);
+}
+
+function EvaluationGatePanel({
+	projectId,
+	canAdmin,
+	onInspect,
+}: {
+	projectId: string;
+	canAdmin: boolean;
+	onInspect: (runId: string) => void;
+}) {
+	const client = useQueryClient();
+	const [definitionVersionId, setDefinitionVersionId] = React.useState("");
+	const [gateContext, setGateContext] = React.useState<"ci" | "release">("ci");
+	const [reason, setReason] = React.useState("");
+	const [message, setMessage] = React.useState<string | null>(null);
+	const [pending, setPending] = React.useState(false);
+	const approvals = useQuery({
+		queryKey: ["evaluation-gate-approvals", projectId],
+		queryFn: () =>
+			listEvaluationGateApprovals({
+				project_id: projectId,
+				include_revoked: true,
+			}),
+	});
+	const runs = useQuery({
+		queryKey: ["evaluation-gate-runs", projectId],
+		queryFn: () => listEvaluationGateRuns({ project_id: projectId, limit: 25 }),
+		refetchInterval: (query) =>
+			query.state.data?.items.some((item) => item.status === "pending")
+				? 3000
+				: false,
+	});
+	const activeApprovals =
+		approvals.data?.items.filter((item) => item.status === "active") ?? [];
+	const createApproval = async () => {
+		setPending(true);
+		setMessage(null);
+		try {
+			await createEvaluationGateApproval({
+				project_id: projectId,
+				definition_version_id: definitionVersionId.trim(),
+				gate_context: gateContext,
+				reason: reason.trim(),
+			});
+			setDefinitionVersionId("");
+			setReason("");
+			setMessage("Approval created for the immutable Definition Version.");
+			await client.invalidateQueries({
+				queryKey: ["evaluation-gate-approvals", projectId],
+			});
+		} catch (error) {
+			setMessage(
+				error instanceof Error ? error.message : "Unable to create approval.",
+			);
+		} finally {
+			setPending(false);
+		}
+	};
+	const revoke = async (id: string) => {
+		setPending(true);
+		setMessage(null);
+		try {
+			await revokeEvaluationGateApproval({
+				project_id: projectId,
+				id,
+				reason: "Revoked by an administrator from the Evaluations dashboard.",
+			});
+			setMessage("Approval revoked; new gate admissions are blocked.");
+			await client.invalidateQueries({
+				queryKey: ["evaluation-gate-approvals", projectId],
+			});
+		} catch (error) {
+			setMessage(
+				error instanceof Error ? error.message : "Unable to revoke approval.",
+			);
+		} finally {
+			setPending(false);
+		}
+	};
+	const start = async (approval: (typeof activeApprovals)[number]) => {
+		setPending(true);
+		setMessage(null);
+		try {
+			await startEvaluationGate({
+				project_id: projectId,
+				approval_id: approval.id,
+				definition_version_id: approval.definition_version_id,
+				dataset_version_id: approval.dataset_version_id,
+				gate_context: approval.gate_context,
+				idempotency_key: crypto.randomUUID(),
+			});
+			setMessage("Pinned gate run admitted.");
+			await client.invalidateQueries({
+				queryKey: ["evaluation-gate-runs", projectId],
+			});
+		} catch (error) {
+			setMessage(
+				error instanceof Error ? error.message : "Unable to start gate.",
+			);
+		} finally {
+			setPending(false);
+		}
+	};
+	return (
+		<section
+			className="space-y-4 rounded border p-4"
+			aria-label="Evaluation release gates"
+		>
+			<div>
+				<h2 className="text-lg font-medium">Pinned release and CI gates</h2>
+				<p className="text-sm text-muted-foreground">
+					Administrator approvals bind a gate to immutable Definition and
+					Dataset Version hashes.
+				</p>
+			</div>
+			{canAdmin && (
+				<div className="grid gap-3 rounded bg-muted/30 p-3 md:grid-cols-2">
+					<label
+						className="block space-y-2 text-sm"
+						htmlFor="gate-definition-version-id"
+					>
+						Immutable Definition Version ID
+						<Input
+							id="gate-definition-version-id"
+							value={definitionVersionId}
+							onChange={(event) => setDefinitionVersionId(event.target.value)}
+							placeholder="UUID"
+						/>
+					</label>
+					<label className="block space-y-2 text-sm" htmlFor="gate-context">
+						Permitted gate context
+						<Select
+							id="gate-context"
+							value={gateContext}
+							onChange={(event) =>
+								setGateContext(event.target.value as "ci" | "release")
+							}
+						>
+							<option value="ci">CI</option>
+							<option value="release">Release</option>
+						</Select>
+					</label>
+					<label
+						className="block space-y-2 text-sm md:col-span-2"
+						htmlFor="gate-reason"
+					>
+						Approval reason
+						<Input
+							id="gate-reason"
+							value={reason}
+							onChange={(event) => setReason(event.target.value)}
+							placeholder="Why this immutable version is approved"
+						/>
+					</label>
+					<Button
+						disabled={pending || !definitionVersionId.trim() || !reason.trim()}
+						onClick={() => void createApproval()}
+					>
+						{pending ? "Saving..." : "Approve pinned gate"}
+					</Button>
+				</div>
+			)}
+			{message && (
+				<p className="text-sm" role="status">
+					{message}
+				</p>
+			)}
+			{approvals.isError ? (
+				<p className="text-sm text-destructive">
+					Unable to load gate approvals.
+				</p>
+			) : approvals.isLoading ? (
+				<p className="text-sm text-muted-foreground">Loading approvals...</p>
+			) : (
+				<ul className="divide-y rounded border" aria-label="Gate approvals">
+					{(approvals.data?.items ?? []).map((approval) => (
+						<li className="space-y-2 p-3 text-sm" key={approval.id}>
+							<div className="flex flex-wrap items-center justify-between gap-2">
+								<strong>
+									{approval.status.toUpperCase()} ·{" "}
+									{approval.gate_context.toUpperCase()}
+								</strong>
+								{canAdmin && approval.status === "active" && (
+									<span className="flex gap-2">
+										<Button
+											disabled={pending}
+											size="sm"
+											onClick={() => void start(approval)}
+										>
+											Run gate
+										</Button>
+										<Button
+											disabled={pending}
+											size="sm"
+											variant="outline"
+											onClick={() => void revoke(approval.id)}
+										>
+											Revoke
+										</Button>
+									</span>
+								)}
+							</div>
+							<p>
+								Definition v{approval.definition_version} · minimum pass rate{" "}
+								{approval.minimum_pass_rate}
+							</p>
+							<p className="break-all text-muted-foreground">
+								Definition hash: {approval.definition_content_hash}
+							</p>
+							<p className="break-all text-muted-foreground">
+								Dataset hash: {approval.dataset_content_hash}
+							</p>
+						</li>
+					))}
+					{!approvals.data?.items.length && (
+						<li className="p-3 text-sm text-muted-foreground">
+							No gate approvals.
+						</li>
+					)}
+				</ul>
+			)}
+			<div>
+				<h3 className="font-medium">Gate results</h3>
+				{runs.isError ? (
+					<p className="text-sm text-destructive">
+						Unable to load gate results.
+					</p>
+				) : (
+					<ul
+						className="mt-2 divide-y rounded border"
+						aria-label="Gate results"
+					>
+						{(runs.data?.items ?? []).map((run) => (
+							<li
+								className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
+								key={run.id}
+							>
+								<span>
+									<strong>{run.status.toUpperCase()}</strong> ·{" "}
+									{run.gate_context.toUpperCase()} · Run {run.evaluation_run_id}{" "}
+									·{" "}
+									{run.selected_count == null
+										? "counts unavailable"
+										: `${run.passed_count ?? 0}/${run.evaluated_count ?? 0} passed of ${run.selected_count} selected`}
+								</span>
+								<span className="flex items-center gap-2 text-muted-foreground">
+									{run.outcome_reason ?? "Awaiting terminal result"}
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={() => onInspect(run.evaluation_run_id)}
+									>
+										Inspect Run
+									</Button>
+								</span>
+							</li>
+						))}
+						{!runs.data?.items.length && (
+							<li className="p-3 text-sm text-muted-foreground">
+								No gate runs.
+							</li>
+						)}
+					</ul>
+				)}
+			</div>
+		</section>
 	);
 }
