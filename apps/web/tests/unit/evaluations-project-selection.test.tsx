@@ -29,6 +29,9 @@ const {
 	publishEvaluationDraft,
 	restoreEvaluation,
 	tombstoneEvaluation,
+	listEvaluationGateApprovals,
+	listEvaluationGateRuns,
+	startEvaluationGate,
 } = vi.hoisted(() => ({
 	archiveEvaluation: vi.fn(),
 	createEvaluation: vi.fn(),
@@ -44,6 +47,9 @@ const {
 	publishEvaluationDraft: vi.fn(),
 	restoreEvaluation: vi.fn(),
 	tombstoneEvaluation: vi.fn(),
+	listEvaluationGateApprovals: vi.fn(),
+	listEvaluationGateRuns: vi.fn(),
+	startEvaluationGate: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -90,6 +96,9 @@ vi.mock("../../src/lib/api", () => ({
 	publishEvaluationDraft,
 	restoreEvaluation,
 	tombstoneEvaluation,
+	listEvaluationGateApprovals,
+	listEvaluationGateRuns,
+	startEvaluationGate,
 }));
 
 import { EvaluationsPage } from "../../src/routes/evaluations";
@@ -199,6 +208,9 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		publishEvaluationDraft.mockReset();
 		restoreEvaluation.mockReset();
 		tombstoneEvaluation.mockReset();
+		listEvaluationGateApprovals.mockResolvedValue({ items: [] });
+		listEvaluationGateRuns.mockResolvedValue({ items: [], total: 0 });
+		startEvaluationGate.mockReset();
 	});
 
 	afterEach(cleanup);
@@ -398,6 +410,37 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		}
 		expect(screen.getByLabelText("Evaluation")).toHaveClass(
 			"focus-visible:ring-2",
+		);
+	});
+	it("reuses a gate idempotency key when a lost response is retried", async () => {
+		selection.projectRole = "admin";
+		listEvaluationGateApprovals.mockResolvedValue({
+			items: [
+				{
+					id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+					status: "active",
+					gate_context: "ci",
+					definition_version: 1,
+					definition_version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+					dataset_version_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+					minimum_pass_rate: 0.9,
+					definition_content_hash: "definition-hash",
+					dataset_content_hash: "dataset-hash",
+				},
+			],
+		});
+		startEvaluationGate
+			.mockRejectedValueOnce(new Error("response lost"))
+			.mockResolvedValueOnce({});
+		renderPage();
+
+		const runGate = await screen.findByRole("button", { name: "Run gate" });
+		fireEvent.click(runGate);
+		await screen.findByText("response lost");
+		fireEvent.click(screen.getByRole("button", { name: "Run gate" }));
+		await waitFor(() => expect(startEvaluationGate).toHaveBeenCalledTimes(2));
+		expect(startEvaluationGate.mock.calls[1]?.[0].idempotency_key).toBe(
+			startEvaluationGate.mock.calls[0]?.[0].idempotency_key,
 		);
 	});
 	it("shows an alert and retry when Dataset Version fetching fails without disabling publish", async () => {
