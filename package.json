@@ -37,7 +37,7 @@
     "dotenv-expand": "1000.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.11",
+    "@biomejs/biome": "2.5.12",
     "@types/bun": "1.4.0",
     "js-yaml": "5.4.1",
     "typescript": "7.0.2"
