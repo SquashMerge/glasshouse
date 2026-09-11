@@ -32,6 +32,7 @@ type ResolvedSnapshot = {
 	evaluator: Record<string, unknown>;
 	evaluator_version: string;
 	execution_defaults: Record<string, unknown>;
+	limits: Record<string, unknown>;
 	thresholds: Record<string, unknown>;
 	sampling: Record<string, unknown>;
 	sample_identity: string;
@@ -59,6 +60,48 @@ export type EvaluationRun = {
 	created_at: string;
 	updated_at: string;
 	replayed: boolean;
+};
+
+export type EvaluationRunLifecycleStatus = {
+	id: string;
+	project_id: string;
+	status: EvaluationRun["status"];
+	counts: {
+		total: number;
+		pending: number;
+		running: number;
+		completed: number;
+		failed: number;
+		cancelled: number;
+	};
+	attempts: number;
+	created_at: string;
+	updated_at: string;
+	terminal_reason: string | null;
+	items: EvaluationRunItemEvidence[];
+	items_truncated: boolean;
+};
+
+export type EvaluationRunItemEvidence = {
+	task_id: string;
+	item_key: string;
+	position: number;
+	status: EvaluationRun["status"];
+	attempt_count: number;
+	error_classification: string | null;
+	error_message: string | null;
+	cost_usd: number | null;
+	evaluator_rationale: Record<string, unknown> | null;
+	trace_id: string | null;
+};
+
+export type EvaluationRunLifecycleEvent = {
+	id: number;
+	run_id: string;
+	event_type: "run_status" | "task_status" | "result_recorded";
+	task_id: string | null;
+	payload: Record<string, unknown>;
+	created_at: string;
 };
 
 export class EvaluationRunRepositoryError extends Error {
@@ -189,6 +232,106 @@ function timestamp(row: Row, field: string): string {
 	return text(row, field);
 }
 
+async function withTransaction<T>(
+	db: Transactional,
+	callback: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		const value = await callback(client);
+		await client.query("COMMIT");
+		return value;
+	} catch (cause) {
+		await client.query("ROLLBACK").catch(() => {});
+		throw cause;
+	} finally {
+		client.release();
+	}
+}
+
+function lifecycleStatus(
+	row: Row,
+	evidenceRows: Row[] = [],
+): EvaluationRunLifecycleStatus {
+	return {
+		id: text(row, "id"),
+		project_id: text(row, "project_id"),
+		status: text(row, "status") as EvaluationRun["status"],
+		counts: {
+			total: Number(row.total ?? 0),
+			pending: Number(row.pending ?? 0),
+			running: Number(row.running ?? 0),
+			completed: Number(row.completed ?? 0),
+			failed: Number(row.failed ?? 0),
+			cancelled: Number(row.cancelled ?? 0),
+		},
+		attempts: Number(row.attempts ?? 0),
+		created_at: timestamp(row, "created_at"),
+		updated_at: timestamp(row, "updated_at"),
+		terminal_reason: nullableText(row, "terminal_reason"),
+		items: evidenceRows.slice(0, 100).map((item) => ({
+			task_id: text(item, "task_id"),
+			item_key: text(item, "item_key"),
+			position: Number(item.position),
+			status: text(item, "status") as EvaluationRun["status"],
+			attempt_count: Number(item.attempt_count ?? 0),
+			error_classification: nullableText(item, "error_classification"),
+			error_message: nullableText(item, "error_message"),
+			cost_usd: item.cost_usd == null ? null : Number(item.cost_usd),
+			evaluator_rationale:
+				item.evaluator_rationale == null
+					? null
+					: object(item, "evaluator_rationale"),
+			trace_id: nullableText(item, "trace_id"),
+		})),
+		items_truncated: evidenceRows.length > 100,
+	};
+}
+
+const lifecycleStatusQuery = `SELECT run.id, run.project_id, run.status,
+    run.created_at, run.updated_at, run.terminal_reason,
+    count(task.id)::int AS total,
+    count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,
+    count(task.id) FILTER (WHERE task.status = 'running')::int AS running,
+    count(task.id) FILTER (WHERE task.status = 'completed')::int AS completed,
+    count(task.id) FILTER (WHERE task.status = 'failed')::int AS failed,
+    count(task.id) FILTER (WHERE task.status = 'cancelled')::int AS cancelled,
+    coalesce(sum(task.attempt_count), 0)::int AS attempts
+ FROM evaluation_runs run
+ LEFT JOIN experiment_tasks task
+   ON task.evaluation_run_id = run.id AND task.project_id = run.project_id
+ WHERE run.id = $1 AND run.project_id = $2
+ GROUP BY run.id`;
+
+const lifecycleEvidenceQuery = `SELECT task.id AS task_id, item.item_key, item.position, task.status, task.attempt_count,
+    COALESCE(result.error_classification, task.last_error_classification) AS error_classification,
+    COALESCE(result.error_message, task.last_error_message) AS error_message,
+    result.cost_usd, result.evaluator_rationale, result.trace_id
+ FROM experiment_tasks task
+ JOIN evaluation_run_items item ON item.id=task.evaluation_run_item_id AND item.project_id=task.project_id
+ LEFT JOIN experiment_results result
+   ON result.experiment_id=task.experiment_id
+  AND result.project_id=task.project_id
+  AND result.evaluation_run_item_id=task.evaluation_run_item_id
+ WHERE task.evaluation_run_id=$1 AND task.project_id=$2
+ ORDER BY item.position ASC, task.id ASC LIMIT 101`;
+
+async function lifecycleStatusWithEvidence(
+	client: PoolClient,
+	id: string,
+	projectId: string,
+) {
+	const status = await client.query(lifecycleStatusQuery, [id, projectId]);
+	if (!status.rows[0])
+		throw new EvaluationRunRepositoryError(
+			"NOT_FOUND",
+			"Evaluation Run is not available",
+		);
+	const evidence = await client.query(lifecycleEvidenceQuery, [id, projectId]);
+	return lifecycleStatus(status.rows[0] as Row, evidence.rows as Row[]);
+}
+
 function safeMetadata(value: Record<string, unknown> | undefined) {
 	if (value === undefined) return {};
 	const output: Record<string, string | number | boolean | null> = {};
@@ -263,6 +406,7 @@ function snapshotFor(
 	const target = { ...definition.target, model };
 	const evaluator = { ...definition.evaluator };
 	const executionDefaults = { ...definition.execution_defaults };
+	const limits = { ...definition.limits };
 	const thresholds = { ...definition.thresholds };
 	const sampling = { ...definition.sampling };
 	const sampleIdentity = hash({
@@ -280,6 +424,7 @@ function snapshotFor(
 		evaluator,
 		evaluator_version: text(evaluator, "version"),
 		execution_defaults: executionDefaults,
+		limits,
 		thresholds,
 		sampling,
 		sample_identity: sampleIdentity,
@@ -327,6 +472,7 @@ function experimentConfig(snapshot: ResolvedSnapshot) {
 		evaluator: snapshot.evaluator.kind,
 		temperature: snapshot.execution_defaults.temperature,
 		max_tokens: snapshot.execution_defaults.max_tokens,
+		limits: snapshot.limits,
 	};
 }
 
@@ -403,6 +549,7 @@ export async function admitEvaluationRun(
 						snapshotRow.execution_defaults,
 						"execution_defaults",
 					),
+					limits: object(snapshotRow.limits ?? {}, "limits"),
 					thresholds: object(snapshotRow.thresholds, "thresholds"),
 					sampling: object(snapshotRow.sampling, "sampling"),
 					sample_identity: text(snapshotRow, "sample_identity"),
@@ -510,7 +657,7 @@ export async function admitEvaluationRun(
 				[runId],
 			);
 			await client.query(
-				"INSERT INTO evaluation_run_inputs (run_id, organization_id, project_id, target, target_version, target_fingerprint, evaluator, evaluator_version, execution_defaults, thresholds, sampling, sample_identity, ordered_item_snapshot, resolved_inputs_hash) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14)",
+				"INSERT INTO evaluation_run_inputs (run_id, organization_id, project_id, target, target_version, target_fingerprint, evaluator, evaluator_version, execution_defaults, thresholds, sampling, sample_identity, ordered_item_snapshot, resolved_inputs_hash, limits) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14,$15::jsonb)",
 				[
 					runId,
 					input.authorization.organization_id,
@@ -526,6 +673,7 @@ export async function admitEvaluationRun(
 					snapshot.sample_identity,
 					JSON.stringify(snapshot.ordered_item_snapshot),
 					snapshot.resolved_inputs_hash,
+					JSON.stringify(snapshot.limits),
 				],
 			);
 			for (const item of selectedItems) {
@@ -587,6 +735,260 @@ export async function admitEvaluationRun(
 				benchmark_run_id: benchmarkRunId,
 			};
 			return runFromRow(finalRunRow, input, snapshot, false);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function getEvaluationRunStatus(
+	db: Transactional,
+	input: {
+		id: string;
+		project_id: string;
+		authorization: ProjectAuthorization;
+	},
+): Promise<EvaluationRunLifecycleStatus> {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			return lifecycleStatusWithEvidence(client, input.id, input.project_id);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function getEvaluationRunExecution(
+	db: Transactional,
+	input: {
+		id: string;
+		project_id: string;
+		authorization: ProjectAuthorization;
+	},
+): Promise<{
+	id: string;
+	project_id: string;
+	experiment_id: string;
+	dataset_id: string;
+	config: Record<string, unknown>;
+}> {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			const result = await client.query(
+				"SELECT run.id, run.project_id, version.dataset_id, experiment.id AS experiment_id, inputs.target, inputs.evaluator, inputs.execution_defaults, inputs.limits FROM evaluation_runs run JOIN evaluation_run_inputs inputs ON inputs.run_id=run.id AND inputs.project_id=run.project_id JOIN dataset_versions version ON version.id=run.dataset_version_id AND version.project_id=run.project_id JOIN experiments experiment ON experiment.evaluation_run_id=run.id AND experiment.project_id=run.project_id WHERE run.id=$1 AND run.project_id=$2",
+				[input.id, input.project_id],
+			);
+			const row = result.rows[0] as Row | undefined;
+			if (!row)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			const target = object(row.target, "target");
+			return {
+				id: text(row, "id"),
+				project_id: text(row, "project_id"),
+				experiment_id: text(row, "experiment_id"),
+				dataset_id: text(row, "dataset_id"),
+				config: {
+					model: target.model,
+					system_prompt: target.system_prompt,
+					evaluator: object(row.evaluator, "evaluator").kind,
+					...object(row.execution_defaults, "execution_defaults"),
+					limits: object(row.limits ?? {}, "limits"),
+				},
+			};
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function cancelEvaluationRun(
+	db: Transactional,
+	input: {
+		id: string;
+		project_id: string;
+		authorization: ProjectAuthorization;
+	},
+): Promise<EvaluationRunLifecycleStatus> {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			await client.query(
+				"SELECT id FROM experiments WHERE evaluation_run_id=$1 AND project_id=$2 ORDER BY id FOR UPDATE",
+				[input.id, input.project_id],
+			);
+			const run = await client.query(
+				"SELECT * FROM evaluation_runs WHERE id=$1 AND project_id=$2 FOR UPDATE",
+				[input.id, input.project_id],
+			);
+			if (!run.rows[0])
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			const current = text(run.rows[0] as Row, "status");
+			if (!(["pending", "running"] as string[]).includes(current))
+				throw new EvaluationRunRepositoryError(
+					"CONFLICT",
+					`Evaluation Run is already ${current}`,
+				);
+			await client.query(
+				"UPDATE evaluation_runs SET status='cancelled', terminal_reason='cancelled_by_request', updated_at=now() WHERE id=$1 AND project_id=$2",
+				[input.id, input.project_id],
+			);
+			await client.query(
+				"UPDATE experiments SET status='cancelled', updated_at=now() WHERE evaluation_run_id=$1 AND project_id=$2 AND status IN ('pending','running')",
+				[input.id, input.project_id],
+			);
+			await client.query(
+				"UPDATE experiment_tasks SET status='cancelled', cost_reservation_usd=NULL, lease_token=NULL, lease_expires_at=NULL, heartbeat_at=NULL, completed_at=now(), last_error_classification='cancelled_by_request', last_error_message='evaluation run cancelled', updated_at=now() WHERE evaluation_run_id=$1 AND project_id=$2 AND status IN ('pending','running')",
+				[input.id, input.project_id],
+			);
+			await client.query(
+				"UPDATE execution_admissions SET status='cancelled', cancelled_at=now() WHERE project_id=$2 AND status='active' AND work_kind='experiment_task' AND work_id IN (SELECT id FROM experiment_tasks WHERE evaluation_run_id=$1 AND project_id=$2)",
+				[input.id, input.project_id],
+			);
+			return lifecycleStatusWithEvidence(client, input.id, input.project_id);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function retryEvaluationRun(
+	db: Transactional,
+	input: {
+		id: string;
+		project_id: string;
+		authorization: ProjectAuthorization;
+	},
+): Promise<EvaluationRunLifecycleStatus> {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			await client.query(
+				"SELECT id FROM experiments WHERE evaluation_run_id=$1 AND project_id=$2 ORDER BY id FOR UPDATE",
+				[input.id, input.project_id],
+			);
+			const run = await client.query(
+				"SELECT * FROM evaluation_runs WHERE id=$1 AND project_id=$2 FOR UPDATE",
+				[input.id, input.project_id],
+			);
+			if (!run.rows[0])
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			if (text(run.rows[0] as Row, "status") !== "failed")
+				throw new EvaluationRunRepositoryError(
+					"CONFLICT",
+					"Only failed Evaluation Runs can be retried",
+				);
+			const reset = await client.query(
+				"UPDATE experiment_tasks SET status='pending', next_attempt_at=now(), lease_token=NULL, lease_expires_at=NULL, heartbeat_at=NULL, last_error_classification=NULL, last_error_message=NULL, updated_at=now() WHERE evaluation_run_id=$1 AND project_id=$2 AND status='failed' AND attempt_count < max_attempts AND last_error_classification = 'provider_error' RETURNING id",
+				[input.id, input.project_id],
+			);
+			if (!reset.rows.length)
+				throw new EvaluationRunRepositoryError(
+					"CONFLICT",
+					"Evaluation Run has no retryable failed items",
+				);
+			await client.query(
+				"UPDATE evaluation_runs SET status='running', terminal_reason=NULL, updated_at=now() WHERE id=$1 AND project_id=$2",
+				[input.id, input.project_id],
+			);
+			await client.query(
+				"UPDATE experiments SET status='running', updated_at=now() WHERE evaluation_run_id=$1 AND project_id=$2 AND status='failed'",
+				[input.id, input.project_id],
+			);
+			return lifecycleStatusWithEvidence(client, input.id, input.project_id);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function listEvaluationRunEvents(
+	db: Transactional,
+	input: {
+		id: string;
+		project_id: string;
+		after_id: number;
+		authorization: ProjectAuthorization;
+	},
+): Promise<EvaluationRunLifecycleEvent[]> {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			const result = await client.query(
+				"SELECT id, run_id, event_type, task_id, payload, created_at FROM evaluation_run_events WHERE run_id=$1 AND project_id=$2 AND id>$3 ORDER BY id ASC LIMIT 100",
+				[input.id, input.project_id, input.after_id],
+			);
+			return (result.rows as Row[]).map((row) => ({
+				id: Number(row.id),
+				run_id: text(row, "run_id"),
+				event_type: text(
+					row,
+					"event_type",
+				) as EvaluationRunLifecycleEvent["event_type"],
+				task_id: nullableText(row, "task_id"),
+				payload: object(row.payload, "payload"),
+				created_at: timestamp(row, "created_at"),
+			}));
 		});
 	} catch (cause) {
 		throw normalize(cause);

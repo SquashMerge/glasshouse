@@ -99,4 +99,20 @@ describe("execution admission dispatch", () => {
 		expect(result).toEqual({ admitted: false, reason: "existing" });
 		expect(providerCalls).toBe(0);
 	});
+
+	it("distinguishes an admission deadline from authorization unavailability", async () => {
+		const result = await invokeWithExecutionAdmission({
+			isActive: async () => true,
+			claimDispatch: async () => ({ status: "created" }),
+			cancel: async () => {},
+			invoke: async () =>
+				await new Promise<never>(() => {
+					// The admission deadline must end an in-flight provider call.
+				}),
+			timeoutMs: 1,
+			pollMs: 1_000,
+		} as never);
+
+		expect(result).toEqual({ admitted: false, reason: "timeout" });
+	});
 });

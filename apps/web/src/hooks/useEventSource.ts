@@ -35,6 +35,7 @@ export type EventSourceStatus = "connecting" | "open" | "closed";
 export interface EventSourceFrame<T> {
 	event: string;
 	data: T;
+	id?: string;
 }
 
 export interface UseEventSourceOptions<T> {
@@ -167,6 +168,9 @@ export function useEventSource<T = unknown>(
 	// Last successful flush timestamp (ms via `performance.now()`).
 	const lastFlushAtRef = React.useRef<number>(0);
 	const bufferRef = React.useRef<EventSourceFrame<T>[]>([]);
+	const parsedEventIdRef = React.useRef<string | null>(null);
+	const deliveredEventIdRef = React.useRef<string | null>(null);
+	const lastEventUrlRef = React.useRef<string | null>(null);
 	const bufferGenerationRef = React.useRef<number | null>(null);
 
 	// Flag so the connect loop knows whether to keep running. Set to false on
@@ -263,6 +267,7 @@ export function useEventSource<T = unknown>(
 			for (const msg of batch) {
 				if (!isCurrentGeneration(generation)) return;
 				cb(msg);
+				if (msg.id) deliveredEventIdRef.current = msg.id;
 			}
 			if (!isCurrentGeneration(generation)) return;
 			framesReceivedRef.current += batch.length;
@@ -333,7 +338,10 @@ export function useEventSource<T = unknown>(
 			setStatus("connecting");
 
 			try {
-				const res = await authedFetch(url, { signal: ac.signal });
+				const headers = deliveredEventIdRef.current
+					? { "last-event-id": deliveredEventIdRef.current }
+					: undefined;
+				const res = await authedFetch(url, { signal: ac.signal, headers });
 				if (!res.ok) {
 					throw new EventSourceHttpError(res.status);
 				}
@@ -390,12 +398,15 @@ export function useEventSource<T = unknown>(
 				if (!isCurrentConnection()) return;
 				const lines = rawFrame.split("\n");
 				let eventName = "";
+				let eventId: string | undefined;
 				const dataLines: string[] = [];
 				for (const rawLine of lines) {
 					const line = rawLine.replace(/\r$/, "");
 					if (line.startsWith(":")) continue; // SSE comment — drop
 					if (line.startsWith("event:")) {
 						eventName += (eventName ? "\n" : "") + line.slice(6).trim();
+					} else if (line.startsWith("id:")) {
+						eventId = line.slice(3).trim();
 					} else if (line.startsWith("data:")) {
 						// SSE allows multiple `data:` lines; concat with `\n`.
 						dataLines.push(line.slice(5).trimStart());
@@ -406,10 +417,14 @@ export function useEventSource<T = unknown>(
 				const dataJoined = dataLines.join("\n");
 				try {
 					const data = JSON.parse(dataJoined) as T;
-					const frame = { event: eventName, data };
+					const frame = eventId
+						? { event: eventName, data, id: eventId }
+						: { event: eventName, data };
+					if (eventId) parsedEventIdRef.current = eventId;
 					if (!coalesceRef.current) {
 						onMessageRef.current(frame);
 						if (!isCurrentConnection()) return;
+						if (eventId) deliveredEventIdRef.current = eventId;
 						framesReceivedRef.current += 1;
 						setLastEventAt(Date.now());
 						return;
@@ -463,6 +478,11 @@ export function useEventSource<T = unknown>(
 		ownerGenerationRef.current = generation;
 		disposedRef.current = false;
 		teardown();
+		if (lastEventUrlRef.current !== url) {
+			parsedEventIdRef.current = null;
+			deliveredEventIdRef.current = null;
+			lastEventUrlRef.current = url;
+		}
 		if (!enabled || !url) {
 			// Subscribing is disabled — make sure nothing is open.
 			setStatus("closed");

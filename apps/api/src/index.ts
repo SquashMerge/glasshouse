@@ -12,6 +12,7 @@ import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
 import { failInterruptedRetentionRuns } from "./db/governance.js";
 import {
 	executeExperiment,
+	executeEvaluationRun,
 	production as evaluationProduction,
 } from "./routes/experiments.js";
 import { recoverInterruptedWork } from "./lib/recovery.js";
@@ -274,12 +275,21 @@ if (import.meta.main) {
 		failOptimizations: () => failInterruptedOptimizationJobs(pgPool()),
 		failRetentionRuns: () => failInterruptedRetentionRuns(pgPool()),
 		resumeExperiment: async (experiment) => {
-			void executeExperiment(evaluationProduction, {
-				project_id: experiment.project_id,
-				experiment_id: experiment.id,
-				dataset_id: experiment.dataset_id,
-				config: experiment.config,
-			}).catch((cause) =>
+			const execution = experiment.evaluation_run_id
+				? executeEvaluationRun(evaluationProduction, {
+						project_id: experiment.project_id,
+						experiment_id: experiment.id,
+						evaluation_run_id: experiment.evaluation_run_id,
+						dataset_id: experiment.dataset_id,
+						config: experiment.config,
+					})
+				: executeExperiment(evaluationProduction, {
+						project_id: experiment.project_id,
+						experiment_id: experiment.id,
+						dataset_id: experiment.dataset_id,
+						config: experiment.config,
+					});
+			void execution.catch((cause) =>
 				logger.error("evaluation.recovery_failed", cause, {
 					experiment_id: experiment.id,
 					project_id: experiment.project_id,

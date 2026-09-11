@@ -1,14 +1,18 @@
 import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
+import type { Pool } from "pg";
 import { streamSSE } from "hono/streaming";
 import { getDataset, listPublishedDatasetItems } from "../db/datasets.js";
 import { admitEvaluationRun } from "../db/evaluation-runs.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
 	claimExperimentTask,
+	heartbeatExperimentTask,
 	claimExperimentExecution,
 	completeExperimentIfTasksFinished,
 	reconcileUnknownExperimentTaskProviderDispatch,
+	recordExperimentResultTrace,
+	reserveExperimentTaskCost,
 	admitExperimentExecution,
 	createExperiment as createExperimentRecord,
 	experimentExecutionAdmissionIsActive,
@@ -32,7 +36,11 @@ import { evaluationWorkerActorId } from "../db/actors.js";
 import { projectAuthorization } from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
 import { scoreCase } from "../lib/evaluator.js";
-import { invokeConfiguredLlm } from "../lib/llm.js";
+import {
+	invokeConfiguredLlm,
+	isUncertainLlmFailure,
+	LlmProviderError,
+} from "../lib/llm.js";
 import { logger } from "../lib/logger.js";
 import {
 	authorizedSseFrame,
@@ -199,6 +207,7 @@ export type ExperimentDependencies = {
 	listResults: typeof listExperimentResults;
 	insertResult: typeof insertExperimentResult;
 	claimTask: typeof claimExperimentTask;
+	heartbeatTask?: typeof heartbeatExperimentTask;
 	nextTaskRetryDelay: typeof nextExperimentTaskRetryDelay;
 	waitForTaskRetry: (delayMs: number, signal?: AbortSignal) => Promise<void>;
 	finalizeTask: typeof finalizeExperimentTask;
@@ -208,6 +217,7 @@ export type ExperimentDependencies = {
 	cancelAdmission: typeof cancelExecutionAdmission;
 	completeAdmission: typeof completeExecutionAdmission;
 	claimExecution: typeof claimExperimentExecution;
+	reserveCost?: typeof reserveExperimentTaskCost;
 	reconcileUnknownProviderDispatch: typeof reconcileUnknownExperimentTaskProviderDispatch;
 	summary: typeof experimentSummaryRecord;
 	listPublishedDatasetItems: typeof listPublishedDatasetItems;
@@ -221,7 +231,17 @@ export type ExperimentDependencies = {
 		input: Record<string, unknown>;
 		output: string;
 		duration_ms: number;
-	}) => Promise<void>;
+	}) => Promise<string | void>;
+	recordResultTrace?: (
+		db: Pick<Pool, "connect">,
+		input: {
+			project_id: string;
+			experiment_id: string;
+			task_id: string;
+			trace_id: string;
+			admission_id: string;
+		},
+	) => Promise<void>;
 };
 
 export function createEvaluationTracePayload(
@@ -297,10 +317,11 @@ export function createProductionTrace(
 		);
 		const organizationId = organization.rows[0]?.organization_id;
 		if (!organizationId) return;
+		const payload = createEvaluationTracePayload(input);
 		const response = await ingest(
 			new Request("http://internal/v1/otel/v1/traces", {
 				method: "POST",
-				body: JSON.stringify(createEvaluationTracePayload(input)),
+				body: JSON.stringify(payload),
 				headers: { "content-type": "application/json" },
 			}),
 			{
@@ -310,6 +331,7 @@ export function createProductionTrace(
 			},
 		);
 		if (!response.ok) throw new Error("OTLP trace ingestion failed");
+		return payload.resource_spans[0]!.scope_spans[0]!.spans[0]!.trace_id;
 	};
 }
 
@@ -323,6 +345,7 @@ export const production: ExperimentDependencies = {
 	listResults: listExperimentResults,
 	insertResult: insertExperimentResult,
 	claimTask: claimExperimentTask,
+	heartbeatTask: heartbeatExperimentTask,
 	nextTaskRetryDelay: nextExperimentTaskRetryDelay,
 	waitForTaskRetry: (delayMs, signal) =>
 		new Promise((resolve) => {
@@ -344,8 +367,10 @@ export const production: ExperimentDependencies = {
 	cancelAdmission: cancelExecutionAdmission,
 	completeAdmission: completeExecutionAdmission,
 	claimExecution: claimExperimentExecution,
+	reserveCost: reserveExperimentTaskCost,
 	reconcileUnknownProviderDispatch:
 		reconcileUnknownExperimentTaskProviderDispatch,
+	recordResultTrace: recordExperimentResultTrace,
 	summary: experimentSummaryRecord,
 	listPublishedDatasetItems,
 	getDataset,
@@ -356,6 +381,68 @@ export const production: ExperimentDependencies = {
 const activeExperiments = new Map<string, AbortController>();
 const experimentKey = (projectId: string, experimentId: string) =>
 	`${projectId}:${experimentId}`;
+const abortedExecutionStatus = (signal?: AbortSignal) =>
+	signal?.reason === "duration_limit" || signal?.reason === "execution_timeout"
+		? ("failed" as const)
+		: ("cancelled" as const);
+
+const abortedExecutionReason = (signal?: AbortSignal) =>
+	signal?.reason === "duration_limit"
+		? "duration_limit"
+		: signal?.reason === "execution_timeout"
+			? "execution_timeout"
+			: "cancelled_by_request";
+
+function configuredMaxCost(config: Record<string, unknown>): number | null {
+	const limits = config.limits;
+	if (typeof limits !== "object" || limits === null) return null;
+	const maxCost = (limits as Record<string, unknown>).max_cost_usd;
+	return typeof maxCost === "number" && Number.isFinite(maxCost) && maxCost >= 0
+		? maxCost
+		: null;
+}
+
+async function terminalizeAbortedTask(
+	deps: ExperimentDependencies,
+	db: ReturnType<ExperimentDependencies["pool"]>,
+	input: {
+		project_id: string;
+		experiment_id: string;
+	},
+	task: NonNullable<Awaited<ReturnType<ExperimentDependencies["claimTask"]>>>,
+	evaluator: string,
+	signal?: AbortSignal,
+	itemStarted = Date.now(),
+) {
+	const timedOut = signal?.reason === "duration_limit";
+	const admissionTimedOut = signal?.reason === "execution_timeout";
+	const unavailable = !signal?.aborted;
+	return deps.finalizeTask(db, {
+		project_id: input.project_id,
+		experiment_id: input.experiment_id,
+		task_id: task.id,
+		lease_token: task.lease_token,
+		status: timedOut || admissionTimedOut ? "failed" : "cancelled",
+		retryable: false,
+		output: null,
+		scores: { [evaluator]: 0 },
+		duration_ms: Date.now() - itemStarted,
+		error_classification: timedOut
+			? "duration_limit"
+			: admissionTimedOut
+				? "execution_timeout"
+				: unavailable
+					? "authorization_revoked"
+					: "cancelled_by_request",
+		error_message: timedOut
+			? "evaluation run duration limit exceeded"
+			: admissionTimedOut
+				? "execution admission deadline exceeded"
+				: unavailable
+					? "execution authorization unavailable"
+					: "evaluation run cancelled",
+	});
+}
 
 export async function executeExperiment(
 	deps: ExperimentDependencies,
@@ -382,8 +469,12 @@ export async function executeExperiment(
 			await deps.updateExperiment(db, {
 				project_id: input.project_id,
 				id: input.experiment_id,
-				status: "cancelled",
+				status: abortedExecutionStatus(signal),
 				if_status: ["pending", "running"],
+				terminal_reason:
+					signal?.reason === "duration_limit"
+						? "duration_limit"
+						: "cancelled_by_request",
 			});
 			return;
 		}
@@ -408,6 +499,41 @@ export async function executeExperiment(
 		const itemStarted = Date.now();
 		let admissionId: string | undefined;
 		try {
+			const reservation = deps.reserveCost
+				? await deps.reserveCost(db, {
+						project_id: input.project_id,
+						experiment_id: input.experiment_id,
+						task_id: task.id,
+						lease_token: task.lease_token,
+					})
+				: ({ reserved: false, reason: "not_configured" } as const);
+			if (!reservation.reserved && reservation.reason !== "not_configured") {
+				const reservationFailure = reservation.reason;
+				await deps.finalizeTask(db, {
+					project_id: input.project_id,
+					experiment_id: input.experiment_id,
+					task_id: task.id,
+					lease_token: task.lease_token,
+					status: "failed",
+					retryable: false,
+					output: null,
+					scores: { [evaluator]: 0 },
+					duration_ms: Date.now() - itemStarted,
+					error_classification: reservationFailure,
+					error_message:
+						reservationFailure === "snapshot_missing"
+							? "evaluation run snapshot missing"
+							: "evaluation cost limit exceeded",
+				});
+				await deps.updateExperiment(db, {
+					project_id: input.project_id,
+					id: input.experiment_id,
+					status: "failed",
+					if_status: ["pending", "running"],
+					terminal_reason: reservationFailure,
+				});
+				return;
+			}
 			const admission = await deps.admitExecution(db, {
 				project_id: input.project_id,
 				id: input.experiment_id,
@@ -415,37 +541,120 @@ export async function executeExperiment(
 				timeout_ms: executionAdmissionTimeoutMs(),
 			});
 			if (!admission) {
+				await terminalizeAbortedTask(
+					deps,
+					db,
+					input,
+					task,
+					evaluator,
+					signal,
+					itemStarted,
+				);
 				await deps.updateExperiment(db, {
 					project_id: input.project_id,
 					id: input.experiment_id,
-					status: "cancelled",
+					status: abortedExecutionStatus(signal),
 					if_status: ["pending", "running"],
+					terminal_reason: "authorization_revoked",
 				});
 				return;
 			}
 			admissionId = admission.id;
-			const dispatchKey = providerDispatchKey("experiment_task", task.id);
-			const provider = await invokeWithExecutionAdmission({
-				parentSignal: signal,
-				isActive: () =>
-					deps.isAdmissionActive(db, {
-						project_id: input.project_id,
-						id: input.experiment_id,
-						admission_id: admission.id,
-					}),
-				claimDispatch: () =>
-					deps.claimExecution(db, {
-						project_id: input.project_id,
-						id: input.experiment_id,
-						admission_id: admission.id,
-						effect: "provider_dispatch",
-						effect_key: dispatchKey,
-					}),
-				cancel: () => deps.cancelAdmission(db, admission.id),
-				invoke: (providerSignal) =>
-					deps.invokeLlm(task.input, input.config, providerSignal, dispatchKey),
-			});
+			const dispatchKey = providerDispatchKey(
+				"experiment_task",
+				task.id,
+				task.attempt_count || 1,
+			);
+			const heartbeat = deps.heartbeatTask
+				? setInterval(() => {
+						void deps.heartbeatTask!(db, {
+							project_id: input.project_id,
+							experiment_id: input.experiment_id,
+							task_id: task.id,
+							lease_token: task.lease_token,
+						});
+					}, 15_000)
+				: undefined;
+			let provider:
+				| {
+						admitted: true;
+						value: Awaited<ReturnType<ExperimentDependencies["invokeLlm"]>>;
+				  }
+				| {
+						admitted: false;
+						reason: "unavailable" | "existing" | "timeout";
+				  };
+			try {
+				provider = await invokeWithExecutionAdmission({
+					parentSignal: signal,
+					isActive: () =>
+						deps.isAdmissionActive(db, {
+							project_id: input.project_id,
+							id: input.experiment_id,
+							admission_id: admission.id,
+						}),
+					claimDispatch: () =>
+						deps.claimExecution(db, {
+							project_id: input.project_id,
+							id: input.experiment_id,
+							admission_id: admission.id,
+							effect: "provider_dispatch",
+							effect_key: dispatchKey,
+						}),
+					cancel: () => deps.cancelAdmission(db, admission.id),
+					invoke: (providerSignal) =>
+						deps.invokeLlm(
+							task.input,
+							input.config,
+							providerSignal,
+							dispatchKey,
+						),
+				});
+			} finally {
+				if (heartbeat) clearInterval(heartbeat);
+			}
 			if (!provider.admitted) {
+				if (provider.reason === "timeout") {
+					await terminalizeAbortedTask(
+						deps,
+						db,
+						input,
+						task,
+						evaluator,
+						AbortSignal.abort("execution_timeout"),
+						itemStarted,
+					);
+					await deps.updateExperiment(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+						status: "failed",
+						if_status: ["pending", "running"],
+						terminal_reason: "execution_timeout",
+					});
+					return;
+				}
+				if (signal?.aborted) {
+					await terminalizeAbortedTask(
+						deps,
+						db,
+						input,
+						task,
+						evaluator,
+						signal,
+						itemStarted,
+					);
+					await deps.updateExperiment(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+						status: abortedExecutionStatus(signal),
+						if_status: ["pending", "running"],
+						terminal_reason:
+							signal?.reason === "duration_limit"
+								? "duration_limit"
+								: "cancelled_by_request",
+					});
+					return;
+				}
 				if (provider.reason === "existing") {
 					const reconciled = await deps.reconcileUnknownProviderDispatch(db, {
 						project_id: input.project_id,
@@ -458,14 +667,36 @@ export async function executeExperiment(
 				await deps.updateExperiment(db, {
 					project_id: input.project_id,
 					id: input.experiment_id,
-					status: "cancelled",
+					status: abortedExecutionStatus(signal),
 					if_status: ["pending", "running"],
+					terminal_reason: "authorization_revoked",
 				});
 				return;
 			}
 			const llm = provider.value;
 			const scores = scoreCase(evaluator, task.expected_output, llm.output);
 			const duration_ms = Date.now() - itemStarted;
+			const providerCost =
+				typeof llm.cost_usd === "number" &&
+				Number.isFinite(llm.cost_usd) &&
+				llm.cost_usd >= 0
+					? llm.cost_usd
+					: null;
+			const costKnown = providerCost !== null;
+			const maxCost = configuredMaxCost(input.config);
+			let costLimitFailure: "cost_unknown" | "cost_limit_exceeded" | null =
+				null;
+			if (maxCost !== null) {
+				if (!costKnown) costLimitFailure = "cost_unknown";
+				else if (providerCost >= maxCost)
+					costLimitFailure = "cost_limit_exceeded";
+			}
+			const costLimitMessage =
+				costLimitFailure === "cost_unknown"
+					? "provider did not return billable cost"
+					: costLimitFailure === "cost_limit_exceeded"
+						? "evaluation cost limit exceeded"
+						: null;
 			const finalized = await deps.finalizeTask(db, {
 				project_id: input.project_id,
 				experiment_id: input.experiment_id,
@@ -474,11 +705,34 @@ export async function executeExperiment(
 				output: llm.output,
 				scores,
 				duration_ms,
-				status: scores[evaluator] === 1 ? "completed" : "failed",
+				status:
+					costLimitFailure || !costKnown || scores[evaluator] !== 1
+						? "failed"
+						: "completed",
+				cost_usd: providerCost,
+				error_classification:
+					costLimitFailure ?? (!costKnown ? "cost_unknown" : null),
+				error_message:
+					costLimitMessage ??
+					(!costKnown ? "provider did not return billable cost" : null),
 				agent_version: llm.model,
+				evaluator_rationale: {
+					kind: evaluator,
+					score: scores[evaluator],
+				},
 				admission_id: admission.id,
 			});
 			if (!finalized) return;
+			if (costLimitFailure) {
+				await deps.updateExperiment(db, {
+					project_id: input.project_id,
+					id: input.experiment_id,
+					status: "failed",
+					if_status: ["pending", "running"],
+					terminal_reason: costLimitFailure,
+				});
+				return;
+			}
 			try {
 				const traceAdmission = await invokeWithExecutionAdmission({
 					parentSignal: signal,
@@ -494,14 +748,18 @@ export async function executeExperiment(
 							id: input.experiment_id,
 							admission_id: admission.id,
 							effect: "trace_write",
-							effect_key: executionOperationKey("trace_write", 1),
+							effect_key: executionOperationKey(
+								"trace_write",
+								task.attempt_count || 1,
+							),
 						}),
 					cancel: () => deps.cancelAdmission(db, admission.id),
 					invoke: () =>
 						deps.trace({
 							project_id: input.project_id,
 							experiment_id: input.experiment_id,
-							item_id: task.dataset_item_id,
+							item_id:
+								task.dataset_item_id ?? task.dataset_version_item_id ?? task.id,
 							model: llm.model,
 							input: task.input,
 							output: JSON.stringify(llm.output),
@@ -509,31 +767,45 @@ export async function executeExperiment(
 						}),
 				});
 				if (!traceAdmission.admitted) {
-					await deps.updateExperiment(db, {
-						project_id: input.project_id,
-						id: input.experiment_id,
-						status: "cancelled",
-						if_status: ["pending", "running"],
-					});
-					return;
+					continue;
 				}
+				if (deps.recordResultTrace && typeof traceAdmission.value === "string")
+					await deps.recordResultTrace(db, {
+						project_id: input.project_id,
+						experiment_id: input.experiment_id,
+						task_id: task.id,
+						trace_id: traceAdmission.value,
+						admission_id: admission.id,
+					});
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
 					dataset_item_id: task.dataset_item_id,
 				});
 			}
-		} catch {
+		} catch (cause) {
 			if (signal?.aborted) {
+				await terminalizeAbortedTask(
+					deps,
+					db,
+					input,
+					task,
+					evaluator,
+					signal,
+					itemStarted,
+				);
 				await deps.updateExperiment(db, {
 					project_id: input.project_id,
 					id: input.experiment_id,
-					status: "cancelled",
+					status: abortedExecutionStatus(signal),
 					if_status: ["pending", "running"],
+					terminal_reason: abortedExecutionReason(signal),
 				});
 				return;
 			}
 			const duration_ms = Date.now() - itemStarted;
+			const uncertain =
+				isUncertainLlmFailure(cause) || !(cause instanceof LlmProviderError);
 			const finalized = await deps.finalizeTask(db, {
 				project_id: input.project_id,
 				experiment_id: input.experiment_id,
@@ -543,11 +815,18 @@ export async function executeExperiment(
 				scores: { [evaluator]: 0 },
 				duration_ms,
 				status: "failed",
+				retryable:
+					!uncertain &&
+					(cause instanceof LlmProviderError ? cause.safeToRetry : false),
+				error_classification: uncertain ? "unknown_dispatch" : "provider_error",
+				error_message: uncertain
+					? "provider dispatch outcome is unknown"
+					: "provider invocation failed",
 				...(admissionId ? { admission_id: admissionId } : {}),
 			});
 			if (!finalized) return;
 			try {
-				if (!admissionId) return;
+				if (!admissionId) continue;
 				const traceAdmission = await invokeWithExecutionAdmission({
 					parentSignal: signal,
 					isActive: () =>
@@ -562,14 +841,18 @@ export async function executeExperiment(
 							id: input.experiment_id,
 							admission_id: admissionId!,
 							effect: "trace_write",
-							effect_key: executionOperationKey("trace_write", 1),
+							effect_key: executionOperationKey(
+								"trace_write",
+								task.attempt_count || 1,
+							),
 						}),
 					cancel: () => deps.cancelAdmission(db, admissionId!),
 					invoke: () =>
 						deps.trace({
 							project_id: input.project_id,
 							experiment_id: input.experiment_id,
-							item_id: task.dataset_item_id,
+							item_id:
+								task.dataset_item_id ?? task.dataset_version_item_id ?? task.id,
 							model:
 								typeof input.config.model === "string"
 									? input.config.model
@@ -580,6 +863,14 @@ export async function executeExperiment(
 						}),
 				});
 				if (!traceAdmission.admitted) return;
+				if (deps.recordResultTrace && typeof traceAdmission.value === "string")
+					await deps.recordResultTrace(db, {
+						project_id: input.project_id,
+						experiment_id: input.experiment_id,
+						task_id: task.id,
+						trace_id: traceAdmission.value,
+						admission_id: admissionId,
+					});
 			} catch (traceError) {
 				logger.warn("evaluation.trace_failed", traceError, {
 					experiment_id: input.experiment_id,
@@ -595,8 +886,12 @@ export async function executeExperiment(
 		await deps.updateExperiment(db, {
 			project_id: input.project_id,
 			id: input.experiment_id,
-			status: "cancelled",
+			status: abortedExecutionStatus(signal),
 			if_status: ["pending", "running"],
+			terminal_reason:
+				signal?.reason === "duration_limit"
+					? "duration_limit"
+					: "cancelled_by_request",
 		});
 		return;
 	}
@@ -604,6 +899,89 @@ export async function executeExperiment(
 		project_id: input.project_id,
 		id: input.experiment_id,
 	});
+}
+
+export function evaluationRunConfig(snapshot: {
+	target: Record<string, unknown>;
+	evaluator: Record<string, unknown>;
+	execution_defaults: Record<string, unknown>;
+	limits?: Record<string, unknown>;
+}) {
+	return {
+		model: snapshot.target.model,
+		system_prompt: snapshot.target.system_prompt,
+		evaluator: snapshot.evaluator.kind,
+		temperature: snapshot.execution_defaults.temperature,
+		max_tokens: snapshot.execution_defaults.max_tokens,
+		limits: snapshot.limits,
+	};
+}
+
+export function evaluationRunConcurrency(): number {
+	const configured = Number(process.env.EVALUATION_RUN_CONCURRENCY ?? 4);
+	return Number.isSafeInteger(configured) && configured >= 1 && configured <= 32
+		? configured
+		: 4;
+}
+
+export async function executeEvaluationRun(
+	deps: ExperimentDependencies,
+	input: {
+		project_id: string;
+		experiment_id: string;
+		evaluation_run_id?: string;
+		dataset_id: string;
+		config: Record<string, unknown>;
+	},
+	signal?: AbortSignal,
+	concurrency = evaluationRunConcurrency(),
+) {
+	const workers = Math.max(1, Math.min(32, Math.floor(concurrency)));
+	const controller = new AbortController();
+	const onParentAbort = () => controller.abort(signal?.reason ?? "cancelled");
+	signal?.addEventListener("abort", onParentAbort, { once: true });
+	if (signal?.aborted) controller.abort(signal.reason ?? "cancelled");
+	const durationSeconds =
+		typeof input.config.limits === "object" && input.config.limits !== null
+			? (input.config.limits as Record<string, unknown>).max_duration_seconds
+			: undefined;
+	let timedOut = false;
+	const deadline =
+		typeof durationSeconds === "number" && durationSeconds > 0
+			? setTimeout(() => {
+					timedOut = true;
+					controller.abort("duration_limit");
+				}, durationSeconds * 1000)
+			: undefined;
+	try {
+		await Promise.all(
+			Array.from({ length: workers }, () =>
+				executeExperiment(deps, input, controller.signal),
+			),
+		);
+	} catch (cause) {
+		await deps
+			.updateExperiment(deps.pool(), {
+				project_id: input.project_id,
+				id: input.experiment_id,
+				status: controller.signal.aborted
+					? abortedExecutionStatus(controller.signal)
+					: "failed",
+				if_status: ["pending", "running"],
+				terminal_reason: timedOut
+					? "duration_limit"
+					: signal?.aborted
+						? signal.reason === "execution_timeout"
+							? "execution_timeout"
+							: "cancelled_by_request"
+						: "execution_failed",
+			})
+			.catch(() => {});
+		throw cause;
+	} finally {
+		if (deadline) clearTimeout(deadline);
+		signal?.removeEventListener("abort", onParentAbort);
+	}
 }
 
 export function createExperimentHandlers(
@@ -650,19 +1028,14 @@ export function createExperimentHandlers(
 						experimentKey(body.project_id, run.experiment_id),
 						controller,
 					);
-					void executeExperiment(
+					void executeEvaluationRun(
 						deps,
 						{
 							project_id: body.project_id,
 							experiment_id: run.experiment_id,
+							evaluation_run_id: run.id,
 							dataset_id: run.dataset_id,
-							config: {
-								model: run.snapshot.target.model,
-								system_prompt: run.snapshot.target.system_prompt,
-								evaluator: run.snapshot.evaluator.kind,
-								temperature: run.snapshot.execution_defaults.temperature,
-								max_tokens: run.snapshot.execution_defaults.max_tokens,
-							},
+							config: evaluationRunConfig(run.snapshot),
 						},
 						controller.signal,
 					)
@@ -674,10 +1047,20 @@ export function createExperimentHandlers(
 							await deps.updateExperiment(deps.pool(), {
 								project_id: body.project_id,
 								id: run.experiment_id,
-								status: controller.signal.aborted ? "cancelled" : "failed",
+								status: controller.signal.aborted
+									? abortedExecutionStatus(controller.signal)
+									: "failed",
 								if_status: controller.signal.aborted
 									? ["pending", "running"]
 									: ["pending", "running"],
+								terminal_reason:
+									controller.signal.reason === "duration_limit"
+										? "duration_limit"
+										: controller.signal.reason === "execution_timeout"
+											? "execution_timeout"
+											: controller.signal.aborted
+												? "cancelled_by_request"
+												: "execution_failed",
 							});
 						})
 						.finally(() =>

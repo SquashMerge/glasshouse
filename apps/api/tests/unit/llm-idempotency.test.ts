@@ -17,7 +17,7 @@ afterEach(() => {
 	else process.env.ASTRAEA_DEV_LLM_COMMAND = originalDevCommand;
 });
 
-test("passes the stable logical dispatch key to OpenAI request and idempotency headers", async () => {
+test("passes the immutable OpenAI execution defaults and stable dispatch headers", async () => {
 	let request: RequestInit | undefined;
 	process.env.OPENAI_API_KEY = "test-key";
 	process.env.OPENAI_API_BASE = "https://provider.example/v1";
@@ -34,7 +34,12 @@ test("passes the stable logical dispatch key to OpenAI request and idempotency h
 
 	await invokeConfiguredLlm(
 		{ question: "test" },
-		{ model: "test-model" },
+		{
+			model: "test-model",
+			temperature: 0.4,
+			max_tokens: 321,
+			system_prompt: "Use the pinned rubric.",
+		},
 		undefined,
 		"astraea:experiment_task:task-id:provider_dispatch:1",
 	);
@@ -45,6 +50,15 @@ test("passes the stable logical dispatch key to OpenAI request and idempotency h
 	expect(new Headers(request?.headers).get("x-client-request-id")).toBe(
 		"astraea:experiment_task:task-id:provider_dispatch:1",
 	);
+	expect(JSON.parse(String(request?.body))).toEqual({
+		model: "test-model",
+		temperature: 0.4,
+		max_tokens: 321,
+		messages: [
+			{ role: "system", content: "Use the pinned rubric." },
+			{ role: "user", content: JSON.stringify({ question: "test" }) },
+		],
+	});
 });
 
 test("passes the stable logical dispatch key to the development CLI", async () => {
@@ -63,5 +77,31 @@ test("passes the stable logical dispatch key to the development CLI", async () =
 
 	expect(response.output).toEqual({
 		value: "astraea:experiment_task:task-id:provider_dispatch:1",
+	});
+});
+
+test("classifies provider throttling and server failures as uncertain", async () => {
+	process.env.OPENAI_API_KEY = "test-key";
+	process.env.OPENAI_API_BASE = "https://provider.example/v1";
+	for (const status of [429, 500, 503]) {
+		globalThis.fetch = (async () =>
+			new Response("failure", { status })) as typeof fetch;
+		await expect(
+			invokeConfiguredLlm({ question: "test" }, { model: "test-model" }),
+		).rejects.toMatchObject({ dispatchOutcome: "uncertain" });
+	}
+});
+
+test("classifies a provider validation response as deterministic and safe to retry", async () => {
+	process.env.OPENAI_API_KEY = "test-key";
+	process.env.OPENAI_API_BASE = "https://provider.example/v1";
+	globalThis.fetch = (async () =>
+		new Response("invalid request", { status: 400 })) as typeof fetch;
+
+	await expect(
+		invokeConfiguredLlm({ question: "test" }, { model: "test-model" }),
+	).rejects.toMatchObject({
+		dispatchOutcome: "deterministic_failure",
+		safeToRetry: true,
 	});
 });

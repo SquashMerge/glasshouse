@@ -54,6 +54,14 @@ import {
 	putEvaluationDraftRoute,
 	startEvaluationRunRoute,
 	handleStartEvaluationRun,
+	getEvaluationRunRoute,
+	handleGetEvaluationRun,
+	cancelEvaluationRunRoute,
+	handleCancelEvaluationRun,
+	retryEvaluationRunRoute,
+	handleRetryEvaluationRun,
+	getEvaluationRunEventsRoute,
+	handleGetEvaluationRunEvents,
 } from "./routes/evaluations.js";
 import {
 	listTraces,
@@ -322,6 +330,10 @@ register(publishEvaluationDraftRoute, handlePublishEvaluationDraft);
 register(listEvaluationVersionsRoute, handleListEvaluationVersions);
 register(getEvaluationVersionRoute, handleGetEvaluationVersion);
 register(startEvaluationRunRoute, handleStartEvaluationRun);
+register(getEvaluationRunRoute, handleGetEvaluationRun);
+register(cancelEvaluationRunRoute, handleCancelEvaluationRun);
+register(retryEvaluationRunRoute, handleRetryEvaluationRun);
+register(getEvaluationRunEventsRoute, handleGetEvaluationRunEvents);
 
 register(listBenchmarkSuites, handleListBenchmarkSuites);
 register(createBenchmarkSuiteRoute, handleCreateBenchmarkSuite);

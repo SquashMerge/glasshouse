@@ -599,6 +599,7 @@ describe("evaluation MVP", () => {
 				invokeLlm: async () => ({
 					output: { value: "answer" },
 					model: "test-model",
+					cost_usd: 0.01,
 				}),
 				insertResult: async (_db: unknown, result: { status: string }) => {
 					results.push(result);

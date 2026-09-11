@@ -37,7 +37,7 @@ export async function invokeWithExecutionAdmission<T>(input: {
 	pollMs?: number;
 }): Promise<
 	| { admitted: true; value: T }
-	| { admitted: false; reason: "unavailable" | "existing" }
+	| { admitted: false; reason: "unavailable" | "existing" | "timeout" }
 > {
 	if (input.parentSignal?.aborted || !(await input.isActive())) {
 		await input.cancel();
@@ -54,24 +54,35 @@ export async function invokeWithExecutionAdmission<T>(input: {
 		};
 	}
 	const controller = new AbortController();
-	let abort: () => void = () => {};
-	const aborted = new Promise<void>((resolve) => {
-		abort = () => {
-			if (!controller.signal.aborted) controller.abort();
-			resolve();
+	type AdmissionAbortReason = "parent" | "timeout" | "unavailable";
+	let abort: (reason: AdmissionAbortReason) => void = () => {};
+	const aborted = new Promise<AdmissionAbortReason>((resolve) => {
+		abort = (reason) => {
+			if (controller.signal.aborted) return;
+			controller.abort();
+			resolve(reason);
 		};
 	});
-	const onParentAbort = () => abort();
+	const onParentAbort = () => {
+		abort("parent");
+	};
 	input.parentSignal?.addEventListener("abort", onParentAbort, { once: true });
-	const deadline = setTimeout(
-		abort,
-		input.timeoutMs ?? executionAdmissionTimeoutMs(),
-	);
+	const deadline = setTimeout(() => {
+		abort("timeout");
+	}, input.timeoutMs ?? executionAdmissionTimeoutMs());
 	const poll = setInterval(() => {
-		void input.isActive().then((active) => {
-			if (!active) abort();
-		}, abort);
+		void input.isActive().then(
+			(active) => {
+				if (!active) {
+					abort("unavailable");
+				}
+			},
+			() => {
+				abort("unavailable");
+			},
+		);
 	}, input.pollMs ?? executionAdmissionPollMs());
+	if (input.parentSignal?.aborted) onParentAbort();
 	let invocation: Promise<T>;
 	try {
 		invocation = input.invoke(controller.signal);
@@ -85,9 +96,19 @@ export async function invokeWithExecutionAdmission<T>(input: {
 				(value) => ({ kind: "result" as const, value }),
 				(cause) => ({ kind: "error" as const, cause }),
 			),
-			aborted.then(() => ({ kind: "aborted" as const })),
+			aborted.then((reason) => ({
+				kind: "aborted" as const,
+				reason,
+			})),
 		]);
-		if (result.kind === "aborted" || !(await input.isActive())) {
+		if (result.kind === "aborted") {
+			await input.cancel();
+			return {
+				admitted: false,
+				reason: result.reason === "timeout" ? "timeout" : "unavailable",
+			};
+		}
+		if (!(await input.isActive())) {
 			await input.cancel();
 			return { admitted: false, reason: "unavailable" };
 		}

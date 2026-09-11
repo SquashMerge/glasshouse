@@ -3,13 +3,16 @@ import { Link, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	archiveEvaluation,
+	cancelEvaluationRun,
 	cancelExperiment,
 	createEvaluation,
+	evaluationRunEventsUrl,
 	experimentEventsUrl,
 	experimentResults,
 	experimentSummary,
 	getExperiment,
 	getEvaluation,
+	getEvaluationRunStatus,
 	getEvaluationDraft,
 	listDatasets,
 	listExperiments,
@@ -21,6 +24,7 @@ import {
 	listDatasetVersions,
 	publishEvaluationDraft,
 	restoreEvaluation,
+	retryEvaluationRun,
 	tombstoneEvaluation,
 	updateEvaluationDraft,
 } from "../lib/api";
@@ -69,12 +73,14 @@ export function EvaluationsPage() {
 	const [runIdempotencyKey, setRunIdempotencyKey] = React.useState<
 		string | null
 	>(null);
+	const [startedRunId, setStartedRunId] = React.useState<string | null>(null);
 	React.useEffect(() => {
 		setDefinitionDatasetId("");
 		setDefinitionDatasetVersionId("");
 		setRunEvaluationSlug("");
 		setRunDefinitionVersion("");
 		setRunIdempotencyKey(null);
+		setStartedRunId(null);
 	}, [selectedProjectId]);
 	const selectedDefinitionDataset = datasets.data?.items.find(
 		(dataset) => dataset.id === definitionDatasetId,
@@ -177,7 +183,7 @@ export function EvaluationsPage() {
 		try {
 			setError("");
 			setPending(true);
-			await startEvaluationRun({
+			const startedRun = await startEvaluationRun({
 				project_id: selectedProjectId!,
 				slug: runEvaluationSlug,
 				definition_version: runVersionNumber,
@@ -189,6 +195,7 @@ export function EvaluationsPage() {
 						return key;
 					})(),
 			});
+			setStartedRunId(startedRun.id);
 			setRunIdempotencyKey(null);
 			await client.invalidateQueries({
 				queryKey: ["experiments", selectedProjectId],
@@ -737,6 +744,13 @@ export function EvaluationsPage() {
 					</Button>
 				</section>
 			)}
+			{startedRunId && (
+				<EvaluationRunLifecycle
+					canExecute={canCurate}
+					projectId={selectedProjectId!}
+					runId={startedRunId}
+				/>
+			)}
 			{(datasets.isError ||
 				experiments.isError ||
 				evaluations.isError ||
@@ -780,6 +794,160 @@ export function EvaluationsPage() {
 				</ul>
 			)}
 		</div>
+	);
+}
+export function EvaluationRunLifecycle({
+	projectId,
+	runId,
+	canExecute,
+}: {
+	projectId: string;
+	runId: string;
+	canExecute: boolean;
+}) {
+	const client = useQueryClient();
+	const [actionError, setActionError] = React.useState("");
+	const [acting, setActing] = React.useState(false);
+	const status = useQuery({
+		queryKey: ["evaluation-run-status", projectId, runId],
+		queryFn: () => getEvaluationRunStatus({ project_id: projectId, id: runId }),
+	});
+	useEventSource(evaluationRunEventsUrl({ project_id: projectId, id: runId }), {
+		enabled: Boolean(
+			status.data &&
+				!["completed", "failed", "cancelled"].includes(status.data.status),
+		),
+		coalesce: false,
+		onMessage: () => {
+			void client.invalidateQueries({
+				queryKey: ["evaluation-run-status", projectId, runId],
+			});
+		},
+	});
+	async function action(kind: "cancel" | "retry") {
+		if (!canExecute || acting) return;
+		setActing(true);
+		setActionError("");
+		try {
+			if (kind === "cancel")
+				await cancelEvaluationRun({ project_id: projectId, id: runId });
+			else await retryEvaluationRun({ project_id: projectId, id: runId });
+			await status.refetch();
+		} catch (cause) {
+			setActionError((cause as Error).message);
+		} finally {
+			setActing(false);
+		}
+	}
+	if (status.isLoading && !status.data) return null;
+	if (status.isError)
+		return (
+			<section
+				className="rounded border border-destructive/40 p-4"
+				aria-live="polite"
+			>
+				<p className="text-sm text-destructive">Unable to load run status.</p>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => void status.refetch()}
+				>
+					Retry
+				</Button>
+			</section>
+		);
+	if (!status.data) return null;
+	const active = ["pending", "running"].includes(status.data.status);
+	return (
+		<section
+			className="space-y-3 rounded border border-primary/30 bg-primary/5 p-4"
+			aria-label="Evaluation Run lifecycle"
+		>
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div>
+					<h2 className="font-medium">Evaluation Run</h2>
+					<p className="font-mono text-xs text-muted-foreground">{runId}</p>
+				</div>
+				<span className="rounded-full bg-background px-3 py-1 text-sm font-medium">
+					{status.data.status}
+				</span>
+			</div>
+			<div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+				{(
+					["pending", "running", "completed", "failed", "cancelled"] as const
+				).map((key) => (
+					<div key={key} className="rounded bg-background p-2">
+						<div className="text-muted-foreground">{key}</div>
+						<div className="text-lg font-semibold">
+							{status.data!.counts[key]}
+						</div>
+					</div>
+				))}
+			</div>
+			{status.data.terminal_reason && (
+				<p className="text-sm text-muted-foreground">
+					Reason: {status.data.terminal_reason}
+				</p>
+			)}
+			{status.data.items.length > 0 && (
+				<div className="space-y-2" aria-label="Evaluation Run item evidence">
+					<h3 className="text-sm font-medium">Item evidence</h3>
+					{status.data.items.map((item) => (
+						<div
+							key={item.task_id}
+							className="rounded border bg-background p-3 text-sm"
+						>
+							<div className="flex flex-wrap items-center gap-2">
+								<strong>{item.item_key}</strong>
+								<span>{item.status}</span>
+								<span className="text-muted-foreground">
+									Attempt {item.attempt_count}
+								</span>
+							</div>
+							{item.error_classification && (
+								<p>Classification: {item.error_classification}</p>
+							)}
+							{item.error_message && <p>{item.error_message}</p>}
+							{item.cost_usd !== null && <p>${item.cost_usd.toFixed(2)}</p>}
+							{item.trace_id && <p>Trace: {item.trace_id}</p>}
+							{item.evaluator_rationale && (
+								<pre className="overflow-auto text-xs">
+									{JSON.stringify(item.evaluator_rationale, null, 2)}
+								</pre>
+							)}
+						</div>
+					))}
+					{status.data.items_truncated && (
+						<p className="text-xs text-muted-foreground">
+							Additional item evidence is available in the run event stream.
+						</p>
+					)}
+				</div>
+			)}
+			{actionError && (
+				<p className="text-sm text-destructive" role="alert">
+					{actionError}
+				</p>
+			)}
+			{canExecute && (active || status.data.status === "failed") && (
+				<div className="flex flex-wrap gap-2">
+					{active && (
+						<Button
+							variant="outline"
+							disabled={acting}
+							onClick={() => void action("cancel")}
+						>
+							{acting ? "Working..." : "Cancel run"}
+						</Button>
+					)}
+					{status.data.status === "failed" && (
+						<Button disabled={acting} onClick={() => void action("retry")}>
+							{acting ? "Queueing..." : "Retry failed items"}
+						</Button>
+					)}
+				</div>
+			)}
+		</section>
 	);
 }
 function EvaluationVersionInspection({
@@ -1381,6 +1549,17 @@ export function EvaluationDetailPage() {
 				{results.data?.items.map((result) => (
 					<li key={result.id} className="rounded border p-3">
 						<span>{result.status}</span>
+						{result.error_classification && (
+							<p>Classification: {result.error_classification}</p>
+						)}
+						{result.error_message && <p>{result.error_message}</p>}
+						{result.cost_usd !== null && <p>${result.cost_usd.toFixed(2)}</p>}
+						{result.trace_id && <p>Trace: {result.trace_id}</p>}
+						{result.evaluator_rationale && (
+							<pre className="mt-2 overflow-auto text-xs">
+								{JSON.stringify(result.evaluator_rationale, null, 2)}
+							</pre>
+						)}
 						<pre className="mt-2 overflow-auto text-xs">
 							{JSON.stringify(result.output, null, 2)}
 						</pre>

@@ -370,6 +370,7 @@ export interface EvaluationRun {
 		evaluator: Record<string, unknown>;
 		evaluator_version: string;
 		execution_defaults: Record<string, unknown>;
+		limits: Record<string, unknown>;
 		thresholds: Record<string, unknown>;
 		sampling: Record<string, unknown>;
 		sample_identity: string;
@@ -404,6 +405,77 @@ export async function startEvaluationRun(input: {
 		),
 		"startEvaluationRun",
 	);
+}
+export interface EvaluationRunStatus {
+	id: string;
+	project_id: string;
+	status: EvaluationRun["status"];
+	counts: {
+		total: number;
+		pending: number;
+		running: number;
+		completed: number;
+		failed: number;
+		cancelled: number;
+	};
+	attempts: number;
+	created_at: string;
+	updated_at: string;
+	terminal_reason: string | null;
+	items: Array<{
+		task_id: string;
+		item_key: string;
+		position: number;
+		status: EvaluationRun["status"];
+		attempt_count: number;
+		error_classification: string | null;
+		error_message: string | null;
+		cost_usd: number | null;
+		evaluator_rationale: JsonObject | null;
+		trace_id: string | null;
+	}>;
+	items_truncated: boolean;
+}
+export async function getEvaluationRunStatus(input: {
+	project_id: string;
+	id: string;
+}): Promise<EvaluationRunStatus> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-runs/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getEvaluationRunStatus",
+	);
+}
+export async function cancelEvaluationRun(input: {
+	project_id: string;
+	id: string;
+}): Promise<EvaluationRunStatus> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-runs/${encodeURIComponent(input.id)}/cancel${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"cancelEvaluationRun",
+	);
+}
+export async function retryEvaluationRun(input: {
+	project_id: string;
+	id: string;
+}): Promise<EvaluationRunStatus> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-runs/${encodeURIComponent(input.id)}/retry${buildQs({ project_id: input.project_id })}`,
+			{ method: "POST" },
+		),
+		"retryEvaluationRun",
+	);
+}
+export function evaluationRunEventsUrl(input: {
+	project_id: string;
+	id: string;
+}): string {
+	return `/v1/evaluation-runs/${encodeURIComponent(input.id)}/events${buildQs({ project_id: input.project_id })}`;
 }
 export interface EvaluationLegacyLink {
 	legacy_kind: "experiment" | "benchmark_suite";
@@ -991,6 +1063,12 @@ export async function experimentResults(input: {
 		dataset_item_id: string;
 		output: JsonObject | null;
 		scores: Record<string, number>;
+		duration_ms: number | null;
+		cost_usd: number | null;
+		error_classification: string | null;
+		error_message: string | null;
+		evaluator_rationale: JsonObject | null;
+		trace_id: string | null;
 		status: string;
 	}>;
 }> {

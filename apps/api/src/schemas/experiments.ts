@@ -47,6 +47,11 @@ export const ExperimentResult = z
 		output: z.record(z.string(), z.unknown()).nullable(),
 		scores: z.record(z.string(), z.number()),
 		duration_ms: z.number().int().nullable(),
+		cost_usd: z.number().nonnegative().nullable(),
+		error_classification: z.string().max(128).nullable(),
+		error_message: z.string().max(512).nullable(),
+		evaluator_rationale: z.record(z.string(), z.unknown()).nullable(),
+		trace_id: z.string().max(256).nullable(),
 		status: ExperimentStatus,
 		created_at: z.string().datetime(),
 	})

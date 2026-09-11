@@ -22,6 +22,7 @@ import {
 	experimentExecutionAdmissionIsActive,
 	finalizeExperimentTask,
 	getExperiment as getExperimentRecord,
+	reserveExperimentTaskCost,
 	updateExperiment,
 } from "../../src/db/experiments";
 import {
@@ -394,6 +395,244 @@ test.skipIf(!databaseUrl)(
 				[fixture.experimentId],
 			);
 			expect(deleted.rows).toEqual([{ id: fixture.experimentId }]);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"serializes sibling cost reservations and terminal cleanup in PostgreSQL",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 8 });
+		const fixture = await seedExecutionExperiment(pool);
+		const secondItemId = randomUUID();
+		const secondTaskId = randomUUID();
+		try {
+			await pool.query(
+				'INSERT INTO dataset_version_items (id, project_id, dataset_version_id, item_key, position, input, expected_output) VALUES ($1, $2, (SELECT resolved_dataset_version_id FROM experiments WHERE id=$3), \'second\', 1, \'{"question":"second"}\', \'{"answer":"second"}\')',
+				[secondItemId, fixture.projectId, fixture.experimentId],
+			);
+			await pool.query(
+				"INSERT INTO experiment_tasks (id, project_id, experiment_id, dataset_version_item_id, status, lease_token, lease_expires_at) VALUES ($1, $2, $3, $4, 'running', $5, now() + interval '1 minute')",
+				[
+					secondTaskId,
+					fixture.projectId,
+					fixture.experimentId,
+					secondItemId,
+					randomUUID(),
+				],
+			);
+			await pool.query(
+				"UPDATE experiment_tasks SET status='running', lease_token=$2, lease_expires_at=now() + interval '1 minute' WHERE experiment_id=$1 AND id <> $3",
+				[fixture.experimentId, randomUUID(), secondTaskId],
+			);
+			await pool.query(
+				`UPDATE experiments SET config='{\"limits\":{\"max_cost_usd\":1}}'::jsonb WHERE id=$1`,
+				[fixture.experimentId],
+			);
+
+			const tasks = await pool.query<{ id: string; lease_token: string }>(
+				"SELECT id, lease_token FROM experiment_tasks WHERE experiment_id=$1 ORDER BY id",
+				[fixture.experimentId],
+			);
+			const reservations = await Promise.all(
+				tasks.rows.map((task) =>
+					reserveExperimentTaskCost(pool, {
+						project_id: fixture.projectId,
+						experiment_id: fixture.experimentId,
+						task_id: task.id,
+						lease_token: task.lease_token,
+					}),
+				),
+			);
+			expect(reservations.filter((value) => value.reserved)).toHaveLength(1);
+
+			const admissions = await Promise.all(
+				tasks.rows.map((task) =>
+					admitExperimentExecution(pool, {
+						project_id: fixture.projectId,
+						id: fixture.experimentId,
+						work_id: task.id,
+						timeout_ms: 60_000,
+					}),
+				),
+			);
+			expect(admissions.every(Boolean)).toBe(true);
+
+			await updateExperiment(pool, {
+				project_id: fixture.projectId,
+				id: fixture.experimentId,
+				status: "failed",
+				terminal_reason: "cost_limit_exceeded",
+			});
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM experiment_tasks WHERE experiment_id=$1 AND status IN ('pending','running')",
+						[fixture.experimentId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM experiment_tasks WHERE experiment_id=$1 AND (lease_token IS NOT NULL OR lease_expires_at IS NOT NULL OR heartbeat_at IS NOT NULL OR cost_reservation_usd IS NOT NULL)",
+						[fixture.experimentId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_admissions WHERE project_id=$1 AND status='active' AND work_kind='experiment_task'",
+						[fixture.projectId],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"does not let a retry claim block the next admitted terminal result",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 6 });
+		const fixture = await seedExecutionExperiment(pool);
+		const task = (
+			await pool.query<{ id: string }>(
+				"SELECT id FROM experiment_tasks WHERE experiment_id=$1",
+				[fixture.experimentId],
+			)
+		).rows[0]!;
+		try {
+			const firstLease = randomUUID();
+			await pool.query(
+				"UPDATE experiment_tasks SET status='running', lease_token=$2, lease_expires_at=now() + interval '1 minute' WHERE id=$1",
+				[task.id, firstLease],
+			);
+			const firstAdmission = await admitExperimentExecution(pool, {
+				project_id: fixture.projectId,
+				id: fixture.experimentId,
+				work_id: task.id,
+				timeout_ms: 60_000,
+			});
+			expect(firstAdmission).not.toBeNull();
+			expect(
+				await finalizeExperimentTask(pool, {
+					project_id: fixture.projectId,
+					experiment_id: fixture.experimentId,
+					task_id: task.id,
+					lease_token: firstLease,
+					admission_id: firstAdmission!.id,
+					status: "failed",
+					retryable: true,
+					scores: { exact_match: 0 },
+					error_classification: "provider_error",
+					error_message: "provider invocation failed",
+				}),
+			).toBe(true);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_effects WHERE project_id=$1 AND work_id=$2 AND effect='result_write'",
+						[fixture.projectId, task.id],
+					)
+				).rows[0]?.count,
+			).toBe(0);
+
+			await pool.query(
+				"UPDATE experiment_tasks SET next_attempt_at=now() WHERE id=$1",
+				[task.id],
+			);
+			const retry = await claimExperimentTask(pool, {
+				project_id: fixture.projectId,
+				experiment_id: fixture.experimentId,
+			});
+			expect(retry).not.toBeNull();
+			const secondAdmission = await admitExperimentExecution(pool, {
+				project_id: fixture.projectId,
+				id: fixture.experimentId,
+				work_id: task.id,
+				timeout_ms: 60_000,
+			});
+			expect(secondAdmission).not.toBeNull();
+			expect(
+				await finalizeExperimentTask(pool, {
+					project_id: fixture.projectId,
+					experiment_id: fixture.experimentId,
+					task_id: task.id,
+					lease_token: retry!.lease_token,
+					admission_id: secondAdmission!.id,
+					status: "completed",
+					output: { answer: true },
+					scores: { exact_match: 1 },
+				}),
+			).toBe(true);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM experiment_results WHERE experiment_id=$1 AND status='completed'",
+						[fixture.experimentId],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+			expect(
+				(
+					await pool.query(
+						"SELECT count(*)::int AS count FROM execution_effects WHERE project_id=$1 AND work_id=$2 AND effect='result_write'",
+						[fixture.projectId, task.id],
+					)
+				).rows[0]?.count,
+			).toBe(1);
+			await cancelExecutionAdmission(pool, firstAdmission!.id);
+			await completeExecutionAdmission(pool, secondAdmission!.id);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"records unknown dispatch evidence when max-attempt recovery retains a reservation",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+		const fixture = await seedExecutionExperiment(pool);
+		try {
+			await pool.query(
+				"UPDATE experiment_tasks SET status='running', attempt_count=max_attempts, cost_reservation_usd=0.5, lease_token=$2, lease_expires_at=now() - interval '1 second' WHERE experiment_id=$1",
+				[fixture.experimentId, randomUUID()],
+			);
+			expect(
+				await claimExperimentTask(pool, {
+					project_id: fixture.projectId,
+					experiment_id: fixture.experimentId,
+				}),
+			).toBeNull();
+			expect(
+				(
+					await pool.query(
+						"SELECT status, last_error_classification FROM experiment_tasks WHERE experiment_id=$1",
+						[fixture.experimentId],
+					)
+				).rows[0],
+			).toEqual({
+				status: "failed",
+				last_error_classification: "unknown_dispatch",
+			});
+			expect(
+				(
+					await pool.query(
+						"SELECT error_classification FROM experiment_results WHERE experiment_id=$1",
+						[fixture.experimentId],
+					)
+				).rows[0]?.error_classification,
+			).toBe("unknown_dispatch");
 		} finally {
 			await fixture.cleanup();
 			await pool.end();
