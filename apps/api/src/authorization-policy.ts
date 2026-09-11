@@ -8,6 +8,7 @@ export type ProjectOperation =
 	| "ingest"
 	| "audit_read"
 	| "governed"
+	| "release_gate_manage"
 	| "destructive"
 	| "project_manage";
 
@@ -19,6 +20,7 @@ const projectOperations: readonly ProjectOperation[] = [
 	"ingest",
 	"audit_read",
 	"governed",
+	"release_gate_manage",
 	"destructive",
 	"project_manage",
 ];

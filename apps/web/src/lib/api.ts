@@ -347,6 +347,207 @@ export async function getEvaluationVersion(input: {
 		"getEvaluationVersion",
 	);
 }
+export type EvaluationGateContext = "ci" | "release";
+export type EvaluationGateApprovalStatus = "active" | "revoked" | "superseded";
+export interface EvaluationGateApproval {
+	id: string;
+	organization_id: string;
+	project_id: string;
+	evaluation_id: string;
+	definition_version_id: string;
+	definition_version: number;
+	dataset_version_id: string;
+	definition_content_hash: string;
+	dataset_content_hash: string;
+	gate_context: EvaluationGateContext;
+	minimum_pass_rate: number;
+	reason: string;
+	approved_by_actor_id: string;
+	approved_at: string;
+	revoked_at: string | null;
+	revoked_by_actor_id: string | null;
+	revocation_reason: string | null;
+	superseded_by: string | null;
+	status: EvaluationGateApprovalStatus;
+	created_at: string;
+}
+export interface EvaluationGateRun {
+	id: string;
+	organization_id: string;
+	project_id: string;
+	approval_id: string;
+	evaluation_run_id: string;
+	evaluation_id: string;
+	definition_version_id: string;
+	dataset_version_id: string;
+	definition_content_hash: string;
+	dataset_content_hash: string;
+	target_fingerprint: string;
+	evaluator_fingerprint: string;
+	gate_context: EvaluationGateContext;
+	minimum_pass_rate: number;
+	selected_count: number | null;
+	evaluated_count: number | null;
+	passed_count: number | null;
+	failed_count: number | null;
+	status:
+		| "pending"
+		| "passed"
+		| "failed"
+		| "inconclusive"
+		| "error"
+		| "cancelled";
+	outcome_reason: string | null;
+	requested_by_actor_id: string;
+	idempotency_key: string;
+	created_at: string;
+	updated_at: string;
+}
+export async function createEvaluationGateApproval(input: {
+	project_id: string;
+	definition_version_id: string;
+	gate_context: EvaluationGateContext;
+	reason: string;
+	supersedes_approval_id?: string | null;
+}): Promise<EvaluationGateApproval> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/approvals${buildQs({ project_id: input.project_id })}`,
+			jsonRequest({
+				definition_version_id: input.definition_version_id,
+				gate_context: input.gate_context,
+				reason: input.reason,
+				supersedes_approval_id: input.supersedes_approval_id,
+			}),
+		),
+		"createEvaluationGateApproval",
+	);
+}
+export async function listEvaluationGateApprovals(input: {
+	project_id: string;
+	include_revoked?: boolean;
+}): Promise<{ items: EvaluationGateApproval[]; total: number }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/approvals${buildQs({
+				project_id: input.project_id,
+				include_revoked: input.include_revoked ? "true" : undefined,
+			})}`,
+		),
+		"listEvaluationGateApprovals",
+	);
+}
+export async function getEvaluationGateApproval(input: {
+	project_id: string;
+	id: string;
+}): Promise<EvaluationGateApproval> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/approvals/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getEvaluationGateApproval",
+	);
+}
+export interface EvaluationGateAuditEvent {
+	id: string;
+	approval_id: string;
+	gate_run_id: string | null;
+	evaluation_run_id: string | null;
+	definition_version_id: string;
+	actor_id: string;
+	event_type:
+		| "approved"
+		| "revoked"
+		| "superseded"
+		| "invoked"
+		| "outcome_recorded";
+	gate_context: EvaluationGateContext | null;
+	outcome_status: EvaluationGateRun["status"] | null;
+	reason_digest: string | null;
+	created_at: string;
+}
+export async function getEvaluationGateApprovalHistory(input: {
+	project_id: string;
+	id: string;
+}): Promise<{ items: EvaluationGateAuditEvent[] }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/approvals/${encodeURIComponent(input.id)}/history${buildQs({ project_id: input.project_id })}`,
+		),
+		"getEvaluationGateApprovalHistory",
+	);
+}
+export async function revokeEvaluationGateApproval(input: {
+	project_id: string;
+	id: string;
+	reason: string;
+}): Promise<EvaluationGateApproval> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/approvals/${encodeURIComponent(input.id)}/revoke${buildQs({ project_id: input.project_id })}`,
+			jsonRequest({ reason: input.reason }),
+		),
+		"revokeEvaluationGateApproval",
+	);
+}
+export async function startEvaluationGate(input: {
+	project_id: string;
+	approval_id: string;
+	definition_version_id: string;
+	dataset_version_id: string;
+	gate_context: EvaluationGateContext;
+	idempotency_key: string;
+	trigger_metadata?: Record<string, string | number | boolean | null>;
+}): Promise<EvaluationGateRun> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/runs${buildQs({ project_id: input.project_id })}`,
+			{
+				...jsonRequest({
+					approval_id: input.approval_id,
+					definition_version_id: input.definition_version_id,
+					dataset_version_id: input.dataset_version_id,
+					gate_context: input.gate_context,
+					trigger_metadata: input.trigger_metadata ?? { source: "dashboard" },
+				}),
+				headers: {
+					"content-type": "application/json",
+					"idempotency-key": input.idempotency_key,
+				},
+			},
+		),
+		"startEvaluationGate",
+	);
+}
+export async function listEvaluationGateRuns(input: {
+	project_id: string;
+	status?: EvaluationGateRun["status"];
+	limit?: number;
+	offset?: number;
+}): Promise<{ items: EvaluationGateRun[]; total: number }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/runs${buildQs({
+				project_id: input.project_id,
+				status: input.status,
+				limit: input.limit,
+				offset: input.offset,
+			})}`,
+		),
+		"listEvaluationGateRuns",
+	);
+}
+export async function getEvaluationGateRun(input: {
+	project_id: string;
+	id: string;
+}): Promise<EvaluationGateRun> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-gates/runs/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
+		),
+		"getEvaluationGateRun",
+	);
+}
 export interface EvaluationRun {
 	id: string;
 	organization_id: string;

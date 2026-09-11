@@ -90,4 +90,22 @@ describe("Admin/User/Read-only authorization policy", () => {
 		);
 		expect(projectOperationAllowed("strict", "user", "governed")).toBe(false);
 	});
+
+	it("keeps release-gate approval and invocation Admin-only in every enforcement mode", () => {
+		for (const enforcement of ["compatibility", "strict"] as const) {
+			expect(
+				projectOperationAllowed(enforcement, "admin", "release_gate_manage"),
+			).toBe(true);
+			expect(
+				projectOperationAllowed(enforcement, "user", "release_gate_manage"),
+			).toBe(false);
+			expect(
+				projectOperationAllowed(
+					enforcement,
+					"read_only",
+					"release_gate_manage",
+				),
+			).toBe(false);
+		}
+	});
 });
