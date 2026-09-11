@@ -9,6 +9,9 @@ import {
 	getEvaluationRunStatus,
 	listEvaluationRunEvents,
 	retryEvaluationRun,
+	listEvaluationRuns,
+	compareEvaluationRuns,
+	getEvaluationRunEvidence,
 } from "../db/evaluation-runs.js";
 import {
 	executeEvaluationRun,
@@ -49,6 +52,12 @@ import {
 	EvaluationTombstone,
 	EvaluationRun,
 	EvaluationRunHeaders,
+	EvaluationRunList,
+	EvaluationRunListQuery,
+	EvaluationRunEvidenceQuery,
+	EvaluationRunEvidencePage,
+	EvaluationRunCompare,
+	EvaluationRunCompareRequest,
 	EvaluationRunStart,
 	EvaluationRunStatus,
 	EvaluationRunIdParam,
@@ -282,6 +291,62 @@ export const startEvaluationRunRoute = createRoute({
 		202: {
 			description: "Run admitted and queued",
 			content: { "application/json": { schema: EvaluationRun } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+export const listEvaluationRunsRoute = createRoute({
+	method: "get",
+	path: "/v1/evaluation-runs",
+	tags: [tag],
+	summary: "List inspectable Evaluation Runs",
+	security: [{ basicAuth: [] }],
+	request: { query: EvaluationRunListQuery },
+	responses: {
+		200: {
+			description: "Authorized run summaries",
+			content: { "application/json": { schema: EvaluationRunList } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+export const compareEvaluationRunsRoute = createRoute({
+	method: "post",
+	path: "/v1/evaluation-runs/compare",
+	tags: [tag],
+	summary: "Compare two compatible Evaluation Runs",
+	description:
+		"Returns explicit pinned-input differences and refuses score/cost deltas when the runs are not comparable.",
+	security: [{ basicAuth: [] }],
+	request: {
+		query: EvaluationRunProjectQuery,
+		body: {
+			content: { "application/json": { schema: EvaluationRunCompareRequest } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: "Comparison or incompatibility explanation",
+			content: { "application/json": { schema: EvaluationRunCompare } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+export const getEvaluationRunEvidenceRoute = createRoute({
+	method: "get",
+	path: "/v1/evaluation-runs/{id}/evidence",
+	tags: [tag],
+	summary: "Read bounded Evaluation Run evidence",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: EvaluationRunIdParam,
+		query: EvaluationRunEvidenceQuery,
+	},
+	responses: {
+		200: {
+			description: "Project-scoped evidence page",
+			content: { "application/json": { schema: EvaluationRunEvidencePage } },
 		},
 		...EvaluationErrorResponses,
 	},
@@ -564,6 +629,54 @@ export const handleStartEvaluationRun = async (c: any) => {
 				}),
 			);
 		return c.json(run, 202);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
+export const handleListEvaluationRuns = async (c: any) => {
+	try {
+		const query = c.req.valid("query");
+		return c.json(
+			await listEvaluationRuns(pgPool(), {
+				...query,
+				authorization: authorization(c, "product_read"),
+			}),
+		);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
+export const handleCompareEvaluationRuns = async (c: any) => {
+	try {
+		const query = c.req.valid("query");
+		const body = c.req.valid("json");
+		return c.json(
+			await compareEvaluationRuns(pgPool(), {
+				project_id: query.project_id,
+				run_ids: body.run_ids as [string, string],
+				authorization: authorization(c, "product_read"),
+			}),
+		);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
+export const handleGetEvaluationRunEvidence = async (c: any) => {
+	try {
+		const params = c.req.valid("param");
+		const query = c.req.valid("query");
+		return c.json(
+			await getEvaluationRunEvidence(pgPool(), {
+				id: params.id,
+				project_id: query.project_id,
+				limit: query.limit,
+				offset: query.offset,
+				authorization: projectAuthorization(c.get("tenant"), "product_read"),
+			}),
+		);
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}

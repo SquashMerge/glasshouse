@@ -4,6 +4,9 @@ import {
 	getEvaluation,
 	getEvaluationDraft,
 	getEvaluationVersion,
+	listEvaluationRuns,
+	getEvaluationRunEvidence,
+	compareEvaluationRuns,
 	listEvaluationVersions,
 	updateEvaluationDraft,
 } from "../../src/lib/api";
@@ -107,6 +110,47 @@ describe("evaluation API client contract", () => {
 				method: "GET",
 				body: undefined,
 				etag: undefined,
+			},
+		]);
+	});
+	it("keeps run list, evidence, and compare calls project-scoped", async () => {
+		const left = "33333333-3333-4333-8333-333333333333";
+		const right = "44444444-4444-4444-8444-444444444444";
+		await listEvaluationRuns({
+			project_id,
+			status: "completed",
+			evaluation_id: "55555555-5555-4555-8555-555555555555",
+			limit: 10,
+			offset: 20,
+		});
+		await getEvaluationRunEvidence({
+			project_id,
+			id: left,
+			limit: 25,
+			offset: 50,
+		});
+		await compareEvaluationRuns({ project_id, run_ids: [left, right] });
+		expect(
+			fetchMock.mock.calls.map(([url, init]) => ({
+				url,
+				method: init?.method ?? "GET",
+				body: init?.body,
+			})),
+		).toEqual([
+			{
+				url: `/v1/evaluation-runs?project_id=${project_id}&status=completed&evaluation_id=55555555-5555-4555-8555-555555555555&limit=10&offset=20`,
+				method: "GET",
+				body: undefined,
+			},
+			{
+				url: `/v1/evaluation-runs/${left}/evidence?project_id=${project_id}&limit=25&offset=50`,
+				method: "GET",
+				body: undefined,
+			},
+			{
+				url: `/v1/evaluation-runs/compare?project_id=${project_id}`,
+				method: "POST",
+				body: JSON.stringify({ run_ids: [left, right] }),
 			},
 		]);
 	});

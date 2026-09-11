@@ -35,7 +35,7 @@ import {
 import { evaluationWorkerActorId } from "../db/actors.js";
 import { projectAuthorization } from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
-import { scoreCase } from "../lib/evaluator.js";
+import { explainCase } from "../lib/evaluator.js";
 import {
 	invokeConfiguredLlm,
 	isUncertainLlmFailure,
@@ -674,7 +674,24 @@ export async function executeExperiment(
 				return;
 			}
 			const llm = provider.value;
-			const scores = scoreCase(evaluator, task.expected_output, llm.output);
+			const rationale = explainCase(
+				{
+					kind: evaluator,
+					version: "v1",
+					expected_output_path:
+						typeof input.config.expected_output_path === "string"
+							? input.config.expected_output_path
+							: "$.expected_output",
+					output_path:
+						typeof input.config.output_path === "string"
+							? input.config.output_path
+							: "$.output",
+				},
+				{ expected_output: task.expected_output },
+				{ output: llm.output },
+			);
+			const score = Number(rationale.score);
+			const scores = { [evaluator]: score };
 			const duration_ms = Date.now() - itemStarted;
 			const providerCost =
 				typeof llm.cost_usd === "number" &&
@@ -716,10 +733,7 @@ export async function executeExperiment(
 					costLimitMessage ??
 					(!costKnown ? "provider did not return billable cost" : null),
 				agent_version: llm.model,
-				evaluator_rationale: {
-					kind: evaluator,
-					score: scores[evaluator],
-				},
+				evaluator_rationale: rationale,
 				admission_id: admission.id,
 			});
 			if (!finalized) return;
@@ -909,8 +923,11 @@ export function evaluationRunConfig(snapshot: {
 }) {
 	return {
 		model: snapshot.target.model,
+		provider: snapshot.target.provider,
 		system_prompt: snapshot.target.system_prompt,
 		evaluator: snapshot.evaluator.kind,
+		expected_output_path: snapshot.evaluator.expected_output_path,
+		output_path: snapshot.evaluator.output_path,
 		temperature: snapshot.execution_defaults.temperature,
 		max_tokens: snapshot.execution_defaults.max_tokens,
 		limits: snapshot.limits,

@@ -54,6 +54,12 @@ import {
 	putEvaluationDraftRoute,
 	startEvaluationRunRoute,
 	handleStartEvaluationRun,
+	listEvaluationRunsRoute,
+	handleListEvaluationRuns,
+	compareEvaluationRunsRoute,
+	handleCompareEvaluationRuns,
+	getEvaluationRunEvidenceRoute,
+	handleGetEvaluationRunEvidence,
 	getEvaluationRunRoute,
 	handleGetEvaluationRun,
 	cancelEvaluationRunRoute,
@@ -330,6 +336,9 @@ register(publishEvaluationDraftRoute, handlePublishEvaluationDraft);
 register(listEvaluationVersionsRoute, handleListEvaluationVersions);
 register(getEvaluationVersionRoute, handleGetEvaluationVersion);
 register(startEvaluationRunRoute, handleStartEvaluationRun);
+register(listEvaluationRunsRoute, handleListEvaluationRuns);
+register(compareEvaluationRunsRoute, handleCompareEvaluationRuns);
+register(getEvaluationRunEvidenceRoute, handleGetEvaluationRunEvidence);
 register(getEvaluationRunRoute, handleGetEvaluationRun);
 register(cancelEvaluationRunRoute, handleCancelEvaluationRun);
 register(retryEvaluationRunRoute, handleRetryEvaluationRun);

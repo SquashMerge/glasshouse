@@ -38,6 +38,7 @@ export const EvaluationEvaluator = z
 export const EvaluationTarget = z
 	.object({
 		kind: z.literal("configured_llm"),
+		provider: z.enum(["openai", "codex_cli"]).optional(),
 		model: z.string().trim().min(1).max(200).nullable().default(null),
 		system_prompt: z.string().max(16000).nullable().default(null),
 	})
@@ -261,6 +262,110 @@ export const EvaluationRun = z
 	.strict()
 	.openapi("EvaluationRun");
 
+const Fingerprint = z.string().regex(/^[a-f0-9]{64}$/);
+const EvidenceRedaction = z
+	.object({
+		applied: z.boolean(),
+		bounded: z.boolean(),
+		fields: z.array(z.string().max(128)).max(32),
+		max_bytes: z.number().int().positive(),
+	})
+	.strict();
+const EvidenceProvenance = z
+	.object({
+		source_trace_id: z.string().max(256).nullable(),
+		source_observation_id: z.string().max(256).nullable(),
+		evaluation_trace_id: z.string().max(256).nullable(),
+	})
+	.strict();
+const EvidenceTiming = z
+	.object({
+		started_at: z.string().datetime().nullable(),
+		completed_at: z.string().datetime().nullable(),
+		duration_ms: z.number().int().nonnegative().nullable(),
+	})
+	.strict();
+export const EvaluationRunItemEvidence = z
+	.object({
+		task_id: z.string().uuid(),
+		item_key: z.string().max(200),
+		position: z.number().int().nonnegative(),
+		status: EvaluationStatus,
+		attempt_count: z.number().int().nonnegative(),
+		input: z.record(z.string(), z.unknown()),
+		expected_output: z.record(z.string(), z.unknown()).nullable(),
+		output: z.record(z.string(), z.unknown()).nullable(),
+		scores: z.record(z.string(), z.number().min(0).max(1)),
+		evaluator_rationale: z.record(z.string(), z.unknown()).nullable(),
+		error_classification: z.string().max(128).nullable(),
+		error_message: z.string().max(512).nullable(),
+		cost_usd: z.number().nonnegative().nullable(),
+		agent_version: z.string().max(200).nullable(),
+		trace_id: z.string().max(256).nullable(),
+		provenance: EvidenceProvenance,
+		timing: EvidenceTiming,
+		redaction: EvidenceRedaction,
+	})
+	.strict()
+	.openapi("EvaluationRunItemEvidence");
+
+const EvaluationRunPinnedInputs = z
+	.object({
+		definition_version_id: z.string().uuid(),
+		dataset_version_id: z.string().uuid(),
+		resolved_inputs_hash: Fingerprint,
+		target: z.record(z.string(), z.unknown()),
+		target_version: z.string(),
+		target_fingerprint: Fingerprint,
+		evaluator: z.record(z.string(), z.unknown()),
+		evaluator_version: z.string(),
+		evaluator_fingerprint: Fingerprint,
+		execution_defaults: z.record(z.string(), z.unknown()),
+		thresholds: z.record(z.string(), z.unknown()),
+		limits: z.record(z.string(), z.unknown()),
+		sample: z
+			.object({
+				strategy: z.string(),
+				sample_size: z.number().int().positive(),
+				seed: z.number().int().nonnegative(),
+				selected_count: z.number().int().nonnegative(),
+				sample_identity: Fingerprint,
+			})
+			.strict(),
+		provenance: z
+			.object({
+				items: z.number().int().nonnegative(),
+				with_source_trace: z.number().int().nonnegative(),
+				with_source_observation: z.number().int().nonnegative(),
+			})
+			.strict(),
+	})
+	.strict();
+
+const EvaluationRunMetrics = z
+	.object({
+		evaluated: z.number().int().nonnegative(),
+		passed: z.number().int().nonnegative(),
+		failed: z.number().int().nonnegative(),
+		pass_rate: z.number().min(0).max(1).nullable(),
+		cost_usd: z.number().nonnegative().nullable(),
+		max_cost_usd: z.number().nonnegative().nullable(),
+		duration_ms: z.number().int().nonnegative().nullable(),
+		max_duration_seconds: z.number().int().positive().nullable(),
+		score_counts: z.record(z.string(), z.number().int().nonnegative()),
+	})
+	.strict();
+
+export const EvaluationRunEvidencePolicy = z
+	.object({
+		retention: z.literal("project_policy"),
+		max_items: z.number().int().positive(),
+		max_field_bytes: z.number().int().positive(),
+		redaction: z.string(),
+	})
+	.strict()
+	.openapi("EvaluationRunEvidencePolicy");
+
 export const EvaluationRunStatus = z
 	.object({
 		id: z.string().uuid(),
@@ -280,28 +385,117 @@ export const EvaluationRunStatus = z
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
 		terminal_reason: z.string().nullable().default(null),
-		items: z
-			.array(
-				z
-					.object({
-						task_id: z.string().uuid(),
-						item_key: z.string().max(200),
-						position: z.number().int().nonnegative(),
-						status: EvaluationStatus,
-						attempt_count: z.number().int().nonnegative(),
-						error_classification: z.string().max(128).nullable(),
-						error_message: z.string().max(512).nullable(),
-						cost_usd: z.number().nonnegative().nullable(),
-						evaluator_rationale: z.record(z.string(), z.unknown()).nullable(),
-						trace_id: z.string().max(256).nullable(),
-					})
-					.strict(),
-			)
-			.default([]),
+		pinned_inputs: EvaluationRunPinnedInputs,
+		metrics: EvaluationRunMetrics,
+		evidence_policy: EvaluationRunEvidencePolicy,
+		items: z.array(EvaluationRunItemEvidence).default([]),
 		items_truncated: z.boolean().default(false),
 	})
 	.strict()
 	.openapi("EvaluationRunStatus");
+
+export const EvaluationRunListQuery = ProjectIdQuery.extend({
+	status: EvaluationStatus.optional(),
+	evaluation_id: z.string().uuid().optional(),
+	limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+	offset: z.coerce.number().int().min(0).optional().default(0),
+}).strict();
+export const EvaluationRunSummary = z
+	.object({
+		id: z.string().uuid(),
+		project_id: z.string().uuid(),
+		evaluation_id: z.string().uuid(),
+		definition_version_id: z.string().uuid(),
+		dataset_version_id: z.string().uuid(),
+		status: EvaluationStatus,
+		counts: EvaluationRunStatus.shape.counts,
+		metrics: EvaluationRunMetrics,
+		target_fingerprint: Fingerprint,
+		evaluator_fingerprint: Fingerprint,
+		sample_identity: Fingerprint,
+		created_at: z.string().datetime(),
+		updated_at: z.string().datetime(),
+		terminal_reason: z.string().nullable(),
+	})
+	.strict()
+	.openapi("EvaluationRunSummary");
+export const EvaluationRunList = z
+	.object({
+		items: z.array(EvaluationRunSummary),
+		total: z.number().int().nonnegative(),
+	})
+	.strict()
+	.openapi("EvaluationRunList");
+export const EvaluationRunEvidenceQuery = ProjectIdQuery.extend({
+	limit: z.coerce.number().int().min(1).max(100).optional().default(100),
+	offset: z.coerce.number().int().min(0).optional().default(0),
+}).strict();
+export const EvaluationRunEvidencePage = z
+	.object({
+		run_id: z.string().uuid(),
+		project_id: z.string().uuid(),
+		items: z.array(EvaluationRunItemEvidence),
+		total: z.number().int().nonnegative(),
+		next_offset: z.number().int().nonnegative().nullable(),
+	})
+	.strict()
+	.openapi("EvaluationRunEvidencePage");
+export const EvaluationRunCompareRequest = z
+	.object({ run_ids: z.array(z.string().uuid()).length(2) })
+	.refine((value) => value.run_ids[0] !== value.run_ids[1], {
+		message: "run_ids must identify two distinct runs",
+		path: ["run_ids"],
+	})
+	.strict()
+	.openapi("EvaluationRunCompareRequest");
+export const EvaluationRunCompare = z
+	.object({
+		run_ids: z.array(z.string().uuid()).length(2),
+		comparable: z.boolean(),
+		differences: z.array(
+			z.object({
+				field: z.enum([
+					"definition_version",
+					"dataset_version",
+					"target",
+					"evaluator",
+					"execution_defaults",
+					"sample",
+					"thresholds",
+					"terminal_reason",
+					"status",
+				]),
+				left: z.unknown(),
+				right: z.unknown(),
+			}),
+		),
+		refusal: z
+			.object({
+				code: z.enum([
+					"incompatible_inputs",
+					"non_success_terminal",
+					"unsupported_contract",
+				]),
+				message: z.string(),
+			})
+			.nullable(),
+		metrics: z
+			.object({
+				left: EvaluationRunMetrics,
+				right: EvaluationRunMetrics,
+				delta: z
+					.object({
+						pass_rate: z.number().nullable(),
+						cost_usd: z.number().nullable(),
+						duration_ms: z.number().nullable(),
+					})
+					.strict()
+					.nullable(),
+			})
+			.strict(),
+	})
+	.strict()
+	.openapi("EvaluationRunCompare");
 export const EvaluationRunEvent = z
 	.object({
 		id: z.number().int().positive(),

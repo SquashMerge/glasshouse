@@ -26,6 +26,7 @@ export function isUncertainLlmFailure(cause: unknown): boolean {
 }
 
 const MAX_DEV_OUTPUT_BYTES = 64 * 1024;
+const MAX_PROVIDER_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_DEV_TIMEOUT_MS = 60_000;
 const MAX_DEV_TIMEOUT_MS = 1_800_000;
 
@@ -268,10 +269,20 @@ export async function invokeConfiguredLlm(
 		);
 	}
 	const content = payload.choices?.[0]?.message?.content;
+	const outputValue =
+		typeof content === "string" ? content : JSON.stringify(content ?? null);
+	if (
+		new TextEncoder().encode(outputValue).byteLength > MAX_PROVIDER_OUTPUT_BYTES
+	)
+		throw new LlmProviderError(
+			"LLM response exceeded the evidence size limit",
+			"deterministic_failure",
+			undefined,
+			false,
+		);
 	return {
 		output: {
-			value:
-				typeof content === "string" ? content : JSON.stringify(content ?? null),
+			value: outputValue,
 		},
 		model: payload.model ?? model,
 		prompt_tokens: payload.usage?.prompt_tokens,

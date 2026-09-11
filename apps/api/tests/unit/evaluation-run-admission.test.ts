@@ -206,7 +206,7 @@ describe("Evaluation Run admission", () => {
 		const db = transactionPool({
 			snapshot: {
 				...first.snapshot,
-				ordered_item_snapshot: JSON.parse(persistedInputs[12] as string),
+				ordered_item_snapshot: JSON.parse(persistedInputs[13] as string),
 			},
 			admittedItems: selectedItems.map(({ id, ...item }) => ({
 				...item,
