@@ -247,6 +247,7 @@ export const EvaluationRun = z
 			evaluator: z.record(z.string(), z.unknown()),
 			evaluator_version: z.string(),
 			execution_defaults: z.record(z.string(), z.unknown()),
+			limits: z.record(z.string(), z.unknown()),
 			thresholds: z.record(z.string(), z.unknown()),
 			sampling: z.record(z.string(), z.unknown()),
 			sample_identity: z.string().regex(/^[a-f0-9]{64}$/),
@@ -259,6 +260,77 @@ export const EvaluationRun = z
 	})
 	.strict()
 	.openapi("EvaluationRun");
+
+export const EvaluationRunStatus = z
+	.object({
+		id: z.string().uuid(),
+		project_id: z.string().uuid(),
+		status: EvaluationStatus,
+		counts: z
+			.object({
+				total: z.number().int().nonnegative(),
+				pending: z.number().int().nonnegative(),
+				running: z.number().int().nonnegative(),
+				completed: z.number().int().nonnegative(),
+				failed: z.number().int().nonnegative(),
+				cancelled: z.number().int().nonnegative(),
+			})
+			.strict(),
+		attempts: z.number().int().nonnegative().default(0),
+		created_at: z.string().datetime(),
+		updated_at: z.string().datetime(),
+		terminal_reason: z.string().nullable().default(null),
+		items: z
+			.array(
+				z
+					.object({
+						task_id: z.string().uuid(),
+						item_key: z.string().max(200),
+						position: z.number().int().nonnegative(),
+						status: EvaluationStatus,
+						attempt_count: z.number().int().nonnegative(),
+						error_classification: z.string().max(128).nullable(),
+						error_message: z.string().max(512).nullable(),
+						cost_usd: z.number().nonnegative().nullable(),
+						evaluator_rationale: z.record(z.string(), z.unknown()).nullable(),
+						trace_id: z.string().max(256).nullable(),
+					})
+					.strict(),
+			)
+			.default([]),
+		items_truncated: z.boolean().default(false),
+	})
+	.strict()
+	.openapi("EvaluationRunStatus");
+export const EvaluationRunEvent = z
+	.object({
+		id: z.number().int().positive(),
+		run_id: z.string().uuid(),
+		event_type: z.enum(["run_status", "task_status", "result_recorded"]),
+		task_id: z.string().uuid().nullable(),
+		payload: z.record(z.string(), z.unknown()),
+		created_at: z.string().datetime(),
+	})
+	.strict()
+	.openapi("EvaluationRunEvent");
+export const EvaluationRunEventList = z
+	.object({ items: z.array(EvaluationRunEvent) })
+	.strict()
+	.openapi("EvaluationRunEventList");
+export const EvaluationRunIdParam = z
+	.object({ id: z.string().uuid() })
+	.strict();
+export const EvaluationRunProjectQuery = ProjectIdQuery;
+export const EvaluationRunEventsHeaders = z.object({
+	"last-event-id": z.coerce
+		.number()
+		.int()
+		.nonnegative()
+		.optional()
+		.openapi({
+			param: { name: "last-event-id", in: "header", required: false },
+		}),
+});
 
 export const EvaluationSlugParam = z
 	.object({

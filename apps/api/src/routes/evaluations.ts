@@ -1,11 +1,18 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
+import { streamSSE } from "hono/streaming";
 import {
 	admitEvaluationRun,
+	cancelEvaluationRun,
 	EvaluationRunRepositoryError,
+	getEvaluationRunExecution,
+	getEvaluationRunStatus,
+	listEvaluationRunEvents,
+	retryEvaluationRun,
 } from "../db/evaluation-runs.js";
 import {
-	executeExperiment,
+	executeEvaluationRun,
+	evaluationRunConfig,
 	production as evaluationProduction,
 } from "./experiments.js";
 import {
@@ -43,9 +50,17 @@ import {
 	EvaluationRun,
 	EvaluationRunHeaders,
 	EvaluationRunStart,
+	EvaluationRunStatus,
+	EvaluationRunIdParam,
+	EvaluationRunProjectQuery,
+	EvaluationRunEventsHeaders,
 	EvaluationSlugParam,
 } from "../schemas/evaluations.js";
 import { trustedTenant } from "../tenancy.js";
+import {
+	authorizedSseFrame,
+	createAuthorizedSseDelivery,
+} from "../lib/authorized-sse.js";
 
 const tag = "evaluations";
 const Etag = z.string().regex(/^"\d+"$/);
@@ -271,6 +286,70 @@ export const startEvaluationRunRoute = createRoute({
 		...EvaluationErrorResponses,
 	},
 });
+export const getEvaluationRunRoute = createRoute({
+	method: "get",
+	path: "/v1/evaluation-runs/{id}",
+	tags: [tag],
+	summary: "Get durable Evaluation Run status",
+	security: [{ basicAuth: [] }],
+	request: { params: EvaluationRunIdParam, query: EvaluationRunProjectQuery },
+	responses: {
+		200: {
+			description: "OK",
+			content: { "application/json": { schema: EvaluationRunStatus } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+export const cancelEvaluationRunRoute = createRoute({
+	method: "post",
+	path: "/v1/evaluation-runs/{id}/cancel",
+	tags: [tag],
+	summary: "Cancel a durable Evaluation Run",
+	security: [{ basicAuth: [] }],
+	request: { params: EvaluationRunIdParam, query: EvaluationRunProjectQuery },
+	responses: {
+		200: {
+			description: "Cancelled",
+			content: { "application/json": { schema: EvaluationRunStatus } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+export const retryEvaluationRunRoute = createRoute({
+	method: "post",
+	path: "/v1/evaluation-runs/{id}/retry",
+	tags: [tag],
+	summary: "Retry failed items in a durable Evaluation Run",
+	security: [{ basicAuth: [] }],
+	request: { params: EvaluationRunIdParam, query: EvaluationRunProjectQuery },
+	responses: {
+		202: {
+			description: "Retry queued",
+			content: { "application/json": { schema: EvaluationRunStatus } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
+export const getEvaluationRunEventsRoute = createRoute({
+	method: "get",
+	path: "/v1/evaluation-runs/{id}/events",
+	tags: [tag],
+	summary: "Stream replayable durable Evaluation Run events",
+	security: [{ basicAuth: [] }],
+	request: {
+		params: EvaluationRunIdParam,
+		query: EvaluationRunProjectQuery,
+		headers: EvaluationRunEventsHeaders,
+	},
+	responses: {
+		200: {
+			description: "OK (text/event-stream)",
+			content: { "text/event-stream": { schema: z.string() } },
+		},
+		...EvaluationErrorResponses,
+	},
+});
 
 export const listEvaluationVersionsRoute = createRoute({
 	method: "get",
@@ -328,7 +407,7 @@ const revision = (value: string | undefined) => {
 };
 const authorization = (
 	c: Context,
-	operation: "product_read" | "curation_write" | "destructive",
+	operation: "product_read" | "curation_write" | "execute" | "destructive",
 ) => projectAuthorization(trustedTenant(c), operation);
 export const handleCreateEvaluation = async (c: any) => {
 	try {
@@ -471,17 +550,12 @@ export const handleStartEvaluationRun = async (c: any) => {
 			authorization: projectAuthorization(trustedTenant(c), "execute"),
 		});
 		if (!run.replayed)
-			void executeExperiment(evaluationProduction, {
+			void executeEvaluationRun(evaluationProduction, {
 				project_id: run.project_id,
 				experiment_id: run.experiment_id,
+				evaluation_run_id: run.id,
 				dataset_id: run.dataset_id,
-				config: {
-					model: run.snapshot.target.model,
-					system_prompt: run.snapshot.target.system_prompt,
-					evaluator: run.snapshot.evaluator.kind,
-					temperature: run.snapshot.execution_defaults.temperature,
-					max_tokens: run.snapshot.execution_defaults.max_tokens,
-				},
+				config: evaluationRunConfig(run.snapshot),
 			}).catch((cause) =>
 				logger.error("evaluation.run_execution_failed", cause, {
 					run_id: run.id,
@@ -490,6 +564,155 @@ export const handleStartEvaluationRun = async (c: any) => {
 				}),
 			);
 		return c.json(run, 202);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
+export const handleGetEvaluationRun = async (c: any) => {
+	try {
+		return c.json(
+			await getEvaluationRunStatus(pgPool(), {
+				id: c.req.valid("param").id,
+				project_id: c.req.valid("query").project_id,
+				authorization: authorization(c, "product_read"),
+			}),
+		);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
+export const handleCancelEvaluationRun = async (c: any) => {
+	try {
+		const query = c.req.valid("query");
+		const status = await cancelEvaluationRun(pgPool(), {
+			id: c.req.valid("param").id,
+			project_id: query.project_id,
+			authorization: authorization(c, "execute"),
+		});
+		return c.json(status);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
+export const handleRetryEvaluationRun = async (c: any) => {
+	try {
+		const query = c.req.valid("query");
+		const status = await retryEvaluationRun(pgPool(), {
+			id: c.req.valid("param").id,
+			project_id: query.project_id,
+			authorization: authorization(c, "execute"),
+		});
+		const execution = await getEvaluationRunExecution(pgPool(), {
+			id: c.req.valid("param").id,
+			project_id: query.project_id,
+			authorization: authorization(c, "execute"),
+		});
+		void executeEvaluationRun(evaluationProduction, {
+			...execution,
+			evaluation_run_id: execution.id,
+		}).catch((cause) =>
+			logger.error("evaluation.run_retry_execution_failed", cause, {
+				run_id: c.req.valid("param").id,
+				project_id: query.project_id,
+			}),
+		);
+		return c.json(status, 202);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+
+export const handleGetEvaluationRunEvents = async (c: any) => {
+	try {
+		const params = c.req.valid("param");
+		const query = c.req.valid("query");
+		const headers = c.req.valid("header");
+		const projectAuthorization = authorization(c, "product_read");
+		await getEvaluationRunStatus(pgPool(), {
+			id: params.id,
+			project_id: query.project_id,
+			authorization: projectAuthorization,
+		});
+		let afterId = headers["last-event-id"] ?? 0;
+		return streamSSE(c, async (stream) => {
+			let closed = false;
+			let polling = false;
+			let timer: ReturnType<typeof setInterval> | undefined;
+			let resolveClose = () => {};
+			const waitForClose = new Promise<void>((resolve) => {
+				resolveClose = resolve;
+			});
+			const close = () => {
+				if (closed) return;
+				closed = true;
+				if (timer) clearInterval(timer);
+				resolveClose();
+			};
+			stream.onAbort(close);
+			const delivery = createAuthorizedSseDelivery({
+				stream,
+				pool: pgPool,
+				tenant: trustedTenant(c),
+				projectId: query.project_id,
+				onClose: close,
+			});
+			const tick = async () => {
+				if (closed || polling) return;
+				polling = true;
+				try {
+					const events = await listEvaluationRunEvents(pgPool(), {
+						id: params.id,
+						project_id: query.project_id,
+						after_id: afterId,
+						authorization: projectAuthorization,
+					});
+					for (const event of events) {
+						const data = JSON.stringify({
+							...event.payload,
+							run_id: event.run_id,
+							task_id: event.task_id,
+							created_at: event.created_at,
+						});
+						if (
+							!(await delivery.deliver(
+								authorizedSseFrame(data, () =>
+									stream.writeSSE({
+										id: String(event.id),
+										event: event.event_type,
+										data,
+									}),
+								),
+							))
+						)
+							return;
+						afterId = event.id;
+					}
+					const status = await getEvaluationRunStatus(pgPool(), {
+						id: params.id,
+						project_id: query.project_id,
+						authorization: projectAuthorization,
+					});
+					if (["completed", "failed", "cancelled"].includes(status.status))
+						close();
+				} catch {
+					close();
+				} finally {
+					polling = false;
+				}
+			};
+			if (
+				!(await delivery.deliver(
+					authorizedSseFrame(":ok\n\n", () => stream.write(":ok\n\n")),
+				))
+			)
+				return;
+			timer = setInterval(() => void tick(), 500);
+			void tick();
+			await waitForClose;
+		});
 	} catch (cause) {
 		return errorResponse(c, cause);
 	}

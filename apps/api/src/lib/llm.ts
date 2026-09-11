@@ -3,7 +3,27 @@ export type LlmResponse = {
 	model: string;
 	prompt_tokens?: number;
 	completion_tokens?: number;
+	/** Provider-reported billable cost. It is never inferred from token counts. */
+	cost_usd?: number | null;
 };
+
+export class LlmProviderError extends Error {
+	constructor(
+		message: string,
+		readonly dispatchOutcome: "deterministic_failure" | "uncertain",
+		cause?: unknown,
+		readonly safeToRetry = dispatchOutcome === "deterministic_failure",
+	) {
+		super(message, { cause });
+		this.name = "LlmProviderError";
+	}
+}
+
+export function isUncertainLlmFailure(cause: unknown): boolean {
+	return (
+		cause instanceof LlmProviderError && cause.dispatchOutcome === "uncertain"
+	);
+}
 
 const MAX_DEV_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_DEV_TIMEOUT_MS = 60_000;
@@ -152,6 +172,9 @@ export async function invokeConfiguredLlm(
 		{ role: "user", content: JSON.stringify(input) },
 	]);
 	if (provider === "codex_cli")
+		// The development CLI intentionally keeps its existing stdin contract. It
+		// receives the pinned model and dispatch key, but does not emulate OpenAI's
+		// temperature/max_tokens request fields.
 		return {
 			output: {
 				value: await invokeDevelopmentCli(
@@ -163,44 +186,87 @@ export async function invokeConfiguredLlm(
 			},
 			model,
 		};
-	if (provider !== "openai") throw new Error("unsupported LLM provider");
+	if (provider !== "openai")
+		throw new LlmProviderError(
+			"unsupported LLM provider",
+			"deterministic_failure",
+			undefined,
+			false,
+		);
 	const apiKey = process.env.OPENAI_API_KEY;
-	if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
+	if (!apiKey)
+		throw new LlmProviderError(
+			"OPENAI_API_KEY is not configured",
+			"deterministic_failure",
+			undefined,
+			false,
+		);
 	const baseUrl = (
 		process.env.OPENAI_API_BASE ??
 		process.env.OPENAI_BASE_URL ??
 		"https://api.openai.com/v1"
 	).replace(/\/$/, "");
-	const response = await fetch(`${baseUrl}/chat/completions`, {
-		method: "POST",
-		headers: {
-			authorization: `Bearer ${apiKey}`,
-			"content-type": "application/json",
-			...(idempotencyKey
-				? {
-						"idempotency-key": idempotencyKey,
-						"x-client-request-id": idempotencyKey,
-					}
-				: {}),
-		},
-		body: JSON.stringify({
-			model,
-			temperature:
-				typeof config.temperature === "number" ? config.temperature : 0,
-			messages: [
-				{ role: "system", content: system },
-				{ role: "user", content: JSON.stringify(input) },
-			],
-		}),
-		signal,
-	});
+	let response: Response;
+	try {
+		response = await fetch(`${baseUrl}/chat/completions`, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${apiKey}`,
+				"content-type": "application/json",
+				...(idempotencyKey
+					? {
+							"idempotency-key": idempotencyKey,
+							"x-client-request-id": idempotencyKey,
+						}
+					: {}),
+			},
+			body: JSON.stringify({
+				model,
+				temperature:
+					typeof config.temperature === "number" ? config.temperature : 0,
+				...(typeof config.max_tokens === "number" &&
+				Number.isSafeInteger(config.max_tokens) &&
+				config.max_tokens >= 1
+					? { max_tokens: config.max_tokens }
+					: {}),
+				messages: [
+					{ role: "system", content: system },
+					{ role: "user", content: JSON.stringify(input) },
+				],
+			}),
+			signal,
+		});
+	} catch (cause) {
+		throw new LlmProviderError(
+			"LLM request outcome is unknown",
+			"uncertain",
+			cause,
+		);
+	}
 	if (!response.ok)
-		throw new Error(`LLM request failed with status ${response.status}`);
-	const payload = (await response.json()) as {
+		throw new LlmProviderError(
+			`LLM request failed with status ${response.status}`,
+			response.status === 429 || response.status >= 500
+				? "uncertain"
+				: "deterministic_failure",
+			undefined,
+			response.status !== 429 && response.status < 500,
+		);
+	let payload: {
 		choices?: Array<{ message?: { content?: unknown } }>;
 		model?: string;
 		usage?: { prompt_tokens?: number; completion_tokens?: number };
+		cost_usd?: unknown;
 	};
+	try {
+		payload = (await response.json()) as typeof payload;
+	} catch (cause) {
+		throw new LlmProviderError(
+			"LLM response could not be decoded",
+			"uncertain",
+			cause,
+		);
+	}
 	const content = payload.choices?.[0]?.message?.content;
 	return {
 		output: {
@@ -210,5 +276,11 @@ export async function invokeConfiguredLlm(
 		model: payload.model ?? model,
 		prompt_tokens: payload.usage?.prompt_tokens,
 		completion_tokens: payload.usage?.completion_tokens,
+		cost_usd:
+			typeof payload.cost_usd === "number" &&
+			Number.isFinite(payload.cost_usd) &&
+			payload.cost_usd >= 0
+				? payload.cost_usd
+				: null,
 	};
 }

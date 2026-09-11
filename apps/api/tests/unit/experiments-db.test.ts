@@ -7,6 +7,7 @@ import {
 	getExperiment,
 	listExperimentResults,
 	listRecoverableExperiments,
+	reconcileUnknownExperimentTaskProviderDispatch,
 } from "../../src/db/experiments";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
@@ -53,7 +54,15 @@ function transactionPool(
 			if (text.includes("FROM project_actor_grants"))
 				return { rows: [{ actor_id: authorization.actor_id }] };
 			if (text.startsWith("SELECT authorization_allows_project"))
-				return { rows: [{ allowed: executionAuthorized }] };
+				return {
+					rows: [
+						{
+							allowed:
+								executionAuthorized &&
+								responses[0]?.rows?.[0]?.authorized !== false,
+						},
+					],
+				};
 			if (text.startsWith("SELECT e.* FROM experiments")) {
 				calls.push({ text, values });
 				const reply = responses.shift() ?? { rows: [] };
@@ -134,6 +143,72 @@ describe("durable experiment task ledger", () => {
 				calls.some((call) => call.text.includes("FROM experiment_results")),
 			).toBe(false);
 		}
+	});
+
+	it("overwrites stale result evidence when reconciling unknown dispatch", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
+		const client = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				if (text.startsWith("SELECT p.id AS authorization_project_id"))
+					return {
+						rows: [
+							{
+								authorization_project_id: projectId,
+								organization_id: authorization.organization_id,
+								requested_by_actor_id: authorization.actor_id,
+							},
+						],
+					};
+				if (text.includes("FROM organization_memberships om"))
+					return { rows: [{ actor_subject: "requester" }] };
+				if (text.includes("FROM organization_actor_roles"))
+					return { rows: [{ actor_id: authorization.actor_id }] };
+				if (text.includes("FROM project_memberships pm"))
+					return { rows: [{ actor_subject: "requester" }] };
+				if (text.includes("FROM project_actor_grants"))
+					return { rows: [{ actor_id: authorization.actor_id }] };
+				if (text.includes("p.status = ANY($3::text[])"))
+					return { rows: [{ id: projectId }] };
+				if (text.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (text.startsWith("SELECT e.* FROM experiments"))
+					return { rows: [runningExperiment] };
+				if (text.startsWith("UPDATE experiment_tasks"))
+					return {
+						rows: [
+							{
+								experiment_id: experimentId,
+								dataset_item_id: datasetId,
+								dataset_version_item_id: null,
+								evaluation_run_item_id: null,
+								evaluation_run_id: null,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		expect(
+			await reconcileUnknownExperimentTaskProviderDispatch(
+				{ connect: async () => client } as never,
+				{
+					project_id: projectId,
+					experiment_id: experimentId,
+					task_id: taskId,
+					lease_token: leaseToken,
+				},
+			),
+		).toBe(true);
+		const resultInsert = calls.find((call) =>
+			call.text.startsWith("INSERT INTO experiment_results"),
+		);
+		expect(resultInsert?.text).toContain("DO UPDATE SET");
+		expect(resultInsert?.text).toContain(
+			"error_classification=excluded.error_classification",
+		);
 	});
 
 	it("rechecks the requester under the project lock before claiming provider work", async () => {
@@ -249,7 +324,6 @@ describe("durable experiment task ledger", () => {
 
 	it("does not finalize a result after requester execution access is revoked", async () => {
 		const db = transactionPool([
-			{ rows: [] },
 			{ rows: [{ ...runningExperiment, authorized: false }] },
 			{ rows: [] },
 			{ rows: [{ ...runningExperiment, status: "cancelled" }] },
@@ -272,17 +346,22 @@ describe("durable experiment task ledger", () => {
 		expect(db.calls.map((call) => call.text)).not.toContain(
 			expect.stringContaining("INSERT INTO experiment_results"),
 		);
-		expect(
-			db.calls.some((call) => call.text.includes("UPDATE experiment_tasks")),
-		).toBe(true);
 	});
 
 	it("binds the lease and result state to the finalized task", async () => {
 		const db = transactionPool([
-			{ rows: [] },
 			{ rows: [runningExperiment] },
-			{ rows: [{ experiment_id: experimentId, dataset_item_id: datasetId }] },
+			{ rows: [runningExperiment] },
 			{ rows: [] },
+			{
+				rows: [
+					{
+						experiment_id: experimentId,
+						dataset_item_id: datasetId,
+						final_status: "completed",
+					},
+				],
+			},
 			{ rows: [] },
 		]);
 
@@ -299,7 +378,102 @@ describe("durable experiment task ledger", () => {
 		expect(
 			db.calls.find((call) => call.text.startsWith("UPDATE experiment_tasks"))
 				?.values,
-		).toEqual([taskId, experimentId, leaseToken, "completed"]);
+		).toEqual([taskId, experimentId, leaseToken, "completed", null, null]);
+	});
+
+	it("terminalizes without result content when the result admission has expired", async () => {
+		const calls: Array<{ text: string; values: unknown[] }> = [];
+		const client = {
+			query: async (text: string, values: unknown[] = []) => {
+				calls.push({ text, values });
+				if (text.startsWith("SELECT p.id AS authorization_project_id"))
+					return {
+						rows: [
+							{
+								authorization_project_id: projectId,
+								organization_id: authorization.organization_id,
+								requested_by_actor_id: authorization.actor_id,
+							},
+						],
+					};
+				if (text.includes("FROM organization_memberships om"))
+					return { rows: [{ actor_subject: "requester" }] };
+				if (text.includes("FROM organization_actor_roles"))
+					return { rows: [{ actor_id: authorization.actor_id }] };
+				if (text.includes("FROM project_memberships pm"))
+					return { rows: [{ actor_subject: "requester" }] };
+				if (text.includes("FROM project_actor_grants"))
+					return { rows: [{ actor_id: authorization.actor_id }] };
+				if (text.includes("FROM projects p WHERE"))
+					return { rows: [{ id: projectId }] };
+				if (text.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (text.startsWith("SELECT e.* FROM experiments"))
+					return { rows: [runningExperiment] };
+				if (text.startsWith("WITH active_admission")) return { rows: [] };
+				if (text.startsWith("UPDATE experiment_tasks"))
+					return { rows: [{ id: taskId }] };
+				return { rows: [{ max_cost_usd: null, spent_cost_usd: 0 }] };
+			},
+			release() {},
+		};
+
+		expect(
+			await finalizeExperimentTask({ connect: async () => client } as never, {
+				project_id: projectId,
+				experiment_id: experimentId,
+				task_id: taskId,
+				lease_token: leaseToken,
+				admission_id: "88888888-8888-4888-8888-888888888888",
+				status: "completed",
+				output: { value: "must not persist" },
+				scores: { exact_match: 1 },
+			}),
+		).toBe(true);
+		const terminalize = calls.find(
+			(call) =>
+				call.text.startsWith("UPDATE experiment_tasks") &&
+				call.text.includes("last_error_classification='execution_timeout'"),
+		);
+		expect(terminalize).toBeDefined();
+		expect(
+			calls.some((call) =>
+				call.text.startsWith("INSERT INTO experiment_results"),
+			),
+		).toBe(false);
+	});
+
+	it("does not claim a terminal result effect when a task is returned for retry", async () => {
+		const db = transactionPool([
+			{ rows: [runningExperiment] },
+			{ rows: [runningExperiment] },
+			{ rows: [] },
+			{
+				rows: [
+					{
+						experiment_id: experimentId,
+						dataset_item_id: datasetId,
+						final_status: "pending",
+					},
+				],
+			},
+		]);
+
+		const result = await finalizeExperimentTask(db as never, {
+			project_id: projectId,
+			experiment_id: experimentId,
+			task_id: taskId,
+			lease_token: leaseToken,
+			status: "failed",
+			retryable: true,
+			scores: { exact_match: 0 },
+			error_classification: "provider_error",
+			error_message: "provider invocation failed",
+		});
+		expect(result).toBe(true);
+		expect(
+			db.calls.some((call) => call.text.includes("execution_effects")),
+		).toBe(false);
 	});
 
 	it("terminalizes unbound or revoked work before restart recovery", async () => {
@@ -329,6 +503,24 @@ describe("durable experiment task ledger", () => {
 		expect(db.calls.some((call) => call.text.includes("FOR UPDATE OF p"))).toBe(
 			true,
 		);
+	});
+
+	it("fails closed instead of restoring mutable config for an admitted run without its snapshot", async () => {
+		const db = transactionPool([
+			{ rows: [] },
+			{
+				rows: [
+					{
+						...runningExperiment,
+						evaluation_run_id: "88888888-8888-4888-8888-888888888888",
+						config: { model: "mutable-draft" },
+					},
+				],
+			},
+			{ rows: [] },
+		]);
+
+		expect(await listRecoverableExperiments(db as never)).toEqual([]);
 	});
 
 	it("rechecks the cancelling actor under the project lock", async () => {

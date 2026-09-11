@@ -4,6 +4,7 @@ type RecoverableExperiment = {
 	project_id: string;
 	dataset_id: string;
 	config: Record<string, unknown>;
+	evaluation_run_id?: string;
 };
 
 type RecoveryDependencies = {

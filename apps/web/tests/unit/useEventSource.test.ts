@@ -127,6 +127,10 @@ function frame(event: string, data: unknown): string {
 	return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+function identifiedFrame(id: string, event: string, data: unknown): string {
+	return `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 function commentFrame(text: string): string {
 	return `:${text}\n\n`;
 }
@@ -491,6 +495,40 @@ describe("useEventSource — SSE transport", () => {
 		});
 		expect(messages).toHaveLength(5);
 		expect(renderCount.count - rendersBefore).toBeLessThanOrEqual(2);
+	});
+
+	it("does not resume from a parsed but not-yet-delivered coalesced event", async () => {
+		vi.useFakeTimers({
+			toFake: [
+				"setTimeout",
+				"clearTimeout",
+				"requestAnimationFrame",
+				"cancelAnimationFrame",
+				"Date",
+				"performance",
+			],
+		});
+		const { messages, hook } = setupHook<unknown>({});
+		const authedFetchMock = (await import("../../src/lib/auth"))
+			.authedFetch as unknown as ReturnType<typeof vi.fn>;
+
+		await act(async () => {
+			await settle();
+			fakeStreams[0]!.enqueue(identifiedFrame("42", "task", { value: 1 }));
+			await flushMicrotasks();
+		});
+		expect(messages).toHaveLength(0);
+
+		await act(async () => {
+			hook.result.reconnect();
+			await flushMicrotasks();
+		});
+		await act(async () => {
+			await settle();
+		});
+
+		expect(authedFetchMock.mock.calls.at(-1)?.[1]?.headers).toBeUndefined();
+		hook.unmount();
 	});
 
 	it("visibility-aware: closes after >60s hidden, reconnects on visible", async () => {

@@ -123,8 +123,9 @@ export function executionOperationKey(
 export function providerDispatchKey(
 	workKind: "optimization" | "experiment_task",
 	workId: string,
+	attempt = 1,
 ): string {
-	return `astraea:${workKind}:${workId}:${executionOperationKey("provider_dispatch", 1)}`;
+	return `astraea:${workKind}:${workId}:${executionOperationKey("provider_dispatch", attempt)}`;
 }
 
 export async function cancelExecutionAdmission(
