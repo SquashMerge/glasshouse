@@ -39,7 +39,7 @@
     "node-pg-migrate": "9.0.0",
     "pg": "8.23.0",
     "unicode-confusables": "0.1.1",
-    "zod": "4.4.3"
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",

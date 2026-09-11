@@ -16,7 +16,7 @@
     "test:e2e": "PLAYWRIGHT_E2E=true playwright test"
   },
   "dependencies": {
-    "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-query": "5.102.8",
     "@tanstack/react-router": "1.170.32",
     "class-variance-authority": "0.7.1",
     "react": "19.2.8",
