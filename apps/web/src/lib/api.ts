@@ -422,17 +422,81 @@ export interface EvaluationRunStatus {
 	created_at: string;
 	updated_at: string;
 	terminal_reason: string | null;
+	pinned_inputs: {
+		definition_version_id: string;
+		dataset_version_id: string;
+		resolved_inputs_hash: string;
+		target: JsonObject;
+		target_version: string;
+		target_fingerprint: string;
+		evaluator: JsonObject;
+		evaluator_version: string;
+		evaluator_fingerprint: string;
+		execution_defaults: JsonObject;
+		thresholds: JsonObject;
+		limits: JsonObject;
+		sample: {
+			strategy: string;
+			sample_size: number;
+			seed: number;
+			selected_count: number;
+			sample_identity: string;
+		};
+		provenance: {
+			items: number;
+			with_source_trace: number;
+			with_source_observation: number;
+		};
+	};
+	metrics: {
+		evaluated: number;
+		passed: number;
+		failed: number;
+		pass_rate: number | null;
+		cost_usd: number | null;
+		max_cost_usd: number | null;
+		duration_ms: number | null;
+		max_duration_seconds: number | null;
+		score_counts: Record<string, number>;
+	};
+	evidence_policy: {
+		retention: "project_policy";
+		max_items: number;
+		max_field_bytes: number;
+		redaction: string;
+	};
 	items: Array<{
 		task_id: string;
 		item_key: string;
 		position: number;
 		status: EvaluationRun["status"];
 		attempt_count: number;
+		input: JsonObject;
+		expected_output: JsonObject | null;
+		output: JsonObject | null;
+		scores: Record<string, number>;
 		error_classification: string | null;
 		error_message: string | null;
 		cost_usd: number | null;
 		evaluator_rationale: JsonObject | null;
 		trace_id: string | null;
+		agent_version: string | null;
+		provenance: {
+			source_trace_id: string | null;
+			source_observation_id: string | null;
+			evaluation_trace_id: string | null;
+		};
+		timing: {
+			started_at: string | null;
+			completed_at: string | null;
+			duration_ms: number | null;
+		};
+		redaction: {
+			applied: boolean;
+			bounded: boolean;
+			fields: string[];
+			max_bytes: number;
+		};
 	}>;
 	items_truncated: boolean;
 }
@@ -445,6 +509,116 @@ export async function getEvaluationRunStatus(input: {
 			`/v1/evaluation-runs/${encodeURIComponent(input.id)}${buildQs({ project_id: input.project_id })}`,
 		),
 		"getEvaluationRunStatus",
+	);
+}
+export interface EvaluationRunEvidencePage {
+	run_id: string;
+	project_id: string;
+	items: EvaluationRunStatus["items"];
+	total: number;
+	next_offset: number | null;
+}
+export async function getEvaluationRunEvidence(input: {
+	project_id: string;
+	id: string;
+	limit?: number;
+	offset?: number;
+}): Promise<EvaluationRunEvidencePage> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-runs/${encodeURIComponent(input.id)}/evidence${buildQs({
+				project_id: input.project_id,
+				limit: input.limit,
+				offset: input.offset,
+			})}`,
+		),
+		"getEvaluationRunEvidence",
+	);
+}
+export interface EvaluationRunSummary {
+	id: string;
+	project_id: string;
+	evaluation_id: string;
+	definition_version_id: string;
+	dataset_version_id: string;
+	status: EvaluationRun["status"];
+	counts: EvaluationRunStatus["counts"];
+	metrics: EvaluationRunStatus["metrics"];
+	target_fingerprint: string;
+	evaluator_fingerprint: string;
+	sample_identity: string;
+	created_at: string;
+	updated_at: string;
+	terminal_reason: string | null;
+}
+export async function listEvaluationRuns(input: {
+	project_id: string;
+	status?: EvaluationRun["status"];
+	evaluation_id?: string;
+	limit?: number;
+	offset?: number;
+}): Promise<{ items: EvaluationRunSummary[]; total: number }> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-runs${buildQs({
+				project_id: input.project_id,
+				status: input.status,
+				evaluation_id: input.evaluation_id,
+				limit: input.limit,
+				offset: input.offset,
+			})}`,
+		),
+		"listEvaluationRuns",
+	);
+}
+export interface EvaluationRunCompare {
+	run_ids: [string, string];
+	comparable: boolean;
+	differences: Array<{
+		field:
+			| "definition_version"
+			| "dataset_version"
+			| "target"
+			| "evaluator"
+			| "execution_defaults"
+			| "sample"
+			| "thresholds"
+			| "terminal_reason"
+			| "status";
+		left: unknown;
+		right: unknown;
+	}>;
+	refusal: {
+		code:
+			| "incompatible_inputs"
+			| "non_success_terminal"
+			| "unsupported_contract";
+		message: string;
+	} | null;
+	metrics: {
+		left: EvaluationRunStatus["metrics"];
+		right: EvaluationRunStatus["metrics"];
+		delta: {
+			pass_rate: number | null;
+			cost_usd: number | null;
+			duration_ms: number | null;
+		} | null;
+	};
+}
+export async function compareEvaluationRuns(input: {
+	project_id: string;
+	run_ids: [string, string];
+}): Promise<EvaluationRunCompare> {
+	return responseJson(
+		await authedFetch(
+			`/v1/evaluation-runs/compare${buildQs({ project_id: input.project_id })}`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ run_ids: input.run_ids }),
+			},
+		),
+		"compareEvaluationRuns",
 	);
 }
 export async function cancelEvaluationRun(input: {

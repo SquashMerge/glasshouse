@@ -5,14 +5,81 @@ import {
 	getEvaluationRunRoute,
 	getEvaluationRunEventsRoute,
 	retryEvaluationRunRoute,
+	listEvaluationRunsRoute,
+	compareEvaluationRunsRoute,
+	getEvaluationRunEvidenceRoute,
 } from "../../src/routes/evaluations";
-import { EvaluationRunStatus } from "../../src/schemas/evaluations";
+import {
+	EvaluationRunStatus,
+	EvaluationRunCompare,
+	EvaluationRunCompareRequest,
+	EvaluationRunEvidencePage,
+} from "../../src/schemas/evaluations";
 import {
 	cancelEvaluationRun,
 	retryEvaluationRun,
 } from "../../src/db/evaluation-runs";
 
 describe("Evaluation Run lifecycle API", () => {
+	const hash = "a".repeat(64);
+	const pinned_inputs = {
+		definition_version_id: "55555555-5555-4555-8555-555555555555",
+		dataset_version_id: "66666666-6666-4666-8666-666666666666",
+		resolved_inputs_hash: hash,
+		target: { kind: "fixture" },
+		target_version: "1",
+		target_fingerprint: hash,
+		evaluator: { kind: "exact_match" },
+		evaluator_version: "1",
+		evaluator_fingerprint: hash,
+		execution_defaults: {},
+		thresholds: {},
+		limits: {},
+		sample: {
+			strategy: "all",
+			sample_size: 2,
+			seed: 0,
+			selected_count: 2,
+			sample_identity: hash,
+		},
+		provenance: { items: 2, with_source_trace: 0, with_source_observation: 0 },
+	};
+	const metrics = {
+		evaluated: 0,
+		passed: 0,
+		failed: 0,
+		pass_rate: null,
+		cost_usd: null,
+		max_cost_usd: null,
+		duration_ms: null,
+		max_duration_seconds: null,
+		score_counts: {},
+	};
+	const evidence_policy = {
+		retention: "project_policy" as const,
+		max_items: 100,
+		max_field_bytes: 64_000,
+		redaction: "bounded_json",
+	};
+	const itemEvidence = {
+		input: { prompt: "redacted fixture" },
+		expected_output: null,
+		output: null,
+		scores: {},
+		provenance: {
+			source_trace_id: null,
+			source_observation_id: null,
+			evaluation_trace_id: null,
+		},
+		agent_version: null,
+		timing: { started_at: null, completed_at: null, duration_ms: null },
+		redaction: {
+			applied: false,
+			bounded: true,
+			fields: [],
+			max_bytes: 64_000,
+		},
+	};
 	it("documents authorized status, cancellation, retry, and replayable SSE routes", () => {
 		const app = new OpenAPIHono();
 		for (const route of [
@@ -39,6 +106,54 @@ describe("Evaluation Run lifecycle API", () => {
 		).toBeDefined();
 	});
 
+	it("documents list, evidence pagination, and comparison contracts", () => {
+		const app = new OpenAPIHono();
+		for (const route of [
+			listEvaluationRunsRoute,
+			getEvaluationRunEvidenceRoute,
+			compareEvaluationRunsRoute,
+		])
+			app.openapi(route, () => new Response());
+		const document = app.getOpenAPIDocument({
+			openapi: "3.0.0",
+			info: { title: "test", version: "1" },
+		});
+		expect(document.paths?.["/v1/evaluation-runs"]?.get).toBeDefined();
+		expect(
+			document.paths?.["/v1/evaluation-runs/{id}/evidence"]?.get,
+		).toBeDefined();
+		expect(document.paths?.["/v1/evaluation-runs/compare"]?.post).toBeDefined();
+		expect(
+			EvaluationRunCompareRequest.safeParse({
+				run_ids: [
+					"11111111-1111-4111-8111-111111111111",
+					"11111111-1111-4111-8111-111111111111",
+				],
+			}).success,
+		).toBe(false);
+		expect(
+			EvaluationRunEvidencePage.safeParse({
+				run_id: "11111111-1111-4111-8111-111111111111",
+				project_id: "22222222-2222-4222-8222-222222222222",
+				items: [],
+				total: 0,
+				next_offset: null,
+			}).success,
+		).toBe(true);
+		expect(
+			EvaluationRunCompare.safeParse({
+				run_ids: [
+					"11111111-1111-4111-8111-111111111111",
+					"33333333-3333-4333-8333-333333333333",
+				],
+				comparable: false,
+				differences: [],
+				refusal: { code: "non_success_terminal", message: "not complete" },
+				metrics: { left: metrics, right: metrics, delta: null },
+			}).success,
+		).toBe(true);
+	});
+
 	it("requires a project-scoped lifecycle status without exposing input content", () => {
 		expect(
 			EvaluationRunStatus.safeParse({
@@ -55,6 +170,9 @@ describe("Evaluation Run lifecycle API", () => {
 				},
 				created_at: "2026-09-10T00:00:00.000Z",
 				updated_at: "2026-09-10T00:00:00.000Z",
+				pinned_inputs,
+				metrics,
+				evidence_policy,
 			}).success,
 		).toBe(true);
 	});
@@ -76,6 +194,9 @@ describe("Evaluation Run lifecycle API", () => {
 			created_at: "2026-09-10T00:00:00.000Z",
 			updated_at: "2026-09-10T00:00:00.000Z",
 			terminal_reason: "task_failed",
+			pinned_inputs,
+			metrics,
+			evidence_policy,
 			items: [
 				{
 					task_id: "33333333-3333-4333-8333-333333333333",
@@ -88,6 +209,7 @@ describe("Evaluation Run lifecycle API", () => {
 					cost_usd: 1.25,
 					evaluator_rationale: { kind: "exact_match", score: 0 },
 					trace_id: "trace-1",
+					...itemEvidence,
 				},
 				{
 					task_id: "44444444-4444-4444-8444-444444444444",
@@ -100,6 +222,7 @@ describe("Evaluation Run lifecycle API", () => {
 					cost_usd: null,
 					evaluator_rationale: null,
 					trace_id: null,
+					...itemEvidence,
 				},
 			],
 			items_truncated: false,
@@ -158,6 +281,30 @@ describe("Evaluation Run lifecycle API", () => {
 					return {
 						rows: [{ id: "run", project_id: "project", status: "running" }],
 					};
+				if (text.startsWith("SELECT inputs.*, count(item.id)"))
+					return {
+						rows: [
+							{
+								target: { kind: "fixture" },
+								target_version: "1",
+								target_fingerprint: "a".repeat(64),
+								evaluator: { kind: "exact_match" },
+								evaluator_version: "1",
+								evaluator_fingerprint: "a".repeat(64),
+								execution_defaults: {},
+								sampling: { strategy: "all", sample_size: 1, seed: 0 },
+								thresholds: {},
+								limits: {},
+								sample_identity: "a".repeat(64),
+								resolved_inputs_hash: "a".repeat(64),
+								definition_version_id: "55555555-5555-4555-8555-555555555555",
+								dataset_version_id: "66666666-6666-4666-8666-666666666666",
+								selected_count: 1,
+								with_source_trace: 0,
+								with_source_observation: 0,
+							},
+						],
+					};
 				if (text.startsWith("SELECT run.id, run.project_id"))
 					return {
 						rows: [
@@ -165,6 +312,9 @@ describe("Evaluation Run lifecycle API", () => {
 								id: "run",
 								project_id: "project",
 								status: "cancelled",
+								definition_version_id: "55555555-5555-4555-8555-555555555555",
+								dataset_version_id: "66666666-6666-4666-8666-666666666666",
+								resolved_inputs_hash: "a".repeat(64),
 								created_at: "2026-09-10T00:00:00.000Z",
 								updated_at: "2026-09-10T00:00:00.000Z",
 								terminal_reason: "cancelled_by_request",
@@ -187,6 +337,7 @@ describe("Evaluation Run lifecycle API", () => {
 								cost_usd: null,
 								evaluator_rationale: null,
 								trace_id: null,
+								agent_version: null,
 							},
 						],
 					};

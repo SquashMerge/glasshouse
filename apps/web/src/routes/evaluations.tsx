@@ -13,6 +13,8 @@ import {
 	getExperiment,
 	getEvaluation,
 	getEvaluationRunStatus,
+	listEvaluationRuns,
+	compareEvaluationRuns,
 	getEvaluationDraft,
 	listDatasets,
 	listExperiments,
@@ -751,6 +753,12 @@ export function EvaluationsPage() {
 					runId={startedRunId}
 				/>
 			)}
+			{selectedProjectId && (
+				<EvaluationRunHistory
+					projectId={selectedProjectId}
+					onInspect={setStartedRunId}
+				/>
+			)}
 			{(datasets.isError ||
 				experiments.isError ||
 				evaluations.isError ||
@@ -796,6 +804,188 @@ export function EvaluationsPage() {
 		</div>
 	);
 }
+function EvaluationRunHistory({
+	projectId,
+	onInspect,
+}: {
+	projectId: string;
+	onInspect: (runId: string) => void;
+}) {
+	const [statusFilter, setStatusFilter] = React.useState("");
+	const [leftRunId, setLeftRunId] = React.useState("");
+	const [rightRunId, setRightRunId] = React.useState("");
+	const runs = useQuery({
+		queryKey: ["evaluation-run-history", projectId, statusFilter],
+		queryFn: () =>
+			listEvaluationRuns({
+				project_id: projectId,
+				status: statusFilter
+					? (statusFilter as
+							| "pending"
+							| "running"
+							| "completed"
+							| "failed"
+							| "cancelled")
+					: undefined,
+				limit: 50,
+			}),
+	});
+	const comparison = useQuery({
+		queryKey: ["evaluation-run-comparison", projectId, leftRunId, rightRunId],
+		queryFn: () =>
+			compareEvaluationRuns({
+				project_id: projectId,
+				run_ids: [leftRunId, rightRunId],
+			}),
+		enabled: Boolean(leftRunId && rightRunId && leftRunId !== rightRunId),
+	});
+	return (
+		<section
+			className="space-y-3 rounded border p-4"
+			aria-label="Evaluation Run history"
+		>
+			<div className="flex flex-wrap items-end justify-between gap-3">
+				<div>
+					<h2 className="text-lg font-medium">Run evidence history</h2>
+					<p className="text-sm text-muted-foreground">
+						Inspect pinned inputs and compare only runs with compatible
+						evidence.
+					</p>
+				</div>
+				<label className="space-y-1 text-sm" htmlFor="run-history-status">
+					<span className="block text-muted-foreground">Filter status</span>
+					<Select
+						id="run-history-status"
+						value={statusFilter}
+						onChange={(event) => setStatusFilter(event.target.value)}
+					>
+						<option value="">All runs</option>
+						<option value="completed">Completed</option>
+						<option value="failed">Failed</option>
+						<option value="cancelled">Cancelled</option>
+						<option value="running">Running</option>
+						<option value="pending">Pending</option>
+					</Select>
+				</label>
+			</div>
+			{runs.isLoading && <p role="status">Loading run history...</p>}
+			{runs.isError && (
+				<p className="text-sm text-destructive" role="status">
+					Unable to load run history.{" "}
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => void runs.refetch()}
+					>
+						Retry history
+					</Button>
+				</p>
+			)}
+			{runs.data && runs.data.items.length === 0 && (
+				<p className="text-sm text-muted-foreground">
+					No runs match this filter.
+				</p>
+			)}
+			{runs.data && runs.data.items.length > 0 && (
+				<>
+					<ul
+						className="divide-y rounded border"
+						aria-label="Evaluation Run summaries"
+					>
+						{runs.data.items.map((run) => (
+							<li
+								key={run.id}
+								className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm"
+							>
+								<div>
+									<strong>{run.status}</strong>{" "}
+									<span className="text-muted-foreground">{run.id}</span>
+									<div className="text-muted-foreground">
+										{run.metrics.pass_rate == null
+											? "No scores yet"
+											: `${Math.round(run.metrics.pass_rate * 100)}% pass`}{" "}
+										· {run.metrics.evaluated} evaluated
+									</div>
+								</div>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => onInspect(run.id)}
+								>
+									Inspect evidence
+								</Button>
+							</li>
+						))}
+					</ul>
+					<div className="grid gap-2 rounded border bg-muted/20 p-3 sm:grid-cols-2">
+						<label className="space-y-1 text-sm" htmlFor="compare-left-run">
+							<span className="block text-muted-foreground">Baseline run</span>
+							<Select
+								id="compare-left-run"
+								value={leftRunId}
+								onChange={(event) => setLeftRunId(event.target.value)}
+							>
+								<option value="">Choose baseline</option>
+								{runs.data.items.map((run) => (
+									<option key={run.id} value={run.id}>
+										{run.id} ({run.status})
+									</option>
+								))}
+							</Select>
+						</label>
+						<label className="space-y-1 text-sm" htmlFor="compare-right-run">
+							<span className="block text-muted-foreground">Candidate run</span>
+							<Select
+								id="compare-right-run"
+								value={rightRunId}
+								onChange={(event) => setRightRunId(event.target.value)}
+							>
+								<option value="">Choose candidate</option>
+								{runs.data.items.map((run) => (
+									<option key={run.id} value={run.id}>
+										{run.id} ({run.status})
+									</option>
+								))}
+							</Select>
+						</label>
+					</div>
+					{comparison.isError && (
+						<p className="text-sm text-destructive" role="alert">
+							Unable to compare these runs.
+						</p>
+					)}
+					{comparison.data?.refusal && (
+						<p className="text-sm text-amber-700" role="alert">
+							{comparison.data.refusal.message}
+						</p>
+					)}
+					{comparison.data && comparison.data.differences.length > 0 && (
+						<div className="rounded border p-3 text-sm" role="status">
+							<strong>Pinned differences</strong>
+							<ul className="mt-2 list-disc space-y-1 pl-5">
+								{comparison.data.differences.map((difference) => (
+									<li key={difference.field}>
+										<code>{difference.field}</code>:{" "}
+										{JSON.stringify(difference.left)} →{" "}
+										{JSON.stringify(difference.right)}
+									</li>
+								))}
+							</ul>
+						</div>
+					)}
+					{comparison.data?.metrics?.delta && (
+						<p className="text-sm" role="status">
+							Comparable pass-rate delta:{" "}
+							{comparison.data.metrics.delta.pass_rate == null
+								? "n/a"
+								: `${(comparison.data.metrics.delta.pass_rate * 100).toFixed(1)} percentage points`}
+						</p>
+					)}
+				</>
+			)}
+		</section>
+	);
+}
 export function EvaluationRunLifecycle({
 	projectId,
 	runId,
@@ -812,18 +1002,21 @@ export function EvaluationRunLifecycle({
 		queryKey: ["evaluation-run-status", projectId, runId],
 		queryFn: () => getEvaluationRunStatus({ project_id: projectId, id: runId }),
 	});
-	useEventSource(evaluationRunEventsUrl({ project_id: projectId, id: runId }), {
-		enabled: Boolean(
-			status.data &&
-				!["completed", "failed", "cancelled"].includes(status.data.status),
-		),
-		coalesce: false,
-		onMessage: () => {
-			void client.invalidateQueries({
-				queryKey: ["evaluation-run-status", projectId, runId],
-			});
+	const eventSource = useEventSource(
+		evaluationRunEventsUrl({ project_id: projectId, id: runId }),
+		{
+			enabled: Boolean(
+				status.data &&
+					!["completed", "failed", "cancelled"].includes(status.data.status),
+			),
+			coalesce: false,
+			onMessage: () => {
+				void client.invalidateQueries({
+					queryKey: ["evaluation-run-status", projectId, runId],
+				});
+			},
 		},
-	});
+	);
 	async function action(kind: "cancel" | "retry") {
 		if (!canExecute || acting) return;
 		setActing(true);
@@ -889,37 +1082,156 @@ export function EvaluationRunLifecycle({
 					Reason: {status.data.terminal_reason}
 				</p>
 			)}
+			{active && (
+				<div
+					className="flex flex-wrap items-center gap-2 text-sm"
+					role="status"
+					aria-live="polite"
+				>
+					<span>
+						{eventSource.status === "open"
+							? "Live updates connected"
+							: eventSource.status === "connecting"
+								? "Connecting to live updates..."
+								: "Live updates disconnected; retrying"}
+					</span>
+					{eventSource.status === "closed" && (
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => eventSource.reconnect()}
+						>
+							Reconnect
+						</Button>
+					)}
+				</div>
+			)}
+			<div
+				className="grid gap-2 text-sm sm:grid-cols-2"
+				aria-label="Pinned Evaluation Run inputs"
+			>
+				<div className="rounded bg-background p-2">
+					<div className="text-muted-foreground">
+						Pinned definition / dataset
+					</div>
+					<div className="break-all font-mono text-xs">
+						{status.data.pinned_inputs.definition_version_id}
+					</div>
+					<div className="break-all font-mono text-xs">
+						{status.data.pinned_inputs.dataset_version_id}
+					</div>
+				</div>
+				<div className="rounded bg-background p-2">
+					<div className="text-muted-foreground">Fingerprints</div>
+					<div className="break-all font-mono text-xs">
+						target {status.data.pinned_inputs.target_fingerprint}
+					</div>
+					<div className="break-all font-mono text-xs">
+						evaluator {status.data.pinned_inputs.evaluator_fingerprint}
+					</div>
+				</div>
+				<div className="rounded bg-background p-2">
+					<div className="text-muted-foreground">Sample / provenance</div>
+					<div>
+						{status.data.pinned_inputs.sample.selected_count} of{" "}
+						{status.data.pinned_inputs.sample.sample_size} selected · seed{" "}
+						{status.data.pinned_inputs.sample.seed}
+					</div>
+					<div>
+						{status.data.pinned_inputs.provenance.with_source_trace} source
+						traces ·{" "}
+						{status.data.pinned_inputs.provenance.with_source_observation}{" "}
+						observations
+					</div>
+				</div>
+				<div className="rounded bg-background p-2">
+					<div className="text-muted-foreground">Metrics and bounds</div>
+					<div>
+						{status.data.metrics.pass_rate == null
+							? "No scores"
+							: `${(status.data.metrics.pass_rate * 100).toFixed(1)}% pass`}{" "}
+						· {status.data.metrics.evaluated} evaluated
+					</div>
+					<div>
+						{status.data.metrics.cost_usd == null
+							? "Cost unavailable"
+							: `$${status.data.metrics.cost_usd.toFixed(4)}`}{" "}
+						/ max{" "}
+						{status.data.metrics.max_cost_usd == null
+							? "n/a"
+							: `$${status.data.metrics.max_cost_usd.toFixed(2)}`}
+					</div>
+				</div>
+			</div>
+			<p className="text-xs text-muted-foreground">
+				Evidence is retained under the project policy, bounded to{" "}
+				{status.data.evidence_policy.max_items} items and{" "}
+				{status.data.evidence_policy.max_field_bytes} bytes per field;{" "}
+				{status.data.evidence_policy.redaction}.
+			</p>
+			{status.data.items.length === 0 && (
+				<p className="text-sm text-muted-foreground">
+					No bounded item evidence is available yet.
+				</p>
+			)}
 			{status.data.items.length > 0 && (
 				<div className="space-y-2" aria-label="Evaluation Run item evidence">
 					<h3 className="text-sm font-medium">Item evidence</h3>
 					{status.data.items.map((item) => (
-						<div
+						<details
 							key={item.task_id}
 							className="rounded border bg-background p-3 text-sm"
 						>
-							<div className="flex flex-wrap items-center gap-2">
+							<summary className="flex cursor-pointer flex-wrap items-center gap-2">
 								<strong>{item.item_key}</strong>
 								<span>{item.status}</span>
 								<span className="text-muted-foreground">
 									Attempt {item.attempt_count}
 								</span>
+							</summary>
+							<div className="mt-3 space-y-2">
+								{item.error_classification && (
+									<p>Classification: {item.error_classification}</p>
+								)}
+								{item.error_message && <p>{item.error_message}</p>}
+								{item.cost_usd !== null && <p>${item.cost_usd.toFixed(2)}</p>}
+								{item.trace_id && <p>Trace: {item.trace_id}</p>}
+								{item.evaluator_rationale && (
+									<pre className="overflow-auto text-xs">
+										{JSON.stringify(item.evaluator_rationale, null, 2)}
+									</pre>
+								)}
+								<div className="grid gap-2 sm:grid-cols-3">
+									<pre className="overflow-auto rounded bg-muted/30 p-2 text-xs">
+										Input{"\n"}
+										{JSON.stringify(item.input, null, 2)}
+									</pre>
+									<pre className="overflow-auto rounded bg-muted/30 p-2 text-xs">
+										Expected{"\n"}
+										{JSON.stringify(item.expected_output, null, 2)}
+									</pre>
+									<pre className="overflow-auto rounded bg-muted/30 p-2 text-xs">
+										Output{"\n"}
+										{JSON.stringify(item.output, null, 2)}
+									</pre>
+								</div>
+								<p className="text-xs text-muted-foreground">
+									{item.timing.duration_ms == null
+										? "Duration unavailable"
+										: `${item.timing.duration_ms} ms`}{" "}
+									· {item.agent_version ?? "provider version unavailable"} ·{" "}
+									{item.redaction.applied
+										? `Redacted: ${item.redaction.fields.join(", ")}`
+										: "No sensitive fields redacted"}
+								</p>
 							</div>
-							{item.error_classification && (
-								<p>Classification: {item.error_classification}</p>
-							)}
-							{item.error_message && <p>{item.error_message}</p>}
-							{item.cost_usd !== null && <p>${item.cost_usd.toFixed(2)}</p>}
-							{item.trace_id && <p>Trace: {item.trace_id}</p>}
-							{item.evaluator_rationale && (
-								<pre className="overflow-auto text-xs">
-									{JSON.stringify(item.evaluator_rationale, null, 2)}
-								</pre>
-							)}
-						</div>
+						</details>
 					))}
 					{status.data.items_truncated && (
 						<p className="text-xs text-muted-foreground">
-							Additional item evidence is available in the run event stream.
+							Showing the bounded first evidence page. Fetch the evidence
+							endpoint for the next page; live events are not a complete
+							evidence history.
 						</p>
 					)}
 				</div>

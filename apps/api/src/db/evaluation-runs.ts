@@ -5,6 +5,8 @@ import {
 	lockActiveAuthorizedProject,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
+import { approvedRedaction } from "./governance.js";
+import { policyRedactionOptions, type RedactionOptions } from "./redact.js";
 
 export type EvaluationRunAdmissionInput = {
 	project_id: string;
@@ -31,6 +33,7 @@ type ResolvedSnapshot = {
 	target_fingerprint: string;
 	evaluator: Record<string, unknown>;
 	evaluator_version: string;
+	evaluator_fingerprint: string;
 	execution_defaults: Record<string, unknown>;
 	limits: Record<string, unknown>;
 	thresholds: Record<string, unknown>;
@@ -78,6 +81,49 @@ export type EvaluationRunLifecycleStatus = {
 	created_at: string;
 	updated_at: string;
 	terminal_reason: string | null;
+	pinned_inputs: {
+		definition_version_id: string;
+		dataset_version_id: string;
+		resolved_inputs_hash: string;
+		target: Record<string, unknown>;
+		target_version: string;
+		target_fingerprint: string;
+		evaluator: Record<string, unknown>;
+		evaluator_version: string;
+		evaluator_fingerprint: string;
+		execution_defaults: Record<string, unknown>;
+		thresholds: Record<string, unknown>;
+		limits: Record<string, unknown>;
+		sample: {
+			strategy: string;
+			sample_size: number;
+			seed: number;
+			selected_count: number;
+			sample_identity: string;
+		};
+		provenance: {
+			items: number;
+			with_source_trace: number;
+			with_source_observation: number;
+		};
+	};
+	metrics: {
+		evaluated: number;
+		passed: number;
+		failed: number;
+		pass_rate: number | null;
+		cost_usd: number | null;
+		max_cost_usd: number | null;
+		duration_ms: number | null;
+		max_duration_seconds: number | null;
+		score_counts: Record<string, number>;
+	};
+	evidence_policy: {
+		retention: "project_policy";
+		max_items: number;
+		max_field_bytes: number;
+		redaction: string;
+	};
 	items: EvaluationRunItemEvidence[];
 	items_truncated: boolean;
 };
@@ -88,11 +134,32 @@ export type EvaluationRunItemEvidence = {
 	position: number;
 	status: EvaluationRun["status"];
 	attempt_count: number;
+	input: Record<string, unknown>;
+	expected_output: Record<string, unknown> | null;
+	output: Record<string, unknown> | null;
+	scores: Record<string, number>;
 	error_classification: string | null;
 	error_message: string | null;
 	cost_usd: number | null;
 	evaluator_rationale: Record<string, unknown> | null;
 	trace_id: string | null;
+	agent_version: string | null;
+	provenance: {
+		source_trace_id: string | null;
+		source_observation_id: string | null;
+		evaluation_trace_id: string | null;
+	};
+	timing: {
+		started_at: string | null;
+		completed_at: string | null;
+		duration_ms: number | null;
+	};
+	redaction: {
+		applied: boolean;
+		bounded: boolean;
+		fields: string[];
+		max_bytes: number;
+	};
 };
 
 export type EvaluationRunLifecycleEvent = {
@@ -232,6 +299,107 @@ function timestamp(row: Row, field: string): string {
 	return text(row, field);
 }
 
+function nullableTimestamp(row: Row, field: string): string | null {
+	return row[field] == null ? null : timestamp(row, field);
+}
+
+const EVIDENCE_MAX_ITEMS = 100;
+const EVIDENCE_MAX_FIELD_BYTES = 32 * 1024;
+const SENSITIVE_KEY =
+	/(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|credential|private[_-]?key)/i;
+
+type EvidenceRedactionState = {
+	applied: boolean;
+	bounded: boolean;
+	fields: string[];
+	options: RedactionOptions;
+};
+
+function evidenceValue(
+	value: unknown,
+	state: EvidenceRedactionState,
+	path: string,
+	depth = 0,
+): unknown {
+	if (depth > 8) {
+		state.bounded = true;
+		return { redacted: true, reason: "depth_limit" };
+	}
+	if (typeof value === "string") {
+		if (state.options.redactInput && value) {
+			state.applied = true;
+			if (state.fields.length < 32) state.fields.push(path);
+			return "[REDACTED]";
+		}
+		if (new TextEncoder().encode(value).byteLength <= EVIDENCE_MAX_FIELD_BYTES)
+			return value;
+		state.bounded = true;
+		return {
+			redacted: true,
+			reason: "field_size_limit",
+			bytes: EVIDENCE_MAX_FIELD_BYTES,
+		};
+	}
+	if (Array.isArray(value))
+		return value
+			.slice(0, 128)
+			.map((item, index) =>
+				evidenceValue(item, state, `${path}[${index}]`, depth + 1),
+			);
+	if (!value || typeof value !== "object") return value;
+	const output: Record<string, unknown> = {};
+	for (const [key, item] of Object.entries(
+		value as Record<string, unknown>,
+	).slice(0, 128)) {
+		const childPath = path ? `${path}.${key}` : key;
+		if (
+			SENSITIVE_KEY.test(key) ||
+			state.options.redactKeys.includes(key) ||
+			state.options.redactInput
+		) {
+			state.applied = true;
+			if (state.fields.length < 32) state.fields.push(childPath);
+			output[key] = "[REDACTED]";
+			continue;
+		}
+		output[key] = evidenceValue(item, state, childPath, depth + 1);
+	}
+	return output;
+}
+
+function safeEvidenceObject(
+	value: unknown,
+	state: EvidenceRedactionState,
+	path: string,
+): Record<string, unknown> | null {
+	if (value == null) return null;
+	const parsed =
+		typeof value === "string"
+			? (() => {
+					try {
+						return JSON.parse(value);
+					} catch {
+						return {};
+					}
+				})()
+			: value;
+	const safe = evidenceValue(parsed, state, path);
+	return safe && typeof safe === "object" && !Array.isArray(safe)
+		? (safe as Record<string, unknown>)
+		: {};
+}
+
+function emptyEvidenceState(
+	options: RedactionOptions = { redactInput: false, redactKeys: [] },
+): EvidenceRedactionState {
+	return {
+		applied: false,
+		bounded: false,
+		fields: [],
+		options,
+	};
+}
+
 async function withTransaction<T>(
 	db: Transactional,
 	callback: (client: PoolClient) => Promise<T>,
@@ -252,8 +420,38 @@ async function withTransaction<T>(
 
 function lifecycleStatus(
 	row: Row,
+	snapshotRow: Row,
 	evidenceRows: Row[] = [],
+	redactionOptions: RedactionOptions = { redactInput: false, redactKeys: [] },
 ): EvaluationRunLifecycleStatus {
+	const provenance = {
+		items: Number(snapshotRow.selected_count ?? row.total ?? 0),
+		with_source_trace: Number(snapshotRow.with_source_trace ?? 0),
+		with_source_observation: Number(snapshotRow.with_source_observation ?? 0),
+	};
+	const sampling = object(snapshotRow.sampling, "sampling");
+	const limits = object(snapshotRow.limits, "limits");
+	const metrics = {
+		evaluated: Number(row.evaluated ?? 0),
+		passed: Number(row.passed ?? 0),
+		failed: Number(row.evaluated_failed ?? 0),
+		pass_rate:
+			Number(row.evaluated ?? 0) > 0
+				? Number(row.passed ?? 0) / Number(row.evaluated)
+				: null,
+		cost_usd: row.cost_usd == null ? null : Number(row.cost_usd),
+		max_cost_usd:
+			limits.max_cost_usd == null ? null : Number(limits.max_cost_usd),
+		duration_ms: row.duration_ms == null ? null : Number(row.duration_ms),
+		max_duration_seconds:
+			limits.max_duration_seconds == null
+				? null
+				: Number(limits.max_duration_seconds),
+		score_counts: {
+			passed: Number(row.passed ?? 0),
+			failed: Number(row.evaluated_failed ?? 0),
+		},
+	};
 	return {
 		id: text(row, "id"),
 		project_id: text(row, "project_id"),
@@ -270,44 +468,133 @@ function lifecycleStatus(
 		created_at: timestamp(row, "created_at"),
 		updated_at: timestamp(row, "updated_at"),
 		terminal_reason: nullableText(row, "terminal_reason"),
-		items: evidenceRows.slice(0, 100).map((item) => ({
-			task_id: text(item, "task_id"),
-			item_key: text(item, "item_key"),
-			position: Number(item.position),
-			status: text(item, "status") as EvaluationRun["status"],
-			attempt_count: Number(item.attempt_count ?? 0),
-			error_classification: nullableText(item, "error_classification"),
-			error_message: nullableText(item, "error_message"),
-			cost_usd: item.cost_usd == null ? null : Number(item.cost_usd),
-			evaluator_rationale:
-				item.evaluator_rationale == null
-					? null
-					: object(item, "evaluator_rationale"),
-			trace_id: nullableText(item, "trace_id"),
-		})),
-		items_truncated: evidenceRows.length > 100,
+		pinned_inputs: {
+			definition_version_id: text(row, "definition_version_id"),
+			dataset_version_id: text(row, "dataset_version_id"),
+			resolved_inputs_hash: text(row, "resolved_inputs_hash"),
+			target: object(snapshotRow.target, "target"),
+			target_version: text(snapshotRow, "target_version"),
+			target_fingerprint: text(snapshotRow, "target_fingerprint"),
+			evaluator: object(snapshotRow.evaluator, "evaluator"),
+			evaluator_version: text(snapshotRow, "evaluator_version"),
+			evaluator_fingerprint:
+				snapshotRow.evaluator_fingerprint == null
+					? hash(snapshotRow.evaluator)
+					: text(snapshotRow, "evaluator_fingerprint"),
+			execution_defaults: object(
+				snapshotRow.execution_defaults,
+				"execution_defaults",
+			),
+			thresholds: object(snapshotRow.thresholds, "thresholds"),
+			limits,
+			sample: {
+				strategy: text(sampling, "strategy"),
+				sample_size: Number(sampling.sample_size),
+				seed: Number(sampling.seed),
+				selected_count: provenance.items,
+				sample_identity: text(snapshotRow, "sample_identity"),
+			},
+			provenance,
+		},
+		metrics,
+		evidence_policy: {
+			retention: "project_policy",
+			max_items: EVIDENCE_MAX_ITEMS,
+			max_field_bytes: EVIDENCE_MAX_FIELD_BYTES,
+			redaction: "sensitive-key redaction and bounded JSON evidence",
+		},
+		items: evidenceRows.slice(0, EVIDENCE_MAX_ITEMS).map((item) => {
+			const redaction = emptyEvidenceState(redactionOptions);
+			return {
+				task_id: text(item, "task_id"),
+				item_key: text(item, "item_key"),
+				position: Number(item.position),
+				status: text(item, "status") as EvaluationRun["status"],
+				attempt_count: Number(item.attempt_count ?? 0),
+				input: safeEvidenceObject(item.input, redaction, "input") ?? {},
+				expected_output: safeEvidenceObject(
+					item.expected_output,
+					redaction,
+					"expected_output",
+				),
+				output: safeEvidenceObject(item.output, redaction, "output"),
+				scores: safeEvidenceObject(item.scores, redaction, "scores") as Record<
+					string,
+					number
+				>,
+				error_classification: nullableText(item, "error_classification"),
+				error_message: nullableText(item, "error_message"),
+				cost_usd: item.cost_usd == null ? null : Number(item.cost_usd),
+				evaluator_rationale: safeEvidenceObject(
+					item.evaluator_rationale,
+					redaction,
+					"evaluator_rationale",
+				),
+				agent_version: nullableText(item, "agent_version"),
+				trace_id: nullableText(item, "trace_id"),
+				provenance: {
+					source_trace_id: nullableText(item, "source_trace_id"),
+					source_observation_id: nullableText(item, "source_observation_id"),
+					evaluation_trace_id: nullableText(item, "trace_id"),
+				},
+				timing: {
+					started_at: nullableTimestamp(item, "started_at"),
+					completed_at: nullableTimestamp(item, "completed_at"),
+					duration_ms:
+						item.duration_ms == null ? null : Number(item.duration_ms),
+				},
+				redaction: {
+					applied: redaction.applied,
+					bounded: redaction.bounded,
+					fields: redaction.fields,
+					max_bytes: EVIDENCE_MAX_FIELD_BYTES,
+				},
+			};
+		}),
+		items_truncated: evidenceRows.length > EVIDENCE_MAX_ITEMS,
 	};
 }
 
 const lifecycleStatusQuery = `SELECT run.id, run.project_id, run.status,
     run.created_at, run.updated_at, run.terminal_reason,
+    run.definition_version_id, run.dataset_version_id, run.resolved_inputs_hash,
     count(task.id)::int AS total,
     count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,
     count(task.id) FILTER (WHERE task.status = 'running')::int AS running,
     count(task.id) FILTER (WHERE task.status = 'completed')::int AS completed,
     count(task.id) FILTER (WHERE task.status = 'failed')::int AS failed,
     count(task.id) FILTER (WHERE task.status = 'cancelled')::int AS cancelled,
-    coalesce(sum(task.attempt_count), 0)::int AS attempts
+    coalesce(sum(task.attempt_count), 0)::int AS attempts,
+    count(result.id)::int AS evaluated,
+    count(result.id) FILTER (WHERE result.status = 'completed'
+      AND EXISTS (SELECT 1 FROM jsonb_each_text(result.scores) score
+                  WHERE score.value ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                    AND score.value::numeric >= 1))::int AS passed,
+    count(result.id) FILTER (WHERE result.status IS NULL OR result.status <> 'completed'
+      OR NOT EXISTS (SELECT 1 FROM jsonb_each_text(result.scores) score
+                    WHERE score.value ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                      AND score.value::numeric >= 1))::int AS evaluated_failed,
+    sum(result.cost_usd) AS cost_usd,
+    sum(result.duration_ms)::int AS duration_ms
  FROM evaluation_runs run
  LEFT JOIN experiment_tasks task
    ON task.evaluation_run_id = run.id AND task.project_id = run.project_id
+ LEFT JOIN experiment_results result
+   ON result.experiment_id = task.experiment_id
+  AND result.evaluation_run_id = run.id
+  AND result.evaluation_run_item_id = task.evaluation_run_item_id
+  AND result.project_id = run.project_id
  WHERE run.id = $1 AND run.project_id = $2
  GROUP BY run.id`;
 
 const lifecycleEvidenceQuery = `SELECT task.id AS task_id, item.item_key, item.position, task.status, task.attempt_count,
+    item.input, item.expected_output, item.source_trace_id, item.source_observation_id,
     COALESCE(result.error_classification, task.last_error_classification) AS error_classification,
     COALESCE(result.error_message, task.last_error_message) AS error_message,
-    result.cost_usd, result.evaluator_rationale, result.trace_id
+    result.output, result.scores, result.cost_usd, result.evaluator_rationale,
+    result.agent_version, result.duration_ms, result.trace_id,
+    task.started_at, task.completed_at,
+    count(*) OVER ()::int AS total_count
  FROM experiment_tasks task
  JOIN evaluation_run_items item ON item.id=task.evaluation_run_item_id AND item.project_id=task.project_id
  LEFT JOIN experiment_results result
@@ -315,12 +602,15 @@ const lifecycleEvidenceQuery = `SELECT task.id AS task_id, item.item_key, item.p
   AND result.project_id=task.project_id
   AND result.evaluation_run_item_id=task.evaluation_run_item_id
  WHERE task.evaluation_run_id=$1 AND task.project_id=$2
- ORDER BY item.position ASC, task.id ASC LIMIT 101`;
+ ORDER BY item.position ASC, task.id ASC LIMIT $3 OFFSET $4`;
 
 async function lifecycleStatusWithEvidence(
 	client: PoolClient,
 	id: string,
 	projectId: string,
+	limit = EVIDENCE_MAX_ITEMS + 1,
+	offset = 0,
+	redactionOptions: RedactionOptions = { redactInput: false, redactKeys: [] },
 ) {
 	const status = await client.query(lifecycleStatusQuery, [id, projectId]);
 	if (!status.rows[0])
@@ -328,8 +618,34 @@ async function lifecycleStatusWithEvidence(
 			"NOT_FOUND",
 			"Evaluation Run is not available",
 		);
-	const evidence = await client.query(lifecycleEvidenceQuery, [id, projectId]);
-	return lifecycleStatus(status.rows[0] as Row, evidence.rows as Row[]);
+	const snapshot = await client.query(
+		`SELECT inputs.*, count(item.id)::int AS selected_count,
+        count(item.id) FILTER (WHERE item.source_trace_id IS NOT NULL)::int AS with_source_trace,
+        count(item.id) FILTER (WHERE item.source_observation_id IS NOT NULL)::int AS with_source_observation
+     FROM evaluation_run_inputs inputs
+     JOIN evaluation_runs run ON run.id=inputs.run_id AND run.project_id=inputs.project_id
+     LEFT JOIN evaluation_run_items item ON item.run_id=run.id AND item.project_id=run.project_id
+     WHERE inputs.run_id=$1 AND inputs.project_id=$2
+     GROUP BY inputs.run_id`,
+		[id, projectId],
+	);
+	if (!snapshot.rows[0])
+		throw new EvaluationRunRepositoryError(
+			"INTERNAL",
+			"Evaluation Run input snapshot is unavailable",
+		);
+	const evidence = await client.query(lifecycleEvidenceQuery, [
+		id,
+		projectId,
+		limit,
+		offset,
+	]);
+	return lifecycleStatus(
+		status.rows[0] as Row,
+		snapshot.rows[0] as Row,
+		evidence.rows as Row[],
+		redactionOptions,
+	);
 }
 
 function safeMetadata(value: Record<string, unknown> | undefined) {
@@ -403,7 +719,16 @@ function snapshotFor(
 		typeof definition.target.model === "string" && definition.target.model
 			? definition.target.model
 			: (process.env.OPENAI_MODEL ?? "gpt-4o-mini");
-	const target = { ...definition.target, model };
+	const configuredProvider =
+		typeof definition.target.provider === "string"
+			? definition.target.provider
+			: (process.env.ASTRAEA_EVAL_LLM_PROVIDER ?? "openai");
+	if (configuredProvider !== "openai" && configuredProvider !== "codex_cli")
+		throw new EvaluationRunRepositoryError(
+			"BAD_REQUEST",
+			"Unsupported configured LLM provider",
+		);
+	const target = { ...definition.target, model, provider: configuredProvider };
 	const evaluator = { ...definition.evaluator };
 	const executionDefaults = { ...definition.execution_defaults };
 	const limits = { ...definition.limits };
@@ -423,6 +748,7 @@ function snapshotFor(
 		target_fingerprint: hash(target),
 		evaluator,
 		evaluator_version: text(evaluator, "version"),
+		evaluator_fingerprint: hash(evaluator),
 		execution_defaults: executionDefaults,
 		limits,
 		thresholds,
@@ -468,8 +794,11 @@ function runFromRow(
 function experimentConfig(snapshot: ResolvedSnapshot) {
 	return {
 		model: snapshot.target.model,
+		provider: snapshot.target.provider,
 		system_prompt: snapshot.target.system_prompt,
 		evaluator: snapshot.evaluator.kind,
+		expected_output_path: snapshot.evaluator.expected_output_path,
+		output_path: snapshot.evaluator.output_path,
 		temperature: snapshot.execution_defaults.temperature,
 		max_tokens: snapshot.execution_defaults.max_tokens,
 		limits: snapshot.limits,
@@ -545,6 +874,10 @@ export async function admitEvaluationRun(
 					target_fingerprint: text(snapshotRow, "target_fingerprint"),
 					evaluator: object(snapshotRow.evaluator, "evaluator"),
 					evaluator_version: text(snapshotRow, "evaluator_version"),
+					evaluator_fingerprint:
+						snapshotRow.evaluator_fingerprint == null
+							? hash(snapshotRow.evaluator)
+							: text(snapshotRow, "evaluator_fingerprint"),
 					execution_defaults: object(
 						snapshotRow.execution_defaults,
 						"execution_defaults",
@@ -657,7 +990,7 @@ export async function admitEvaluationRun(
 				[runId],
 			);
 			await client.query(
-				"INSERT INTO evaluation_run_inputs (run_id, organization_id, project_id, target, target_version, target_fingerprint, evaluator, evaluator_version, execution_defaults, thresholds, sampling, sample_identity, ordered_item_snapshot, resolved_inputs_hash, limits) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14,$15::jsonb)",
+				"INSERT INTO evaluation_run_inputs (run_id, organization_id, project_id, target, target_version, target_fingerprint, evaluator, evaluator_version, evaluator_fingerprint, execution_defaults, thresholds, sampling, sample_identity, ordered_item_snapshot, resolved_inputs_hash, limits) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14::jsonb,$15,$16::jsonb)",
 				[
 					runId,
 					input.authorization.organization_id,
@@ -667,6 +1000,7 @@ export async function admitEvaluationRun(
 					snapshot.target_fingerprint,
 					JSON.stringify(snapshot.evaluator),
 					snapshot.evaluator_version,
+					snapshot.evaluator_fingerprint,
 					JSON.stringify(snapshot.execution_defaults),
 					JSON.stringify(snapshot.thresholds),
 					JSON.stringify(snapshot.sampling),
@@ -762,7 +1096,451 @@ export async function getEvaluationRunStatus(
 					"NOT_FOUND",
 					"Evaluation Run is not available",
 				);
-			return lifecycleStatusWithEvidence(client, input.id, input.project_id);
+			const policy = await approvedRedaction(
+				client,
+				input.authorization.organization_id,
+				input.project_id,
+			);
+			return lifecycleStatusWithEvidence(
+				client,
+				input.id,
+				input.project_id,
+				EVIDENCE_MAX_ITEMS + 1,
+				0,
+				policyRedactionOptions(policy ?? { mode: "none", keys: [] }),
+			);
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function getEvaluationRunEvidence(
+	db: Transactional,
+	input: {
+		id: string;
+		project_id: string;
+		limit?: number;
+		offset?: number;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Evaluation Run is not available",
+				);
+			const offset = Math.max(0, input.offset ?? 0);
+			const limit = Math.min(100, Math.max(1, input.limit ?? 100));
+			const policy = await approvedRedaction(
+				client,
+				input.authorization.organization_id,
+				input.project_id,
+			);
+			const status = await lifecycleStatusWithEvidence(
+				client,
+				input.id,
+				input.project_id,
+				limit,
+				offset,
+				policyRedactionOptions(policy ?? { mode: "none", keys: [] }),
+			);
+			const total = status.counts.total;
+			return {
+				run_id: status.id,
+				project_id: status.project_id,
+				items: status.items,
+				total,
+				next_offset:
+					offset + status.items.length < total
+						? offset + status.items.length
+						: null,
+			};
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+const runSummaryQuery = `SELECT run.id, run.project_id, run.evaluation_id,
+    run.definition_version_id, run.dataset_version_id, run.status,
+    run.created_at, run.updated_at, run.terminal_reason,
+    max(definition_version.content_hash) AS definition_content_hash,
+    max(dataset_version.content_hash) AS dataset_content_hash,
+    inputs.target_fingerprint, inputs.evaluator_fingerprint, inputs.sample_identity,
+    inputs.evaluator_version, inputs.evaluator, inputs.execution_defaults,
+    inputs.limits,
+    count(task.id)::int AS total,
+    count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,
+    count(task.id) FILTER (WHERE task.status = 'running')::int AS running,
+    count(task.id) FILTER (WHERE task.status = 'completed')::int AS completed,
+    count(task.id) FILTER (WHERE task.status = 'failed')::int AS failed,
+    count(task.id) FILTER (WHERE task.status = 'cancelled')::int AS cancelled,
+    count(result.id)::int AS evaluated,
+    count(result.id) FILTER (WHERE result.status = 'completed'
+      AND EXISTS (SELECT 1 FROM jsonb_each_text(result.scores) score
+                  WHERE score.value ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                    AND score.value::numeric >= 1))::int AS passed,
+    count(result.id) FILTER (WHERE result.status IS NULL OR result.status <> 'completed'
+      OR NOT EXISTS (SELECT 1 FROM jsonb_each_text(result.scores) score
+                    WHERE score.value ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                      AND score.value::numeric >= 1))::int AS evaluated_failed,
+    sum(result.cost_usd) AS cost_usd,
+    sum(result.duration_ms)::int AS duration_ms,
+    count(*) OVER ()::int AS total_count
+ FROM evaluation_runs run
+ JOIN evaluation_run_inputs inputs
+   ON inputs.run_id=run.id AND inputs.project_id=run.project_id
+ JOIN evaluation_definition_versions definition_version
+   ON definition_version.id=run.definition_version_id
+  AND definition_version.project_id=run.project_id
+ JOIN dataset_versions dataset_version
+   ON dataset_version.id=run.dataset_version_id
+  AND dataset_version.project_id=run.project_id
+ LEFT JOIN experiment_tasks task
+   ON task.evaluation_run_id=run.id AND task.project_id=run.project_id
+ LEFT JOIN experiment_results result
+   ON result.experiment_id=task.experiment_id
+  AND result.evaluation_run_id=run.id
+  AND result.evaluation_run_item_id=task.evaluation_run_item_id
+  AND result.project_id=run.project_id
+ WHERE run.project_id=$1
+   AND ($2::text IS NULL OR run.status=$2)
+   AND ($3::uuid IS NULL OR run.evaluation_id=$3)
+ GROUP BY run.id, inputs.target_fingerprint, inputs.evaluator_fingerprint,
+    inputs.sample_identity, inputs.evaluator_version, inputs.evaluator,
+    inputs.execution_defaults, inputs.limits
+ORDER BY run.created_at DESC, run.id DESC
+LIMIT $4 OFFSET $5`;
+
+const runComparisonQuery = `SELECT run.id, run.project_id, run.evaluation_id,
+    run.definition_version_id, run.dataset_version_id, run.status,
+    run.created_at, run.updated_at, run.terminal_reason,
+    max(definition_version.content_hash) AS definition_content_hash,
+    max(dataset_version.content_hash) AS dataset_content_hash,
+    inputs.target_fingerprint, inputs.evaluator_fingerprint, inputs.sample_identity,
+    inputs.evaluator_version, inputs.evaluator, inputs.execution_defaults,
+    inputs.limits,
+    count(task.id)::int AS total,
+    count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,
+    count(task.id) FILTER (WHERE task.status = 'running')::int AS running,
+    count(task.id) FILTER (WHERE task.status = 'completed')::int AS completed,
+    count(task.id) FILTER (WHERE task.status = 'failed')::int AS failed,
+    count(task.id) FILTER (WHERE task.status = 'cancelled')::int AS cancelled,
+    count(result.id)::int AS evaluated,
+    count(result.id) FILTER (WHERE result.status = 'completed'
+      AND EXISTS (SELECT 1 FROM jsonb_each_text(result.scores) score
+                  WHERE score.value ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                    AND score.value::numeric >= 1))::int AS passed,
+    count(result.id) FILTER (WHERE result.status IS NULL OR result.status <> 'completed'
+      OR NOT EXISTS (SELECT 1 FROM jsonb_each_text(result.scores) score
+                    WHERE score.value ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                      AND score.value::numeric >= 1))::int AS evaluated_failed,
+    sum(result.cost_usd) AS cost_usd,
+    sum(result.duration_ms)::int AS duration_ms,
+    count(*) OVER ()::int AS total_count
+ FROM evaluation_runs run
+ JOIN evaluation_run_inputs inputs
+   ON inputs.run_id=run.id AND inputs.project_id=run.project_id
+ JOIN evaluation_definition_versions definition_version
+   ON definition_version.id=run.definition_version_id
+  AND definition_version.project_id=run.project_id
+ JOIN dataset_versions dataset_version
+   ON dataset_version.id=run.dataset_version_id
+  AND dataset_version.project_id=run.project_id
+ LEFT JOIN experiment_tasks task
+   ON task.evaluation_run_id=run.id AND task.project_id=run.project_id
+ LEFT JOIN experiment_results result
+   ON result.experiment_id=task.experiment_id
+  AND result.evaluation_run_id=run.id
+  AND result.evaluation_run_item_id=task.evaluation_run_item_id
+  AND result.project_id=run.project_id
+ WHERE run.project_id=$1
+   AND run.id = ANY($2::uuid[])
+ GROUP BY run.id, inputs.target_fingerprint, inputs.evaluator_fingerprint,
+    inputs.sample_identity, inputs.evaluator_version, inputs.evaluator,
+    inputs.execution_defaults, inputs.limits
+ ORDER BY run.created_at DESC, run.id DESC`;
+
+function metricsFromRow(row: Row) {
+	const evaluated = Number(row.evaluated ?? 0);
+	const passed = Number(row.passed ?? 0);
+	const limits = object(row.limits ?? {}, "limits");
+	return {
+		evaluated,
+		passed,
+		failed: Number(row.evaluated_failed ?? 0),
+		pass_rate: evaluated > 0 ? passed / evaluated : null,
+		cost_usd: row.cost_usd == null ? null : Number(row.cost_usd),
+		max_cost_usd:
+			limits.max_cost_usd == null ? null : Number(limits.max_cost_usd),
+		duration_ms: row.duration_ms == null ? null : Number(row.duration_ms),
+		max_duration_seconds:
+			limits.max_duration_seconds == null
+				? null
+				: Number(limits.max_duration_seconds),
+		score_counts: { passed, failed: Number(row.evaluated_failed ?? 0) },
+	};
+}
+
+function summaryFromRow(row: Row) {
+	return {
+		id: text(row, "id"),
+		project_id: text(row, "project_id"),
+		evaluation_id: text(row, "evaluation_id"),
+		definition_version_id: text(row, "definition_version_id"),
+		dataset_version_id: text(row, "dataset_version_id"),
+		status: text(row, "status") as EvaluationRun["status"],
+		counts: {
+			total: Number(row.total ?? 0),
+			pending: Number(row.pending ?? 0),
+			running: Number(row.running ?? 0),
+			completed: Number(row.completed ?? 0),
+			failed: Number(row.failed ?? 0),
+			cancelled: Number(row.cancelled ?? 0),
+		},
+		metrics: metricsFromRow(row),
+		target_fingerprint: text(row, "target_fingerprint"),
+		evaluator_fingerprint: text(row, "evaluator_fingerprint"),
+		sample_identity: text(row, "sample_identity"),
+		created_at: timestamp(row, "created_at"),
+		updated_at: timestamp(row, "updated_at"),
+		terminal_reason: nullableText(row, "terminal_reason"),
+	};
+}
+
+export async function listEvaluationRuns(
+	db: Transactional,
+	input: {
+		project_id: string;
+		status?: EvaluationRun["status"];
+		evaluation_id?: string;
+		limit?: number;
+		offset?: number;
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			const result = await client.query(runSummaryQuery, [
+				input.project_id,
+				input.status ?? null,
+				input.evaluation_id ?? null,
+				Math.min(100, Math.max(1, input.limit ?? 50)),
+				Math.max(0, input.offset ?? 0),
+			]);
+			return {
+				items: result.rows.map((row) => summaryFromRow(row as Row)),
+				total: result.rows[0]
+					? Number((result.rows[0] as Row).total_count ?? result.rows.length)
+					: 0,
+			};
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function compareEvaluationRuns(
+	db: Transactional,
+	input: {
+		project_id: string;
+		run_ids: [string, string];
+		authorization: ProjectAuthorization;
+	},
+) {
+	try {
+		return await withTransaction(db, async (client) => {
+			if (
+				!(await lockActiveAuthorizedProject(
+					client,
+					input.project_id,
+					input.authorization,
+				))
+			)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Project is not available",
+				);
+			const result = await client.query(runComparisonQuery, [
+				input.project_id,
+				input.run_ids,
+			]);
+			if (result.rows.length !== 2)
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Both Evaluation Runs must be available in this Project",
+				);
+			const rows = input.run_ids.map((id) =>
+				result.rows.find((row) => text(row as Row, "id") === id),
+			);
+			if (rows.some((row) => !row))
+				throw new EvaluationRunRepositoryError(
+					"NOT_FOUND",
+					"Both Evaluation Runs must be available in this Project",
+				);
+			const [left, right] = rows as [Row, Row];
+			const differences: Array<{
+				field:
+					| "definition_version"
+					| "dataset_version"
+					| "target"
+					| "evaluator"
+					| "execution_defaults"
+					| "sample"
+					| "thresholds"
+					| "terminal_reason"
+					| "status";
+				left: unknown;
+				right: unknown;
+			}> = [];
+			const addDifference = (
+				field: (typeof differences)[number]["field"],
+				leftValue: unknown,
+				rightValue: unknown,
+			) => {
+				if (canonical(leftValue) !== canonical(rightValue))
+					differences.push({ field, left: leftValue, right: rightValue });
+			};
+			addDifference(
+				"definition_version",
+				{
+					id: left.definition_version_id,
+					content_hash: left.definition_content_hash,
+				},
+				{
+					id: right.definition_version_id,
+					content_hash: right.definition_content_hash,
+				},
+			);
+			addDifference(
+				"dataset_version",
+				{
+					id: left.dataset_version_id,
+					content_hash: left.dataset_content_hash,
+				},
+				{
+					id: right.dataset_version_id,
+					content_hash: right.dataset_content_hash,
+				},
+			);
+			addDifference(
+				"target",
+				left.target_fingerprint,
+				right.target_fingerprint,
+			);
+			addDifference(
+				"evaluator",
+				left.evaluator_fingerprint,
+				right.evaluator_fingerprint,
+			);
+			addDifference(
+				"execution_defaults",
+				left.execution_defaults,
+				right.execution_defaults,
+			);
+			addDifference("sample", left.sample_identity, right.sample_identity);
+			const snapshots = await client.query(
+				"SELECT run_id, thresholds FROM evaluation_run_inputs WHERE project_id=$1 AND run_id = ANY($2::uuid[])",
+				[input.project_id, input.run_ids],
+			);
+			const thresholdByRun = new Map(
+				snapshots.rows.map((row) => [
+					text(row as Row, "run_id"),
+					row.thresholds,
+				]),
+			);
+			addDifference(
+				"thresholds",
+				thresholdByRun.get(input.run_ids[0]),
+				thresholdByRun.get(input.run_ids[1]),
+			);
+			addDifference("status", left.status, right.status);
+			addDifference(
+				"terminal_reason",
+				left.terminal_reason,
+				right.terminal_reason,
+			);
+			const leftMetrics = metricsFromRow(left);
+			const rightMetrics = metricsFromRow(right);
+			const inputDifferences = differences.filter(
+				(difference) =>
+					!new Set(["target", "status", "terminal_reason"]).has(
+						difference.field,
+					),
+			);
+			const unsupportedContract = [left, right].some(
+				(row) =>
+					row.evaluator_version === "legacy_untyped" || !row.evaluator_version,
+			);
+			const nonSuccess =
+				left.status !== "completed" || right.status !== "completed";
+			const refusal = unsupportedContract
+				? {
+						code: "unsupported_contract" as const,
+						message: "At least one run uses an unsupported evaluator contract",
+					}
+				: nonSuccess
+					? {
+							code: "non_success_terminal" as const,
+							message:
+								"Both runs must complete before score, cost, or duration deltas are reported",
+						}
+					: inputDifferences.length > 0
+						? {
+								code: "incompatible_inputs" as const,
+								message:
+									"Runs have different pinned inputs; score or cost deltas are not an equivalent comparison",
+							}
+						: null;
+			const comparable = refusal === null;
+			return {
+				run_ids: input.run_ids,
+				comparable,
+				differences,
+				refusal,
+				metrics: {
+					left: leftMetrics,
+					right: rightMetrics,
+					delta: !comparable
+						? null
+						: {
+								pass_rate:
+									leftMetrics.pass_rate == null ||
+									rightMetrics.pass_rate == null
+										? null
+										: rightMetrics.pass_rate - leftMetrics.pass_rate,
+								cost_usd:
+									leftMetrics.cost_usd == null || rightMetrics.cost_usd == null
+										? null
+										: rightMetrics.cost_usd - leftMetrics.cost_usd,
+								duration_ms:
+									leftMetrics.duration_ms == null ||
+									rightMetrics.duration_ms == null
+										? null
+										: rightMetrics.duration_ms - leftMetrics.duration_ms,
+							},
+				},
+			};
 		});
 	} catch (cause) {
 		throw normalize(cause);
