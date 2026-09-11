@@ -2018,6 +2018,10 @@ function EvaluationGatePanel({
 	const [reason, setReason] = React.useState("");
 	const [message, setMessage] = React.useState<string | null>(null);
 	const [pending, setPending] = React.useState(false);
+	const gateIdempotencyKeys = React.useRef<Record<string, string>>({});
+	React.useEffect(() => {
+		gateIdempotencyKeys.current = {};
+	}, [projectId]);
 	const approvals = useQuery({
 		queryKey: ["evaluation-gate-approvals", projectId],
 		queryFn: () =>
@@ -2084,6 +2088,9 @@ function EvaluationGatePanel({
 	const start = async (approval: (typeof activeApprovals)[number]) => {
 		setPending(true);
 		setMessage(null);
+		const idempotencyKey =
+			gateIdempotencyKeys.current[approval.id] ?? crypto.randomUUID();
+		gateIdempotencyKeys.current[approval.id] = idempotencyKey;
 		try {
 			await startEvaluationGate({
 				project_id: projectId,
@@ -2091,8 +2098,9 @@ function EvaluationGatePanel({
 				definition_version_id: approval.definition_version_id,
 				dataset_version_id: approval.dataset_version_id,
 				gate_context: approval.gate_context,
-				idempotency_key: crypto.randomUUID(),
+				idempotency_key: idempotencyKey,
 			});
+			delete gateIdempotencyKeys.current[approval.id];
 			setMessage("Pinned gate run admitted.");
 			await client.invalidateQueries({
 				queryKey: ["evaluation-gate-runs", projectId],

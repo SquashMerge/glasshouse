@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { EvaluationDefinitionInput } from "../schemas/evaluations.js";
 import {
 	admitEvaluationRun,
+	EvaluationRunRepositoryError,
 	type EvaluationRun,
 	type EvaluationRunAdmissionInput,
 } from "./evaluation-runs.js";
@@ -701,11 +702,6 @@ export async function admitEvaluationGate(
 			project_id: input.project_id,
 			authorization: input.authorization,
 		});
-		if (approvalValue.status !== "active")
-			throw new EvaluationGateRepositoryError(
-				"CONFLICT",
-				"Evaluation Gate approval is not active",
-			);
 		if (
 			approvalValue.definition_version_id !== input.definition_version_id ||
 			approvalValue.dataset_version_id !== input.dataset_version_id ||
@@ -742,6 +738,8 @@ export async function admitEvaluationGate(
 		return { gate, run };
 	} catch (cause) {
 		if (cause instanceof EvaluationGateRepositoryError) throw cause;
+		if (cause instanceof EvaluationRunRepositoryError)
+			throw new EvaluationGateRepositoryError(cause.code, cause.message, cause);
 		throw normalize(cause);
 	}
 }
