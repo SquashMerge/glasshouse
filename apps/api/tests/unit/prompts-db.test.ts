@@ -10,6 +10,7 @@ import {
 	deletePrompt,
 	getPrompt,
 	listProjects,
+	listPrompts,
 	listPromptVersions,
 	normalizePromptSlug,
 	promptProvenanceStatus,
@@ -26,12 +27,22 @@ class MockClient {
 	readonly calls: QueryCall[] = [];
 	released = false;
 
-	constructor(private readonly replies: Reply[]) {}
+	constructor(
+		private readonly replies: Reply[],
+		private readonly autoTransactionControl = false,
+	) {}
 
 	async query(
 		text: string,
 		values: unknown[] = [],
 	): Promise<{ rows: Record<string, unknown>[] }> {
+		if (
+			this.autoTransactionControl &&
+			(text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK")
+		) {
+			this.calls.push({ text, values });
+			return { rows: [] };
+		}
 		if (text.includes("p.status = ANY($3::text[])")) {
 			const reply = this.replies.shift();
 			if (!reply) return { rows: [{ id: PROJECT }] };
@@ -70,7 +81,10 @@ class MockPool {
 
 	constructor(readReplies: Reply[] = [], transactionReplies: Reply[] = []) {
 		this.readReplies = readReplies;
-		this.client = new MockClient(transactionReplies);
+		this.client = new MockClient(
+			transactionReplies.length > 0 ? transactionReplies : readReplies,
+			transactionReplies.length === 0,
+		);
 	}
 
 	private readonly readReplies: Reply[];
@@ -99,6 +113,10 @@ const authorization = {
 	organization_id: "33333333-3333-4333-8333-333333333333",
 	actor_id: "44444444-4444-4444-8444-444444444444",
 	operation: "product_write" as const,
+};
+const readAuthorization = {
+	...authorization,
+	operation: "product_read" as const,
 };
 
 const versionRow = {
@@ -136,6 +154,34 @@ async function expectError(
 }
 
 describe("prompt repository", () => {
+	it("fences every persisted prompt read through transactional project authorization", () => {
+		for (const operation of [
+			listPrompts,
+			getPrompt,
+			listPromptVersions,
+			renderPrompt,
+			promptProvenanceStatus,
+		]) {
+			expect(operation.toString()).toContain("transaction");
+			expect(operation.toString()).toContain("input.authorization");
+		}
+	});
+
+	it("denies a Prompt list before issuing any protected query", async () => {
+		const pool = new MockPool([{ rows: [] }]);
+		await expectError(
+			listPrompts(transactionPool(pool), {
+				project_id: OTHER_PROJECT,
+				authorization: readAuthorization,
+			}),
+			"NOT_FOUND",
+		);
+		expect(
+			pool.client.calls.some((call) => call.text.includes("FROM prompts")),
+		).toBe(false);
+		expect(pool.client.calls.at(-1)?.text).toBe("ROLLBACK");
+	});
+
 	it("lists only projects belonging to the requested organization", async () => {
 		const pool = new MockPool([
 			{ rows: [{ total: "2" }] },
@@ -625,18 +671,23 @@ describe("prompt repository", () => {
 				],
 			},
 		]);
-		const prompt = await getPrompt(readPool(getPool), {
+		const prompt = await getPrompt(transactionPool(getPool), {
 			project_id: PROJECT,
 			slug: "support-agent",
 			version: 2,
+			authorization: readAuthorization,
 		});
 
 		expect(prompt.messages).toEqual([
 			{ role: "system", content: "Current {{customer}}" },
 		]);
 		expect(prompt.diff).toContain("Current {{customer}}");
-		expect(getPool.calls[1]?.values).toEqual([PROJECT, "support-agent", 2]);
-		expect(getPool.calls[1]?.text).toContain(
+		expect(getPool.client.calls[2]?.values).toEqual([
+			PROJECT,
+			"support-agent",
+			2,
+		]);
+		expect(getPool.client.calls[2]?.text).toContain(
 			"p.project_id = $1 AND p.slug = $2",
 		);
 		expect(JSON.stringify(prompt)).not.toContain("internal-prompt-id");
@@ -657,10 +708,11 @@ describe("prompt repository", () => {
 				],
 			},
 		]);
-		const malformed = await getPrompt(readPool(malformedPool), {
+		const malformed = await getPrompt(transactionPool(malformedPool), {
 			project_id: PROJECT,
 			slug: "support-agent",
 			version: 1,
+			authorization: readAuthorization,
 		});
 		expect(malformed.messages).toEqual([
 			{ role: "system", content: "Malformed {{template" },
@@ -683,11 +735,15 @@ describe("prompt repository", () => {
 				],
 			},
 		]);
-		const oversizedLegacy = await getPrompt(readPool(oversizedLegacyPool), {
-			project_id: PROJECT,
-			slug: "support-agent",
-			version: 2,
-		});
+		const oversizedLegacy = await getPrompt(
+			transactionPool(oversizedLegacyPool),
+			{
+				project_id: PROJECT,
+				slug: "support-agent",
+				version: 2,
+				authorization: readAuthorization,
+			},
+		);
 		expect(oversizedLegacy.messages).toEqual([
 			{ role: "system", content: "current legacy source" },
 		]);
@@ -707,15 +763,19 @@ describe("prompt repository", () => {
 				],
 			},
 		]);
-		const history = await listPromptVersions(readPool(historyPool), {
+		const history = await listPromptVersions(transactionPool(historyPool), {
 			project_id: PROJECT,
 			slug: "support-agent",
+			authorization: readAuthorization,
 		});
 		expect(history.items.map((item) => item.version)).toEqual([2, 1]);
 		expect(history.items[0]?.messages).toEqual([
 			{ role: "system", content: "Current {{customer}}" },
 		]);
-		expect(historyPool.calls[1]?.values).toEqual([PROJECT, "support-agent"]);
+		expect(historyPool.client.calls[2]?.values).toEqual([
+			PROJECT,
+			"support-agent",
+		]);
 	});
 
 	it("does not reveal a prompt from another project", async () => {
@@ -725,13 +785,17 @@ describe("prompt repository", () => {
 		]);
 
 		await expectError(
-			getPrompt(readPool(pool), {
+			getPrompt(transactionPool(pool), {
 				project_id: OTHER_PROJECT,
 				slug: "support-agent",
+				authorization: readAuthorization,
 			}),
 			"NOT_FOUND",
 		);
-		expect(pool.calls[1]?.values).toEqual([OTHER_PROJECT, "support-agent"]);
+		expect(pool.client.calls[2]?.values).toEqual([
+			OTHER_PROJECT,
+			"support-agent",
+		]);
 	});
 
 	it("renders each stored prompt message from valid nested JSON with deterministic missing-variable warnings", async () => {
@@ -757,10 +821,11 @@ describe("prompt repository", () => {
 				],
 			},
 		]);
-		const rendered = await renderPrompt(readPool(pool), {
+		const rendered = await renderPrompt(transactionPool(pool), {
 			project_id: PROJECT,
 			slug: "support-agent",
 			data: { customer: { name: "Ada" } },
+			authorization: readAuthorization,
 		});
 
 		expect(rendered).toEqual({
@@ -795,10 +860,11 @@ describe("prompt repository", () => {
 			},
 		]);
 		await expectError(
-			renderPrompt(readPool(oversizedSourcePool), {
+			renderPrompt(transactionPool(oversizedSourcePool), {
 				project_id: PROJECT,
 				slug: "support-agent",
 				data: {},
+				authorization: readAuthorization,
 			}),
 			"BAD_REQUEST",
 		);
@@ -1046,29 +1112,33 @@ describe("prompt repository", () => {
 			{ rows: [{ status: "deleted" }] },
 		]);
 		expect(
-			await promptProvenanceStatus(readPool(statusPool), {
+			await promptProvenanceStatus(transactionPool(statusPool), {
 				project_id: PROJECT,
 				slug: "support-agent",
 				version: 99,
 				content_hash: "b".repeat(64),
+				authorization: readAuthorization,
 			}),
 		).toBe("deleted");
-		expect(statusPool.calls).toHaveLength(2);
+		expect(statusPool.client.calls).toHaveLength(4);
 
-		expect(statusPool.calls[1]?.text).toContain("SELECT CASE");
-		expect(statusPool.calls[1]?.text).toContain("prompt_tombstones");
-		expect(statusPool.calls[1]?.text).toContain("INNER JOIN prompt_versions");
+		expect(statusPool.client.calls[2]?.text).toContain("SELECT CASE");
+		expect(statusPool.client.calls[2]?.text).toContain("prompt_tombstones");
+		expect(statusPool.client.calls[2]?.text).toContain(
+			"INNER JOIN prompt_versions",
+		);
 
 		const activePool = new MockPool([
 			{ rows: [{ id: PROJECT }] },
 			{ rows: [{ status: "active" }] },
 		]);
 		expect(
-			await promptProvenanceStatus(readPool(activePool), {
+			await promptProvenanceStatus(transactionPool(activePool), {
 				project_id: PROJECT,
 				slug: "support-agent",
 				version: 2,
 				content_hash: HASH,
+				authorization: readAuthorization,
 			}),
 		).toBe("active");
 
@@ -1077,26 +1147,28 @@ describe("prompt repository", () => {
 			{ rows: [{ status: "unknown" }] },
 		]);
 		expect(
-			await promptProvenanceStatus(readPool(unknownPool), {
+			await promptProvenanceStatus(transactionPool(unknownPool), {
 				project_id: PROJECT,
 				slug: "support-agent",
 				version: 2,
 				content_hash: HASH,
+				authorization: readAuthorization,
 			}),
 		).toBe("unknown");
-		expect(activePool.calls).toHaveLength(2);
-		expect(unknownPool.calls).toHaveLength(2);
+		expect(activePool.client.calls).toHaveLength(4);
+		expect(unknownPool.client.calls).toHaveLength(4);
 
 		const missingProjectPool = new MockPool([{ rows: [] }]);
 		await expectError(
-			promptProvenanceStatus(readPool(missingProjectPool), {
+			promptProvenanceStatus(transactionPool(missingProjectPool), {
 				project_id: OTHER_PROJECT,
 				slug: "support-agent",
 				version: 2,
 				content_hash: HASH,
+				authorization: readAuthorization,
 			}),
 			"NOT_FOUND",
 		);
-		expect(missingProjectPool.calls).toHaveLength(1);
+		expect(missingProjectPool.client.calls).toHaveLength(3);
 	});
 });

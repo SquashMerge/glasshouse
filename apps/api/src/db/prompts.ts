@@ -567,18 +567,18 @@ function positiveIntegerOrZero(value: unknown, key: string): number {
 }
 
 export async function listPrompts(
-	pool: Pick<Pool, "query">,
-	projectId: string,
+	pool: Pick<Pool, "connect">,
+	input: { project_id: string; authorization: ProjectAuthorization },
 ): Promise<{ items: Prompt[]; total: number }> {
-	return read(async () => {
-		await requireProject(pool, projectId);
+	return transaction(pool, async (client) => {
+		await requireProject(client, input.project_id, true, input.authorization);
 		const countRows = await query<Row>(
-			pool,
+			client,
 			"SELECT count(*) AS total FROM prompts WHERE project_id = $1",
-			[projectId],
+			[input.project_id],
 		);
 		const rows = await query<Row>(
-			pool,
+			client,
 			`SELECT p.project_id, p.name, p.description, ${versionColumns}
        FROM prompts AS p
        INNER JOIN LATERAL (
@@ -587,7 +587,7 @@ export async function listPrompts(
        ${previousVersionJoin}
        WHERE p.project_id = $1
        ORDER BY p.slug ASC`,
-			[projectId],
+			[input.project_id],
 		);
 		return {
 			items: rows.map(mapPrompt),
@@ -747,42 +747,58 @@ export async function createPrompt(
 	});
 }
 
-export async function getPrompt(
-	pool: Pick<Pool, "query">,
+async function getPromptInTransaction(
+	client: PoolClient,
 	input: { project_id: string; slug: string; version?: number },
 ): Promise<Prompt> {
-	return read(async () => {
-		await requireProject(pool, input.project_id);
-		const predicate = input.version === undefined ? "" : "AND v.version = $3";
-		const values =
-			input.version === undefined
-				? [input.project_id, input.slug]
-				: [input.project_id, input.slug, input.version];
-		const rows = await query<Row>(
-			pool,
-			`SELECT p.project_id, p.name, p.description, ${versionColumns}
+	const predicate = input.version === undefined ? "" : "AND v.version = $3";
+	const values =
+		input.version === undefined
+			? [input.project_id, input.slug]
+			: [input.project_id, input.slug, input.version];
+	const rows = await query<Row>(
+		client,
+		`SELECT p.project_id, p.name, p.description, ${versionColumns}
        FROM prompts AS p
        INNER JOIN prompt_versions AS v ON v.prompt_id = p.id
        ${previousVersionJoin}
        WHERE p.project_id = $1 AND p.slug = $2 ${predicate}
        ORDER BY v.version DESC
        LIMIT 1`,
-			values,
-		);
-		const row = rows[0];
-		if (!row) throw error("NOT_FOUND", "Prompt or version not found");
-		return mapPrompt(row);
+		values,
+	);
+	const row = rows[0];
+	if (!row) throw error("NOT_FOUND", "Prompt or version not found");
+	return mapPrompt(row);
+}
+
+export async function getPrompt(
+	pool: Pick<Pool, "connect">,
+	input: {
+		project_id: string;
+		slug: string;
+		version?: number;
+		authorization: ProjectAuthorization;
+	},
+): Promise<Prompt> {
+	return transaction(pool, async (client) => {
+		await requireProject(client, input.project_id, true, input.authorization);
+		return getPromptInTransaction(client, input);
 	});
 }
 
 export async function listPromptVersions(
-	pool: Pick<Pool, "query">,
-	input: { project_id: string; slug: string },
+	pool: Pick<Pool, "connect">,
+	input: {
+		project_id: string;
+		slug: string;
+		authorization: ProjectAuthorization;
+	},
 ): Promise<{ items: PromptVersion[] }> {
-	return read(async () => {
-		await requireProject(pool, input.project_id);
+	return transaction(pool, async (client) => {
+		await requireProject(client, input.project_id, true, input.authorization);
 		const rows = await query<Row>(
-			pool,
+			client,
 			`SELECT ${versionColumns}
        FROM prompts AS p
        INNER JOIN prompt_versions AS v ON v.prompt_id = p.id
@@ -944,12 +960,13 @@ export async function rollbackLatestPromptVersion(
 }
 
 export async function renderPrompt(
-	pool: Pick<Pool, "query">,
+	pool: Pick<Pool, "connect">,
 	input: {
 		project_id: string;
 		slug: string;
 		version?: number;
 		data: JsonObject;
+		authorization: ProjectAuthorization;
 	},
 ): Promise<{
 	id: string;
@@ -958,12 +975,9 @@ export async function renderPrompt(
 	messages: PromptMessage[];
 	warnings: { code: "MISSING_VARIABLE"; role: PromptRole; path: string }[];
 }> {
-	return read(async () => {
-		const prompt = await getPrompt(pool, {
-			project_id: input.project_id,
-			slug: input.slug,
-			version: input.version,
-		});
+	return transaction(pool, async (client) => {
+		await requireProject(client, input.project_id, true, input.authorization);
+		const prompt = await getPromptInTransaction(client, input);
 		const messages = prompt.messages.map((message) => {
 			const rendered = renderPromptTemplateWithWarnings(
 				message.content,
@@ -1061,18 +1075,19 @@ export async function deletePrompt(
 }
 
 export async function promptProvenanceStatus(
-	pool: Pick<Pool, "query">,
+	pool: Pick<Pool, "connect">,
 	input: {
 		project_id: string;
 		slug: string;
 		version: number;
 		content_hash: string;
+		authorization: ProjectAuthorization;
 	},
 ): Promise<"active" | "deleted" | "unknown"> {
-	return read(async () => {
-		await requireProject(pool, input.project_id);
+	return transaction(pool, async (client) => {
+		await requireProject(client, input.project_id, true, input.authorization);
 		const rows = await query<Row>(
-			pool,
+			client,
 			`SELECT CASE
          WHEN EXISTS (
            SELECT 1

@@ -4,7 +4,9 @@ import {
 	PromptRepositoryError,
 } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
+import { projectAuthorization } from "../db/project-authorization.js";
 import { logger } from "../lib/logger.js";
+import { trustedTenant } from "../tenancy.js";
 import {
 	PromptErrorResponses,
 	PromptIdParam,
@@ -61,6 +63,10 @@ export function createPromptProvenanceRouteHandlers(
 							slug: params.id,
 							version: query.version,
 							content_hash: query.content_hash,
+							authorization: projectAuthorization(
+								trustedTenant(c),
+								"product_read",
+							),
 						},
 					),
 				});
