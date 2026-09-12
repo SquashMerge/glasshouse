@@ -63,8 +63,17 @@ function projectOperationForRequest(
 	path: string,
 	method: string,
 ): ProjectOperation {
-	if (method === "POST" && /^\/v1\/prompts\/[^/]+\/render$/.test(path))
-		return "product_read";
+	if (path.startsWith("/v1/prompts/")) {
+		if (method === "POST" && /^\/v1\/prompts\/[^/]+\/render$/.test(path))
+			return "product_read";
+		if (method === "DELETE" && /^\/v1\/prompts\/[^/]+$/.test(path))
+			return "destructive";
+		if (
+			method === "POST" &&
+			/^\/v1\/prompts\/[^/]+\/versions\/rollback$/.test(path)
+		)
+			return "destructive";
+	}
 	if (path.startsWith("/v1/datasets/")) {
 		if (
 			(method === "DELETE" && /^\/v1\/datasets\/by-slug\/[^/]+$/.test(path)) ||

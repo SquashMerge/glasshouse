@@ -244,6 +244,44 @@ describe("API integration: auth gate", () => {
 		}
 	});
 
+	it("classifies Prompt rollback and hard deletion as destructive before route execution", async () => {
+		const unavailableProject = "00000000-0000-4000-8000-000000000099";
+		assertTenantProjectAccess.mockClear();
+		assertTenantProjectAccess.mockImplementation(async () => {
+			throw new TenantScopeError("Project is not available");
+		});
+		try {
+			const requests = [
+				new Request(
+					`http://x/v1/prompts/support-agent/versions/rollback?project_id=${unavailableProject}`,
+					{ method: "POST", headers: { authorization: AUTH } },
+				),
+				new Request(
+					`http://x/v1/prompts/support-agent?project_id=${unavailableProject}`,
+					{
+						method: "DELETE",
+						headers: {
+							authorization: AUTH,
+							"content-type": "application/json",
+						},
+						body: JSON.stringify({ confirmation: "support-agent" }),
+					},
+				),
+			];
+			for (const request of requests) {
+				const response = await apiApp.fetch(request);
+				expect(response.status).toBe(404);
+			}
+			expect(
+				assertTenantProjectAccess.mock.calls.map(
+					([, , , operation]) => operation,
+				),
+			).toEqual(["destructive", "destructive"]);
+		} finally {
+			assertTenantProjectAccess.mockImplementation(async () => undefined);
+		}
+	});
+
 	it("rejects a query/body project mismatch before a body-scoped route executes", async () => {
 		const authorizedProject = "00000000-0000-4000-8000-000000000002";
 		const foreignProject = "00000000-0000-4000-8000-000000000099";

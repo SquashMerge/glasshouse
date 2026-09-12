@@ -374,7 +374,7 @@ export function createPromptRouteHandlers(
 						slug: params.id,
 						authorization: projectAuthorization(
 							trustedTenant(c),
-							"product_write",
+							"destructive",
 						),
 					}),
 				);
@@ -435,10 +435,7 @@ export function createPromptRouteHandlers(
 					slug: params.id,
 					confirmation: body.confirmation,
 					actor: actor(c),
-					authorization: projectAuthorization(
-						trustedTenant(c),
-						"product_write",
-					),
+					authorization: projectAuthorization(trustedTenant(c), "destructive"),
 				});
 				return c.body(null, 204);
 			} catch (cause) {

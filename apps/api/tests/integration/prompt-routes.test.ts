@@ -366,7 +366,7 @@ describe("prompt route contracts", () => {
 		});
 	});
 
-	it("authenticates and returns the restored prompt from a project-scoped rollback", async () => {
+	it("requires destructive authority for a project-scoped rollback", async () => {
 		rollbackLatestPromptVersionRecord.mockClear();
 		const response = await app().request(
 			`/v1/prompts/support-agent/versions/rollback?project_id=${PROJECT}`,
@@ -383,7 +383,7 @@ describe("prompt route contracts", () => {
 				authorization: {
 					organization_id: "00000000-0000-4000-8000-000000000001",
 					actor_id: "33333333-3333-4333-8333-333333333333",
-					operation: "product_write",
+					operation: "destructive",
 				},
 			}),
 		);
@@ -508,7 +508,7 @@ describe("prompt route contracts", () => {
 		});
 	});
 
-	it("requires raw deletion confirmation and marks successful delete responses no-store", async () => {
+	it("requires destructive authority for hard deletion and marks successful responses no-store", async () => {
 		deletePromptRecord.mockClear();
 		const invalid = await app().request(
 			`/v1/prompts/support-agent?project_id=${PROJECT}`,
@@ -544,7 +544,7 @@ describe("prompt route contracts", () => {
 			authorization: {
 				organization_id: "00000000-0000-4000-8000-000000000001",
 				actor_id: "33333333-3333-4333-8333-333333333333",
-				operation: "product_write",
+				operation: "destructive",
 			},
 		});
 	});
