@@ -6,6 +6,10 @@ const migrationHarness = readFileSync(
 	resolve(import.meta.dir, "../../../../infra/scripts/test-db-migrations.sh"),
 	"utf8",
 );
+const migrationRunner = readFileSync(
+	resolve(import.meta.dir, "../../src/db/migrate.ts"),
+	"utf8",
+);
 
 test("db:migrate validates filenames and tolerates the known legacy ordering inversion", () => {
 	const packageJson = JSON.parse(
@@ -16,17 +20,25 @@ test("db:migrate validates filenames and tolerates the known legacy ordering inv
 	expect(migrationCommand).toContain(
 		"bun run ../../infra/scripts/verify-pg-migration-filenames.ts",
 	);
-	expect(migrationCommand).toContain(
+	expect(migrationCommand).toContain("bun run src/db/migrate.ts");
+	expect(migrationCommand).not.toContain(
 		"bun run src/db/prepare-0091-run-item-remediation.ts",
 	);
-	expect(migrationCommand).toContain("pg-migration-order-mode.ts");
-	expect(migrationCommand).toContain("legacy-0023-inversion");
-	expect(migrationCommand).toMatch(
-		/legacy-0023-inversion.*node-pg-migrate up --advisory-lock-mode wait.*--check-order=false/,
+});
+
+test("the Run-item preflight and migrations share node-pg-migrate's lock", () => {
+	const lock = migrationRunner.indexOf("SELECT pg_advisory_lock($1)");
+	const preflight = migrationRunner.indexOf(
+		"await prepare0091RunItemRemediation",
 	);
-	expect(migrationCommand).toMatch(
-		/strict.*node-pg-migrate up --advisory-lock-mode wait.*--migration-file-language sql/,
-	);
+	const migrations = migrationRunner.indexOf("await runner({");
+
+	expect(lock).toBeGreaterThan(-1);
+	expect(preflight).toBeGreaterThan(lock);
+	expect(migrations).toBeGreaterThan(preflight);
+	expect(migrationRunner).toContain("lockValue: nodePgMigrateLockId");
+	expect(migrationRunner).toContain('advisoryLockMode: "wait"');
+	expect(migrationRunner).toContain("SELECT pg_advisory_unlock($1)");
 });
 
 test("migration harness upgrades a database that recorded the prior 0023 order", () => {
@@ -48,6 +60,13 @@ test("migration harness exercises the occupied Run-item remediation before 0091"
 	);
 	expect(migrationHarness).toContain("prepare-0091-run-item-remediation.ts");
 	expect(migrationHarness).toContain("0093_*.sql");
+	expect(migrationHarness).toContain(
+		"test-db-migrations-0091-post-upgrade.fixture.sql",
+	);
+	expect(migrationHarness).toContain("CONCURRENT_0089_UPGRADE_DATABASE");
+	expect(migrationHarness).toContain(
+		"concurrent 0089 upgrade did not wait for the migration advisory lock",
+	);
 	expect(migrationHarness).toContain(
 		"test-db-migrations-agent-introspection-upgrade.assert.sql",
 	);

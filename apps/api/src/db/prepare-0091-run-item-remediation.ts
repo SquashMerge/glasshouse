@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, type Client, type PoolClient } from "pg";
 
 const requiredColumns = [
 	["experiment_tasks", "evaluation_run_id"],
@@ -13,18 +13,21 @@ const requiredColumns = [
 
 export async function prepare0091RunItemRemediation(
 	env: NodeJS.ProcessEnv = process.env,
-	pool = new Pool({ connectionString: env.DATABASE_URL }),
+	connection?: Client | PoolClient,
 ): Promise<void> {
-	const client = await pool.connect();
+	const pool = connection
+		? undefined
+		: new Pool({ connectionString: env.DATABASE_URL });
+	const client = connection ?? (await pool!.connect());
 	try {
 		const columns = await client.query<{ ready: boolean }>(
 			"SELECT count(*) = $1 AS ready FROM information_schema.columns WHERE table_schema = 'public' AND (table_name, column_name) IN (('experiment_tasks', 'evaluation_run_id'), ('experiment_tasks', 'evaluation_run_item_id'), ('experiment_tasks', 'dataset_version_item_id'), ('experiment_results', 'evaluation_run_id'), ('experiment_results', 'evaluation_run_item_id'), ('experiment_results', 'dataset_version_item_id'), ('evaluation_run_items', 'run_id'), ('evaluation_run_items', 'dataset_version_item_id'))",
 			[requiredColumns.length],
 		);
-		const scopeConstraint = await client.query<{ exists: boolean }>(
-			"SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass('public.experiment_tasks') AND conname = 'experiment_tasks_evaluation_run_item_run_fkey') AS exists",
+		const finalScopeConstraint = await client.query<{ exists: boolean }>(
+			"SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass('public.experiment_tasks') AND conname IN ('experiment_tasks_evaluation_run_item_pair_check', 'experiment_tasks_evaluation_run_item_dataset_version_item_fkey')) AS exists",
 		);
-		if (!columns.rows[0]?.ready || scopeConstraint.rows[0]?.exists) return;
+		if (!columns.rows[0]?.ready || finalScopeConstraint.rows[0]?.exists) return;
 
 		await client.query("BEGIN");
 		await client.query(`CREATE TABLE IF NOT EXISTS experiment_task_run_item_mismatch_quarantine (
@@ -51,6 +54,9 @@ export async function prepare0091RunItemRemediation(
             FOREIGN KEY (project_id, organization_id)
                 REFERENCES projects(id, organization_id) ON DELETE RESTRICT
         )`);
+		await client.query(`ALTER TABLE experiment_task_run_item_mismatch_quarantine
+            ALTER COLUMN evaluation_run_id DROP NOT NULL,
+            ALTER COLUMN evaluation_run_item_id DROP NOT NULL`);
 		await client.query(`WITH planned_remaps AS (
             SELECT task.id, task.project_id, task.evaluation_run_id,
                    task.evaluation_run_item_id, candidate.id AS candidate_id,
@@ -169,8 +175,10 @@ export async function prepare0091RunItemRemediation(
 		await client.query("ROLLBACK");
 		throw error;
 	} finally {
-		client.release();
-		await pool.end();
+		if (pool) {
+			(client as PoolClient).release();
+			await pool.end();
+		}
 	}
 }
 
