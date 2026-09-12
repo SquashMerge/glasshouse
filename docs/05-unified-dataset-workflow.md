@@ -111,7 +111,7 @@ The API, worker, SSE subscription, and UI must all enforce this matrix. A
 Read-only client must receive a server-side authorization failure for every
 mutation or execution attempt, including a stale or hand-crafted request.
 
-## Target user journeys (future Evaluation Run workflow)
+## Shipped Evaluation Run journeys
 
 ### 1. Create a UI-authored regression dataset and run it
 
@@ -151,8 +151,8 @@ mutation or execution attempt, including a stale or hand-crafted request.
 ## Data model and target execution invariants
 
 The Evaluation Run tables, resolution fields, and execution invariants in this
-section are future contract work; they do not describe a shipped Evaluation Run
-endpoint.
+section describe the shipped P3 admission and execution contract. Schedules,
+SDK invocation, and Agent Registry targets remain deferred.
 
 ### Logical tables
 
@@ -289,7 +289,7 @@ GET    /v1/datasets/by-slug/{slug}/export?project_id=&format=csv|jsonl&represent
 POST   /v1/datasets/by-slug/{slug}/restore?project_id= # Project Admin, If-Match Dataset revision
 DELETE /v1/datasets/by-slug/{slug}/tombstone?project_id= # Project Admin, typed slug + If-Match Dataset revision
 
-# Future Evaluation execution (shipped identity/Definition Version routes are listed above)
+# Shipped Evaluation execution
 PATCH  /v1/evaluations/{slug}?project_id=      # metadata only
 POST   /v1/evaluations/{slug}/draft/validate?project_id=
 POST   /v1/evaluations/{slug}/runs?project_id= # body may choose definition version and run overrides
@@ -400,8 +400,8 @@ become a second durable definition model.
 ## UX information architecture
 
 The existing dashboard exposes the shipped Definition foundation. Screens and
-interaction rules below that depend on Evaluation Runs, schedules, gates, or
-SDK execution are future UX work.
+interaction rules below that depend on schedules or SDK execution are future UX
+work. Shipped Run evidence, comparison, and gates remain server-authoritative.
 
 ### Global navigation
 
@@ -446,7 +446,7 @@ SDK execution are future UX work.
 1. **Preserve reads:** existing `datasets`/`dataset_items` remain readable. Backfill each existing dataset as `dataset@1`, preserving item UUID as `item_key`, order by `created_at, id`, and existing trace provenance.
 2. **Add snapshot tables:** introduce Dataset/Evaluation version and draft tables in a new migration; do not alter past migrations. Every tenant-bearing child table gets a non-null `project_id`, composite Project-scoped foreign keys, `slug`, `latest_published_version`, audit/provenance fields, and tombstones. Backfill scope only from validated parents; delete or safely terminalize ambiguous legacy rows rather than assigning a Project by guesswork.
 3. **Adapt experiments:** add `project_id`, `evaluation_id`, `evaluation_version_id`, `dataset_version_id`, a resolved target snapshot, and optional future `manifest_version_id` fields to Experiments. Use composite Project-scoped foreign keys for every resolved attachment. Backfill legacy Experiments with an implicit immutable “legacy ad hoc” definition/version rather than inventing historical intent.
-4. **API compatibility:** retain the current UUID Dataset routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. `GET /v1/datasets/by-slug/{slug}/versions` and its `{version}` detail provide read-only immutable-version inspection. Retained `POST /v1/datasets` and `POST /v1/datasets/{id}/items` use the body-scoped adapter above; an optional query selector must match the body selector. Retain the complete Experiment execution surface while future Evaluation Run work is implemented: `GET /v1/experiments?project_id=<UUID>`, `GET /v1/experiments/{id}?project_id=<UUID>`, `GET /v1/experiments/{id}/results?project_id=<UUID>`, `GET /v1/experiments/{id}/summary?project_id=<UUID>`, `GET /v1/experiments/{id}/events?project_id=<UUID>`, and `POST /v1/experiments/{id}/cancel?project_id=<UUID>`; retained `POST /v1/experiments` uses the body-scoped adapter. New Experiments return a `versioned` resolved Dataset Version ID; pre-version rows report `legacy_unversioned` and no resolved ID. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
+4. **API compatibility:** retain the current UUID Dataset routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. `GET /v1/datasets/by-slug/{slug}/versions` and its `{version}` detail provide read-only immutable-version inspection. Retained `POST /v1/datasets` and `POST /v1/datasets/{id}/items` use the body-scoped adapter above; an optional query selector must match the body selector. Retain the complete legacy Experiment execution surface alongside shipped Evaluation Runs: `GET /v1/experiments?project_id=<UUID>`, `GET /v1/experiments/{id}?project_id=<UUID>`, `GET /v1/experiments/{id}/results?project_id=<UUID>`, `GET /v1/experiments/{id}/summary?project_id=<UUID>`, `GET /v1/experiments/{id}/events?project_id=<UUID>`, and `POST /v1/experiments/{id}/cancel?project_id=<UUID>`; retained `POST /v1/experiments` uses the body-scoped adapter. New Experiments return a `versioned` resolved Dataset Version ID; pre-version rows report `legacy_unversioned` and no resolved ID. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
 5. **UI rollout:** Dataset/versioning and Evaluation identity/Definition Version
    routes are shipped. Future Evaluation Run work can switch “Run experiment”
    labels to “Run evaluation”; keep `Experiment` only in technical

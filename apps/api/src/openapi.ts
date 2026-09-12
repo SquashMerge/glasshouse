@@ -288,9 +288,21 @@ import {
 export const openapiApp = new OpenAPIHono({
 	defaultHook: (result, c) => {
 		if (!result.success) {
+			const normalizedReportTooLarge =
+				/^\/v1\/evaluation-runs\/[^/]+\/tasks\/[^/]+\/agent-introspection\/[^/]+$/.test(
+					c.req.path,
+				) &&
+				result.error.issues.some((issue) =>
+					issue.message.includes("Normalized report exceeds 256 KiB"),
+				);
 			return c.json(
-				{ code: "BAD_REQUEST", message: "Request validation failed" },
-				400,
+				normalizedReportTooLarge
+					? {
+							code: "PAYLOAD_TOO_LARGE",
+							message: "Report exceeds the normalized size limit",
+						}
+					: { code: "BAD_REQUEST", message: "Request validation failed" },
+				normalizedReportTooLarge ? 413 : 400,
 			);
 		}
 	},

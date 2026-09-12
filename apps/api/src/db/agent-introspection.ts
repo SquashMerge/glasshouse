@@ -116,7 +116,7 @@ async function scopedTask(
 	identity: AgentIntrospectionIdentity,
 ): Promise<{ evaluation_run_item_id: string }> {
 	const result = await client.query(
-		"SELECT task.evaluation_run_item_id FROM experiment_tasks task JOIN evaluation_runs run ON run.id = task.evaluation_run_id AND run.project_id = task.project_id WHERE task.id = $1 AND task.project_id = $2 AND task.evaluation_run_id = $3 AND run.organization_id = $4",
+		"SELECT task.evaluation_run_item_id FROM experiment_tasks task JOIN evaluation_runs run ON run.id = task.evaluation_run_id AND run.project_id = task.project_id JOIN evaluation_run_items item ON item.id = task.evaluation_run_item_id AND item.project_id = task.project_id AND item.run_id = task.evaluation_run_id WHERE task.id = $1 AND task.project_id = $2 AND task.evaluation_run_id = $3 AND run.organization_id = $4",
 		[
 			identity.task_id,
 			identity.project_id,
@@ -201,7 +201,7 @@ export async function storeAgentIntrospectionReport(
 				return { report: stored, replayed: true, created: false };
 			}
 			const inserted = await client.query(
-				"INSERT INTO agent_introspection_reports (organization_id, project_id, evaluation_run_id, evaluation_run_item_id, task_id, invocation_id, reported_by_actor_id, contract_version, source, outcome, completeness, request_hash, report) VALUES ($1, $2, $3, $4, $5, $6, $7, 'agent-introspection.v1', 'client_reported', $8, $9, $10, $11::jsonb) RETURNING *",
+				"INSERT INTO agent_introspection_reports (organization_id, project_id, evaluation_run_id, evaluation_run_item_id, task_id, invocation_id, reported_by_actor_id, contract_version, source, outcome, completeness, request_hash, report) VALUES ($1, $2, $3, $4, $5, $6, $7, 'agent-introspection.v1', 'client_reported', $8, $9, $10, $11::jsonb) ON CONFLICT (project_id, evaluation_run_id, task_id, invocation_id) DO NOTHING RETURNING *",
 				[
 					identity.authorization.organization_id,
 					identity.project_id,
@@ -216,11 +216,33 @@ export async function storeAgentIntrospectionReport(
 					JSON.stringify(parsed.data),
 				],
 			);
-			return {
-				report: reportFromRow(inserted.rows[0] as Row),
-				replayed: false,
-				created: true,
-			};
+			if (inserted.rows[0])
+				return {
+					report: reportFromRow(inserted.rows[0] as Row),
+					replayed: false,
+					created: true,
+				};
+			const raced = await client.query(
+				"SELECT * FROM agent_introspection_reports WHERE project_id = $1 AND evaluation_run_id = $2 AND task_id = $3 AND invocation_id = $4 FOR UPDATE",
+				[
+					identity.project_id,
+					identity.run_id,
+					identity.task_id,
+					identity.invocation_id,
+				],
+			);
+			if (!raced.rows[0])
+				throw new AgentIntrospectionRepositoryError(
+					"INTERNAL",
+					"Report persistence did not return a stored report",
+				);
+			const stored = reportFromRow(raced.rows[0] as Row);
+			if (stored.request_hash !== requestHash)
+				throw new AgentIntrospectionRepositoryError(
+					"CONFLICT",
+					"Report identity is already bound to immutable content",
+				);
+			return { report: stored, replayed: true, created: false };
 		},
 	);
 }

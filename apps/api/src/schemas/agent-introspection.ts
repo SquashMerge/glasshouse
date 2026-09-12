@@ -4,6 +4,8 @@ import { ErrorEnvelope } from "./common.js";
 
 const SafeToken = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/);
 const Uuid = z.string().uuid();
+const UuidPattern =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const Sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const FailureClass = z.enum([
 	"authentication",
@@ -106,7 +108,8 @@ const EvidenceReference = z
 			(value.source === "trace" && /^[a-f0-9]{32}$/.test(value.id)) ||
 			(value.source === "observation" && value.id.length <= 256) ||
 			(value.source === "prompt_version" &&
-				/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,199}@[1-9][0-9]*$/.test(value.id)) ||
+				(Uuid.safeParse(value.id).success ||
+					/^[a-z0-9]+(?:-[a-z0-9]+)*@[1-9][0-9]*$/.test(value.id))) ||
 			(value.source === "content_digest" && /^[a-f0-9]{64}$/.test(value.id));
 		if (!valid)
 			ctx.addIssue({
@@ -279,7 +282,11 @@ export function canonicalAgentIntrospectionJson(value: unknown): string {
 					`${JSON.stringify(key)}:${canonicalAgentIntrospectionJson(item)}`,
 			)
 			.join(",")}}`;
-	return JSON.stringify(value);
+	return JSON.stringify(
+		typeof value === "string" && UuidPattern.test(value)
+			? value.toLowerCase()
+			: value,
+	);
 }
 
 export const AgentIntrospectionReportV1 = ReportShape.superRefine(
@@ -329,7 +336,10 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 		const earlierIds = new Set<string>();
 		const operations = new Set<string>();
 		const attempts = new Map<string, number>();
+		const pendingRetries = new Map<string, number>();
 		let rootStarts = 0;
+		let root: { operation_id: string; agent_key: string } | undefined;
+		const agentTerminals: Array<{ index: number; event: any }> = [];
 		for (const [index, candidate] of report.events.entries()) {
 			const event = candidate as any;
 			if (event.sequence !== index)
@@ -371,6 +381,16 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 					path: ["events", index],
 				});
 			if (
+				event.type === "model.completed" &&
+				event.detail.cost_usd !== null &&
+				capabilitySupport.get("cost") !== "supported"
+			)
+				ctx.addIssue({
+					code: "custom",
+					message: "Model cost requires capability support",
+					path: ["events", index, "detail", "cost_usd"],
+				});
+			if (
 				(event.trace.trace_id || event.trace.span_id) &&
 				capabilitySupport.get("trace_linkage") !== "supported"
 			)
@@ -391,14 +411,19 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 			if (event.type === "retry") {
 				if (
 					!operations.has(event.detail.retried_operation_id) ||
-					event.detail.next_attempt <=
-						(attempts.get(event.detail.retried_operation_id) ?? 0)
+					event.detail.next_attempt !==
+						(attempts.get(event.detail.retried_operation_id) ?? 0) + 1
 				)
 					ctx.addIssue({
 						code: "custom",
 						message: "Retry must advance a prior operation attempt",
 						path: ["events", index, "detail"],
 					});
+				else
+					pendingRetries.set(
+						event.detail.retried_operation_id,
+						event.detail.next_attempt,
+					);
 			}
 			if (
 				event.type === "stream.summary" &&
@@ -419,11 +444,35 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 					message: "Error must reference a prior operation",
 					path: ["events", index, "detail"],
 				});
-			if ("attempt" in event.detail)
+			if ("attempt" in event.detail) {
+				const pendingAttempt = pendingRetries.get(event.operation_id);
+				if (
+					pendingAttempt !== undefined &&
+					event.detail.attempt !== pendingAttempt
+				)
+					ctx.addIssue({
+						code: "custom",
+						message: "Retry must be followed by its announced attempt",
+						path: ["events", index, "detail", "attempt"],
+					});
+				if (pendingAttempt === event.detail.attempt)
+					pendingRetries.delete(event.operation_id);
 				attempts.set(event.operation_id, event.detail.attempt);
+			}
 			operations.add(event.operation_id);
-			if (event.type === "agent.started" && event.parent_event_id === null)
+			if (event.type === "agent.started" && event.parent_event_id === null) {
 				rootStarts += 1;
+				root = {
+					operation_id: event.operation_id,
+					agent_key: event.detail.agent_key,
+				};
+			}
+			if (
+				["agent.completed", "agent.failed", "agent.cancelled"].includes(
+					event.type,
+				)
+			)
+				agentTerminals.push({ index, event });
 			earlierIds.add(event.event_id);
 			if (
 				Buffer.byteLength(canonicalAgentIntrospectionJson(event), "utf8") > 4096
@@ -434,12 +483,39 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 					path: ["events", index],
 				});
 		}
+		for (const _operationId of pendingRetries.keys())
+			ctx.addIssue({
+				code: "custom",
+				message: "Retry must be followed by its announced attempt",
+				path: ["events"],
+			});
 		const terminalTypes = {
 			succeeded: "agent.completed",
 			failed: "agent.failed",
 			cancelled: "agent.cancelled",
 		} as const;
 		const terminal = report.events.at(-1);
+		if (report.outcome !== "unknown") {
+			const expectedTerminal = terminalTypes[report.outcome];
+			if (
+				!root ||
+				rootStarts !== 1 ||
+				report.events[0]?.type !== "agent.started" ||
+				report.events[0]?.parent_event_id !== null ||
+				!terminal ||
+				terminal.type !== expectedTerminal ||
+				terminal.parent_event_id !== null ||
+				terminal.operation_id !== root.operation_id ||
+				terminal.detail.agent_key !== root.agent_key ||
+				agentTerminals.length !== 1 ||
+				agentTerminals.some(({ event }) => event.parent_event_id !== null)
+			)
+				ctx.addIssue({
+					code: "custom",
+					message: "Known outcomes require one matching root terminal",
+					path: ["events"],
+				});
+		}
 		if (report.completeness === "complete") {
 			if (
 				report.events[0]?.type !== "agent.started" ||
@@ -456,7 +532,8 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 				!terminal ||
 				terminal.type !== terminalTypes[report.outcome] ||
 				terminal.parent_event_id !== null ||
-				terminal.operation_id !== report.events[0]?.operation_id
+				terminal.operation_id !== report.events[0]?.operation_id ||
+				terminal.detail.agent_key !== root?.agent_key
 			)
 				ctx.addIssue({
 					code: "custom",
@@ -540,22 +617,27 @@ export const ReadAgentIntrospectionReportV1 = Stored.openapi(
 export const AgentIntrospectionErrorResponses = {
 	400: {
 		description: "Invalid report",
+		headers: z.object({ "Cache-Control": z.literal("no-store") }),
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	404: {
 		description: "Report or scoped task not found",
+		headers: z.object({ "Cache-Control": z.literal("no-store") }),
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	409: {
 		description: "Immutable report identity conflict",
+		headers: z.object({ "Cache-Control": z.literal("no-store") }),
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	413: {
 		description: "Normalized report too large",
+		headers: z.object({ "Cache-Control": z.literal("no-store") }),
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	500: {
 		description: "Internal server error",
+		headers: z.object({ "Cache-Control": z.literal("no-store") }),
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 };
