@@ -63,6 +63,8 @@ function projectOperationForRequest(
 	path: string,
 	method: string,
 ): ProjectOperation {
+	if (method === "POST" && /^\/v1\/prompts\/[^/]+\/render$/.test(path))
+		return "product_read";
 	if (path.startsWith("/v1/datasets/")) {
 		if (
 			(method === "DELETE" && /^\/v1\/datasets\/by-slug\/[^/]+$/.test(path)) ||

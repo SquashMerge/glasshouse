@@ -256,7 +256,13 @@ export function createPromptRouteHandlers(
 			try {
 				const query = c.req.valid("query") as { project_id: string };
 				return c.json(
-					await dependencies.listPrompts(dependencies.pool(), query.project_id),
+					await dependencies.listPrompts(dependencies.pool(), {
+						project_id: query.project_id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
+					}),
 				);
 			} catch (cause) {
 				return failure(c, cause);
@@ -299,6 +305,10 @@ export function createPromptRouteHandlers(
 						project_id: query.project_id,
 						slug: params.id,
 						version: query.version,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -315,6 +325,10 @@ export function createPromptRouteHandlers(
 					await dependencies.listPromptVersions(dependencies.pool(), {
 						project_id: query.project_id,
 						slug: params.id,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {
@@ -384,6 +398,10 @@ export function createPromptRouteHandlers(
 						slug: params.id,
 						version: query.version,
 						data: body.data,
+						authorization: projectAuthorization(
+							trustedTenant(c),
+							"product_read",
+						),
 					}),
 				);
 			} catch (cause) {

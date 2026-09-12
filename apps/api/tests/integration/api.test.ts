@@ -188,6 +188,62 @@ describe("API integration: auth gate", () => {
 		}
 	});
 
+	it("classifies persisted Prompt read surfaces as product_read before route execution", async () => {
+		const unavailableProject = "00000000-0000-4000-8000-000000000099";
+		const contentHash = "a".repeat(64);
+		assertTenantProjectAccess.mockClear();
+		assertTenantProjectAccess.mockImplementation(async () => {
+			throw new TenantScopeError("Project is not available");
+		});
+		try {
+			const requests = [
+				new Request(`http://x/v1/prompts?project_id=${unavailableProject}`, {
+					headers: { authorization: AUTH },
+				}),
+				new Request(
+					`http://x/v1/prompts/support-agent?project_id=${unavailableProject}`,
+					{ headers: { authorization: AUTH } },
+				),
+				new Request(
+					`http://x/v1/prompts/support-agent/versions?project_id=${unavailableProject}`,
+					{ headers: { authorization: AUTH } },
+				),
+				new Request(
+					`http://x/v1/prompts/support-agent/render?project_id=${unavailableProject}`,
+					{
+						method: "POST",
+						headers: {
+							authorization: AUTH,
+							"content-type": "application/json",
+						},
+						body: JSON.stringify({ data: {} }),
+					},
+				),
+				new Request(
+					`http://x/v1/prompt-provenance/support-agent?project_id=${unavailableProject}&version=1&content_hash=${contentHash}`,
+					{ headers: { authorization: AUTH } },
+				),
+			];
+			for (const request of requests) {
+				const response = await apiApp.fetch(request);
+				expect(response.status).toBe(404);
+			}
+			expect(
+				assertTenantProjectAccess.mock.calls.map(
+					([, , , operation]) => operation,
+				),
+			).toEqual([
+				"product_read",
+				"product_read",
+				"product_read",
+				"product_read",
+				"product_read",
+			]);
+		} finally {
+			assertTenantProjectAccess.mockImplementation(async () => undefined);
+		}
+	});
+
 	it("rejects a query/body project mismatch before a body-scoped route executes", async () => {
 		const authorizedProject = "00000000-0000-4000-8000-000000000002";
 		const foreignProject = "00000000-0000-4000-8000-000000000099";

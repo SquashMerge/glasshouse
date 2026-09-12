@@ -80,11 +80,14 @@ const PROMPT = {
 	name: "Support Agent",
 	description: null,
 };
-const listPromptsRecord = mock(async (_pool: unknown, projectId: string) => {
-	if (projectId === OTHER_PROJECT)
-		throw new PromptRepositoryError("NOT_FOUND", "Project not found");
-	return { items: [PROMPT], total: 1 };
-});
+const listPromptsRecord = mock(
+	async (_pool: unknown, input: string | { project_id: string }) => {
+		const projectId = typeof input === "string" ? input : input.project_id;
+		if (projectId === OTHER_PROJECT)
+			throw new PromptRepositoryError("NOT_FOUND", "Project not found");
+		return { items: [PROMPT], total: 1 };
+	},
+);
 const listPromptVersionsRecord = mock(
 	async (_pool: unknown, input: { project_id: string }) => {
 		if (input.project_id === OTHER_PROJECT)
@@ -339,10 +342,22 @@ describe("prompt route contracts", () => {
 			code: "CONFLICT",
 			message: "Prompt base version is stale",
 		});
-		expect(listPromptsRecord.mock.calls[0]?.[1]).toBe(PROJECT);
+		expect(listPromptsRecord.mock.calls[0]?.[1]).toEqual({
+			project_id: PROJECT,
+			authorization: {
+				organization_id: "00000000-0000-4000-8000-000000000001",
+				actor_id: "33333333-3333-4333-8333-333333333333",
+				operation: "product_read",
+			},
+		});
 		expect(listPromptVersionsRecord.mock.calls[0]?.[1]).toEqual({
 			project_id: PROJECT,
 			slug: "support-agent",
+			authorization: {
+				organization_id: "00000000-0000-4000-8000-000000000001",
+				actor_id: "33333333-3333-4333-8333-333333333333",
+				operation: "product_read",
+			},
 		});
 		expect(createPromptVersionRecord.mock.calls[0]?.[1]).toMatchObject({
 			project_id: PROJECT,
@@ -403,6 +418,15 @@ describe("prompt route contracts", () => {
 			warnings: [],
 		});
 		expect(renderPromptRecord).toHaveBeenCalledTimes(1);
+		expect(renderPromptRecord.mock.calls[0]?.[1]).toMatchObject({
+			project_id: PROJECT,
+			slug: "support-agent",
+			authorization: {
+				organization_id: "00000000-0000-4000-8000-000000000001",
+				actor_id: "33333333-3333-4333-8333-333333333333",
+				operation: "product_read",
+			},
+		});
 	});
 
 	it("renders unsaved system and user drafts with injected variables without reading a saved prompt", async () => {
@@ -443,6 +467,15 @@ describe("prompt route contracts", () => {
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
 		expect(await response.json()).toEqual({ status: "active" });
 		expect(promptProvenanceStatus).toHaveBeenCalledTimes(1);
+		expect(promptProvenanceStatus.mock.calls[0]?.[1]).toMatchObject({
+			project_id: PROJECT,
+			slug: "support-agent",
+			authorization: {
+				organization_id: "00000000-0000-4000-8000-000000000001",
+				actor_id: "33333333-3333-4333-8333-333333333333",
+				operation: "product_read",
+			},
+		});
 		const missingProject = await app().request(
 			`/v1/prompt-provenance/support-agent?project_id=${OTHER_PROJECT}&version=1&content_hash=${"a".repeat(64)}`,
 		);
@@ -463,6 +496,15 @@ describe("prompt route contracts", () => {
 		expect(await response.json()).toEqual({
 			code: "NOT_FOUND",
 			message: "Prompt or version not found",
+		});
+		expect(getPromptRecord.mock.calls.at(-1)?.[1]).toMatchObject({
+			project_id: PROJECT,
+			slug: "support-agent",
+			authorization: {
+				organization_id: "00000000-0000-4000-8000-000000000001",
+				actor_id: "33333333-3333-4333-8333-333333333333",
+				operation: "product_read",
+			},
 		});
 	});
 
