@@ -111,7 +111,11 @@ The API, worker, SSE subscription, and UI must all enforce this matrix. A
 Read-only client must receive a server-side authorization failure for every
 mutation or execution attempt, including a stale or hand-crafted request.
 
-## Shipped Evaluation Run journeys
+## Future Evaluation Run UX journeys
+
+The following journeys describe intended UI and SDK workflows. They are not a
+claim that the corresponding UI or SDK wrapper is shipped; the registered REST
+surface is listed below.
 
 ### 1. Create a UI-authored regression dataset and run it
 
@@ -254,16 +258,10 @@ Draft item removal uses `DELETE /v1/datasets/by-slug/{slug}/draft/items/{itemId}
 
 ## API and SDK surface
 
-The shipped Evaluation identity/Definition Version API is listed above. The
-Dataset and Experiment entries below document existing or retained migration
-surfaces. Only the Evaluation execution routes and SDK surface are future target
-contracts; they are not currently generated or available. **Every new endpoint
-below requires exactly one `?project_id=<UUID>` selector, including POST,
-detail, SSE, and cancel.** The SDK supplies that selector from its explicit
-Project configuration; the server still verifies membership and applies
-Project-scoped resource predicates. The current Dataset endpoints remain
-available during migration under the explicit body-scoped compatibility rule
-below; new endpoints make draft/version semantics explicit.
+The generated API exposes the registered REST routes below. Every Evaluation
+route requires `?project_id=<UUID>` and server-side Project authorization. UI
+journeys and SDK wrappers remain future work; generated clients do not add a
+handwritten `client.evaluations` workflow.
 
 ### REST
 
@@ -289,15 +287,28 @@ GET    /v1/datasets/by-slug/{slug}/export?project_id=&format=csv|jsonl&represent
 POST   /v1/datasets/by-slug/{slug}/restore?project_id= # Project Admin, If-Match Dataset revision
 DELETE /v1/datasets/by-slug/{slug}/tombstone?project_id= # Project Admin, typed slug + If-Match Dataset revision
 
-# Shipped Evaluation execution
-PATCH  /v1/evaluations/{slug}?project_id=      # metadata only
-POST   /v1/evaluations/{slug}/draft/validate?project_id=
-POST   /v1/evaluations/{slug}/runs?project_id= # body may choose definition version and run overrides
+# Registered Evaluation definitions and Run execution
+POST   /v1/evaluations?project_id=
+GET    /v1/evaluations?project_id=
+GET    /v1/evaluations/{slug}?project_id=
+DELETE /v1/evaluations/{slug}?project_id=              # archive
+POST   /v1/evaluations/{slug}/restore?project_id=
+DELETE /v1/evaluations/{slug}/tombstone?project_id=
+GET    /v1/evaluations/{slug}/draft?project_id=
+PUT    /v1/evaluations/{slug}/draft?project_id=
+POST   /v1/evaluations/{slug}/draft/publish?project_id=
+GET    /v1/evaluations/{slug}/versions?project_id=
+GET    /v1/evaluations/{slug}/versions/{version}?project_id=
+POST   /v1/evaluations/{slug}/runs?project_id=
+GET    /v1/evaluation-runs?project_id=
+POST   /v1/evaluation-runs/compare?project_id=
 GET    /v1/evaluation-runs/{id}?project_id=
-GET    /v1/evaluation-runs/{id}/results?project_id=
-GET    /v1/evaluation-runs/{id}/summary?project_id=
-GET    /v1/evaluation-runs/{id}/events?project_id= # SSE
+GET    /v1/evaluation-runs/{id}/evidence?project_id=
+GET    /v1/evaluation-runs/{id}/events?project_id=      # SSE notification stream
 POST   /v1/evaluation-runs/{id}/cancel?project_id=
+POST   /v1/evaluation-runs/{id}/retry?project_id=
+PUT    /v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}?project_id=
+GET    /v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}?project_id=
 
 # Existing Experiment execution API (shipped legacy ad-hoc surface, not an Evaluation Run alias)
 POST   /v1/experiments                         # legacy JSON-body project_id adapter; optional query must normalize equal
@@ -309,7 +320,7 @@ GET    /v1/experiments/{id}/events?project_id=   # legacy execution SSE
 POST   /v1/experiments/{id}/cancel?project_id=   # legacy execution cancellation
 ```
 
-`POST /v1/datasets` accepts `slug` optionally; new clients supply `?project_id=<UUID>`, while the compatibility adapter accepts the existing body `project_id` and rejects a nonmatching query/body pair. The server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. `POST /v1/datasets/by-slug/{slug}/draft/publish?project_id=<UUID>` accepts a required `expected_revision` and optional `message`, `source_git_sha`, and `idempotency_key`. Duplicate publish requests with the same idempotency key return the original version.
+`POST /v1/datasets` accepts `slug` optionally; new clients supply `?project_id=<UUID>`, while the compatibility adapter accepts the existing body `project_id` and rejects a nonmatching query/body pair. The server derives and reserves a normalized slug otherwise. Dataset slugs use the explicit `/by-slug/{slug}` namespace, so UUID-shaped slugs remain valid and cannot collide with retained `{id}` routes. The draft/version workflow described above remains a target contract until its routes are registered.
 
 Draft-facing screens use `GET /v1/datasets/{id}/items` to show the shared editable state. Evaluation and benchmark preflight use `GET /v1/datasets/{id}/published-items`, so unpublished additions or removals cannot change executable cases until an explicit publish succeeds.
 
@@ -326,7 +337,7 @@ neither selector is present, it fails before routing. Retained `GET` and
 selector. OpenAPI and generated SDKs expose the legacy body-scoped POST shapes
 as deprecated adapters and the query-scoped shapes as the new contract.
 
-The future `POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
+`POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
 
 ```json
 {
@@ -337,10 +348,7 @@ The future `POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
 }
 ```
 
-For that future route, overrides are permitted in manual/API runs and displayed
-as **Run overrides**. CI-gate tokens must reject dataset or target overrides
-unless the evaluation definition explicitly permits them. `latest_published` is
-resolved at request time and the resulting version is stored on the run.
+The UI presentation of overrides and CI SDK workflow remain future work.
 
 ### Future Python SDK
 

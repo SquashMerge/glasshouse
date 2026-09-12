@@ -105,7 +105,7 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 ## Conventions
 
 - **Agent Introspection Report:** one immutable, references-only `client_reported` report for an existing Evaluation Run task invocation; supplementary evidence, not verified execution or an Agent Registry record (`docs/agent-introspection-contract.md`, `apps/api/src/schemas/agent-introspection.ts`).
-- **Run-item scope quarantine:** safe identity metadata retained only when a historical task Run-item relationship cannot be deterministically remapped; its associated report content is removed rather than retained against an invalid Run (`infra/db/migrations/0091_agent_introspection_run_item_scope.sql`).
+- **Run-item scope quarantine:** safe identity metadata retained when a historical task Run-item relationship cannot be deterministically remapped to an unoccupied matching Dataset item; the invalid Run association is removed rather than guessed (`infra/db/migrations/0091_agent_introspection_run_item_scope.sql`, `0092_agent_introspection_scope_pair_integrity.sql`).
 
 - **observation** (not span) for the data-model concept.
 - **trace** (not request/run/session) in observability context.

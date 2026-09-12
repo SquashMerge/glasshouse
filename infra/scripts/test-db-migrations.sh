@@ -308,6 +308,46 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0091.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0092.assert.sql"
+
+run_agent_introspection_upgrade() {
+  local database="$1"
+  local stop_before="$2"
+  local include_report="$3"
+  docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$database"
+  for migration in "$ROOT"/infra/db/migrations/*.sql; do
+    [[ "$(basename "$migration")" == "$stop_before" ]] && break
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" < "$migration"
+  done
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+    < "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.fixture.sql"
+  if [[ "$include_report" == "true" ]]; then
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+      < "$ROOT/infra/db/migrations/0090_agent_introspection_reports.sql"
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+      < "$ROOT/infra/scripts/test-db-migrations-0091-upgrade.fixture.sql"
+  fi
+  local migrations=("$ROOT"/infra/db/migrations/0091_*.sql "$ROOT"/infra/db/migrations/0092_*.sql)
+  if [[ "$include_report" != "true" ]]; then
+    migrations=("$ROOT"/infra/db/migrations/0090_*.sql "${migrations[@]}")
+  fi
+  for migration in "${migrations[@]}"; do
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" < "$migration"
+  done
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+    < "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.assert.sql"
+}
+
+run_agent_introspection_upgrade "${POSTGRES_DB}_0090_upgrade" "0090_agent_introspection_reports.sql" false
+run_agent_introspection_upgrade "${POSTGRES_DB}_0091_upgrade" "0091_agent_introspection_run_item_scope.sql" true
 
 UPGRADE_0039_DATABASE="${POSTGRES_DB}_0039_upgrade"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0039_DATABASE"
