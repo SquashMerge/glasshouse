@@ -1,6 +1,9 @@
 DO $$
 DECLARE
     valid_task_id UUID;
+    safe_task_id UUID;
+    collision_a_task_id UUID;
+    collision_c_task_id UUID;
 BEGIN
     SELECT id INTO valid_task_id
     FROM experiment_tasks
@@ -16,53 +19,77 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'upgrade did not preserve the valid task Run-item association';
     END IF;
+
+    SELECT id INTO safe_task_id
+    FROM experiment_tasks
+    WHERE experiment_id = '90000000-0000-4000-8000-000000000014'
+      AND dataset_version_item_id = '90000000-0000-4000-8000-000000000018';
+    SELECT id INTO collision_a_task_id
+    FROM experiment_tasks
+    WHERE experiment_id = '90000000-0000-4000-8000-000000000014'
+      AND dataset_version_item_id = '90000000-0000-4000-8000-000000000007';
+    SELECT id INTO collision_c_task_id
+    FROM experiment_tasks
+    WHERE experiment_id = '90000000-0000-4000-8000-000000000026'
+      AND dataset_version_item_id = '90000000-0000-4000-8000-000000000007';
+
+    IF safe_task_id IS NULL OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_tasks
+        WHERE id = safe_task_id
+          AND evaluation_run_id = '90000000-0000-4000-8000-000000000010'
+          AND evaluation_run_item_id = '90000000-0000-4000-8000-000000000019'
+    ) THEN
+        RAISE EXCEPTION 'upgrade did not remap the non-conflicting task';
+    END IF;
     IF EXISTS (
         SELECT 1
         FROM experiment_tasks
-        WHERE experiment_id = '90000000-0000-4000-8000-000000000014'
-          AND dataset_version_item_id IN (
-              '90000000-0000-4000-8000-000000000007',
-              '90000000-0000-4000-8000-000000000018'
-          )
+        WHERE id IN (collision_a_task_id, collision_c_task_id)
           AND (evaluation_run_id IS NOT NULL OR evaluation_run_item_id IS NOT NULL)
     ) THEN
-        RAISE EXCEPTION 'upgrade retained an occupied or Dataset-misassociated task Run-item link';
+        RAISE EXCEPTION 'upgrade retained a conflicting task Run-item link';
     END IF;
     IF NOT EXISTS (
         SELECT 1
         FROM experiment_task_run_item_mismatch_quarantine AS quarantine
-        JOIN experiment_tasks AS task ON task.id = quarantine.task_id
-        WHERE task.dataset_version_item_id = '90000000-0000-4000-8000-000000000007'
-          AND quarantine.reason = 'deterministic_run_item_occupied'
+        WHERE quarantine.task_id = collision_a_task_id
+          AND quarantine.reason = 'deterministic_run_item_remap_collision'
     ) OR NOT EXISTS (
         SELECT 1
         FROM experiment_task_run_item_mismatch_quarantine AS quarantine
-        JOIN experiment_tasks AS task ON task.id = quarantine.task_id
-        WHERE task.dataset_version_item_id = '90000000-0000-4000-8000-000000000018'
-          AND quarantine.reason = 'run_item_dataset_version_item_mismatch'
+        WHERE quarantine.task_id = collision_c_task_id
+          AND quarantine.reason = 'deterministic_run_item_remap_collision'
     ) THEN
-        RAISE EXCEPTION 'upgrade did not quarantine both malformed task relationships';
+        RAISE EXCEPTION 'upgrade did not quarantine both converging task remaps';
     END IF;
     IF EXISTS (
         SELECT 1
         FROM experiment_results
         WHERE id IN (
                 '90000000-0000-4000-8000-000000000015',
-                '90000000-0000-4000-8000-000000000020'
+                '90000000-0000-4000-8000-000000000025'
             )
           AND (evaluation_run_id IS NOT NULL OR evaluation_run_item_id IS NOT NULL)
     ) OR NOT EXISTS (
         SELECT 1
         FROM experiment_results
         WHERE id = '90000000-0000-4000-8000-000000000015'
-          AND output = '{"output":"collision-preserved"}'::jsonb
+          AND output = '{"output":"collision-a-preserved"}'::jsonb
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_results
+        WHERE id = '90000000-0000-4000-8000-000000000025'
+          AND output = '{"output":"collision-c-preserved"}'::jsonb
     ) OR NOT EXISTS (
         SELECT 1
         FROM experiment_results
         WHERE id = '90000000-0000-4000-8000-000000000020'
-          AND output = '{"output":"misassociation-preserved"}'::jsonb
+          AND evaluation_run_id = '90000000-0000-4000-8000-000000000010'
+          AND evaluation_run_item_id = '90000000-0000-4000-8000-000000000019'
+          AND output = '{"output":"safe-remap-preserved"}'::jsonb
     ) THEN
-        RAISE EXCEPTION 'upgrade did not fail closed while preserving result evidence';
+        RAISE EXCEPTION 'upgrade did not scope remediated and quarantined result evidence';
     END IF;
     IF EXISTS (
         SELECT 1

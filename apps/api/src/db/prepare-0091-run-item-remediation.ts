@@ -51,39 +51,52 @@ export async function prepare0091RunItemRemediation(
             FOREIGN KEY (project_id, organization_id)
                 REFERENCES projects(id, organization_id) ON DELETE RESTRICT
         )`);
-		await client.query(`INSERT INTO experiment_task_run_item_mismatch_quarantine (
+		await client.query(`WITH planned_remaps AS (
+            SELECT task.id, task.project_id, task.evaluation_run_id,
+                   task.evaluation_run_item_id, candidate.id AS candidate_id,
+                   EXISTS (
+                       SELECT 1
+                       FROM experiment_tasks AS occupied_task
+                       WHERE occupied_task.project_id = task.project_id
+                         AND occupied_task.evaluation_run_id = task.evaluation_run_id
+                         AND occupied_task.evaluation_run_item_id = candidate.id
+                         AND occupied_task.id <> task.id
+                   ) AS candidate_occupied
+            FROM experiment_tasks AS task
+            JOIN LATERAL (
+                SELECT item.id
+                FROM evaluation_run_items AS item
+                WHERE item.project_id = task.project_id
+                  AND item.run_id = task.evaluation_run_id
+                  AND item.dataset_version_item_id IS NOT DISTINCT FROM task.dataset_version_item_id
+                ORDER BY item.id
+                LIMIT 1
+            ) AS candidate ON true
+            WHERE task.evaluation_run_id IS NOT NULL
+              AND task.evaluation_run_item_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM evaluation_run_items AS item
+                  WHERE item.id = task.evaluation_run_item_id
+                    AND item.project_id = task.project_id
+                    AND item.run_id = task.evaluation_run_id
+              )
+        ), conflicting_remaps AS (
+            SELECT planned_remaps.*,
+                   count(*) OVER (PARTITION BY candidate_id) AS candidate_remap_count
+            FROM planned_remaps
+        )
+        INSERT INTO experiment_task_run_item_mismatch_quarantine (
             task_id, project_id, evaluation_run_id, evaluation_run_item_id,
             remediated_evaluation_run_item_id, reason
         )
-        SELECT task.id, task.project_id, task.evaluation_run_id,
-               task.evaluation_run_item_id, NULL, 'deterministic_run_item_occupied'
-        FROM experiment_tasks AS task
-        JOIN LATERAL (
-            SELECT item.id
-            FROM evaluation_run_items AS item
-            WHERE item.project_id = task.project_id
-              AND item.run_id = task.evaluation_run_id
-              AND item.dataset_version_item_id IS NOT DISTINCT FROM task.dataset_version_item_id
-            ORDER BY item.id
-            LIMIT 1
-        ) AS candidate ON true
-        WHERE task.evaluation_run_id IS NOT NULL
-          AND task.evaluation_run_item_id IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1
-              FROM evaluation_run_items AS item
-              WHERE item.id = task.evaluation_run_item_id
-                AND item.project_id = task.project_id
-                AND item.run_id = task.evaluation_run_id
-          )
-          AND EXISTS (
-              SELECT 1
-              FROM experiment_tasks AS occupied_task
-              WHERE occupied_task.project_id = task.project_id
-                AND occupied_task.evaluation_run_id = task.evaluation_run_id
-                AND occupied_task.evaluation_run_item_id = candidate.id
-                AND occupied_task.id <> task.id
-          )
+        SELECT id, project_id, evaluation_run_id, evaluation_run_item_id, NULL,
+               CASE
+                   WHEN candidate_occupied THEN 'deterministic_run_item_occupied'
+                   ELSE 'deterministic_run_item_remap_collision'
+               END
+        FROM conflicting_remaps
+        WHERE candidate_occupied OR candidate_remap_count > 1
         ON CONFLICT (task_id) DO NOTHING`);
 
 		const reports = await client.query<{ exists: boolean }>(
@@ -96,13 +109,16 @@ export async function prepare0091RunItemRemediation(
             )
             SELECT report.id, report.organization_id, report.project_id,
                    report.evaluation_run_id, report.task_id, report.invocation_id,
-                   report.request_hash, 'deterministic_run_item_occupied'
+                   report.request_hash, quarantine.reason
             FROM agent_introspection_reports AS report
             JOIN experiment_task_run_item_mismatch_quarantine AS quarantine
               ON quarantine.task_id = report.task_id
              AND quarantine.project_id = report.project_id
              AND quarantine.evaluation_run_id = report.evaluation_run_id
-            WHERE quarantine.reason = 'deterministic_run_item_occupied'
+             WHERE quarantine.reason IN (
+                 'deterministic_run_item_occupied',
+                 'deterministic_run_item_remap_collision'
+             )
             ON CONFLICT (report_id) DO NOTHING`);
 			await client.query(
 				"ALTER TABLE agent_introspection_reports DISABLE TRIGGER agent_introspection_reports_immutable",
@@ -112,7 +128,10 @@ export async function prepare0091RunItemRemediation(
                 WHERE quarantine.task_id = report.task_id
                   AND quarantine.project_id = report.project_id
                   AND quarantine.evaluation_run_id = report.evaluation_run_id
-                  AND quarantine.reason = 'deterministic_run_item_occupied'`);
+                   AND quarantine.reason IN (
+                       'deterministic_run_item_occupied',
+                       'deterministic_run_item_remap_collision'
+                   )`);
 			await client.query(
 				"ALTER TABLE agent_introspection_reports ENABLE TRIGGER agent_introspection_reports_immutable",
 			);
@@ -123,7 +142,10 @@ export async function prepare0091RunItemRemediation(
             FROM experiment_tasks AS task
             JOIN experiment_task_run_item_mismatch_quarantine AS quarantine
               ON quarantine.task_id = task.id
-            WHERE quarantine.reason = 'deterministic_run_item_occupied'
+             WHERE quarantine.reason IN (
+                 'deterministic_run_item_occupied',
+                 'deterministic_run_item_remap_collision'
+             )
               AND result.experiment_id = task.experiment_id
               AND result.project_id = task.project_id
               AND result.dataset_version_item_id IS NOT DISTINCT FROM task.dataset_version_item_id
@@ -136,7 +158,10 @@ export async function prepare0091RunItemRemediation(
                 evaluation_run_item_id = NULL
             FROM experiment_task_run_item_mismatch_quarantine AS quarantine
             WHERE quarantine.task_id = task.id
-              AND quarantine.reason = 'deterministic_run_item_occupied'`);
+               AND quarantine.reason IN (
+                   'deterministic_run_item_occupied',
+                   'deterministic_run_item_remap_collision'
+               )`);
 		await client.query("COMMIT");
 	} catch (error) {
 		await client.query("ROLLBACK");
