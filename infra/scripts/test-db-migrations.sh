@@ -311,6 +311,9 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0092.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0093.assert.sql"
 
 run_agent_introspection_upgrade() {
   local database="$1"
@@ -325,6 +328,8 @@ run_agent_introspection_upgrade() {
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
     < "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.fixture.sql"
+  DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$database" \
+    bun run --cwd "$ROOT/apps/api" src/db/prepare-0091-run-item-remediation.ts
   if [[ "$include_report" == "true" ]]; then
     docker exec --interactive "$CONTAINER" \
       psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
@@ -333,7 +338,7 @@ run_agent_introspection_upgrade() {
       psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
       < "$ROOT/infra/scripts/test-db-migrations-0091-upgrade.fixture.sql"
   fi
-  local migrations=("$ROOT"/infra/db/migrations/0091_*.sql "$ROOT"/infra/db/migrations/0092_*.sql)
+  local migrations=("$ROOT"/infra/db/migrations/0091_*.sql "$ROOT"/infra/db/migrations/0092_*.sql "$ROOT"/infra/db/migrations/0093_*.sql)
   if [[ "$include_report" != "true" ]]; then
     migrations=("$ROOT"/infra/db/migrations/0090_*.sql "${migrations[@]}")
   fi

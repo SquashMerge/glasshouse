@@ -16,6 +16,9 @@ test("db:migrate validates filenames and tolerates the known legacy ordering inv
 	expect(migrationCommand).toContain(
 		"bun run ../../infra/scripts/verify-pg-migration-filenames.ts",
 	);
+	expect(migrationCommand).toContain(
+		"bun run src/db/prepare-0091-run-item-remediation.ts",
+	);
 	expect(migrationCommand).toContain("pg-migration-order-mode.ts");
 	expect(migrationCommand).toContain("legacy-0023-inversion");
 	expect(migrationCommand).toMatch(
@@ -37,4 +40,15 @@ test("migration harness upgrades a database that recorded the prior 0023 order",
 	expect(legacyHarness).toContain("0023_prompt_optimization_metric_calls");
 	expect(legacyHarness).toContain("0023_project_workspace_authorization");
 	expect(legacyHarness).toContain("psql --tuples-only --no-align");
+});
+
+test("migration harness exercises the occupied Run-item remediation before 0091", () => {
+	expect(migrationHarness).toContain(
+		"test-db-migrations-agent-introspection-upgrade.fixture.sql",
+	);
+	expect(migrationHarness).toContain("prepare-0091-run-item-remediation.ts");
+	expect(migrationHarness).toContain("0093_*.sql");
+	expect(migrationHarness).toContain(
+		"test-db-migrations-agent-introspection-upgrade.assert.sql",
+	);
 });

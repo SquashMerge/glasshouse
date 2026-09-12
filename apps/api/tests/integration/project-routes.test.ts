@@ -645,6 +645,17 @@ describe("project authorization routes", () => {
 		expect(index("DELETE FROM feedback_reviews")).toBeLessThan(
 			index("DELETE FROM dataset_items"),
 		);
+		expect(index("DELETE FROM agent_introspection_reports")).toBeLessThan(
+			index("DELETE FROM agent_introspection_report_scope_quarantine"),
+		);
+		expect(
+			index("DELETE FROM agent_introspection_report_scope_quarantine"),
+		).toBeLessThan(
+			index("DELETE FROM experiment_task_run_item_mismatch_quarantine"),
+		);
+		expect(
+			index("DELETE FROM experiment_task_run_item_mismatch_quarantine"),
+		).toBeLessThan(index("DELETE FROM experiment_tasks"));
 		expect(index("DELETE FROM dataset_item_input_quarantine")).toBeLessThan(
 			index("DELETE FROM dataset_items"),
 		);

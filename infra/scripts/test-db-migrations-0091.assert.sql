@@ -11,10 +11,10 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'experiment_tasks'::regclass
-          AND conname = 'experiment_tasks_evaluation_run_item_run_fkey'
-          AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (evaluation_run_item_id, project_id, evaluation_run_id)%REFERENCES evaluation_run_items(id, project_id, run_id)%'
+          AND conname = 'experiment_tasks_evaluation_run_item_dataset_version_item_fkey'
+          AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (evaluation_run_item_id, project_id, evaluation_run_id, dataset_version_item_id)%REFERENCES evaluation_run_items(id, project_id, run_id, dataset_version_item_id)%'
     ) THEN
-        RAISE EXCEPTION '0091 task Run-item composite scope FK is missing';
+        RAISE EXCEPTION 'task Run-item Dataset-version-item composite scope FK is missing';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
