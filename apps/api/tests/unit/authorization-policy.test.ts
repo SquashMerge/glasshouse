@@ -65,6 +65,9 @@ describe("Admin/User/Read-only authorization policy", () => {
 		expect(projectOperationAllowed("strict", "user", "product_write")).toBe(
 			true,
 		);
+		expect(projectOperationAllowed("strict", "user", "curation_write")).toBe(
+			true,
+		);
 		expect(projectOperationAllowed("strict", "user", "execute")).toBe(true);
 		expect(projectOperationAllowed("strict", "user", "governed")).toBe(false);
 		expect(projectOperationAllowed("strict", "admin", "destructive")).toBe(
