@@ -73,13 +73,15 @@ export async function prepare0091RunItemRemediation(
                 LIMIT 1
             ) AS candidate ON true
             WHERE task.evaluation_run_id IS NOT NULL
-              AND task.evaluation_run_item_id IS NOT NULL
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM evaluation_run_items AS item
-                  WHERE item.id = task.evaluation_run_item_id
-                    AND item.project_id = task.project_id
-                    AND item.run_id = task.evaluation_run_id
+              AND (
+                  task.evaluation_run_item_id IS NULL
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM evaluation_run_items AS item
+                      WHERE item.id = task.evaluation_run_item_id
+                        AND item.project_id = task.project_id
+                        AND item.run_id = task.evaluation_run_id
+                  )
               )
         ), conflicting_remaps AS (
             SELECT planned_remaps.*,

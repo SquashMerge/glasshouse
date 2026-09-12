@@ -4,6 +4,8 @@ DECLARE
     safe_task_id UUID;
     collision_a_task_id UUID;
     collision_c_task_id UUID;
+    half_scope_a_task_id UUID;
+    half_scope_b_task_id UUID;
 BEGIN
     SELECT id INTO valid_task_id
     FROM experiment_tasks
@@ -32,6 +34,14 @@ BEGIN
     FROM experiment_tasks
     WHERE experiment_id = '90000000-0000-4000-8000-000000000026'
       AND dataset_version_item_id = '90000000-0000-4000-8000-000000000007';
+    SELECT id INTO half_scope_a_task_id
+    FROM experiment_tasks
+    WHERE experiment_id = '90000000-0000-4000-8000-000000000027'
+      AND dataset_version_item_id = '90000000-0000-4000-8000-000000000007';
+    SELECT id INTO half_scope_b_task_id
+    FROM experiment_tasks
+    WHERE experiment_id = '90000000-0000-4000-8000-000000000030'
+      AND dataset_version_item_id = '90000000-0000-4000-8000-000000000007';
 
     IF safe_task_id IS NULL OR NOT EXISTS (
         SELECT 1
@@ -45,7 +55,12 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM experiment_tasks
-        WHERE id IN (collision_a_task_id, collision_c_task_id)
+        WHERE id IN (
+                collision_a_task_id,
+                collision_c_task_id,
+                half_scope_a_task_id,
+                half_scope_b_task_id
+            )
           AND (evaluation_run_id IS NOT NULL OR evaluation_run_item_id IS NOT NULL)
     ) THEN
         RAISE EXCEPTION 'upgrade retained a conflicting task Run-item link';
@@ -60,15 +75,27 @@ BEGIN
         FROM experiment_task_run_item_mismatch_quarantine AS quarantine
         WHERE quarantine.task_id = collision_c_task_id
           AND quarantine.reason = 'deterministic_run_item_remap_collision'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_task_run_item_mismatch_quarantine AS quarantine
+        WHERE quarantine.task_id = half_scope_a_task_id
+          AND quarantine.reason = 'deterministic_run_item_remap_collision'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_task_run_item_mismatch_quarantine AS quarantine
+        WHERE quarantine.task_id = half_scope_b_task_id
+          AND quarantine.reason = 'deterministic_run_item_remap_collision'
     ) THEN
-        RAISE EXCEPTION 'upgrade did not quarantine both converging task remaps';
+        RAISE EXCEPTION 'upgrade did not quarantine every converging task remap';
     END IF;
     IF EXISTS (
         SELECT 1
         FROM experiment_results
         WHERE id IN (
                 '90000000-0000-4000-8000-000000000015',
-                '90000000-0000-4000-8000-000000000025'
+                '90000000-0000-4000-8000-000000000025',
+                '90000000-0000-4000-8000-000000000028',
+                '90000000-0000-4000-8000-000000000029'
             )
           AND (evaluation_run_id IS NOT NULL OR evaluation_run_item_id IS NOT NULL)
     ) OR NOT EXISTS (
@@ -81,6 +108,16 @@ BEGIN
         FROM experiment_results
         WHERE id = '90000000-0000-4000-8000-000000000025'
           AND output = '{"output":"collision-c-preserved"}'::jsonb
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_results
+        WHERE id = '90000000-0000-4000-8000-000000000028'
+          AND output = '{"output":"half-scope-a-preserved"}'::jsonb
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_results
+        WHERE id = '90000000-0000-4000-8000-000000000029'
+          AND output = '{"output":"half-scope-b-preserved"}'::jsonb
     ) OR NOT EXISTS (
         SELECT 1
         FROM experiment_results
