@@ -180,7 +180,8 @@ describe("Evaluation Run lifecycle API", () => {
 			openapi: "3.0.0",
 			info: { title: "test", version: "1" },
 		});
-		const path = "/v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}";
+		const path =
+			"/v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}";
 		expect(document.paths?.[path]?.put).toBeDefined();
 		expect(document.paths?.[path]?.get).toBeDefined();
 	});

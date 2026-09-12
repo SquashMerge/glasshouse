@@ -12,18 +12,26 @@ import {
 
 describe("agent-introspection.v1 contract", () => {
 	it("accepts strict normalized framework-neutral complete and partial reports", () => {
-		expect(AgentIntrospectionReportV1.safeParse(completeSuccess).success).toBe(true);
+		expect(AgentIntrospectionReportV1.safeParse(completeSuccess).success).toBe(
+			true,
+		);
 		expect(AgentIntrospectionReportV1.safeParse(partial).success).toBe(true);
 		expect(AgentIntrospectionReportV1.safeParse(failed).success).toBe(true);
 		expect(AgentIntrospectionReportV1.safeParse(cancelled).success).toBe(true);
-		expect(AgentIntrospectionReportV1.safeParse(secondFramework).success).toBe(true);
+		expect(AgentIntrospectionReportV1.safeParse(secondFramework).success).toBe(
+			true,
+		);
 	});
 
 	it("rejects unsafe and arbitrary report content", () => {
-		expect(AgentIntrospectionReportV1.safeParse(invalidSecurity).success).toBe(false);
+		expect(AgentIntrospectionReportV1.safeParse(invalidSecurity).success).toBe(
+			false,
+		);
 		expect(
-		AgentIntrospectionReportV1.safeParse({ ...completeSuccess, prompt: "secret" })
-			.success,
+			AgentIntrospectionReportV1.safeParse({
+				...completeSuccess,
+				prompt: "secret",
+			}).success,
 		).toBe(false);
 	});
 
@@ -37,7 +45,9 @@ describe("agent-introspection.v1 contract", () => {
 			support: "unsupported",
 			reason: "adapter_unsupported",
 		};
-		expect(AgentIntrospectionReportV1.safeParse(unsupported).success).toBe(false);
+		expect(AgentIntrospectionReportV1.safeParse(unsupported).success).toBe(
+			false,
+		);
 	});
 
 	it("hashes recursively sorted object keys while preserving array order", () => {
@@ -49,20 +59,22 @@ describe("agent-introspection.v1 contract", () => {
 			task_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
 			invocation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
 		};
-		const reordered = JSON.parse(JSON.stringify(completeSuccess)) as typeof completeSuccess;
+		const reordered = JSON.parse(
+			JSON.stringify(completeSuccess),
+		) as typeof completeSuccess;
 		reordered.adapter = {
 			framework_version: reordered.adapter.framework_version,
 			framework: reordered.adapter.framework,
 			version: reordered.adapter.version,
 			name: reordered.adapter.name,
 		};
-		expect(canonicalAgentIntrospectionRequestHash(completeSuccess, identity)).toBe(
-			canonicalAgentIntrospectionRequestHash(reordered, identity),
-		);
+		expect(
+			canonicalAgentIntrospectionRequestHash(completeSuccess, identity),
+		).toBe(canonicalAgentIntrospectionRequestHash(reordered, identity));
 		const changedOrder = structuredClone(completeSuccess);
 		changedOrder.events.reverse();
-		expect(canonicalAgentIntrospectionRequestHash(completeSuccess, identity)).not.toBe(
-			canonicalAgentIntrospectionRequestHash(changedOrder, identity),
-		);
+		expect(
+			canonicalAgentIntrospectionRequestHash(completeSuccess, identity),
+		).not.toBe(canonicalAgentIntrospectionRequestHash(changedOrder, identity));
 	});
 });

@@ -25,16 +25,32 @@ export const putAgentIntrospectionRoute = createRoute({
 	path: "/v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}",
 	tags: [tag],
 	summary: "Store or replay a client-reported Agent Introspection Report",
-	description: "Stores one immutable references-only client report. Astraea did not execute or verify the reported agent activity.",
+	description:
+		"Stores one immutable references-only client report. Astraea did not execute or verify the reported agent activity.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: AgentIntrospectionPath,
 		query: AgentIntrospectionProjectQuery,
-		body: { content: { "application/json": { schema: AgentIntrospectionReportV1 } }, required: true },
+		body: {
+			content: { "application/json": { schema: AgentIntrospectionReportV1 } },
+			required: true,
+		},
 	},
 	responses: {
-		201: { description: "Stored", headers: NoStore, content: { "application/json": { schema: StoredAgentIntrospectionReportV1 } } },
-		200: { description: "Identical immutable replay", headers: NoStore, content: { "application/json": { schema: StoredAgentIntrospectionReportV1 } } },
+		201: {
+			description: "Stored",
+			headers: NoStore,
+			content: {
+				"application/json": { schema: StoredAgentIntrospectionReportV1 },
+			},
+		},
+		200: {
+			description: "Identical immutable replay",
+			headers: NoStore,
+			content: {
+				"application/json": { schema: StoredAgentIntrospectionReportV1 },
+			},
+		},
 		...AgentIntrospectionErrorResponses,
 	},
 });
@@ -43,20 +59,36 @@ export const getAgentIntrospectionRoute = createRoute({
 	path: "/v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}",
 	tags: [tag],
 	summary: "Get one client-reported Agent Introspection Report",
-	description: "Returns supplementary client-reported evidence, not verified agent execution.",
+	description:
+		"Returns supplementary client-reported evidence, not verified agent execution.",
 	security: [{ basicAuth: [] }],
-	request: { params: AgentIntrospectionPath, query: AgentIntrospectionProjectQuery },
+	request: {
+		params: AgentIntrospectionPath,
+		query: AgentIntrospectionProjectQuery,
+	},
 	responses: {
-		200: { description: "OK", headers: NoStore, content: { "application/json": { schema: ReadAgentIntrospectionReportV1 } } },
+		200: {
+			description: "OK",
+			headers: NoStore,
+			content: {
+				"application/json": { schema: ReadAgentIntrospectionReportV1 },
+			},
+		},
 		...AgentIntrospectionErrorResponses,
 	},
 });
 
 function failure(c: Context, cause: unknown) {
-	const error = cause instanceof AgentIntrospectionRepositoryError
-		? cause
-		: new AgentIntrospectionRepositoryError("INTERNAL", "Agent introspection operation failed", cause);
-	if (error.status === 500) logger.error("agent_introspection.request_failed", cause);
+	const error =
+		cause instanceof AgentIntrospectionRepositoryError
+			? cause
+			: new AgentIntrospectionRepositoryError(
+					"INTERNAL",
+					"Agent introspection operation failed",
+					cause,
+				);
+	if (error.status === 500)
+		logger.error("agent_introspection.request_failed", cause);
 	return c.json(
 		{
 			code: error.code,
@@ -91,7 +123,10 @@ export const handlePutAgentIntrospection = async (c: any) => {
 			c.req.valid("json"),
 		);
 		c.header("Cache-Control", "no-store");
-		return c.json({ ...stored.report, replayed: stored.replayed }, stored.created ? 201 : 200);
+		return c.json(
+			{ ...stored.report, replayed: stored.replayed },
+			stored.created ? 201 : 200,
+		);
 	} catch (cause) {
 		c.header("Cache-Control", "no-store");
 		return failure(c, cause);
@@ -99,7 +134,10 @@ export const handlePutAgentIntrospection = async (c: any) => {
 };
 export const handleGetAgentIntrospection = async (c: any) => {
 	try {
-		const stored = await getAgentIntrospectionReport(pgPool(), identity(c, "product_read"));
+		const stored = await getAgentIntrospectionReport(
+			pgPool(),
+			identity(c, "product_read"),
+		);
 		c.header("Cache-Control", "no-store");
 		return c.json(stored);
 	} catch (cause) {
