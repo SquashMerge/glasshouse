@@ -509,16 +509,25 @@ describe("evaluation route contract", () => {
 		const runId = "44444444-4444-4444-8444-444444444444";
 		const otherProjectId = "55555555-5555-4555-8555-555555555555";
 		const evidenceQueries: unknown[][] = [];
+		const runLookups: Array<{ sql: string; values: unknown[] }> = [];
 		const query = async (sql: string, values: unknown[] = []) => {
 			if (sql.includes("FROM projects p"))
-				return { rows: values[0] === projectId ? [{ id: projectId }] : [] };
+				return {
+					rows:
+						values[0] === projectId || values[0] === otherProjectId
+							? [{ id: values[0] }]
+							: [],
+				};
 			if (sql.includes("authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
 			if (sql.startsWith("SELECT v.redaction")) return { rows: [] };
-			if (sql.startsWith("SELECT run.id, run.project_id, run.status"))
+			if (sql.startsWith("SELECT run.id, run.project_id, run.status")) {
+				runLookups.push({ sql, values });
 				return {
 					rows:
-						values[0] === runId
+						sql.includes("WHERE run.id = $1 AND run.project_id = $2") &&
+						values[0] === runId &&
+						values[1] === projectId
 							? [
 									{
 										id: runId,
@@ -547,6 +556,7 @@ describe("evaluation route contract", () => {
 								]
 							: [],
 				};
+			}
 			if (sql.startsWith("SELECT inputs.*, count(item.id)"))
 				return {
 					rows: [
@@ -608,14 +618,22 @@ describe("evaluation route contract", () => {
 			});
 			expect(evidenceQueries).toEqual([[runId, projectId, 1, 0]]);
 
-			for (const id of ["88888888-8888-4888-8888-888888888888", runId]) {
-				const project = id === runId ? otherProjectId : projectId;
-				const response = await app.request(
-					`http://test/v1/evaluation-runs/${id}/evidence?project_id=${project}`,
-				);
-				expect(response.status).toBe(404);
-				expect(await response.json()).toMatchObject({ code: "NOT_FOUND" });
-			}
+			const missing = await app.request(
+				`http://test/v1/evaluation-runs/88888888-8888-4888-8888-888888888888/evidence?project_id=${projectId}`,
+			);
+			const crossProject = await app.request(
+				`http://test/v1/evaluation-runs/${runId}/evidence?project_id=${otherProjectId}`,
+			);
+
+			expect(missing.status).toBe(404);
+			expect(crossProject.status).toBe(404);
+			expect(await crossProject.json()).toEqual(await missing.json());
+			expect(runLookups).toContainEqual({
+				sql: expect.stringContaining(
+					"WHERE run.id = $1 AND run.project_id = $2",
+				),
+				values: [runId, otherProjectId],
+			});
 		} finally {
 			postgresSpy.mockRestore();
 		}
