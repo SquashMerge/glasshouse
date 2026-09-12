@@ -8,6 +8,10 @@ Evaluation Runs are inspectable records, not opaque pass percentages. A Run pins
 
 Evidence is read-time bounded. Sensitive-key redaction and size/depth limits always apply; the approved Project governance redaction policy adds its configured keys or all-text mode. A redaction indicator identifies fields affected and the byte bound. Do not treat the SSE event stream as an evidence page.
 
+## Client-reported introspection
+
+`agent-introspection.v1` is separate supplementary evidence attached to one Run task/invocation. It is explicitly `source: "client_reported"`; Astraea did not execute or verify the described agent. It contains strict references and typed summaries only and never changes canonical Run lifecycle, result, comparison, or gate data. See [the normative contract](agent-introspection-contract.md). SSE remains lifecycle notification only and never carries introspection reports.
+
 ## Comparison rules
 
 `POST /v1/evaluation-runs/compare?project_id=...` with two distinct Run IDs reports every pinned difference. Target changes are explicit and are allowed for baseline/candidate comparison. The immutable Definition Version and Dataset Version content hashes, evaluator contract, execution defaults, sample identity, and thresholds must match. Legacy or unsupported evaluator contracts are not comparable.

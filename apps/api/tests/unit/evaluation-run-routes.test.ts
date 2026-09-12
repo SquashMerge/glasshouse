@@ -33,6 +33,10 @@ import {
 	cancelEvaluationRun,
 	retryEvaluationRun,
 } from "../../src/db/evaluation-runs";
+import {
+	getAgentIntrospectionRoute,
+	putAgentIntrospectionRoute,
+} from "../../src/routes/agent-introspection";
 
 describe("Evaluation Run lifecycle API", () => {
 	const hash = "a".repeat(64);
@@ -166,6 +170,19 @@ describe("Evaluation Run lifecycle API", () => {
 				metrics: { left: metrics, right: metrics, delta: null },
 			}).success,
 		).toBe(true);
+	});
+
+	it("documents exact project-scoped agent introspection routes", () => {
+		const app = new OpenAPIHono();
+		app.openapi(putAgentIntrospectionRoute, () => new Response());
+		app.openapi(getAgentIntrospectionRoute, () => new Response());
+		const document = app.getOpenAPIDocument({
+			openapi: "3.0.0",
+			info: { title: "test", version: "1" },
+		});
+		const path = "/v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}";
+		expect(document.paths?.[path]?.put).toBeDefined();
+		expect(document.paths?.[path]?.get).toBeDefined();
 	});
 
 	it("requires a project-scoped lifecycle status without exposing input content", () => {

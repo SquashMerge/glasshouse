@@ -104,6 +104,8 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 
 ## Conventions
 
+- **Agent Introspection Report:** one immutable, references-only `client_reported` report for an existing Evaluation Run task invocation; supplementary evidence, not verified execution or an Agent Registry record (`docs/agent-introspection-contract.md`, `apps/api/src/schemas/agent-introspection.ts`).
+
 - **observation** (not span) for the data-model concept.
 - **trace** (not request/run/session) in observability context.
 - **generation** (not "LLM call") when `type` matters.

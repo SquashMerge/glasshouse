@@ -58,18 +58,18 @@ that give an agent version meaning.
 | Project isolation and lifecycle | Shipped | Organization/Project membership, server-authorized Project selection, scoped REST/worker/SSE/telemetry behavior, governed project lifecycle, and deletion safeguards. |
 | Governance | Shipped | Project-scoped policy drafts/approval, ingress redaction, safe previews, bounded retention, and content-free audit evidence. |
 
-Shipped does **not** mean finished. P2 Dataset lifecycle, the P3.1 Evaluation
-identity/Definition Version route foundation, and the initial P3.2 Evaluation
-Run admission path are shipped. The next roadmap hardens execution evidence,
-gates, and authorization before adding Agent Registry breadth.
+Shipped does **not** mean finished. P2 Dataset lifecycle and P3 Evaluation Run
+admission, execution, evidence, comparison, and gates are shipped. P4 #166a is
+strict client-reported introspection contract groundwork only; it does not ship
+Agent execution, Agno, an SDK, or the deferred #50 Agent Registry.
 
 ## Target P2/P3 product definition (remaining work)
 
 The current product combines the P2 Dataset lifecycle and P3.1 Evaluation
 identity/Definition Version route foundation with admitted configured-LLM
 Evaluation Runs, legacy Experiment runs, and human-feedback review. Evaluation
-Run evidence views, schedules, and gates remain future work; the existing
-Experiment surface is not a shipped Evaluation Run alias.
+Run evidence views and release/CI gates are shipped; schedules remain future
+work. The existing Experiment surface is not a shipped Evaluation Run alias.
 
 ```text
 Authorized user in an organization / Project
@@ -94,7 +94,7 @@ Curate a governed, versioned Dataset
         ↓
 Publish a reusable, versioned Evaluation definition (P3.1 route foundation shipped)
         ↓
-Resolve immutable inputs and execute an Evaluation run (future P3 execution)
+Resolve immutable inputs and execute a durable Evaluation Run (shipped P3)
         ↓
 Inspect evidence, promote a deliberate improvement, repeat
 ```
@@ -263,10 +263,9 @@ Dataset foundation.
 
 ### P3 — Evaluation definitions and reproducible execution
 
-**Status:** P3.1 stable Evaluation identity, revisioned definition drafts,
-immutable Definition Version publication/inspection, and lifecycle routes are
-shipped. Evaluation Run resolution/execution, evidence, schedules, and gates
-remain future work.
+**Status:** Evaluation identity, immutable Definition Versions, durable Run
+admission/execution, bounded evidence, comparison, and release/CI gates are
+shipped. Schedules remain future work.
 
 **Goal:** complete the transition from one-off Experiments into reliable,
 reusable Evaluation Definitions and Runs while continuing to use the current
@@ -319,6 +318,11 @@ follow mutable “latest” data by accident.
 
 ### P4 — Agent Registry and version-bound targets
 
+**Approved ordering exception:** #166a precedes the deferred #50 Registry only
+as a strict, immutable `client_reported` report attached to an existing
+Evaluation Run task. It does not activate legacy Agent routes or ship Agent
+identity, manifests, targets, execution, Agno, or SDK support.
+
 **Goal:** introduce Agents only when Astraea has reliable data, evaluation,
 identity, and execution foundations to make a first-class Agent useful.
 
@@ -369,7 +373,7 @@ Only after the evidence loop is reliable:
 | Build identity/roles/SSO before expanding Dataset/Evaluation collaboration. | Shared curation, governance, and future release gates require accountable users and enforceable authority. |
 | Build Dataset versions before reusable Evaluation definitions. | An Evaluation cannot be reproducible if its source suite remains mutable. |
 | Build Evaluation Definitions/Runs before Agent Registry. | Astraea needs a dependable place to bind and evaluate a future Agent version; configured-LLM targets let us prove the execution model now. |
-| Introduce Agents before framework breadth. | A small immutable Agent identity/version contract is more valuable than many shallow adapters. |
+| Keep #50 Agent Registry deferred while landing #166a contract groundwork. | A references-only client report establishes a safe P4 evidence boundary without pretending a Registry or framework integration exists. |
 | Add SCIM, complex RBAC, and broad IdP catalogs later. | The three-role, Project-scoped model must prove secure and usable before automating administration. |
 | Defer automatic Dataset/model/deployment changes and unguarded prompt promotion. | Astraea should make evidence and decisions stronger before it automates consequential changes; the existing held-out-validation, leakage-checked, source-version-guarded GEPA prompt exception remains deliberately narrow. |
 

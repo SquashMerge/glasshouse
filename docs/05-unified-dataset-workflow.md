@@ -6,7 +6,7 @@
 
 Canonical Evaluation slugs are required for archive, restore, tombstone, draft replacement, and publication. UUID Evaluation IDs remain a read-only compatibility selector for Evaluation, draft, and immutable-version detail or inspection requests.
 
-**Status:** P2 Dataset lifecycle, P3.1 Evaluation identity and Definition Versions, and the initial P3.2 Evaluation Run admission/execution path are implemented; the Agent Registry remains planned.
+**Status:** P2 Dataset lifecycle and P3 Evaluation identity, durable Runs, bounded evidence, comparison, and gates are implemented. The Agent Registry remains deferred; P4 ships only a client-reported introspection contract, not Agent execution or a target.
 
 **Shipped Evaluation API:**
 
@@ -28,7 +28,7 @@ GET    /v1/evaluations/{slug}/versions/{version}?project_id=
 Archive, restore, and tombstone `204` responses return their quoted lifecycle
 `ETag`.
 
-**Future boundary:** Evaluation Run schedules, gates, evidence views, and SDK invocation below remain planned P3/P5 work. Admission and configured-LLM execution are shipped through the Evaluation Run route; existing `/v1/experiments` remains the distinct legacy ad-hoc execution API and is not an alias.
+**Future boundary:** Evaluation Run schedules and SDK invocation remain planned. Admission, configured-LLM execution, bounded evidence, comparison, and gates are shipped; existing `/v1/experiments` remains the distinct legacy ad-hoc execution API and is not an alias.
 
 **Scope:** one project-scoped Dataset and Evaluation Definition foundation shared by the dashboard and REST API; this document preserves the future SDK and Evaluation Run roadmap separately.
 
@@ -74,7 +74,7 @@ Project
  │   └─ Evaluation definition version 1..n (immutable recipe)
  │       ├─ target selector → resolved target snapshot at run time
  │       └─ dataset selector → resolved Dataset version at run time
- └─ Evaluation run (future P3; distinct from current Experiment)
+  └─ Evaluation run (shipped P3; distinct from current Experiment)
      ├─ resolved evaluation-definition version
      ├─ resolved dataset version
      ├─ resolved target snapshot (and manifest version when applicable)
@@ -90,7 +90,7 @@ Project
 - **Dataset item:** one test case. `input` is sent to the target; `expected_output` and `metadata` are evaluator inputs. Item identity remains stable across versions when carried forward.
 - **Evaluation:** stable reusable definition, for example “Support quality gate.” It has a version history just as a prompt does.
 - **Evaluation definition version:** immutable target selector, dataset selector, evaluator configuration, mappings, and run defaults. Displayed as `support-quality-gate@4`.
-- **Evaluation run (future P3):** the planned execution and its results. It records all resolved IDs/hashes; the existing MVP API/database term is the distinct legacy **Experiment**.
+- **Evaluation run:** durable execution and results with resolved IDs/hashes; the existing MVP API/database term is the distinct legacy **Experiment**.
 
 ### P1 authorization prerequisites
 

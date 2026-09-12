@@ -89,6 +89,13 @@ function projectOperationForRequest(
 		if (method === "GET" || method === "HEAD") return "product_read";
 		return "release_gate_manage";
 	}
+	if (
+		method === "PUT" &&
+		/^\/v1\/evaluation-runs\/[^/]+\/tasks\/[^/]+\/agent-introspection\/[^/]+$/.test(
+			path,
+		)
+	)
+		return "ingest";
 	if (method === "GET" || method === "HEAD") return "product_read";
 	if (path === "/v1/datasets") return "curation_write";
 	if (path.startsWith("/v1/feedback")) return "curation_write";

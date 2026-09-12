@@ -296,6 +296,12 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0089.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0090.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0090.assert.sql"
 
 UPGRADE_0039_DATABASE="${POSTGRES_DB}_0039_upgrade"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$UPGRADE_0039_DATABASE"

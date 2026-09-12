@@ -70,6 +70,12 @@ import {
 	handleGetEvaluationRunEvents,
 } from "./routes/evaluations.js";
 import {
+	getAgentIntrospectionRoute,
+	handleGetAgentIntrospection,
+	handlePutAgentIntrospection,
+	putAgentIntrospectionRoute,
+} from "./routes/agent-introspection.js";
+import {
 	createEvaluationGateApprovalRoute,
 	getEvaluationGateApprovalRoute,
 	getEvaluationGateRunRoute,
@@ -361,6 +367,8 @@ register(getEvaluationRunRoute, handleGetEvaluationRun);
 register(cancelEvaluationRunRoute, handleCancelEvaluationRun);
 register(retryEvaluationRunRoute, handleRetryEvaluationRun);
 register(getEvaluationRunEventsRoute, handleGetEvaluationRunEvents);
+register(putAgentIntrospectionRoute, handlePutAgentIntrospection);
+register(getAgentIntrospectionRoute, handleGetAgentIntrospection);
 
 register(createEvaluationGateApprovalRoute, handleCreateEvaluationGateApproval);
 register(listEvaluationGateApprovalsRoute, handleListEvaluationGateApprovals);
