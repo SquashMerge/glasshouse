@@ -27,6 +27,8 @@ import {
 	listEvaluationVersionsRoute,
 	publishEvaluationDraftRoute,
 	putEvaluationDraftRoute,
+	getEvaluationRunEvidenceRoute,
+	handleGetEvaluationRunEvidence,
 } from "../../src/routes/evaluations";
 import {
 	EvaluationDefinitionInput,
@@ -499,6 +501,139 @@ describe("evaluation route contract", () => {
 			expect(body).toMatchObject({ published_by: publishedBy });
 			expect(body.published_by).not.toBe(actorId);
 			expect(body).not.toHaveProperty("published_by_subject");
+		} finally {
+			postgresSpy.mockRestore();
+		}
+	});
+	it("reaches scoped evidence access without disclosing missing or cross-Project runs", async () => {
+		const runId = "44444444-4444-4444-8444-444444444444";
+		const otherProjectId = "55555555-5555-4555-8555-555555555555";
+		const evidenceQueries: unknown[][] = [];
+		const runLookups: Array<{ sql: string; values: unknown[] }> = [];
+		const query = async (sql: string, values: unknown[] = []) => {
+			if (sql.includes("FROM projects p"))
+				return {
+					rows:
+						values[0] === projectId || values[0] === otherProjectId
+							? [{ id: values[0] }]
+							: [],
+				};
+			if (sql.includes("authorization_allows_project"))
+				return { rows: [{ allowed: true }] };
+			if (sql.startsWith("SELECT v.redaction")) return { rows: [] };
+			if (sql.startsWith("SELECT run.id, run.project_id, run.status")) {
+				runLookups.push({ sql, values });
+				return {
+					rows:
+						sql.includes("WHERE run.id = $1 AND run.project_id = $2") &&
+						values[0] === runId &&
+						values[1] === projectId
+							? [
+									{
+										id: runId,
+										project_id: projectId,
+										status: "completed",
+										created_at: new Date("2026-09-12T00:00:00.000Z"),
+										updated_at: new Date("2026-09-12T00:00:00.000Z"),
+										terminal_reason: null,
+										definition_version_id:
+											"66666666-6666-4666-8666-666666666666",
+										dataset_version_id: "77777777-7777-4777-8777-777777777777",
+										resolved_inputs_hash: "a".repeat(64),
+										total: 1,
+										pending: 0,
+										running: 0,
+										completed: 1,
+										failed: 0,
+										cancelled: 0,
+										attempts: 1,
+										evaluated: 1,
+										passed: 1,
+										evaluated_failed: 0,
+										cost_usd: null,
+										duration_ms: null,
+									},
+								]
+							: [],
+				};
+			}
+			if (sql.startsWith("SELECT inputs.*, count(item.id)"))
+				return {
+					rows: [
+						{
+							target: { kind: "fixture" },
+							target_version: "1",
+							target_fingerprint: "a".repeat(64),
+							evaluator: { kind: "exact_match" },
+							evaluator_version: "1",
+							evaluator_fingerprint: "a".repeat(64),
+							execution_defaults: {},
+							thresholds: {},
+							limits: {},
+							sampling: { strategy: "all", sample_size: 1, seed: 0 },
+							sample_identity: "a".repeat(64),
+							selected_count: 1,
+							with_source_trace: 0,
+							with_source_observation: 0,
+						},
+					],
+				};
+			if (sql.startsWith("SELECT task.id AS task_id")) {
+				evidenceQueries.push(values);
+				return { rows: [] };
+			}
+			return { rows: [] };
+		};
+		const postgresSpy = spyOn(postgres, "pgPool").mockReturnValue({
+			connect: async () => ({ query, release() {} }),
+		} as never);
+		const app = new OpenAPIHono({
+			defaultHook: (result, c) =>
+				result.success
+					? undefined
+					: c.json(
+							{ code: "BAD_REQUEST", message: "Request validation failed" },
+							400,
+						),
+		});
+		app.use("/v1/*", async (c, next) => {
+			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+				actor: "reader",
+				actorId,
+				organizationId,
+			});
+			await next();
+		});
+		app.openapi(getEvaluationRunEvidenceRoute, handleGetEvaluationRunEvidence);
+
+		try {
+			const valid = await app.request(
+				`http://test/v1/evaluation-runs/${runId}/evidence?project_id=${projectId}&limit=1&offset=0`,
+			);
+			expect(valid.status).toBe(200);
+			expect(await valid.json()).toMatchObject({
+				run_id: runId,
+				project_id: projectId,
+				total: 1,
+			});
+			expect(evidenceQueries).toEqual([[runId, projectId, 1, 0]]);
+
+			const missing = await app.request(
+				`http://test/v1/evaluation-runs/88888888-8888-4888-8888-888888888888/evidence?project_id=${projectId}`,
+			);
+			const crossProject = await app.request(
+				`http://test/v1/evaluation-runs/${runId}/evidence?project_id=${otherProjectId}`,
+			);
+
+			expect(missing.status).toBe(404);
+			expect(crossProject.status).toBe(404);
+			expect(await crossProject.json()).toEqual(await missing.json());
+			expect(runLookups).toContainEqual({
+				sql: expect.stringContaining(
+					"WHERE run.id = $1 AND run.project_id = $2",
+				),
+				values: [runId, otherProjectId],
+			});
 		} finally {
 			postgresSpy.mockRestore();
 		}

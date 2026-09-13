@@ -674,7 +674,7 @@ export const handleGetEvaluationRunEvidence = async (c: any) => {
 				project_id: query.project_id,
 				limit: query.limit,
 				offset: query.offset,
-				authorization: projectAuthorization(c.get("tenant"), "product_read"),
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
 			}),
 		);
 	} catch (cause) {

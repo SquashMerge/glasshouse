@@ -27,6 +27,8 @@ import { logger } from "./lib/logger.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
 const MAX_BODY_BYTES = parseBodySizeLimit(process.env.API_MAX_BODY_BYTES);
+const AGENT_INTROSPECTION_PATH =
+	"/v1/evaluation-runs/:run_id/tasks/:task_id/agent-introspection/:invocation_id";
 
 export type ApiDependencies = {
 	handleHealth: typeof handleHealth;
@@ -89,6 +91,13 @@ function projectOperationForRequest(
 		if (method === "GET" || method === "HEAD") return "product_read";
 		return "release_gate_manage";
 	}
+	if (
+		method === "PUT" &&
+		/^\/v1\/evaluation-runs\/[^/]+\/tasks\/[^/]+\/agent-introspection\/[^/]+$/.test(
+			path,
+		)
+	)
+		return "ingest";
 	if (method === "GET" || method === "HEAD") return "product_read";
 	if (path === "/v1/datasets") return "curation_write";
 	if (path.startsWith("/v1/feedback")) return "curation_write";
@@ -176,6 +185,10 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	});
 
 	apiApp.use(securityHeaders());
+	apiApp.use(AGENT_INTROSPECTION_PATH, async (c, next) => {
+		c.header("Cache-Control", "no-store");
+		await next();
+	});
 	// Body size limit applied before auth so unauth'd large payloads don't waste auth work.
 	apiApp.use(bodySizeLimit(MAX_BODY_BYTES));
 

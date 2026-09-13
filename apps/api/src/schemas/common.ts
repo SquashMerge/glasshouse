@@ -42,6 +42,8 @@ export const ErrorCode = z.enum([
 	"UNAUTHORIZED",
 	"FORBIDDEN",
 	"CONFLICT",
+	"CONTRACT_VIOLATION",
+	"PAYLOAD_TOO_LARGE",
 	"INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;

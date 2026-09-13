@@ -8,6 +8,10 @@ const dockerfile = readFileSync(
 	new URL("../../Dockerfile", import.meta.url),
 	"utf8",
 );
+const postgresMigrationRunner = readFileSync(
+	new URL("../../src/db/migrate.ts", import.meta.url),
+	"utf8",
+);
 
 describe("production startup", () => {
 	it("runs both schema migration systems concurrently before the API starts", () => {
@@ -18,8 +22,9 @@ describe("production startup", () => {
 			"bun run --parallel db:migrate ch:migrate",
 		);
 		expect(packageJson.scripts["db:migrate"]).toContain(
-			"--advisory-lock-mode wait",
+			"bun run src/db/migrate.ts",
 		);
+		expect(postgresMigrationRunner).toContain('advisoryLockMode: "wait"');
 		expect(packageJson.scripts.start).toBe(
 			"bun run migrate && bun run src/index.ts",
 		);

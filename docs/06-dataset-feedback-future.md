@@ -1,14 +1,14 @@
 # Dataset, Evaluation, and Feedback Future Design
 
-The first pass deliberately provides mutable project Datasets, configured-LLM Experiment runs, and immutable `human.feedback` signals with a small review workflow. It never changes a Dataset, evaluation gate, prompt, model, evaluator, or deployment automatically from feedback.
+The shipped foundation provides versioned project Datasets, configured-LLM Evaluation Runs with bounded evidence/comparison/gates, and immutable `human.feedback` signals with a review workflow. It never changes a Dataset, evaluation gate, prompt, model, evaluator, or deployment automatically from feedback.
 
 ## Dataset and evaluation lifecycle
 
-Future Dataset contracts include immutable versions, mutable drafts, protected labels, content hashes, diffs, rollback, and version-pinned evaluation runs. Dataset items will later gain revisions/editing, import/export, schemas, ownership, archive/tombstones, and CI-only version pins. Reusable Evaluation Definitions, default Dataset selectors, definition/version history, and deeper Python/TypeScript SDK conveniences remain deferred.
+Dataset drafts/versions, content hashes, lifecycle, version-pinned Runs, and reusable Evaluation Definitions are shipped. Deeper Python/TypeScript SDK conveniences, schedules, and future product ergonomics remain deferred.
 
 ## Execution and evaluators
 
-An agent registry with manifest versions, framework introspection, and HTTP execution is deferred. So are custom, LLM-as-judge, code, RAG, and calibrated evaluators; comparisons, schedules, CI gates, protected environments, baselines, and version-aware analysis.
+An Agent Registry with manifest versions and HTTP execution is deferred. The shipped introspection contract is client-reported supplementary evidence only, not framework integration. Custom, LLM-as-judge, code, RAG, and calibrated evaluators; schedules; protected environments; and version-aware analysis remain future work.
 
 ## Feedback maturity
 

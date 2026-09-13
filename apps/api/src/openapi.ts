@@ -70,6 +70,13 @@ import {
 	handleGetEvaluationRunEvents,
 } from "./routes/evaluations.js";
 import {
+	getAgentIntrospectionRoute,
+	handleGetAgentIntrospection,
+	handlePutAgentIntrospection,
+	putAgentIntrospectionRoute,
+} from "./routes/agent-introspection.js";
+import { agentIntrospectionValidationCategory } from "./schemas/agent-introspection.js";
+import {
 	createEvaluationGateApprovalRoute,
 	getEvaluationGateApprovalRoute,
 	getEvaluationGateRunRoute,
@@ -282,9 +289,30 @@ import {
 export const openapiApp = new OpenAPIHono({
 	defaultHook: (result, c) => {
 		if (!result.success) {
+			const isAgentIntrospection =
+				/^\/v1\/evaluation-runs\/[^/]+\/tasks\/[^/]+\/agent-introspection\/[^/]+$/.test(
+					c.req.path,
+				);
+			const category = isAgentIntrospection
+				? agentIntrospectionValidationCategory(result.error.issues)
+				: "structural";
 			return c.json(
-				{ code: "BAD_REQUEST", message: "Request validation failed" },
-				400,
+				category === "normalized_size"
+					? {
+							code: "PAYLOAD_TOO_LARGE",
+							message: "Report exceeds the normalized size limit",
+						}
+					: category === "semantic"
+						? {
+								code: "CONTRACT_VIOLATION",
+								message: "Report violates the Agent Introspection contract",
+							}
+						: { code: "BAD_REQUEST", message: "Request validation failed" },
+				category === "normalized_size"
+					? 413
+					: category === "semantic"
+						? 422
+						: 400,
 			);
 		}
 	},
@@ -361,6 +389,8 @@ register(getEvaluationRunRoute, handleGetEvaluationRun);
 register(cancelEvaluationRunRoute, handleCancelEvaluationRun);
 register(retryEvaluationRunRoute, handleRetryEvaluationRun);
 register(getEvaluationRunEventsRoute, handleGetEvaluationRunEvents);
+register(putAgentIntrospectionRoute, handlePutAgentIntrospection);
+register(getAgentIntrospectionRoute, handleGetAgentIntrospection);
 
 register(createEvaluationGateApprovalRoute, handleCreateEvaluationGateApproval);
 register(listEvaluationGateApprovalsRoute, handleListEvaluationGateApprovals);

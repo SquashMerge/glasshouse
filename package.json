@@ -20,6 +20,7 @@
     "smoke": "make smoke",
     "doctor": "make doctor",
     "openapi:snapshot": "bun --filter @astraea/api openapi:snapshot",
+    "openapi:check": "bun --filter @astraea/api openapi:check",
     "codegen": "bun run openapi:snapshot && bun --filter @astraea/api codegen:ts && bun --filter @astraea/api codegen:py",
     "format": "bun --filter '*' format",
     "format:check": "bun --filter '*' format:check",

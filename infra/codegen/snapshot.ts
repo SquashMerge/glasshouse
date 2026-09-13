@@ -9,7 +9,9 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openapiApp } from "../../apps/api/src/openapi.ts";
 
-const OUT_PATH = fileURLToPath(new URL("../../openapi.yaml", import.meta.url));
+const OUT_PATH =
+  process.env.OPENAPI_SNAPSHOT_PATH ??
+  fileURLToPath(new URL("../../openapi.yaml", import.meta.url));
 
 const doc = openapiApp.getOpenAPI31Document({
   openapi: "3.1.0",

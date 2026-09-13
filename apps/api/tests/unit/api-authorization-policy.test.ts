@@ -46,11 +46,20 @@ test("classifies curation writes, executions, and governed promotions at the ser
 		headers: { authorization, "content-type": "application/json" },
 		body: JSON.stringify({ project_id: projectId }),
 	});
+	await app.request(
+		`http://localhost/v1/evaluation-runs/22222222-2222-4222-8222-222222222222/tasks/33333333-3333-4333-8333-333333333333/agent-introspection/44444444-4444-4444-8444-444444444444?project_id=${projectId}`,
+		{
+			method: "PUT",
+			headers: { authorization, "content-type": "application/json" },
+			body: "{}",
+		},
+	);
 
 	expect(operations).toEqual([
 		"curation_write",
 		"curation_write",
 		"governed",
 		"execute",
+		"ingest",
 	]);
 });

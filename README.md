@@ -1,6 +1,6 @@
 # Astraea
 
-**Astraea** is an open-source observability and evaluation platform for AI agents and LLM workflows. The shipped foundation provides project-scoped OTLP observability, immutable prompt versions, mutable Datasets, configured-LLM Experiments, feedback review, and governance. Versioned agent manifests, real-agent execution, and Agent Registry workflows are planned P4 capabilities; CI gates and drift detection are planned P5 capabilities—not current product behavior.
+**Astraea** is an open-source observability and evaluation platform for AI agents and LLM workflows. The shipped foundation provides project-scoped OTLP observability, immutable prompt and Dataset versions, configured-LLM Evaluation Runs with bounded evidence/comparison/release gates, feedback review, and governance. A strict `client_reported` Agent Introspection Report contract is shipped as P4 groundwork; versioned Agent manifests, real-agent execution, Agno/SDK integrations, and Agent Registry workflows remain future work. Drift detection remains planned P5 behavior.
 
 > Named for the Titan goddess of precision: the idea that an agent eval platform should be honest about what your agent actually is, not just optimistic about what it could be.
 
@@ -262,7 +262,7 @@ See [`docs/03-otel-ingest.md`](docs/03-otel-ingest.md) for Python and Node.js ex
 
 ### Client code generation
 
-`bun run codegen` regenerates the typed TypeScript and Python clients from `openapi.yaml`; `bun run openapi:snapshot` regenerates only the snapshot. `make codegen` and `make openapi-snapshot` provide equivalent Makefile targets. These commands are idempotent: running them twice produces no diff.
+`openapi.yaml` is the tracked canonical OpenAPI artifact. `bun run codegen` regenerates the typed TypeScript and Python clients from it; `bun run openapi:snapshot` updates only the artifact. `bun run openapi:check` regenerates to a temporary file and rejects missing or stale canonical artifacts. `make codegen` and `make openapi-snapshot` provide equivalent generation targets. These commands are idempotent: running them twice produces no diff.
 
 ### `make seed-traces`
 

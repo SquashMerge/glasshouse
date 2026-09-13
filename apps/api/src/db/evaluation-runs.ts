@@ -321,6 +321,13 @@ type EvidenceRedactionState = {
 	options: RedactionOptions;
 };
 
+function evidenceKeyIsSensitive(
+	key: string,
+	options: RedactionOptions,
+): boolean {
+	return SENSITIVE_KEY.test(key) || options.redactKeys.includes(key);
+}
+
 function evidenceValue(
 	value: unknown,
 	state: EvidenceRedactionState,
@@ -346,21 +353,30 @@ function evidenceValue(
 			bytes: EVIDENCE_MAX_FIELD_BYTES,
 		};
 	}
-	if (Array.isArray(value))
+	if (Array.isArray(value)) {
+		if (value.length > 128) state.bounded = true;
 		return value
 			.slice(0, 128)
 			.map((item, index) =>
 				evidenceValue(item, state, `${path}[${index}]`, depth + 1),
 			);
+	}
 	if (!value || typeof value !== "object") return value;
+	const entries = Object.entries(value as Record<string, unknown>);
+	const keyValueKey =
+		typeof (value as Record<string, unknown>).key === "string"
+			? ((value as Record<string, unknown>).key as string)
+			: undefined;
+	const redactedKeyValue =
+		keyValueKey !== undefined &&
+		evidenceKeyIsSensitive(keyValueKey, state.options);
+	if (entries.length > 128) state.bounded = true;
 	const output: Record<string, unknown> = {};
-	for (const [key, item] of Object.entries(
-		value as Record<string, unknown>,
-	).slice(0, 128)) {
+	for (const [key, item] of entries.slice(0, 128)) {
 		const childPath = path ? `${path}.${key}` : key;
 		if (
-			SENSITIVE_KEY.test(key) ||
-			state.options.redactKeys.includes(key) ||
+			evidenceKeyIsSensitive(key, state.options) ||
+			(key === "value" && redactedKeyValue) ||
 			state.options.redactInput
 		) {
 			state.applied = true;

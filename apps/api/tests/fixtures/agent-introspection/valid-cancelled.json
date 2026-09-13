@@ -1,0 +1,90 @@
+{
+	"contract_version": "agent-introspection.v1",
+	"adapter": {
+		"name": "fixture-adapter",
+		"version": "1",
+		"framework": "fixture",
+		"framework_version": null
+	},
+	"capabilities": [
+		{ "capability": "agent_lifecycle", "support": "supported", "reason": null },
+		{ "capability": "model_calls", "support": "unknown", "reason": "unknown" },
+		{
+			"capability": "tool_calls",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{
+			"capability": "workflows",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{
+			"capability": "teams",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{
+			"capability": "handoffs",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{
+			"capability": "retries",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{
+			"capability": "streaming",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{
+			"capability": "trace_linkage",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{
+			"capability": "content_references",
+			"support": "unsupported",
+			"reason": "adapter_unsupported"
+		},
+		{ "capability": "cost", "support": "unknown", "reason": "unknown" }
+	],
+	"capture": {
+		"source": "client_reported",
+		"content_mode": "references_only",
+		"sampling": "full"
+	},
+	"outcome": "cancelled",
+	"completeness": "complete",
+	"omissions": [],
+	"events": [
+		{
+			"event_id": "11111111-1111-4111-8111-111111111111",
+			"sequence": 0,
+			"occurred_at": "2026-09-12T00:00:00.000Z",
+			"type": "agent.started",
+			"operation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			"parent_event_id": null,
+			"trace": { "trace_id": null, "span_id": null },
+			"references": [],
+			"detail": { "agent_key": "fixture-agent", "version_fingerprint": null }
+		},
+		{
+			"event_id": "22222222-2222-4222-8222-222222222222",
+			"sequence": 1,
+			"occurred_at": "2026-09-12T00:00:01.000Z",
+			"type": "agent.cancelled",
+			"operation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			"parent_event_id": null,
+			"trace": { "trace_id": null, "span_id": null },
+			"references": [],
+			"detail": {
+				"agent_key": "fixture-agent",
+				"duration_ms": 1,
+				"classification": "cancelled"
+			}
+		}
+	]
+}
