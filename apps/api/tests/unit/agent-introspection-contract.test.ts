@@ -432,7 +432,9 @@ describe("agent-introspection.v1 contract", () => {
 				redacted: true,
 			},
 		];
-		expect(AgentIntrospectionReportV1.safeParse(observation).success).toBe(true);
+		expect(AgentIntrospectionReportV1.safeParse(observation).success).toBe(
+			true,
+		);
 		for (const id of [
 			"Bearer secret-token",
 			"authorization: Basic dXNlcjpwYXNz",
