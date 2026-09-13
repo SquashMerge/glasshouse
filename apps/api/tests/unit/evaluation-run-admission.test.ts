@@ -162,7 +162,9 @@ function transactionPool(options: {
 						{
 							id: experimentId,
 							project_id: projectId,
+							agent_id: null,
 							dataset_id: datasetId,
+							name: "Support quality run v3",
 							status: "pending",
 						},
 					],
@@ -187,6 +189,8 @@ describe("Evaluation Run admission", () => {
 			definition_version_id: definitionVersionId,
 			dataset_version_id: datasetVersionId,
 			experiment_id: experimentId,
+			experiment_agent_id: null,
+			experiment_name: "Support quality run v3",
 			snapshot: {
 				sampling: definitionRow.sampling,
 				sample_identity: expect.any(String),
@@ -303,6 +307,37 @@ describe("Evaluation Run admission", () => {
 		).toBe(false);
 	});
 
+	it("rejects a replay when an accepted benchmark label changes", async () => {
+		const benchmark = {
+			suite_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			label: "baseline",
+			prompt_version: "v1",
+		};
+		const first = await admitEvaluationRun(
+			transactionPool({ definition: definitionRow }) as never,
+			admissionInput({ benchmark }),
+		);
+		const db = transactionPool({
+			existing: {
+				id: runId,
+				project_id: projectId,
+				request_hash: first.request_hash,
+			},
+		});
+
+		await expect(
+			admitEvaluationRun(
+				db as never,
+				admissionInput({ benchmark: { ...benchmark, label: "candidate" } }),
+			),
+		).rejects.toMatchObject({ code: "CONFLICT" });
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+	});
+
 	it("fails closed when the definition or its Dataset Version is unavailable", async () => {
 		const db = transactionPool({ definition: undefined });
 
@@ -350,8 +385,8 @@ describe("Evaluation Run admission", () => {
 	});
 
 	it("rejects an oversized Dataset Version before materializing its items", async () => {
-		const previous = process.env.EVALUATION_MAX_CASES_PER_RUN;
-		process.env.EVALUATION_MAX_CASES_PER_RUN = "1";
+		const previous = process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN;
+		process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN = "1";
 		const db = transactionPool({ definition: definitionRow });
 		try {
 			await expect(
@@ -359,8 +394,8 @@ describe("Evaluation Run admission", () => {
 			).rejects.toMatchObject({ code: "BAD_REQUEST" });
 		} finally {
 			if (previous === undefined)
-				delete process.env.EVALUATION_MAX_CASES_PER_RUN;
-			else process.env.EVALUATION_MAX_CASES_PER_RUN = previous;
+				delete process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN;
+			else process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN = previous;
 		}
 		expect(
 			db.calls.some((call) =>

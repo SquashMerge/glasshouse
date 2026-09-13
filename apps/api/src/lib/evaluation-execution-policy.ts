@@ -1,7 +1,7 @@
 export type EvaluationExecutionBounds = {
 	max_active_runs_per_project: number;
 	max_active_runs_per_actor: number;
-	max_cases: number;
+	max_requested_sample_size: number;
 	max_provider_calls: number;
 };
 
@@ -55,7 +55,7 @@ function allowedModels(environment: Environment): Set<string> {
 
 export function resolveEvaluationExecutionPolicy(
 	target: { provider?: unknown; model?: unknown },
-	caseCount: number,
+	requestedSampleSize: number,
 	environment: Environment = process.env,
 ): ResolvedEvaluationExecutionPolicy {
 	const provider =
@@ -85,8 +85,8 @@ export function resolveEvaluationExecutionPolicy(
 			2,
 			32,
 		),
-		max_cases: boundedInteger(
-			environment.EVALUATION_MAX_CASES_PER_RUN,
+		max_requested_sample_size: boundedInteger(
+			environment.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN,
 			100,
 			10_000,
 		),
@@ -97,13 +97,13 @@ export function resolveEvaluationExecutionPolicy(
 		),
 	};
 	if (
-		!Number.isSafeInteger(caseCount) ||
-		caseCount < 1 ||
-		caseCount > bounds.max_cases ||
-		caseCount > bounds.max_provider_calls
+		!Number.isSafeInteger(requestedSampleSize) ||
+		requestedSampleSize < 1 ||
+		requestedSampleSize > bounds.max_requested_sample_size ||
+		requestedSampleSize > bounds.max_provider_calls
 	)
 		throw new EvaluationExecutionPolicyError(
-			"Evaluation exceeds the operator case or provider-call budget",
+			"Evaluation exceeds the operator requested sample-size cap or provider-call budget",
 		);
 	return { provider, model, bounds };
 }

@@ -395,6 +395,30 @@ export const production: ExperimentDependencies = {
 const activeExperiments = new Map<string, AbortController>();
 const experimentKey = (projectId: string, experimentId: string) =>
 	`${projectId}:${experimentId}`;
+export function experimentFromEvaluationRun(run: {
+	experiment_id: string;
+	project_id: string;
+	experiment_agent_id: string | null;
+	dataset_id: string;
+	dataset_version_id: string;
+	experiment_name: string | null;
+	status: "pending" | "running" | "completed" | "failed" | "cancelled";
+	created_at: string;
+	updated_at: string;
+}) {
+	return {
+		id: run.experiment_id,
+		project_id: run.project_id,
+		agent_id: run.experiment_agent_id,
+		dataset_id: run.dataset_id,
+		resolved_dataset_version_id: run.dataset_version_id,
+		dataset_input_binding: "versioned" as const,
+		name: run.experiment_name,
+		status: run.status,
+		created_at: run.created_at,
+		updated_at: run.updated_at,
+	};
+}
 const abortedExecutionStatus = (signal?: AbortSignal) =>
 	signal?.reason === "duration_limit" || signal?.reason === "execution_timeout"
 		? ("failed" as const)
@@ -1136,21 +1160,7 @@ export function createExperimentHandlers(
 							),
 						);
 				}
-				return c.json(
-					{
-						id: run.experiment_id,
-						project_id: run.project_id,
-						agent_id: null,
-						dataset_id: run.dataset_id,
-						resolved_dataset_version_id: run.dataset_version_id,
-						dataset_input_binding: "versioned" as const,
-						name: body.name ?? null,
-						status: run.status,
-						created_at: run.created_at,
-						updated_at: run.updated_at,
-					},
-					201,
-				);
+				return c.json(experimentFromEvaluationRun(run), 201);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}

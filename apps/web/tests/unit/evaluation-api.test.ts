@@ -166,7 +166,7 @@ describe("evaluation API client contract", () => {
 			},
 		]);
 	});
-	it("starts compatibility experiments from immutable Definition identity without mutable config", async () => {
+	it("starts compatibility experiments from immutable Definition identity without mutable fields", async () => {
 		await createExperiment({
 			project_id,
 			dataset_id: "22222222-2222-4222-8222-222222222222",
@@ -186,7 +186,6 @@ describe("evaluation API client contract", () => {
 				evaluation_id: "33333333-3333-4333-8333-333333333333",
 				definition_version: 3,
 				idempotency_key: "run-immutable-definition",
-				name: "Release verification",
 			}),
 		);
 	});

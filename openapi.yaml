@@ -2786,7 +2786,6 @@ components:
       properties:
         config:
           additionalProperties: false
-          default: {}
           properties: {}
           type: object
         definition_version:
@@ -2817,6 +2816,7 @@ components:
         - definition_version
         - idempotency_key
         - label
+        - config
       type: object
     BenchmarkSuite:
       additionalProperties: false
@@ -5064,20 +5064,20 @@ components:
                   maximum: 32
                   minimum: 1
                   type: integer
-                max_cases:
-                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
+                max_provider_calls:
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
                   maximum: 10000
                   minimum: 1
                   type: integer
-                max_provider_calls:
-                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                max_requested_sample_size:
+                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
                   maximum: 10000
                   minimum: 1
                   type: integer
               required:
                 - max_active_runs_per_project
                 - max_active_runs_per_actor
-                - max_cases
+                - max_requested_sample_size
                 - max_provider_calls
               type: object
             execution_defaults:
@@ -5767,20 +5767,20 @@ components:
                   maximum: 32
                   minimum: 1
                   type: integer
-                max_cases:
-                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
+                max_provider_calls:
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
                   maximum: 10000
                   minimum: 1
                   type: integer
-                max_provider_calls:
-                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                max_requested_sample_size:
+                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
                   maximum: 10000
                   minimum: 1
                   type: integer
               required:
                 - max_active_runs_per_project
                 - max_active_runs_per_actor
-                - max_cases
+                - max_requested_sample_size
                 - max_provider_calls
               type: object
             execution_defaults:
@@ -6107,11 +6107,6 @@ components:
     ExperimentCreate:
       additionalProperties: false
       properties:
-        agent_id:
-          format: uuid
-          type:
-            - string
-            - 'null'
         dataset_id:
           format: uuid
           type: string
@@ -6125,11 +6120,6 @@ components:
           maxLength: 200
           minLength: 1
           type: string
-        name:
-          maxLength: 120
-          type:
-            - string
-            - 'null'
         project_id:
           format: uuid
           type: string
@@ -8154,7 +8144,7 @@ paths:
       tags:
         - benchmarks
     post:
-      description: Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.
+      description: Compatibility start route. The required body project_id must match the query selector. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.
       parameters:
         - in: path
           name: id

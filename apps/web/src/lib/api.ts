@@ -577,7 +577,7 @@ export interface EvaluationRun {
 		execution_bounds: {
 			max_active_runs_per_project: number;
 			max_active_runs_per_actor: number;
-			max_cases: number;
+			max_requested_sample_size: number;
 			max_provider_calls: number;
 		};
 		thresholds: Record<string, unknown>;
@@ -647,7 +647,7 @@ export interface EvaluationRunStatus {
 		execution_bounds: {
 			max_active_runs_per_project: number;
 			max_active_runs_per_actor: number;
-			max_cases: number;
+			max_requested_sample_size: number;
 			max_provider_calls: number;
 		};
 		sample: {
@@ -1428,7 +1428,6 @@ export async function createExperiment(input: {
 	evaluation_id: string;
 	definition_version: number;
 	idempotency_key: string;
-	name?: string;
 }): Promise<Experiment> {
 	const {
 		project_id,
@@ -1436,7 +1435,6 @@ export async function createExperiment(input: {
 		evaluation_id,
 		definition_version,
 		idempotency_key,
-		name,
 	} = input;
 	return responseJson(
 		await authedFetch(
@@ -1447,7 +1445,6 @@ export async function createExperiment(input: {
 				evaluation_id,
 				definition_version,
 				idempotency_key,
-				...(name === undefined ? {} : { name }),
 			}),
 		),
 		"createExperiment",

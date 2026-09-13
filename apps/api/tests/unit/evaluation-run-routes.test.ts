@@ -46,7 +46,7 @@ import {
 } from "../../src/routes/agent-introspection";
 
 describe("Evaluation Run lifecycle API", () => {
-	it("documents compatibility starters as admitted immutable Runs with a configured sample-size cap", () => {
+	it("documents compatibility starters as admitted immutable Runs with a requested sample-size cap", () => {
 		const root = join(import.meta.dir, "../../../..");
 		const workflow = readFileSync(
 			join(root, "docs/05-unified-dataset-workflow.md"),
@@ -60,7 +60,7 @@ describe("Evaluation Run lifecycle API", () => {
 		expect(workflow).toContain("admitted compatibility start API");
 		expect(workflow).not.toContain("legacy ad-hoc execution API");
 		expect(workflow).not.toContain("shipped legacy ad-hoc surface");
-		expect(evidence).toContain("configured sample-size cap");
+		expect(evidence).toContain("requested Definition sample-size cap");
 	});
 
 	const hash = "a".repeat(64);
@@ -80,7 +80,7 @@ describe("Evaluation Run lifecycle API", () => {
 		execution_bounds: {
 			max_active_runs_per_project: 4,
 			max_active_runs_per_actor: 2,
-			max_cases: 100,
+			max_requested_sample_size: 100,
 			max_provider_calls: 100,
 		},
 		sample: {
@@ -165,6 +165,18 @@ describe("Evaluation Run lifecycle API", () => {
 			properties?: Record<string, unknown>;
 		};
 		expect(experimentSchema.properties).not.toHaveProperty("config");
+		const experimentStart = document.paths?.["/v1/experiments"]?.post;
+		expect(experimentStart?.parameters).toBeUndefined();
+		const experimentCreate = document.components?.schemas?.ExperimentCreate as {
+			properties?: Record<string, unknown>;
+		};
+		expect(experimentCreate.properties).not.toHaveProperty("agent_id");
+		expect(experimentCreate.properties).not.toHaveProperty("name");
+		const benchmarkCreate = document.components?.schemas
+			?.BenchmarkRunCreate as {
+			required?: string[];
+		};
+		expect(benchmarkCreate.required).toContain("config");
 		expect(ErrorCode.safeParse("TOO_MANY_REQUESTS").success).toBe(true);
 	});
 	it("documents authorized status, cancellation, retry, and replayable SSE routes", () => {
@@ -205,8 +217,8 @@ describe("Evaluation Run lifecycle API", () => {
 				?.properties;
 		expect(bounds?.max_active_runs_per_project?.maximum).toBe(32);
 		expect(bounds?.max_active_runs_per_actor?.maximum).toBe(32);
-		expect(bounds?.max_cases?.maximum).toBe(10_000);
-		expect(bounds?.max_cases?.description).toContain(
+		expect(bounds?.max_requested_sample_size?.maximum).toBe(10_000);
+		expect(bounds?.max_requested_sample_size?.description).toContain(
 			"requested Definition sample-size cap",
 		);
 		expect(bounds?.max_provider_calls?.maximum).toBe(10_000);
@@ -468,7 +480,7 @@ describe("Evaluation Run lifecycle API", () => {
 								execution_bounds: {
 									max_active_runs_per_project: 4,
 									max_active_runs_per_actor: 2,
-									max_cases: 100,
+									max_requested_sample_size: 100,
 									max_provider_calls: 100,
 								},
 								sample_identity: "a".repeat(64),
@@ -565,7 +577,7 @@ describe("Evaluation Run lifecycle API", () => {
 			execution_bounds: {
 				max_active_runs_per_project: 4,
 				max_active_runs_per_actor: 2,
-				max_cases: 100,
+				max_requested_sample_size: 100,
 				max_provider_calls: 100,
 			},
 			sample_identity: "a".repeat(64),

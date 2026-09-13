@@ -574,7 +574,7 @@ describe("evaluation route contract", () => {
 							execution_bounds: {
 								max_active_runs_per_project: 4,
 								max_active_runs_per_actor: 2,
-								max_cases: 100,
+								max_requested_sample_size: 100,
 								max_provider_calls: 100,
 							},
 							sampling: { strategy: "all", sample_size: 1, seed: 0 },

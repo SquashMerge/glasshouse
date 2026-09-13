@@ -37,6 +37,17 @@ import { projectAuthorization } from "../db/project-authorization.js";
 import { trustedTenant } from "../tenancy.js";
 
 const tag = "benchmarks";
+export function benchmarkRunProjectId(
+	queryProjectId: string,
+	bodyProjectId: string,
+): string {
+	if (queryProjectId !== bodyProjectId)
+		throw new BenchmarkRepositoryError(
+			"CONFLICT",
+			"Benchmark run body project_id must match the query selector",
+		);
+	return queryProjectId;
+}
 const SuiteList = z
 	.object({
 		items: z.array(BenchmarkSuite),
@@ -146,7 +157,7 @@ export const createBenchmarkRunRoute = createRoute({
 	tags: [tag],
 	summary: "Run a prompt/model benchmark",
 	description:
-		"Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.",
+		"Compatibility start route. The required body project_id must match the query selector. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: BenchmarkSuiteIdParam,
@@ -223,9 +234,12 @@ export const handleCreateBenchmarkRun = async (
 	c: Parameters<RouteHandler<typeof createBenchmarkRunRoute>>[0],
 ) => {
 	try {
-		const project_id = c.req.valid("query").project_id;
 		const suite_id = c.req.valid("param").id;
 		const body = c.req.valid("json");
+		const project_id = benchmarkRunProjectId(
+			c.req.valid("query").project_id,
+			body.project_id,
+		);
 		const suite = await getBenchmarkSuite(pgPool(), {
 			project_id,
 			id: suite_id,

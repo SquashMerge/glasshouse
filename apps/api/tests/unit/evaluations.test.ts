@@ -9,6 +9,7 @@ import { ExperimentCreate } from "../../src/schemas/experiments";
 import {
 	createEvaluationTracePayload,
 	createExperimentHandlers,
+	experimentFromEvaluationRun,
 	createProductionTrace,
 	executeExperiment,
 	type ExperimentDependencies,
@@ -204,6 +205,20 @@ describe("evaluation MVP", () => {
 			idempotency_key: "compatibility-run",
 		});
 		expect(parsed).not.toHaveProperty("config");
+		for (const mutableField of [
+			{ name: "operator-selected name" },
+			{ agent_id: "33333333-3333-4333-8333-333333333333" },
+		])
+			expect(() =>
+				ExperimentCreate.parse({
+					project_id: projectId,
+					dataset_id: datasetId,
+					evaluation_id: "33333333-3333-4333-8333-433333333333",
+					definition_version: 1,
+					idempotency_key: "compatibility-run",
+					...mutableField,
+				}),
+			).toThrow();
 		expect(() =>
 			ExperimentCreate.parse({
 				project_id: projectId,
@@ -214,6 +229,25 @@ describe("evaluation MVP", () => {
 				config: { model: "mutable-override" },
 			}),
 		).toThrow();
+	});
+
+	it("returns the persisted Experiment identity for a compatibility replay", () => {
+		expect(
+			experimentFromEvaluationRun({
+				experiment_id: experimentId,
+				project_id: projectId,
+				experiment_agent_id: null,
+				dataset_id: datasetId,
+				dataset_version_id: "44444444-4444-4444-8444-444444444444",
+				experiment_name: "Support quality run v1",
+				status: "pending",
+				created_at: "2026-09-13T00:00:00.000Z",
+				updated_at: "2026-09-13T00:00:00.000Z",
+			}),
+		).toMatchObject({
+			id: experimentId,
+			name: "Support quality run v1",
+		});
 	});
 
 	it("does not overwrite a concurrent cancellation with a terminal worker update", async () => {

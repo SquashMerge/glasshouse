@@ -4,9 +4,9 @@ BEGIN
         SELECT 1
         FROM evaluation_run_inputs
         WHERE run_id = '95000000-0000-4000-8000-000000000008'
-          AND execution_bounds = '{"max_active_runs_per_project":4,"max_active_runs_per_actor":2,"max_cases":100,"max_provider_calls":100}'::jsonb
+          AND execution_bounds = '{"max_active_runs_per_project":4,"max_active_runs_per_actor":2,"max_requested_sample_size":100,"max_provider_calls":100}'::jsonb
     ) THEN
-        RAISE EXCEPTION '0095 did not add safe immutable bounds to a historical Evaluation Run';
+        RAISE EXCEPTION '0096 did not rename the immutable requested sample-size bound on a historical Evaluation Run';
     END IF;
     IF NOT EXISTS (
         SELECT 1

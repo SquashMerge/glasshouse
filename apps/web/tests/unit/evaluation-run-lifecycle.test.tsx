@@ -55,7 +55,7 @@ describe("Evaluation Run lifecycle evidence", () => {
 				execution_bounds: {
 					max_active_runs_per_project: 4,
 					max_active_runs_per_actor: 2,
-					max_cases: 100,
+					max_requested_sample_size: 100,
 					max_provider_calls: 100,
 				},
 				sample: {
@@ -183,7 +183,9 @@ describe("Evaluation Run lifecycle evidence", () => {
 		expect(evidence()).toContain("cancelled_by_request");
 		expect(evidence()).toContain("evaluation run cancelled");
 		expect(
-			screen.getByText("2 / 100 provider calls · 100 case limit"),
+			screen.getByText(
+				"2 / 100 provider calls · 100 requested sample-size cap",
+			),
 		).toBeTruthy();
 	});
 });

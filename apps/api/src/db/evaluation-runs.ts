@@ -63,6 +63,8 @@ export type EvaluationRun = {
 	dataset_version_id: string;
 	dataset_id: string;
 	experiment_id: string;
+	experiment_agent_id: string | null;
+	experiment_name: string | null;
 	benchmark_run_id: string | null;
 	status: "pending" | "running" | "completed" | "failed" | "cancelled";
 	requested_by_actor_id: string;
@@ -872,6 +874,8 @@ function runFromRow(
 		dataset_version_id: text(row, "dataset_version_id"),
 		dataset_id: text(row, "dataset_id"),
 		experiment_id: text(row, "experiment_id"),
+		experiment_agent_id: nullableText(row, "experiment_agent_id"),
+		experiment_name: nullableText(row, "experiment_name"),
 		benchmark_run_id: nullableText(row, "benchmark_run_id"),
 		status: text(row, "status") as EvaluationRun["status"],
 		requested_by_actor_id: text(row, "requested_by_actor_id"),
@@ -995,7 +999,7 @@ export async function admitEvaluationRun(
 
 			const expectedRequestHash = requestHash(input, metadata);
 			const existing = await client.query(
-				"SELECT run.*, experiment.id AS experiment_id, benchmark.id AS benchmark_run_id, version.dataset_id FROM evaluation_runs run LEFT JOIN experiments experiment ON experiment.evaluation_run_id = run.id AND experiment.project_id = run.project_id LEFT JOIN benchmark_runs benchmark ON benchmark.evaluation_run_id = run.id AND benchmark.project_id = run.project_id JOIN dataset_versions version ON version.id = run.dataset_version_id AND version.project_id = run.project_id WHERE run.project_id=$1 AND run.idempotency_key=$2",
+				"SELECT run.*, experiment.id AS experiment_id, experiment.agent_id AS experiment_agent_id, experiment.name AS experiment_name, benchmark.id AS benchmark_run_id, version.dataset_id FROM evaluation_runs run LEFT JOIN experiments experiment ON experiment.evaluation_run_id = run.id AND experiment.project_id = run.project_id LEFT JOIN benchmark_runs benchmark ON benchmark.evaluation_run_id = run.id AND benchmark.project_id = run.project_id JOIN dataset_versions version ON version.id = run.dataset_version_id AND version.project_id = run.project_id WHERE run.project_id=$1 AND run.idempotency_key=$2",
 				[input.project_id, input.idempotency_key],
 			);
 			if (existing.rows[0]) {
@@ -1146,6 +1150,8 @@ export async function admitEvaluationRun(
 				dataset_version_id: definition.dataset_version_id,
 				dataset_id: text(definitionRow, "dataset_id"),
 				experiment_id: experimentId,
+				experiment_agent_id: null,
+				experiment_name: `${text(definitionRow, "evaluation_name")} run v${input.definition_version}`,
 				status: "pending",
 				requested_by_actor_id: input.authorization.actor_id,
 				idempotency_key: input.idempotency_key,
@@ -1222,6 +1228,7 @@ export async function admitEvaluationRun(
 					runId,
 				],
 			);
+			const experimentRow = experiment.rows[0] as Row | undefined;
 			const benchmarkRunId = input.benchmark ? randomUUID() : null;
 			if (input.benchmark) {
 				await client.query(
@@ -1294,9 +1301,16 @@ export async function admitEvaluationRun(
 			const finalRunRow = {
 				...runRow,
 				dataset_id: text(definitionRow, "dataset_id"),
-				experiment_id:
-					(experiment.rows[0] as Row | undefined)?.id ?? experimentId,
+				experiment_id: experimentRow?.id ?? experimentId,
 				benchmark_run_id: benchmarkRunId,
+				experiment_agent_id: nullableText(
+					experimentRow ?? runRow,
+					experimentRow ? "agent_id" : "experiment_agent_id",
+				),
+				experiment_name: nullableText(
+					experimentRow ?? runRow,
+					experimentRow ? "name" : "experiment_name",
+				),
 			};
 			return runFromRow(finalRunRow, input, snapshot, false);
 		});

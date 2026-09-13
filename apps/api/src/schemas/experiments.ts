@@ -26,9 +26,7 @@ export const ExperimentCreate = z
 		evaluation_id: z.string().uuid(),
 		definition_version: z.number().int().positive(),
 		idempotency_key: z.string().trim().min(1).max(200),
-		agent_id: z.string().uuid().nullable().optional(),
 		dataset_id: z.string().uuid(),
-		name: z.string().trim().max(120).nullable().optional(),
 	})
 	.strict()
 	.openapi("ExperimentCreate");

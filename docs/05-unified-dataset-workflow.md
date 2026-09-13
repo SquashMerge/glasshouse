@@ -311,7 +311,7 @@ PUT    /v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocat
 GET    /v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}?project_id=
 
 # Existing Experiment compatibility API (admitted Evaluation Run starter and read model)
-POST   /v1/experiments                         # required JSON body includes project_id, evaluation_id, definition_version, and idempotency_key; optional query must normalize equal
+POST   /v1/experiments                         # required JSON body includes project_id, dataset_id, evaluation_id, definition_version, and idempotency_key
 GET    /v1/experiments?project_id=               # legacy run collection/read model
 GET    /v1/experiments/{id}?project_id=          # legacy execution detail
 GET    /v1/experiments/{id}/results?project_id=  # legacy execution results
@@ -326,19 +326,15 @@ Draft-facing screens use `GET /v1/datasets/{id}/items` to show the shared editab
 
 #### Legacy POST scope adapter
 
-During the one-minor-version compatibility window, retained `POST /v1/datasets`,
-`POST /v1/datasets/{id}/items`, and `POST /v1/experiments` continue to accept
-the existing JSON-body `project_id` contract. `POST /v1/experiments` additionally
-requires `evaluation_id`, `definition_version`, and `idempotency_key` in that
-required body; it admits a Run and never accepts mutable target configuration.
-They may also receive the new
-`?project_id=<UUID>` selector: if both are present they must be the same after
-UUID normalization or the server rejects the request as conflicting scope;
-if only the legacy body selector is present, the request remains valid. If
-neither selector is present, it fails before routing. Retained `GET` and
-`DELETE` routes, which have no compatible body selector, require the query
-selector. OpenAPI and generated SDKs expose the legacy body-scoped POST shapes
-as deprecated adapters and the query-scoped shapes as the new contract.
+During the one-minor-version compatibility window, retained `POST /v1/datasets`
+and `POST /v1/datasets/{id}/items` continue to accept the existing JSON-body
+`project_id` contract and may receive a matching `?project_id=<UUID>` selector.
+`POST /v1/experiments` is body-scoped only: its required body includes
+`project_id`, `dataset_id`, `evaluation_id`, `definition_version`, and
+`idempotency_key`; it admits a Run and never accepts mutable target
+configuration. Retained `GET` and `DELETE` routes, which have no compatible
+body selector, require the query selector. OpenAPI and generated SDKs expose
+the actual body-scoped compatibility shapes.
 
 `POST /v1/evaluations/{slug}/runs?project_id=<UUID>` accepts:
 
@@ -355,7 +351,8 @@ plus their UI presentation and CI SDK workflow, remain future work.
 `POST /v1/experiments` and `POST /v1/benchmarks/{id}/runs` are required-body
 compatibility starters for the same admission. Each requires its Evaluation
 Definition Version and idempotency key; benchmark starts also require the
-route's project-scoped suite and an empty `config` object. Their responses
+route's project-scoped suite, a body `project_id` equal to the query selector,
+and an empty `config` object. Their responses
 expose Experiment or benchmark identity/status only, not mutable execution
 configuration; inspect immutable target, evaluator, defaults, limits, and
 bounds through the admitted Evaluation Run.
@@ -464,7 +461,7 @@ work. Shipped Run evidence, comparison, and gates remain server-authoritative.
 1. **Preserve reads:** existing `datasets`/`dataset_items` remain readable. Backfill each existing dataset as `dataset@1`, preserving item UUID as `item_key`, order by `created_at, id`, and existing trace provenance.
 2. **Add snapshot tables:** introduce Dataset/Evaluation version and draft tables in a new migration; do not alter past migrations. Every tenant-bearing child table gets a non-null `project_id`, composite Project-scoped foreign keys, `slug`, `latest_published_version`, audit/provenance fields, and tombstones. Backfill scope only from validated parents; delete or safely terminalize ambiguous legacy rows rather than assigning a Project by guesswork.
 3. **Admitted Experiment lineage:** new Experiment and benchmark compatibility starts persist the project-scoped Evaluation Run, immutable Dataset Version binding, and resolved target snapshot before work is queued. Historical Experiment rows remain `legacy_unversioned` or `legacy_ad_hoc` when their original inputs cannot be proven; they are not assigned fabricated history.
-4. **API compatibility:** retain the current UUID Dataset routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. `GET /v1/datasets/by-slug/{slug}/versions` and its `{version}` detail provide read-only immutable-version inspection. Retained `POST /v1/datasets` and `POST /v1/datasets/{id}/items` use the body-scoped adapter above; an optional query selector must match the body selector. Retain the Experiment read surface: `GET /v1/experiments?project_id=<UUID>`, `GET /v1/experiments/{id}?project_id=<UUID>`, `GET /v1/experiments/{id}/results?project_id=<UUID>`, `GET /v1/experiments/{id}/summary?project_id=<UUID>`, `GET /v1/experiments/{id}/events?project_id=<UUID>`, and `POST /v1/experiments/{id}/cancel?project_id=<UUID>`. Its required-body `POST /v1/experiments` is an Evaluation Run admission compatibility starter, not independent ad-hoc execution. New Experiments return a `versioned` resolved Dataset Version ID; pre-version rows report `legacy_unversioned` and no resolved ID. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
+4. **API compatibility:** retain the current UUID Dataset routes for one minor version: `GET /v1/datasets?project_id=<UUID>`, `GET /v1/datasets/{id}?project_id=<UUID>`, `GET /v1/datasets/{id}/items?project_id=<UUID>`, and `DELETE /v1/datasets/{id}/items/{itemId}?project_id=<UUID>`. `GET /v1/datasets/by-slug/{slug}/versions` and its `{version}` detail provide read-only immutable-version inspection. Retained `POST /v1/datasets` and `POST /v1/datasets/{id}/items` use the body-scoped adapter above; an optional query selector must match the body selector. Retain the Experiment read surface: `GET /v1/experiments?project_id=<UUID>`, `GET /v1/experiments/{id}?project_id=<UUID>`, `GET /v1/experiments/{id}/results?project_id=<UUID>`, `GET /v1/experiments/{id}/summary?project_id=<UUID>`, `GET /v1/experiments/{id}/events?project_id=<UUID>`, and `POST /v1/experiments/{id}/cancel?project_id=<UUID>`. Its body-scoped `POST /v1/experiments` is an Evaluation Run admission compatibility starter, not independent ad-hoc execution. New Experiments return a `versioned` resolved Dataset Version ID; pre-version rows report `legacy_unversioned` and no resolved ID. Deprecate direct mutation of published `dataset_items`; route new writes through drafts.
 5. **UI rollout:** Dataset/versioning, Evaluation identity/Definition Version,
    and Evaluation Run routes are shipped. Keep `Experiment` only for the
    compatibility response/read surface and historical records.

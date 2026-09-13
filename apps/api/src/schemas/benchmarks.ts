@@ -45,7 +45,7 @@ export const BenchmarkRunCreate = z
 		idempotency_key: z.string().trim().min(1).max(200),
 		label: z.string().trim().min(1).max(160),
 		prompt_version: z.string().trim().max(200).nullable().optional(),
-		config: z.object({}).strict().default({}),
+		config: z.object({}).strict(),
 	})
 	.strict()
 	.openapi("BenchmarkRunCreate");

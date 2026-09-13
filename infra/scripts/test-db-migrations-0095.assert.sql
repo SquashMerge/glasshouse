@@ -30,7 +30,7 @@ BEGIN
         'v1', repeat('c', 64), '{}', '{}',
         '{"strategy":"first_n","sample_size":1,"seed":0}', repeat('d', 64),
         '[]', repeat('a', 64), '{"max_cost_usd":1,"max_duration_seconds":60}',
-        '{"max_active_runs_per_project":1,"max_active_runs_per_actor":1,"max_cases":1,"max_provider_calls":1}'
+        '{"max_active_runs_per_project":1,"max_active_runs_per_actor":1,"max_requested_sample_size":1,"max_provider_calls":1}'
     );
     INSERT INTO evaluation_run_capacity_admissions (
         run_id, organization_id, project_id, actor_id, status
@@ -59,7 +59,7 @@ BEGIN
     END IF;
     BEGIN
         UPDATE evaluation_run_inputs
-        SET execution_bounds = '{"max_active_runs_per_project":32,"max_active_runs_per_actor":32,"max_cases":10000,"max_provider_calls":10000}'
+        SET execution_bounds = '{"max_active_runs_per_project":32,"max_active_runs_per_actor":32,"max_requested_sample_size":10000,"max_provider_calls":10000}'
         WHERE evaluation_run_inputs.run_id = fixture_run_id;
         RAISE EXCEPTION 'execution bounds snapshot was mutable';
     EXCEPTION WHEN SQLSTATE '55000' THEN NULL;

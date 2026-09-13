@@ -1176,7 +1176,11 @@ export function EvaluationRunLifecycle({
 					<div>
 						{status.data.metrics.provider_calls_used} /{" "}
 						{status.data.metrics.max_provider_calls} provider calls ·{" "}
-						{status.data.pinned_inputs.execution_bounds.max_cases} case limit
+						{
+							status.data.pinned_inputs.execution_bounds
+								.max_requested_sample_size
+						}{" "}
+						requested sample-size cap
 					</div>
 				</div>
 			</div>

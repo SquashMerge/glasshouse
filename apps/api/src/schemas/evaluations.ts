@@ -259,10 +259,15 @@ export const EvaluationRun = z
 						description:
 							"Immutable active-Run cap for the requesting actor (1-32)",
 					}),
-					max_cases: z.number().int().min(1).max(10_000).openapi({
-						description:
-							"Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)",
-					}),
+					max_requested_sample_size: z
+						.number()
+						.int()
+						.min(1)
+						.max(10_000)
+						.openapi({
+							description:
+								"Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)",
+						}),
 					max_provider_calls: z.number().int().min(1).max(10_000).openapi({
 						description:
 							"Immutable maximum pre-dispatch provider-call charges (1-10,000)",
@@ -352,7 +357,7 @@ const EvaluationRunPinnedInputs = z
 					description:
 						"Immutable active-Run cap for the requesting actor (1-32)",
 				}),
-				max_cases: z.number().int().min(1).max(10_000).openapi({
+				max_requested_sample_size: z.number().int().min(1).max(10_000).openapi({
 					description:
 						"Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)",
 				}),
