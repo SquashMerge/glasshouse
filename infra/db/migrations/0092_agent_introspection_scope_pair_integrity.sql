@@ -39,7 +39,12 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS candidate ON task.evaluation_run_id IS NOT NULL
 WHERE (task.evaluation_run_id IS NULL) <> (task.evaluation_run_item_id IS NULL)
-ON CONFLICT (task_id) DO NOTHING;
+ON CONFLICT (task_id) DO UPDATE
+SET project_id = EXCLUDED.project_id,
+    evaluation_run_id = EXCLUDED.evaluation_run_id,
+    evaluation_run_item_id = EXCLUDED.evaluation_run_item_id,
+    remediated_evaluation_run_item_id = EXCLUDED.remediated_evaluation_run_item_id,
+    reason = EXCLUDED.reason;
 
 -- A completed result is proven to belong to its task only through its immutable
 -- experiment and Dataset-version item identity. Repair that relationship in the

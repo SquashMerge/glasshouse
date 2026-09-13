@@ -105,7 +105,12 @@ export async function prepare0091RunItemRemediation(
                END
         FROM conflicting_remaps
         WHERE candidate_occupied OR candidate_remap_count > 1
-        ON CONFLICT (task_id) DO NOTHING`);
+        ON CONFLICT (task_id) DO UPDATE
+        SET project_id = EXCLUDED.project_id,
+            evaluation_run_id = EXCLUDED.evaluation_run_id,
+            evaluation_run_item_id = EXCLUDED.evaluation_run_item_id,
+            remediated_evaluation_run_item_id = EXCLUDED.remediated_evaluation_run_item_id,
+            reason = EXCLUDED.reason`);
 
 		const reports = await client.query<{ exists: boolean }>(
 			"SELECT to_regclass('public.agent_introspection_reports') IS NOT NULL AS exists",

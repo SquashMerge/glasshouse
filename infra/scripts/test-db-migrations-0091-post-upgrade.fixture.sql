@@ -1,5 +1,5 @@
--- A 0091 database permits Run-only tasks. Two such tasks cannot both be
--- remapped to the same item while the 0083 uniqueness index remains in force.
+-- A legacy upgrade can contain a Run-only task whose deterministic target is
+-- occupied by another task. Startup must fail closed without a guessed remap.
 WITH organization AS (
     INSERT INTO organizations (id, name, slug, default_project_id)
     VALUES ('91000000-0000-4000-8000-000000000001', 'Post 0091 Upgrade', 'post-0091-upgrade', '91000000-0000-4000-8000-000000000002')
@@ -41,9 +41,11 @@ VALUES
     ('91000000-0000-4000-8000-000000000013', '91000000-0000-4000-8000-000000000002', '91000000-0000-4000-8000-000000000004', '91000000-0000-4000-8000-000000000005', 'pending', '{}', '91000000-0000-4000-8000-000000000003', '91000000-0000-4000-8000-000000000006', 'versioned');
 UPDATE experiment_tasks
 SET evaluation_run_id = '91000000-0000-4000-8000-000000000010',
+    evaluation_run_item_id = '91000000-0000-4000-8000-000000000011'
+WHERE experiment_id = '91000000-0000-4000-8000-000000000012'
+  AND dataset_version_item_id = '91000000-0000-4000-8000-000000000007';
+UPDATE experiment_tasks
+SET evaluation_run_id = '91000000-0000-4000-8000-000000000010',
     evaluation_run_item_id = NULL
-WHERE experiment_id IN (
-        '91000000-0000-4000-8000-000000000012',
-        '91000000-0000-4000-8000-000000000013'
-    )
+WHERE experiment_id = '91000000-0000-4000-8000-000000000013'
   AND dataset_version_item_id = '91000000-0000-4000-8000-000000000007';

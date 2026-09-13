@@ -193,8 +193,30 @@ BEGIN
             SELECT 1
             FROM agent_introspection_reports
             WHERE id = '90000000-0000-4000-8000-000000000016'
+              AND evaluation_run_item_id = '90000000-0000-4000-8000-000000000019'
+              AND report->>'contract_version' = 'agent-introspection.v1'
+              AND report->'capture'->>'content_mode' = 'references_only'
+              AND jsonb_typeof(report->'events') = 'array'
         ) THEN
-            RAISE EXCEPTION 'expected introspection report fixture is missing';
+            RAISE EXCEPTION 'remapped introspection report is missing or unreadable';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM agent_introspection_reports
+            WHERE id = '90000000-0000-4000-8000-000000000031'
+        ) OR NOT EXISTS (
+            SELECT 1
+            FROM agent_introspection_report_scope_quarantine
+            WHERE report_id = '90000000-0000-4000-8000-000000000031'
+              AND task_id = (
+                  SELECT id
+                  FROM experiment_tasks
+                  WHERE experiment_id = '90000000-0000-4000-8000-000000000014'
+                    AND dataset_version_item_id = '90000000-0000-4000-8000-000000000007'
+              )
+              AND reason = 'deterministic_run_item_remap_collision'
+        ) THEN
+            RAISE EXCEPTION 'quarantined introspection report was not recorded then deleted';
         END IF;
 
         BEGIN
