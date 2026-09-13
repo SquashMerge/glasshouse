@@ -30,7 +30,6 @@ export const ExperimentCreate = z
 		agent_id: z.string().uuid().nullable().optional(),
 		dataset_id: z.string().uuid(),
 		name: z.string().trim().max(120).nullable().optional(),
-		config: z.object({}).strict().default({}),
 	})
 	.strict()
 	.openapi("ExperimentCreate");

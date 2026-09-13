@@ -479,6 +479,8 @@ describe("durable experiment task ledger", () => {
 	it("terminalizes unbound or revoked work before restart recovery", async () => {
 		const db = transactionPool([
 			{ rows: [] },
+			{ rows: [] },
+			{ rows: [] },
 			{
 				rows: [
 					{
@@ -499,7 +501,11 @@ describe("durable experiment task ledger", () => {
 				config: {},
 			},
 		]);
-		expect(db.calls[1]?.text).toContain("status IN ('pending', 'running')");
+		expect(
+			db.calls.find((call) =>
+				call.text.includes("FROM experiments experiment LEFT JOIN"),
+			)?.text,
+		).toContain("status IN ('pending', 'running')");
 		expect(db.calls.some((call) => call.text.includes("FOR UPDATE OF p"))).toBe(
 			true,
 		);
@@ -507,6 +513,8 @@ describe("durable experiment task ledger", () => {
 
 	it("fails closed instead of restoring mutable config for an admitted run without its snapshot", async () => {
 		const db = transactionPool([
+			{ rows: [] },
+			{ rows: [] },
 			{ rows: [] },
 			{
 				rows: [

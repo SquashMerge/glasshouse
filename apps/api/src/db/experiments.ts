@@ -471,6 +471,26 @@ export async function updateExperiment(
 export async function listRecoverableExperiments(db: Transactional) {
 	try {
 		return await withTransaction(db, async (client) => {
+			await client.query(
+				`UPDATE evaluation_run_capacity_admissions capacity
+				 SET status='released', released_at=now(),
+				     release_reason=COALESCE(run.terminal_reason, run.status)
+				FROM evaluation_runs run
+				WHERE capacity.run_id=run.id
+				  AND capacity.project_id=run.project_id
+				  AND capacity.status='active'
+				  AND run.status IN ('completed','failed','cancelled')`,
+			);
+			await client.query(
+				`INSERT INTO evaluation_run_capacity_admissions
+					(run_id, organization_id, project_id, actor_id, status)
+				 SELECT id, organization_id, project_id, requested_by_actor_id, 'active'
+				 FROM evaluation_runs
+				 WHERE status IN ('pending','running')
+				 ON CONFLICT (run_id) DO UPDATE
+				 SET status='active', acquired_at=now(), released_at=NULL, release_reason=NULL
+				 WHERE evaluation_run_capacity_admissions.status='released'`,
+			);
 			const candidates = await client.query(
 				"SELECT experiment.*, inputs.target AS run_target, inputs.evaluator AS run_evaluator, inputs.execution_defaults AS run_execution_defaults, inputs.limits AS run_limits FROM experiments experiment LEFT JOIN evaluation_run_inputs inputs ON inputs.run_id = experiment.evaluation_run_id AND inputs.project_id = experiment.project_id WHERE experiment.status IN ('pending', 'running') ORDER BY experiment.created_at ASC",
 			);
@@ -502,6 +522,7 @@ export async function listRecoverableExperiments(db: Transactional) {
 					if (snapshot) {
 						config = {
 							model: json(snapshot, "target").model,
+							provider: json(snapshot, "target").provider,
 							system_prompt: json(snapshot, "target").system_prompt,
 							evaluator: json(snapshot, "evaluator").kind,
 							...json(snapshot, "execution_defaults"),

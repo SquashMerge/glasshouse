@@ -64,6 +64,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 - Model identifiers must be checked against the exact `GEPA_ALLOWED_MODELS` allowlist. Provider API credentials belong only in the ignored `infra/.env` or deployment secret store.
 - `GEPA_WORKER_MODE=cli` is development-only and runs the locally authenticated OpenAI Codex CLI. It requires the API to run on the same host as Codex (`make deps-up` plus `make dev-backend`, not the Dockerized `make dev` path), a local Python environment with `worker/requirements.lock` installed using `--require-hashes`, and `GEPA_PYTHON` pointing to that interpreter.
 - Candidate publication must preserve the full message snapshot while deriving canonical `prompt_versions.content` from the optimized target role. Add a system-target regression test whenever this path changes.
+- Evaluation Run active-capacity admissions are a PostgreSQL quota ledger: every pending/running Run must hold one active row, terminal/cancelled/revoked Runs must release it once, and admission, retry, and recovery paths must reconcile it at the storage boundary.
 
 ## Review and verification
 

@@ -816,11 +816,8 @@ async function validateGateApproval(
 function snapshotFor(
 	definition: ReturnType<typeof definitionFields>,
 	items: Row[],
+	policy: ReturnType<typeof resolveEvaluationExecutionPolicy>,
 ): ResolvedSnapshot {
-	const policy = resolveEvaluationExecutionPolicy(
-		definition.target,
-		items.length,
-	);
 	const target = {
 		...definition.target,
 		model: policy.model,
@@ -1095,9 +1092,14 @@ export async function admitEvaluationRun(
 					"Executable Evaluation Definition Version is not available",
 				);
 			const definition = definitionFields(definitionRow);
+			const requestedSampleSize = Number(definition.sampling.sample_size);
+			const policy = resolveEvaluationExecutionPolicy(
+				definition.target,
+				requestedSampleSize,
+			);
 			const itemResult = await client.query(
-				"SELECT item.* FROM dataset_version_items item WHERE item.project_id=$1 AND item.dataset_version_id=$2 ORDER BY item.position ASC, item.item_key ASC, item.id ASC",
-				[input.project_id, definition.dataset_version_id],
+				"SELECT item.* FROM dataset_version_items item WHERE item.project_id=$1 AND item.dataset_version_id=$2 ORDER BY item.position ASC, item.item_key ASC, item.id ASC LIMIT $3",
+				[input.project_id, definition.dataset_version_id, requestedSampleSize],
 			);
 			const allItems = itemResult.rows as Row[];
 			if (allItems.length === 0)
@@ -1105,14 +1107,13 @@ export async function admitEvaluationRun(
 					"BAD_REQUEST",
 					"The selected Dataset Version contains no items",
 				);
-			const requestedSampleSize = Number(definition.sampling.sample_size);
-			const selectedItems = allItems.slice(0, requestedSampleSize);
+			const selectedItems = allItems;
 			if (selectedItems.some((item) => item.expected_output == null))
 				throw new EvaluationRunRepositoryError(
 					"BAD_REQUEST",
 					"Every selected Dataset Version item needs expected output",
 				);
-			const snapshot = snapshotFor(definition, selectedItems);
+			const snapshot = snapshotFor(definition, selectedItems, policy);
 			await assertEvaluationRunCapacity(client, {
 				project_id: input.project_id,
 				actor_id: input.authorization.actor_id,

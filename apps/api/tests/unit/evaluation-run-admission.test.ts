@@ -349,6 +349,26 @@ describe("Evaluation Run admission", () => {
 		).toBe(false);
 	});
 
+	it("rejects an oversized Dataset Version before materializing its items", async () => {
+		const previous = process.env.EVALUATION_MAX_CASES_PER_RUN;
+		process.env.EVALUATION_MAX_CASES_PER_RUN = "1";
+		const db = transactionPool({ definition: definitionRow });
+		try {
+			await expect(
+				admitEvaluationRun(db as never, admissionInput()),
+			).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		} finally {
+			if (previous === undefined)
+				delete process.env.EVALUATION_MAX_CASES_PER_RUN;
+			else process.env.EVALUATION_MAX_CASES_PER_RUN = previous;
+		}
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("SELECT item.* FROM dataset_version_items"),
+			),
+		).toBe(false);
+	});
+
 	it("rejects a concurrent project admission before it persists runnable work", async () => {
 		const db = transactionPool({
 			definition: definitionRow,

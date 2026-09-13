@@ -140,6 +140,7 @@ export interface EvaluationDefinition {
 	};
 	target: {
 		kind: "configured_llm";
+		provider?: "openai" | "codex_cli";
 		model: string | null;
 		system_prompt: string | null;
 	};
@@ -1425,11 +1426,31 @@ export async function listExperiments(
 export async function createExperiment(input: {
 	project_id: string;
 	dataset_id: string;
+	evaluation_id: string;
+	definition_version: number;
+	idempotency_key: string;
 	name?: string;
-	config: JsonObject;
 }): Promise<Experiment> {
+	const {
+		project_id,
+		dataset_id,
+		evaluation_id,
+		definition_version,
+		idempotency_key,
+		name,
+	} = input;
 	return responseJson(
-		await authedFetch("/v1/experiments", jsonRequest(input)),
+		await authedFetch(
+			"/v1/experiments",
+			jsonRequest({
+				project_id,
+				dataset_id,
+				evaluation_id,
+				definition_version,
+				idempotency_key,
+				...(name === undefined ? {} : { name }),
+			}),
+		),
 		"createExperiment",
 	);
 }

@@ -8,6 +8,7 @@ import {
 	listEvaluationRuns,
 	getEvaluationRunEvidence,
 	compareEvaluationRuns,
+	createExperiment,
 	createEvaluationGateApproval,
 	listEvaluationGateApprovals,
 	listEvaluationGateRuns,
@@ -28,7 +29,12 @@ const definition = {
 		expected_output_path: "$.expected_output",
 		output_path: "$.output",
 	},
-	target: { kind: "configured_llm" as const, model: null, system_prompt: null },
+	target: {
+		kind: "configured_llm" as const,
+		provider: "openai" as const,
+		model: null,
+		system_prompt: null,
+	},
 	execution_defaults: { temperature: 0, max_tokens: null },
 	limits: { max_cost_usd: 1, max_duration_seconds: 1 },
 	thresholds: { minimum_pass_rate: null },
@@ -159,6 +165,30 @@ describe("evaluation API client contract", () => {
 				body: JSON.stringify({ run_ids: [left, right] }),
 			},
 		]);
+	});
+	it("starts compatibility experiments from immutable Definition identity without mutable config", async () => {
+		await createExperiment({
+			project_id,
+			dataset_id: "22222222-2222-4222-8222-222222222222",
+			evaluation_id: "33333333-3333-4333-8333-333333333333",
+			definition_version: 3,
+			idempotency_key: "run-immutable-definition",
+			name: "Release verification",
+			config: { model: "stale-model" },
+		} as never);
+
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
+		expect(url).toBe("/v1/experiments");
+		expect(init?.body).toBe(
+			JSON.stringify({
+				project_id,
+				dataset_id: "22222222-2222-4222-8222-222222222222",
+				evaluation_id: "33333333-3333-4333-8333-333333333333",
+				definition_version: 3,
+				idempotency_key: "run-immutable-definition",
+				name: "Release verification",
+			}),
+		);
 	});
 	it("keeps approval and gate invocation calls project-scoped and idempotent", async () => {
 		const approval = "66666666-6666-4666-8666-666666666666";

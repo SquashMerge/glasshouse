@@ -1078,17 +1078,6 @@ export function createExperimentHandlers(
 						"CONFLICT",
 						"The compatibility route requires evaluation_id, definition_version, and idempotency_key",
 					);
-				if (
-					Object.keys(body.config).some((key) =>
-						["model", "system_prompt", "evaluator", "temperature"].includes(
-							key,
-						),
-					)
-				)
-					throw new ExperimentRepositoryError(
-						"CONFLICT",
-						"Experiment target configuration must come from the pinned Evaluation Definition Version",
-					);
 				const run = await admitEvaluationRun(db, {
 					project_id: body.project_id,
 					evaluation_selector: body.evaluation_id,

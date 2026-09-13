@@ -156,6 +156,41 @@ describe("Evaluation Run lifecycle API", () => {
 			openapi: "3.0.0",
 			info: { title: "test", version: "1" },
 		});
+		const statusSchema = document.components?.schemas?.EvaluationRunStatus as {
+			properties?: {
+				pinned_inputs?: {
+					properties?: {
+						execution_bounds?: {
+							properties?: Record<
+								string,
+								{ maximum?: number; description?: string }
+							>;
+						};
+					};
+				};
+				metrics?: {
+					properties?: Record<
+						string,
+						{ maximum?: number; description?: string }
+					>;
+				};
+			};
+		};
+		const bounds =
+			statusSchema.properties?.pinned_inputs?.properties?.execution_bounds
+				?.properties;
+		expect(bounds?.max_active_runs_per_project?.maximum).toBe(32);
+		expect(bounds?.max_active_runs_per_actor?.maximum).toBe(32);
+		expect(bounds?.max_cases?.maximum).toBe(10_000);
+		expect(bounds?.max_provider_calls?.maximum).toBe(10_000);
+		expect(
+			statusSchema.properties?.metrics?.properties?.provider_calls_used
+				?.maximum,
+		).toBe(10_000);
+		expect(
+			statusSchema.properties?.metrics?.properties?.provider_calls_used
+				?.description,
+		).toContain("does not confirm provider success");
 
 		expect(document.paths?.["/v1/evaluation-runs/{id}"]?.get).toBeDefined();
 		expect(

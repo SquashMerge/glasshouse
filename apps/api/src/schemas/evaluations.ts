@@ -252,17 +252,19 @@ export const EvaluationRun = z
 			limits: z.record(z.string(), z.unknown()),
 			execution_bounds: z
 				.object({
-					max_active_runs_per_project: z.number().int().positive().openapi({
-						description: "Immutable active-Run cap for the Project",
+					max_active_runs_per_project: z.number().int().min(1).max(32).openapi({
+						description: "Immutable active-Run cap for the Project (1-32)",
 					}),
-					max_active_runs_per_actor: z.number().int().positive().openapi({
-						description: "Immutable active-Run cap for the requesting actor",
+					max_active_runs_per_actor: z.number().int().min(1).max(32).openapi({
+						description:
+							"Immutable active-Run cap for the requesting actor (1-32)",
 					}),
-					max_cases: z.number().int().positive().openapi({
-						description: "Immutable maximum selected Dataset cases",
+					max_cases: z.number().int().min(1).max(10_000).openapi({
+						description: "Immutable maximum selected Dataset cases (1-10,000)",
 					}),
-					max_provider_calls: z.number().int().positive().openapi({
-						description: "Immutable maximum pre-dispatch provider-call charges",
+					max_provider_calls: z.number().int().min(1).max(10_000).openapi({
+						description:
+							"Immutable maximum pre-dispatch provider-call charges (1-10,000)",
 					}),
 				})
 				.strict(),
@@ -342,21 +344,19 @@ const EvaluationRunPinnedInputs = z
 		limits: z.record(z.string(), z.unknown()),
 		execution_bounds: z
 			.object({
-				max_active_runs_per_project: z
-					.number()
-					.int()
-					.positive()
-					.openapi({ description: "Immutable active-Run cap for the Project" }),
-				max_active_runs_per_actor: z.number().int().positive().openapi({
-					description: "Immutable active-Run cap for the requesting actor",
+				max_active_runs_per_project: z.number().int().min(1).max(32).openapi({
+					description: "Immutable active-Run cap for the Project (1-32)",
 				}),
-				max_cases: z
-					.number()
-					.int()
-					.positive()
-					.openapi({ description: "Immutable maximum selected Dataset cases" }),
-				max_provider_calls: z.number().int().positive().openapi({
-					description: "Immutable maximum pre-dispatch provider-call charges",
+				max_active_runs_per_actor: z.number().int().min(1).max(32).openapi({
+					description:
+						"Immutable active-Run cap for the requesting actor (1-32)",
+				}),
+				max_cases: z.number().int().min(1).max(10_000).openapi({
+					description: "Immutable maximum selected Dataset cases (1-10,000)",
+				}),
+				max_provider_calls: z.number().int().min(1).max(10_000).openapi({
+					description:
+						"Immutable maximum pre-dispatch provider-call charges (1-10,000)",
 				}),
 			})
 			.strict(),
@@ -386,12 +386,13 @@ const EvaluationRunMetrics = z
 		failed: z.number().int().nonnegative(),
 		pass_rate: z.number().min(0).max(1).nullable(),
 		cost_usd: z.number().nonnegative().nullable(),
-		provider_calls_used: z.number().int().nonnegative().openapi({
+		provider_calls_used: z.number().int().min(0).max(10_000).openapi({
 			description:
 				"Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success",
 		}),
-		max_provider_calls: z.number().int().positive().openapi({
-			description: "Immutable maximum pre-dispatch provider-call charges",
+		max_provider_calls: z.number().int().min(1).max(10_000).openapi({
+			description:
+				"Immutable maximum pre-dispatch provider-call charges (1-10,000)",
 		}),
 		max_cost_usd: z.number().nonnegative().nullable(),
 		duration_ms: z.number().int().nonnegative().nullable(),

@@ -5055,20 +5055,24 @@ components:
               additionalProperties: false
               properties:
                 max_active_runs_per_actor:
-                  description: Immutable active-Run cap for the requesting actor
-                  exclusiveMinimum: 0
+                  description: Immutable active-Run cap for the requesting actor (1-32)
+                  maximum: 32
+                  minimum: 1
                   type: integer
                 max_active_runs_per_project:
-                  description: Immutable active-Run cap for the Project
-                  exclusiveMinimum: 0
+                  description: Immutable active-Run cap for the Project (1-32)
+                  maximum: 32
+                  minimum: 1
                   type: integer
                 max_cases:
-                  description: Immutable maximum selected Dataset cases
-                  exclusiveMinimum: 0
+                  description: Immutable maximum selected Dataset cases (1-10,000)
+                  maximum: 10000
+                  minimum: 1
                   type: integer
                 max_provider_calls:
-                  description: Immutable maximum pre-dispatch provider-call charges
-                  exclusiveMinimum: 0
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
                   type: integer
               required:
                 - max_active_runs_per_project
@@ -5233,8 +5237,9 @@ components:
                     - integer
                     - 'null'
                 max_provider_calls:
-                  description: Immutable maximum pre-dispatch provider-call charges
-                  exclusiveMinimum: 0
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
                   type: integer
                 pass_rate:
                   maximum: 1
@@ -5247,6 +5252,7 @@ components:
                   type: integer
                 provider_calls_used:
                   description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+                  maximum: 10000
                   minimum: 0
                   type: integer
                 score_counts:
@@ -5297,8 +5303,9 @@ components:
                     - integer
                     - 'null'
                 max_provider_calls:
-                  description: Immutable maximum pre-dispatch provider-call charges
-                  exclusiveMinimum: 0
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
                   type: integer
                 pass_rate:
                   maximum: 1
@@ -5311,6 +5318,7 @@ components:
                   type: integer
                 provider_calls_used:
                   description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+                  maximum: 10000
                   minimum: 0
                   type: integer
                 score_counts:
@@ -5693,8 +5701,9 @@ components:
                 - integer
                 - 'null'
             max_provider_calls:
-              description: Immutable maximum pre-dispatch provider-call charges
-              exclusiveMinimum: 0
+              description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+              maximum: 10000
+              minimum: 1
               type: integer
             pass_rate:
               maximum: 1
@@ -5707,6 +5716,7 @@ components:
               type: integer
             provider_calls_used:
               description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+              maximum: 10000
               minimum: 0
               type: integer
             score_counts:
@@ -5748,20 +5758,24 @@ components:
               additionalProperties: false
               properties:
                 max_active_runs_per_actor:
-                  description: Immutable active-Run cap for the requesting actor
-                  exclusiveMinimum: 0
+                  description: Immutable active-Run cap for the requesting actor (1-32)
+                  maximum: 32
+                  minimum: 1
                   type: integer
                 max_active_runs_per_project:
-                  description: Immutable active-Run cap for the Project
-                  exclusiveMinimum: 0
+                  description: Immutable active-Run cap for the Project (1-32)
+                  maximum: 32
+                  minimum: 1
                   type: integer
                 max_cases:
-                  description: Immutable maximum selected Dataset cases
-                  exclusiveMinimum: 0
+                  description: Immutable maximum selected Dataset cases (1-10,000)
+                  maximum: 10000
+                  minimum: 1
                   type: integer
                 max_provider_calls:
-                  description: Immutable maximum pre-dispatch provider-call charges
-                  exclusiveMinimum: 0
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
                   type: integer
               required:
                 - max_active_runs_per_project
@@ -5951,8 +5965,9 @@ components:
                 - integer
                 - 'null'
             max_provider_calls:
-              description: Immutable maximum pre-dispatch provider-call charges
-              exclusiveMinimum: 0
+              description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+              maximum: 10000
+              minimum: 1
               type: integer
             pass_rate:
               maximum: 1
@@ -5965,6 +5980,7 @@ components:
               type: integer
             provider_calls_used:
               description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+              maximum: 10000
               minimum: 0
               type: integer
             score_counts:
@@ -6100,11 +6116,6 @@ components:
           type:
             - string
             - 'null'
-        config:
-          additionalProperties: false
-          default: {}
-          properties: {}
-          type: object
         dataset_id:
           format: uuid
           type: string

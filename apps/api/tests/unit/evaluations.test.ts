@@ -203,7 +203,7 @@ describe("evaluation MVP", () => {
 			definition_version: 1,
 			idempotency_key: "compatibility-run",
 		});
-		expect(parsed.config).toEqual({});
+		expect(parsed).not.toHaveProperty("config");
 		expect(() =>
 			ExperimentCreate.parse({
 				project_id: projectId,
