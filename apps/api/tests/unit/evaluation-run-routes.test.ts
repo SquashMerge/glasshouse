@@ -182,8 +182,25 @@ describe("Evaluation Run lifecycle API", () => {
 		});
 		const path =
 			"/v1/evaluation-runs/{run_id}/tasks/{task_id}/agent-introspection/{invocation_id}";
-		expect(document.paths?.[path]?.put).toBeDefined();
-		expect(document.paths?.[path]?.get).toBeDefined();
+		const put = document.paths?.[path]?.put;
+		const get = document.paths?.[path]?.get;
+		expect(put).toBeDefined();
+		expect(get).toBeDefined();
+		expect(put?.security).toEqual([{ basicAuth: [] }]);
+		expect(get?.security).toEqual([{ basicAuth: [] }]);
+		for (const operation of [put, get]) {
+			expect(operation?.responses?.["401"]).toMatchObject({
+				description: "Basic authentication required",
+				headers: {
+					"Cache-Control": { schema: { enum: ["no-store"] } },
+				},
+				content: {
+					"application/json": {
+						schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+					},
+				},
+			});
+		}
 	});
 
 	it("requires a project-scoped lifecycle status without exposing input content", () => {

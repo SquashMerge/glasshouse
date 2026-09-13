@@ -44,8 +44,8 @@ function reportAtNormalizedSize(bytes: number) {
 			trace: { trace_id: null, span_id: null },
 			references: Array.from({ length: 8 }, () => ({
 				kind: "input",
-				source: "observation",
-				id: "x",
+				source: "prompt_version",
+				id: "a@1",
 				sha256: null,
 				byte_count: null,
 				redacted: true,
@@ -59,8 +59,8 @@ function reportAtNormalizedSize(bytes: number) {
 		for (const reference of event.references) {
 			const eventCapacity =
 				4096 - Buffer.byteLength(canonicalAgentIntrospectionJson(event));
-			const increase = Math.min(255, eventCapacity, remaining);
-			reference.id += "x".repeat(increase);
+			const increase = Math.min(253, eventCapacity, remaining);
+			reference.id = `a@${"9".repeat(reference.id.length - 2 + increase)}`;
 			remaining -= increase;
 		}
 	expect(remaining).toBe(0);
@@ -86,8 +86,8 @@ function eventAtNormalizedSize(bytes: number) {
 	};
 	event.references = Array.from({ length: 8 }, () => ({
 		kind: "input",
-		source: "observation",
-		id: "x",
+		source: "prompt_version",
+		id: "a@1",
 		sha256: "a".repeat(64),
 		byte_count: 0,
 		redacted: true,
@@ -95,8 +95,8 @@ function eventAtNormalizedSize(bytes: number) {
 	let remaining =
 		bytes - Buffer.byteLength(canonicalAgentIntrospectionJson(event));
 	for (const reference of event.references) {
-		const increase = Math.min(255, remaining);
-		reference.id += "x".repeat(increase);
+		const increase = Math.min(253, remaining);
+		reference.id = `a@${"9".repeat(reference.id.length - 2 + increase)}`;
 		remaining -= increase;
 	}
 	expect(remaining).toBe(0);
@@ -256,7 +256,7 @@ describe("agent-introspection.v1 contract", () => {
 		}
 	});
 
-	it("accepts at-or-before operation references and partial retry endings", () => {
+	it("requires operation references to precede their event", () => {
 		const selfStream = structuredClone(completeSuccess) as any;
 		selfStream.events[1] = {
 			...selfStream.events[1],
@@ -268,8 +268,37 @@ describe("agent-introspection.v1 contract", () => {
 				duration_ms: 1,
 			},
 		};
-		expect(AgentIntrospectionReportV1.safeParse(selfStream).success).toBe(true);
+		expect(AgentIntrospectionReportV1.safeParse(selfStream).success).toBe(
+			false,
+		);
 
+		const selfRetry = structuredClone(completeSuccess) as any;
+		selfRetry.events[1] = {
+			...selfRetry.events[1],
+			type: "retry",
+			detail: {
+				retried_operation_id: selfRetry.events[1].operation_id,
+				next_attempt: 2,
+				classification: "timeout",
+			},
+		};
+		expect(AgentIntrospectionReportV1.safeParse(selfRetry).success).toBe(false);
+
+		const selfError = structuredClone(completeSuccess) as any;
+		selfError.events[1] = {
+			...selfError.events[1],
+			type: "error",
+			detail: {
+				source: "model",
+				classification: "timeout",
+				retryable: true,
+				affected_operation_id: selfError.events[1].operation_id,
+			},
+		};
+		expect(AgentIntrospectionReportV1.safeParse(selfError).success).toBe(false);
+	});
+
+	it("advances a retried operation attempt", () => {
 		const retryEnding = structuredClone(partial) as any;
 		retryEnding.capabilities[1] = {
 			capability: "model_calls",
@@ -304,13 +333,33 @@ describe("agent-introspection.v1 contract", () => {
 				references: [],
 				detail: {
 					retried_operation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-					next_attempt: 3,
+					next_attempt: 2,
 					classification: "timeout",
 				},
 			},
 		);
 		expect(AgentIntrospectionReportV1.safeParse(retryEnding).success).toBe(
 			true,
+		);
+
+		const repeatedRetry = structuredClone(retryEnding) as any;
+		repeatedRetry.events.push({
+			event_id: "44444444-4444-4444-8444-444444444444",
+			sequence: 3,
+			occurred_at: "2026-09-12T00:00:03.000Z",
+			type: "retry",
+			operation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+			parent_event_id: retryEnding.events[0].event_id,
+			trace: { trace_id: null, span_id: null },
+			references: [],
+			detail: {
+				retried_operation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+				next_attempt: 2,
+				classification: "timeout",
+			},
+		});
+		expect(AgentIntrospectionReportV1.safeParse(repeatedRetry).success).toBe(
+			false,
 		);
 	});
 
@@ -371,6 +420,29 @@ describe("agent-introspection.v1 contract", () => {
 			invalid.events[1].references[0].id = id;
 			expect(AgentIntrospectionReportV1.safeParse(invalid).success).toBe(false);
 		}
+
+		const observation = structuredClone(completeSuccess);
+		observation.events[1].references = [
+			{
+				kind: "input",
+				source: "observation",
+				id: "0123456789abcdef",
+				sha256: null,
+				byte_count: null,
+				redacted: true,
+			},
+		];
+		expect(AgentIntrospectionReportV1.safeParse(observation).success).toBe(true);
+		for (const id of [
+			"Bearer secret-token",
+			"authorization: Basic dXNlcjpwYXNz",
+			"https://example.test/observations/0123456789abcdef",
+			"0123456789ABCDEF",
+		]) {
+			const invalid = structuredClone(observation);
+			invalid.events[1].references[0].id = id;
+			expect(AgentIntrospectionReportV1.safeParse(invalid).success).toBe(false);
+		}
 	});
 
 	it("hashes recursively sorted object keys while preserving array order", () => {
@@ -416,25 +488,6 @@ describe("agent-introspection.v1 contract", () => {
 			canonicalAgentIntrospectionRequestHash(uuidShapedToken, identity),
 		).not.toBe(
 			canonicalAgentIntrospectionRequestHash(changedTokenCase, identity),
-		);
-		const uuidShapedObservation = structuredClone(completeSuccess);
-		uuidShapedObservation.events[1].references = [
-			{
-				kind: "input",
-				source: "observation",
-				id: "AbCdEf12-3456-4789-8AbC-dEf123456789",
-				sha256: null,
-				byte_count: null,
-				redacted: true,
-			},
-		];
-		const changedObservationCase = structuredClone(uuidShapedObservation);
-		changedObservationCase.events[1].references[0].id =
-			changedObservationCase.events[1].references[0].id.toLowerCase();
-		expect(
-			canonicalAgentIntrospectionRequestHash(uuidShapedObservation, identity),
-		).not.toBe(
-			canonicalAgentIntrospectionRequestHash(changedObservationCase, identity),
 		);
 	});
 });

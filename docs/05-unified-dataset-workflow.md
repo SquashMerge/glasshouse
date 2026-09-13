@@ -342,13 +342,12 @@ as deprecated adapters and the query-scoped shapes as the new contract.
 ```json
 {
   "definition_version": 3,
-  "dataset_override": { "mode": "pinned", "dataset_slug": "checkout-regression", "version": 8 },
-  "target_override": { "kind": "configured_llm", "provider": "openai_compatible", "model": "gpt-4.1", "settings": {} },
-  "run_overrides": { "sample": { "mode": "count", "count": 25, "seed": 42 } }
+  "trigger_metadata": { "source": "ci", "build_number": 42 }
 }
 ```
 
-The UI presentation of overrides and CI SDK workflow remain future work.
+This is the current strict request shape. Dataset, target, and run overrides,
+plus their UI presentation and CI SDK workflow, remain future work.
 
 ### Future Python SDK
 

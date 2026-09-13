@@ -170,6 +170,7 @@ describe("agent introspection HTTP handlers", () => {
 				const unauthorized = await createApiApp().request(`http://test${path}`);
 				expect(unauthorized.status).toBe(401);
 				expect(unauthorized.headers.get("cache-control")).toBe("no-store");
+				expect(unauthorized.headers.get("www-authenticate")).toContain("Basic");
 			} finally {
 				if (credentials === undefined)
 					delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
@@ -191,8 +192,8 @@ describe("agent introspection HTTP handlers", () => {
 				sequence: index + 1,
 				references: Array.from({ length: 8 }, () => ({
 					kind: "input",
-					source: "observation",
-					id: "a".repeat(256),
+					source: "prompt_version",
+					id: `a@${"9".repeat(254)}`,
 					sha256: null,
 					byte_count: null,
 					redacted: true,

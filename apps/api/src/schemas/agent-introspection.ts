@@ -108,7 +108,7 @@ const EvidenceReference = z
 			(value.source === "evaluation_run_item" &&
 				Uuid.safeParse(value.id).success) ||
 			(value.source === "trace" && /^[a-f0-9]{32}$/.test(value.id)) ||
-			(value.source === "observation" && value.id.length <= 256) ||
+			(value.source === "observation" && /^[a-f0-9]{16}$/.test(value.id)) ||
 			(value.source === "prompt_version" &&
 				(Uuid.safeParse(value.id).success ||
 					(promptVersion.length === 2 &&
@@ -458,7 +458,6 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 					message: "References require capability support",
 					path: ["events", index, "references"],
 				});
-			operations.add(operationId);
 			if (event.type === "retry") {
 				const retriedOperationId = canonicalUuid(
 					event.detail.retried_operation_id,
@@ -472,6 +471,7 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 						message: "Retry must advance a prior operation attempt",
 						path: ["events", index, "detail"],
 					});
+				else attempts.set(retriedOperationId, event.detail.next_attempt);
 			}
 			if (
 				event.type === "stream.summary" &&
@@ -492,6 +492,7 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 					message: "Error must reference a prior operation",
 					path: ["events", index, "detail"],
 				});
+			operations.add(operationId);
 			if ("attempt" in event.detail) {
 				attempts.set(operationId, event.detail.attempt);
 			}
@@ -661,6 +662,11 @@ export const ReadAgentIntrospectionReportV1 = Stored.openapi(
 	"ReadAgentIntrospectionReportV1",
 );
 export const AgentIntrospectionErrorResponses = {
+	401: {
+		description: "Basic authentication required",
+		headers: z.object({ "Cache-Control": z.literal("no-store") }),
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
 	400: {
 		description: "Invalid report",
 		headers: z.object({ "Cache-Control": z.literal("no-store") }),
