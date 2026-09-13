@@ -202,6 +202,20 @@ describe("Evaluation Run lifecycle API", () => {
 				},
 			});
 		}
+		expect(put?.responses?.["422"]).toMatchObject({
+			description: "Report violates the Agent Introspection contract",
+			headers: {
+				"Cache-Control": { schema: { enum: ["no-store"] } },
+			},
+			content: {
+				"application/json": {
+					schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+				},
+			},
+		});
+		expect(
+			document.components?.schemas?.ErrorEnvelope?.properties?.code?.enum,
+		).toContain("CONTRACT_VIOLATION");
 	});
 
 	it("requires a project-scoped lifecycle status without exposing input content", () => {

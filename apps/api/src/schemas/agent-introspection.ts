@@ -4,7 +4,7 @@ import { ErrorEnvelope } from "./common.js";
 import { PromptId } from "./prompts.js";
 
 const UnsafeIdentifier =
-	/(?:^[a-z][a-z0-9+.-]*:\/\/|^(?:authorization|proxy-authorization)\s*:|^(?:bearer|basic)\s+|^[a-z_][a-z0-9_]*=|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|credential|private[_-]?key)|^(?:sk|rk|pk)-|^xox[baprs]-|^akia|^gh[pous]_)/i;
+	/(?:^[a-z][a-z0-9+.-]*:\/\/|^(?:authorization|proxy-authorization)\s*:|^(?:bearer|basic)\s+|^[a-z_][a-z0-9_]*=|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|credential|private[_-]?key)|^(?:sk|rk|pk)-|^(?:sk|rk|pk)_(?:live|test)_|^AIza|^glpat-|^hf_|^github_pat_|^xox[baprs]-|^akia|^gh[pous]_)/i;
 const Identifier = z
 	.string()
 	.regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/)

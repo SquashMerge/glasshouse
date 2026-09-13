@@ -294,6 +294,7 @@ const deletionCleanupSql = [
 	"DELETE FROM feedback_reviews WHERE project_id = $1",
 	"DELETE FROM agent_introspection_reports WHERE project_id = $1",
 	"DELETE FROM agent_introspection_report_scope_quarantine WHERE project_id = $1",
+	"DELETE FROM experiment_result_run_scope_quarantine WHERE project_id = $1",
 	"DELETE FROM experiment_task_run_item_mismatch_quarantine WHERE project_id = $1",
 	"DELETE FROM experiment_tasks WHERE experiment_id IN (SELECT id FROM experiments WHERE project_id = $1)",
 	"DELETE FROM experiment_results WHERE experiment_id IN (SELECT id FROM experiments WHERE project_id = $1)",

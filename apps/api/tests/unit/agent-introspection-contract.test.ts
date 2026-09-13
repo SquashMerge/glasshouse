@@ -140,6 +140,10 @@ describe("agent-introspection.v1 contract", () => {
 			"OPENAI_API_KEY=secret",
 			"sk-secret-token",
 			"model-api_key-secret",
+			"AIza-not-a-real-google-key",
+			"glpat-not-a-real-gitlab-token",
+			"hf_not_a_real_hugging_face_token",
+			"github_pat_not_a_real_token",
 		]) {
 			const unsafeModel = structuredClone(completeSuccess);
 			unsafeModel.events[1].detail.model = value;

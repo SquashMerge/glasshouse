@@ -478,6 +478,33 @@ describe("project authorization routes", () => {
 			query.mock.calls.some(([sql]) => sql.includes("SET project_id = NULL")),
 		).toBe(false);
 	});
+	it("cleans 0094 run-scope quarantines during authorized project deletion", async () => {
+		const response = await request("owner", `/v1/projects/${PROJECT}`, {
+			method: "DELETE",
+			body: JSON.stringify({ confirmation_name: "Project One" }),
+		});
+
+		expect(response.status).toBe(204);
+		expect(
+			query.mock.calls
+				.filter(([sql]) =>
+					[
+						"DELETE FROM experiment_result_run_scope_quarantine WHERE project_id = $1",
+						"DELETE FROM experiment_task_run_item_mismatch_quarantine WHERE project_id = $1",
+					].includes(sql as string),
+				)
+				.map(([sql, values]) => ({ sql, values })),
+		).toEqual([
+			{
+				sql: "DELETE FROM experiment_result_run_scope_quarantine WHERE project_id = $1",
+				values: [PROJECT],
+			},
+			{
+				sql: "DELETE FROM experiment_task_run_item_mismatch_quarantine WHERE project_id = $1",
+				values: [PROJECT],
+			},
+		]);
+	});
 	it("does not delete the PostgreSQL project when ClickHouse cleanup fails", async () => {
 		command.mockImplementationOnce(async () => {
 			throw new Error("ClickHouse mutation failed");
@@ -650,12 +677,24 @@ describe("project authorization routes", () => {
 		);
 		expect(
 			index("DELETE FROM agent_introspection_report_scope_quarantine"),
+		).toBeLessThan(index("DELETE FROM experiment_result_run_scope_quarantine"));
+		expect(
+			index("DELETE FROM experiment_result_run_scope_quarantine"),
 		).toBeLessThan(
 			index("DELETE FROM experiment_task_run_item_mismatch_quarantine"),
 		);
 		expect(
 			index("DELETE FROM experiment_task_run_item_mismatch_quarantine"),
 		).toBeLessThan(index("DELETE FROM experiment_tasks"));
+		expect(
+			sql.find((statement) =>
+				statement.startsWith(
+					"DELETE FROM experiment_result_run_scope_quarantine",
+				),
+			),
+		).toBe(
+			"DELETE FROM experiment_result_run_scope_quarantine WHERE project_id = $1",
+		);
 		expect(index("DELETE FROM dataset_item_input_quarantine")).toBeLessThan(
 			index("DELETE FROM dataset_items"),
 		);

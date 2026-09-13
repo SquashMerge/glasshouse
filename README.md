@@ -262,7 +262,7 @@ See [`docs/03-otel-ingest.md`](docs/03-otel-ingest.md) for Python and Node.js ex
 
 ### Client code generation
 
-`bun run codegen` regenerates the typed TypeScript and Python clients from `openapi.yaml`; `bun run openapi:snapshot` regenerates only the snapshot. `make codegen` and `make openapi-snapshot` provide equivalent Makefile targets. These commands are idempotent: running them twice produces no diff.
+`openapi.yaml` is the tracked canonical OpenAPI artifact. `bun run codegen` regenerates the typed TypeScript and Python clients from it; `bun run openapi:snapshot` updates only the artifact. `bun run openapi:check` regenerates to a temporary file and rejects missing or stale canonical artifacts. `make codegen` and `make openapi-snapshot` provide equivalent generation targets. These commands are idempotent: running them twice produces no diff.
 
 ### `make seed-traces`
 
