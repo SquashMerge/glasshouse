@@ -84,11 +84,15 @@ BEGIN
         FROM experiment_task_run_item_mismatch_quarantine AS quarantine
         WHERE quarantine.task_id = half_scope_a_task_id
           AND quarantine.reason = 'deterministic_run_item_remap_collision'
+          AND quarantine.evaluation_run_item_id IS NULL
+          AND quarantine.remediated_evaluation_run_item_id IS NULL
     ) OR NOT EXISTS (
         SELECT 1
         FROM experiment_task_run_item_mismatch_quarantine AS quarantine
         WHERE quarantine.task_id = half_scope_b_task_id
           AND quarantine.reason = 'deterministic_run_item_remap_collision'
+          AND quarantine.evaluation_run_item_id IS NULL
+          AND quarantine.remediated_evaluation_run_item_id IS NULL
     ) THEN
         RAISE EXCEPTION 'upgrade did not quarantine every converging task remap';
     END IF;

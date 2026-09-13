@@ -1,5 +1,15 @@
 DO $$
 BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'experiment_task_run_item_mismatch_quarantine'
+          AND column_name IN ('evaluation_run_item_id', 'remediated_evaluation_run_item_id')
+          AND is_nullable = 'NO'
+    ) THEN
+        RAISE EXCEPTION '0092 quarantine ledger cannot represent an ambiguous Run-item remap';
+    END IF;
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint

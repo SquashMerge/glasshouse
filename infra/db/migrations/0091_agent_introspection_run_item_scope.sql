@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS experiment_task_run_item_mismatch_quarantine (
     task_id UUID PRIMARY KEY,
     project_id UUID NOT NULL,
     evaluation_run_id UUID NOT NULL,
-    evaluation_run_item_id UUID NOT NULL,
+    evaluation_run_item_id UUID,
     remediated_evaluation_run_item_id UUID,
     reason TEXT NOT NULL,
     quarantined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -123,7 +123,7 @@ INSERT INTO agent_introspection_report_scope_quarantine (
 )
 SELECT report.id, report.organization_id, report.project_id,
        report.evaluation_run_id, report.task_id, report.invocation_id,
-       report.request_hash, 'task_run_item_has_no_deterministic_remediation'
+       report.request_hash, quarantine.reason
 FROM agent_introspection_reports AS report
 JOIN experiment_task_run_item_mismatch_quarantine AS quarantine
   ON quarantine.task_id = report.task_id
