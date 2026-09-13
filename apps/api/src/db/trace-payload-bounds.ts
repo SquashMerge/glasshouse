@@ -2,6 +2,7 @@ import type {
 	ObservationMetadata,
 	OtlpAttribute,
 } from "./observation-metadata.js";
+import { serializeObservationMetadata } from "./observation-metadata.js";
 
 export const MAX_RETAINED_TEXT_BYTES = 8 * 1024;
 export const MAX_RETAINED_METADATA_BYTES = 16 * 1024;
@@ -83,24 +84,34 @@ export function boundObservationMetadata(
 				? {}
 				: { value: boundValue(attribute.value, state) }),
 		};
-		const next = {
+		const next: ObservationMetadata = {
 			schema_version: 1 as const,
 			attributes: [...attributes, candidate],
 			prompt_provenance: metadata.prompt_provenance,
-			truncated: true,
 		};
-		if (utf8ByteLength(JSON.stringify(next)) > MAX_RETAINED_METADATA_BYTES) {
+		if (
+			utf8ByteLength(serializeObservationMetadata(next)) >
+			MAX_RETAINED_METADATA_BYTES
+		) {
 			state.truncated = true;
 			break;
 		}
 		attributes.push(candidate);
 	}
-	return {
+	let bounded: ObservationMetadata = {
 		schema_version: 1,
 		attributes,
 		prompt_provenance: metadata.prompt_provenance,
 		...(state.truncated ? { truncated: true } : {}),
 	};
+	while (
+		utf8ByteLength(serializeObservationMetadata(bounded)) >
+			MAX_RETAINED_METADATA_BYTES &&
+		bounded.attributes.length > 0
+	) {
+		bounded = { ...bounded, attributes: bounded.attributes.slice(0, -1) };
+	}
+	return bounded;
 }
 
 export function fitResponseItems<T>(

@@ -150,6 +150,7 @@ function TraceDetailPageContent({
 	const splitContainerRef = React.useRef<HTMLDivElement>(null);
 	const highlightTimersRef = React.useRef(new Map<string, number>());
 	const highlightVersionsRef = React.useRef(new Map<string, number>());
+	const receivedSnapshotRef = React.useRef(false);
 
 	const clearHighlightTimers = React.useCallback(() => {
 		for (const timer of highlightTimersRef.current.values())
@@ -183,22 +184,35 @@ function TraceDetailPageContent({
 				snapshot_truncated?: boolean;
 				next_cursor?: string;
 			}) => {
+				const reconnectSnapshot = receivedSnapshotRef.current;
+				receivedSnapshotRef.current = true;
 				setReceivedSnapshot(true);
 				setSnapshotTimedOut(false);
 				setNotFound(false);
 				setRecordingStatus("recording");
-				setSnapshotTruncated(snapshot.snapshot_truncated === true);
-				setNextCursor(snapshot.next_cursor ?? null);
+				setSnapshotTruncated((current) =>
+					reconnectSnapshot ? current : snapshot.snapshot_truncated === true,
+				);
+				setNextCursor((current) =>
+					reconnectSnapshot ? current : (snapshot.next_cursor ?? null),
+				);
 				setLoadMoreError(null);
-				setModel(
+				const snapshotObservations = snapshot.observations.map(
+					normalizeStreamObservation,
+				);
+				setModel((current) =>
 					createTraceModel({
-						...snapshot,
-						observations: snapshot.observations.map(normalizeStreamObservation),
+						trace: snapshot.trace ?? current.trace,
+						observations: reconnectSnapshot
+							? [...traceModelObservations(current), ...snapshotObservations]
+							: snapshotObservations,
 					}),
 				);
-				clearHighlightTimers();
-				highlightVersionsRef.current = new Map();
-				setHighlightVersions(highlightVersionsRef.current);
+				if (!reconnectSnapshot) {
+					clearHighlightTimers();
+					highlightVersionsRef.current = new Map();
+					setHighlightVersions(highlightVersionsRef.current);
+				}
 			},
 			onObservation: ({ observation }: { observation: ObservationRowLike }) => {
 				setRecordingStatus("recording");

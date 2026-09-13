@@ -210,6 +210,109 @@ describe("trace pagination", () => {
 		expect(typeof JSON.parse(raw).next_cursor).toBe("string");
 	});
 
+	it("keeps an ASCII raw list response at the UTF-8 ceiling while retaining its continuation cursor", async () => {
+		const trace = {
+			trace_id: "a".repeat(32),
+			project_id: PROJECT_ID,
+			name: "",
+			start_time: "2024-01-01 00:00:00.000",
+			end_time: null,
+			duration_ms: null,
+			status: "ok" as const,
+			user_id: "",
+			session_id: "",
+			agent_id: "",
+			agent_version: "",
+			env: "test",
+			tags: [],
+			input_text: "",
+			output_text: "",
+			scores_summary: "",
+		};
+		const presented = {
+			...trace,
+			start_time: "2024-01-01T00:00:00.000Z",
+		};
+		const continuation = {
+			...trace,
+			trace_id: "b".repeat(32),
+			start_time: "2024-01-01 00:00:00.000",
+		};
+		const presentedContinuation = {
+			...continuation,
+			start_time: "2024-01-01T00:00:00.000Z",
+		};
+		continuation.name = "a".repeat(
+			MAX_TRACE_RESPONSE_BYTES -
+				new TextEncoder().encode(
+					JSON.stringify({
+						items: [presented, presentedContinuation],
+						total: 2,
+						response_truncated: true,
+					}),
+				).byteLength,
+		);
+		presentedContinuation.name = continuation.name;
+		listTraces.mockResolvedValueOnce({
+			items: [trace, continuation],
+			total: 2,
+			next_cursor: {
+				start_time: continuation.start_time,
+				id: continuation.trace_id,
+			},
+		});
+
+		const response = await apiApp.fetch(scopedRequest("/v1/traces?limit=2"));
+		const raw = await response.text();
+		const page = JSON.parse(raw) as {
+			items: Array<{ trace_id: string }>;
+			response_truncated?: boolean;
+			next_cursor?: string;
+		};
+
+		expect(response.status).toBe(200);
+		expect(page.items).toHaveLength(1);
+		expect(page.response_truncated).toBe(true);
+		expect(page.next_cursor).toEqual(expect.any(String));
+		expect(new TextEncoder().encode(raw).byteLength).toBeLessThanOrEqual(
+			MAX_TRACE_RESPONSE_BYTES,
+		);
+	});
+
+	it("rejects a list page whose only continuation-safe item cannot fit the UTF-8 ceiling", async () => {
+		listTraces.mockResolvedValueOnce({
+			items: [
+				{
+					trace_id: "c".repeat(32),
+					project_id: PROJECT_ID,
+					name: "a".repeat(MAX_TRACE_RESPONSE_BYTES),
+					start_time: "2024-01-01 00:00:00.000",
+					end_time: null,
+					duration_ms: null,
+					status: "ok" as const,
+					user_id: "",
+					session_id: "",
+					agent_id: "",
+					agent_version: "",
+					env: "test",
+					tags: [],
+					input_text: "",
+					output_text: "",
+					scores_summary: "",
+				},
+			],
+			total: 2,
+			next_cursor: {
+				start_time: "2024-01-01 00:00:00.000",
+				id: "c".repeat(32),
+			},
+		});
+
+		const response = await apiApp.fetch(scopedRequest("/v1/traces?limit=1"));
+
+		expect(response.status).toBe(413);
+	});
+
 	it("preserves the observation limit cap", async () => {
 		const res = await apiApp.fetch(scopedRequest("/v1/observations?limit=201"));
 		expect(res.status).toBe(200);

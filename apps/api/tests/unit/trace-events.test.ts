@@ -760,6 +760,71 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/traces/{id}/events (detail SSE)", () => {
+	it("keeps a multibyte snapshot's raw SSE frame within its pending-byte ceiling with its cursor", async () => {
+		const maxPendingBytes = 4_096;
+		const presentedMetadata = {
+			schema_version: 1,
+			attributes: [
+				{ key: "model", value: { stringValue: "gpt-4o" } },
+				{ key: "tokens", value: { intValue: 42 } },
+			],
+			prompt_provenance: null,
+		};
+		const first = { ...fakeObservation, metadata: presentedMetadata };
+		const continuation = {
+			...fakeObservation,
+			observation_id: "obs-boundary-multibyte",
+			metadata: presentedMetadata,
+			input_text: "",
+		};
+		continuation.input_text = "界".repeat(
+			Math.floor(
+				(maxPendingBytes -
+					new TextEncoder().encode(
+						JSON.stringify({
+							trace: fakeTrace,
+							observations: [first, continuation],
+							snapshot_truncated: true,
+						}),
+					).byteLength) /
+					3,
+			),
+		);
+		const handlers = createTraceEventHandlers({
+			assertProjectAccess: assertProjectAccessMock,
+			defaultClient: defaultClientMock,
+			getTrace: async () => ({
+				trace: fakeTrace,
+				observations: [first, continuation],
+				next_cursor: {
+					start_time: continuation.start_time,
+					id: continuation.observation_id,
+				},
+			}),
+			graceMs: 150,
+			heartbeatMs: 60,
+			maxPendingBytes,
+			subscribe: subscribeSpy,
+		});
+		const response = await createApiApp(handlers).fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+		const reader = response.body!.getReader();
+		await reader.read();
+		const snapshot = await reader.read();
+
+		expect(response.status).toBe(200);
+		expect(snapshot.done).toBe(false);
+		expect(snapshot.value!.byteLength).toBeLessThanOrEqual(maxPendingBytes);
+		expect(decoder.decode(snapshot.value!)).toStartWith("event: snapshot\n");
+		expect(decoder.decode(snapshot.value!)).toContain("snapshot_truncated");
+		expect(decoder.decode(snapshot.value!)).toContain("next_cursor");
+		await reader.cancel();
+	});
+
 	it("bounds the serialized snapshot before the SSE frame is materialized", async () => {
 		getTraceMock.mockResolvedValueOnce({
 			trace: fakeTrace,
@@ -776,7 +841,17 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 				}),
 			})),
 		});
-		const response = await apiApp.fetch(
+		const response = await createApiApp(
+			createTraceEventHandlers({
+				assertProjectAccess: assertProjectAccessMock,
+				defaultClient: defaultClientMock,
+				getTrace: getTraceMock,
+				graceMs: 150,
+				heartbeatMs: 60,
+				maxPendingBytes: MAX_TRACE_RESPONSE_BYTES,
+				subscribe: subscribeSpy,
+			}),
+		).fetch(
 			new Request(
 				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
 				{ headers: { authorization: AUTH } },

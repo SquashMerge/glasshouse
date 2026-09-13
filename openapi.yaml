@@ -13613,7 +13613,7 @@ paths:
         - projects
   /v1/observations:
     get:
-      description: Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.
+      description: Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.
       parameters:
         - in: query
           name: limit
@@ -13663,6 +13663,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Trace not found
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: A response cannot fit within the raw UTF-8 byte limit
         '501':
           content:
             application/json:
@@ -16538,7 +16544,7 @@ paths:
         - prompts
   /v1/traces:
     get:
-      description: Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.
+      description: Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.
       parameters:
         - in: query
           name: limit
@@ -16588,6 +16594,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Trace not found
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: A response cannot fit within the raw UTF-8 byte limit
         '501':
           content:
             application/json:
@@ -16629,7 +16641,7 @@ paths:
         - traces
   /v1/traces/{id}:
     get:
-      description: Fetch a project- and trace-scoped, byte-bounded observation page in stable start_time, observation_id order. Retained text is capped at 8 KiB UTF-8 and its truncation flags report source clipping. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.
+      description: Fetch a project- and trace-scoped observation page in stable start_time, observation_id order. The raw UTF-8 JSON body is capped at 256 KiB; response_truncated and next_cursor preserve byte-truncated continuation. Retained text is capped at 8 KiB UTF-8 and its truncation flags report source clipping. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.
       parameters:
         - in: path
           name: id
@@ -16696,6 +16708,12 @@ paths:
                     type: string
                 type: object
           description: Trace not found
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: A response cannot fit within the raw UTF-8 byte limit
       security:
         - basicAuth: []
       summary: Get a trace
@@ -16704,7 +16722,7 @@ paths:
   /v1/traces/{id}/events:
     get:
       description: |-
-        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with existing observations capped by both the 256 KiB response budget and `SSE_MAX_PENDING_BYTES`; a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
+        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
         data: {"status":"complete"}` and closes the stream.
       parameters:
         - in: path

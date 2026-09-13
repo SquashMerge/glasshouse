@@ -25,6 +25,7 @@ import { trustedTenant } from "../tenancy.js";
 import {
 	fitResponseItems,
 	MAX_TRACE_RESPONSE_BYTES,
+	utf8ByteLength,
 } from "../db/trace-payload-bounds.js";
 import {
 	decodeTraceCursor,
@@ -101,25 +102,35 @@ function boundedListResponse<T extends { start_time: string }>(
 	projectId: string,
 	itemId: (item: T) => string,
 ) {
-	const bounded = fitResponseItems(items, (candidate) => ({
-		items: candidate,
-		total,
-		response_truncated: true,
-	}));
-	const last = bounded.items.at(-1);
-	const pageCursor = bounded.truncated
-		? last
-			? { start_time: last.start_time, id: itemId(last) }
-			: undefined
-		: nextCursor;
-	return c.json({
-		items: bounded.items,
-		total,
-		...(bounded.truncated ? { response_truncated: true } : {}),
-		...(pageCursor
-			? { next_cursor: encodeTraceCursor(cursorKind, projectId, pageCursor) }
-			: {}),
-	});
+	const responseFor = (candidate: readonly T[]) => {
+		const responseTruncated = candidate.length < items.length;
+		const last = candidate.at(-1);
+		const pageCursor = responseTruncated
+			? last
+				? { start_time: last.start_time, id: itemId(last) }
+				: undefined
+			: nextCursor;
+		return {
+			items: candidate,
+			total,
+			...(responseTruncated ? { response_truncated: true } : {}),
+			...(pageCursor
+				? { next_cursor: encodeTraceCursor(cursorKind, projectId, pageCursor) }
+				: {}),
+		};
+	};
+	const bounded = fitResponseItems(items, responseFor);
+	const response = responseFor(bounded.items);
+	if (
+		(items.length > 0 && bounded.items.length === 0) ||
+		utf8ByteLength(JSON.stringify(response)) > MAX_TRACE_RESPONSE_BYTES
+	) {
+		return c.json(
+			{ code: "PAYLOAD_TOO_LARGE", message: "Response exceeds byte limit" },
+			413,
+		);
+	}
+	return c.json(response);
 }
 
 export const listTraces = createRoute({
@@ -128,7 +139,7 @@ export const listTraces = createRoute({
 	tags: ["traces"],
 	summary: "List traces",
 	description:
-		"Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
+		"Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
 	security: [{ basicAuth: [] }],
 	request: { query: TraceListQuery },
 	responses: {
@@ -138,6 +149,10 @@ export const listTraces = createRoute({
 		},
 		400: {
 			description: "Invalid pagination parameters",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
+		413: {
+			description: "A response cannot fit within the raw UTF-8 byte limit",
 			content: { "application/json": { schema: ErrorEnvelope } },
 		},
 		...TraceStubResponses,
@@ -195,7 +210,7 @@ export const getTrace = createRoute({
 	tags: ["traces"],
 	summary: "Get a trace",
 	description:
-		"Fetch a project- and trace-scoped, byte-bounded observation page in stable start_time, observation_id order. Retained text is capped at 8 KiB UTF-8 and its truncation flags report source clipping. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.",
+		"Fetch a project- and trace-scoped observation page in stable start_time, observation_id order. The raw UTF-8 JSON body is capped at 256 KiB; response_truncated and next_cursor preserve byte-truncated continuation. Retained text is capped at 8 KiB UTF-8 and its truncation flags report source clipping. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: TraceIdParam,
@@ -231,6 +246,10 @@ export const getTrace = createRoute({
 		},
 		400: {
 			description: "Missing or invalid project_id",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
+		413: {
+			description: "A response cannot fit within the raw UTF-8 byte limit",
 			content: { "application/json": { schema: ErrorEnvelope } },
 		},
 	},
@@ -272,33 +291,48 @@ export async function handleGetTrace(c: Context): Promise<Response> {
 			);
 		}
 		const presentedTrace = presentTrace(trace);
-		const bounded = fitResponseItems(
-			observations.map(presentObservation),
-			(candidate) => ({
+		const presentedObservations = observations.map(presentObservation);
+		const responseFor = (
+			candidate: ReadonlyArray<(typeof presentedObservations)[number]>,
+		) => {
+			const responseTruncated = candidate.length < presentedObservations.length;
+			const hasMore = responseTruncated || next_cursor !== undefined;
+			const last = candidate.at(-1);
+			return {
 				trace: presentedTrace,
 				observations: candidate,
-				response_truncated: true,
-			}),
+				...(responseTruncated ? { response_truncated: true } : {}),
+				...(last && hasMore
+					? {
+							next_cursor: encodeTraceCursor(
+								"trace-observations",
+								projectId,
+								{
+									start_time: last.start_time,
+									id: last.observation_id,
+								},
+								traceId,
+							),
+						}
+					: {}),
+			};
+		};
+		const bounded = fitResponseItems(
+			presentedObservations,
+			responseFor,
 			MAX_TRACE_RESPONSE_BYTES,
 		);
-		const responseCursor =
-			bounded.items.length > 0 && (bounded.truncated || next_cursor)
-				? encodeTraceCursor(
-						"trace-observations",
-						projectId,
-						{
-							start_time: bounded.items.at(-1)!.start_time,
-							id: bounded.items.at(-1)!.observation_id,
-						},
-						traceId,
-					)
-				: undefined;
-		return c.json({
-			trace: presentedTrace,
-			observations: bounded.items,
-			...(bounded.truncated ? { response_truncated: true } : {}),
-			...(responseCursor ? { next_cursor: responseCursor } : {}),
-		});
+		const response = responseFor(bounded.items);
+		if (
+			(presentedObservations.length > 0 && bounded.items.length === 0) ||
+			utf8ByteLength(JSON.stringify(response)) > MAX_TRACE_RESPONSE_BYTES
+		) {
+			return c.json(
+				{ code: "PAYLOAD_TOO_LARGE", message: "Response exceeds byte limit" },
+				413,
+			);
+		}
+		return c.json(response);
 	} catch (err) {
 		if (err instanceof InvalidTraceCursorError)
 			return c.json({ code: "BAD_REQUEST", message: err.message }, 400);
@@ -316,7 +350,7 @@ export const listObservations = createRoute({
 	tags: ["traces"],
 	summary: "List observations (spans)",
 	description:
-		"Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
+		"Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
 	security: [{ basicAuth: [] }],
 	request: { query: TraceListQuery },
 	responses: {
@@ -326,6 +360,10 @@ export const listObservations = createRoute({
 		},
 		400: {
 			description: "Invalid pagination parameters",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
+		413: {
+			description: "A response cannot fit within the raw UTF-8 byte limit",
 			content: { "application/json": { schema: ErrorEnvelope } },
 		},
 		...TraceStubResponses,

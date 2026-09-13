@@ -29,6 +29,7 @@ import { logger } from "../lib/logger.js";
 import {
 	fitResponseItems,
 	MAX_TRACE_RESPONSE_BYTES,
+	utf8ByteLength,
 } from "../db/trace-payload-bounds.js";
 import { encodeTraceCursor } from "../db/trace-cursor.js";
 
@@ -36,6 +37,10 @@ import { encodeTraceCursor } from "../db/trace-cursor.js";
 const HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS ?? 15_000);
 const GRACE_MS = Number(process.env.TRACE_COMPLETE_GRACE_MS ?? 30_000);
 const sseEncoder = new TextEncoder();
+
+function sseEventFrame(event: string, data: string): string {
+	return `event: ${event}\ndata: ${data}\n\n`;
+}
 
 const tag = "traces";
 
@@ -119,7 +124,7 @@ export const streamTraceDetailEvents = createRoute({
 		"Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), " +
 		"subscribes to `observation.created` BEFORE writing the snapshot (so any " +
 		"observation created in the gap is delivered as a live event), writes an " +
-		"`event: snapshot` frame with existing observations capped by both the 256 KiB response budget and `SSE_MAX_PENDING_BYTES`; " +
+		"`event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); " +
 		"a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards " +
 		"matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` " +
 		"frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` " +
@@ -302,10 +307,9 @@ export function createTraceEventHandlers(
 				)
 					return;
 				const data = JSON.stringify({ trace });
+				const frame = sseEventFrame("trace", data);
 				void frameDelivery.deliver(
-					authorizedSseFrame(data, () =>
-						stream.writeSSE({ event: "trace", data }),
-					),
+					authorizedSseFrame(frame, () => stream.write(frame)),
 				);
 			});
 			heartbeat = setInterval(() => {
@@ -370,10 +374,9 @@ export function createTraceEventHandlers(
 					observation: presented,
 					metadataParsed: presented.metadata,
 				});
+				const frame = sseEventFrame("observation", data);
 				void frameDelivery.deliver(
-					authorizedSseFrame(data, () =>
-						stream.writeSSE({ event: "observation", data }),
-					),
+					authorizedSseFrame(frame, () => stream.write(frame)),
 				);
 			});
 			heartbeat = setInterval(() => {
@@ -401,9 +404,9 @@ export function createTraceEventHandlers(
 			c.req as { valid: (target: "query") => { project_id?: string } }
 		).valid("query");
 		const expectedProjectId = projectId ?? "";
-		const bufferedObservations: Array<{ data: string; bytes: number }> = [];
+		const bufferedObservations: Array<{ frame: string; bytes: number }> = [];
 		let bufferedObservationBytes = 0;
-		let forwardObservation: ((data: string) => void) | null = null;
+		let forwardObservation: ((frame: string) => void) | null = null;
 		let unsubscribe: (() => void) | null = null;
 		let preSnapshotClosed: "aborted" | "overflow" | "timeout" | null = null;
 		const snapshotController = new AbortController();
@@ -439,11 +442,12 @@ export function createTraceEventHandlers(
 			const data = JSON.stringify({
 				observation: presentObservation(observation),
 			});
+			const frame = sseEventFrame("observation", data);
 			if (forwardObservation) {
-				forwardObservation(data);
+				forwardObservation(frame);
 				return;
 			}
-			const bytes = sseEncoder.encode(data).byteLength;
+			const bytes = sseEncoder.encode(frame).byteLength;
 			if (
 				bufferedObservations.length >= d.maxPendingFrames ||
 				bufferedObservationBytes + bytes > d.maxPendingBytes
@@ -452,7 +456,7 @@ export function createTraceEventHandlers(
 				return;
 			}
 			bufferedObservationBytes += bytes;
-			bufferedObservations.push({ data, bytes });
+			bufferedObservations.push({ frame, bytes });
 		});
 
 		if (preSnapshotClosed) {
@@ -531,6 +535,51 @@ export function createTraceEventHandlers(
 
 		const snapshotObservations =
 			snapshotResult.observations.map(presentObservation);
+		const snapshotDataFor = (
+			observations: ReadonlyArray<(typeof snapshotObservations)[number]>,
+		) => {
+			const snapshotTruncated =
+				observations.length < snapshotObservations.length ||
+				snapshotResult.next_cursor !== undefined;
+			const last = observations.at(-1);
+			return JSON.stringify({
+				trace: snapshotTrace,
+				observations,
+				...(snapshotTruncated ? { snapshot_truncated: true } : {}),
+				...(last && snapshotTruncated
+					? {
+							next_cursor: encodeTraceCursor(
+								"trace-observations",
+								expectedProjectId,
+								{
+									start_time: last.start_time,
+									id: last.observation_id,
+								},
+								traceId,
+							),
+						}
+					: {}),
+			});
+		};
+		const maxSnapshotBytes = Math.min(
+			MAX_TRACE_RESPONSE_BYTES,
+			d.maxPendingBytes,
+		);
+		const boundedSnapshot = fitResponseItems(
+			snapshotObservations,
+			(observations) =>
+				sseEventFrame("snapshot", snapshotDataFor(observations)),
+			maxSnapshotBytes,
+		);
+		const snapshotData = snapshotDataFor(boundedSnapshot.items);
+		const snapshotFrame = sseEventFrame("snapshot", snapshotData);
+		if (
+			utf8ByteLength(snapshotFrame) > maxSnapshotBytes ||
+			(snapshotObservations.length > 0 && boundedSnapshot.items.length === 0)
+		) {
+			unsubscribe?.();
+			return snapshotOverflowResponse();
+		}
 		return streamSSE(c, async (stream) => {
 			let heartbeat: ReturnType<typeof setInterval> | null = null;
 			let graceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -588,59 +637,22 @@ export function createTraceEventHandlers(
 					if (closed) return;
 					closed = true;
 					const data = JSON.stringify({ status: "complete" });
+					const frame = sseEventFrame("status", data);
 					void frameDelivery
-						.deliver(
-							authorizedSseFrame(data, () =>
-								stream.writeSSE({ event: "status", data }),
-							),
-						)
+						.deliver(authorizedSseFrame(frame, () => stream.write(frame)))
 						.finally(cleanup);
 				}, d.graceMs);
 			};
-			const sendObservation = (data: string) => {
+			const sendObservation = (frame: string) => {
 				if (closed) return;
 				armGraceTimer();
 				void frameDelivery.deliver(
-					authorizedSseFrame(data, () =>
-						stream.writeSSE({ event: "observation", data }),
-					),
+					authorizedSseFrame(frame, () => stream.write(frame)),
 				);
 			};
 
-			const boundedSnapshot = fitResponseItems(
-				snapshotObservations,
-				(observations) => ({
-					trace: snapshotTrace,
-					observations,
-					snapshot_truncated: true,
-				}),
-				Math.min(MAX_TRACE_RESPONSE_BYTES - 1024, d.maxPendingBytes),
-			);
-			const snapshotData = JSON.stringify({
-				trace: snapshotTrace,
-				observations: boundedSnapshot.items,
-				...(boundedSnapshot.truncated || snapshotResult.next_cursor
-					? { snapshot_truncated: true }
-					: {}),
-				...(boundedSnapshot.items.length > 0 &&
-				(boundedSnapshot.truncated || snapshotResult.next_cursor)
-					? {
-							next_cursor: encodeTraceCursor(
-								"trace-observations",
-								expectedProjectId,
-								{
-									start_time: boundedSnapshot.items.at(-1)!.start_time,
-									id: boundedSnapshot.items.at(-1)!.observation_id,
-								},
-								traceId,
-							),
-						}
-					: {}),
-			});
 			await frameDelivery.deliver(
-				authorizedSseFrame(snapshotData, () =>
-					stream.writeSSE({ event: "snapshot", data: snapshotData }),
-				),
+				authorizedSseFrame(snapshotFrame, () => stream.write(snapshotFrame)),
 			);
 			if (frameDelivery.closed || stream.aborted) {
 				cleanup();
@@ -649,7 +661,7 @@ export function createTraceEventHandlers(
 			forwardObservation = sendObservation;
 			for (const observation of bufferedObservations.splice(0)) {
 				bufferedObservationBytes -= observation.bytes;
-				sendObservation(observation.data);
+				sendObservation(observation.frame);
 			}
 			armGraceTimer();
 			await waitForClose;

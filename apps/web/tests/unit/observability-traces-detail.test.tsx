@@ -24,7 +24,21 @@ import {
 } from "@testing-library/react";
 import { TraceDetailPage } from "../../src/routes/observability/traces/$id";
 import { ObservationDetailPanel } from "../../src/components/ObservationDetailPanel";
-import type { TraceRow } from "../../src/lib/api";
+import {
+	getTraceDetail,
+	type ObservationRow,
+	type TraceRow,
+} from "../../src/lib/api";
+
+vi.mock("../../src/lib/api", async () => {
+	const actual =
+		await vi.importActual<typeof import("../../src/lib/api")>(
+			"../../src/lib/api",
+		);
+	return { ...actual, getTraceDetail: vi.fn() };
+});
+
+const mockedGetTraceDetail = vi.mocked(getTraceDetail);
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -219,6 +233,7 @@ function renderAt(id: string, span?: string): ReturnType<typeof render> {
 beforeEach(() => {
 	handleByTraceId.clear();
 	projectIdByTraceId.clear();
+	mockedGetTraceDetail.mockReset();
 	selectedProjectId = null;
 	selectedProjectRole = "user";
 	setRoute(VALID_ID);
@@ -419,6 +434,75 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 		expect(
 			screen.getByRole("button", { name: "Load remaining observations" }),
 		).toBeInTheDocument();
+	});
+
+	it("merges a reconnect snapshot with loaded continuations and live rows without rewinding its cursor", async () => {
+		selectedProjectId = PROJECT_ID;
+		mockedGetTraceDetail.mockResolvedValueOnce({
+			trace: { trace_id: VALID_ID, name: "trace" } as TraceRow,
+			observations: [
+				makeObservation({
+					observation_id: "b".repeat(32),
+					name: "continuation",
+				}) as unknown as ObservationRow,
+			],
+			next_cursor: "after-continuation",
+		});
+		renderAt(VALID_ID);
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const handle = handleByTraceId.get(VALID_ID)!;
+
+		await act(async () => {
+			handle.callbacks!.onSnapshot({
+				observations: [
+					makeObservation({ observation_id: "a".repeat(32), name: "snapshot" }),
+				],
+				snapshot_truncated: true,
+				next_cursor: "first-snapshot-cursor",
+			});
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "Load remaining observations" }),
+		);
+		await screen.findByText("continuation");
+		await act(async () => {
+			handle.callbacks!.onObservation({
+				observation: makeObservation({
+					observation_id: "c".repeat(32),
+					name: "live",
+				}),
+			});
+			handle.callbacks!.onSnapshot({
+				observations: [
+					makeObservation({ observation_id: "a".repeat(32), name: "snapshot" }),
+					makeObservation({
+						observation_id: "d".repeat(32),
+						name: "reconnect",
+					}),
+				],
+				snapshot_truncated: true,
+				next_cursor: "stale-snapshot-cursor",
+			});
+		});
+
+		const rows = await screen.findAllByTestId("span-row");
+		expect(rows).toHaveLength(4);
+		expect(screen.getByTestId("span-tree")).toHaveTextContent("continuation");
+		expect(screen.getByTestId("span-tree")).toHaveTextContent("live");
+		expect(screen.getByTestId("span-tree")).toHaveTextContent("reconnect");
+		mockedGetTraceDetail.mockResolvedValueOnce({
+			trace: { trace_id: VALID_ID, name: "trace" } as TraceRow,
+			observations: [],
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "Load remaining observations" }),
+		);
+		await waitFor(() =>
+			expect(mockedGetTraceDetail).toHaveBeenLastCalledWith(VALID_ID, {
+				project_id: PROJECT_ID,
+				cursor: "after-continuation",
+			}),
+		);
 	});
 
 	it("renders the 3 snapshot observation rows in the tree", async () => {

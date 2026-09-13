@@ -6,6 +6,7 @@ import { createApiApp } from "../../src/index.js";
 import { clickhouseUrl } from "../../src/db/clickhouse.js";
 import {
 	MAX_RETAINED_TEXT_BYTES,
+	MAX_RETAINED_METADATA_BYTES,
 	MAX_TRACE_RESPONSE_BYTES,
 } from "../../src/db/trace-payload-bounds.js";
 import { sseMaxPendingBytes } from "../../src/lib/authorized-sse.js";
@@ -14,6 +15,7 @@ import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization.js"
 const encoder = new TextEncoder();
 const marker = `trace-bounds-${randomBytes(8).toString("hex")}`;
 const traceIds = [
+	randomBytes(16).toString("hex"),
 	randomBytes(16).toString("hex"),
 	randomBytes(16).toString("hex"),
 	randomBytes(16).toString("hex"),
@@ -41,7 +43,21 @@ function bytes(value: unknown): number {
 	return encoder.encode(JSON.stringify(value)).byteLength;
 }
 
-function span(traceId: string, index: number) {
+const exactInput = "a".repeat(MAX_RETAINED_TEXT_BYTES);
+const exactOutput = `${"界".repeat(2_730)}aa`;
+const metadataFirstValue = "a".repeat(MAX_RETAINED_TEXT_BYTES);
+const metadataSecondValue = "a".repeat(
+	MAX_RETAINED_METADATA_BYTES -
+		bytes({
+			schema_version: 1,
+			attributes: [
+				{ key: "metadata.first", value: { stringValue: metadataFirstValue } },
+				{ key: "metadata.second", value: { stringValue: "" } },
+			],
+		}),
+);
+
+function span(traceId: string, index: number, exact = false) {
 	return {
 		trace_id: traceId,
 		span_id: (index + 1).toString(16).padStart(16, "0"),
@@ -52,11 +68,34 @@ function span(traceId: string, index: number) {
 			{ key: "gen_ai.system", value: { stringValue: "openai" } },
 			{
 				key: "gen_ai.prompt.0.content",
-				value: { stringValue: "a".repeat(MAX_RETAINED_TEXT_BYTES + 1) },
+				value: {
+					stringValue: exact
+						? exactInput
+						: "a".repeat(MAX_RETAINED_TEXT_BYTES + 1),
+				},
 			},
 			{
 				key: "gen_ai.completion.0.content",
-				value: { stringValue: "界".repeat(2_731) },
+				value: {
+					stringValue: exact ? exactOutput : "界".repeat(2_731),
+				},
+			},
+		],
+	};
+}
+
+function metadataSpan(traceId: string, index: number, overLimit: boolean) {
+	return {
+		trace_id: traceId,
+		span_id: (index + 1).toString(16).padStart(16, "0"),
+		name: marker,
+		start_time_unix_nano: String(1_700_000_000_000_000_000 + index * 1_000_000),
+		end_time_unix_nano: String(1_700_000_000_100_000_000 + index * 1_000_000),
+		attributes: [
+			{ key: "metadata.first", value: { stringValue: metadataFirstValue } },
+			{
+				key: "metadata.second",
+				value: { stringValue: `${metadataSecondValue}${overLimit ? "a" : ""}` },
 			},
 		],
 	};
@@ -135,8 +174,9 @@ describe("real OTLP retained trace bounds", () => {
 
 		const spans = [
 			...Array.from({ length: 15 }, (_, index) => span(traceIds[0]!, index)),
-			span(traceIds[1]!, 100),
-			span(traceIds[2]!, 200),
+			span(traceIds[1]!, 100, true),
+			metadataSpan(traceIds[2]!, 200, false),
+			metadataSpan(traceIds[3]!, 300, true),
 		];
 		const ingest = await request("/v1/otel/v1/traces", {
 			method: "POST",
@@ -179,6 +219,71 @@ describe("real OTLP retained trace bounds", () => {
 			expect(row.output_retained_truncated).toBe(true);
 		}
 
+		const storedTraces = await client.query({
+			query:
+				"SELECT trace_id, input_text, output_text, input_retained_truncated, output_retained_truncated FROM traces WHERE trace_id IN ({over_limit: String}, {exact: String}) AND project_id = {project_id: String}",
+			query_params: {
+				over_limit: traceIds[0]!,
+				exact: traceIds[1]!,
+				project_id: projectId,
+			},
+			format: "JSONEachRow",
+		});
+		const traceRows = (await storedTraces.json()) as Array<{
+			trace_id: string;
+			input_text: string;
+			output_text: string;
+			input_retained_truncated: boolean;
+			output_retained_truncated: boolean;
+		}>;
+		expect(
+			traceRows.filter((row) => row.trace_id === traceIds[0]),
+		).toHaveLength(1);
+		for (const row of traceRows) {
+			const exact = row.trace_id === traceIds[1];
+			expect(encoder.encode(row.input_text).byteLength).toBe(
+				MAX_RETAINED_TEXT_BYTES,
+			);
+			expect(encoder.encode(row.output_text).byteLength).toBe(
+				exact ? MAX_RETAINED_TEXT_BYTES : MAX_RETAINED_TEXT_BYTES - 2,
+			);
+			expect(row.input_retained_truncated).toBe(!exact);
+			expect(row.output_retained_truncated).toBe(!exact);
+		}
+
+		const storedMetadata = await client.query({
+			query:
+				"SELECT trace_id, metadata FROM observations WHERE trace_id IN ({exact: String}, {over_limit: String}) AND project_id = {project_id: String}",
+			query_params: {
+				exact: traceIds[2]!,
+				over_limit: traceIds[3]!,
+				project_id: projectId,
+			},
+			format: "JSONEachRow",
+		});
+		const metadataRows = (await storedMetadata.json()) as Array<{
+			trace_id: string;
+			metadata: string;
+		}>;
+		expect(metadataRows).toHaveLength(2);
+		for (const row of metadataRows) {
+			const metadata = JSON.parse(row.metadata) as {
+				attributes: unknown[];
+				truncated?: boolean;
+			};
+			const overLimit = row.trace_id === traceIds[3];
+			expect(metadata.attributes).toHaveLength(overLimit ? 1 : 2);
+			if (!overLimit) {
+				expect(encoder.encode(row.metadata).byteLength).toBe(
+					MAX_RETAINED_METADATA_BYTES,
+				);
+			}
+			expect(encoder.encode(row.metadata).byteLength).toBeLessThanOrEqual(
+				MAX_RETAINED_METADATA_BYTES,
+			);
+			expect(metadata.truncated === true).toBe(overLimit);
+		}
+
 		let traceCursor: string | undefined;
 		const listedTraceIds: string[] = [];
 		do {
@@ -186,27 +291,69 @@ describe("real OTLP retained trace bounds", () => {
 				`/v1/traces?project_id=${projectId}&filter[name]=${marker}&limit=1${traceCursor ? `&cursor=${traceCursor}` : ""}`,
 			);
 			expect(response.status).toBe(200);
-			const page = (await response.json()) as {
+			const raw = await response.text();
+			const page = JSON.parse(raw) as {
 				items: Array<{
 					trace_id: string;
 					input_text: string;
+					output_text: string;
 					input_retained_truncated?: boolean;
 					output_retained_truncated?: boolean;
 					input_excerpt_truncated?: boolean;
 				}>;
 				next_cursor?: string;
 			};
-			expect(bytes(page)).toBeLessThanOrEqual(MAX_TRACE_RESPONSE_BYTES);
+			expect(encoder.encode(raw).byteLength).toBeLessThanOrEqual(
+				MAX_TRACE_RESPONSE_BYTES,
+			);
 			for (const trace of page.items) {
 				listedTraceIds.push(trace.trace_id);
-				expect(trace.input_text).toHaveLength(200);
-				expect(trace.input_retained_truncated).toBe(true);
-				expect(trace.output_retained_truncated).toBe(true);
-				expect(trace.input_excerpt_truncated).toBe(true);
+				if (trace.trace_id === traceIds[0]) {
+					expect(trace.input_text).toHaveLength(200);
+					expect(trace.input_retained_truncated).toBe(true);
+					expect(trace.output_retained_truncated).toBe(true);
+					expect(trace.input_excerpt_truncated).toBe(true);
+				} else if (trace.trace_id === traceIds[1]) {
+					expect(trace.input_text).toHaveLength(200);
+					expect(trace.input_retained_truncated).toBeUndefined();
+					expect(trace.output_retained_truncated).toBeUndefined();
+					expect(trace.input_excerpt_truncated).toBe(true);
+				} else {
+					expect(trace.input_text).toBe("");
+					expect(trace.output_text).toBe("");
+				}
 			}
 			traceCursor = page.next_cursor;
 		} while (traceCursor);
 		expect(new Set(listedTraceIds)).toEqual(new Set(traceIds));
+
+		let observationCursor: string | undefined;
+		const listedObservationIds: string[] = [];
+		do {
+			const response = await request(
+				`/v1/observations?project_id=${projectId}&filter[name]=${marker}&limit=1${observationCursor ? `&cursor=${observationCursor}` : ""}`,
+			);
+			expect(response.status).toBe(200);
+			const raw = await response.text();
+			const page = JSON.parse(raw) as {
+				items: Array<{
+					observation_id: string;
+					input_text: string;
+					output_text: string;
+					metadata_truncated?: boolean;
+				}>;
+				next_cursor?: string;
+			};
+			expect(encoder.encode(raw).byteLength).toBeLessThanOrEqual(
+				MAX_TRACE_RESPONSE_BYTES,
+			);
+			for (const observation of page.items) {
+				listedObservationIds.push(observation.observation_id);
+			}
+			observationCursor = page.next_cursor;
+		} while (observationCursor);
+		expect(listedObservationIds).toHaveLength(spans.length);
+		expect(new Set(listedObservationIds).size).toBe(spans.length);
 
 		let detailCursor: string | undefined;
 		const detailObservationIds: string[] = [];
@@ -215,7 +362,8 @@ describe("real OTLP retained trace bounds", () => {
 				`/v1/traces/${traceIds[0]}?project_id=${projectId}${detailCursor ? `&cursor=${detailCursor}` : ""}`,
 			);
 			expect(response.status).toBe(200);
-			const page = (await response.json()) as {
+			const raw = await response.text();
+			const page = JSON.parse(raw) as {
 				observations: Array<{
 					observation_id: string;
 					input_text: string;
@@ -225,7 +373,9 @@ describe("real OTLP retained trace bounds", () => {
 				}>;
 				next_cursor?: string;
 			};
-			expect(bytes(page)).toBeLessThanOrEqual(MAX_TRACE_RESPONSE_BYTES);
+			expect(encoder.encode(raw).byteLength).toBeLessThanOrEqual(
+				MAX_TRACE_RESPONSE_BYTES,
+			);
 			for (const observation of page.observations) {
 				detailObservationIds.push(observation.observation_id);
 				expect(encoder.encode(observation.input_text).byteLength).toBe(
@@ -241,6 +391,25 @@ describe("real OTLP retained trace bounds", () => {
 		} while (detailCursor);
 		expect(detailObservationIds).toHaveLength(15);
 		expect(new Set(detailObservationIds).size).toBe(15);
+
+		for (const [traceId, overLimit] of [
+			[traceIds[2]!, false],
+			[traceIds[3]!, true],
+		] as const) {
+			const response = await request(
+				`/v1/traces/${traceId}?project_id=${projectId}`,
+			);
+			expect(response.status).toBe(200);
+			const raw = await response.text();
+			const page = JSON.parse(raw) as {
+				observations: Array<{ metadata: { truncated?: boolean } }>;
+			};
+			expect(encoder.encode(raw).byteLength).toBeLessThanOrEqual(
+				MAX_TRACE_RESPONSE_BYTES,
+			);
+			expect(page.observations).toHaveLength(1);
+			expect(page.observations[0]!.metadata.truncated === true).toBe(overLimit);
+		}
 
 		const events = await request(
 			`/v1/traces/${traceIds[0]}/events?project_id=${projectId}`,
