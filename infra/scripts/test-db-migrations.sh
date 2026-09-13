@@ -353,7 +353,8 @@ run_agent_introspection_upgrade() {
   done
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
-    < "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.assert.sql"
+    --command "SELECT set_config('astraea.test.include_report', '$include_report', false)" \
+    --file "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.assert.sql"
 }
 
 run_agent_introspection_upgrade "${POSTGRES_DB}_0090_upgrade" "0090_agent_introspection_reports.sql" false

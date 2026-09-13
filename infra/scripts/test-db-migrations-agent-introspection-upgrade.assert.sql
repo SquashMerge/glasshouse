@@ -183,26 +183,38 @@ BEGIN
 END $$;
 
 DO $$
+DECLARE
+    include_report BOOLEAN := current_setting('astraea.test.include_report')::boolean;
 BEGIN
-    BEGIN
-        UPDATE agent_introspection_reports
-        SET request_hash = repeat('b', 64)
-        WHERE id = '90000000-0000-4000-8000-000000000016';
-        RAISE EXCEPTION 'immutable report accepted an update';
-    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
-    END;
-    BEGIN
-        INSERT INTO agent_introspection_reports (
-            organization_id, project_id, evaluation_run_id, evaluation_run_item_id,
-            task_id, invocation_id, reported_by_actor_id, contract_version, source,
-            outcome, completeness, request_hash, report
-        )
-        SELECT organization_id, project_id, evaluation_run_id, evaluation_run_item_id,
-               task_id, invocation_id, reported_by_actor_id, contract_version, source,
-               outcome, completeness, request_hash, report
-        FROM agent_introspection_reports
-        WHERE id = '90000000-0000-4000-8000-000000000016';
-        RAISE EXCEPTION 'report invocation identity accepted a duplicate';
-    EXCEPTION WHEN unique_violation THEN NULL;
-    END;
+    IF include_report THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM agent_introspection_reports
+            WHERE id = '90000000-0000-4000-8000-000000000016'
+        ) THEN
+            RAISE EXCEPTION 'expected introspection report fixture is missing';
+        END IF;
+
+        BEGIN
+            UPDATE agent_introspection_reports
+            SET request_hash = repeat('b', 64)
+            WHERE id = '90000000-0000-4000-8000-000000000016';
+            RAISE EXCEPTION 'immutable report accepted an update';
+        EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+        END;
+        BEGIN
+            INSERT INTO agent_introspection_reports (
+                organization_id, project_id, evaluation_run_id, evaluation_run_item_id,
+                task_id, invocation_id, reported_by_actor_id, contract_version, source,
+                outcome, completeness, request_hash, report
+            )
+            SELECT organization_id, project_id, evaluation_run_id, evaluation_run_item_id,
+                   task_id, invocation_id, reported_by_actor_id, contract_version, source,
+                   outcome, completeness, request_hash, report
+            FROM agent_introspection_reports
+            WHERE id = '90000000-0000-4000-8000-000000000016';
+            RAISE EXCEPTION 'report invocation identity accepted a duplicate';
+        EXCEPTION WHEN unique_violation THEN NULL;
+        END;
+    END IF;
 END $$;
