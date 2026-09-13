@@ -2,28 +2,13 @@ SELECT set_config('astraea.test.include_report', :'include_report', false);
 
 DO $$
 DECLARE
-    valid_task_id UUID;
     safe_task_id UUID;
+    lineage_mismatch_task_id UUID;
     collision_a_task_id UUID;
     collision_c_task_id UUID;
     half_scope_a_task_id UUID;
     half_scope_b_task_id UUID;
 BEGIN
-    SELECT id INTO valid_task_id
-    FROM experiment_tasks
-    WHERE experiment_id = '90000000-0000-4000-8000-000000000014'
-      AND dataset_version_item_id = '90000000-0000-4000-8000-000000000021';
-
-    IF valid_task_id IS NULL OR NOT EXISTS (
-        SELECT 1
-        FROM experiment_tasks
-        WHERE id = valid_task_id
-          AND evaluation_run_id = '90000000-0000-4000-8000-000000000010'
-          AND evaluation_run_item_id = '90000000-0000-4000-8000-000000000022'
-    ) THEN
-        RAISE EXCEPTION 'upgrade did not preserve the valid task Run-item association';
-    END IF;
-
     SELECT id INTO safe_task_id
     FROM experiment_tasks
     WHERE experiment_id = '90000000-0000-4000-8000-000000000014'
@@ -44,6 +29,10 @@ BEGIN
     FROM experiment_tasks
     WHERE experiment_id = '90000000-0000-4000-8000-000000000030'
       AND dataset_version_item_id = '90000000-0000-4000-8000-000000000007';
+    SELECT id INTO lineage_mismatch_task_id
+    FROM experiment_tasks
+    WHERE experiment_id = '90000000-0000-4000-8000-000000000014'
+      AND dataset_version_item_id = '90000000-0000-4000-8000-000000000021';
 
     IF safe_task_id IS NULL OR NOT EXISTS (
         SELECT 1
@@ -66,6 +55,19 @@ BEGIN
           AND (evaluation_run_id IS NOT NULL OR evaluation_run_item_id IS NOT NULL)
     ) THEN
         RAISE EXCEPTION 'upgrade retained a conflicting task Run-item link';
+    END IF;
+    IF lineage_mismatch_task_id IS NULL OR EXISTS (
+        SELECT 1
+        FROM experiment_tasks
+        WHERE id = lineage_mismatch_task_id
+          AND (evaluation_run_id IS NOT NULL OR evaluation_run_item_id IS NOT NULL)
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_task_run_item_mismatch_quarantine
+        WHERE task_id = lineage_mismatch_task_id
+          AND reason = 'experiment_evaluation_run_mismatch'
+    ) THEN
+        RAISE EXCEPTION 'upgrade did not quarantine the Experiment/Run task mismatch';
     END IF;
     IF NOT EXISTS (
         SELECT 1
@@ -130,6 +132,21 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'upgrade did not scope remediated and quarantined result evidence';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM experiment_results
+        WHERE id = '90000000-0000-4000-8000-000000000032'
+          AND evaluation_run_id IS NULL
+          AND evaluation_run_item_id IS NULL
+          AND output = '{"output":"lineage-mismatch-preserved"}'::jsonb
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM experiment_result_run_scope_quarantine
+        WHERE result_id = '90000000-0000-4000-8000-000000000032'
+          AND reason = 'experiment_evaluation_run_mismatch'
+    ) THEN
+        RAISE EXCEPTION 'upgrade did not quarantine the Experiment/Run result mismatch';
+    END IF;
     IF EXISTS (
         SELECT 1
         FROM experiment_tasks AS task
@@ -170,16 +187,16 @@ BEGIN
     BEGIN
         UPDATE experiment_tasks
         SET evaluation_run_item_id = '90000000-0000-4000-8000-000000000012'
-        WHERE id = valid_task_id;
+        WHERE id = safe_task_id;
         RAISE EXCEPTION 'task Run-item FK accepted a different Dataset-version item';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
     BEGIN
         UPDATE experiment_results
-        SET evaluation_run_id = '90000000-0000-4000-8000-000000000010',
-            evaluation_run_item_id = '90000000-0000-4000-8000-000000000019'
-        WHERE id = '90000000-0000-4000-8000-000000000015';
-        RAISE EXCEPTION 'result Run-item FK accepted a different Dataset-version item';
+        SET evaluation_run_id = '90000000-0000-4000-8000-000000000011',
+            evaluation_run_item_id = '90000000-0000-4000-8000-000000000023'
+        WHERE id = '90000000-0000-4000-8000-000000000020';
+        RAISE EXCEPTION 'result Experiment/Run FK accepted a different Run';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
 END $$;

@@ -341,20 +341,43 @@ run_agent_introspection_upgrade() {
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
     < "$ROOT/infra/scripts/test-db-migrations-0091-upgrade.fixture.sql"
-  DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$database" \
-    bun run --cwd "$ROOT/apps/api" src/db/prepare-0091-run-item-remediation.ts
-  local migrations=("$ROOT"/infra/db/migrations/0091_*.sql "$ROOT"/infra/db/migrations/0092_*.sql "$ROOT"/infra/db/migrations/0093_*.sql)
+  local migrations=("$ROOT"/infra/db/migrations/0091_*.sql "$ROOT"/infra/db/migrations/0092_*.sql "$ROOT"/infra/db/migrations/0093_*.sql "$ROOT"/infra/db/migrations/0094_*.sql)
   for migration in "${migrations[@]}"; do
     docker exec --interactive "$CONTAINER" \
       psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" < "$migration"
   done
-  docker exec --interactive "$CONTAINER" \
-    psql --set ON_ERROR_STOP=1 --set "include_report=$include_report" --username "$POSTGRES_USER" --dbname "$database" \
-    < "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.assert.sql"
+  { printf '\\set include_report %s\n' "$include_report"; cat "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.assert.sql"; } | \
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database"
 }
 
 run_agent_introspection_upgrade "${POSTGRES_DB}_0090_upgrade" "0090_agent_introspection_reports.sql" false
 run_agent_introspection_upgrade "${POSTGRES_DB}_0091_upgrade" "0091_agent_introspection_run_item_scope.sql" true
+
+# Node-pg-migrate runs pending migrations in one transaction. Reproduce a
+# later failure after 0091 and prove collision/report rows were not committed.
+ROLLBACK_0091_UPGRADE_DATABASE="${POSTGRES_DB}_0091_rollback"
+docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$ROLLBACK_0091_UPGRADE_DATABASE"
+for migration in "$ROOT"/infra/db/migrations/*.sql; do
+  [[ "$(basename "$migration")" == "0091_agent_introspection_run_item_scope.sql" ]] && break
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$ROLLBACK_0091_UPGRADE_DATABASE" < "$migration"
+done
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$ROLLBACK_0091_UPGRADE_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-agent-introspection-upgrade.fixture.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$ROLLBACK_0091_UPGRADE_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0091-upgrade.fixture.sql"
+if { printf 'BEGIN;\n'; cat "$ROOT/infra/db/migrations/0091_agent_introspection_run_item_scope.sql"; printf '\nSELECT 1 / 0;\n'; } | \
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$ROLLBACK_0091_UPGRADE_DATABASE"; then
+  echo "0091 rollback adversary unexpectedly succeeded" >&2
+  exit 1
+fi
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$ROLLBACK_0091_UPGRADE_DATABASE" \
+  < "$ROOT/infra/scripts/test-db-migrations-0091-rollback.assert.sql"
 
 POST_0091_UPGRADE_DATABASE="${POSTGRES_DB}_0091_post_upgrade"
 docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$POST_0091_UPGRADE_DATABASE"
@@ -369,9 +392,7 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POST_0091_UPGRADE_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0091-stale-remediation.fixture.sql"
-DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POST_0091_UPGRADE_DATABASE" \
-  bun run --cwd "$ROOT/apps/api" src/db/prepare-0091-run-item-remediation.ts
-for migration in "$ROOT"/infra/db/migrations/009[2-3]_*.sql; do
+for migration in "$ROOT"/infra/db/migrations/009[2-4]_*.sql; do
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POST_0091_UPGRADE_DATABASE" < "$migration"
 done
@@ -397,9 +418,10 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POST_0091_DIRECT_MIGRATION_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0091-stale-remediation.fixture.sql"
-docker exec --interactive "$CONTAINER" \
-  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POST_0091_DIRECT_MIGRATION_DATABASE" \
-  < "$ROOT/infra/db/migrations/0092_agent_introspection_scope_pair_integrity.sql"
+for migration in "$ROOT"/infra/db/migrations/009[2-4]_*.sql; do
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POST_0091_DIRECT_MIGRATION_DATABASE" < "$migration"
+done
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POST_0091_DIRECT_MIGRATION_DATABASE" \
   < "$ROOT/infra/scripts/test-db-migrations-0091-post-upgrade.assert.sql"

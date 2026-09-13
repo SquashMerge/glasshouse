@@ -2,7 +2,6 @@ import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { PG_MIGRATE_LOCK_ID, runner } from "node-pg-migrate";
 import { Client } from "pg";
-import { prepare0091RunItemRemediation } from "./prepare-0091-run-item-remediation";
 
 const nodePgMigrateLockId = PG_MIGRATE_LOCK_ID;
 
@@ -76,7 +75,6 @@ export async function migrate(
 	try {
 		await client.query("SELECT pg_advisory_lock($1)", [nodePgMigrateLockId]);
 		locked = true;
-		await prepare0091RunItemRemediation(env, client);
 		const checkOrder = await checkMigrationOrder(client, migrationDirectory);
 		await runner({
 			dbClient: client,
@@ -87,6 +85,7 @@ export async function migrate(
 			checkOrder,
 			advisoryLockMode: "wait",
 			lockValue: nodePgMigrateLockId,
+			singleTransaction: true,
 		});
 	} finally {
 		try {

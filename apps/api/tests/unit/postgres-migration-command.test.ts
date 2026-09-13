@@ -26,19 +26,17 @@ test("db:migrate validates filenames and tolerates the known legacy ordering inv
 	);
 });
 
-test("the Run-item preflight and migrations share node-pg-migrate's lock", () => {
+test("Run-item remediation is ledgered by the migration runner", () => {
 	const lock = migrationRunner.indexOf("SELECT pg_advisory_lock($1)");
-	const preflight = migrationRunner.indexOf(
-		"await prepare0091RunItemRemediation",
-	);
 	const migrations = migrationRunner.indexOf("await runner({");
 
 	expect(lock).toBeGreaterThan(-1);
-	expect(preflight).toBeGreaterThan(lock);
-	expect(migrations).toBeGreaterThan(preflight);
+	expect(migrations).toBeGreaterThan(lock);
+	expect(migrationRunner).not.toContain("prepare0091RunItemRemediation");
 	expect(migrationRunner).toContain("lockValue: nodePgMigrateLockId");
 	expect(migrationRunner).toContain('advisoryLockMode: "wait"');
 	expect(migrationRunner).toContain("SELECT pg_advisory_unlock($1)");
+	expect(migrationRunner).toContain("singleTransaction: true");
 });
 
 test("migration harness upgrades a database that recorded the prior 0023 order", () => {
@@ -54,12 +52,15 @@ test("migration harness upgrades a database that recorded the prior 0023 order",
 	expect(legacyHarness).toContain("psql --tuples-only --no-align");
 });
 
-test("migration harness exercises the occupied Run-item remediation before 0091", () => {
+test("migration harness exercises ledgered occupied Run-item remediation", () => {
 	expect(migrationHarness).toContain(
 		"test-db-migrations-agent-introspection-upgrade.fixture.sql",
 	);
-	expect(migrationHarness).toContain("prepare-0091-run-item-remediation.ts");
-	expect(migrationHarness).toContain("0093_*.sql");
+	expect(migrationHarness).not.toContain(
+		"prepare-0091-run-item-remediation.ts",
+	);
+	expect(migrationHarness).not.toContain('--set "include_report=');
+	expect(migrationHarness).toContain("0094_*.sql");
 	expect(migrationHarness).toContain(
 		"test-db-migrations-0091-post-upgrade.fixture.sql",
 	);
@@ -69,5 +70,9 @@ test("migration harness exercises the occupied Run-item remediation before 0091"
 	);
 	expect(migrationHarness).toContain(
 		"test-db-migrations-agent-introspection-upgrade.assert.sql",
+	);
+	expect(migrationHarness).toContain("ROLLBACK_0091_UPGRADE_DATABASE");
+	expect(migrationHarness).toContain(
+		"test-db-migrations-0091-rollback.assert.sql",
 	);
 });
