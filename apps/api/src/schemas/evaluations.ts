@@ -260,7 +260,8 @@ export const EvaluationRun = z
 							"Immutable active-Run cap for the requesting actor (1-32)",
 					}),
 					max_cases: z.number().int().min(1).max(10_000).openapi({
-						description: "Immutable maximum selected Dataset cases (1-10,000)",
+						description:
+							"Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)",
 					}),
 					max_provider_calls: z.number().int().min(1).max(10_000).openapi({
 						description:
@@ -352,7 +353,8 @@ const EvaluationRunPinnedInputs = z
 						"Immutable active-Run cap for the requesting actor (1-32)",
 				}),
 				max_cases: z.number().int().min(1).max(10_000).openapi({
-					description: "Immutable maximum selected Dataset cases (1-10,000)",
+					description:
+						"Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)",
 				}),
 				max_provider_calls: z.number().int().min(1).max(10_000).openapi({
 					description:
@@ -613,7 +615,7 @@ export const EvaluationErrorResponses = {
 export const EvaluationRunAdmissionErrorResponses = {
 	400: {
 		description:
-			"Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted",
+			"Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	404: {

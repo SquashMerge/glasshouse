@@ -1305,7 +1305,6 @@ export interface Experiment {
 	dataset_input_binding: "versioned" | "legacy_unversioned";
 	name: string | null;
 	status: "pending" | "running" | "completed" | "failed" | "cancelled";
-	config: JsonObject;
 	created_at: string;
 	updated_at: string;
 }

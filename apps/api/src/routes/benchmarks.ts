@@ -146,12 +146,15 @@ export const createBenchmarkRunRoute = createRoute({
 	tags: [tag],
 	summary: "Run a prompt/model benchmark",
 	description:
-		"Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run).",
+		"Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: BenchmarkSuiteIdParam,
 		query: BenchmarkProjectQuery,
-		body: { content: { "application/json": { schema: BenchmarkRunCreate } } },
+		body: {
+			content: { "application/json": { schema: BenchmarkRunCreate } },
+			required: true,
+		},
 	},
 	responses: {
 		202: {

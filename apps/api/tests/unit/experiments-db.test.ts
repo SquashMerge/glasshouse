@@ -88,6 +88,43 @@ const runningExperiment = {
 };
 
 describe("durable experiment task ledger", () => {
+	it("does not serialize persisted mutable execution config in an Experiment read", async () => {
+		const persistedExperiment = {
+			...runningExperiment,
+			agent_id: null,
+			resolved_dataset_version_id: "88888888-8888-4888-8888-888888888888",
+			dataset_input_binding: "versioned",
+			name: "immutable run",
+			config: { model: "mutable-draft", system_prompt: "secret" },
+			created_at: "2026-09-13T00:00:00.000Z",
+			updated_at: "2026-09-13T00:00:00.000Z",
+		};
+		const client = {
+			query: async (text: string) => {
+				if (text.includes("FROM projects p"))
+					return { rows: [{ id: projectId }] };
+				if (text.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (text.startsWith("SELECT e.* FROM experiments"))
+					return { rows: [persistedExperiment] };
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const value = await getExperiment(
+			{ connect: async () => client } as never,
+			{
+				id: experimentId,
+				project_id: projectId,
+				authorization: { ...authorization, operation: "product_read" },
+			},
+		);
+
+		expect(value).not.toHaveProperty("config");
+		expect(JSON.stringify(value)).not.toContain("mutable-draft");
+	});
+
 	it("does not read an experiment from another authorized project", async () => {
 		const calls: Array<{ text: string; values: unknown[] }> = [];
 		const client = {

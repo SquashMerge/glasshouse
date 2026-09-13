@@ -121,7 +121,7 @@ export const startEvaluationGateRoute = createRoute({
 	tags: [tag],
 	summary: "Run an administrator-approved pinned Evaluation Gate",
 	description:
-		"Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. Admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run). The result never deploys or mutates production.",
+		"Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. Admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized. The result never deploys or mutates production.",
 	security: [{ basicAuth: [] }],
 	request: {
 		query: ProjectQuery,

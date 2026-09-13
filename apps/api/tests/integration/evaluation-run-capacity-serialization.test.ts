@@ -8,6 +8,7 @@ import {
 } from "../../src/db/evaluation-runs";
 import {
 	claimExperimentTask,
+	getExperiment,
 	listRecoverableExperiments,
 } from "../../src/db/experiments";
 
@@ -182,6 +183,47 @@ async function seedRunAdmission(pool: Pool) {
 		},
 	};
 }
+
+test.skipIf(!databaseUrl)(
+	"does not serialize mutable persisted execution config from an admitted Experiment",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+		const fixture = await seedRunAdmission(pool);
+		const authorization = {
+			organization_id: fixture.organizationId,
+			actor_id: fixture.actorId,
+			operation: "execute" as const,
+		};
+		try {
+			const run = await admitEvaluationRun(pool, {
+				project_id: fixture.projectId,
+				evaluation_selector: fixture.evaluationId,
+				definition_version: 1,
+				idempotency_key: "persisted-config-serialization",
+				authorization,
+			});
+			const persisted = await pool.query<{ config: Record<string, unknown> }>(
+				"SELECT config FROM experiments WHERE id=$1 AND project_id=$2",
+				[run.experiment_id, fixture.projectId],
+			);
+			expect(persisted.rows[0]?.config).toMatchObject({
+				model: "gpt-4o-mini",
+			});
+
+			const experiment = await getExperiment(pool, {
+				id: run.experiment_id,
+				project_id: fixture.projectId,
+				authorization: { ...authorization, operation: "product_read" },
+			});
+
+			expect(experiment).not.toHaveProperty("config");
+			expect(JSON.stringify(experiment)).not.toContain("gpt-4o-mini");
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
 
 test.skipIf(!databaseUrl)(
 	"serializes capacity at PostgreSQL and reconciles release paths without a process restart",

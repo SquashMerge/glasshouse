@@ -5065,7 +5065,7 @@ components:
                   minimum: 1
                   type: integer
                 max_cases:
-                  description: Immutable maximum selected Dataset cases (1-10,000)
+                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
                   maximum: 10000
                   minimum: 1
                   type: integer
@@ -5768,7 +5768,7 @@ components:
                   minimum: 1
                   type: integer
                 max_cases:
-                  description: Immutable maximum selected Dataset cases (1-10,000)
+                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
                   maximum: 10000
                   minimum: 1
                   type: integer
@@ -6061,9 +6061,6 @@ components:
           type:
             - string
             - 'null'
-        config:
-          additionalProperties: {}
-          type: object
         created_at:
           format: date-time
           type: string
@@ -6104,7 +6101,6 @@ components:
         - dataset_input_binding
         - name
         - status
-        - config
         - created_at
         - updated_at
       type: object
@@ -8158,7 +8154,7 @@ paths:
       tags:
         - benchmarks
     post:
-      description: Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run).
+      description: Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.
       parameters:
         - in: path
           name: id
@@ -8177,6 +8173,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/BenchmarkRunCreate'
+        required: true
       responses:
         '202':
           content:
@@ -8189,7 +8186,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '404':
           content:
             application/json:
@@ -10341,7 +10338,7 @@ paths:
       tags:
         - evaluation-gates
     post:
-      description: Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. Admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run). The result never deploys or mutates production.
+      description: Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. Admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized. The result never deploys or mutates production.
       parameters:
         - in: query
           name: project_id
@@ -10374,7 +10371,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '403':
           content:
             application/json:
@@ -11834,7 +11831,7 @@ paths:
         - evaluations
   /v1/evaluations/{slug}/runs:
     post:
-      description: Resolves an immutable Definition Version and Dataset Version snapshot before any work is queued. Admission accepts only an exact operator-allowed provider/model pair and snapshots active-run, case, and provider-call bounds. Active limits are 1-32 per Project and actor; case and provider-call limits are 1-10,000 per Run. Retries with the same Idempotency-Key replay the original run.
+      description: Resolves an immutable Definition Version and Dataset Version snapshot before any work is queued. Admission accepts only an exact operator-allowed provider/model pair and snapshots active-run, requested sample-size, and provider-call bounds. Active limits are 1-32 per Project and actor; the requested sample-size and provider-call limits are 1-10,000 per Run. The sample-size limit is checked before Dataset items are materialized. Retries with the same Idempotency-Key replay the original run.
       parameters:
         - description: Canonical Evaluation slug. UUID Evaluation IDs are accepted only by read detail and inspection endpoints.
           in: path
@@ -11877,7 +11874,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '404':
           content:
             application/json:
@@ -12148,12 +12145,13 @@ paths:
       tags:
         - experiments
     post:
-      description: Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run).
+      description: Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ExperimentCreate'
+        required: true
       responses:
         '201':
           content:
@@ -12166,7 +12164,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '404':
           content:
             application/json:

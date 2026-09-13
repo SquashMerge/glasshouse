@@ -102,10 +102,13 @@ export const createExperiment = createRoute({
 	tags: [tag],
 	summary: "Create and run an LLM evaluation",
 	description:
-		"Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run).",
+		"Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.",
 	security: [{ basicAuth: [] }],
 	request: {
-		body: { content: { "application/json": { schema: ExperimentCreate } } },
+		body: {
+			content: { "application/json": { schema: ExperimentCreate } },
+			required: true,
+		},
 	},
 	responses: {
 		201: {
@@ -1143,13 +1146,6 @@ export function createExperimentHandlers(
 						dataset_input_binding: "versioned" as const,
 						name: body.name ?? null,
 						status: run.status,
-						config: {
-							model: run.snapshot.target.model,
-							system_prompt: run.snapshot.target.system_prompt,
-							evaluator: run.snapshot.evaluator.kind,
-							temperature: run.snapshot.execution_defaults.temperature,
-							max_tokens: run.snapshot.execution_defaults.max_tokens,
-						},
 						created_at: run.created_at,
 						updated_at: run.updated_at,
 					},

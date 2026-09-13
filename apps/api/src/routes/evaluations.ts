@@ -277,7 +277,7 @@ export const startEvaluationRunRoute = createRoute({
 	tags: [tag],
 	summary: "Admit and start a reproducible Evaluation Run",
 	description:
-		"Resolves an immutable Definition Version and Dataset Version snapshot before any work is queued. Admission accepts only an exact operator-allowed provider/model pair and snapshots active-run, case, and provider-call bounds. Active limits are 1-32 per Project and actor; case and provider-call limits are 1-10,000 per Run. Retries with the same Idempotency-Key replay the original run.",
+		"Resolves an immutable Definition Version and Dataset Version snapshot before any work is queued. Admission accepts only an exact operator-allowed provider/model pair and snapshots active-run, requested sample-size, and provider-call bounds. Active limits are 1-32 per Project and actor; the requested sample-size and provider-call limits are 1-10,000 per Run. The sample-size limit is checked before Dataset items are materialized. Retries with the same Idempotency-Key replay the original run.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: EvaluationMutationSlugParam,

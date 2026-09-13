@@ -15,7 +15,6 @@ export const Experiment = z
 		dataset_input_binding: z.enum(["versioned", "legacy_unversioned"]),
 		name: z.string().nullable(),
 		status: ExperimentStatus,
-		config: z.record(z.string(), z.unknown()),
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
 	})
@@ -99,7 +98,7 @@ export const ExperimentErrorResponses = {
 export const ExperimentRunAdmissionErrorResponses = {
 	400: {
 		description:
-			"Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted",
+			"Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	404: {

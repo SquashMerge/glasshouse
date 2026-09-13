@@ -94,7 +94,7 @@ export const BenchmarkErrorResponses = {
 export const BenchmarkRunAdmissionErrorResponses = {
 	400: {
 		description:
-			"Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted",
+			"Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	404: {

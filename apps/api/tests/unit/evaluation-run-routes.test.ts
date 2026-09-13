@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	cancelEvaluationRunRoute,
 	getEvaluationRunRoute,
@@ -44,6 +46,23 @@ import {
 } from "../../src/routes/agent-introspection";
 
 describe("Evaluation Run lifecycle API", () => {
+	it("documents compatibility starters as admitted immutable Runs with a configured sample-size cap", () => {
+		const root = join(import.meta.dir, "../../../..");
+		const workflow = readFileSync(
+			join(root, "docs/05-unified-dataset-workflow.md"),
+			"utf8",
+		);
+		const evidence = readFileSync(
+			join(root, "docs/evaluation-run-evidence.md"),
+			"utf8",
+		);
+
+		expect(workflow).toContain("admitted compatibility start API");
+		expect(workflow).not.toContain("legacy ad-hoc execution API");
+		expect(workflow).not.toContain("shipped legacy ad-hoc surface");
+		expect(evidence).toContain("configured sample-size cap");
+	});
+
 	const hash = "a".repeat(64);
 	const pinned_inputs = {
 		definition_version_id: "55555555-5555-4555-8555-555555555555",
@@ -130,6 +149,7 @@ describe("Evaluation Run lifecycle API", () => {
 			document.paths?.["/v1/benchmarks/{id}/runs"]?.post,
 			document.paths?.["/v1/experiments"]?.post,
 		]) {
+			expect(operation?.requestBody?.required).toBe(true);
 			expect(operation?.description).toContain("provider/model");
 			expect(operation?.responses?.["400"]?.description).toContain(
 				"before a runnable Run is persisted",
@@ -141,6 +161,10 @@ describe("Evaluation Run lifecycle API", () => {
 				"no runnable Run is persisted",
 			);
 		}
+		const experimentSchema = document.components?.schemas?.Experiment as {
+			properties?: Record<string, unknown>;
+		};
+		expect(experimentSchema.properties).not.toHaveProperty("config");
 		expect(ErrorCode.safeParse("TOO_MANY_REQUESTS").success).toBe(true);
 	});
 	it("documents authorized status, cancellation, retry, and replayable SSE routes", () => {
@@ -182,6 +206,9 @@ describe("Evaluation Run lifecycle API", () => {
 		expect(bounds?.max_active_runs_per_project?.maximum).toBe(32);
 		expect(bounds?.max_active_runs_per_actor?.maximum).toBe(32);
 		expect(bounds?.max_cases?.maximum).toBe(10_000);
+		expect(bounds?.max_cases?.description).toContain(
+			"requested Definition sample-size cap",
+		);
 		expect(bounds?.max_provider_calls?.maximum).toBe(10_000);
 		expect(
 			statusSchema.properties?.metrics?.properties?.provider_calls_used

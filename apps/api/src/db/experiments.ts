@@ -137,7 +137,6 @@ function experiment(row: Row) {
 				: ("legacy_unversioned" as const),
 		name: nullableText(row, "name"),
 		status: text(row, "status") as ExperimentStatus,
-		config: json(row, "config"),
 		created_at: time(row, "created_at"),
 		updated_at: time(row, "updated_at"),
 	};
