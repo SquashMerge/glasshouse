@@ -8,37 +8,50 @@ INSERT INTO experiment_task_run_item_mismatch_quarantine (
     task_id, project_id, evaluation_run_id, evaluation_run_item_id,
     remediated_evaluation_run_item_id, reason
 )
-SELECT task.id, task.project_id, task.evaluation_run_id,
-       task.evaluation_run_item_id,
+WITH planned_remaps AS (
+    SELECT task.id, task.project_id, task.evaluation_run_id,
+           task.evaluation_run_item_id, candidate.id AS candidate_id,
+           candidate.occupied
+    FROM experiment_tasks AS task
+    LEFT JOIN LATERAL (
+        SELECT item.id,
+               EXISTS (
+                   SELECT 1
+                   FROM experiment_tasks AS occupied_task
+                   WHERE occupied_task.project_id = task.project_id
+                     AND occupied_task.evaluation_run_id = task.evaluation_run_id
+                     AND occupied_task.evaluation_run_item_id = item.id
+                     AND occupied_task.id <> task.id
+               ) AS occupied
+        FROM evaluation_run_items AS item
+        WHERE item.project_id = task.project_id
+          AND item.run_id = task.evaluation_run_id
+          AND item.dataset_version_item_id IS NOT DISTINCT FROM task.dataset_version_item_id
+        ORDER BY item.id
+        LIMIT 1
+    ) AS candidate ON task.evaluation_run_id IS NOT NULL
+    WHERE (task.evaluation_run_id IS NULL) <> (task.evaluation_run_item_id IS NULL)
+), counted_remaps AS (
+    SELECT planned_remaps.*,
+           count(*) FILTER (WHERE candidate_id IS NOT NULL)
+               OVER (PARTITION BY candidate_id) AS candidate_remap_count
+    FROM planned_remaps
+)
+SELECT id, project_id, evaluation_run_id, evaluation_run_item_id,
        CASE
-           WHEN candidate.id IS NOT NULL AND NOT candidate.occupied THEN candidate.id
-           ELSE NULL
+            WHEN candidate_id IS NOT NULL
+             AND NOT occupied
+             AND candidate_remap_count = 1 THEN candidate_id
+            ELSE NULL
        END,
        CASE
-           WHEN task.evaluation_run_id IS NULL THEN 'missing_evaluation_run_id'
-           WHEN candidate.id IS NULL THEN 'no_deterministic_run_item'
-           WHEN candidate.occupied THEN 'deterministic_run_item_occupied'
-           ELSE 'remapped_by_dataset_version_item'
+            WHEN evaluation_run_id IS NULL THEN 'missing_evaluation_run_id'
+            WHEN candidate_id IS NULL THEN 'no_deterministic_run_item'
+            WHEN occupied THEN 'deterministic_run_item_occupied'
+            WHEN candidate_remap_count > 1 THEN 'deterministic_run_item_remap_collision'
+            ELSE 'remapped_by_dataset_version_item'
        END
-FROM experiment_tasks AS task
-LEFT JOIN LATERAL (
-    SELECT item.id,
-           EXISTS (
-               SELECT 1
-               FROM experiment_tasks AS occupied_task
-               WHERE occupied_task.project_id = task.project_id
-                 AND occupied_task.evaluation_run_id = task.evaluation_run_id
-                 AND occupied_task.evaluation_run_item_id = item.id
-                 AND occupied_task.id <> task.id
-           ) AS occupied
-    FROM evaluation_run_items AS item
-    WHERE item.project_id = task.project_id
-      AND item.run_id = task.evaluation_run_id
-      AND item.dataset_version_item_id IS NOT DISTINCT FROM task.dataset_version_item_id
-    ORDER BY item.id
-    LIMIT 1
-) AS candidate ON task.evaluation_run_id IS NOT NULL
-WHERE (task.evaluation_run_id IS NULL) <> (task.evaluation_run_item_id IS NULL)
+FROM counted_remaps
 ON CONFLICT (task_id) DO UPDATE
 SET project_id = EXCLUDED.project_id,
     evaluation_run_id = EXCLUDED.evaluation_run_id,

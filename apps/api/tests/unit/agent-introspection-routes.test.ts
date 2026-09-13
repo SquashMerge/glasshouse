@@ -19,6 +19,8 @@ const taskId = "33333333-3333-4333-8333-333333333333";
 const itemId = "44444444-4444-4444-8444-444444444444";
 const invocationId = "55555555-5555-4555-8555-555555555555";
 const actorId = "66666666-6666-4666-8666-666666666666";
+const compactJws =
+	"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJpZGVudGlmaWVyIn0.c2lnbmF0dXJl";
 
 function app() {
 	const api = new OpenAPIHono({
@@ -52,6 +54,7 @@ function app() {
 
 function database(taskAvailable = true) {
 	let stored: Record<string, unknown> | undefined;
+	let inserts = 0;
 	const query = async (sql: string, values: unknown[] = []) => {
 		if (
 			sql === "BEGIN" ||
@@ -74,6 +77,7 @@ function database(taskAvailable = true) {
 		if (sql.startsWith("SELECT * FROM agent_introspection_reports"))
 			return { rows: stored ? [stored] : [] };
 		if (sql.startsWith("INSERT INTO agent_introspection_reports")) {
+			inserts += 1;
 			if (stored) return { rows: [] };
 			stored = {
 				id: "77777777-7777-4777-8777-777777777777",
@@ -92,7 +96,11 @@ function database(taskAvailable = true) {
 		}
 		throw new Error(`Unexpected query: ${sql}`);
 	};
-	return { connect: async () => ({ query, release() {} }) };
+	return {
+		connect: async () => ({ query, release() {} }),
+		insertCount: () => inserts,
+		stored: () => stored,
+	};
 }
 
 describe("agent introspection HTTP handlers", () => {
@@ -234,5 +242,28 @@ describe("agent introspection HTTP handlers", () => {
 		expect(await rejected.json()).toMatchObject({
 			code: "CONTRACT_VIOLATION",
 		});
+	});
+
+	it("rejects compact JWS identifier leaves before persisting or returning a report", async () => {
+		const db = database();
+		const postgresSpy = spyOn(postgres, "pgPool").mockReturnValue(db as never);
+		const path = `/v1/evaluation-runs/${runId}/tasks/${taskId}/agent-introspection/${invocationId}?project_id=${projectId}`;
+		const unsafe = structuredClone(report);
+		unsafe.events[1].detail.model = compactJws;
+		try {
+			const rejected = await app().request(`http://test${path}`, {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(unsafe),
+			});
+			expect(rejected.status).toBe(400);
+			expect(db.insertCount()).toBe(0);
+			expect(db.stored()).toBeUndefined();
+
+			const read = await app().request(`http://test${path}`);
+			expect(read.status).toBe(404);
+		} finally {
+			postgresSpy.mockRestore();
+		}
 	});
 });

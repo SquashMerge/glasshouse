@@ -19,6 +19,8 @@ const identity = {
 	task_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
 	invocation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
 };
+const compactJws =
+	"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJpZGVudGlmaWVyIn0.c2lnbmF0dXJl";
 
 function reportAtNormalizedSize(bytes: number) {
 	const sized = structuredClone(partial) as any;
@@ -151,6 +153,96 @@ describe("agent-introspection.v1 contract", () => {
 				AgentIntrospectionReportV1.safeParse(unsafeModel).success,
 				value,
 			).toBe(false);
+		}
+	});
+
+	it("rejects compact JWS syntax without rejecting ordinary dotted identifiers", () => {
+		const ordinary = structuredClone(completeSuccess);
+		ordinary.adapter.name = "release.2026_09-rc1";
+		expect(AgentIntrospectionReportV1.safeParse(ordinary).success).toBe(true);
+
+		const leaves: Array<[string, (value: any) => void]> = [
+			["adapter name", (value) => (value.adapter.name = compactJws)],
+			["adapter version", (value) => (value.adapter.version = compactJws)],
+			["adapter framework", (value) => (value.adapter.framework = compactJws)],
+			[
+				"adapter framework version",
+				(value) => (value.adapter.framework_version = compactJws),
+			],
+			[
+				"agent key",
+				(value) => (value.events[0].detail.agent_key = compactJws),
+			],
+			[
+				"model provider",
+				(value) => (value.events[1].detail.provider = compactJws),
+			],
+			["model", (value) => (value.events[1].detail.model = compactJws)],
+			[
+				"tool",
+				(value) => {
+					value.events[1] = {
+						...value.events[1],
+						type: "tool.started",
+						detail: { tool: compactJws, attempt: 1 },
+					};
+				},
+			],
+			[
+				"workflow",
+				(value) => {
+					value.events[1] = {
+						...value.events[1],
+						type: "workflow.started",
+						detail: { workflow: compactJws },
+					};
+				},
+			],
+			[
+				"team",
+				(value) => {
+					value.events[1] = {
+						...value.events[1],
+						type: "team.started",
+						detail: { team: compactJws },
+					};
+				},
+			],
+			[
+				"handoff source",
+				(value) => {
+					value.events[1] = {
+						...value.events[1],
+						type: "handoff",
+						detail: {
+							from_agent_key: compactJws,
+							to_agent_key: "fixture-agent",
+							reason_code: "delegated",
+						},
+					};
+				},
+			],
+			[
+				"handoff destination",
+				(value) => {
+					value.events[1] = {
+						...value.events[1],
+						type: "handoff",
+						detail: {
+							from_agent_key: "fixture-agent",
+							to_agent_key: compactJws,
+							reason_code: "delegated",
+						},
+					};
+				},
+			],
+		];
+		for (const [name, mutate] of leaves) {
+			const unsafe = structuredClone(completeSuccess) as any;
+			mutate(unsafe);
+			expect(AgentIntrospectionReportV1.safeParse(unsafe).success, name).toBe(
+				false,
+			);
 		}
 	});
 

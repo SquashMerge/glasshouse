@@ -5,10 +5,37 @@ import { PromptId } from "./prompts.js";
 
 const UnsafeIdentifier =
 	/(?:^[a-z][a-z0-9+.-]*:\/\/|^(?:authorization|proxy-authorization)\s*:|^(?:bearer|basic)\s+|^[a-z_][a-z0-9_]*=|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|credential|private[_-]?key)|^(?:sk|rk|pk)-|^(?:sk|rk|pk)_(?:live|test)_|^AIza|^glpat-|^hf_|^github_pat_|^xox[baprs]-|^akia|^gh[pous]_)/i;
+
+function isCompactJws(value: string) {
+	const segments = value.split(".");
+	if (
+		segments.length !== 3 ||
+		segments.some(
+			(segment) =>
+				!/^[a-zA-Z0-9_-]+$/.test(segment) || segment.length % 4 === 1,
+		)
+	)
+		return false;
+	try {
+		const header = JSON.parse(
+			Buffer.from(segments[0]!, "base64url").toString("utf8"),
+		);
+		return (
+			typeof header === "object" &&
+			header !== null &&
+			!Array.isArray(header) &&
+			typeof header.alg === "string" &&
+			header.alg.length > 0
+		);
+	} catch {
+		return false;
+	}
+}
+
 const Identifier = z
 	.string()
 	.regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/)
-	.refine((value) => !UnsafeIdentifier.test(value), {
+	.refine((value) => !UnsafeIdentifier.test(value) && !isCompactJws(value), {
 		message: "Identifier must not contain credentials or transport syntax",
 	});
 const Uuid = z.string().uuid();
