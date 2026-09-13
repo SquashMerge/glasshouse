@@ -5,6 +5,7 @@ import {
 	admitEvaluationRun,
 	cancelEvaluationRun,
 	EvaluationRunRepositoryError,
+	getEvaluationRunStatus,
 } from "../../src/db/evaluation-runs";
 import {
 	claimExperimentTask,
@@ -183,6 +184,243 @@ async function seedRunAdmission(pool: Pool) {
 		},
 	};
 }
+
+test.skipIf(!databaseUrl)(
+	"terminalizes a recovered Run whose persisted provider-charge ledger has exhausted its budget",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+		const fixture = await seedRunAdmission(pool);
+		const authorization = {
+			organization_id: fixture.organizationId,
+			actor_id: fixture.actorId,
+			operation: "execute" as const,
+		};
+		const previousProviderCap =
+			process.env.EVALUATION_MAX_PROVIDER_CALLS_PER_RUN;
+		try {
+			const run = await admitEvaluationRun(pool, {
+				project_id: fixture.projectId,
+				evaluation_selector: fixture.evaluationId,
+				definition_version: 1,
+				idempotency_key: "recovery-provider-budget-exhausted",
+				authorization,
+			});
+			await pool.query(
+				"UPDATE evaluation_runs SET provider_call_count=1 WHERE id=$1 AND project_id=$2",
+				[run.id, fixture.projectId],
+			);
+			process.env.EVALUATION_MAX_PROVIDER_CALLS_PER_RUN = "1";
+
+			expect(await listRecoverableExperiments(pool)).not.toContainEqual(
+				expect.objectContaining({ id: run.experiment_id }),
+			);
+			expect(
+				await pool.query(
+					"SELECT status, terminal_reason FROM evaluation_runs WHERE id=$1",
+					[run.id],
+				),
+			).toMatchObject({
+				rows: [
+					{
+						status: "failed",
+						terminal_reason: "provider_call_limit_exceeded",
+					},
+				],
+			});
+		} finally {
+			if (previousProviderCap === undefined)
+				delete process.env.EVALUATION_MAX_PROVIDER_CALLS_PER_RUN;
+			else
+				process.env.EVALUATION_MAX_PROVIDER_CALLS_PER_RUN = previousProviderCap;
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"terminalizes a legacy Experiment without an immutable Run before recovery can invoke its provider",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+		const fixture = await seedRunAdmission(pool);
+		try {
+			const legacyId = randomUUID();
+			await pool.query(
+				`INSERT INTO experiments (
+					id, project_id, agent_id, dataset_id, resolved_dataset_version_id,
+					dataset_input_binding, name, config, status, requested_by_actor_id
+				) VALUES ($1, $2, NULL, $3, (SELECT id FROM dataset_versions WHERE dataset_id=$3 AND project_id=$2), 'versioned', 'legacy recovery fixture', '{"provider":"openai","model":"gpt-4o-mini"}', 'pending', $4)`,
+				[legacyId, fixture.projectId, fixture.datasetId, fixture.actorId],
+			);
+
+			expect(await listRecoverableExperiments(pool)).not.toContainEqual(
+				expect.objectContaining({ id: legacyId }),
+			);
+			expect(
+				await pool.query("SELECT status FROM experiments WHERE id=$1", [
+					legacyId,
+				]),
+			).toMatchObject({ rows: [{ status: "failed" }] });
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"re-admits historical Runs against the current capacity before returning them for recovery",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+		const fixture = await seedRunAdmission(pool);
+		const authorization = {
+			organization_id: fixture.organizationId,
+			actor_id: fixture.actorId,
+			operation: "execute" as const,
+		};
+		const previousProjectCap =
+			process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT;
+		const previousActorCap = process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_ACTOR;
+		try {
+			process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT = "2";
+			process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_ACTOR = "2";
+			const first = await admitEvaluationRun(pool, {
+				project_id: fixture.projectId,
+				evaluation_selector: fixture.evaluationId,
+				definition_version: 1,
+				idempotency_key: "recovery-current-capacity-first",
+				authorization,
+			});
+			const second = await admitEvaluationRun(pool, {
+				project_id: fixture.projectId,
+				evaluation_selector: fixture.evaluationId,
+				definition_version: 1,
+				idempotency_key: "recovery-current-capacity-second",
+				authorization,
+			});
+			process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT = "1";
+			process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_ACTOR = "1";
+
+			const recovered = await listRecoverableExperiments(pool);
+			const ownRecoveries = recovered.filter(
+				(candidate) =>
+					candidate.id === first.experiment_id ||
+					candidate.id === second.experiment_id,
+			);
+			expect(ownRecoveries).toHaveLength(1);
+			expect(
+				await pool.query(
+					"SELECT id, status, terminal_reason FROM evaluation_runs WHERE id = ANY($1::uuid[]) ORDER BY id",
+					[[first.id, second.id]],
+				),
+			).toMatchObject({
+				rows: expect.arrayContaining([
+					expect.objectContaining({ status: "pending", terminal_reason: null }),
+					expect.objectContaining({
+						status: "failed",
+						terminal_reason: "capacity_limit_exceeded",
+					}),
+				]),
+			});
+		} finally {
+			if (previousProjectCap === undefined)
+				delete process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT;
+			else
+				process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT = previousProjectCap;
+			if (previousActorCap === undefined)
+				delete process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_ACTOR;
+			else process.env.EVALUATION_MAX_ACTIVE_RUNS_PER_ACTOR = previousActorCap;
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"terminalizes a Run whose persisted provider target is no longer allowed before recovery can resume it",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+		const fixture = await seedRunAdmission(pool);
+		const authorization = {
+			organization_id: fixture.organizationId,
+			actor_id: fixture.actorId,
+			operation: "execute" as const,
+		};
+		const previousAllowedModels = process.env.EVALUATION_ALLOWED_MODELS;
+		try {
+			const run = await admitEvaluationRun(pool, {
+				project_id: fixture.projectId,
+				evaluation_selector: fixture.evaluationId,
+				definition_version: 1,
+				idempotency_key: "recovery-revoked-provider",
+				authorization,
+			});
+			process.env.EVALUATION_ALLOWED_MODELS = "codex_cli/safe-model";
+
+			expect(await listRecoverableExperiments(pool)).not.toContainEqual(
+				expect.objectContaining({ id: run.experiment_id }),
+			);
+			expect(
+				await pool.query(
+					"SELECT status, terminal_reason FROM evaluation_runs WHERE id=$1",
+					[run.id],
+				),
+			).toMatchObject({
+				rows: [
+					{ status: "failed", terminal_reason: "provider_policy_revoked" },
+				],
+			});
+			expect(
+				await pool.query("SELECT status FROM experiments WHERE id=$1", [
+					run.experiment_id,
+				]),
+			).toMatchObject({ rows: [{ status: "failed" }] });
+		} finally {
+			if (previousAllowedModels === undefined)
+				delete process.env.EVALUATION_ALLOWED_MODELS;
+			else process.env.EVALUATION_ALLOWED_MODELS = previousAllowedModels;
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"reports persisted provider-call charges in the durable lifecycle status",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+		const fixture = await seedRunAdmission(pool);
+		const authorization = {
+			organization_id: fixture.organizationId,
+			actor_id: fixture.actorId,
+			operation: "execute" as const,
+		};
+		try {
+			const run = await admitEvaluationRun(pool, {
+				project_id: fixture.projectId,
+				evaluation_selector: fixture.evaluationId,
+				definition_version: 1,
+				idempotency_key: "lifecycle-provider-call-count",
+				authorization,
+			});
+			await pool.query(
+				"UPDATE evaluation_runs SET provider_call_count=3 WHERE id=$1 AND project_id=$2",
+				[run.id, fixture.projectId],
+			);
+
+			const status = await getEvaluationRunStatus(pool, {
+				id: run.id,
+				project_id: fixture.projectId,
+				authorization: { ...authorization, operation: "product_read" },
+			});
+
+			expect(status.metrics.provider_calls_used).toBe(3);
+		} finally {
+			await fixture.cleanup();
+			await pool.end();
+		}
+	},
+);
 
 test.skipIf(!databaseUrl)(
 	"does not serialize mutable persisted execution config from an admitted Experiment",

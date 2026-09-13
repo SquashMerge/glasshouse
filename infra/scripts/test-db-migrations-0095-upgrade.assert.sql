@@ -12,9 +12,18 @@ BEGIN
         SELECT 1
         FROM evaluation_run_capacity_admissions
         WHERE run_id = '95000000-0000-4000-8000-000000000008'
-          AND status = 'active'
+          AND status = 'released'
+          AND release_reason = 'recovery_reconciliation'
     ) THEN
-        RAISE EXCEPTION '0095 did not retain capacity for a historical running Evaluation Run';
+        RAISE EXCEPTION '0097 did not require a historical running Evaluation Run to pass recovery admission again';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM evaluation_runs
+        WHERE id = '95000000-0000-4000-8000-000000000008'
+          AND provider_call_count = 1
+    ) THEN
+        RAISE EXCEPTION '0097 did not conservatively backfill historical provider dispatch charges';
     END IF;
     UPDATE evaluation_runs
     SET status = 'failed', terminal_reason = 'upgrade_test'
@@ -24,8 +33,8 @@ BEGIN
         FROM evaluation_run_capacity_admissions
         WHERE run_id = '95000000-0000-4000-8000-000000000008'
           AND status = 'released'
-          AND release_reason = 'upgrade_test'
+          AND release_reason = 'recovery_reconciliation'
     ) THEN
-        RAISE EXCEPTION '0095 did not release historical capacity at terminalization';
+        RAISE EXCEPTION '0097 did not preserve the released historical capacity during terminalization';
     END IF;
 END $$;

@@ -608,7 +608,7 @@ function lifecycleStatus(
 }
 
 const lifecycleStatusQuery = `SELECT run.id, run.project_id, run.status,
-    run.created_at, run.updated_at, run.terminal_reason,
+    run.created_at, run.updated_at, run.terminal_reason, run.provider_call_count,
     run.definition_version_id, run.dataset_version_id, run.resolved_inputs_hash,
     count(task.id)::int AS total,
     count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,

@@ -29,6 +29,7 @@ import {
 	EvaluationGateRunStart,
 } from "../../src/schemas/evaluation-gates";
 import {
+	EvaluationRun,
 	EvaluationRunStatus,
 	EvaluationRunCompare,
 	EvaluationRunCompareRequest,
@@ -111,6 +112,41 @@ describe("Evaluation Run lifecycle API", () => {
 		max_field_bytes: 64_000,
 		redaction: "bounded_json",
 	};
+	it("publishes the persisted Experiment identity on initial and replayed Run admissions", () => {
+		const admission = {
+			id: "11111111-1111-4111-8111-111111111111",
+			organization_id: "22222222-2222-4222-8222-222222222222",
+			project_id: "33333333-3333-4333-8333-333333333333",
+			evaluation_id: "44444444-4444-4444-8444-444444444444",
+			definition_version_id: pinned_inputs.definition_version_id,
+			dataset_version_id: pinned_inputs.dataset_version_id,
+			dataset_id: "55555555-5555-4555-8555-555555555555",
+			experiment_id: "66666666-6666-4666-8666-666666666666",
+			experiment_agent_id: null,
+			experiment_name: "Support quality run v1",
+			benchmark_run_id: null,
+			status: "pending",
+			requested_by_actor_id: "77777777-7777-4777-8777-777777777777",
+			idempotency_key: "published-experiment-identity",
+			request_hash: hash,
+			resolved_inputs_hash: hash,
+			trigger_metadata: {},
+			snapshot: {
+				...pinned_inputs,
+				sampling: { strategy: "first_n", sample_size: 1, seed: 0 },
+				sample_identity: hash,
+				ordered_item_snapshot: [],
+			},
+			created_at: "2026-09-13T00:00:00.000Z",
+			updated_at: "2026-09-13T00:00:00.000Z",
+		};
+
+		for (const replayed of [false, true])
+			expect(EvaluationRun.parse({ ...admission, replayed })).toMatchObject({
+				experiment_agent_id: null,
+				experiment_name: "Support quality run v1",
+			});
+	});
 	const itemEvidence = {
 		input: { prompt: "redacted fixture" },
 		expected_output: null,

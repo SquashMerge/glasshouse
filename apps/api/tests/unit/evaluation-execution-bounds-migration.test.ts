@@ -29,4 +29,26 @@ describe("Evaluation execution bounds migration", () => {
 		expect(harness).toContain("test-db-migrations-0095-upgrade.fixture.sql");
 		expect(harness).toContain("test-db-migrations-0095-upgrade.assert.sql");
 	});
+
+	it("conservatively backfills durable provider dispatch effects before recovery re-admission", () => {
+		const migration = readFileSync(
+			resolve(
+				import.meta.dir,
+				"../../../../infra/db/migrations/0097_reconcile_evaluation_run_recovery_bounds.sql",
+			),
+			"utf8",
+		);
+		const fixture = readFileSync(
+			resolve(
+				import.meta.dir,
+				"../../../../infra/scripts/test-db-migrations-0095-upgrade.fixture.sql",
+			),
+			"utf8",
+		);
+
+		expect(migration).toContain("count(DISTINCT effect.id)");
+		expect(migration).toContain("effect.effect = 'provider_dispatch'");
+		expect(migration).toContain("recovery_reconciliation");
+		expect(fixture).toContain("INSERT INTO execution_effects");
+	});
 });

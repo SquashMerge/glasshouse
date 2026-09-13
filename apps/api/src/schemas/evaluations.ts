@@ -234,6 +234,8 @@ export const EvaluationRun = z
 		dataset_version_id: z.string().uuid(),
 		dataset_id: z.string().uuid(),
 		experiment_id: z.string().uuid(),
+		experiment_agent_id: z.string().uuid().nullable(),
+		experiment_name: z.string().nullable(),
 		benchmark_run_id: z.string().uuid().nullable(),
 		status: EvaluationStatus,
 		requested_by_actor_id: z.string().uuid(),

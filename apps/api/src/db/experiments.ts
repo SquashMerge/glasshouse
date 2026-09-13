@@ -14,6 +14,10 @@ import {
 	type ExecutionAdmissionEffect,
 	type ExecutionAdmission,
 } from "./execution-admissions.js";
+import {
+	EvaluationExecutionPolicyError,
+	resolveEvaluationExecutionPolicy,
+} from "../lib/evaluation-execution-policy.js";
 
 type Queryable = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 type Transactional = Pick<Pool, "connect">;
@@ -286,6 +290,72 @@ async function sweepExperimentWork(
 	);
 }
 
+async function failRecoveryExperiment(
+	client: PoolClient,
+	access: NonNullable<Awaited<ReturnType<typeof lockExperimentExecution>>>,
+	reason:
+		| "legacy_execution_contract"
+		| "provider_policy_revoked"
+		| "provider_call_limit_exceeded"
+		| "capacity_limit_exceeded",
+) {
+	const runId = access.row.evaluation_run_id;
+	if (typeof runId === "string")
+		await client.query(
+			"UPDATE evaluation_runs SET status='failed', terminal_reason=$3, updated_at=now() WHERE id=$1 AND project_id=$2 AND status IN ('pending','running')",
+			[runId, access.project_id, reason],
+		);
+	await client.query(
+		"UPDATE experiments SET status='failed', updated_at=now() WHERE id=$1 AND project_id=$2 AND status IN ('pending','running')",
+		[text(access.row, "id"), access.project_id],
+	);
+	await sweepExperimentWork(
+		client,
+		text(access.row, "id"),
+		access.project_id,
+		"cancelled",
+		reason,
+		"evaluation recovery was not admitted",
+	);
+}
+
+async function activateRecoveredEvaluationRunCapacity(
+	client: PoolClient,
+	input: {
+		run_id: string;
+		organization_id: string;
+		project_id: string;
+		actor_id: string;
+		max_active_runs_per_project: number;
+		max_active_runs_per_actor: number;
+	},
+): Promise<boolean> {
+	const active = await client.query(
+		`SELECT count(*) FILTER (WHERE status='active')::int AS project_active,
+            count(*) FILTER (WHERE status='active' AND actor_id=$2::uuid)::int AS actor_active
+         FROM evaluation_run_capacity_admissions
+         WHERE project_id=$1`,
+		[input.project_id, input.actor_id],
+	);
+	const row = active.rows[0] as Row | undefined;
+	if (
+		Number(row?.project_active ?? 0) >= input.max_active_runs_per_project ||
+		Number(row?.actor_active ?? 0) >= input.max_active_runs_per_actor
+	)
+		return false;
+	const activated = await client.query(
+		`INSERT INTO evaluation_run_capacity_admissions
+            (run_id, organization_id, project_id, actor_id, status)
+         VALUES ($1,$2,$3,$4,'active')
+         ON CONFLICT (run_id) DO UPDATE
+         SET status='active', acquired_at=now(), released_at=NULL, release_reason=NULL
+         WHERE evaluation_run_capacity_admissions.status='released'
+         RETURNING run_id`,
+		[input.run_id, input.organization_id, input.project_id, input.actor_id],
+	);
+	return Boolean(activated.rows[0]);
+}
+
 export async function createExperiment(
 	db: Transactional,
 	input: {
@@ -481,17 +551,17 @@ export async function listRecoverableExperiments(db: Transactional) {
 				  AND run.status IN ('completed','failed','cancelled')`,
 			);
 			await client.query(
-				`INSERT INTO evaluation_run_capacity_admissions
-					(run_id, organization_id, project_id, actor_id, status)
-				 SELECT id, organization_id, project_id, requested_by_actor_id, 'active'
-				 FROM evaluation_runs
-				 WHERE status IN ('pending','running')
-				 ON CONFLICT (run_id) DO UPDATE
-				 SET status='active', acquired_at=now(), released_at=NULL, release_reason=NULL
-				 WHERE evaluation_run_capacity_admissions.status='released'`,
+				`UPDATE evaluation_run_capacity_admissions capacity
+				 SET status='released', released_at=now(),
+				     release_reason='recovery_reconciliation'
+				FROM evaluation_runs run
+				WHERE capacity.run_id=run.id
+				  AND capacity.project_id=run.project_id
+				  AND capacity.status='active'
+				  AND run.status IN ('pending','running')`,
 			);
 			const candidates = await client.query(
-				"SELECT experiment.*, inputs.target AS run_target, inputs.evaluator AS run_evaluator, inputs.execution_defaults AS run_execution_defaults, inputs.limits AS run_limits FROM experiments experiment LEFT JOIN evaluation_run_inputs inputs ON inputs.run_id = experiment.evaluation_run_id AND inputs.project_id = experiment.project_id WHERE experiment.status IN ('pending', 'running') ORDER BY experiment.created_at ASC",
+				"SELECT experiment.* FROM experiments experiment WHERE experiment.status IN ('pending', 'running') ORDER BY experiment.created_at ASC",
 			);
 			const recoverable: RecoverableExperiment[] = [];
 			for (const candidate of candidates.rows) {
@@ -506,29 +576,87 @@ export async function listRecoverableExperiments(db: Transactional) {
 				}
 				if (!["pending", "running"].includes(text(access.row, "status")))
 					continue;
-				if (
-					typeof access.row.evaluation_run_id === "string" &&
-					candidate.run_target == null
-				)
-					continue;
-				let config = json(access.row, "config");
-				if (typeof access.row.evaluation_run_id === "string") {
-					const inputs = await client.query(
-						"SELECT target, evaluator, execution_defaults, limits FROM evaluation_run_inputs WHERE run_id=$1 AND project_id=$2",
-						[access.row.evaluation_run_id, access.project_id],
+				if (typeof access.row.evaluation_run_id !== "string") {
+					await failRecoveryExperiment(
+						client,
+						access,
+						"legacy_execution_contract",
 					);
-					const snapshot = inputs.rows[0] as Row | undefined;
-					if (snapshot) {
-						config = {
-							model: json(snapshot, "target").model,
-							provider: json(snapshot, "target").provider,
-							system_prompt: json(snapshot, "target").system_prompt,
-							evaluator: json(snapshot, "evaluator").kind,
-							...json(snapshot, "execution_defaults"),
-							limits: json(snapshot, "limits"),
-						};
-					}
+					continue;
 				}
+				let config = json(access.row, "config");
+				const inputs = await client.query(
+					"SELECT target, evaluator, execution_defaults, limits, sampling, execution_bounds, run.provider_call_count, run.status AS run_status FROM evaluation_run_inputs inputs JOIN evaluation_runs run ON run.id=inputs.run_id AND run.project_id=inputs.project_id WHERE inputs.run_id=$1 AND inputs.project_id=$2",
+					[access.row.evaluation_run_id, access.project_id],
+				);
+				const snapshot = inputs.rows[0] as Row | undefined;
+				if (
+					!snapshot ||
+					!["pending", "running"].includes(String(snapshot.run_status))
+				) {
+					await failRecoveryExperiment(
+						client,
+						access,
+						"legacy_execution_contract",
+					);
+					continue;
+				}
+				let policy;
+				try {
+					policy = resolveEvaluationExecutionPolicy(
+						json(snapshot, "target"),
+						Number(json(snapshot, "sampling").sample_size),
+					);
+				} catch (cause) {
+					if (!(cause instanceof EvaluationExecutionPolicyError)) throw cause;
+					await failRecoveryExperiment(
+						client,
+						access,
+						"provider_policy_revoked",
+					);
+					continue;
+				}
+				const executionBounds = json(snapshot, "execution_bounds");
+				const providerCallLimit = Math.min(
+					policy.bounds.max_provider_calls,
+					Number(executionBounds.max_provider_calls),
+				);
+				if (
+					!Number.isSafeInteger(providerCallLimit) ||
+					providerCallLimit < 1 ||
+					Number(snapshot.provider_call_count) >= providerCallLimit
+				) {
+					await failRecoveryExperiment(
+						client,
+						access,
+						"provider_call_limit_exceeded",
+					);
+					continue;
+				}
+				if (
+					!(await activateRecoveredEvaluationRunCapacity(client, {
+						run_id: access.row.evaluation_run_id,
+						organization_id: access.organization_id,
+						project_id: access.project_id,
+						actor_id: access.requester_actor_id!,
+						...policy.bounds,
+					}))
+				) {
+					await failRecoveryExperiment(
+						client,
+						access,
+						"capacity_limit_exceeded",
+					);
+					continue;
+				}
+				config = {
+					model: policy.model,
+					provider: policy.provider,
+					system_prompt: json(snapshot, "target").system_prompt,
+					evaluator: json(snapshot, "evaluator").kind,
+					...json(snapshot, "execution_defaults"),
+					limits: json(snapshot, "limits"),
+				};
 				const recoverableExperiment: RecoverableExperiment = {
 					id: text(access.row, "id"),
 					project_id: text(access.row, "project_id"),

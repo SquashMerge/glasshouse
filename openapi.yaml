@@ -5016,9 +5016,18 @@ components:
         evaluation_id:
           format: uuid
           type: string
+        experiment_agent_id:
+          format: uuid
+          type:
+            - string
+            - 'null'
         experiment_id:
           format: uuid
           type: string
+        experiment_name:
+          type:
+            - string
+            - 'null'
         id:
           format: uuid
           type: string
@@ -5144,6 +5153,8 @@ components:
         - dataset_version_id
         - dataset_id
         - experiment_id
+        - experiment_agent_id
+        - experiment_name
         - benchmark_run_id
         - status
         - requested_by_actor_id

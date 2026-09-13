@@ -344,6 +344,11 @@ run_evaluation_execution_bounds_upgrade() {
       psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
       < "$ROOT/infra/db/migrations/0096_rename_evaluation_requested_sample_size_bound.sql"
   done
+  for _ in 1 2; do
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+      < "$ROOT/infra/db/migrations/0097_reconcile_evaluation_run_recovery_bounds.sql"
+  done
   docker exec --interactive "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
     < "$ROOT/infra/scripts/test-db-migrations-0095-upgrade.assert.sql"
