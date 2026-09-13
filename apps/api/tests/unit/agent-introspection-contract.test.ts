@@ -169,10 +169,7 @@ describe("agent-introspection.v1 contract", () => {
 				"adapter framework version",
 				(value) => (value.adapter.framework_version = compactJws),
 			],
-			[
-				"agent key",
-				(value) => (value.events[0].detail.agent_key = compactJws),
-			],
+			["agent key", (value) => (value.events[0].detail.agent_key = compactJws)],
 			[
 				"model provider",
 				(value) => (value.events[1].detail.provider = compactJws),
