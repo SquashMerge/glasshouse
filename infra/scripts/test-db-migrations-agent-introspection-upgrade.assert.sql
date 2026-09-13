@@ -156,9 +156,18 @@ BEGIN
         RAISE EXCEPTION 'upgrade left an unprovable Run-item Dataset-version-item association';
     END IF;
 
+    IF EXISTS (
+        SELECT 1
+        FROM experiment_tasks
+        WHERE project_id = '90000000-0000-4000-8000-000000000002'
+          AND evaluation_run_id = '90000000-0000-4000-8000-000000000010'
+          AND evaluation_run_item_id = '90000000-0000-4000-8000-000000000012'
+    ) THEN
+        RAISE EXCEPTION 'task Run-item FK probe target is unexpectedly occupied';
+    END IF;
     BEGIN
         UPDATE experiment_tasks
-        SET evaluation_run_item_id = '90000000-0000-4000-8000-000000000019'
+        SET evaluation_run_item_id = '90000000-0000-4000-8000-000000000012'
         WHERE id = valid_task_id;
         RAISE EXCEPTION 'task Run-item FK accepted a different Dataset-version item';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
