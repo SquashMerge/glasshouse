@@ -128,7 +128,7 @@ export const listTraces = createRoute({
 	tags: ["traces"],
 	summary: "List traces",
 	description:
-		"Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. Input and output excerpts are limited to 200 Unicode code points; use next_cursor for the next page.",
+		"Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
 	security: [{ basicAuth: [] }],
 	request: { query: TraceListQuery },
 	responses: {
@@ -195,7 +195,7 @@ export const getTrace = createRoute({
 	tags: ["traces"],
 	summary: "Get a trace",
 	description:
-		"Fetch a project-scoped, byte-bounded observation page in stable start_time, observation_id order. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.",
+		"Fetch a project- and trace-scoped, byte-bounded observation page in stable start_time, observation_id order. Retained text is capped at 8 KiB UTF-8 and its truncation flags report source clipping. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: TraceIdParam,
@@ -316,7 +316,7 @@ export const listObservations = createRoute({
 	tags: ["traces"],
 	summary: "List observations (spans)",
 	description:
-		"Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. Input and output excerpts are limited to 200 Unicode code points; use next_cursor for the next page.",
+		"Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
 	security: [{ basicAuth: [] }],
 	request: { query: TraceListQuery },
 	responses: {

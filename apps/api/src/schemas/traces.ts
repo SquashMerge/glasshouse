@@ -16,6 +16,21 @@ const TraceCursorQuery = z
 		},
 	});
 
+const TraceDetailCursorQuery = z
+	.string()
+	.min(1)
+	.max(2048)
+	.regex(/^[A-Za-z0-9_-]+$/)
+	.optional()
+	.openapi({
+		param: {
+			name: "cursor",
+			in: "query",
+			description:
+				"Opaque, project- and trace-scoped keyset cursor from next_cursor.",
+		},
+	});
+
 const UnsupportedOffsetQuery = z
 	.string()
 	.optional()
@@ -74,7 +89,7 @@ export const TraceDetailQuery = z
 	.object({
 		expand: z.string().optional(),
 		project_id: ProjectIdQuery,
-		cursor: TraceCursorQuery,
+		cursor: TraceDetailCursorQuery,
 	})
 	.strict();
 

@@ -119,7 +119,8 @@ export const streamTraceDetailEvents = createRoute({
 		"Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), " +
 		"subscribes to `observation.created` BEFORE writing the snapshot (so any " +
 		"observation created in the gap is delivered as a live event), writes an " +
-		"`event: snapshot` frame with the existing observations, then forwards " +
+		"`event: snapshot` frame with existing observations capped by both the 256 KiB response budget and `SSE_MAX_PENDING_BYTES`; " +
+		"a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards " +
 		"matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` " +
 		"frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` " +
 		"default-30s timer; on the timer's fire the server writes " +
@@ -613,7 +614,7 @@ export function createTraceEventHandlers(
 					observations,
 					snapshot_truncated: true,
 				}),
-				MAX_TRACE_RESPONSE_BYTES - 1024,
+				Math.min(MAX_TRACE_RESPONSE_BYTES - 1024, d.maxPendingBytes),
 			);
 			const snapshotData = JSON.stringify({
 				trace: snapshotTrace,

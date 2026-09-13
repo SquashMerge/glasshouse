@@ -79,18 +79,62 @@ export interface ObservationListFilters {
 }
 
 const LIST_COLUMNS =
-	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(input_text) > 200 AS input_excerpt_truncated, lengthUTF8(output_text) > 200 AS output_excerpt_truncated, scores_summary";
+	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(traces.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(traces.output_text) > 200 AS output_excerpt_truncated, scores_summary";
 
 const OBSERVATION_COLUMNS =
-	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(input_text) > 200 AS input_excerpt_truncated, lengthUTF8(output_text) > 200 AS output_excerpt_truncated, if(length(metadata) <= 2048, metadata, '') AS metadata, length(metadata) > 2048 AS metadata_truncated";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(observations.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(observations.output_text) > 200 AS output_excerpt_truncated, if(length(metadata) <= 2048, metadata, '') AS metadata, length(metadata) > 2048 AS metadata_truncated";
 
 const OBSERVATION_FULL_COLUMNS =
 	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, input_retained_truncated, output_retained_truncated, if(length(metadata) <= 16384, metadata, '') AS metadata, length(metadata) > 16384 AS metadata_truncated";
 
 export const MAX_TRACE_DETAIL_OBSERVATIONS = 7;
 
+type ClickHouseBooleanFlags = {
+	input_retained_truncated?: boolean | number;
+	output_retained_truncated?: boolean | number;
+	input_excerpt_truncated?: boolean | number;
+	output_excerpt_truncated?: boolean | number;
+	metadata_truncated?: boolean | number;
+};
+
+type ResponseBooleanFlags = {
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
+	metadata_truncated?: boolean;
+};
+
+function normalizeClickHouseFlags<T extends ClickHouseBooleanFlags>(
+	row: T,
+): Omit<T, keyof ClickHouseBooleanFlags> & ResponseBooleanFlags {
+	const {
+		input_retained_truncated,
+		output_retained_truncated,
+		input_excerpt_truncated,
+		output_excerpt_truncated,
+		metadata_truncated,
+		...rest
+	} = row;
+	return {
+		...rest,
+		...(input_retained_truncated ? { input_retained_truncated: true } : {}),
+		...(output_retained_truncated ? { output_retained_truncated: true } : {}),
+		...(input_excerpt_truncated ? { input_excerpt_truncated: true } : {}),
+		...(output_excerpt_truncated ? { output_excerpt_truncated: true } : {}),
+		...(metadata_truncated ? { metadata_truncated: true } : {}),
+	};
+}
+
 function defaultClient(): ClickHouseClient {
 	return ch();
+}
+
+function clickHouseDateTime(value: string): string {
+	const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z$/.exec(
+		value,
+	);
+	return match ? `${match[1]} ${match[2]}` : value;
 }
 
 function buildWhere(
@@ -167,7 +211,7 @@ export async function listTraces(
 		? " AND (start_time, trace_id) < ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
 		: "";
 	if (cursor) {
-		params.cursor_start_time = cursor.start_time;
+		params.cursor_start_time = clickHouseDateTime(cursor.start_time);
 		params.cursor_id = cursor.id;
 	}
 
@@ -176,7 +220,9 @@ export async function listTraces(
 		query_params: params,
 		format: "JSONEachRow",
 	});
-	const rows = (await itemsResult.json()) as TraceRow[];
+	const rows = ((await itemsResult.json()) as TraceRow[]).map(
+		normalizeClickHouseFlags,
+	);
 	const items = rows.slice(0, limit);
 
 	const totalResult = await client.query({
@@ -223,13 +269,15 @@ export async function getTrace(
 		format: "JSONEachRow",
 		abort_signal: signal,
 	});
-	const traceRows = (await traceResult.json()) as TraceRow[];
+	const traceRows = ((await traceResult.json()) as TraceRow[]).map(
+		normalizeClickHouseFlags,
+	);
 	const trace = traceRows.length > 0 ? traceRows[0] : null;
 	if (!trace) return { trace: null, observations: [] };
 
 	if (cursor) {
 		Object.assign(query_params, {
-			cursor_start_time: cursor.start_time,
+			cursor_start_time: clickHouseDateTime(cursor.start_time),
 			cursor_id: cursor.id,
 		});
 	}
@@ -242,7 +290,9 @@ export async function getTrace(
 		format: "JSONEachRow",
 		abort_signal: signal,
 	});
-	const rows = (await obsResult.json()) as ObservationRow[];
+	const rows = ((await obsResult.json()) as ObservationRow[]).map(
+		normalizeClickHouseFlags,
+	);
 	const observations = rows.slice(0, MAX_TRACE_DETAIL_OBSERVATIONS);
 	const last = observations.at(-1);
 
@@ -339,7 +389,7 @@ export async function listObservations(
 		? " AND (start_time, observation_id) < ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
 		: "";
 	if (cursor) {
-		params.cursor_start_time = cursor.start_time;
+		params.cursor_start_time = clickHouseDateTime(cursor.start_time);
 		params.cursor_id = cursor.id;
 	}
 
@@ -348,7 +398,9 @@ export async function listObservations(
 		query_params: params,
 		format: "JSONEachRow",
 	});
-	const rows = (await itemsResult.json()) as ObservationRow[];
+	const rows = ((await itemsResult.json()) as ObservationRow[]).map(
+		normalizeClickHouseFlags,
+	);
 	const items = rows.slice(0, limit);
 
 	const totalResult = await client.query({
