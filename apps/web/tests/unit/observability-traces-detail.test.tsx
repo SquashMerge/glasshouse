@@ -436,7 +436,7 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 		).toBeInTheDocument();
 	});
 
-	it("merges a reconnect snapshot with loaded continuations and live rows without rewinding its cursor", async () => {
+	it("merges a reconnect snapshot with loaded continuations and live rows while refreshing its cursor", async () => {
 		selectedProjectId = PROJECT_ID;
 		mockedGetTraceDetail.mockResolvedValueOnce({
 			trace: { trace_id: VALID_ID, name: "trace" } as TraceRow,
@@ -500,7 +500,81 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 		await waitFor(() =>
 			expect(mockedGetTraceDetail).toHaveBeenLastCalledWith(VALID_ID, {
 				project_id: PROJECT_ID,
-				cursor: "after-continuation",
+				cursor: "stale-snapshot-cursor",
+			}),
+		);
+	});
+
+	it("updates a fully loaded trace to a truncated reconnect snapshot without losing prior rows", async () => {
+		selectedProjectId = PROJECT_ID;
+		mockedGetTraceDetail.mockResolvedValueOnce({
+			trace: { trace_id: VALID_ID, name: "trace" } as TraceRow,
+			observations: [
+				makeObservation({
+					observation_id: "b".repeat(32),
+					name: "loaded continuation",
+				}) as unknown as ObservationRow,
+			],
+		});
+		renderAt(VALID_ID);
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const handle = handleByTraceId.get(VALID_ID)!;
+
+		await act(async () => {
+			handle.callbacks!.onSnapshot({
+				observations: [
+					makeObservation({
+						observation_id: "a".repeat(32),
+						name: "first page",
+					}),
+				],
+				snapshot_truncated: true,
+				next_cursor: "initial-cursor",
+			});
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "Load remaining observations" }),
+		);
+		await screen.findByText("loaded continuation");
+		expect(
+			screen.queryByRole("button", { name: "Load remaining observations" }),
+		).not.toBeInTheDocument();
+
+		await act(async () => {
+			handle.callbacks!.onStatus("complete");
+			handle.callbacks!.onSnapshot({
+				observations: [
+					makeObservation({
+						observation_id: "a".repeat(32),
+						name: "first page",
+					}),
+					makeObservation({
+						observation_id: "c".repeat(32),
+						name: "new reconnect row",
+					}),
+				],
+				snapshot_truncated: true,
+				next_cursor: "reconnect-cursor",
+			});
+		});
+
+		expect(screen.getByTestId("span-tree")).toHaveTextContent(
+			"loaded continuation",
+		);
+		expect(screen.getByTestId("span-tree")).toHaveTextContent(
+			"new reconnect row",
+		);
+		mockedGetTraceDetail.mockResolvedValueOnce({
+			trace: { trace_id: VALID_ID, name: "trace" } as TraceRow,
+			observations: [],
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "Load remaining observations" }),
+		);
+		await waitFor(() =>
+			expect(mockedGetTraceDetail).toHaveBeenLastCalledWith(VALID_ID, {
+				project_id: PROJECT_ID,
+				cursor: "reconnect-cursor",
 			}),
 		);
 	});

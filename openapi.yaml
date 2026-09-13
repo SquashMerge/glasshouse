@@ -13613,13 +13613,22 @@ paths:
         - projects
   /v1/observations:
     get:
-      description: Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.
+      description: Returns a project-scoped page sorted by start_time DESC, observation_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.
       parameters:
-        - in: query
+        - description: Default 50. Zero is allowed. Values above 200 are clamped to 200; malformed, fractional, or negative values return 400.
+          in: query
           name: limit
           required: false
           schema:
             example: 50
+            minLength: 1
+            type: string
+        - description: v1 offset pagination. Defaults to 0. A malformed, fractional, negative, or offset above 2147483647 returns 400.
+          in: query
+          name: offset
+          required: false
+          schema:
+            example: 0
             minLength: 1
             type: string
         - in: query
@@ -13628,7 +13637,7 @@ paths:
           schema:
             format: uuid
             type: string
-        - description: Opaque, project-scoped keyset cursor from next_cursor.
+        - description: Opaque, project-scoped keyset cursor from next_cursor. Do not combine it with a positive v1 offset.
           in: query
           name: cursor
           required: false
@@ -13636,13 +13645,6 @@ paths:
             maxLength: 2048
             minLength: 1
             pattern: ^[A-Za-z0-9_-]+$
-            type: string
-        - deprecated: true
-          description: Unsupported; use the opaque cursor returned by next_cursor.
-          in: query
-          name: offset
-          required: false
-          schema:
             type: string
       responses:
         '200':
@@ -16544,13 +16546,22 @@ paths:
         - prompts
   /v1/traces:
     get:
-      description: Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.
+      description: Returns a project-scoped page sorted by start_time DESC, trace_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.
       parameters:
-        - in: query
+        - description: Default 50. Zero is allowed. Values above 200 are clamped to 200; malformed, fractional, or negative values return 400.
+          in: query
           name: limit
           required: false
           schema:
             example: 50
+            minLength: 1
+            type: string
+        - description: v1 offset pagination. Defaults to 0. A malformed, fractional, negative, or offset above 2147483647 returns 400.
+          in: query
+          name: offset
+          required: false
+          schema:
+            example: 0
             minLength: 1
             type: string
         - in: query
@@ -16559,7 +16570,7 @@ paths:
           schema:
             format: uuid
             type: string
-        - description: Opaque, project-scoped keyset cursor from next_cursor.
+        - description: Opaque, project-scoped keyset cursor from next_cursor. Do not combine it with a positive v1 offset.
           in: query
           name: cursor
           required: false
@@ -16567,13 +16578,6 @@ paths:
             maxLength: 2048
             minLength: 1
             pattern: ^[A-Za-z0-9_-]+$
-            type: string
-        - deprecated: true
-          description: Unsupported; use the opaque cursor returned by next_cursor.
-          in: query
-          name: offset
-          required: false
-          schema:
             type: string
       responses:
         '200':
@@ -16641,7 +16645,7 @@ paths:
         - traces
   /v1/traces/{id}:
     get:
-      description: Fetch a project- and trace-scoped observation page in stable start_time, observation_id order. The raw UTF-8 JSON body is capped at 256 KiB; response_truncated and next_cursor preserve byte-truncated continuation. Retained text is capped at 8 KiB UTF-8 and its truncation flags report source clipping. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.
+      description: Fetch a project- and trace-scoped observation page in stable start_time, observation_id order. The embedded trace input/output remain 200-Unicode-code-point excerpts; each observation detail field contains the full retained value, capped at 8 KiB UTF-8, and truncation flags report source or legacy read-time clipping. The raw UTF-8 JSON body is capped at 256 KiB; response_truncated and a project- and trace-scoped next_cursor preserve byte-truncated continuation. Legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.
       parameters:
         - in: path
           name: id

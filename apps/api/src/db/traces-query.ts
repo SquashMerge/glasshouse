@@ -79,13 +79,13 @@ export interface ObservationListFilters {
 }
 
 const LIST_COLUMNS =
-	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(traces.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(traces.output_text) > 200 AS output_excerpt_truncated, scores_summary";
+	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated OR length(traces.input_text) > 8192 AS input_retained_truncated, output_retained_truncated OR length(traces.output_text) > 8192 AS output_retained_truncated, lengthUTF8(traces.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(traces.output_text) > 200 AS output_excerpt_truncated, scores_summary";
 
 const OBSERVATION_COLUMNS =
-	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(observations.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(observations.output_text) > 200 AS output_excerpt_truncated, if(length(metadata) <= 2048, metadata, '') AS metadata, length(metadata) > 2048 AS metadata_truncated";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated OR length(observations.input_text) > 8192 AS input_retained_truncated, output_retained_truncated OR length(observations.output_text) > 8192 AS output_retained_truncated, lengthUTF8(observations.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(observations.output_text) > 200 AS output_excerpt_truncated, if(length(metadata) <= 2048, metadata, '') AS metadata, length(metadata) > 2048 AS metadata_truncated";
 
 const OBSERVATION_FULL_COLUMNS =
-	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, input_retained_truncated, output_retained_truncated, if(length(metadata) <= 16384, metadata, '') AS metadata, length(metadata) > 16384 AS metadata_truncated";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, if(length(observations.input_text) > 8192, substringUTF8(observations.input_text, 1, 2048), observations.input_text) AS input_text, if(length(observations.output_text) > 8192, substringUTF8(observations.output_text, 1, 2048), observations.output_text) AS output_text, input_retained_truncated OR length(observations.input_text) > 8192 AS input_retained_truncated, output_retained_truncated OR length(observations.output_text) > 8192 AS output_retained_truncated, if(length(metadata) <= 16384, metadata, '') AS metadata, length(metadata) > 16384 AS metadata_truncated";
 
 export const MAX_TRACE_DETAIL_OBSERVATIONS = 7;
 
@@ -202,21 +202,24 @@ export async function listTraces(
 	filters: TraceListFilters,
 	limit: number,
 	cursor?: TraceCursor,
+	offset = 0,
 ): Promise<{ items: TraceRow[]; total: number; next_cursor?: TraceCursor }> {
 	const params: Record<string, unknown> = {
 		limit: limit === 0 ? 0 : limit + 1,
+		...(offset > 0 ? { offset } : {}),
 	};
 	const whereClause = buildWhere(filters, params);
 	const cursorClause = cursor
 		? " AND (start_time, trace_id) < ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
 		: "";
+	const offsetClause = offset > 0 ? " OFFSET {offset: UInt32}" : "";
 	if (cursor) {
 		params.cursor_start_time = clickHouseDateTime(cursor.start_time);
 		params.cursor_id = cursor.id;
 	}
 
 	const itemsResult = await client.query({
-		query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause}${cursorClause} ORDER BY start_time DESC, trace_id DESC LIMIT {limit: UInt32}`,
+		query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause}${cursorClause} ORDER BY start_time DESC, trace_id DESC LIMIT {limit: UInt32}${offsetClause}`,
 		query_params: params,
 		format: "JSONEachRow",
 	});
@@ -376,6 +379,7 @@ export async function listObservations(
 	filters: ObservationListFilters,
 	limit: number,
 	cursor?: TraceCursor,
+	offset = 0,
 ): Promise<{
 	items: ObservationRow[];
 	total: number;
@@ -383,18 +387,20 @@ export async function listObservations(
 }> {
 	const params: Record<string, unknown> = {
 		limit: limit === 0 ? 0 : limit + 1,
+		...(offset > 0 ? { offset } : {}),
 	};
 	const whereClause = buildObservationWhere(filters, params);
 	const cursorClause = cursor
 		? " AND (start_time, observation_id) < ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
 		: "";
+	const offsetClause = offset > 0 ? " OFFSET {offset: UInt32}" : "";
 	if (cursor) {
 		params.cursor_start_time = clickHouseDateTime(cursor.start_time);
 		params.cursor_id = cursor.id;
 	}
 
 	const itemsResult = await client.query({
-		query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause}${cursorClause} ORDER BY start_time DESC, observation_id DESC LIMIT {limit: UInt32}`,
+		query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause}${cursorClause} ORDER BY start_time DESC, observation_id DESC LIMIT {limit: UInt32}${offsetClause}`,
 		query_params: params,
 		format: "JSONEachRow",
 	});

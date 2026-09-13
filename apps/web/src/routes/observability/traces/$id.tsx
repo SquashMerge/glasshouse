@@ -190,12 +190,8 @@ function TraceDetailPageContent({
 				setSnapshotTimedOut(false);
 				setNotFound(false);
 				setRecordingStatus("recording");
-				setSnapshotTruncated((current) =>
-					reconnectSnapshot ? current : snapshot.snapshot_truncated === true,
-				);
-				setNextCursor((current) =>
-					reconnectSnapshot ? current : (snapshot.next_cursor ?? null),
-				);
+				setSnapshotTruncated(snapshot.snapshot_truncated === true);
+				setNextCursor(snapshot.next_cursor ?? null);
 				setLoadMoreError(null);
 				const snapshotObservations = snapshot.observations.map(
 					normalizeStreamObservation,

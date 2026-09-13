@@ -75,22 +75,25 @@ function presentTimestamp(value: string): string {
 function getPagination(c: Context): {
 	limit: number;
 	cursor?: string;
+	offset: number;
 	projectId?: string;
 } {
 	const {
 		limit: requestedLimit = 50,
 		cursor,
+		offset = 0,
 		project_id: projectId,
 	} = (
 		c.req as {
 			valid: (target: "query") => {
 				limit?: number;
 				cursor?: string;
+				offset?: number;
 				project_id?: string;
 			};
 		}
 	).valid("query");
-	return { limit: Math.min(requestedLimit, 200), cursor, projectId };
+	return { limit: Math.min(requestedLimit, 200), cursor, offset, projectId };
 }
 
 function boundedListResponse<T extends { start_time: string }>(
@@ -139,7 +142,7 @@ export const listTraces = createRoute({
 	tags: ["traces"],
 	summary: "List traces",
 	description:
-		"Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
+		"Returns a project-scoped page sorted by start_time DESC, trace_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.",
 	security: [{ basicAuth: [] }],
 	request: { query: TraceListQuery },
 	responses: {
@@ -160,7 +163,7 @@ export const listTraces = createRoute({
 });
 
 export async function handleListTraces(c: Context): Promise<Response> {
-	const { limit, cursor: encodedCursor, projectId } = getPagination(c);
+	const { limit, cursor: encodedCursor, offset, projectId } = getPagination(c);
 	const q = c.req.query("filter[q]");
 	const filters = {
 		organization_id: trustedTenant(c).organizationId,
@@ -182,6 +185,7 @@ export async function handleListTraces(c: Context): Promise<Response> {
 			filters,
 			limit,
 			cursor,
+			offset,
 		);
 		const presented = items.map(presentTrace);
 		return boundedListResponse(
@@ -210,7 +214,7 @@ export const getTrace = createRoute({
 	tags: ["traces"],
 	summary: "Get a trace",
 	description:
-		"Fetch a project- and trace-scoped observation page in stable start_time, observation_id order. The raw UTF-8 JSON body is capped at 256 KiB; response_truncated and next_cursor preserve byte-truncated continuation. Retained text is capped at 8 KiB UTF-8 and its truncation flags report source clipping. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.",
+		"Fetch a project- and trace-scoped observation page in stable start_time, observation_id order. The embedded trace input/output remain 200-Unicode-code-point excerpts; each observation detail field contains the full retained value, capped at 8 KiB UTF-8, and truncation flags report source or legacy read-time clipping. The raw UTF-8 JSON body is capped at 256 KiB; response_truncated and a project- and trace-scoped next_cursor preserve byte-truncated continuation. Legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: TraceIdParam,
@@ -350,7 +354,7 @@ export const listObservations = createRoute({
 	tags: ["traces"],
 	summary: "List observations (spans)",
 	description:
-		"Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation. Use next_cursor for the next page.",
+		"Returns a project-scoped page sorted by start_time DESC, observation_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.",
 	security: [{ basicAuth: [] }],
 	request: { query: TraceListQuery },
 	responses: {
@@ -371,7 +375,7 @@ export const listObservations = createRoute({
 });
 
 export async function handleListObservations(c: Context): Promise<Response> {
-	const { limit, cursor: encodedCursor, projectId } = getPagination(c);
+	const { limit, cursor: encodedCursor, offset, projectId } = getPagination(c);
 	const filters = {
 		organization_id: trustedTenant(c).organizationId,
 		project_id: projectId,
@@ -393,6 +397,7 @@ export async function handleListObservations(c: Context): Promise<Response> {
 			filters,
 			limit,
 			cursor,
+			offset,
 		);
 		const presented = items.map(presentObservation);
 		return boundedListResponse(

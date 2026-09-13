@@ -55,7 +55,9 @@ describe("getTrace project scope", () => {
 		expect(queries[1]!.query).toContain(
 			"ORDER BY start_time ASC, observation_id ASC",
 		);
-		expect(queries[1]!.query).toContain("model, input_text, output_text");
+		expect(queries[1]!.query).toContain(
+			"model, if(length(observations.input_text) > 8192, substringUTF8(observations.input_text, 1, 2048), observations.input_text) AS input_text",
+		);
 		expect(queries[1]!.query).toContain("metadata_truncated");
 		expect(queries[1]).toMatchObject({
 			query: expect.stringContaining("LIMIT {limit: UInt32}"),
@@ -108,16 +110,36 @@ describe("listTraces empty result", () => {
 		expect(queries[2]?.query).toContain("metadata_truncated");
 	});
 
-	it("projects the complete storage-bounded detail fields without claiming a byte truncation", async () => {
+	it("projects storage-bounded detail fields and marks legacy oversize text", async () => {
 		const { client, queries } = fakeClient();
 		await getTrace(client as never, ORGANIZATION_ID, TRACE_ID, PROJECT_ID);
 
 		const detailQuery = queries[1]!.query;
-		expect(detailQuery).toContain("model, input_text, output_text");
-		expect(detailQuery).not.toContain("substringUTF8(input_text, 1, 2048)");
-		expect(detailQuery).not.toContain("length(input_text) > 8192");
+		expect(detailQuery).toContain(
+			"model, if(length(observations.input_text) > 8192, substringUTF8(observations.input_text, 1, 2048), observations.input_text) AS input_text",
+		);
+		expect(detailQuery).toContain("length(observations.input_text) > 8192");
 		expect(detailQuery).toContain("input_retained_truncated");
 		expect(detailQuery).toContain("output_retained_truncated");
+	});
+
+	it("query-bounds legacy detail text before it can be materialized", async () => {
+		const { client, queries } = fakeClient();
+		await getTrace(client as never, ORGANIZATION_ID, TRACE_ID, PROJECT_ID);
+
+		const detailQuery = queries[1]!.query;
+		expect(detailQuery).toContain(
+			"if(length(observations.input_text) > 8192, substringUTF8(observations.input_text, 1, 2048), observations.input_text) AS input_text",
+		);
+		expect(detailQuery).toContain(
+			"if(length(observations.output_text) > 8192, substringUTF8(observations.output_text, 1, 2048), observations.output_text) AS output_text",
+		);
+		expect(detailQuery).toContain(
+			"input_retained_truncated OR length(observations.input_text) > 8192 AS input_retained_truncated",
+		);
+		expect(detailQuery).toContain(
+			"output_retained_truncated OR length(observations.output_text) > 8192 AS output_retained_truncated",
+		);
 	});
 
 	it("uses a project-scoped keyset boundary instead of offset pagination", async () => {
@@ -139,6 +161,24 @@ describe("listTraces empty result", () => {
 			project_id: PROJECT_ID,
 			cursor_start_time: "2026-08-30 12:00:00.000",
 			cursor_id: TRACE_ID,
+		});
+	});
+
+	it("applies a v1 offset at the ClickHouse query boundary", async () => {
+		const { client, queries } = fakeClient();
+		await listObservations(
+			client as never,
+			{ organization_id: ORGANIZATION_ID, project_id: PROJECT_ID },
+			10,
+			undefined,
+			25,
+		);
+
+		expect(queries[0]).toMatchObject({
+			query: expect.stringMatching(
+				/input_retained_truncated OR length\(observations\.input_text\) > 8192 AS input_retained_truncated[\s\S]*LIMIT \{limit: UInt32\} OFFSET \{offset: UInt32\}/,
+			),
+			query_params: { limit: 11, offset: 25 },
 		});
 	});
 

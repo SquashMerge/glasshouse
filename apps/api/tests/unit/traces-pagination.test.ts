@@ -127,7 +127,23 @@ describe("trace pagination", () => {
 	it("uses the default trace pagination", async () => {
 		const res = await apiApp.fetch(scopedRequest("/v1/traces"));
 		expect(res.status).toBe(200);
-		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([50, undefined]);
+		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([50, undefined, 0]);
+	});
+
+	it("preserves v1 zero and positive offset pagination for trace and observation lists", async () => {
+		const zero = await apiApp.fetch(scopedRequest("/v1/traces?offset=0"));
+		expect(zero.status).toBe(200);
+		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([50, undefined, 0]);
+
+		const offset = await apiApp.fetch(
+			scopedRequest("/v1/observations?limit=10&offset=25"),
+		);
+		expect(offset.status).toBe(200);
+		expect(listObservations.mock.calls[0]?.slice(2)).toEqual([
+			10,
+			undefined,
+			25,
+		]);
 	});
 
 	it("rejects a cursor issued for another project before querying traces", async () => {
@@ -138,6 +154,20 @@ describe("trace pagination", () => {
 
 		const res = await apiApp.fetch(
 			scopedRequest(`/v1/traces?cursor=${cursor}`),
+		);
+
+		expect(res.status).toBe(400);
+		expect(listTraces).not.toHaveBeenCalled();
+	});
+
+	it("rejects a positive v1 offset combined with a keyset cursor before querying", async () => {
+		const cursor = encodeTraceCursor("traces", PROJECT_ID, {
+			start_time: "2026-08-30 12:00:00.000",
+			id: "0123456789abcdef0123456789abcdef",
+		});
+
+		const res = await apiApp.fetch(
+			scopedRequest(`/v1/traces?cursor=${cursor}&offset=1`),
 		);
 
 		expect(res.status).toBe(400);
@@ -155,11 +185,11 @@ describe("trace pagination", () => {
 	it("accepts zero and the maximum trace page limit", async () => {
 		const zero = await apiApp.fetch(scopedRequest("/v1/traces?limit=0"));
 		expect(zero.status).toBe(200);
-		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([0, undefined]);
+		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([0, undefined, 0]);
 
 		const maximum = await apiApp.fetch(scopedRequest("/v1/traces?limit=200"));
 		expect(maximum.status).toBe(200);
-		expect(listTraces.mock.calls[1]?.slice(2)).toEqual([200, undefined]);
+		expect(listTraces.mock.calls[1]?.slice(2)).toEqual([200, undefined, 0]);
 	});
 
 	it("passes the validated project selector into both list queries", async () => {
@@ -316,6 +346,10 @@ describe("trace pagination", () => {
 	it("preserves the observation limit cap", async () => {
 		const res = await apiApp.fetch(scopedRequest("/v1/observations?limit=201"));
 		expect(res.status).toBe(200);
-		expect(listObservations.mock.calls[0]?.slice(2)).toEqual([200, undefined]);
+		expect(listObservations.mock.calls[0]?.slice(2)).toEqual([
+			200,
+			undefined,
+			0,
+		]);
 	});
 });
