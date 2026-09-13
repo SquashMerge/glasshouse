@@ -248,6 +248,7 @@ export async function handleGetTrace(c: Context): Promise<Response> {
 			encodedCursor,
 			"trace-observations",
 			projectId,
+			traceId,
 		);
 		const { trace, observations, next_cursor } = cursor
 			? await queryGetTrace(
@@ -282,10 +283,15 @@ export async function handleGetTrace(c: Context): Promise<Response> {
 		);
 		const responseCursor =
 			bounded.items.length > 0 && (bounded.truncated || next_cursor)
-				? encodeTraceCursor("trace-observations", projectId, {
-						start_time: bounded.items.at(-1)!.start_time,
-						id: bounded.items.at(-1)!.observation_id,
-					})
+				? encodeTraceCursor(
+						"trace-observations",
+						projectId,
+						{
+							start_time: bounded.items.at(-1)!.start_time,
+							id: bounded.items.at(-1)!.observation_id,
+						},
+						traceId,
+					)
 				: undefined;
 		return c.json({
 			trace: presentedTrace,

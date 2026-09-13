@@ -243,8 +243,12 @@ export function createOtlpIngestHandler(
 								const output = boundText(trace.output_text);
 								trace.input_text = input.value;
 								trace.output_text = output.value;
+								trace.input_retained_truncated = input.truncated;
+								trace.output_retained_truncated = output.truncated;
 								observation.input_text = input.value;
 								observation.output_text = output.value;
+								observation.input_retained_truncated = input.truncated;
+								observation.output_retained_truncated = output.truncated;
 								observation.metadata = boundObservationMetadata(
 									redactMetadata(observation.metadata, redaction),
 								);

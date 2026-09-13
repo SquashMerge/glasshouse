@@ -54,6 +54,24 @@ const BadRequestResponse = {
 	content: { "application/json": { schema: ErrorEnvelope } },
 };
 
+const InternalResponse = {
+	description:
+		"Trace snapshot query failed before the SSE upgrade; retry safely.",
+	content: { "application/json": { schema: ErrorEnvelope } },
+};
+
+const SnapshotUnavailableResponse = {
+	description:
+		"Trace snapshot buffering reached its bounded limit before the SSE upgrade; retry safely.",
+	content: { "application/json": { schema: ErrorEnvelope } },
+};
+
+const SnapshotTimeoutResponse = {
+	description:
+		"Trace snapshot did not complete before its bounded delivery deadline; retry safely.",
+	content: { "application/json": { schema: ErrorEnvelope } },
+};
+
 export const streamTraceEvents = createRoute({
 	method: "get",
 	path: "/v1/traces/events",
@@ -115,6 +133,9 @@ export const streamTraceDetailEvents = createRoute({
 		200: StreamResponse,
 		400: BadRequestResponse,
 		404: NotFoundResponse,
+		500: InternalResponse,
+		503: SnapshotUnavailableResponse,
+		504: SnapshotTimeoutResponse,
 	},
 });
 
@@ -610,6 +631,7 @@ export function createTraceEventHandlers(
 									start_time: boundedSnapshot.items.at(-1)!.start_time,
 									id: boundedSnapshot.items.at(-1)!.observation_id,
 								},
+								traceId,
 							),
 						}
 					: {}),

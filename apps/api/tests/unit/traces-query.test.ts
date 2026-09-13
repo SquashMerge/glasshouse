@@ -55,7 +55,7 @@ describe("getTrace project scope", () => {
 		expect(queries[1]!.query).toContain(
 			"ORDER BY start_time ASC, observation_id ASC",
 		);
-		expect(queries[1]!.query).toContain("substringUTF8(input_text, 1, 2048)");
+		expect(queries[1]!.query).toContain("model, input_text, output_text");
 		expect(queries[1]!.query).toContain("metadata_truncated");
 		expect(queries[1]).toMatchObject({
 			query: expect.stringContaining("LIMIT {limit: UInt32}"),
@@ -106,6 +106,18 @@ describe("listTraces empty result", () => {
 		expect(queries[2]?.query).toContain("substringUTF8(input_text, 1, 200)");
 		expect(queries[2]?.query).toContain("substringUTF8(output_text, 1, 200)");
 		expect(queries[2]?.query).toContain("metadata_truncated");
+	});
+
+	it("projects the complete storage-bounded detail fields without claiming a byte truncation", async () => {
+		const { client, queries } = fakeClient();
+		await getTrace(client as never, ORGANIZATION_ID, TRACE_ID, PROJECT_ID);
+
+		const detailQuery = queries[1]!.query;
+		expect(detailQuery).toContain("model, input_text, output_text");
+		expect(detailQuery).not.toContain("substringUTF8(input_text, 1, 2048)");
+		expect(detailQuery).not.toContain("length(input_text) > 8192");
+		expect(detailQuery).toContain("input_retained_truncated");
+		expect(detailQuery).toContain("output_retained_truncated");
 	});
 
 	it("uses a project-scoped keyset boundary instead of offset pagination", async () => {

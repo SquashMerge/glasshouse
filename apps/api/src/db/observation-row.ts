@@ -3,7 +3,7 @@ import { serializeObservationMetadata } from "./observation-metadata.js";
 import { boundObservationMetadata, boundText } from "./trace-payload-bounds.js";
 
 export interface ObservationInsertRow {
-	[key: string]: string | number | null;
+	[key: string]: string | number | boolean | null;
 	metadata: string;
 }
 
@@ -27,6 +27,10 @@ export function observationToInsertRow(
 		model: observation.model,
 		input_text: input.value,
 		output_text: output.value,
+		input_retained_truncated:
+			observation.input_retained_truncated === true || input.truncated,
+		output_retained_truncated:
+			observation.output_retained_truncated === true || output.truncated,
 		metadata: serializeObservationMetadata(
 			boundObservationMetadata(observation.metadata),
 		),

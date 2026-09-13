@@ -9,6 +9,7 @@ interface StoredTraceCursor extends TraceCursor {
 	v: 1;
 	kind: TraceCursorKind;
 	project_id: string;
+	trace_id?: string;
 }
 
 export class InvalidTraceCursorError extends Error {
@@ -21,9 +22,16 @@ export function encodeTraceCursor(
 	kind: TraceCursorKind,
 	projectId: string,
 	cursor: TraceCursor,
+	traceId?: string,
 ): string {
 	return Buffer.from(
-		JSON.stringify({ v: 1, kind, project_id: projectId, ...cursor }),
+		JSON.stringify({
+			v: 1,
+			kind,
+			project_id: projectId,
+			...(traceId ? { trace_id: traceId } : {}),
+			...cursor,
+		}),
 	).toString("base64url");
 }
 
@@ -31,6 +39,7 @@ export function decodeTraceCursor(
 	encoded: string | undefined,
 	kind: TraceCursorKind,
 	projectId: string,
+	traceId?: string,
 ): TraceCursor | undefined {
 	if (!encoded) return undefined;
 	try {
@@ -41,6 +50,7 @@ export function decodeTraceCursor(
 			value.v !== 1 ||
 			value.kind !== kind ||
 			value.project_id !== projectId ||
+			value.trace_id !== traceId ||
 			typeof value.start_time !== "string" ||
 			value.start_time.length === 0 ||
 			typeof value.id !== "string" ||

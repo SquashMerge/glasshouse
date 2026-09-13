@@ -19,9 +19,11 @@ export interface TraceRow {
 	tags: string[];
 	input_text: string;
 	output_text: string;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
 	scores_summary: string;
-	input_truncated?: boolean;
-	output_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
 }
 
 export interface ObservationRow {
@@ -39,9 +41,11 @@ export interface ObservationRow {
 	model: string | null;
 	input_text: string;
 	output_text: string;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
 	metadata: string;
-	input_truncated?: boolean;
-	output_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
 	metadata_truncated?: boolean;
 }
 
@@ -75,13 +79,13 @@ export interface ObservationListFilters {
 }
 
 const LIST_COLUMNS =
-	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, lengthUTF8(input_text) > 200 AS input_truncated, lengthUTF8(output_text) > 200 AS output_truncated, scores_summary";
+	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(input_text) > 200 AS input_excerpt_truncated, lengthUTF8(output_text) > 200 AS output_excerpt_truncated, scores_summary";
 
 const OBSERVATION_COLUMNS =
-	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, lengthUTF8(input_text) > 200 AS input_truncated, lengthUTF8(output_text) > 200 AS output_truncated, if(length(metadata) <= 2048, metadata, '') AS metadata, length(metadata) > 2048 AS metadata_truncated";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated, output_retained_truncated, lengthUTF8(input_text) > 200 AS input_excerpt_truncated, lengthUTF8(output_text) > 200 AS output_excerpt_truncated, if(length(metadata) <= 2048, metadata, '') AS metadata, length(metadata) > 2048 AS metadata_truncated";
 
 const OBSERVATION_FULL_COLUMNS =
-	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 2048) AS input_text, substringUTF8(output_text, 1, 2048) AS output_text, length(input_text) > 8192 AS input_truncated, length(output_text) > 8192 AS output_truncated, if(length(metadata) <= 16384, metadata, '') AS metadata, length(metadata) > 16384 AS metadata_truncated";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, input_retained_truncated, output_retained_truncated, if(length(metadata) <= 16384, metadata, '') AS metadata, length(metadata) > 16384 AS metadata_truncated";
 
 export const MAX_TRACE_DETAIL_OBSERVATIONS = 7;
 

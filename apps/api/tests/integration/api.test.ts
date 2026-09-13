@@ -75,6 +75,30 @@ describe("API integration: health + openapi", () => {
 		expect(document.paths?.["/v1/otel/v1/traces"]?.post).toBeDefined();
 	});
 
+	it("documents bounded trace-detail and snapshot recovery responses", async () => {
+		const res = await apiApp.fetch(new Request("http://x/openapi.json"));
+		const document = (await res.json()) as {
+			paths?: Record<
+				string,
+				{
+					get?: {
+						parameters?: Array<{ name?: string }>;
+						responses?: Record<string, unknown>;
+					};
+				}
+			>;
+		};
+		const detail = document.paths?.["/v1/traces/{id}"]?.get;
+		const snapshot = document.paths?.["/v1/traces/{id}/events"]?.get;
+
+		expect(
+			detail?.parameters?.some((parameter) => parameter.name === "cursor"),
+		).toBe(true);
+		expect(snapshot?.responses?.["500"]).toBeDefined();
+		expect(snapshot?.responses?.["503"]).toBeDefined();
+		expect(snapshot?.responses?.["504"]).toBeDefined();
+	});
+
 	it("production OpenAPI excludes legacy subject-keyed membership operations", async () => {
 		const res = await apiApp.fetch(new Request("http://x/openapi.json"));
 		expect(res.status).toBe(200);

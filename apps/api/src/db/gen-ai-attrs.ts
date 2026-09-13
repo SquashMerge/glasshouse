@@ -69,6 +69,8 @@ export interface NormalizedTrace {
 	tags: string[];
 	input_text: string;
 	output_text: string;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
 	scores_summary: string; // CSV of name:value pairs
 }
 
@@ -86,6 +88,8 @@ export interface NormalizedObservation {
 	model: string | null;
 	input_text: string;
 	output_text: string;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
 	metadata: ObservationMetadata;
 }
 

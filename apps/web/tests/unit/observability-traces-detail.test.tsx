@@ -23,6 +23,7 @@ import {
 	cleanup,
 } from "@testing-library/react";
 import { TraceDetailPage } from "../../src/routes/observability/traces/$id";
+import { ObservationDetailPanel } from "../../src/components/ObservationDetailPanel";
 import type { TraceRow } from "../../src/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,8 @@ interface MockTraceStreamHandle {
 		onSnapshot: (msg: {
 			trace?: TraceRow;
 			observations: Array<Record<string, unknown>>;
+			snapshot_truncated?: boolean;
+			next_cursor?: string;
 		}) => void;
 		onObservation: (msg: { observation: Record<string, unknown> }) => void;
 		onStatus: (status: "complete" | "not_found") => void;
@@ -188,6 +191,8 @@ function makeObservation(
 		input_text: string;
 		output_text: string;
 		metadata: string;
+		input_retained_truncated: boolean;
+		output_retained_truncated: boolean;
 	}> = {},
 ): Record<string, unknown> {
 	return {
@@ -200,6 +205,8 @@ function makeObservation(
 		model: overrides.model ?? null,
 		input_text: overrides.input_text ?? "",
 		output_text: overrides.output_text ?? "",
+		input_retained_truncated: overrides.input_retained_truncated ?? false,
+		output_retained_truncated: overrides.output_retained_truncated ?? false,
 		metadata: overrides.metadata ?? "{}",
 	};
 }
@@ -395,6 +402,23 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 			"trace snapshot name",
 		);
 		expect(handleByTraceId.size).toBe(1);
+	});
+
+	it("retains a truncated snapshot cursor and offers to load later pages", async () => {
+		renderAt(VALID_ID);
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+
+		await act(async () => {
+			handleByTraceId.get(VALID_ID)!.callbacks!.onSnapshot({
+				observations: [makeObservation({ name: "first-page" })],
+				snapshot_truncated: true,
+				next_cursor: "later-page",
+			});
+		});
+
+		expect(
+			screen.getByRole("button", { name: "Load remaining observations" }),
+		).toBeInTheDocument();
 	});
 
 	it("renders the 3 snapshot observation rows in the tree", async () => {
@@ -650,6 +674,34 @@ describe("TraceDetailPage — span detail tabs", () => {
 		fireEvent.click(screen.getByRole("tab", { name: /Metadata/i }));
 		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"tool"/);
 		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"x"/);
+	});
+
+	it("identifies retained-field truncation without presenting excerpts as full values", async () => {
+		render(
+			<ObservationDetailPanel
+				traceId={VALID_ID}
+				observation={{
+					...makeObservation({
+						input_text: "retained input",
+						output_text: "retained output",
+						input_retained_truncated: true,
+						output_retained_truncated: true,
+						metadata: JSON.stringify({
+							schema_version: 1,
+							attributes: [],
+							prompt_provenance: null,
+							truncated: true,
+						}),
+					}),
+					observation_id: "obs-retained",
+				}}
+			/>,
+		);
+
+		const truncationState = screen.getByRole("status");
+		expect(truncationState).toHaveTextContent("Input retained at 8 KiB");
+		expect(truncationState).toHaveTextContent("Output retained at 8 KiB");
+		expect(truncationState).toHaveTextContent("Metadata retained at 16 KiB");
 	});
 
 	it("persists the keyboard-accessible split and moves the closed inspector trigger into a distinct rail", async () => {

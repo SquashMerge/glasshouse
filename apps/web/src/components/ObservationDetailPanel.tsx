@@ -231,6 +231,20 @@ export function ObservationDetailPanel({
 	const kind = observationKind(observation.type);
 	const timing = observationTiming(observation);
 	const statusError = observation.status === "error";
+	const retainedFieldNotices = [
+		observation.input_retained_truncated === true
+			? "Input retained at 8 KiB"
+			: null,
+		observation.output_retained_truncated === true
+			? "Output retained at 8 KiB"
+			: null,
+		normalizeObservationMetadata(
+			observation.metadata as ObservationMetadataInput,
+			observation.type === "generation",
+		).truncated === true || observation.metadata_truncated === true
+			? "Metadata retained at 16 KiB"
+			: null,
+	].filter((notice): notice is string => notice !== null);
 	const service = detailValue(observation, metadata.value, [
 		"service_name",
 		"service.name",
@@ -333,6 +347,14 @@ export function ObservationDetailPanel({
 			<span className="sr-only" aria-live="polite">
 				{copyMessage}
 			</span>
+			{retainedFieldNotices.length > 0 && (
+				<div
+					className="mx-4 mt-4 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground"
+					role="status"
+				>
+					{retainedFieldNotices.join(" · ")}
+				</div>
+			)}
 
 			<Tabs value={tab} onValueChange={setTab} className="p-4">
 				<TabsList className="h-auto flex-wrap justify-start">

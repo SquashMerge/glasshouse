@@ -3882,6 +3882,8 @@ components:
             - TOO_MANY_REQUESTS
             - CONTRACT_VIOLATION
             - PAYLOAD_TOO_LARGE
+            - SERVICE_UNAVAILABLE
+            - GATEWAY_TIMEOUT
             - INTERNAL
           type: string
         details:
@@ -6549,11 +6551,13 @@ components:
           type:
             - string
             - 'null'
+        input_excerpt_truncated:
+          type: boolean
+        input_retained_truncated:
+          type: boolean
         input_text:
           default: ''
           type: string
-        input_truncated:
-          type: boolean
         metadata:
           $ref: '#/components/schemas/ObservationMetadata'
         metadata_truncated:
@@ -6566,11 +6570,13 @@ components:
           type: string
         observation_id:
           type: string
+        output_excerpt_truncated:
+          type: boolean
+        output_retained_truncated:
+          type: boolean
         output_text:
           default: ''
           type: string
-        output_truncated:
-          type: boolean
         parent_observation_id:
           type:
             - string
@@ -7481,18 +7487,22 @@ components:
             - 'null'
         env:
           type: string
+        input_excerpt_truncated:
+          type: boolean
+        input_retained_truncated:
+          type: boolean
         input_text:
           default: ''
           type: string
-        input_truncated:
-          type: boolean
         name:
           type: string
+        output_excerpt_truncated:
+          type: boolean
+        output_retained_truncated:
+          type: boolean
         output_text:
           default: ''
           type: string
-        output_truncated:
-          type: boolean
         project_id:
           type: string
         session_id:
@@ -16729,6 +16739,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Trace not found
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Trace snapshot query failed before the SSE upgrade; retry safely.
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Trace snapshot buffering reached its bounded limit before the SSE upgrade; retry safely.
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Trace snapshot did not complete before its bounded delivery deadline; retry safely.
       security:
         - basicAuth: []
       summary: 'SSE stream for a single trace: snapshot + live observations + complete'

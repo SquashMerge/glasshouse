@@ -2321,8 +2321,10 @@ export interface TraceRow {
 	input_text: string;
 	output_text: string;
 	scores_summary: string;
-	input_truncated?: boolean;
-	output_truncated?: boolean;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
 }
 
 export interface OtlpAttribute {
@@ -2457,8 +2459,10 @@ export interface ObservationRow {
 	input_text: string;
 	output_text: string;
 	metadata: ObservationMetadata;
-	input_truncated?: boolean;
-	output_truncated?: boolean;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
 	metadata_truncated?: boolean;
 }
 
@@ -2537,6 +2541,38 @@ export interface ObservationListResponse {
 	total: number;
 	response_truncated?: boolean;
 	next_cursor?: string;
+}
+
+export interface TraceDetailResponse {
+	trace: TraceRow;
+	observations: ObservationRow[];
+	response_truncated?: boolean;
+	next_cursor?: string;
+}
+
+export async function getTraceDetail(
+	traceId: string,
+	params: { project_id: string; cursor?: string },
+): Promise<TraceDetailResponse> {
+	const qs = buildQs({
+		project_id: params.project_id,
+		cursor: params.cursor,
+	});
+	const res = await authedFetch(
+		`/v1/traces/${encodeURIComponent(traceId)}${qs}`,
+	);
+	if (!res.ok) throw new Error(`getTraceDetail ${res.status}`);
+	const response = (await res.json()) as TraceDetailResponse;
+	return {
+		...response,
+		observations: response.observations.map((observation) => ({
+			...observation,
+			metadata: normalizeObservationMetadata(
+				observation.metadata,
+				observation.type === "generation",
+			),
+		})),
+	};
 }
 
 export async function listObservations(

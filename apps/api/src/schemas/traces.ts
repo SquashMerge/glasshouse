@@ -49,8 +49,10 @@ export const Trace = z
 		tags: z.array(z.string()).default([]),
 		input_text: z.string().default(""),
 		output_text: z.string().default(""),
-		input_truncated: z.boolean().optional(),
-		output_truncated: z.boolean().optional(),
+		input_retained_truncated: z.boolean().optional(),
+		output_retained_truncated: z.boolean().optional(),
+		input_excerpt_truncated: z.boolean().optional(),
+		output_excerpt_truncated: z.boolean().optional(),
 	})
 	.openapi("Trace");
 
@@ -131,8 +133,10 @@ export const Observation = z
 		model: z.string().nullable().optional(),
 		input_text: z.string().default(""),
 		output_text: z.string().default(""),
-		input_truncated: z.boolean().optional(),
-		output_truncated: z.boolean().optional(),
+		input_retained_truncated: z.boolean().optional(),
+		output_retained_truncated: z.boolean().optional(),
+		input_excerpt_truncated: z.boolean().optional(),
+		output_excerpt_truncated: z.boolean().optional(),
 		metadata_truncated: z.boolean().optional(),
 		metadata: ObservationMetadata,
 	})

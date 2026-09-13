@@ -48,6 +48,8 @@ describe("ClickHouse schema integration", () => {
 			"output_text",
 			"scores_summary",
 			"metadata",
+			"input_retained_truncated",
+			"output_retained_truncated",
 		]);
 
 		const observationColumns = await values(
@@ -69,6 +71,8 @@ describe("ClickHouse schema integration", () => {
 			"input_text",
 			"output_text",
 			"metadata",
+			"input_retained_truncated",
+			"output_retained_truncated",
 		]);
 	});
 

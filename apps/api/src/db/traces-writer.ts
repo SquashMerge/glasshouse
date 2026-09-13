@@ -15,7 +15,7 @@ export type TenantScopedObservation = NormalizedObservation & {
 };
 
 interface ClickHouseRow {
-	[key: string]: string | number | null | string[];
+	[key: string]: string | number | boolean | null | string[];
 }
 
 function traceToRow(t: TenantScopedTrace): ClickHouseRow {
@@ -38,6 +38,10 @@ function traceToRow(t: TenantScopedTrace): ClickHouseRow {
 		tags: t.tags,
 		input_text: input.value,
 		output_text: output.value,
+		input_retained_truncated:
+			t.input_retained_truncated === true || input.truncated,
+		output_retained_truncated:
+			t.output_retained_truncated === true || output.truncated,
 		scores_summary: t.scores_summary,
 		metadata: "",
 	};
