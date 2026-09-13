@@ -8,6 +8,7 @@ import {
 	listEvaluationRunsRoute,
 	compareEvaluationRunsRoute,
 	getEvaluationRunEvidenceRoute,
+	startEvaluationRunRoute,
 } from "../../src/routes/evaluations";
 import {
 	createEvaluationGateApprovalRoute,
@@ -19,6 +20,8 @@ import {
 	revokeEvaluationGateApprovalRoute,
 	startEvaluationGateRoute,
 } from "../../src/routes/evaluation-gates";
+import { createBenchmarkRunRoute } from "../../src/routes/benchmarks";
+import { createExperiment } from "../../src/routes/experiments";
 import {
 	EvaluationGateApprovalCreate,
 	EvaluationGateRunStart,
@@ -29,6 +32,7 @@ import {
 	EvaluationRunCompareRequest,
 	EvaluationRunEvidencePage,
 } from "../../src/schemas/evaluations";
+import { ErrorCode } from "../../src/schemas/common";
 import {
 	cancelEvaluationRun,
 	getEvaluationRunStatus,
@@ -54,6 +58,12 @@ describe("Evaluation Run lifecycle API", () => {
 		execution_defaults: {},
 		thresholds: {},
 		limits: {},
+		execution_bounds: {
+			max_active_runs_per_project: 4,
+			max_active_runs_per_actor: 2,
+			max_cases: 100,
+			max_provider_calls: 100,
+		},
 		sample: {
 			strategy: "all",
 			sample_size: 2,
@@ -69,6 +79,8 @@ describe("Evaluation Run lifecycle API", () => {
 		failed: 0,
 		pass_rate: null,
 		cost_usd: null,
+		provider_calls_used: 0,
+		max_provider_calls: 100,
 		max_cost_usd: null,
 		duration_ms: null,
 		max_duration_seconds: null,
@@ -99,6 +111,38 @@ describe("Evaluation Run lifecycle API", () => {
 			max_bytes: 64_000,
 		},
 	};
+	it("documents bounded admission and no-persistence rejections for every run-start route", () => {
+		const app = new OpenAPIHono();
+		for (const route of [
+			startEvaluationRunRoute,
+			startEvaluationGateRoute,
+			createBenchmarkRunRoute,
+			createExperiment,
+		])
+			app.openapi(route, () => new Response());
+		const document = app.getOpenAPIDocument({
+			openapi: "3.0.0",
+			info: { title: "test", version: "1" },
+		});
+		for (const operation of [
+			document.paths?.["/v1/evaluations/{slug}/runs"]?.post,
+			document.paths?.["/v1/evaluation-gates/runs"]?.post,
+			document.paths?.["/v1/benchmarks/{id}/runs"]?.post,
+			document.paths?.["/v1/experiments"]?.post,
+		]) {
+			expect(operation?.description).toContain("provider/model");
+			expect(operation?.responses?.["400"]?.description).toContain(
+				"before a runnable Run is persisted",
+			);
+			expect(operation?.responses?.["409"]?.description).toContain(
+				"Idempotency-Key",
+			);
+			expect(operation?.responses?.["429"]?.description).toContain(
+				"no runnable Run is persisted",
+			);
+		}
+		expect(ErrorCode.safeParse("TOO_MANY_REQUESTS").success).toBe(true);
+	});
 	it("documents authorized status, cancellation, retry, and replayable SSE routes", () => {
 		const app = new OpenAPIHono();
 		for (const route of [
@@ -359,6 +403,12 @@ describe("Evaluation Run lifecycle API", () => {
 								sampling: { strategy: "all", sample_size: 1, seed: 0 },
 								thresholds: {},
 								limits: {},
+								execution_bounds: {
+									max_active_runs_per_project: 4,
+									max_active_runs_per_actor: 2,
+									max_cases: 100,
+									max_provider_calls: 100,
+								},
 								sample_identity: "a".repeat(64),
 								resolved_inputs_hash: "a".repeat(64),
 								definition_version_id: "55555555-5555-4555-8555-555555555555",
@@ -450,6 +500,12 @@ describe("Evaluation Run lifecycle API", () => {
 			sampling: { strategy: "all", sample_size: 1, seed: 0 },
 			thresholds: {},
 			limits: {},
+			execution_bounds: {
+				max_active_runs_per_project: 4,
+				max_active_runs_per_actor: 2,
+				max_cases: 100,
+				max_provider_calls: 100,
+			},
 			sample_identity: "a".repeat(64),
 			resolved_inputs_hash: "a".repeat(64),
 			definition_version_id: "55555555-5555-4555-8555-555555555555",

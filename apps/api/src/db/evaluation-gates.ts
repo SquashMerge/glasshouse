@@ -93,13 +93,14 @@ export type EvaluationGateRun = {
 };
 
 export class EvaluationGateRepositoryError extends Error {
-	readonly status: 400 | 403 | 404 | 409 | 500;
+	readonly status: 400 | 403 | 404 | 409 | 429 | 500;
 	constructor(
 		readonly code:
 			| "BAD_REQUEST"
 			| "FORBIDDEN"
 			| "NOT_FOUND"
 			| "CONFLICT"
+			| "TOO_MANY_REQUESTS"
 			| "INTERNAL",
 		message: string,
 		cause?: unknown,
@@ -115,7 +116,9 @@ export class EvaluationGateRepositoryError extends Error {
 						? 404
 						: code === "CONFLICT"
 							? 409
-							: 500;
+							: code === "TOO_MANY_REQUESTS"
+								? 429
+								: 500;
 	}
 }
 

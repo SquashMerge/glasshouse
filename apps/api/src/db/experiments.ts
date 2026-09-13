@@ -59,6 +59,16 @@ export type ExperimentCostReservation =
 			reason: "not_configured" | "cost_limit_exceeded" | "snapshot_missing";
 	  };
 
+export type ExperimentProviderCallReservation =
+	| { reserved: true; used: number; limit: number }
+	| {
+			reserved: false;
+			reason:
+				| "not_configured"
+				| "provider_call_limit_exceeded"
+				| "snapshot_missing";
+	  };
+
 export class ExperimentRepositoryError extends Error {
 	readonly status: 400 | 404 | 409 | 500;
 	constructor(
@@ -723,6 +733,48 @@ export async function reserveExperimentTaskCost(
 			return claimed.rows[0]
 				? { reserved: true, amount: available }
 				: { reserved: false, reason: "cost_limit_exceeded" };
+		});
+	} catch (cause) {
+		throw normalize(cause);
+	}
+}
+
+export async function reserveExperimentTaskProviderCall(
+	db: Transactional,
+	input: {
+		project_id: string;
+		experiment_id: string;
+	},
+): Promise<ExperimentProviderCallReservation> {
+	try {
+		return await withTransaction(db, async (client) => {
+			const access = await lockExperimentExecution(client, {
+				id: input.experiment_id,
+				project_id: input.project_id,
+			});
+			if (!access?.authorized)
+				return { reserved: false, reason: "snapshot_missing" };
+			if (typeof access.row.evaluation_run_id !== "string")
+				return { reserved: false, reason: "not_configured" };
+			const charged = await client.query(
+				`UPDATE evaluation_runs run
+				 SET provider_call_count=run.provider_call_count+1, updated_at=now()
+				FROM evaluation_run_inputs inputs
+				WHERE run.id=$1 AND run.project_id=$2
+				  AND inputs.run_id=run.id AND inputs.project_id=run.project_id
+				  AND run.status IN ('pending','running')
+				  AND run.provider_call_count < (inputs.execution_bounds->>'max_provider_calls')::integer
+				RETURNING run.provider_call_count, (inputs.execution_bounds->>'max_provider_calls')::integer AS max_provider_calls`,
+				[access.row.evaluation_run_id, access.project_id],
+			);
+			const row = charged.rows[0] as Row | undefined;
+			if (!row)
+				return { reserved: false, reason: "provider_call_limit_exceeded" };
+			return {
+				reserved: true,
+				used: Number(row.provider_call_count),
+				limit: Number(row.max_provider_calls),
+			};
 		});
 	} catch (cause) {
 		throw normalize(cause);

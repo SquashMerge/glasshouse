@@ -247,8 +247,25 @@ export const EvaluationRun = z
 			target_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
 			evaluator: z.record(z.string(), z.unknown()),
 			evaluator_version: z.string(),
+			evaluator_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
 			execution_defaults: z.record(z.string(), z.unknown()),
 			limits: z.record(z.string(), z.unknown()),
+			execution_bounds: z
+				.object({
+					max_active_runs_per_project: z.number().int().positive().openapi({
+						description: "Immutable active-Run cap for the Project",
+					}),
+					max_active_runs_per_actor: z.number().int().positive().openapi({
+						description: "Immutable active-Run cap for the requesting actor",
+					}),
+					max_cases: z.number().int().positive().openapi({
+						description: "Immutable maximum selected Dataset cases",
+					}),
+					max_provider_calls: z.number().int().positive().openapi({
+						description: "Immutable maximum pre-dispatch provider-call charges",
+					}),
+				})
+				.strict(),
 			thresholds: z.record(z.string(), z.unknown()),
 			sampling: z.record(z.string(), z.unknown()),
 			sample_identity: z.string().regex(/^[a-f0-9]{64}$/),
@@ -323,6 +340,26 @@ const EvaluationRunPinnedInputs = z
 		execution_defaults: z.record(z.string(), z.unknown()),
 		thresholds: z.record(z.string(), z.unknown()),
 		limits: z.record(z.string(), z.unknown()),
+		execution_bounds: z
+			.object({
+				max_active_runs_per_project: z
+					.number()
+					.int()
+					.positive()
+					.openapi({ description: "Immutable active-Run cap for the Project" }),
+				max_active_runs_per_actor: z.number().int().positive().openapi({
+					description: "Immutable active-Run cap for the requesting actor",
+				}),
+				max_cases: z
+					.number()
+					.int()
+					.positive()
+					.openapi({ description: "Immutable maximum selected Dataset cases" }),
+				max_provider_calls: z.number().int().positive().openapi({
+					description: "Immutable maximum pre-dispatch provider-call charges",
+				}),
+			})
+			.strict(),
 		sample: z
 			.object({
 				strategy: z.string(),
@@ -349,6 +386,13 @@ const EvaluationRunMetrics = z
 		failed: z.number().int().nonnegative(),
 		pass_rate: z.number().min(0).max(1).nullable(),
 		cost_usd: z.number().nonnegative().nullable(),
+		provider_calls_used: z.number().int().nonnegative().openapi({
+			description:
+				"Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success",
+		}),
+		max_provider_calls: z.number().int().positive().openapi({
+			description: "Immutable maximum pre-dispatch provider-call charges",
+		}),
 		max_cost_usd: z.number().nonnegative().nullable(),
 		duration_ms: z.number().int().nonnegative().nullable(),
 		max_duration_seconds: z.number().int().positive().nullable(),
@@ -558,6 +602,31 @@ export const EvaluationErrorResponses = {
 	},
 	409: {
 		description: "Evaluation conflict",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	500: {
+		description: "Internal server error",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+};
+export const EvaluationRunAdmissionErrorResponses = {
+	400: {
+		description:
+			"Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	404: {
+		description: "Executable Evaluation Definition Version not found",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	409: {
+		description:
+			"Run-start conflict, including an Idempotency-Key bound to a different immutable request",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	429: {
+		description:
+			"Active project or actor capacity is exhausted; no runnable Run is persisted",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	500: {

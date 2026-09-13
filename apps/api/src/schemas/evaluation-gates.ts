@@ -192,3 +192,33 @@ export const EvaluationGateErrorResponses = {
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 };
+export const EvaluationGateRunAdmissionErrorResponses = {
+	400: {
+		description:
+			"Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	403: {
+		description: "Administrator authorization required",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	404: {
+		description:
+			"Active Evaluation Gate approval or executable Definition Version not found",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	409: {
+		description:
+			"Run-start conflict, including an Idempotency-Key bound to a different immutable request",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	429: {
+		description:
+			"Active project or actor capacity is exhausted; no runnable Run is persisted",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	500: {
+		description: "Internal server error",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+};

@@ -27,6 +27,7 @@ import {
 	EvaluationGateApprovalListQuery,
 	EvaluationGateApprovalRevoke,
 	EvaluationGateErrorResponses,
+	EvaluationGateRunAdmissionErrorResponses,
 	EvaluationGateIdParam,
 	EvaluationGateRun,
 	EvaluationGateRunHeaders,
@@ -35,6 +36,7 @@ import {
 	EvaluationGateRunStart,
 } from "../schemas/evaluation-gates.js";
 import { EvaluationGateRepositoryError } from "../db/evaluation-gates.js";
+import { EvaluationRunRepositoryError } from "../db/evaluation-runs.js";
 
 const tag = "evaluation-gates";
 const ProjectQuery = z.object({ project_id: z.string().uuid() }).strict();
@@ -119,7 +121,7 @@ export const startEvaluationGateRoute = createRoute({
 	tags: [tag],
 	summary: "Run an administrator-approved pinned Evaluation Gate",
 	description:
-		"Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. The result never deploys or mutates production.",
+		"Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. Admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run). The result never deploys or mutates production.",
 	security: [{ basicAuth: [] }],
 	request: {
 		query: ProjectQuery,
@@ -134,7 +136,7 @@ export const startEvaluationGateRoute = createRoute({
 			description: "Gate Run admitted",
 			content: { "application/json": { schema: EvaluationGateRun } },
 		},
-		...EvaluationGateErrorResponses,
+		...EvaluationGateRunAdmissionErrorResponses,
 	},
 });
 export const listEvaluationGateRunsRoute = createRoute({
@@ -157,6 +159,20 @@ export const getEvaluationGateRunRoute = createRoute({
 });
 
 function failure(c: Context, cause: unknown): Response {
+	if (cause instanceof EvaluationRunRepositoryError) {
+		if (cause.status === 500)
+			logger.error("evaluation_gate.request_failed", cause);
+		return c.json(
+			{
+				code: cause.code,
+				message:
+					cause.status === 500
+						? "Evaluation Gate operation failed"
+						: cause.message,
+			},
+			cause.status,
+		);
+	}
 	if (cause instanceof EvaluationGateRepositoryError) {
 		if (cause.status === 500)
 			logger.error("evaluation_gate.request_failed", cause);

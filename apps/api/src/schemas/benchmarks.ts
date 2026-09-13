@@ -44,7 +44,6 @@ export const BenchmarkRunCreate = z
 		definition_version: z.number().int().positive(),
 		idempotency_key: z.string().trim().min(1).max(200),
 		label: z.string().trim().min(1).max(160),
-		model: z.string().trim().min(1).max(200).optional(),
 		prompt_version: z.string().trim().max(200).nullable().optional(),
 		config: z.object({}).strict().default({}),
 	})
@@ -85,6 +84,32 @@ export const BenchmarkErrorResponses = {
 	},
 	409: {
 		description: "Benchmark conflict",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	500: {
+		description: "Internal server error",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+};
+export const BenchmarkRunAdmissionErrorResponses = {
+	400: {
+		description:
+			"Unapproved provider/model pair, strict configuration validation, or case/provider-call budget rejected before a runnable Run is persisted",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	404: {
+		description:
+			"Executable Evaluation Definition Version or benchmark suite not found",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	409: {
+		description:
+			"Run-start conflict, including an Idempotency-Key bound to a different immutable request",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	429: {
+		description:
+			"Active project or actor capacity is exhausted; no runnable Run is persisted",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	500: {

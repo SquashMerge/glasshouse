@@ -52,6 +52,12 @@ describe("Evaluation Run lifecycle evidence", () => {
 				execution_defaults: {},
 				thresholds: {},
 				limits: {},
+				execution_bounds: {
+					max_active_runs_per_project: 4,
+					max_active_runs_per_actor: 2,
+					max_cases: 100,
+					max_provider_calls: 100,
+				},
 				sample: {
 					strategy: "all",
 					sample_size: 2,
@@ -71,6 +77,8 @@ describe("Evaluation Run lifecycle evidence", () => {
 				failed: 1,
 				pass_rate: 0,
 				cost_usd: 1.25,
+				provider_calls_used: 2,
+				max_provider_calls: 100,
 				max_cost_usd: 2,
 				duration_ms: 100,
 				max_duration_seconds: 30,
@@ -174,5 +182,8 @@ describe("Evaluation Run lifecycle evidence", () => {
 		expect(screen.getByText(/exact_match/, { selector: "pre" })).toBeTruthy();
 		expect(evidence()).toContain("cancelled_by_request");
 		expect(evidence()).toContain("evaluation run cancelled");
+		expect(
+			screen.getByText("2 / 100 provider calls · 100 case limit"),
+		).toBeTruthy();
 	});
 });

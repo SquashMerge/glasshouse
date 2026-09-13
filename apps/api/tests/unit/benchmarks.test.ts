@@ -81,6 +81,16 @@ describe("benchmark evaluation execution", () => {
 				config: { model: "mutable-override" },
 			}),
 		).toThrow();
+		expect(() =>
+			BenchmarkRunCreate.parse({
+				project_id: projectId,
+				evaluation_id: "44444444-4444-4444-8444-444444444444",
+				definition_version: 1,
+				idempotency_key: "benchmark-once",
+				label: "baseline",
+				model: "unapproved-model",
+			}),
+		).toThrow();
 	});
 
 	it("marks the experiment failed when background execution rejects", async () => {

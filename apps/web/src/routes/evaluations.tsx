@@ -1173,6 +1173,11 @@ export function EvaluationRunLifecycle({
 							? "n/a"
 							: `$${status.data.metrics.max_cost_usd.toFixed(2)}`}
 					</div>
+					<div>
+						{status.data.metrics.provider_calls_used} /{" "}
+						{status.data.metrics.max_provider_calls} provider calls ·{" "}
+						{status.data.pinned_inputs.execution_bounds.max_cases} case limit
+					</div>
 				</div>
 			</div>
 			<p className="text-xs text-muted-foreground">

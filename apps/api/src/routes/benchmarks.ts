@@ -18,6 +18,7 @@ import {
 } from "../db/benchmarks.js";
 import {
 	BenchmarkErrorResponses,
+	BenchmarkRunAdmissionErrorResponses,
 	BenchmarkProjectQuery,
 	BenchmarkRanking,
 	BenchmarkRun,
@@ -144,6 +145,8 @@ export const createBenchmarkRunRoute = createRoute({
 	path: "/v1/benchmarks/{id}/runs",
 	tags: [tag],
 	summary: "Run a prompt/model benchmark",
+	description:
+		"Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; case and provider-call limits 1-10,000 per Run).",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: BenchmarkSuiteIdParam,
@@ -155,7 +158,7 @@ export const createBenchmarkRunRoute = createRoute({
 			description: "Benchmark started",
 			content: { "application/json": { schema: BenchmarkRun } },
 		},
-		...BenchmarkErrorResponses,
+		...BenchmarkRunAdmissionErrorResponses,
 	},
 });
 
@@ -258,7 +261,6 @@ export const handleCreateBenchmarkRun = async (
 			benchmark: {
 				suite_id,
 				label: body.label,
-				model: body.model ?? null,
 				prompt_version: body.prompt_version ?? null,
 			},
 			authorization,
@@ -282,7 +284,7 @@ export const handleCreateBenchmarkRun = async (
 				suite_id,
 				experiment_id: run.experiment_id,
 				label: body.label,
-				model: body.model ?? run.snapshot.target.model,
+				model: run.snapshot.target.model,
 				prompt_version: body.prompt_version ?? null,
 				created_at: run.created_at,
 			},

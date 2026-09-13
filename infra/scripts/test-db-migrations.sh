@@ -319,6 +319,32 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0093.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0095.assert.sql"
+
+run_evaluation_execution_bounds_upgrade() {
+  local database="${POSTGRES_DB}_0095_upgrade"
+  docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$database"
+  for migration in "$ROOT"/infra/db/migrations/*.sql; do
+    [[ "$(basename "$migration")" == "0095_evaluation_execution_bounds.sql" ]] && break
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" < "$migration"
+  done
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+    < "$ROOT/infra/scripts/test-db-migrations-0095-upgrade.fixture.sql"
+  for _ in 1 2; do
+    docker exec --interactive "$CONTAINER" \
+      psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+      < "$ROOT/infra/db/migrations/0095_evaluation_execution_bounds.sql"
+  done
+  docker exec --interactive "$CONTAINER" \
+    psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$database" \
+    < "$ROOT/infra/scripts/test-db-migrations-0095-upgrade.assert.sql"
+}
+
+run_evaluation_execution_bounds_upgrade
 
 run_agent_introspection_upgrade() {
   local database="$1"

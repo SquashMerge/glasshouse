@@ -32,12 +32,16 @@ export async function invokeWithExecutionAdmission<T>(input: {
 	isActive: () => Promise<boolean>;
 	claimDispatch: () => Promise<ExecutionAdmissionClaim>;
 	cancel: () => Promise<void>;
+	beforeInvoke?: () => Promise<boolean>;
 	invoke: (signal: AbortSignal) => Promise<T>;
 	timeoutMs?: number;
 	pollMs?: number;
 }): Promise<
 	| { admitted: true; value: T }
-	| { admitted: false; reason: "unavailable" | "existing" | "timeout" }
+	| {
+			admitted: false;
+			reason: "unavailable" | "existing" | "rejected" | "timeout";
+	  }
 > {
 	if (input.parentSignal?.aborted || !(await input.isActive())) {
 		await input.cancel();
@@ -51,6 +55,17 @@ export async function invokeWithExecutionAdmission<T>(input: {
 		return {
 			admitted: false,
 			reason: dispatchClaim.status === "existing" ? "existing" : "unavailable",
+		};
+	}
+	if (
+		input.parentSignal?.aborted ||
+		!(await input.isActive()) ||
+		(input.beforeInvoke && !(await input.beforeInvoke()))
+	) {
+		await input.cancel();
+		return {
+			admitted: false,
+			reason: input.parentSignal?.aborted ? "unavailable" : "rejected",
 		};
 	}
 	const controller = new AbortController();
