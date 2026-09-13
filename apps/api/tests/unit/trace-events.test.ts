@@ -25,6 +25,7 @@ import {
 	streamTraceDetailEvents,
 	streamTraceEvents,
 } from "../../src/routes/trace-events";
+import { MAX_TRACE_RESPONSE_BYTES } from "../../src/db/trace-payload-bounds";
 
 // ---------------------------------------------------------------------------
 // Mocked ClickHouse + an env-tunable SSE setup BEFORE importing the app.
@@ -759,6 +760,38 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/traces/{id}/events (detail SSE)", () => {
+	it("bounds the serialized snapshot before the SSE frame is materialized", async () => {
+		getTraceMock.mockResolvedValueOnce({
+			trace: fakeTrace,
+			observations: Array.from({ length: 100 }, (_, index) => ({
+				...fakeObservation,
+				observation_id: `bounded-${index}`,
+				input_text: "界".repeat(8_000),
+				output_text: "界".repeat(8_000),
+				metadata: JSON.stringify({
+					schema_version: 1,
+					attributes: [
+						{ key: "safe", value: { stringValue: "界".repeat(8_000) } },
+					],
+				}),
+			})),
+		});
+		const response = await apiApp.fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+		const reader = response.body!.getReader();
+		await reader.read();
+		const snapshot = await reader.read();
+		expect(snapshot.done).toBe(false);
+		expect(snapshot.value!.byteLength).toBeLessThanOrEqual(
+			MAX_TRACE_RESPONSE_BYTES,
+		);
+		await reader.cancel();
+	});
+
 	it("404 when trace does not exist (JSON, NO SSE upgrade)", async () => {
 		getTraceMock.mockResolvedValueOnce({ trace: null, observations: [] });
 		const res = await apiApp.fetch(

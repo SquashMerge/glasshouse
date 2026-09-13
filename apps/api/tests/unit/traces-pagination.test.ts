@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Context } from "hono";
+import { MAX_TRACE_RESPONSE_BYTES } from "../../src/db/trace-payload-bounds";
+import { encodeTraceCursor } from "../../src/db/trace-cursor";
 
 const USER = "astraea";
 const PASS = "secret";
@@ -10,6 +12,7 @@ const listTraces = mock(async () => ({ items: [], total: 0 }));
 const listObservations = mock(async () => ({ items: [], total: 0 }));
 const assertTenantProjectAccess = mock(async () => undefined);
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 mock.module("../../src/db/traces-query", () => ({
 	defaultClient,
@@ -124,7 +127,21 @@ describe("trace pagination", () => {
 	it("uses the default trace pagination", async () => {
 		const res = await apiApp.fetch(scopedRequest("/v1/traces"));
 		expect(res.status).toBe(200);
-		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([50, 0]);
+		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([50, undefined]);
+	});
+
+	it("rejects a cursor issued for another project before querying traces", async () => {
+		const cursor = encodeTraceCursor("traces", OTHER_PROJECT_ID, {
+			start_time: "2026-08-30 12:00:00.000",
+			id: "0123456789abcdef0123456789abcdef",
+		});
+
+		const res = await apiApp.fetch(
+			scopedRequest(`/v1/traces?cursor=${cursor}`),
+		);
+
+		expect(res.status).toBe(400);
+		expect(listTraces).not.toHaveBeenCalled();
 	});
 
 	it("accepts supported list filters alongside the required project_id", async () => {
@@ -136,23 +153,13 @@ describe("trace pagination", () => {
 	});
 
 	it("accepts zero and the maximum trace page limit", async () => {
-		const zero = await apiApp.fetch(
-			scopedRequest("/v1/traces?limit=0&offset=0"),
-		);
+		const zero = await apiApp.fetch(scopedRequest("/v1/traces?limit=0"));
 		expect(zero.status).toBe(200);
-		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([0, 0]);
+		expect(listTraces.mock.calls[0]?.slice(2)).toEqual([0, undefined]);
 
-		const maximum = await apiApp.fetch(
-			scopedRequest("/v1/traces?limit=200&offset=200"),
-		);
+		const maximum = await apiApp.fetch(scopedRequest("/v1/traces?limit=200"));
 		expect(maximum.status).toBe(200);
-		expect(listTraces.mock.calls[1]?.slice(2)).toEqual([200, 200]);
-
-		const maximumOffset = await apiApp.fetch(
-			scopedRequest("/v1/traces?offset=2147483647"),
-		);
-		expect(maximumOffset.status).toBe(200);
-		expect(listTraces.mock.calls[2]?.slice(2)).toEqual([50, 2_147_483_647]);
+		expect(listTraces.mock.calls[1]?.slice(2)).toEqual([200, undefined]);
 	});
 
 	it("passes the validated project selector into both list queries", async () => {
@@ -171,11 +178,41 @@ describe("trace pagination", () => {
 		});
 	});
 
-	it("preserves the observation limit cap", async () => {
-		const res = await apiApp.fetch(
-			scopedRequest("/v1/observations?limit=201&offset=3"),
+	it("serializes a bounded trace list response rather than materializing every projected row", async () => {
+		listTraces.mockResolvedValueOnce({
+			items: Array.from({ length: 200 }, (_, index) => ({
+				trace_id: `${index}`.padStart(32, "0"),
+				project_id: PROJECT_ID,
+				name: "large",
+				start_time: "2024-01-01 00:00:00.000",
+				end_time: null,
+				duration_ms: null,
+				status: "ok",
+				user_id: "",
+				session_id: "",
+				agent_id: "",
+				agent_version: "",
+				env: "test",
+				tags: [],
+				input_text: "界".repeat(8_000),
+				output_text: "界".repeat(8_000),
+				scores_summary: "",
+			})),
+			total: 200,
+		});
+
+		const response = await handleListTraces(fakeContext(PROJECT_ID));
+		const raw = await response.text();
+		expect(new TextEncoder().encode(raw).byteLength).toBeLessThanOrEqual(
+			MAX_TRACE_RESPONSE_BYTES,
 		);
+		expect(JSON.parse(raw).response_truncated).toBe(true);
+		expect(typeof JSON.parse(raw).next_cursor).toBe("string");
+	});
+
+	it("preserves the observation limit cap", async () => {
+		const res = await apiApp.fetch(scopedRequest("/v1/observations?limit=201"));
 		expect(res.status).toBe(200);
-		expect(listObservations.mock.calls[0]?.slice(2)).toEqual([200, 3]);
+		expect(listObservations.mock.calls[0]?.slice(2)).toEqual([200, undefined]);
 	});
 });

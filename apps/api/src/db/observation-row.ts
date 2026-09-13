@@ -1,5 +1,6 @@
 import type { TenantScopedObservation } from "./traces-writer.js";
 import { serializeObservationMetadata } from "./observation-metadata.js";
+import { boundObservationMetadata, boundText } from "./trace-payload-bounds.js";
 
 export interface ObservationInsertRow {
 	[key: string]: string | number | null;
@@ -9,6 +10,8 @@ export interface ObservationInsertRow {
 export function observationToInsertRow(
 	observation: TenantScopedObservation,
 ): ObservationInsertRow {
+	const input = boundText(observation.input_text);
+	const output = boundText(observation.output_text);
 	return {
 		observation_id: observation.observation_id,
 		trace_id: observation.trace_id,
@@ -22,8 +25,10 @@ export function observationToInsertRow(
 		duration_ms: observation.duration_ms,
 		status: observation.status,
 		model: observation.model,
-		input_text: observation.input_text,
-		output_text: observation.output_text,
-		metadata: serializeObservationMetadata(observation.metadata),
+		input_text: input.value,
+		output_text: output.value,
+		metadata: serializeObservationMetadata(
+			boundObservationMetadata(observation.metadata),
+		),
 	};
 }

@@ -27,6 +27,10 @@ import {
 import { pgPool } from "../db/postgres.js";
 import { publishSync } from "../lib/event-bus.js";
 import { logger } from "../lib/logger.js";
+import {
+	boundObservationMetadata,
+	boundText,
+} from "../db/trace-payload-bounds.js";
 
 const tag = "otlp";
 
@@ -235,11 +239,14 @@ export function createOtlpIngestHandler(
 									trace.output_text,
 									redaction,
 								);
-								observation.input_text = trace.input_text;
-								observation.output_text = trace.output_text;
-								observation.metadata = redactMetadata(
-									observation.metadata,
-									redaction,
+								const input = boundText(trace.input_text);
+								const output = boundText(trace.output_text);
+								trace.input_text = input.value;
+								trace.output_text = output.value;
+								observation.input_text = input.value;
+								observation.output_text = output.value;
+								observation.metadata = boundObservationMetadata(
+									redactMetadata(observation.metadata, redaction),
 								);
 								const isRoot = observation.parent_observation_id === null;
 								traces.set(

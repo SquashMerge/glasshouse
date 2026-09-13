@@ -2,6 +2,34 @@
 import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope, NotImplementedError, PageQuery } from "./common.js";
 
+const TraceCursorQuery = z
+	.string()
+	.min(1)
+	.max(2048)
+	.regex(/^[A-Za-z0-9_-]+$/)
+	.optional()
+	.openapi({
+		param: {
+			name: "cursor",
+			in: "query",
+			description: "Opaque, project-scoped keyset cursor from next_cursor.",
+		},
+	});
+
+const UnsupportedOffsetQuery = z
+	.string()
+	.optional()
+	.refine((value) => value === undefined, "Offset pagination is not supported")
+	.openapi({
+		param: {
+			name: "offset",
+			in: "query",
+			deprecated: true,
+			description:
+				"Unsupported; use the opaque cursor returned by next_cursor.",
+		},
+	});
+
 export const TraceStatus = z.enum(["ok", "error"]).openapi("TraceStatus");
 
 export const Trace = z
@@ -21,6 +49,8 @@ export const Trace = z
 		tags: z.array(z.string()).default([]),
 		input_text: z.string().default(""),
 		output_text: z.string().default(""),
+		input_truncated: z.boolean().optional(),
+		output_truncated: z.boolean().optional(),
 	})
 	.openapi("Trace");
 
@@ -28,6 +58,8 @@ export const TraceList = z
 	.object({
 		items: z.array(Trace),
 		total: z.number().int(),
+		response_truncated: z.boolean().optional(),
+		next_cursor: z.string().optional(),
 	})
 	.openapi("TraceList");
 
@@ -40,15 +72,20 @@ export const TraceDetailQuery = z
 	.object({
 		expand: z.string().optional(),
 		project_id: ProjectIdQuery,
+		cursor: TraceCursorQuery,
 	})
 	.strict();
 
 export const TraceEventsQuery = z
 	.object({ project_id: ProjectIdQuery })
 	.strict();
-export const TraceListQuery = PageQuery.extend({
-	project_id: ProjectIdQuery,
-}).passthrough();
+export const TraceListQuery = PageQuery.omit({ offset: true })
+	.extend({
+		project_id: ProjectIdQuery,
+		cursor: TraceCursorQuery,
+		offset: UnsupportedOffsetQuery,
+	})
+	.passthrough();
 
 export const PromptProvenance = z
 	.object({
@@ -74,6 +111,7 @@ export const ObservationMetadata = z
 			}),
 		),
 		prompt_provenance: PromptProvenance.nullable(),
+		truncated: z.boolean().optional(),
 	})
 	.strict()
 	.openapi("ObservationMetadata");
@@ -93,6 +131,9 @@ export const Observation = z
 		model: z.string().nullable().optional(),
 		input_text: z.string().default(""),
 		output_text: z.string().default(""),
+		input_truncated: z.boolean().optional(),
+		output_truncated: z.boolean().optional(),
+		metadata_truncated: z.boolean().optional(),
 		metadata: ObservationMetadata,
 	})
 	.openapi("Observation");
@@ -101,6 +142,8 @@ export const ObservationList = z
 	.object({
 		items: z.array(Observation),
 		total: z.number().int(),
+		response_truncated: z.boolean().optional(),
+		next_cursor: z.string().optional(),
 	})
 	.openapi("ObservationList");
 

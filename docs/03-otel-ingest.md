@@ -146,7 +146,7 @@ A single OTLP request accepts at most 2,000 spans (with a 512-span per scope lim
 
 OTLP retries reuse table-namespaced ClickHouse insert-deduplication tokens derived from the validated batch and trusted organization/project scope. This avoids duplicate trace rows when an earlier attempt writes `traces` but fails before writing `observations`. Deduplication is deliberately bounded by ClickHouse's 100,000-block history per table, not a permanent uniqueness guarantee; retries after that history has rolled over can insert duplicates.
 
-Trace-detail reads are capped at 5,000 observations, ordered by start time, so an unusually large trace cannot create an unbounded ClickHouse query or SSE snapshot. Use the paginated observations endpoint to inspect broader data.
+Trace and Observation text is redacted before retention accounting, then safely clipped to 8 KiB UTF-8 per input/output field. Sanitized Observation metadata is retained as valid JSON up to 16 KiB; a `truncated: true` metadata marker identifies a clipped envelope. ClickHouse enforces the same ceilings at storage time. List excerpts are capped at 200 Unicode code points in both directions, while list, REST-detail, and trace-detail SSE snapshot payloads stop at a 256 KiB encoded-response ceiling and expose `response_truncated` or `snapshot_truncated` when their supplied page is incomplete. Trace and Observation lists provide an opaque Project-scoped `next_cursor` for stable `start_time, id` keyset traversal; Trace detail does the same in ascending `start_time, observation_id` order and fetches at most seven bounded observations per page. Reuse the returned cursor only with the same Project.
 
 ## Custom path
 

@@ -23,6 +23,9 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 
 > **Don't say "span" when you mean "observation".** "Span" is reserved for the UI label (the "Spans" tab) and for `observation.type === "span"` specifically.
 
+### Trace cursor
+An opaque, Project-scoped `next_cursor` returned by Trace, Observation, and Trace-detail pages. It preserves the endpoint's stable `start_time, id` keyset boundary; it is not transferable to another Project or endpoint.
+
 ## Observability UI
 
 - `/observability` — Traces tab + Spans tab. The "Spans" tab is really the observations table (all four types mixed); the label is a legacy holdover.

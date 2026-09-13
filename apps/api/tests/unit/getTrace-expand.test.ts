@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Context } from "hono";
 import type { ObservationRow, TraceRow } from "../../src/db/traces-query";
+import { MAX_TRACE_RESPONSE_BYTES } from "../../src/db/trace-payload-bounds";
 
 const VALID_TRACE_ID = "0123456789abcdef0123456789abcdef";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -149,6 +150,30 @@ function fakeContext(traceId = VALID_TRACE_ID, projectId?: string): Context {
 }
 
 describe("handleGetTrace metadata envelopes", () => {
+	it("bounds REST detail serialization before returning an oversized observation page", async () => {
+		getTraceMock.mockResolvedValueOnce({
+			trace: fakeTrace,
+			observations: Array.from({ length: 100 }, (_, index) => ({
+				...fakeObservations[0]!,
+				observation_id: `large-${index}`,
+				input_text: "界".repeat(8_000),
+				output_text: "界".repeat(8_000),
+				metadata: JSON.stringify({
+					schema_version: 1,
+					attributes: [
+						{ key: "safe", value: { stringValue: "界".repeat(8_000) } },
+					],
+				}),
+			})),
+		});
+		const response = await handleGetTrace(fakeContext());
+		const raw = await response.text();
+		expect(new TextEncoder().encode(raw).byteLength).toBeLessThanOrEqual(
+			MAX_TRACE_RESPONSE_BYTES,
+		);
+		expect(JSON.parse(raw).response_truncated).toBe(true);
+	});
+
 	it("normalizes ClickHouse timestamps to the documented RFC3339 contract", async () => {
 		const res = await handleGetTrace(fakeContext());
 		const body = (await res.json()) as {

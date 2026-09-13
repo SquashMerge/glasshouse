@@ -45,7 +45,7 @@ describe("ClickHouse migrations", () => {
 				!query.includes("astraea_schema_migrations") &&
 				!query.startsWith("INSERT INTO"),
 		);
-		expect(migrationStatements).toHaveLength(12);
+		expect(migrationStatements).toHaveLength(14);
 		expect(migrationStatements.every((query) => query.length > 0)).toBe(true);
 		expect(migrationStatements[0]).toContain(
 			"CREATE TABLE IF NOT EXISTS traces",
@@ -87,6 +87,14 @@ describe("ClickHouse migrations", () => {
 		expect(migrationStatements[11]).toContain("ALTER TABLE observations");
 		expect(migrationStatements[11]).toContain("DELETE WHERE");
 		expect(migrationStatements[11]).toContain("mutations_sync = 2");
+		expect(migrationStatements[12]).toContain(
+			"ADD CONSTRAINT IF NOT EXISTS traces_retained_payload_bounds",
+		);
+		expect(migrationStatements[12]).toContain("length(input_text) <= 8192");
+		expect(migrationStatements[13]).toContain(
+			"ADD CONSTRAINT IF NOT EXISTS observations_retained_payload_bounds",
+		);
+		expect(migrationStatements[13]).toContain("length(metadata) <= 16384");
 
 		const commandsAfterFirstStartup = commands.length;
 		await applyClickHouseMigrations(client, withoutMigrationLock);
@@ -146,8 +154,8 @@ describe("ClickHouse migrations", () => {
 			applyClickHouseMigrations(client, serializedMigrationLock),
 		]);
 
-		expect(inserted).toBe(5);
-		expect(applied).toHaveLength(5);
+		expect(inserted).toBe(6);
+		expect(applied).toHaveLength(6);
 	});
 
 	it("holds a PostgreSQL advisory lock for the full ClickHouse migration run", async () => {

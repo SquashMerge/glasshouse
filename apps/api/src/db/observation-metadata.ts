@@ -15,12 +15,14 @@ export interface ObservationMetadata {
 	schema_version: 1;
 	attributes: OtlpAttribute[];
 	prompt_provenance: PromptProvenance | null;
+	truncated?: boolean;
 }
 
 interface StoredObservationMetadata {
 	schema_version: 1;
 	attributes: OtlpAttribute[];
 	prompt_provenance?: PromptProvenance;
+	truncated?: true;
 }
 
 const PROMPT_ATTRIBUTE_PREFIX = "astraea.prompt.";
@@ -72,6 +74,7 @@ function isStoredMetadata(value: unknown): value is StoredObservationMetadata {
 		isRecord(value) &&
 		value.schema_version === 1 &&
 		isAttributeArray(value.attributes) &&
+		(value.truncated === undefined || value.truncated === true) &&
 		(value.prompt_provenance === undefined ||
 			isPromptProvenance(value.prompt_provenance))
 	);
@@ -133,11 +136,13 @@ export function promptProvenanceFromAttributes(
 export function observationMetadata(
 	attributes: readonly OtlpAttribute[],
 	promptProvenance: PromptProvenance | null,
+	truncated = false,
 ): ObservationMetadata {
 	return {
 		schema_version: 1,
 		attributes: sanitizeOtlpAttributes(attributes),
 		prompt_provenance: promptProvenance,
+		...(truncated ? { truncated: true } : {}),
 	};
 }
 
@@ -150,6 +155,7 @@ export function serializeObservationMetadata(
 	};
 	if (metadata.prompt_provenance)
 		stored.prompt_provenance = metadata.prompt_provenance;
+	if (metadata.truncated) stored.truncated = true;
 	return JSON.stringify(stored);
 }
 
@@ -166,6 +172,7 @@ export function parseObservationMetadata(
 			return observationMetadata(
 				parsed.attributes,
 				parsed.prompt_provenance ?? null,
+				parsed.truncated === true,
 			);
 		}
 	} catch {
@@ -187,6 +194,7 @@ export function presentObservationMetadata(
 						isPromptProvenance(raw.prompt_provenance)
 							? raw.prompt_provenance
 							: null,
+						raw.truncated === true,
 					)
 				: emptyObservationMetadata();
 	return isGeneration ? parsed : { ...parsed, prompt_provenance: null };

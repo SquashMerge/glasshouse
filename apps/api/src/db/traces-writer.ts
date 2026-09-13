@@ -2,6 +2,7 @@ import type { ClickHouseClient } from "@clickhouse/client";
 import { ch } from "./clickhouse.js";
 import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
 import { observationToInsertRow } from "./observation-row.js";
+import { boundText } from "./trace-payload-bounds.js";
 
 export type TenantScopedTrace = NormalizedTrace & {
 	organization_id: string;
@@ -18,6 +19,8 @@ interface ClickHouseRow {
 }
 
 function traceToRow(t: TenantScopedTrace): ClickHouseRow {
+	const input = boundText(t.input_text);
+	const output = boundText(t.output_text);
 	return {
 		trace_id: t.trace_id,
 		organization_id: t.organization_id,
@@ -33,8 +36,8 @@ function traceToRow(t: TenantScopedTrace): ClickHouseRow {
 		agent_version: t.agent_version,
 		env: t.env,
 		tags: t.tags,
-		input_text: t.input_text,
-		output_text: t.output_text,
+		input_text: input.value,
+		output_text: output.value,
 		scores_summary: t.scores_summary,
 		metadata: "",
 	};

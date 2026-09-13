@@ -6552,8 +6552,12 @@ components:
         input_text:
           default: ''
           type: string
+        input_truncated:
+          type: boolean
         metadata:
           $ref: '#/components/schemas/ObservationMetadata'
+        metadata_truncated:
+          type: boolean
         model:
           type:
             - string
@@ -6565,6 +6569,8 @@ components:
         output_text:
           default: ''
           type: string
+        output_truncated:
+          type: boolean
         parent_observation_id:
           type:
             - string
@@ -6601,6 +6607,10 @@ components:
           items:
             $ref: '#/components/schemas/Observation'
           type: array
+        next_cursor:
+          type: string
+        response_truncated:
+          type: boolean
         total:
           type: integer
       required:
@@ -6631,6 +6641,8 @@ components:
           enum:
             - 1
           type: number
+        truncated:
+          type: boolean
       required:
         - schema_version
         - attributes
@@ -7472,11 +7484,15 @@ components:
         input_text:
           default: ''
           type: string
+        input_truncated:
+          type: boolean
         name:
           type: string
         output_text:
           default: ''
           type: string
+        output_truncated:
+          type: boolean
         project_id:
           type: string
         session_id:
@@ -7511,6 +7527,10 @@ components:
           items:
             $ref: '#/components/schemas/Trace'
           type: array
+        next_cursor:
+          type: string
+        response_truncated:
+          type: boolean
         total:
           type: integer
       required:
@@ -13583,7 +13603,7 @@ paths:
         - projects
   /v1/observations:
     get:
-      description: Returns up to 50 observations per page sorted by start_time DESC. input_text is truncated to 200 chars.
+      description: Returns a project-scoped keyset page of up to 50 observations sorted by start_time DESC, observation_id DESC. Input and output excerpts are limited to 200 Unicode code points; use next_cursor for the next page.
       parameters:
         - in: query
           name: limit
@@ -13593,17 +13613,26 @@ paths:
             minLength: 1
             type: string
         - in: query
-          name: offset
-          required: false
-          schema:
-            example: 0
-            minLength: 1
-            type: string
-        - in: query
           name: project_id
           required: true
           schema:
             format: uuid
+            type: string
+        - description: Opaque, project-scoped keyset cursor from next_cursor.
+          in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            minLength: 1
+            pattern: ^[A-Za-z0-9_-]+$
+            type: string
+        - deprecated: true
+          description: Unsupported; use the opaque cursor returned by next_cursor.
+          in: query
+          name: offset
+          required: false
+          schema:
             type: string
       responses:
         '200':
@@ -16499,7 +16528,7 @@ paths:
         - prompts
   /v1/traces:
     get:
-      description: Returns up to 50 traces sorted by start_time DESC. Each row's input_text is truncated to 200 chars.
+      description: Returns a project-scoped keyset page of up to 50 traces sorted by start_time DESC, trace_id DESC. Input and output excerpts are limited to 200 Unicode code points; use next_cursor for the next page.
       parameters:
         - in: query
           name: limit
@@ -16509,17 +16538,26 @@ paths:
             minLength: 1
             type: string
         - in: query
-          name: offset
-          required: false
-          schema:
-            example: 0
-            minLength: 1
-            type: string
-        - in: query
           name: project_id
           required: true
           schema:
             format: uuid
+            type: string
+        - description: Opaque, project-scoped keyset cursor from next_cursor.
+          in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            minLength: 1
+            pattern: ^[A-Za-z0-9_-]+$
+            type: string
+        - deprecated: true
+          description: Unsupported; use the opaque cursor returned by next_cursor.
+          in: query
+          name: offset
+          required: false
+          schema:
             type: string
       responses:
         '200':
@@ -16581,7 +16619,7 @@ paths:
         - traces
   /v1/traces/{id}:
     get:
-      description: Fetch a project-scoped trace and its observations with versioned metadata envelopes. Legacy metadata arrays are exposed as attributes with null prompt provenance; invalid persisted metadata fails closed.
+      description: Fetch a project-scoped, byte-bounded observation page in stable start_time, observation_id order. Use next_cursor to continue; legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.
       parameters:
         - in: path
           name: id
@@ -16601,16 +16639,29 @@ paths:
           schema:
             format: uuid
             type: string
+        - description: Opaque, project-scoped keyset cursor from next_cursor.
+          in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            minLength: 1
+            pattern: ^[A-Za-z0-9_-]+$
+            type: string
       responses:
         '200':
           content:
             application/json:
               schema:
                 properties:
+                  next_cursor:
+                    type: string
                   observations:
                     items:
                       $ref: '#/components/schemas/Observation'
                     type: array
+                  response_truncated:
+                    type: boolean
                   trace:
                     $ref: '#/components/schemas/Trace'
                 required:

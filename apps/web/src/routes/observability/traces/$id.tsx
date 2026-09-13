@@ -136,6 +136,7 @@ function TraceDetailPageContent({
 	const [focusWorkspaceVersion, setFocusWorkspaceVersion] = React.useState(0);
 	const [receivedSnapshot, setReceivedSnapshot] = React.useState(false);
 	const [snapshotTimedOut, setSnapshotTimedOut] = React.useState(false);
+	const [snapshotTruncated, setSnapshotTruncated] = React.useState(false);
 	const splitContainerRef = React.useRef<HTMLDivElement>(null);
 	const highlightTimersRef = React.useRef(new Map<string, number>());
 	const highlightVersionsRef = React.useRef(new Map<string, number>());
@@ -169,11 +170,14 @@ function TraceDetailPageContent({
 			onSnapshot: (snapshot: {
 				trace?: TraceRow;
 				observations: ObservationRowLike[];
+				snapshot_truncated?: boolean;
+				next_cursor?: string;
 			}) => {
 				setReceivedSnapshot(true);
 				setSnapshotTimedOut(false);
 				setNotFound(false);
 				setRecordingStatus("recording");
+				setSnapshotTruncated(snapshot.snapshot_truncated === true);
 				setModel(
 					createTraceModel({
 						...snapshot,
@@ -345,6 +349,15 @@ function TraceDetailPageContent({
 					>
 						Retry connection
 					</Button>
+				</div>
+			)}
+			{snapshotTruncated && (
+				<div
+					className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+					role="status"
+				>
+					This live snapshot is safely limited to a bounded first page. Refresh
+					to inspect newly available observations.
 				</div>
 			)}
 			<div

@@ -2321,6 +2321,8 @@ export interface TraceRow {
 	input_text: string;
 	output_text: string;
 	scores_summary: string;
+	input_truncated?: boolean;
+	output_truncated?: boolean;
 }
 
 export interface OtlpAttribute {
@@ -2338,6 +2340,7 @@ export interface ObservationMetadata {
 	schema_version: 1;
 	attributes: OtlpAttribute[];
 	prompt_provenance: PromptProvenance | null;
+	truncated?: boolean;
 }
 
 export type ObservationMetadataInput =
@@ -2371,6 +2374,7 @@ export function normalizeObservationMetadata(
 	return {
 		schema_version: 1,
 		attributes: sanitizeMetadataAttributes(parsed.attributes),
+		...(parsed.truncated ? { truncated: true } : {}),
 		prompt_provenance:
 			isGeneration && isPromptProvenance(parsed.prompt_provenance)
 				? parsed.prompt_provenance
@@ -2422,6 +2426,7 @@ function isMetadataEnvelope(value: unknown): value is ObservationMetadata {
 		isRecord(value) &&
 		value.schema_version === 1 &&
 		isAttributeArray(value.attributes) &&
+		(value.truncated === undefined || value.truncated === true) &&
 		(value.prompt_provenance === undefined ||
 			value.prompt_provenance === null ||
 			isPromptProvenance(value.prompt_provenance))
@@ -2452,11 +2457,16 @@ export interface ObservationRow {
 	input_text: string;
 	output_text: string;
 	metadata: ObservationMetadata;
+	input_truncated?: boolean;
+	output_truncated?: boolean;
+	metadata_truncated?: boolean;
 }
 
 export interface TraceListResponse {
 	items: TraceRow[];
 	total: number;
+	response_truncated?: boolean;
+	next_cursor?: string;
 }
 
 function buildQs(
@@ -2474,7 +2484,7 @@ function buildQs(
 export interface ListTracesParams {
 	project_id?: string;
 	limit?: number;
-	offset?: number;
+	cursor?: string;
 	env?: string;
 	agent_id?: string;
 	name?: string;
@@ -2492,7 +2502,7 @@ export async function listTraces(
 	const qs = buildQs({
 		project_id: params.project_id,
 		limit: params.limit,
-		offset: params.offset,
+		cursor: params.cursor,
 		"filter[env]": params.env,
 		"filter[agent_id]": params.agent_id,
 		"filter[name]": params.name,
@@ -2509,7 +2519,7 @@ export async function listTraces(
 export interface ListObservationsParams {
 	project_id?: string;
 	limit?: number;
-	offset?: number;
+	cursor?: string;
 	agent_id?: string;
 	trace_id?: string;
 	type?: string;
@@ -2525,6 +2535,8 @@ export interface ListObservationsParams {
 export interface ObservationListResponse {
 	items: ObservationRow[];
 	total: number;
+	response_truncated?: boolean;
+	next_cursor?: string;
 }
 
 export async function listObservations(
@@ -2533,7 +2545,7 @@ export async function listObservations(
 	const qs = buildQs({
 		project_id: params.project_id,
 		limit: params.limit,
-		offset: params.offset,
+		cursor: params.cursor,
 		"filter[agent_id]": params.agent_id,
 		"filter[trace_id]": params.trace_id,
 		"filter[type]": params.type,

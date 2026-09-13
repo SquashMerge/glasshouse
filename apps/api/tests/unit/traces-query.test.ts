@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { getTrace, listTraces } from "../../src/db/traces-query";
+import {
+	getTrace,
+	listObservations,
+	listTraces,
+} from "../../src/db/traces-query";
 
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 const ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
@@ -48,13 +52,18 @@ describe("getTrace project scope", () => {
 				project_id: PROJECT_ID,
 			},
 		});
+		expect(queries[1]!.query).toContain(
+			"ORDER BY start_time ASC, observation_id ASC",
+		);
+		expect(queries[1]!.query).toContain("substringUTF8(input_text, 1, 2048)");
+		expect(queries[1]!.query).toContain("metadata_truncated");
 		expect(queries[1]).toMatchObject({
 			query: expect.stringContaining("LIMIT {limit: UInt32}"),
 			query_params: {
 				organization_id: ORGANIZATION_ID,
 				trace_id: TRACE_ID,
 				project_id: PROJECT_ID,
-				limit: 5_000,
+				limit: 8,
 			},
 		});
 		for (const request of queries)
@@ -77,6 +86,50 @@ describe("getTrace project scope", () => {
 });
 
 describe("listTraces empty result", () => {
+	it("projects both text directions and metadata to bounded list fields", async () => {
+		const { client, queries } = fakeClient();
+		await listTraces(
+			client as never,
+			{ organization_id: ORGANIZATION_ID, project_id: PROJECT_ID },
+			50,
+			undefined,
+		);
+		await listObservations(
+			client as never,
+			{ organization_id: ORGANIZATION_ID, project_id: PROJECT_ID },
+			50,
+			undefined,
+		);
+
+		expect(queries[0]?.query).toContain("substringUTF8(input_text, 1, 200)");
+		expect(queries[0]?.query).toContain("substringUTF8(output_text, 1, 200)");
+		expect(queries[2]?.query).toContain("substringUTF8(input_text, 1, 200)");
+		expect(queries[2]?.query).toContain("substringUTF8(output_text, 1, 200)");
+		expect(queries[2]?.query).toContain("metadata_truncated");
+	});
+
+	it("uses a project-scoped keyset boundary instead of offset pagination", async () => {
+		const { client, queries } = fakeClient();
+		await listTraces(
+			client as never,
+			{ organization_id: ORGANIZATION_ID, project_id: PROJECT_ID },
+			50,
+			{ start_time: "2026-08-30 12:00:00.000", id: TRACE_ID },
+		);
+
+		const request = queries[0]!;
+		expect(request.query).toContain(
+			"(start_time, trace_id) < ({cursor_start_time: DateTime64(3)}, {cursor_id: String})",
+		);
+		expect(request.query.includes("OFFSET")).toBe(false);
+		expect(request.query_params).toMatchObject({
+			organization_id: ORGANIZATION_ID,
+			project_id: PROJECT_ID,
+			cursor_start_time: "2026-08-30 12:00:00.000",
+			cursor_id: TRACE_ID,
+		});
+	});
+
 	it("returns an empty collection and zero total while preserving project scope", async () => {
 		const queries: Array<{
 			query: string;
@@ -96,7 +149,7 @@ describe("listTraces empty result", () => {
 			client as never,
 			{ organization_id: ORGANIZATION_ID, project_id: PROJECT_ID },
 			50,
-			0,
+			undefined,
 		);
 
 		expect(result).toEqual({ items: [], total: 0 });

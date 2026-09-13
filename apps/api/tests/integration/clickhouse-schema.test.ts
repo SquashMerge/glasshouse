@@ -129,6 +129,65 @@ describe("ClickHouse schema integration", () => {
 		).rejects.toThrow(/observations_tenant_scope_required/);
 	});
 
+	it("rejects oversized retained trace and observation payloads at storage time", async () => {
+		const oversizedText = "界".repeat(3_000);
+		const oversizedMetadata = "界".repeat(6_000);
+		await expect(
+			client.insert({
+				table: "traces",
+				format: "JSONEachRow",
+				values: [
+					{
+						trace_id: "trace-oversized-retained-text",
+						organization_id: "00000000-0000-4000-8000-000000000001",
+						project_id: "11111111-1111-4111-8111-111111111111",
+						name: "oversized-trace",
+						start_time: "2026-07-31 00:00:00.000",
+						end_time: null,
+						duration_ms: null,
+						status: "ok",
+						user_id: "",
+						session_id: "",
+						agent_id: "",
+						agent_version: "",
+						env: "test",
+						tags: [],
+						input_text: oversizedText,
+						output_text: "",
+						scores_summary: "",
+						metadata: "",
+					},
+				],
+			}),
+		).rejects.toThrow(/traces_retained_payload_bounds/);
+
+		await expect(
+			client.insert({
+				table: "observations",
+				format: "JSONEachRow",
+				values: [
+					{
+						observation_id: "observation-oversized-metadata",
+						trace_id: "trace-oversized-metadata",
+						organization_id: "00000000-0000-4000-8000-000000000001",
+						project_id: "11111111-1111-4111-8111-111111111111",
+						parent_observation_id: null,
+						type: "span",
+						name: "oversized-observation",
+						start_time: "2026-07-31 00:00:00.000",
+						end_time: null,
+						duration_ms: null,
+						status: "ok",
+						model: null,
+						input_text: "",
+						output_text: "",
+						metadata: oversizedMetadata,
+					},
+				],
+			}),
+		).rejects.toThrow(/observations_retained_payload_bounds/);
+	});
+
 	it("has every expected data-skipping index", async () => {
 		const indices = await values(
 			"SELECT name FROM system.data_skipping_indices WHERE database = currentDatabase() AND table IN ('traces', 'observations') ORDER BY name",

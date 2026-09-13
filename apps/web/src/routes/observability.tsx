@@ -347,25 +347,23 @@ function useTracesData() {
 	// reconnect (the hook handles exponential backoff).
 	const query = useInfiniteQuery({
 		queryKey: ["traces", apiParams],
-		queryFn: ({ pageParam = 0 }) =>
+		queryFn: ({ pageParam }) =>
 			listTraces({
 				...(apiParams as ListTracesParams),
-				offset: pageParam as number,
+				cursor: pageParam as string | undefined,
 			}),
-		initialPageParam: 0,
+		initialPageParam: undefined as string | undefined,
 		enabled: Boolean(selectedProjectId),
-		getNextPageParam: (
-			lastPage: { items: TraceRow[]; total: number },
-			allPages: Array<{ items: TraceRow[]; total: number }>,
-		) => {
-			const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
-			return loaded < lastPage.total ? loaded : undefined;
-		},
+		getNextPageParam: (lastPage: {
+			items: TraceRow[];
+			total: number;
+			next_cursor?: string;
+		}) => lastPage.next_cursor,
 	});
 
-	// Dedup across pages: offset-pagination against a live DB can return the
-	// same id twice if a new trace inserts at the top between fetches. Without
-	// this, the table would emit React `duplicate key` warnings.
+	// Dedup across pages defensively. Keyset traversal prevents inserts above the
+	// prior boundary from shifting later pages, while trace retries can still
+	// duplicate a stored id.
 	const paginated = React.useMemo(() => {
 		const ids = new Set<string>();
 		const out: TraceRow[] = [];
@@ -791,24 +789,21 @@ function useSpansData() {
 	// `{status, paused, lastEventAt, reconnect}` for the Live/Pause UX.
 	const query = useInfiniteQuery({
 		queryKey: ["observations", apiParams],
-		queryFn: ({ pageParam = 0 }) =>
+		queryFn: ({ pageParam }) =>
 			listObservations({
 				...(apiParams as ListObservationsParams),
-				offset: pageParam as number,
+				cursor: pageParam as string | undefined,
 			}),
-		initialPageParam: 0,
+		initialPageParam: undefined as string | undefined,
 		enabled: Boolean(selectedProjectId),
-		getNextPageParam: (
-			lastPage: { items: ObservationRow[]; total: number },
-			allPages: Array<{ items: ObservationRow[]; total: number }>,
-		) => {
-			const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
-			return loaded < lastPage.total ? loaded : undefined;
-		},
+		getNextPageParam: (lastPage: {
+			items: ObservationRow[];
+			total: number;
+			next_cursor?: string;
+		}) => lastPage.next_cursor,
 	});
 
-	// Dedup across pages: see useTracesData. Without this, offset-pagination
-	// against a live DB can produce duplicate keys in the rendered table.
+	// Dedup across pages: see useTracesData.
 	const paginated = React.useMemo(() => {
 		const ids = new Set<string>();
 		const out: ObservationRow[] = [];

@@ -26,6 +26,11 @@ import {
 	type ObservationMetadata,
 } from "../db/observation-metadata.js";
 import { logger } from "../lib/logger.js";
+import {
+	fitResponseItems,
+	MAX_TRACE_RESPONSE_BYTES,
+} from "../db/trace-payload-bounds.js";
+import { encodeTraceCursor } from "../db/trace-cursor.js";
 
 // Read tunables once at module load so per-event work is allocation-free.
 const HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS ?? 15_000);
@@ -580,9 +585,34 @@ export function createTraceEventHandlers(
 				);
 			};
 
+			const boundedSnapshot = fitResponseItems(
+				snapshotObservations,
+				(observations) => ({
+					trace: snapshotTrace,
+					observations,
+					snapshot_truncated: true,
+				}),
+				MAX_TRACE_RESPONSE_BYTES - 1024,
+			);
 			const snapshotData = JSON.stringify({
 				trace: snapshotTrace,
-				observations: snapshotObservations,
+				observations: boundedSnapshot.items,
+				...(boundedSnapshot.truncated || snapshotResult.next_cursor
+					? { snapshot_truncated: true }
+					: {}),
+				...(boundedSnapshot.items.length > 0 &&
+				(boundedSnapshot.truncated || snapshotResult.next_cursor)
+					? {
+							next_cursor: encodeTraceCursor(
+								"trace-observations",
+								expectedProjectId,
+								{
+									start_time: boundedSnapshot.items.at(-1)!.start_time,
+									id: boundedSnapshot.items.at(-1)!.observation_id,
+								},
+							),
+						}
+					: {}),
 			});
 			await frameDelivery.deliver(
 				authorizedSseFrame(snapshotData, () =>
