@@ -59,5 +59,20 @@
 	"outcome": "unknown",
 	"completeness": "unknown",
 	"omissions": ["unknown"],
-	"events": []
+	"events": [
+		{
+			"event_id": "12345678-1234-4234-8234-123456789012",
+			"sequence": 0,
+			"occurred_at": "2026-09-12T00:00:00.000Z",
+			"type": "agent.started",
+			"operation_id": "22345678-1234-4234-8234-123456789012",
+			"parent_event_id": null,
+			"trace": { "trace_id": null, "span_id": null },
+			"references": [],
+			"detail": {
+				"agent_key": "second-fixture-agent",
+				"version_fingerprint": null
+			}
+		}
+	]
 }

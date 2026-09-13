@@ -75,6 +75,7 @@ import {
 	handlePutAgentIntrospection,
 	putAgentIntrospectionRoute,
 } from "./routes/agent-introspection.js";
+import { agentIntrospectionValidationCategory } from "./schemas/agent-introspection.js";
 import {
 	createEvaluationGateApprovalRoute,
 	getEvaluationGateApprovalRoute,
@@ -288,21 +289,30 @@ import {
 export const openapiApp = new OpenAPIHono({
 	defaultHook: (result, c) => {
 		if (!result.success) {
-			const normalizedReportTooLarge =
+			const isAgentIntrospection =
 				/^\/v1\/evaluation-runs\/[^/]+\/tasks\/[^/]+\/agent-introspection\/[^/]+$/.test(
 					c.req.path,
-				) &&
-				result.error.issues.some((issue) =>
-					issue.message.includes("Normalized report exceeds 256 KiB"),
 				);
+			const category = isAgentIntrospection
+				? agentIntrospectionValidationCategory(result.error.issues)
+				: "structural";
 			return c.json(
-				normalizedReportTooLarge
+				category === "normalized_size"
 					? {
 							code: "PAYLOAD_TOO_LARGE",
 							message: "Report exceeds the normalized size limit",
 						}
-					: { code: "BAD_REQUEST", message: "Request validation failed" },
-				normalizedReportTooLarge ? 413 : 400,
+					: category === "semantic"
+						? {
+								code: "CONTRACT_VIOLATION",
+								message: "Report violates the Agent Introspection contract",
+							}
+						: { code: "BAD_REQUEST", message: "Request validation failed" },
+				category === "normalized_size"
+					? 413
+					: category === "semantic"
+						? 422
+						: 400,
 			);
 		}
 	},

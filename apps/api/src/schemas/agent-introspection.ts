@@ -3,7 +3,14 @@ import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "./common.js";
 import { PromptId } from "./prompts.js";
 
-const SafeToken = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/);
+const UnsafeIdentifier =
+	/(?:^[a-z][a-z0-9+.-]*:\/\/|^(?:authorization|proxy-authorization)\s*:|^(?:bearer|basic)\s+|^[a-z_][a-z0-9_]*=|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|credential|private[_-]?key)|^(?:sk|rk|pk)-|^xox[baprs]-|^akia|^gh[pous]_)/i;
+const Identifier = z
+	.string()
+	.regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/)
+	.refine((value) => !UnsafeIdentifier.test(value), {
+		message: "Identifier must not contain credentials or transport syntax",
+	});
 const Uuid = z.string().uuid();
 const UuidPattern =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -142,7 +149,7 @@ const EventBase = z.object({
 		.strict(),
 	references: z.array(EvidenceReference).max(8),
 });
-const AgentKey = z.object({ agent_key: SafeToken });
+const AgentKey = z.object({ agent_key: Identifier });
 const Duration = z.object({
 	duration_ms: z.number().int().min(0).max(86_400_000),
 });
@@ -151,16 +158,16 @@ const Failure = z.object({
 	retryable: z.boolean(),
 });
 const Model = z.object({
-	provider: SafeToken.nullable(),
-	model: SafeToken,
+	provider: Identifier.nullable(),
+	model: Identifier,
 	attempt: z.number().int().min(1).max(10),
 });
 const Tool = z.object({
-	tool: SafeToken,
+	tool: Identifier,
 	attempt: z.number().int().min(1).max(10),
 });
-const Workflow = z.object({ workflow: SafeToken });
-const Team = z.object({ team: SafeToken });
+const Workflow = z.object({ workflow: Identifier });
+const Team = z.object({ team: Identifier });
 const event = <T extends string, D extends z.ZodObject>(type: T, detail: D) =>
 	EventBase.extend({ type: z.literal(type), detail: detail.strict() }).strict();
 
@@ -197,8 +204,8 @@ const Events = z.discriminatedUnion("type", [
 	event(
 		"handoff",
 		z.object({
-			from_agent_key: SafeToken,
-			to_agent_key: SafeToken,
+			from_agent_key: Identifier,
+			to_agent_key: Identifier,
 			reason_code: z.enum(["delegated", "routed", "fallback", "unknown"]),
 		}),
 	),
@@ -242,10 +249,10 @@ const ReportShape = z
 		contract_version: z.literal("agent-introspection.v1"),
 		adapter: z
 			.object({
-				name: SafeToken,
-				version: SafeToken,
-				framework: SafeToken,
-				framework_version: SafeToken.nullable(),
+				name: Identifier,
+				version: Identifier,
+				framework: Identifier,
+				framework_version: Identifier.nullable(),
 			})
 			.strict(),
 		capabilities: z.array(CapabilityDeclaration).length(Capabilities.length),
@@ -520,6 +527,17 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 					path: ["events", index],
 				});
 		}
+		if (
+			!root ||
+			rootStarts !== 1 ||
+			report.events[0]?.type !== "agent.started" ||
+			report.events[0]?.parent_event_id !== null
+		)
+			ctx.addIssue({
+				code: "custom",
+				message: "Every report requires one root agent start",
+				path: ["events"],
+			});
 		const terminalTypes = {
 			succeeded: "agent.completed",
 			failed: "agent.failed",
@@ -621,9 +639,29 @@ export const AgentIntrospectionReportV1 = ReportShape.superRefine(
 			ctx.addIssue({
 				code: "custom",
 				message: "Normalized report exceeds 256 KiB",
+				params: { validation_category: "normalized_size" },
 			});
 	},
 ).openapi("AgentIntrospectionReportV1");
+
+export type AgentIntrospectionValidationCategory =
+	| "structural"
+	| "semantic"
+	| "normalized_size";
+
+export function agentIntrospectionValidationCategory(
+	issues: ReadonlyArray<{ code: string; params?: Record<string, unknown> }>,
+): AgentIntrospectionValidationCategory {
+	if (
+		issues.some(
+			(issue) => issue.params?.validation_category === "normalized_size",
+		)
+	)
+		return "normalized_size";
+	return issues.some((issue) => issue.code === "custom")
+		? "semantic"
+		: "structural";
+}
 
 export type AgentIntrospectionReport = z.infer<
 	typeof AgentIntrospectionReportV1
@@ -668,7 +706,12 @@ export const AgentIntrospectionErrorResponses = {
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	400: {
-		description: "Invalid report",
+		description: "Malformed report request",
+		headers: z.object({ "Cache-Control": z.literal("no-store") }),
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	422: {
+		description: "Report violates the Agent Introspection contract",
 		headers: z.object({ "Cache-Control": z.literal("no-store") }),
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},

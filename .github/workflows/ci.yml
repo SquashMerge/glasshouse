@@ -33,6 +33,8 @@ jobs:
             command: python3 -m pip install --user --disable-pip-version-check --require-hashes -r worker/requirements.lock && python3 -m unittest worker.test_dev_cli_llm
           - check: build
             command: bun run build
+          - check: openapi-artifact
+            command: bun run openapi:check
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
           - check: doctor-version

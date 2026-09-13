@@ -212,4 +212,27 @@ describe("agent introspection HTTP handlers", () => {
 		expect(response.status).toBe(413);
 		expect(await response.json()).toMatchObject({ code: "PAYLOAD_TOO_LARGE" });
 	});
+
+	it("maps malformed and semantic reports to distinct typed responses", async () => {
+		const path = `/v1/evaluation-runs/${runId}/tasks/${taskId}/agent-introspection/${invocationId}?project_id=${projectId}`;
+		const malformed = await openapiApp.request(`http://test${path}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		});
+		expect(malformed.status).toBe(400);
+		expect(await malformed.json()).toMatchObject({ code: "BAD_REQUEST" });
+
+		const semantic = structuredClone(report);
+		semantic.outcome = "failed";
+		const rejected = await openapiApp.request(`http://test${path}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(semantic),
+		});
+		expect(rejected.status).toBe(422);
+		expect(await rejected.json()).toMatchObject({
+			code: "CONTRACT_VIOLATION",
+		});
+	});
 });

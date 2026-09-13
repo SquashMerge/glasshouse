@@ -31,6 +31,7 @@ import {
 } from "../../src/schemas/evaluations";
 import {
 	cancelEvaluationRun,
+	getEvaluationRunStatus,
 	retryEvaluationRun,
 } from "../../src/db/evaluation-runs";
 import {
@@ -421,6 +422,133 @@ describe("Evaluation Run lifecycle API", () => {
 				text.startsWith("SELECT * FROM evaluation_runs"),
 			),
 		);
+	});
+
+	it("redacts nested KeyValue evidence and marks truncated collections", async () => {
+		const snapshot = {
+			target: { kind: "fixture" },
+			target_version: "1",
+			target_fingerprint: "a".repeat(64),
+			evaluator: { kind: "exact_match" },
+			evaluator_version: "1",
+			evaluator_fingerprint: "a".repeat(64),
+			execution_defaults: {},
+			sampling: { strategy: "all", sample_size: 1, seed: 0 },
+			thresholds: {},
+			limits: {},
+			sample_identity: "a".repeat(64),
+			resolved_inputs_hash: "a".repeat(64),
+			definition_version_id: "55555555-5555-4555-8555-555555555555",
+			dataset_version_id: "66666666-6666-4666-8666-666666666666",
+			selected_count: 1,
+			with_source_trace: 0,
+			with_source_observation: 0,
+		};
+		const client = {
+			query: async (text: string) => {
+				if (
+					text === "BEGIN" ||
+					text === "COMMIT" ||
+					text === "ROLLBACK" ||
+					text.includes("FROM organization_memberships om") ||
+					text.includes("FROM organization_actor_roles") ||
+					text.includes("FROM project_memberships pm") ||
+					text.includes("FROM project_actor_grants")
+				)
+					return { rows: [] };
+				if (text.includes("FROM projects p WHERE p.id"))
+					return { rows: [{ id: "project" }] };
+				if (text.startsWith("SELECT authorization_allows_project"))
+					return { rows: [{ allowed: true }] };
+				if (text.startsWith("SELECT v.redaction"))
+					return {
+						rows: [{ redaction: { mode: "none", keys: ["session_token"] } }],
+					};
+				if (text.startsWith("SELECT run.id, run.project_id"))
+					return {
+						rows: [
+							{
+								id: "run",
+								project_id: "project",
+								status: "completed",
+								definition_version_id: snapshot.definition_version_id,
+								dataset_version_id: snapshot.dataset_version_id,
+								resolved_inputs_hash: snapshot.resolved_inputs_hash,
+								created_at: "2026-09-10T00:00:00.000Z",
+								updated_at: "2026-09-10T00:00:00.000Z",
+								total: 1,
+							},
+						],
+					};
+				if (text.startsWith("SELECT inputs.*, count(item.id)"))
+					return { rows: [snapshot] };
+				if (text.startsWith("SELECT task.id AS task_id"))
+					return {
+						rows: [
+							{
+								task_id: "task",
+								item_key: "item-1",
+								position: 0,
+								status: "completed",
+								attempt_count: 1,
+								input: {
+									attributes: [
+										{ key: "authorization", value: "top-secret" },
+										{
+											key: "nested",
+											value: [
+												{ key: "session_token", value: "configured-secret" },
+											],
+										},
+									],
+									overflow: Array.from({ length: 129 }, (_, index) => index),
+								},
+								output: Object.fromEntries(
+									Array.from({ length: 129 }, (_, index) => [
+										`field_${index}`,
+										index,
+									]),
+								),
+								error_classification: null,
+								error_message: null,
+								cost_usd: null,
+								evaluator_rationale: null,
+								trace_id: null,
+								agent_version: null,
+							},
+						],
+					};
+				return { rows: [] };
+			},
+			release() {},
+		};
+
+		const status = await getEvaluationRunStatus(
+			{ connect: async () => client } as never,
+			{
+				id: "run",
+				project_id: "project",
+				authorization: {
+					organization_id: "organization",
+					actor_id: "actor",
+					operation: "product_read",
+				},
+			},
+		);
+
+		expect(status.items[0]?.input).toMatchObject({
+			attributes: [
+				{ key: "authorization", value: "[REDACTED]" },
+				{
+					key: "nested",
+					value: [{ key: "session_token", value: "[REDACTED]" }],
+				},
+			],
+		});
+		expect(status.items[0]?.redaction).toMatchObject({
+			applied: true,
+			bounded: true,
+		});
 	});
 
 	it("documents Admin-approved pinned gate contracts and rejects mutable inputs", () => {

@@ -129,6 +129,27 @@ describe("agent-introspection.v1 contract", () => {
 		).toBe(false);
 	});
 
+	it("rejects transport and credential syntax in identifier leaves", () => {
+		const unsafeAdapter = structuredClone(completeSuccess);
+		unsafeAdapter.adapter.name = "https://private.example/token";
+		expect(AgentIntrospectionReportV1.safeParse(unsafeAdapter).success).toBe(
+			false,
+		);
+		for (const value of [
+			"Bearer secret-token",
+			"OPENAI_API_KEY=secret",
+			"sk-secret-token",
+			"model-api_key-secret",
+		]) {
+			const unsafeModel = structuredClone(completeSuccess);
+			unsafeModel.events[1].detail.model = value;
+			expect(
+				AgentIntrospectionReportV1.safeParse(unsafeModel).success,
+				value,
+			).toBe(false);
+		}
+	});
+
 	it("enforces report lifecycle and capability consistency", () => {
 		const mismatch = structuredClone(completeSuccess);
 		mismatch.outcome = "failed";
@@ -166,6 +187,14 @@ describe("agent-introspection.v1 contract", () => {
 		const changedRootKey = structuredClone(completeSuccess);
 		changedRootKey.events[3].detail.agent_key = "different-agent";
 		expect(AgentIntrospectionReportV1.safeParse(changedRootKey).success).toBe(
+			false,
+		);
+	});
+
+	it("requires one root start even for incomplete unknown reports", () => {
+		const missingRoot = structuredClone(partial) as any;
+		missingRoot.events = [];
+		expect(AgentIntrospectionReportV1.safeParse(missingRoot).success).toBe(
 			false,
 		);
 	});

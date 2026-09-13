@@ -6,6 +6,7 @@ import {
 } from "./project-authorization.js";
 import {
 	AgentIntrospectionReportV1,
+	agentIntrospectionValidationCategory,
 	canonicalAgentIntrospectionRequestHash,
 	type AgentIntrospectionReport,
 } from "../schemas/agent-introspection.js";
@@ -14,13 +15,14 @@ type Transactional = Pick<Pool, "connect">;
 type Row = Record<string, unknown>;
 
 export class AgentIntrospectionRepositoryError extends Error {
-	readonly status: 400 | 404 | 409 | 413 | 500;
+	readonly status: 400 | 404 | 409 | 413 | 422 | 500;
 	constructor(
 		readonly code:
 			| "BAD_REQUEST"
 			| "NOT_FOUND"
 			| "CONFLICT"
 			| "PAYLOAD_TOO_LARGE"
+			| "CONTRACT_VIOLATION"
 			| "INTERNAL",
 		message: string,
 		cause?: unknown,
@@ -30,13 +32,15 @@ export class AgentIntrospectionRepositoryError extends Error {
 		this.status =
 			code === "BAD_REQUEST"
 				? 400
-				: code === "NOT_FOUND"
-					? 404
-					: code === "CONFLICT"
-						? 409
-						: code === "PAYLOAD_TOO_LARGE"
-							? 413
-							: 500;
+				: code === "CONTRACT_VIOLATION"
+					? 422
+					: code === "NOT_FOUND"
+						? 404
+						: code === "CONFLICT"
+							? 409
+							: code === "PAYLOAD_TOO_LARGE"
+								? 413
+								: 500;
 	}
 }
 
@@ -161,11 +165,13 @@ export async function storeAgentIntrospectionReport(
 }> {
 	const parsed = AgentIntrospectionReportV1.safeParse(report);
 	if (!parsed.success) {
-		const tooLarge = parsed.error.issues.some((issue) =>
-			issue.message.includes("256 KiB"),
-		);
+		const category = agentIntrospectionValidationCategory(parsed.error.issues);
 		throw new AgentIntrospectionRepositoryError(
-			tooLarge ? "PAYLOAD_TOO_LARGE" : "BAD_REQUEST",
+			category === "normalized_size"
+				? "PAYLOAD_TOO_LARGE"
+				: category === "semantic"
+					? "CONTRACT_VIOLATION"
+					: "BAD_REQUEST",
 			"Report validation failed",
 		);
 	}
