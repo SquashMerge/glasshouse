@@ -1,3 +1,5 @@
+SELECT set_config('astraea.test.include_report', :'include_report', false);
+
 DO $$
 DECLARE
     valid_task_id UUID;
