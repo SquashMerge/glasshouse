@@ -41,7 +41,7 @@ import {
 	transitionOptimizationJob,
 } from "../../src/db/prompt-optimizations";
 import { createAuthorizedSseDelivery } from "../../src/lib/authorized-sse";
-import { publishSync } from "../../src/lib/event-bus";
+import { publishSync, subscribe } from "../../src/lib/event-bus";
 import {
 	TRUSTED_ACTOR_CONTEXT_KEY,
 	TRUSTED_TENANT_CONTEXT_KEY,
@@ -1309,6 +1309,7 @@ test.skipIf(!databaseUrl)(
 		const applicationName = "astraea-trace-sse-revocation";
 		const firstWrite = deferred();
 		const releaseFirstWrite = deferred();
+		const subscriptionReady = deferred();
 		const demoter = await pool.connect();
 		const originalWrite = StreamingApi.prototype.write;
 		let revoke: Promise<void> | undefined;
@@ -1370,7 +1371,11 @@ test.skipIf(!databaseUrl)(
 				getTrace: async () => ({ trace: null, observations: [] }),
 				graceMs: 1_000,
 				heartbeatMs: 10_000,
-				subscribe: (await import("../../src/lib/event-bus")).subscribe,
+				subscribe: (event, handler) => {
+					const unsubscribe = subscribe(event, handler);
+					subscriptionReady.resolve();
+					return unsubscribe;
+				},
 			});
 			const api = new OpenAPIHono({
 				defaultHook: (result, c) =>
@@ -1397,6 +1402,7 @@ test.skipIf(!databaseUrl)(
 			expect(response.status).toBe(200);
 			reader = response.body?.getReader();
 			if (!reader) throw new Error("Trace SSE response has no body");
+			await subscriptionReady.promise;
 			const firstChunk = reader.read();
 			publishSync("trace.created", {
 				trace: { organization_id: organizationId, project_id: projectId },
