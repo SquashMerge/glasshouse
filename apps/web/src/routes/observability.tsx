@@ -139,8 +139,11 @@ const TRACE_FILTER_FIELDS: FilterFieldDef[] = [
 function buildTraceApiParams(
 	filters: Record<string, string>,
 	timeRange: TimeRange,
-): ListTracesParams {
-	const out: ListTracesParams = {};
+): Omit<ListTracesParams, "project_id" | "cursor" | "limit" | "offset"> {
+	const out: Omit<
+		ListTracesParams,
+		"project_id" | "cursor" | "limit" | "offset"
+	> = {};
 	if (filters.name) out.name = filters.name;
 	if (filters.agent_id) out.agent_id = filters.agent_id;
 	if (filters.status) out.status = filters.status;
@@ -155,7 +158,7 @@ function buildTraceApiParams(
 
 export interface TraceEvent {
 	trace_id: string;
-	project_id?: string;
+	project_id: string;
 	name: string;
 	start_time: string;
 	end_time?: string | null;
@@ -170,6 +173,10 @@ export interface TraceEvent {
 	input_text?: string;
 	output_text?: string;
 	scores_summary?: string;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
 }
 
 const PAGE_SIZE = 100;
@@ -262,49 +269,49 @@ function includesFolded(
 function matchesTimeRange(
 	startTime: string,
 	range: TimeRange,
-	params: { time_from?: string; time_to?: string },
+	params?: { time_from?: string; time_to?: string },
 ): boolean {
 	if (range.kind === "last") {
 		const cutoff = new Date(Date.now() - range.minutes * 60_000);
 		const cutoffText = cutoff.toISOString().replace("T", " ").replace("Z", "");
 		return startTime >= cutoffText;
 	}
-	if (params.time_from && startTime < params.time_from) return false;
-	if (params.time_to && startTime > params.time_to) return false;
+	if (params?.time_from && startTime < params.time_from) return false;
+	if (params?.time_to && startTime > params.time_to) return false;
 	return true;
 }
 
 function matchesTraceEvent(
 	event: TraceEvent,
-	params: ListTracesParams,
+	params: ListTracesParams | undefined,
 	range: TimeRange,
 ): boolean {
 	return (
-		(!params.env || event.env === params.env) &&
-		(!params.agent_id || event.agent_id === params.agent_id) &&
-		(!params.status || event.status === params.status) &&
-		includesFolded(event.name, params.name) &&
-		includesFolded(event.scores_summary, params.scores) &&
-		includesFolded(event.input_text, params.input_text) &&
-		matchesDuration(event.duration_ms, params.duration) &&
+		(!params?.env || event.env === params.env) &&
+		(!params?.agent_id || event.agent_id === params.agent_id) &&
+		(!params?.status || event.status === params.status) &&
+		includesFolded(event.name, params?.name) &&
+		includesFolded(event.scores_summary, params?.scores) &&
+		includesFolded(event.input_text, params?.input_text) &&
+		matchesDuration(event.duration_ms, params?.duration) &&
 		matchesTimeRange(event.start_time, range, params)
 	);
 }
 
 function matchesObservationEvent(
 	event: ObservationEvent,
-	params: ListObservationsParams,
+	params: ListObservationsParams | undefined,
 	range: TimeRange,
 ): boolean {
 	return (
-		(!params.trace_id || event.trace_id === params.trace_id) &&
-		(!params.type || event.type === params.type) &&
-		(!params.status || event.status === params.status) &&
-		includesFolded(event.name, params.name) &&
-		includesFolded(event.model, params.model) &&
-		includesFolded(event.input_text, params.input_text) &&
-		includesFolded(metadataSearchText(event.metadata), params.agent_id) &&
-		matchesDuration(event.duration_ms, params.duration) &&
+		(!params?.trace_id || event.trace_id === params.trace_id) &&
+		(!params?.type || event.type === params.type) &&
+		(!params?.status || event.status === params.status) &&
+		includesFolded(event.name, params?.name) &&
+		includesFolded(event.model, params?.model) &&
+		includesFolded(event.input_text, params?.input_text) &&
+		includesFolded(metadataSearchText(event.metadata), params?.agent_id) &&
+		matchesDuration(event.duration_ms, params?.duration) &&
 		matchesTimeRange(event.start_time, range, params)
 	);
 }
@@ -332,13 +339,16 @@ function useTracesData() {
 	}, [filters, timeRange]);
 
 	const apiParams = React.useMemo(
-		() => ({
-			...buildTraceApiParams(debouncedFilters, debouncedTimeRange),
-			project_id: selectedProjectId ?? undefined,
-		}),
+		() =>
+			selectedProjectId
+				? {
+						...buildTraceApiParams(debouncedFilters, debouncedTimeRange),
+						project_id: selectedProjectId,
+					}
+				: undefined,
 		[debouncedFilters, debouncedTimeRange, selectedProjectId],
 	);
-	const streamScope = JSON.stringify(apiParams);
+	const streamScope = JSON.stringify(apiParams ?? null);
 
 	// SSE-only live updates — no `refetchInterval` polling. The hook below
 	// returns `{status, paused, lastEventAt, reconnect}` for the Live/Pause UX.
@@ -349,7 +359,7 @@ function useTracesData() {
 		queryKey: ["traces", apiParams],
 		queryFn: ({ pageParam }) =>
 			listTraces({
-				...(apiParams as ListTracesParams),
+				...apiParams!,
 				cursor: pageParam as string | undefined,
 			}),
 		initialPageParam: undefined as string | undefined,
@@ -421,7 +431,7 @@ function useTracesData() {
 				const id = event.trace_id;
 				const row: TraceRow = {
 					trace_id: event.trace_id,
-					project_id: event.project_id ?? "",
+					project_id: event.project_id,
 					name: event.name,
 					start_time: event.start_time,
 					end_time: event.end_time ?? null,
@@ -436,6 +446,10 @@ function useTracesData() {
 					input_text: event.input_text ?? "",
 					output_text: event.output_text ?? "",
 					scores_summary: event.scores_summary ?? "",
+					input_retained_truncated: event.input_retained_truncated,
+					output_retained_truncated: event.output_retained_truncated,
+					input_excerpt_truncated: event.input_excerpt_truncated,
+					output_excerpt_truncated: event.output_excerpt_truncated,
 				};
 				setLiveRows((previous) => {
 					const current =
@@ -723,8 +737,11 @@ const SPAN_FILTER_FIELDS: FilterFieldDef[] = [
 function buildSpanApiParams(
 	filters: Record<string, string>,
 	timeRange: TimeRange,
-): ListObservationsParams {
-	const out: ListObservationsParams = {};
+): Omit<ListObservationsParams, "project_id" | "cursor" | "limit" | "offset"> {
+	const out: Omit<
+		ListObservationsParams,
+		"project_id" | "cursor" | "limit" | "offset"
+	> = {};
 	if (filters.type) out.type = filters.type;
 	if (filters.name) out.name = filters.name;
 	if (filters.trace_id) out.trace_id = filters.trace_id;
@@ -741,7 +758,7 @@ function buildSpanApiParams(
 export interface ObservationEvent {
 	observation_id: string;
 	trace_id: string;
-	project_id?: string;
+	project_id: string;
 	parent_observation_id?: string | null;
 	type: "span" | "event" | "generation" | "tool";
 	name: string;
@@ -754,6 +771,11 @@ export interface ObservationEvent {
 	output_text?: string;
 	metadataParsed?: ObservationMetadata | null;
 	metadata?: ObservationMetadataInput;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
+	metadata_truncated?: boolean;
 }
 
 function useSpansData() {
@@ -776,14 +798,17 @@ function useSpansData() {
 	}, [filters, timeRange]);
 
 	const apiParams = React.useMemo(
-		() => ({
-			...buildSpanApiParams(debouncedFilters, debouncedTimeRange),
-			limit: PAGE_SIZE,
-			project_id: selectedProjectId ?? undefined,
-		}),
+		() =>
+			selectedProjectId
+				? {
+						...buildSpanApiParams(debouncedFilters, debouncedTimeRange),
+						limit: PAGE_SIZE,
+						project_id: selectedProjectId,
+					}
+				: undefined,
 		[debouncedFilters, debouncedTimeRange, selectedProjectId],
 	);
-	const streamScope = JSON.stringify(apiParams);
+	const streamScope = JSON.stringify(apiParams ?? null);
 
 	// SSE-only live updates — no `refetchInterval` polling. The hook returns
 	// `{status, paused, lastEventAt, reconnect}` for the Live/Pause UX.
@@ -791,7 +816,7 @@ function useSpansData() {
 		queryKey: ["observations", apiParams],
 		queryFn: ({ pageParam }) =>
 			listObservations({
-				...(apiParams as ListObservationsParams),
+				...apiParams!,
 				cursor: pageParam as string | undefined,
 			}),
 		initialPageParam: undefined as string | undefined,
@@ -861,7 +886,7 @@ function useSpansData() {
 				const row: ObservationRow = {
 					observation_id: event.observation_id,
 					trace_id: event.trace_id,
-					project_id: event.project_id ?? "",
+					project_id: event.project_id,
 					parent_observation_id: event.parent_observation_id ?? null,
 					type: event.type,
 					name: event.name,
@@ -876,6 +901,11 @@ function useSpansData() {
 						event.metadata,
 						event.type === "generation",
 					),
+					input_retained_truncated: event.input_retained_truncated,
+					output_retained_truncated: event.output_retained_truncated,
+					input_excerpt_truncated: event.input_excerpt_truncated,
+					output_excerpt_truncated: event.output_excerpt_truncated,
+					metadata_truncated: event.metadata_truncated,
 				};
 				setLiveRows((previous) => {
 					const current =

@@ -9,6 +9,8 @@ export const MAX_RETAINED_METADATA_BYTES = 16 * 1024;
 export const MAX_RETAINED_METADATA_DEPTH = 8;
 export const MAX_RETAINED_METADATA_VALUES = 256;
 export const MAX_TRACE_RESPONSE_BYTES = 256 * 1024;
+export const MAX_LIST_TEXT_CODEPOINTS = 200;
+export const MAX_LIST_METADATA_BYTES = 2 * 1024;
 
 const encoder = new TextEncoder();
 
@@ -30,6 +32,21 @@ export function boundText(
 		bytes += characterBytes;
 	}
 	return { value: bounded, truncated: true };
+}
+
+export function boundListExcerpt(value: string): {
+	value: string;
+	truncated: boolean;
+} {
+	let excerpt = "";
+	let length = 0;
+	for (const codePoint of value) {
+		if (length === MAX_LIST_TEXT_CODEPOINTS)
+			return { value: excerpt, truncated: true };
+		excerpt += codePoint;
+		length += 1;
+	}
+	return { value: excerpt, truncated: false };
 }
 
 function boundValue(

@@ -506,6 +506,80 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		await reader.cancel();
 	});
 
+	it("projects trace and observation list events to bounded public rows", async () => {
+		const traceResponse = await apiApp.fetch(
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const traceReader = traceResponse.body!.getReader();
+		await traceReader.read();
+		publishSync("trace.created", {
+			trace: {
+				...fakeTrace,
+				input_text: "界".repeat(201),
+				output_text: "x".repeat(8 * 1024),
+				input_retained_truncated: true,
+			},
+		});
+		const traceFrames = await readFramesUntil(traceReader, (frames) =>
+			frames.some((frame) => frame.event === "trace"),
+		);
+		const trace = JSON.parse(
+			traceFrames.find((frame) => frame.event === "trace")!.data,
+		).trace as Record<string, unknown>;
+		expect(Array.from(trace.input_text as string)).toHaveLength(200);
+		expect(trace.output_text).toHaveLength(200);
+		expect(trace).toMatchObject({
+			input_retained_truncated: true,
+			input_excerpt_truncated: true,
+			output_excerpt_truncated: true,
+		});
+		expect(trace).not.toHaveProperty("organization_id");
+		await traceReader.cancel();
+
+		const observationResponse = await apiApp.fetch(
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const observationReader = observationResponse.body!.getReader();
+		await observationReader.read();
+		publishSync("observation.created", {
+			observation: {
+				...fakeObservation,
+				input_text: "界".repeat(201),
+				output_text: "x".repeat(8 * 1024),
+				metadata: {
+					schema_version: 1,
+					attributes: [
+						{ key: "large", value: { stringValue: "x".repeat(2_048) } },
+					],
+					prompt_provenance: null,
+				},
+			} as unknown as NormalizedObservation,
+		});
+		const observationFrames = await readFramesUntil(
+			observationReader,
+			(frames) => frames.some((frame) => frame.event === "observation"),
+		);
+		const observation = JSON.parse(
+			observationFrames.find((frame) => frame.event === "observation")!.data,
+		).observation as Record<string, unknown>;
+		expect(Array.from(observation.input_text as string)).toHaveLength(200);
+		expect(observation.output_text).toHaveLength(200);
+		expect(observation).toMatchObject({
+			input_excerpt_truncated: true,
+			output_excerpt_truncated: true,
+			metadata_truncated: true,
+			metadata: {
+				attributes: [],
+			},
+		});
+		expect(observation).not.toHaveProperty("organization_id");
+		await observationReader.cancel();
+	});
+
 	it("does not forward trace events from another organization", async () => {
 		const res = await apiApp.fetch(
 			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {

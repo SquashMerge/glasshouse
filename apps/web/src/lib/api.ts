@@ -2486,8 +2486,9 @@ function buildQs(
 }
 
 export interface ListTracesParams {
-	project_id?: string;
+	project_id: string;
 	limit?: number;
+	offset?: number;
 	cursor?: string;
 	env?: string;
 	agent_id?: string;
@@ -2501,11 +2502,12 @@ export interface ListTracesParams {
 }
 
 export async function listTraces(
-	params: ListTracesParams = {},
+	params: ListTracesParams,
 ): Promise<TraceListResponse> {
 	const qs = buildQs({
 		project_id: params.project_id,
 		limit: params.limit,
+		offset: params.offset,
 		cursor: params.cursor,
 		"filter[env]": params.env,
 		"filter[agent_id]": params.agent_id,
@@ -2521,8 +2523,9 @@ export async function listTraces(
 }
 
 export interface ListObservationsParams {
-	project_id?: string;
+	project_id: string;
 	limit?: number;
+	offset?: number;
 	cursor?: string;
 	agent_id?: string;
 	trace_id?: string;
@@ -2576,11 +2579,12 @@ export async function getTraceDetail(
 }
 
 export async function listObservations(
-	params: ListObservationsParams = {},
+	params: ListObservationsParams,
 ): Promise<ObservationListResponse> {
 	const qs = buildQs({
 		project_id: params.project_id,
 		limit: params.limit,
+		offset: params.offset,
 		cursor: params.cursor,
 		"filter[agent_id]": params.agent_id,
 		"filter[trace_id]": params.trace_id,

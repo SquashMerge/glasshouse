@@ -430,8 +430,8 @@ describe("TracesTab — SSE merge + highlight", () => {
 	});
 
 	it("isolates REST rows and SSE scope when the selected project changes", async () => {
-		vi.mocked(listTraces).mockImplementation(async (params = {}) => {
-			const projectId = params.project_id!;
+		vi.mocked(listTraces).mockImplementation(async (params) => {
+			const projectId = params.project_id;
 			return {
 				items: [
 					{

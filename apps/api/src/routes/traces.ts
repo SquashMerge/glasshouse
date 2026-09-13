@@ -17,60 +17,19 @@ import {
 	listTraces as queryListTraces,
 	listObservations as queryListObservations,
 } from "../db/traces-query.js";
-import {
-	presentObservationMetadata,
-	type ObservationMetadata,
-} from "../db/observation-metadata.js";
+import { presentObservationMetadata } from "../db/observation-metadata.js";
 import { trustedTenant } from "../tenancy.js";
 import {
 	fitResponseItems,
 	MAX_TRACE_RESPONSE_BYTES,
 	utf8ByteLength,
 } from "../db/trace-payload-bounds.js";
+import { presentObservation, presentTrace } from "../db/trace-presentation.js";
 import {
 	decodeTraceCursor,
 	encodeTraceCursor,
 	InvalidTraceCursorError,
 } from "../db/trace-cursor.js";
-
-function presentObservation<
-	T extends {
-		type: string;
-		metadata: string | ObservationMetadata;
-		start_time: string;
-		end_time: string | null;
-	},
->(observation: T) {
-	return {
-		...observation,
-		start_time: presentTimestamp(observation.start_time),
-		end_time: observation.end_time
-			? presentTimestamp(observation.end_time)
-			: null,
-		metadata: presentObservationMetadata(
-			observation.metadata,
-			observation.type === "generation",
-		),
-	};
-}
-
-function presentTrace<
-	T extends { start_time: string; end_time: string | null },
->(trace: T) {
-	return {
-		...trace,
-		start_time: presentTimestamp(trace.start_time),
-		end_time: trace.end_time ? presentTimestamp(trace.end_time) : null,
-	};
-}
-
-function presentTimestamp(value: string): string {
-	if (/^\d{4}-\d{2}-\d{2}T.*Z$/.test(value)) return value;
-	const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/.exec(
-		value,
-	);
-	return match ? `${match[1]}T${match[2]}Z` : value;
-}
 
 function getPagination(c: Context): {
 	limit: number;
@@ -295,7 +254,9 @@ export async function handleGetTrace(c: Context): Promise<Response> {
 			);
 		}
 		const presentedTrace = presentTrace(trace);
-		const presentedObservations = observations.map(presentObservation);
+		const presentedObservations = observations.map((observation) =>
+			presentObservation(observation, presentObservationMetadata),
+		);
 		const responseFor = (
 			candidate: ReadonlyArray<(typeof presentedObservations)[number]>,
 		) => {
@@ -399,7 +360,9 @@ export async function handleListObservations(c: Context): Promise<Response> {
 			cursor,
 			offset,
 		);
-		const presented = items.map(presentObservation);
+		const presented = items.map((observation) =>
+			presentObservation(observation, presentObservationMetadata),
+		);
 		return boundedListResponse(
 			c,
 			presented,

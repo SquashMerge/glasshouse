@@ -13684,7 +13684,7 @@ paths:
         - traces
   /v1/observations/events:
     get:
-      description: 'Subscribes to the `observation.created` bus event and emits one `event: observation` SSE frame per published observation, with a typed versioned metadata envelope and nullable prompt provenance. Sends an `:ok` comment immediately on connect and a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s).'
+      description: 'Subscribes to the `observation.created` bus event and emits one `event: observation` SSE frame per published observation, with the Observation list projection: no organization_id, 200-Unicode-code-point input/output excerpts with retained/excerpt truncation flags, and a 2 KiB metadata envelope with metadata_truncated when omitted. It includes a typed versioned metadata envelope and nullable prompt provenance. Sends an `:ok` comment immediately on connect and a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s).'
       parameters:
         - in: query
           name: project_id
@@ -16617,7 +16617,7 @@ paths:
         - traces
   /v1/traces/events:
     get:
-      description: 'Subscribes to the `trace.created` bus event and emits one `event: trace` SSE frame per published trace. Sends an `:ok` comment immediately on connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), and cleans up the bus subscription on client disconnect.'
+      description: 'Subscribes to the `trace.created` bus event and emits one `event: trace` SSE frame per published trace. Its trace payload uses the Trace list projection: no organization_id, input/output excerpts limited to 200 Unicode code points, and retained/excerpt truncation flags. Sends an `:ok` comment immediately on connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), and cleans up the bus subscription on client disconnect.'
       parameters:
         - in: query
           name: project_id

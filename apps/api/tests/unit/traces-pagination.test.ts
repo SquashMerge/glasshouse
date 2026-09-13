@@ -208,6 +208,57 @@ describe("trace pagination", () => {
 		});
 	});
 
+	it("does not expose authenticated organization scope in REST list rows", async () => {
+		const trace = {
+			trace_id: "a".repeat(32),
+			organization_id: "00000000-0000-4000-8000-000000000001",
+			project_id: PROJECT_ID,
+			name: "trace",
+			start_time: "2024-01-01 00:00:00.000",
+			end_time: null,
+			duration_ms: null,
+			status: "ok" as const,
+			user_id: "",
+			session_id: "",
+			agent_id: "",
+			agent_version: "",
+			env: "test",
+			tags: [],
+			input_text: "",
+			output_text: "",
+			scores_summary: "",
+		};
+		const observation = {
+			observation_id: "b".repeat(32),
+			trace_id: trace.trace_id,
+			organization_id: trace.organization_id,
+			project_id: PROJECT_ID,
+			parent_observation_id: null,
+			type: "span" as const,
+			name: "observation",
+			start_time: trace.start_time,
+			end_time: null,
+			duration_ms: null,
+			status: "ok" as const,
+			model: null,
+			input_text: "",
+			output_text: "",
+			metadata: "",
+		};
+		listTraces.mockResolvedValueOnce({ items: [trace], total: 1 });
+		listObservations.mockResolvedValueOnce({ items: [observation], total: 1 });
+
+		const traces = await apiApp.fetch(scopedRequest("/v1/traces"));
+		const observations = await apiApp.fetch(scopedRequest("/v1/observations"));
+
+		expect((await traces.json()).items[0]).not.toHaveProperty(
+			"organization_id",
+		);
+		expect((await observations.json()).items[0]).not.toHaveProperty(
+			"organization_id",
+		);
+	});
+
 	it("serializes a bounded trace list response rather than materializing every projected row", async () => {
 		listTraces.mockResolvedValueOnce({
 			items: Array.from({ length: 200 }, (_, index) => ({

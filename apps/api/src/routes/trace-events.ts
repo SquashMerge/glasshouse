@@ -21,10 +21,7 @@ import {
 	sseMaxPendingFrames,
 	type AuthorizedSseDelivery,
 } from "../lib/authorized-sse.js";
-import {
-	presentObservationMetadata,
-	type ObservationMetadata,
-} from "../db/observation-metadata.js";
+import { presentObservationMetadata } from "../db/observation-metadata.js";
 import { logger } from "../lib/logger.js";
 import {
 	fitResponseItems,
@@ -32,6 +29,11 @@ import {
 	utf8ByteLength,
 } from "../db/trace-payload-bounds.js";
 import { encodeTraceCursor } from "../db/trace-cursor.js";
+import {
+	presentListObservation,
+	presentListTrace,
+	presentObservation,
+} from "../db/trace-presentation.js";
 
 // Read tunables once at module load so per-event work is allocation-free.
 const HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS ?? 15_000);
@@ -84,7 +86,7 @@ export const streamTraceEvents = createRoute({
 	summary: "SSE stream of newly created traces",
 	description:
 		"Subscribes to the `trace.created` bus event and emits one `event: trace` " +
-		"SSE frame per published trace. Sends an `:ok` comment immediately on " +
+		"SSE frame per published trace. Its trace payload uses the Trace list projection: no organization_id, input/output excerpts limited to 200 Unicode code points, and retained/excerpt truncation flags. Sends an `:ok` comment immediately on " +
 		"connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), " +
 		"and cleans up the bus subscription on client disconnect.",
 	security: [{ basicAuth: [] }],
@@ -103,7 +105,7 @@ export const streamObservationEvents = createRoute({
 	description:
 		"Subscribes to the `observation.created` bus event and emits one " +
 		"`event: observation` SSE frame per published observation, with " +
-		"a typed versioned metadata envelope and nullable prompt provenance. " +
+		"the Observation list projection: no organization_id, 200-Unicode-code-point input/output excerpts with retained/excerpt truncation flags, and a 2 KiB metadata envelope with metadata_truncated when omitted. It includes a typed versioned metadata envelope and nullable prompt provenance. " +
 		"Sends an `:ok` comment immediately on connect and a `:heartbeat` " +
 		"comment every `SSE_HEARTBEAT_MS` (default 15s).",
 	security: [{ basicAuth: [] }],
@@ -148,22 +150,6 @@ export const streamTraceDetailEvents = createRoute({
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Normalize storage and live observations to the same external metadata
- * envelope. Invalid persisted metadata intentionally fails closed.
- */
-function presentObservation<
-	T extends { type: string; metadata: string | ObservationMetadata },
->(observation: T) {
-	return {
-		...observation,
-		metadata: presentObservationMetadata(
-			observation.metadata,
-			observation.type === "generation",
-		),
-	};
-}
 
 function notFoundResponse(traceId: string): Response {
 	return new Response(
@@ -306,7 +292,9 @@ export function createTraceEventHandlers(
 					trace.project_id !== expectedProjectId
 				)
 					return;
-				const data = JSON.stringify({ trace });
+				const data = JSON.stringify({
+					trace: presentListTrace(trace),
+				});
 				const frame = sseEventFrame("trace", data);
 				void frameDelivery.deliver(
 					authorizedSseFrame(frame, () => stream.write(frame)),
@@ -369,7 +357,10 @@ export function createTraceEventHandlers(
 					observation.project_id !== expectedProjectId
 				)
 					return;
-				const presented = presentObservation(observation);
+				const presented = presentListObservation(
+					observation,
+					presentObservationMetadata,
+				);
 				const data = JSON.stringify({
 					observation: presented,
 					metadataParsed: presented.metadata,
@@ -440,7 +431,10 @@ export function createTraceEventHandlers(
 			)
 				return;
 			const data = JSON.stringify({
-				observation: presentObservation(observation),
+				observation: presentObservation(
+					observation,
+					presentObservationMetadata,
+				),
 			});
 			const frame = sseEventFrame("observation", data);
 			if (forwardObservation) {
@@ -533,8 +527,10 @@ export function createTraceEventHandlers(
 		}
 		const snapshotTrace = snapshotResult.trace;
 
-		const snapshotObservations =
-			snapshotResult.observations.map(presentObservation);
+		const snapshotObservations = snapshotResult.observations.map(
+			(observation) =>
+				presentObservation(observation, presentObservationMetadata),
+		);
 		const snapshotDataFor = (
 			observations: ReadonlyArray<(typeof snapshotObservations)[number]>,
 		) => {
