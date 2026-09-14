@@ -15,7 +15,6 @@ export const Experiment = z
 		dataset_input_binding: z.enum(["versioned", "legacy_unversioned"]),
 		name: z.string().nullable(),
 		status: ExperimentStatus,
-		config: z.record(z.string(), z.unknown()),
 		created_at: z.string().datetime(),
 		updated_at: z.string().datetime(),
 	})
@@ -27,10 +26,7 @@ export const ExperimentCreate = z
 		evaluation_id: z.string().uuid(),
 		definition_version: z.number().int().positive(),
 		idempotency_key: z.string().trim().min(1).max(200),
-		agent_id: z.string().uuid().nullable().optional(),
 		dataset_id: z.string().uuid(),
-		name: z.string().trim().max(120).nullable().optional(),
-		config: z.object({}).strict().default({}),
 	})
 	.strict()
 	.openapi("ExperimentCreate");
@@ -90,6 +86,31 @@ export const ExperimentErrorResponses = {
 	},
 	409: {
 		description: "Experiment conflict",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	500: {
+		description: "Internal server error",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+};
+export const ExperimentRunAdmissionErrorResponses = {
+	400: {
+		description:
+			"Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	404: {
+		description: "Executable Evaluation Definition Version not found",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	409: {
+		description:
+			"Run-start conflict, including an Idempotency-Key bound to a different immutable request",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
+	429: {
+		description:
+			"Active project or actor capacity is exhausted; no runnable Run is persisted",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
 	500: {

@@ -155,7 +155,7 @@ hermes.evaluate(agent=agent, dataset="qa-100", evaluators=["accuracy","latency",
 ```http
 # 3. REST + Dashboard UI
 POST /v1/experiments
-{ "name": "prompt-v4-baseline", "agent_id": "ag_8f3e2a", "dataset": "qa-100", "evaluators": [...] }
+{ "project_id": "<UUID>", "dataset_id": "<UUID>", "evaluation_id": "<UUID>", "definition_version": 3, "idempotency_key": "ci-123" }
 GET  /v1/experiments/{id}/events       # SSE stream of live progress
 ```
 

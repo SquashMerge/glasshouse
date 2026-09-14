@@ -551,6 +551,7 @@ describe("evaluation route contract", () => {
 										passed: 1,
 										evaluated_failed: 0,
 										cost_usd: null,
+										provider_call_count: 0,
 										duration_ms: null,
 									},
 								]
@@ -570,6 +571,12 @@ describe("evaluation route contract", () => {
 							execution_defaults: {},
 							thresholds: {},
 							limits: {},
+							execution_bounds: {
+								max_active_runs_per_project: 4,
+								max_active_runs_per_actor: 2,
+								max_requested_sample_size: 100,
+								max_provider_calls: 100,
+							},
 							sampling: { strategy: "all", sample_size: 1, seed: 0 },
 							sample_identity: "a".repeat(64),
 							selected_count: 1,

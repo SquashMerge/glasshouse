@@ -140,6 +140,7 @@ export interface EvaluationDefinition {
 	};
 	target: {
 		kind: "configured_llm";
+		provider?: "openai" | "codex_cli";
 		model: string | null;
 		system_prompt: string | null;
 	};
@@ -570,8 +571,15 @@ export interface EvaluationRun {
 		target_fingerprint: string;
 		evaluator: Record<string, unknown>;
 		evaluator_version: string;
+		evaluator_fingerprint: string;
 		execution_defaults: Record<string, unknown>;
 		limits: Record<string, unknown>;
+		execution_bounds: {
+			max_active_runs_per_project: number;
+			max_active_runs_per_actor: number;
+			max_requested_sample_size: number;
+			max_provider_calls: number;
+		};
 		thresholds: Record<string, unknown>;
 		sampling: Record<string, unknown>;
 		sample_identity: string;
@@ -636,6 +644,12 @@ export interface EvaluationRunStatus {
 		execution_defaults: JsonObject;
 		thresholds: JsonObject;
 		limits: JsonObject;
+		execution_bounds: {
+			max_active_runs_per_project: number;
+			max_active_runs_per_actor: number;
+			max_requested_sample_size: number;
+			max_provider_calls: number;
+		};
 		sample: {
 			strategy: string;
 			sample_size: number;
@@ -655,6 +669,8 @@ export interface EvaluationRunStatus {
 		failed: number;
 		pass_rate: number | null;
 		cost_usd: number | null;
+		provider_calls_used: number;
+		max_provider_calls: number;
 		max_cost_usd: number | null;
 		duration_ms: number | null;
 		max_duration_seconds: number | null;
@@ -1289,7 +1305,6 @@ export interface Experiment {
 	dataset_input_binding: "versioned" | "legacy_unversioned";
 	name: string | null;
 	status: "pending" | "running" | "completed" | "failed" | "cancelled";
-	config: JsonObject;
 	created_at: string;
 	updated_at: string;
 }
@@ -1410,11 +1425,28 @@ export async function listExperiments(
 export async function createExperiment(input: {
 	project_id: string;
 	dataset_id: string;
-	name?: string;
-	config: JsonObject;
+	evaluation_id: string;
+	definition_version: number;
+	idempotency_key: string;
 }): Promise<Experiment> {
+	const {
+		project_id,
+		dataset_id,
+		evaluation_id,
+		definition_version,
+		idempotency_key,
+	} = input;
 	return responseJson(
-		await authedFetch("/v1/experiments", jsonRequest(input)),
+		await authedFetch(
+			"/v1/experiments",
+			jsonRequest({
+				project_id,
+				dataset_id,
+				evaluation_id,
+				definition_version,
+				idempotency_key,
+			}),
+		),
 		"createExperiment",
 	);
 }

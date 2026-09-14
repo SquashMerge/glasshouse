@@ -1,6 +1,6 @@
 # Evaluation Run Evidence
 
-Evaluation Runs are inspectable records, not opaque pass percentages. A Run pins the Definition Version, Dataset Version, sampled item identity, target, evaluator, execution defaults, thresholds, and limits before dispatch. The status and evidence APIs expose those pins plus bounded per-item evidence.
+Evaluation Runs are inspectable records, not opaque pass percentages. A Run pins the Definition Version, Dataset Version, sampled item identity, target, evaluator, execution defaults, thresholds, cost limits, and the operator execution envelope before dispatch. The status and evidence APIs expose those pins plus bounded per-item evidence.
 
 ## Evidence and retention
 
@@ -22,7 +22,7 @@ Both Runs must be completed before score, cost, or duration deltas are emitted. 
 
 The shipped deterministic evaluator contracts are `exact_match` and `contains`, version `v1`. JSON paths are pinned in the evaluator definition. Missing expected or actual paths score `0`; they never accidentally count as an exact match. Rationale records the evaluator kind/version, resolved paths, expected and actual values, score, and match result, subject to evidence bounds and redaction.
 
-The configured-LLM target pins provider (`openai` or `codex_cli`), model, prompt, and execution defaults. Provider output is bounded before result persistence. Provider failures are classified by the durable execution path; unknown dispatch outcomes are not silently retried.
+The configured-LLM target pins provider (`openai` or `codex_cli`), model, prompt, and execution defaults. Admission allows only an exact `EVALUATION_ALLOWED_MODELS` accepted provider/model pair (default `openai/gpt-4o-mini`), rejects unapproved definitions before runnable work is persisted, and snapshots the configured active-run, requested Definition sample-size, and provider-call bounds. Active caps are 1-32 per Project and actor; `EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN` is the requested Definition sample-size cap and the provider-call cap is 1-10,000 per Run. Admission checks the Definition Version's requested sample size before it materializes Dataset items, so it can reject an oversized request without scanning the Dataset; the stored `selected_count` may be lower when the Dataset Version has fewer items. Provider-call capacity is durably charged before each provider dispatch, including retries and recovery. The `provider_calls_used` status metric is that pre-dispatch charge, not confirmation that a provider call succeeded. Terminal completion, cancellation, authorization revocation, and recovery terminalization release the Run's project capacity once. Provider output is bounded before result persistence. Provider failures are classified by the durable execution path; unknown dispatch outcomes are not silently retried.
 
 ## Legacy Runs
 

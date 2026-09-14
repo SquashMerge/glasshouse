@@ -18,6 +18,7 @@ import {
 } from "../db/benchmarks.js";
 import {
 	BenchmarkErrorResponses,
+	BenchmarkRunAdmissionErrorResponses,
 	BenchmarkProjectQuery,
 	BenchmarkRanking,
 	BenchmarkRun,
@@ -36,6 +37,17 @@ import { projectAuthorization } from "../db/project-authorization.js";
 import { trustedTenant } from "../tenancy.js";
 
 const tag = "benchmarks";
+export function benchmarkRunProjectId(
+	queryProjectId: string,
+	bodyProjectId: string,
+): string {
+	if (queryProjectId !== bodyProjectId)
+		throw new BenchmarkRepositoryError(
+			"CONFLICT",
+			"Benchmark run body project_id must match the query selector",
+		);
+	return queryProjectId;
+}
 const SuiteList = z
 	.object({
 		items: z.array(BenchmarkSuite),
@@ -144,18 +156,23 @@ export const createBenchmarkRunRoute = createRoute({
 	path: "/v1/benchmarks/{id}/runs",
 	tags: [tag],
 	summary: "Run a prompt/model benchmark",
+	description:
+		"Compatibility start route. The required body project_id must match the query selector. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: BenchmarkSuiteIdParam,
 		query: BenchmarkProjectQuery,
-		body: { content: { "application/json": { schema: BenchmarkRunCreate } } },
+		body: {
+			content: { "application/json": { schema: BenchmarkRunCreate } },
+			required: true,
+		},
 	},
 	responses: {
 		202: {
 			description: "Benchmark started",
 			content: { "application/json": { schema: BenchmarkRun } },
 		},
-		...BenchmarkErrorResponses,
+		...BenchmarkRunAdmissionErrorResponses,
 	},
 });
 
@@ -217,9 +234,12 @@ export const handleCreateBenchmarkRun = async (
 	c: Parameters<RouteHandler<typeof createBenchmarkRunRoute>>[0],
 ) => {
 	try {
-		const project_id = c.req.valid("query").project_id;
 		const suite_id = c.req.valid("param").id;
 		const body = c.req.valid("json");
+		const project_id = benchmarkRunProjectId(
+			c.req.valid("query").project_id,
+			body.project_id,
+		);
 		const suite = await getBenchmarkSuite(pgPool(), {
 			project_id,
 			id: suite_id,
@@ -258,7 +278,6 @@ export const handleCreateBenchmarkRun = async (
 			benchmark: {
 				suite_id,
 				label: body.label,
-				model: body.model ?? null,
 				prompt_version: body.prompt_version ?? null,
 			},
 			authorization,
@@ -282,7 +301,7 @@ export const handleCreateBenchmarkRun = async (
 				suite_id,
 				experiment_id: run.experiment_id,
 				label: body.label,
-				model: body.model ?? run.snapshot.target.model,
+				model: run.snapshot.target.model,
 				prompt_version: body.prompt_version ?? null,
 				created_at: run.created_at,
 			},

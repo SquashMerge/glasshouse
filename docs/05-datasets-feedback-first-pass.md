@@ -27,7 +27,7 @@ A team can:
 
 1. Create a Dataset manually in the UI or via the existing REST API; add/edit JSON cases with optional expected output.
 2. Open a trace or observation, explicitly copy its input/output into an existing dataset case while preserving `source_trace_id` and `source_observation_id`.
-3. Run a configured LLM evaluation against that dataset from the dashboard or existing `POST /v1/experiments` API, follow its current status/results, and inspect evaluation traces.
+3. Start an admitted immutable Evaluation Run against that dataset from the dashboard or existing `POST /v1/experiments` compatibility API, follow its current status/results, and inspect evaluation traces.
 4. Record thumbs-up/down feedback on a trace or observation. Feedback is stored as a standard `human.feedback` score with typed metadata.
 5. Use a **Feedback** page to see positive and negative signals and a **Needs review** queue for negative feedback.
 6. From a reviewed feedback item, explicitly add a redacted/edited case to an existing dataset and mark the feedback item as added to a dataset.
@@ -68,7 +68,7 @@ Add `/evaluations` and `/evaluations/$id` using **the existing Experiment resour
 **Create/run evaluation**
 
 - Select a Dataset from the selected project.
-- Allow name, model, optional system prompt, `exact_match`/`contains`, and temperature `[0,2]`; the form must send the current `ExperimentCreate` shape.
+- Select an executable Evaluation Definition Version and its Dataset, then send the current `ExperimentCreate` admission shape: `project_id`, `dataset_id`, `evaluation_id`, `definition_version`, and `idempotency_key`. Name, Agent, model, prompt, evaluator, and execution overrides are not accepted by this compatibility starter.
 - Before submit, load the dataset items. If an evaluator requires expected output and an item lacks it, block submission with an actionable count/link. Do not silently score missing references as failures.
 - No agent selection: the real Agent registry/runtime is not implemented yet. `agent_id` remains absent/null, and the existing configured LLM runner is the only supported target.
 

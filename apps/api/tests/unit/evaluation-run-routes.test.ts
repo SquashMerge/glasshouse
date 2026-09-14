@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	cancelEvaluationRunRoute,
 	getEvaluationRunRoute,
@@ -8,6 +10,7 @@ import {
 	listEvaluationRunsRoute,
 	compareEvaluationRunsRoute,
 	getEvaluationRunEvidenceRoute,
+	startEvaluationRunRoute,
 } from "../../src/routes/evaluations";
 import {
 	createEvaluationGateApprovalRoute,
@@ -19,16 +22,20 @@ import {
 	revokeEvaluationGateApprovalRoute,
 	startEvaluationGateRoute,
 } from "../../src/routes/evaluation-gates";
+import { createBenchmarkRunRoute } from "../../src/routes/benchmarks";
+import { createExperiment } from "../../src/routes/experiments";
 import {
 	EvaluationGateApprovalCreate,
 	EvaluationGateRunStart,
 } from "../../src/schemas/evaluation-gates";
 import {
+	EvaluationRun,
 	EvaluationRunStatus,
 	EvaluationRunCompare,
 	EvaluationRunCompareRequest,
 	EvaluationRunEvidencePage,
 } from "../../src/schemas/evaluations";
+import { ErrorCode } from "../../src/schemas/common";
 import {
 	cancelEvaluationRun,
 	getEvaluationRunStatus,
@@ -40,6 +47,23 @@ import {
 } from "../../src/routes/agent-introspection";
 
 describe("Evaluation Run lifecycle API", () => {
+	it("documents compatibility starters as admitted immutable Runs with a requested sample-size cap", () => {
+		const root = join(import.meta.dir, "../../../..");
+		const workflow = readFileSync(
+			join(root, "docs/05-unified-dataset-workflow.md"),
+			"utf8",
+		);
+		const evidence = readFileSync(
+			join(root, "docs/evaluation-run-evidence.md"),
+			"utf8",
+		);
+
+		expect(workflow).toContain("admitted compatibility start API");
+		expect(workflow).not.toContain("legacy ad-hoc execution API");
+		expect(workflow).not.toContain("shipped legacy ad-hoc surface");
+		expect(evidence).toContain("requested Definition sample-size cap");
+	});
+
 	const hash = "a".repeat(64);
 	const pinned_inputs = {
 		definition_version_id: "55555555-5555-4555-8555-555555555555",
@@ -54,6 +78,12 @@ describe("Evaluation Run lifecycle API", () => {
 		execution_defaults: {},
 		thresholds: {},
 		limits: {},
+		execution_bounds: {
+			max_active_runs_per_project: 4,
+			max_active_runs_per_actor: 2,
+			max_requested_sample_size: 100,
+			max_provider_calls: 100,
+		},
 		sample: {
 			strategy: "all",
 			sample_size: 2,
@@ -69,6 +99,8 @@ describe("Evaluation Run lifecycle API", () => {
 		failed: 0,
 		pass_rate: null,
 		cost_usd: null,
+		provider_calls_used: 0,
+		max_provider_calls: 100,
 		max_cost_usd: null,
 		duration_ms: null,
 		max_duration_seconds: null,
@@ -80,6 +112,41 @@ describe("Evaluation Run lifecycle API", () => {
 		max_field_bytes: 64_000,
 		redaction: "bounded_json",
 	};
+	it("publishes the persisted Experiment identity on initial and replayed Run admissions", () => {
+		const admission = {
+			id: "11111111-1111-4111-8111-111111111111",
+			organization_id: "22222222-2222-4222-8222-222222222222",
+			project_id: "33333333-3333-4333-8333-333333333333",
+			evaluation_id: "44444444-4444-4444-8444-444444444444",
+			definition_version_id: pinned_inputs.definition_version_id,
+			dataset_version_id: pinned_inputs.dataset_version_id,
+			dataset_id: "55555555-5555-4555-8555-555555555555",
+			experiment_id: "66666666-6666-4666-8666-666666666666",
+			experiment_agent_id: null,
+			experiment_name: "Support quality run v1",
+			benchmark_run_id: null,
+			status: "pending",
+			requested_by_actor_id: "77777777-7777-4777-8777-777777777777",
+			idempotency_key: "published-experiment-identity",
+			request_hash: hash,
+			resolved_inputs_hash: hash,
+			trigger_metadata: {},
+			snapshot: {
+				...pinned_inputs,
+				sampling: { strategy: "first_n", sample_size: 1, seed: 0 },
+				sample_identity: hash,
+				ordered_item_snapshot: [],
+			},
+			created_at: "2026-09-13T00:00:00.000Z",
+			updated_at: "2026-09-13T00:00:00.000Z",
+		};
+
+		for (const replayed of [false, true])
+			expect(EvaluationRun.parse({ ...admission, replayed })).toMatchObject({
+				experiment_agent_id: null,
+				experiment_name: "Support quality run v1",
+			});
+	});
 	const itemEvidence = {
 		input: { prompt: "redacted fixture" },
 		expected_output: null,
@@ -99,6 +166,55 @@ describe("Evaluation Run lifecycle API", () => {
 			max_bytes: 64_000,
 		},
 	};
+	it("documents bounded admission and no-persistence rejections for every run-start route", () => {
+		const app = new OpenAPIHono();
+		for (const route of [
+			startEvaluationRunRoute,
+			startEvaluationGateRoute,
+			createBenchmarkRunRoute,
+			createExperiment,
+		])
+			app.openapi(route, () => new Response());
+		const document = app.getOpenAPIDocument({
+			openapi: "3.0.0",
+			info: { title: "test", version: "1" },
+		});
+		for (const operation of [
+			document.paths?.["/v1/evaluations/{slug}/runs"]?.post,
+			document.paths?.["/v1/evaluation-gates/runs"]?.post,
+			document.paths?.["/v1/benchmarks/{id}/runs"]?.post,
+			document.paths?.["/v1/experiments"]?.post,
+		]) {
+			expect(operation?.requestBody?.required).toBe(true);
+			expect(operation?.description).toContain("provider/model");
+			expect(operation?.responses?.["400"]?.description).toContain(
+				"before a runnable Run is persisted",
+			);
+			expect(operation?.responses?.["409"]?.description).toContain(
+				"Idempotency-Key",
+			);
+			expect(operation?.responses?.["429"]?.description).toContain(
+				"no runnable Run is persisted",
+			);
+		}
+		const experimentSchema = document.components?.schemas?.Experiment as {
+			properties?: Record<string, unknown>;
+		};
+		expect(experimentSchema.properties).not.toHaveProperty("config");
+		const experimentStart = document.paths?.["/v1/experiments"]?.post;
+		expect(experimentStart?.parameters).toBeUndefined();
+		const experimentCreate = document.components?.schemas?.ExperimentCreate as {
+			properties?: Record<string, unknown>;
+		};
+		expect(experimentCreate.properties).not.toHaveProperty("agent_id");
+		expect(experimentCreate.properties).not.toHaveProperty("name");
+		const benchmarkCreate = document.components?.schemas
+			?.BenchmarkRunCreate as {
+			required?: string[];
+		};
+		expect(benchmarkCreate.required).toContain("config");
+		expect(ErrorCode.safeParse("TOO_MANY_REQUESTS").success).toBe(true);
+	});
 	it("documents authorized status, cancellation, retry, and replayable SSE routes", () => {
 		const app = new OpenAPIHono();
 		for (const route of [
@@ -112,6 +228,44 @@ describe("Evaluation Run lifecycle API", () => {
 			openapi: "3.0.0",
 			info: { title: "test", version: "1" },
 		});
+		const statusSchema = document.components?.schemas?.EvaluationRunStatus as {
+			properties?: {
+				pinned_inputs?: {
+					properties?: {
+						execution_bounds?: {
+							properties?: Record<
+								string,
+								{ maximum?: number; description?: string }
+							>;
+						};
+					};
+				};
+				metrics?: {
+					properties?: Record<
+						string,
+						{ maximum?: number; description?: string }
+					>;
+				};
+			};
+		};
+		const bounds =
+			statusSchema.properties?.pinned_inputs?.properties?.execution_bounds
+				?.properties;
+		expect(bounds?.max_active_runs_per_project?.maximum).toBe(32);
+		expect(bounds?.max_active_runs_per_actor?.maximum).toBe(32);
+		expect(bounds?.max_requested_sample_size?.maximum).toBe(10_000);
+		expect(bounds?.max_requested_sample_size?.description).toContain(
+			"requested Definition sample-size cap",
+		);
+		expect(bounds?.max_provider_calls?.maximum).toBe(10_000);
+		expect(
+			statusSchema.properties?.metrics?.properties?.provider_calls_used
+				?.maximum,
+		).toBe(10_000);
+		expect(
+			statusSchema.properties?.metrics?.properties?.provider_calls_used
+				?.description,
+		).toContain("does not confirm provider success");
 
 		expect(document.paths?.["/v1/evaluation-runs/{id}"]?.get).toBeDefined();
 		expect(
@@ -359,6 +513,12 @@ describe("Evaluation Run lifecycle API", () => {
 								sampling: { strategy: "all", sample_size: 1, seed: 0 },
 								thresholds: {},
 								limits: {},
+								execution_bounds: {
+									max_active_runs_per_project: 4,
+									max_active_runs_per_actor: 2,
+									max_requested_sample_size: 100,
+									max_provider_calls: 100,
+								},
 								sample_identity: "a".repeat(64),
 								resolved_inputs_hash: "a".repeat(64),
 								definition_version_id: "55555555-5555-4555-8555-555555555555",
@@ -450,6 +610,12 @@ describe("Evaluation Run lifecycle API", () => {
 			sampling: { strategy: "all", sample_size: 1, seed: 0 },
 			thresholds: {},
 			limits: {},
+			execution_bounds: {
+				max_active_runs_per_project: 4,
+				max_active_runs_per_actor: 2,
+				max_requested_sample_size: 100,
+				max_provider_calls: 100,
+			},
 			sample_identity: "a".repeat(64),
 			resolved_inputs_hash: "a".repeat(64),
 			definition_version_id: "55555555-5555-4555-8555-555555555555",

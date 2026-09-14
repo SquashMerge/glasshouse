@@ -3,7 +3,10 @@ import type { Context } from "hono";
 import type { Pool } from "pg";
 import { streamSSE } from "hono/streaming";
 import { getDataset, listPublishedDatasetItems } from "../db/datasets.js";
-import { admitEvaluationRun } from "../db/evaluation-runs.js";
+import {
+	admitEvaluationRun,
+	EvaluationRunRepositoryError,
+} from "../db/evaluation-runs.js";
 import {
 	cancelExperiment as cancelExperimentRecord,
 	claimExperimentTask,
@@ -13,6 +16,7 @@ import {
 	reconcileUnknownExperimentTaskProviderDispatch,
 	recordExperimentResultTrace,
 	reserveExperimentTaskCost,
+	reserveExperimentTaskProviderCall,
 	admitExperimentExecution,
 	createExperiment as createExperimentRecord,
 	experimentExecutionAdmissionIsActive,
@@ -54,6 +58,7 @@ import {
 	Experiment,
 	ExperimentCreate,
 	ExperimentErrorResponses,
+	ExperimentRunAdmissionErrorResponses,
 	ExperimentIdParam,
 	ExperimentList,
 	ExperimentProjectQuery,
@@ -71,11 +76,13 @@ const errorResponse = (c: Context, cause: unknown): Response => {
 	const error =
 		cause instanceof ExperimentRepositoryError
 			? cause
-			: new ExperimentRepositoryError(
-					"INTERNAL",
-					"Experiment operation failed",
-					cause,
-				);
+			: cause instanceof EvaluationRunRepositoryError
+				? cause
+				: new ExperimentRepositoryError(
+						"INTERNAL",
+						"Experiment operation failed",
+						cause,
+					);
 	if (error.status === 500) logger.error("experiments.request_failed", cause);
 	return c.json(
 		{
@@ -94,16 +101,21 @@ export const createExperiment = createRoute({
 	path: "/v1/experiments",
 	tags: [tag],
 	summary: "Create and run an LLM evaluation",
+	description:
+		"Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.",
 	security: [{ basicAuth: [] }],
 	request: {
-		body: { content: { "application/json": { schema: ExperimentCreate } } },
+		body: {
+			content: { "application/json": { schema: ExperimentCreate } },
+			required: true,
+		},
 	},
 	responses: {
 		201: {
 			description: "Experiment created",
 			content: { "application/json": { schema: Experiment } },
 		},
-		...ExperimentErrorResponses,
+		...ExperimentRunAdmissionErrorResponses,
 	},
 });
 export const listExperiments = createRoute({
@@ -218,6 +230,7 @@ export type ExperimentDependencies = {
 	completeAdmission: typeof completeExecutionAdmission;
 	claimExecution: typeof claimExperimentExecution;
 	reserveCost?: typeof reserveExperimentTaskCost;
+	reserveProviderCall?: typeof reserveExperimentTaskProviderCall;
 	reconcileUnknownProviderDispatch: typeof reconcileUnknownExperimentTaskProviderDispatch;
 	summary: typeof experimentSummaryRecord;
 	listPublishedDatasetItems: typeof listPublishedDatasetItems;
@@ -368,6 +381,7 @@ export const production: ExperimentDependencies = {
 	completeAdmission: completeExecutionAdmission,
 	claimExecution: claimExperimentExecution,
 	reserveCost: reserveExperimentTaskCost,
+	reserveProviderCall: reserveExperimentTaskProviderCall,
 	reconcileUnknownProviderDispatch:
 		reconcileUnknownExperimentTaskProviderDispatch,
 	recordResultTrace: recordExperimentResultTrace,
@@ -381,6 +395,30 @@ export const production: ExperimentDependencies = {
 const activeExperiments = new Map<string, AbortController>();
 const experimentKey = (projectId: string, experimentId: string) =>
 	`${projectId}:${experimentId}`;
+export function experimentFromEvaluationRun(run: {
+	experiment_id: string;
+	project_id: string;
+	experiment_agent_id: string | null;
+	dataset_id: string;
+	dataset_version_id: string;
+	experiment_name: string | null;
+	status: "pending" | "running" | "completed" | "failed" | "cancelled";
+	created_at: string;
+	updated_at: string;
+}) {
+	return {
+		id: run.experiment_id,
+		project_id: run.project_id,
+		agent_id: run.experiment_agent_id,
+		dataset_id: run.dataset_id,
+		resolved_dataset_version_id: run.dataset_version_id,
+		dataset_input_binding: "versioned" as const,
+		name: run.experiment_name,
+		status: run.status,
+		created_at: run.created_at,
+		updated_at: run.updated_at,
+	};
+}
 const abortedExecutionStatus = (signal?: AbortSignal) =>
 	signal?.reason === "duration_limit" || signal?.reason === "execution_timeout"
 		? ("failed" as const)
@@ -560,6 +598,10 @@ export async function executeExperiment(
 				return;
 			}
 			admissionId = admission.id;
+			let providerCallFailure:
+				| "provider_call_limit_exceeded"
+				| "snapshot_missing"
+				| undefined;
 			const dispatchKey = providerDispatchKey(
 				"experiment_task",
 				task.id,
@@ -582,7 +624,7 @@ export async function executeExperiment(
 				  }
 				| {
 						admitted: false;
-						reason: "unavailable" | "existing" | "timeout";
+						reason: "unavailable" | "existing" | "rejected" | "timeout";
 				  };
 			try {
 				provider = await invokeWithExecutionAdmission({
@@ -602,6 +644,21 @@ export async function executeExperiment(
 							effect_key: dispatchKey,
 						}),
 					cancel: () => deps.cancelAdmission(db, admission.id),
+					beforeInvoke: async () => {
+						const providerCall = deps.reserveProviderCall
+							? await deps.reserveProviderCall(db, {
+									project_id: input.project_id,
+									experiment_id: input.experiment_id,
+								})
+							: ({ reserved: false, reason: "not_configured" } as const);
+						if (
+							providerCall.reserved ||
+							providerCall.reason === "not_configured"
+						)
+							return true;
+						providerCallFailure = providerCall.reason;
+						return false;
+					},
 					invoke: (providerSignal) =>
 						deps.invokeLlm(
 							task.input,
@@ -652,6 +709,32 @@ export async function executeExperiment(
 							signal?.reason === "duration_limit"
 								? "duration_limit"
 								: "cancelled_by_request",
+					});
+					return;
+				}
+				if (provider.reason === "rejected" && providerCallFailure) {
+					await deps.finalizeTask(db, {
+						project_id: input.project_id,
+						experiment_id: input.experiment_id,
+						task_id: task.id,
+						lease_token: task.lease_token,
+						status: "failed",
+						retryable: false,
+						output: null,
+						scores: { [evaluator]: 0 },
+						duration_ms: Date.now() - itemStarted,
+						error_classification: providerCallFailure,
+						error_message:
+							providerCallFailure === "snapshot_missing"
+								? "evaluation run snapshot missing"
+								: "evaluation provider-call limit exceeded",
+					});
+					await deps.updateExperiment(db, {
+						project_id: input.project_id,
+						id: input.experiment_id,
+						status: "failed",
+						if_status: ["pending", "running"],
+						terminal_reason: providerCallFailure,
 					});
 					return;
 				}
@@ -920,6 +1003,7 @@ export function evaluationRunConfig(snapshot: {
 	evaluator: Record<string, unknown>;
 	execution_defaults: Record<string, unknown>;
 	limits?: Record<string, unknown>;
+	execution_bounds?: Record<string, unknown>;
 }) {
 	return {
 		model: snapshot.target.model,
@@ -931,6 +1015,7 @@ export function evaluationRunConfig(snapshot: {
 		temperature: snapshot.execution_defaults.temperature,
 		max_tokens: snapshot.execution_defaults.max_tokens,
 		limits: snapshot.limits,
+		execution_bounds: snapshot.execution_bounds,
 	};
 }
 
@@ -1020,17 +1105,6 @@ export function createExperimentHandlers(
 						"CONFLICT",
 						"The compatibility route requires evaluation_id, definition_version, and idempotency_key",
 					);
-				if (
-					Object.keys(body.config).some((key) =>
-						["model", "system_prompt", "evaluator", "temperature"].includes(
-							key,
-						),
-					)
-				)
-					throw new ExperimentRepositoryError(
-						"CONFLICT",
-						"Experiment target configuration must come from the pinned Evaluation Definition Version",
-					);
 				const run = await admitEvaluationRun(db, {
 					project_id: body.project_id,
 					evaluation_selector: body.evaluation_id,
@@ -1086,28 +1160,7 @@ export function createExperimentHandlers(
 							),
 						);
 				}
-				return c.json(
-					{
-						id: run.experiment_id,
-						project_id: run.project_id,
-						agent_id: null,
-						dataset_id: run.dataset_id,
-						resolved_dataset_version_id: run.dataset_version_id,
-						dataset_input_binding: "versioned" as const,
-						name: body.name ?? null,
-						status: run.status,
-						config: {
-							model: run.snapshot.target.model,
-							system_prompt: run.snapshot.target.system_prompt,
-							evaluator: run.snapshot.evaluator.kind,
-							temperature: run.snapshot.execution_defaults.temperature,
-							max_tokens: run.snapshot.execution_defaults.max_tokens,
-						},
-						created_at: run.created_at,
-						updated_at: run.updated_at,
-					},
-					201,
-				);
+				return c.json(experimentFromEvaluationRun(run), 201);
 			} catch (cause) {
 				return errorResponse(c, cause);
 			}

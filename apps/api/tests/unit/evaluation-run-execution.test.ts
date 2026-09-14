@@ -19,6 +19,124 @@ const migration = readFileSync(
 );
 
 describe("durable Evaluation Run execution", () => {
+	it("charges a provider call only after the dispatch effect is admitted", async () => {
+		const events: string[] = [];
+		let claimed = false;
+		const deps = {
+			pool: () => ({}) as never,
+			updateExperiment: async () => ({ status: "running" }) as never,
+			claimTask: async () => {
+				if (claimed) return null;
+				claimed = true;
+				return {
+					id: "task-existing-dispatch",
+					dataset_item_id: "item-existing-dispatch",
+					attempt_count: 1,
+					lease_token: "66666666-6666-4666-8666-666666666666",
+					input: { question: "bounded" },
+					expected_output: { value: "answer" },
+				};
+			},
+			reserveProviderCall: async () => {
+				events.push("charge");
+				return { reserved: true as const, used: 1, limit: 1 };
+			},
+			admitExecution: async () => ({
+				id: "77777777-7777-4777-8777-777777777777",
+				project_id: projectId,
+				requester_actor_id: "88888888-8888-4888-8888-888888888888",
+				authorization_epoch: 1,
+			}),
+			isAdmissionActive: async () => true,
+			claimExecution: async () => {
+				events.push("dispatch");
+				return { status: "existing" as const };
+			},
+			cancelAdmission: async () => {},
+			completeAdmission: async () => {},
+			reconcileUnknownProviderDispatch: async () => true,
+			finalizeTask: async () => true,
+			completeExperiment: async () => true,
+			nextTaskRetryDelay: async () => null,
+			waitForTaskRetry: async () => {},
+			invokeLlm: async () => {
+				throw new Error("must not invoke an existing dispatch");
+			},
+			trace: async () => {},
+		} as unknown as ExperimentDependencies;
+
+		await executeExperiment(deps, {
+			project_id: projectId,
+			experiment_id: "33333333-3333-4333-8333-333333333333",
+			dataset_id: "22222222-2222-4222-8222-222222222222",
+			config: { model: "test-model", evaluator: "exact_match" },
+		});
+
+		expect(events).toEqual(["dispatch"]);
+	});
+
+	it("charges the immutable provider-call budget before provider dispatch", async () => {
+		let invoked = 0;
+		let claimed = false;
+		const finalizations: Record<string, unknown>[] = [];
+		const deps = {
+			pool: () => ({}) as never,
+			updateExperiment: async () => ({ status: "running" }) as never,
+			claimTask: async () => {
+				if (claimed) return null;
+				claimed = true;
+				return {
+					id: "task-provider-call-limit",
+					dataset_item_id: "item-provider-call-limit",
+					lease_token: "66666666-6666-4666-8666-666666666666",
+					input: { question: "bounded" },
+					expected_output: { value: "answer" },
+				};
+			},
+			reserveCost: async () => ({ reserved: true as const, amount: 1 }),
+			reserveProviderCall: async () => ({
+				reserved: false as const,
+				reason: "provider_call_limit_exceeded" as const,
+			}),
+			admitExecution: async () => ({
+				id: "77777777-7777-4777-8777-777777777777",
+				project_id: projectId,
+				requester_actor_id: "88888888-8888-4888-8888-888888888888",
+				authorization_epoch: 1,
+			}),
+			isAdmissionActive: async () => true,
+			claimExecution: async () => ({ status: "created" as const }),
+			cancelAdmission: async () => {},
+			completeAdmission: async () => {},
+			reconcileUnknownProviderDispatch: async () => false,
+			finalizeTask: async (_db: unknown, input: Record<string, unknown>) => {
+				finalizations.push(input);
+				return true;
+			},
+			completeExperiment: async () => true,
+			nextTaskRetryDelay: async () => null,
+			waitForTaskRetry: async () => {},
+			invokeLlm: async () => {
+				invoked += 1;
+				return { output: { value: "answer" }, model: "test-model" };
+			},
+		} as unknown as ExperimentDependencies;
+
+		await executeExperiment(deps, {
+			project_id: projectId,
+			experiment_id: "33333333-3333-4333-8333-333333333333",
+			dataset_id: "22222222-2222-4222-8222-222222222222",
+			config: { model: "test-model", evaluator: "exact_match" },
+		});
+
+		expect(invoked).toBe(0);
+		expect(finalizations[0]).toMatchObject({
+			status: "failed",
+			retryable: false,
+			error_classification: "provider_call_limit_exceeded",
+		});
+	});
+
 	for (const reason of ["cost_limit_exceeded", "snapshot_missing"] as const) {
 		it(`does not dispatch when cost reservation returns ${reason}`, async () => {
 			const events: string[] = [];

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { executeBenchmarkExperiment } from "../../src/routes/benchmarks";
+import {
+	benchmarkRunProjectId,
+	executeBenchmarkExperiment,
+} from "../../src/routes/benchmarks";
 import type { ExperimentDependencies } from "../../src/routes/experiments";
 import {
 	createBenchmarkRun,
@@ -68,6 +71,15 @@ describe("benchmark evaluation execution", () => {
 		expect(() =>
 			BenchmarkRunCreate.parse({
 				project_id: projectId,
+				evaluation_id: "44444444-4444-4444-8444-444444444444",
+				definition_version: 1,
+				idempotency_key: "benchmark-once",
+				label: "baseline",
+			}),
+		).toThrow();
+		expect(() =>
+			BenchmarkRunCreate.parse({
+				project_id: projectId,
 				label: "baseline",
 			}),
 		).toThrow();
@@ -81,6 +93,22 @@ describe("benchmark evaluation execution", () => {
 				config: { model: "mutable-override" },
 			}),
 		).toThrow();
+		expect(() =>
+			BenchmarkRunCreate.parse({
+				project_id: projectId,
+				evaluation_id: "44444444-4444-4444-8444-444444444444",
+				definition_version: 1,
+				idempotency_key: "benchmark-once",
+				label: "baseline",
+				model: "unapproved-model",
+			}),
+		).toThrow();
+	});
+
+	it("rejects a benchmark run body selector that conflicts with its query selector", () => {
+		expect(() => benchmarkRunProjectId(projectId, otherProjectId)).toThrow(
+			"must match the query selector",
+		);
 	});
 
 	it("marks the experiment failed when background execution rejects", async () => {

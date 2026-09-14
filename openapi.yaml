@@ -2786,7 +2786,6 @@ components:
       properties:
         config:
           additionalProperties: false
-          default: {}
           properties: {}
           type: object
         definition_version:
@@ -2803,10 +2802,6 @@ components:
           maxLength: 160
           minLength: 1
           type: string
-        model:
-          maxLength: 200
-          minLength: 1
-          type: string
         project_id:
           format: uuid
           type: string
@@ -2821,6 +2816,7 @@ components:
         - definition_version
         - idempotency_key
         - label
+        - config
       type: object
     BenchmarkSuite:
       additionalProperties: false
@@ -3883,6 +3879,7 @@ components:
             - UNAUTHORIZED
             - FORBIDDEN
             - CONFLICT
+            - TOO_MANY_REQUESTS
             - CONTRACT_VIOLATION
             - PAYLOAD_TOO_LARGE
             - INTERNAL
@@ -5019,9 +5016,18 @@ components:
         evaluation_id:
           format: uuid
           type: string
+        experiment_agent_id:
+          format: uuid
+          type:
+            - string
+            - 'null'
         experiment_id:
           format: uuid
           type: string
+        experiment_name:
+          type:
+            - string
+            - 'null'
         id:
           format: uuid
           type: string
@@ -5049,8 +5055,40 @@ components:
             evaluator:
               additionalProperties: {}
               type: object
+            evaluator_fingerprint:
+              pattern: ^[a-f0-9]{64}$
+              type: string
             evaluator_version:
               type: string
+            execution_bounds:
+              additionalProperties: false
+              properties:
+                max_active_runs_per_actor:
+                  description: Immutable active-Run cap for the requesting actor (1-32)
+                  maximum: 32
+                  minimum: 1
+                  type: integer
+                max_active_runs_per_project:
+                  description: Immutable active-Run cap for the Project (1-32)
+                  maximum: 32
+                  minimum: 1
+                  type: integer
+                max_provider_calls:
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
+                  type: integer
+                max_requested_sample_size:
+                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
+                  maximum: 10000
+                  minimum: 1
+                  type: integer
+              required:
+                - max_active_runs_per_project
+                - max_active_runs_per_actor
+                - max_requested_sample_size
+                - max_provider_calls
+              type: object
             execution_defaults:
               additionalProperties: {}
               type: object
@@ -5088,8 +5126,10 @@ components:
             - target_fingerprint
             - evaluator
             - evaluator_version
+            - evaluator_fingerprint
             - execution_defaults
             - limits
+            - execution_bounds
             - thresholds
             - sampling
             - sample_identity
@@ -5113,6 +5153,8 @@ components:
         - dataset_version_id
         - dataset_id
         - experiment_id
+        - experiment_agent_id
+        - experiment_name
         - benchmark_run_id
         - status
         - requested_by_actor_id
@@ -5205,6 +5247,11 @@ components:
                   type:
                     - integer
                     - 'null'
+                max_provider_calls:
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
+                  type: integer
                 pass_rate:
                   maximum: 1
                   minimum: 0
@@ -5212,6 +5259,11 @@ components:
                     - number
                     - 'null'
                 passed:
+                  minimum: 0
+                  type: integer
+                provider_calls_used:
+                  description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+                  maximum: 10000
                   minimum: 0
                   type: integer
                 score_counts:
@@ -5225,6 +5277,8 @@ components:
                 - failed
                 - pass_rate
                 - cost_usd
+                - provider_calls_used
+                - max_provider_calls
                 - max_cost_usd
                 - duration_ms
                 - max_duration_seconds
@@ -5259,6 +5313,11 @@ components:
                   type:
                     - integer
                     - 'null'
+                max_provider_calls:
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
+                  type: integer
                 pass_rate:
                   maximum: 1
                   minimum: 0
@@ -5266,6 +5325,11 @@ components:
                     - number
                     - 'null'
                 passed:
+                  minimum: 0
+                  type: integer
+                provider_calls_used:
+                  description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+                  maximum: 10000
                   minimum: 0
                   type: integer
                 score_counts:
@@ -5279,6 +5343,8 @@ components:
                 - failed
                 - pass_rate
                 - cost_usd
+                - provider_calls_used
+                - max_provider_calls
                 - max_cost_usd
                 - duration_ms
                 - max_duration_seconds
@@ -5645,6 +5711,11 @@ components:
               type:
                 - integer
                 - 'null'
+            max_provider_calls:
+              description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+              maximum: 10000
+              minimum: 1
+              type: integer
             pass_rate:
               maximum: 1
               minimum: 0
@@ -5652,6 +5723,11 @@ components:
                 - number
                 - 'null'
             passed:
+              minimum: 0
+              type: integer
+            provider_calls_used:
+              description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+              maximum: 10000
               minimum: 0
               type: integer
             score_counts:
@@ -5665,6 +5741,8 @@ components:
             - failed
             - pass_rate
             - cost_usd
+            - provider_calls_used
+            - max_provider_calls
             - max_cost_usd
             - duration_ms
             - max_duration_seconds
@@ -5687,6 +5765,35 @@ components:
               type: string
             evaluator_version:
               type: string
+            execution_bounds:
+              additionalProperties: false
+              properties:
+                max_active_runs_per_actor:
+                  description: Immutable active-Run cap for the requesting actor (1-32)
+                  maximum: 32
+                  minimum: 1
+                  type: integer
+                max_active_runs_per_project:
+                  description: Immutable active-Run cap for the Project (1-32)
+                  maximum: 32
+                  minimum: 1
+                  type: integer
+                max_provider_calls:
+                  description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+                  maximum: 10000
+                  minimum: 1
+                  type: integer
+                max_requested_sample_size:
+                  description: Immutable requested Definition sample-size cap, checked before Dataset items are materialized (1-10,000)
+                  maximum: 10000
+                  minimum: 1
+                  type: integer
+              required:
+                - max_active_runs_per_project
+                - max_active_runs_per_actor
+                - max_requested_sample_size
+                - max_provider_calls
+              type: object
             execution_defaults:
               additionalProperties: {}
               type: object
@@ -5761,6 +5868,7 @@ components:
             - execution_defaults
             - thresholds
             - limits
+            - execution_bounds
             - sample
             - provenance
           type: object
@@ -5867,6 +5975,11 @@ components:
               type:
                 - integer
                 - 'null'
+            max_provider_calls:
+              description: Immutable maximum pre-dispatch provider-call charges (1-10,000)
+              maximum: 10000
+              minimum: 1
+              type: integer
             pass_rate:
               maximum: 1
               minimum: 0
@@ -5874,6 +5987,11 @@ components:
                 - number
                 - 'null'
             passed:
+              minimum: 0
+              type: integer
+            provider_calls_used:
+              description: Provider dispatch attempts charged before dispatch, including retry and recovery attempts; a charge does not confirm provider success
+              maximum: 10000
               minimum: 0
               type: integer
             score_counts:
@@ -5887,6 +6005,8 @@ components:
             - failed
             - pass_rate
             - cost_usd
+            - provider_calls_used
+            - max_provider_calls
             - max_cost_usd
             - duration_ms
             - max_duration_seconds
@@ -5952,9 +6072,6 @@ components:
           type:
             - string
             - 'null'
-        config:
-          additionalProperties: {}
-          type: object
         created_at:
           format: date-time
           type: string
@@ -5995,23 +6112,12 @@ components:
         - dataset_input_binding
         - name
         - status
-        - config
         - created_at
         - updated_at
       type: object
     ExperimentCreate:
       additionalProperties: false
       properties:
-        agent_id:
-          format: uuid
-          type:
-            - string
-            - 'null'
-        config:
-          additionalProperties: false
-          default: {}
-          properties: {}
-          type: object
         dataset_id:
           format: uuid
           type: string
@@ -6025,11 +6131,6 @@ components:
           maxLength: 200
           minLength: 1
           type: string
-        name:
-          maxLength: 120
-          type:
-            - string
-            - 'null'
         project_id:
           format: uuid
           type: string
@@ -8054,6 +8155,7 @@ paths:
       tags:
         - benchmarks
     post:
+      description: Compatibility start route. The required body project_id must match the query selector. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.
       parameters:
         - in: path
           name: id
@@ -8072,6 +8174,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/BenchmarkRunCreate'
+        required: true
       responses:
         '202':
           content:
@@ -8084,19 +8187,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Bad request
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '404':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Benchmark not found
+          description: Executable Evaluation Definition Version or benchmark suite not found
         '409':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Benchmark conflict
+          description: Run-start conflict, including an Idempotency-Key bound to a different immutable request
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Active project or actor capacity is exhausted; no runnable Run is persisted
         '500':
           content:
             application/json:
@@ -10230,7 +10339,7 @@ paths:
       tags:
         - evaluation-gates
     post:
-      description: Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. The result never deploys or mutates production.
+      description: Requires an explicit active approval, Definition Version UUID, Dataset Version UUID, context, and idempotency key. Admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized. The result never deploys or mutates production.
       parameters:
         - in: query
           name: project_id
@@ -10263,7 +10372,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Bad request
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '403':
           content:
             application/json:
@@ -10275,13 +10384,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Evaluation Gate not found
+          description: Active Evaluation Gate approval or executable Definition Version not found
         '409':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Evaluation Gate conflict
+          description: Run-start conflict, including an Idempotency-Key bound to a different immutable request
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Active project or actor capacity is exhausted; no runnable Run is persisted
         '500':
           content:
             application/json:
@@ -11717,7 +11832,7 @@ paths:
         - evaluations
   /v1/evaluations/{slug}/runs:
     post:
-      description: Resolves an immutable Definition Version and Dataset Version snapshot before any work is queued. Retries with the same Idempotency-Key replay the original run.
+      description: Resolves an immutable Definition Version and Dataset Version snapshot before any work is queued. Admission accepts only an exact operator-allowed provider/model pair and snapshots active-run, requested sample-size, and provider-call bounds. Active limits are 1-32 per Project and actor; the requested sample-size and provider-call limits are 1-10,000 per Run. The sample-size limit is checked before Dataset items are materialized. Retries with the same Idempotency-Key replay the original run.
       parameters:
         - description: Canonical Evaluation slug. UUID Evaluation IDs are accepted only by read detail and inspection endpoints.
           in: path
@@ -11760,19 +11875,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Bad request
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '404':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Evaluation not found
+          description: Executable Evaluation Definition Version not found
         '409':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Evaluation conflict
+          description: Run-start conflict, including an Idempotency-Key bound to a different immutable request
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Active project or actor capacity is exhausted; no runnable Run is persisted
         '500':
           content:
             application/json:
@@ -12025,11 +12146,13 @@ paths:
       tags:
         - experiments
     post:
+      description: Compatibility start route. Target configuration must be empty because admission accepts only the pinned Definition Version's exact operator-allowed provider/model pair and immutable bounds (active limits 1-32 per Project and actor; requested sample-size and provider-call limits 1-10,000 per Run). The sample-size limit is checked before Dataset items are materialized.
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ExperimentCreate'
+        required: true
       responses:
         '201':
           content:
@@ -12042,19 +12165,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Bad request
+          description: Unapproved provider/model pair, strict configuration validation, or requested sample-size/provider-call budget rejected before a runnable Run is persisted
         '404':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Experiment not found
+          description: Executable Evaluation Definition Version not found
         '409':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Experiment conflict
+          description: Run-start conflict, including an Idempotency-Key bound to a different immutable request
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Active project or actor capacity is exhausted; no runnable Run is persisted
         '500':
           content:
             application/json:

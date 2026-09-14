@@ -26,7 +26,7 @@ All routes require `project_id` and use project authorization:
 - `POST /v1/evaluation-gates/runs` — invoke a gate;
 - `GET /v1/evaluation-gates/runs` and `/v1/evaluation-gates/runs/{id}` — inspect machine-readable results.
 
-Invocation requires an `Idempotency-Key` header and repeats all pinned identifiers: approval, Definition Version, Dataset Version, and gate context. The admission transaction re-checks those values against the still-active approval while holding the approval and active Project locks. This prevents a revoked approval or a mutable/latest selector from admitting new work. Retries with the same key replay the same durable gate Run; a changed payload conflicts.
+Invocation requires a JSON request body, an `Idempotency-Key` header, and all pinned identifiers: approval, Definition Version, Dataset Version, and gate context. The admission transaction re-checks those values against the still-active approval while holding the approval and active Project locks. This prevents a revoked approval or a mutable/latest selector from admitting new work. Retries with the same key replay the same durable gate Run; a changed payload conflicts.
 
 ## Gate outcomes
 

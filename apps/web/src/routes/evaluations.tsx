@@ -1173,6 +1173,15 @@ export function EvaluationRunLifecycle({
 							? "n/a"
 							: `$${status.data.metrics.max_cost_usd.toFixed(2)}`}
 					</div>
+					<div>
+						{status.data.metrics.provider_calls_used} /{" "}
+						{status.data.metrics.max_provider_calls} provider calls ·{" "}
+						{
+							status.data.pinned_inputs.execution_bounds
+								.max_requested_sample_size
+						}{" "}
+						requested sample-size cap
+					</div>
 				</div>
 			</div>
 			<p className="text-xs text-muted-foreground">

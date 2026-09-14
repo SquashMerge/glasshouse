@@ -7,6 +7,11 @@ import {
 } from "./project-authorization.js";
 import { approvedRedaction } from "./governance.js";
 import { policyRedactionOptions, type RedactionOptions } from "./redact.js";
+import {
+	EvaluationExecutionPolicyError,
+	resolveEvaluationExecutionPolicy,
+	type EvaluationExecutionBounds,
+} from "../lib/evaluation-execution-policy.js";
 
 export type EvaluationRunAdmissionInput = {
 	project_id: string;
@@ -18,7 +23,6 @@ export type EvaluationRunAdmissionInput = {
 	benchmark?: {
 		suite_id: string;
 		label: string;
-		model?: string | null;
 		prompt_version?: string | null;
 	};
 	gate?: {
@@ -42,6 +46,7 @@ type ResolvedSnapshot = {
 	evaluator_fingerprint: string;
 	execution_defaults: Record<string, unknown>;
 	limits: Record<string, unknown>;
+	execution_bounds: EvaluationExecutionBounds;
 	thresholds: Record<string, unknown>;
 	sampling: Record<string, unknown>;
 	sample_identity: string;
@@ -58,6 +63,8 @@ export type EvaluationRun = {
 	dataset_version_id: string;
 	dataset_id: string;
 	experiment_id: string;
+	experiment_agent_id: string | null;
+	experiment_name: string | null;
 	benchmark_run_id: string | null;
 	status: "pending" | "running" | "completed" | "failed" | "cancelled";
 	requested_by_actor_id: string;
@@ -100,6 +107,7 @@ export type EvaluationRunLifecycleStatus = {
 		execution_defaults: Record<string, unknown>;
 		thresholds: Record<string, unknown>;
 		limits: Record<string, unknown>;
+		execution_bounds: EvaluationExecutionBounds;
 		sample: {
 			strategy: string;
 			sample_size: number;
@@ -119,6 +127,8 @@ export type EvaluationRunLifecycleStatus = {
 		failed: number;
 		pass_rate: number | null;
 		cost_usd: number | null;
+		provider_calls_used: number;
+		max_provider_calls: number;
 		max_cost_usd: number | null;
 		duration_ms: number | null;
 		max_duration_seconds: number | null;
@@ -178,9 +188,14 @@ export type EvaluationRunLifecycleEvent = {
 };
 
 export class EvaluationRunRepositoryError extends Error {
-	readonly status: 400 | 404 | 409 | 500;
+	readonly status: 400 | 404 | 409 | 429 | 500;
 	constructor(
-		readonly code: "BAD_REQUEST" | "NOT_FOUND" | "CONFLICT" | "INTERNAL",
+		readonly code:
+			| "BAD_REQUEST"
+			| "NOT_FOUND"
+			| "CONFLICT"
+			| "TOO_MANY_REQUESTS"
+			| "INTERNAL",
 		message: string,
 		cause?: unknown,
 	) {
@@ -193,12 +208,20 @@ export class EvaluationRunRepositoryError extends Error {
 					? 404
 					: code === "CONFLICT"
 						? 409
-						: 500;
+						: code === "TOO_MANY_REQUESTS"
+							? 429
+							: 500;
 	}
 }
 
 function normalize(cause: unknown): EvaluationRunRepositoryError {
 	if (cause instanceof EvaluationRunRepositoryError) return cause;
+	if (cause instanceof EvaluationExecutionPolicyError)
+		return new EvaluationRunRepositoryError(
+			"BAD_REQUEST",
+			cause.message,
+			cause,
+		);
 	if (
 		typeof cause === "object" &&
 		cause !== null &&
@@ -453,6 +476,10 @@ function lifecycleStatus(
 	};
 	const sampling = object(snapshotRow.sampling, "sampling");
 	const limits = object(snapshotRow.limits, "limits");
+	const executionBounds = object(
+		snapshotRow.execution_bounds,
+		"execution_bounds",
+	) as EvaluationExecutionBounds;
 	const metrics = {
 		evaluated: Number(row.evaluated ?? 0),
 		passed: Number(row.passed ?? 0),
@@ -462,6 +489,8 @@ function lifecycleStatus(
 				? Number(row.passed ?? 0) / Number(row.evaluated)
 				: null,
 		cost_usd: row.cost_usd == null ? null : Number(row.cost_usd),
+		provider_calls_used: Number(row.provider_call_count ?? 0),
+		max_provider_calls: Number(executionBounds.max_provider_calls),
 		max_cost_usd:
 			limits.max_cost_usd == null ? null : Number(limits.max_cost_usd),
 		duration_ms: row.duration_ms == null ? null : Number(row.duration_ms),
@@ -509,6 +538,7 @@ function lifecycleStatus(
 			),
 			thresholds: object(snapshotRow.thresholds, "thresholds"),
 			limits,
+			execution_bounds: executionBounds,
 			sample: {
 				strategy: text(sampling, "strategy"),
 				sample_size: Number(sampling.sample_size),
@@ -578,7 +608,7 @@ function lifecycleStatus(
 }
 
 const lifecycleStatusQuery = `SELECT run.id, run.project_id, run.status,
-    run.created_at, run.updated_at, run.terminal_reason,
+    run.created_at, run.updated_at, run.terminal_reason, run.provider_call_count,
     run.definition_version_id, run.dataset_version_id, run.resolved_inputs_hash,
     count(task.id)::int AS total,
     count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,
@@ -788,21 +818,13 @@ async function validateGateApproval(
 function snapshotFor(
 	definition: ReturnType<typeof definitionFields>,
 	items: Row[],
+	policy: ReturnType<typeof resolveEvaluationExecutionPolicy>,
 ): ResolvedSnapshot {
-	const model =
-		typeof definition.target.model === "string" && definition.target.model
-			? definition.target.model
-			: (process.env.OPENAI_MODEL ?? "gpt-4o-mini");
-	const configuredProvider =
-		typeof definition.target.provider === "string"
-			? definition.target.provider
-			: (process.env.ASTRAEA_EVAL_LLM_PROVIDER ?? "openai");
-	if (configuredProvider !== "openai" && configuredProvider !== "codex_cli")
-		throw new EvaluationRunRepositoryError(
-			"BAD_REQUEST",
-			"Unsupported configured LLM provider",
-		);
-	const target = { ...definition.target, model, provider: configuredProvider };
+	const target = {
+		...definition.target,
+		model: policy.model,
+		provider: policy.provider,
+	};
 	const evaluator = { ...definition.evaluator };
 	const executionDefaults = { ...definition.execution_defaults };
 	const limits = { ...definition.limits };
@@ -825,6 +847,7 @@ function snapshotFor(
 		evaluator_fingerprint: hash(evaluator),
 		execution_defaults: executionDefaults,
 		limits,
+		execution_bounds: policy.bounds,
 		thresholds,
 		sampling,
 		sample_identity: sampleIdentity,
@@ -851,6 +874,8 @@ function runFromRow(
 		dataset_version_id: text(row, "dataset_version_id"),
 		dataset_id: text(row, "dataset_id"),
 		experiment_id: text(row, "experiment_id"),
+		experiment_agent_id: nullableText(row, "experiment_agent_id"),
+		experiment_name: nullableText(row, "experiment_name"),
 		benchmark_run_id: nullableText(row, "benchmark_run_id"),
 		status: text(row, "status") as EvaluationRun["status"],
 		requested_by_actor_id: text(row, "requested_by_actor_id"),
@@ -892,6 +917,62 @@ function itemSnapshot(item: Row) {
 	};
 }
 
+async function assertEvaluationRunCapacity(
+	client: PoolClient,
+	input: {
+		project_id: string;
+		actor_id: string;
+		bounds: EvaluationExecutionBounds;
+	},
+) {
+	const capacity = await client.query(
+		`SELECT count(*) FILTER (WHERE status='active')::int AS project_active,
+            count(*) FILTER (WHERE status='active' AND actor_id=$2::uuid)::int AS actor_active
+         FROM evaluation_run_capacity_admissions
+         WHERE project_id=$1`,
+		[input.project_id, input.actor_id],
+	);
+	const row = capacity.rows[0] as Row | undefined;
+	if (
+		Number(row?.project_active ?? 0) >= input.bounds.max_active_runs_per_project
+	)
+		throw new EvaluationRunRepositoryError(
+			"TOO_MANY_REQUESTS",
+			"Project Evaluation Run concurrency limit is reached",
+		);
+	if (Number(row?.actor_active ?? 0) >= input.bounds.max_active_runs_per_actor)
+		throw new EvaluationRunRepositoryError(
+			"TOO_MANY_REQUESTS",
+			"Actor Evaluation Run concurrency limit is reached",
+		);
+}
+
+async function activateEvaluationRunCapacity(
+	client: PoolClient,
+	input: {
+		run_id: string;
+		organization_id: string;
+		project_id: string;
+		actor_id: string;
+	},
+) {
+	const result = await client.query(
+		`INSERT INTO evaluation_run_capacity_admissions
+            (run_id, organization_id, project_id, actor_id, status)
+         VALUES ($1,$2,$3,$4,'active')
+         ON CONFLICT (run_id) DO UPDATE
+         SET status='active', acquired_at=now(), released_at=NULL, release_reason=NULL
+         WHERE evaluation_run_capacity_admissions.status='released'
+         RETURNING run_id`,
+		[input.run_id, input.organization_id, input.project_id, input.actor_id],
+	);
+	if (!result.rows[0])
+		throw new EvaluationRunRepositoryError(
+			"CONFLICT",
+			"Evaluation Run already holds execution capacity",
+		);
+}
+
 export async function admitEvaluationRun(
 	db: Transactional,
 	input: EvaluationRunAdmissionInput,
@@ -918,7 +999,7 @@ export async function admitEvaluationRun(
 
 			const expectedRequestHash = requestHash(input, metadata);
 			const existing = await client.query(
-				"SELECT run.*, experiment.id AS experiment_id, benchmark.id AS benchmark_run_id, version.dataset_id FROM evaluation_runs run LEFT JOIN experiments experiment ON experiment.evaluation_run_id = run.id AND experiment.project_id = run.project_id LEFT JOIN benchmark_runs benchmark ON benchmark.evaluation_run_id = run.id AND benchmark.project_id = run.project_id JOIN dataset_versions version ON version.id = run.dataset_version_id AND version.project_id = run.project_id WHERE run.project_id=$1 AND run.idempotency_key=$2",
+				"SELECT run.*, experiment.id AS experiment_id, experiment.agent_id AS experiment_agent_id, experiment.name AS experiment_name, benchmark.id AS benchmark_run_id, version.dataset_id FROM evaluation_runs run LEFT JOIN experiments experiment ON experiment.evaluation_run_id = run.id AND experiment.project_id = run.project_id LEFT JOIN benchmark_runs benchmark ON benchmark.evaluation_run_id = run.id AND benchmark.project_id = run.project_id JOIN dataset_versions version ON version.id = run.dataset_version_id AND version.project_id = run.project_id WHERE run.project_id=$1 AND run.idempotency_key=$2",
 				[input.project_id, input.idempotency_key],
 			);
 			if (existing.rows[0]) {
@@ -957,6 +1038,10 @@ export async function admitEvaluationRun(
 						"execution_defaults",
 					),
 					limits: object(snapshotRow.limits ?? {}, "limits"),
+					execution_bounds: object(
+						snapshotRow.execution_bounds ?? {},
+						"execution_bounds",
+					) as EvaluationExecutionBounds,
 					thresholds: object(snapshotRow.thresholds, "thresholds"),
 					sampling: object(snapshotRow.sampling, "sampling"),
 					sample_identity: text(snapshotRow, "sample_identity"),
@@ -1011,9 +1096,14 @@ export async function admitEvaluationRun(
 					"Executable Evaluation Definition Version is not available",
 				);
 			const definition = definitionFields(definitionRow);
+			const requestedSampleSize = Number(definition.sampling.sample_size);
+			const policy = resolveEvaluationExecutionPolicy(
+				definition.target,
+				requestedSampleSize,
+			);
 			const itemResult = await client.query(
-				"SELECT item.* FROM dataset_version_items item WHERE item.project_id=$1 AND item.dataset_version_id=$2 ORDER BY item.position ASC, item.item_key ASC, item.id ASC",
-				[input.project_id, definition.dataset_version_id],
+				"SELECT item.* FROM dataset_version_items item WHERE item.project_id=$1 AND item.dataset_version_id=$2 ORDER BY item.position ASC, item.item_key ASC, item.id ASC LIMIT $3",
+				[input.project_id, definition.dataset_version_id, requestedSampleSize],
 			);
 			const allItems = itemResult.rows as Row[];
 			if (allItems.length === 0)
@@ -1021,14 +1111,18 @@ export async function admitEvaluationRun(
 					"BAD_REQUEST",
 					"The selected Dataset Version contains no items",
 				);
-			const requestedSampleSize = Number(definition.sampling.sample_size);
-			const selectedItems = allItems.slice(0, requestedSampleSize);
+			const selectedItems = allItems;
 			if (selectedItems.some((item) => item.expected_output == null))
 				throw new EvaluationRunRepositoryError(
 					"BAD_REQUEST",
 					"Every selected Dataset Version item needs expected output",
 				);
-			const snapshot = snapshotFor(definition, selectedItems);
+			const snapshot = snapshotFor(definition, selectedItems, policy);
+			await assertEvaluationRunCapacity(client, {
+				project_id: input.project_id,
+				actor_id: input.authorization.actor_id,
+				bounds: snapshot.execution_bounds,
+			});
 			const runId = randomUUID();
 			const experimentId = randomUUID();
 			const insertedRun = await client.query(
@@ -1056,6 +1150,8 @@ export async function admitEvaluationRun(
 				dataset_version_id: definition.dataset_version_id,
 				dataset_id: text(definitionRow, "dataset_id"),
 				experiment_id: experimentId,
+				experiment_agent_id: null,
+				experiment_name: `${text(definitionRow, "evaluation_name")} run v${input.definition_version}`,
 				status: "pending",
 				requested_by_actor_id: input.authorization.actor_id,
 				idempotency_key: input.idempotency_key,
@@ -1069,8 +1165,14 @@ export async function admitEvaluationRun(
 				"SELECT set_config('astraea.evaluation_run_admission_run_id', $1, true)",
 				[runId],
 			);
+			await activateEvaluationRunCapacity(client, {
+				run_id: runId,
+				organization_id: input.authorization.organization_id,
+				project_id: input.project_id,
+				actor_id: input.authorization.actor_id,
+			});
 			await client.query(
-				"INSERT INTO evaluation_run_inputs (run_id, organization_id, project_id, target, target_version, target_fingerprint, evaluator, evaluator_version, evaluator_fingerprint, execution_defaults, thresholds, sampling, sample_identity, ordered_item_snapshot, resolved_inputs_hash, limits) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14::jsonb,$15,$16::jsonb)",
+				"INSERT INTO evaluation_run_inputs (run_id, organization_id, project_id, target, target_version, target_fingerprint, evaluator, evaluator_version, evaluator_fingerprint, execution_defaults, thresholds, sampling, sample_identity, ordered_item_snapshot, resolved_inputs_hash, limits, execution_bounds) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14::jsonb,$15,$16::jsonb,$17::jsonb)",
 				[
 					runId,
 					input.authorization.organization_id,
@@ -1088,6 +1190,7 @@ export async function admitEvaluationRun(
 					JSON.stringify(snapshot.ordered_item_snapshot),
 					snapshot.resolved_inputs_hash,
 					JSON.stringify(snapshot.limits),
+					JSON.stringify(snapshot.execution_bounds),
 				],
 			);
 			for (const item of selectedItems) {
@@ -1125,6 +1228,7 @@ export async function admitEvaluationRun(
 					runId,
 				],
 			);
+			const experimentRow = experiment.rows[0] as Row | undefined;
 			const benchmarkRunId = input.benchmark ? randomUUID() : null;
 			if (input.benchmark) {
 				await client.query(
@@ -1136,7 +1240,7 @@ export async function admitEvaluationRun(
 						experimentId,
 						runId,
 						input.benchmark.label,
-						input.benchmark.model ?? snapshot.target.model,
+						snapshot.target.model,
 						input.benchmark.prompt_version ?? null,
 					],
 				);
@@ -1197,9 +1301,16 @@ export async function admitEvaluationRun(
 			const finalRunRow = {
 				...runRow,
 				dataset_id: text(definitionRow, "dataset_id"),
-				experiment_id:
-					(experiment.rows[0] as Row | undefined)?.id ?? experimentId,
+				experiment_id: experimentRow?.id ?? experimentId,
 				benchmark_run_id: benchmarkRunId,
+				experiment_agent_id: nullableText(
+					experimentRow ?? runRow,
+					experimentRow ? "agent_id" : "experiment_agent_id",
+				),
+				experiment_name: nullableText(
+					experimentRow ?? runRow,
+					experimentRow ? "name" : "experiment_name",
+				),
 			};
 			return runFromRow(finalRunRow, input, snapshot, false);
 		});
@@ -1310,7 +1421,7 @@ const runSummaryQuery = `SELECT run.id, run.project_id, run.evaluation_id,
     max(dataset_version.content_hash) AS dataset_content_hash,
     inputs.target_fingerprint, inputs.evaluator_fingerprint, inputs.sample_identity,
     inputs.evaluator_version, inputs.evaluator, inputs.execution_defaults,
-    inputs.limits,
+    inputs.limits, inputs.execution_bounds, run.provider_call_count,
     count(task.id)::int AS total,
     count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,
     count(task.id) FILTER (WHERE task.status = 'running')::int AS running,
@@ -1350,7 +1461,7 @@ const runSummaryQuery = `SELECT run.id, run.project_id, run.evaluation_id,
    AND ($3::uuid IS NULL OR run.evaluation_id=$3)
  GROUP BY run.id, inputs.target_fingerprint, inputs.evaluator_fingerprint,
     inputs.sample_identity, inputs.evaluator_version, inputs.evaluator,
-    inputs.execution_defaults, inputs.limits
+    inputs.execution_defaults, inputs.limits, inputs.execution_bounds, run.provider_call_count
 ORDER BY run.created_at DESC, run.id DESC
 LIMIT $4 OFFSET $5`;
 
@@ -1361,7 +1472,7 @@ const runComparisonQuery = `SELECT run.id, run.project_id, run.evaluation_id,
     max(dataset_version.content_hash) AS dataset_content_hash,
     inputs.target_fingerprint, inputs.evaluator_fingerprint, inputs.sample_identity,
     inputs.evaluator_version, inputs.evaluator, inputs.execution_defaults,
-    inputs.limits,
+    inputs.limits, inputs.execution_bounds, run.provider_call_count,
     count(task.id)::int AS total,
     count(task.id) FILTER (WHERE task.status = 'pending')::int AS pending,
     count(task.id) FILTER (WHERE task.status = 'running')::int AS running,
@@ -1400,19 +1511,25 @@ const runComparisonQuery = `SELECT run.id, run.project_id, run.evaluation_id,
    AND run.id = ANY($2::uuid[])
  GROUP BY run.id, inputs.target_fingerprint, inputs.evaluator_fingerprint,
     inputs.sample_identity, inputs.evaluator_version, inputs.evaluator,
-    inputs.execution_defaults, inputs.limits
+    inputs.execution_defaults, inputs.limits, inputs.execution_bounds, run.provider_call_count
  ORDER BY run.created_at DESC, run.id DESC`;
 
 function metricsFromRow(row: Row) {
 	const evaluated = Number(row.evaluated ?? 0);
 	const passed = Number(row.passed ?? 0);
 	const limits = object(row.limits ?? {}, "limits");
+	const executionBounds = object(
+		row.execution_bounds ?? {},
+		"execution_bounds",
+	) as EvaluationExecutionBounds;
 	return {
 		evaluated,
 		passed,
 		failed: Number(row.evaluated_failed ?? 0),
 		pass_rate: evaluated > 0 ? passed / evaluated : null,
 		cost_usd: row.cost_usd == null ? null : Number(row.cost_usd),
+		provider_calls_used: Number(row.provider_call_count ?? 0),
+		max_provider_calls: Number(executionBounds.max_provider_calls),
 		max_cost_usd:
 			limits.max_cost_usd == null ? null : Number(limits.max_cost_usd),
 		duration_ms: row.duration_ms == null ? null : Number(row.duration_ms),
@@ -1708,7 +1825,7 @@ export async function getEvaluationRunExecution(
 					"Evaluation Run is not available",
 				);
 			const result = await client.query(
-				"SELECT run.id, run.project_id, version.dataset_id, experiment.id AS experiment_id, inputs.target, inputs.evaluator, inputs.execution_defaults, inputs.limits FROM evaluation_runs run JOIN evaluation_run_inputs inputs ON inputs.run_id=run.id AND inputs.project_id=run.project_id JOIN dataset_versions version ON version.id=run.dataset_version_id AND version.project_id=run.project_id JOIN experiments experiment ON experiment.evaluation_run_id=run.id AND experiment.project_id=run.project_id WHERE run.id=$1 AND run.project_id=$2",
+				"SELECT run.id, run.project_id, version.dataset_id, experiment.id AS experiment_id, inputs.target, inputs.evaluator, inputs.execution_defaults, inputs.limits, inputs.execution_bounds FROM evaluation_runs run JOIN evaluation_run_inputs inputs ON inputs.run_id=run.id AND inputs.project_id=run.project_id JOIN dataset_versions version ON version.id=run.dataset_version_id AND version.project_id=run.project_id JOIN experiments experiment ON experiment.evaluation_run_id=run.id AND experiment.project_id=run.project_id WHERE run.id=$1 AND run.project_id=$2",
 				[input.id, input.project_id],
 			);
 			const row = result.rows[0] as Row | undefined;
@@ -1725,10 +1842,15 @@ export async function getEvaluationRunExecution(
 				dataset_id: text(row, "dataset_id"),
 				config: {
 					model: target.model,
+					provider: target.provider,
 					system_prompt: target.system_prompt,
 					evaluator: object(row.evaluator, "evaluator").kind,
 					...object(row.execution_defaults, "execution_defaults"),
 					limits: object(row.limits ?? {}, "limits"),
+					execution_bounds: object(
+						row.execution_bounds ?? {},
+						"execution_bounds",
+					),
 				},
 			};
 		});
@@ -1848,6 +1970,31 @@ export async function retryEvaluationRun(
 					"CONFLICT",
 					"Evaluation Run has no retryable failed items",
 				);
+			const boundsResult = await client.query(
+				"SELECT execution_bounds FROM evaluation_run_inputs WHERE run_id=$1 AND project_id=$2 FOR UPDATE",
+				[input.id, input.project_id],
+			);
+			const boundsRow = boundsResult.rows[0] as Row | undefined;
+			if (!boundsRow)
+				throw new EvaluationRunRepositoryError(
+					"INTERNAL",
+					"Evaluation Run execution bounds are unavailable",
+				);
+			const bounds = object(
+				boundsRow.execution_bounds,
+				"execution_bounds",
+			) as EvaluationExecutionBounds;
+			await assertEvaluationRunCapacity(client, {
+				project_id: input.project_id,
+				actor_id: text(run.rows[0] as Row, "requested_by_actor_id"),
+				bounds,
+			});
+			await activateEvaluationRunCapacity(client, {
+				run_id: input.id,
+				organization_id: input.authorization.organization_id,
+				project_id: input.project_id,
+				actor_id: text(run.rows[0] as Row, "requested_by_actor_id"),
+			});
 			await client.query(
 				"UPDATE evaluation_runs SET status='running', terminal_reason=NULL, updated_at=now() WHERE id=$1 AND project_id=$2",
 				[input.id, input.project_id],

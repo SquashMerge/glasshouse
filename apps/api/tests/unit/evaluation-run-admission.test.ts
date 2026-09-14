@@ -35,7 +35,11 @@ const definitionRow = {
 		expected_output_path: "$.expected_output",
 		output_path: "$.output",
 	},
-	target: { kind: "configured_llm", model: "model-v1", system_prompt: null },
+	target: {
+		kind: "configured_llm",
+		model: "gpt-4o-mini",
+		system_prompt: null,
+	},
 	execution_defaults: { temperature: 0, max_tokens: null },
 	limits: { max_cost_usd: 10, max_duration_seconds: 3600 },
 	thresholds: { minimum_pass_rate: null },
@@ -100,6 +104,7 @@ function transactionPool(options: {
 	admittedItems?: Record<string, unknown>[];
 	definition?: Record<string, unknown>;
 	items?: Record<string, unknown>[];
+	activeCapacity?: { project: number; actor: number };
 }) {
 	const calls: Array<{ text: string; values: unknown[] }> = [];
 	const client = {
@@ -115,6 +120,15 @@ function transactionPool(options: {
 				return { rows: options.definition ? [options.definition] : [] };
 			if (text.startsWith("SELECT item.* FROM dataset_version_items"))
 				return { rows: options.items ?? selectedItems };
+			if (text.includes("FROM evaluation_run_capacity_admissions"))
+				return {
+					rows: [
+						{
+							project_active: options.activeCapacity?.project ?? 0,
+							actor_active: options.activeCapacity?.actor ?? 0,
+						},
+					],
+				};
 			if (text.startsWith("SELECT input.* FROM evaluation_run_inputs"))
 				return { rows: options.snapshot ? [options.snapshot] : [] };
 			if (text.startsWith("SELECT item.* FROM evaluation_run_items"))
@@ -140,13 +154,17 @@ function transactionPool(options: {
 						},
 					],
 				};
+			if (text.startsWith("INSERT INTO evaluation_run_capacity_admissions"))
+				return { rows: [{ run_id: runId }] };
 			if (text.startsWith("INSERT INTO experiments"))
 				return {
 					rows: [
 						{
 							id: experimentId,
 							project_id: projectId,
+							agent_id: null,
 							dataset_id: datasetId,
+							name: "Support quality run v3",
 							status: "pending",
 						},
 					],
@@ -171,6 +189,8 @@ describe("Evaluation Run admission", () => {
 			definition_version_id: definitionVersionId,
 			dataset_version_id: datasetVersionId,
 			experiment_id: experimentId,
+			experiment_agent_id: null,
+			experiment_name: "Support quality run v3",
 			snapshot: {
 				sampling: definitionRow.sampling,
 				sample_identity: expect.any(String),
@@ -287,12 +307,112 @@ describe("Evaluation Run admission", () => {
 		).toBe(false);
 	});
 
+	it("rejects a replay when an accepted benchmark label changes", async () => {
+		const benchmark = {
+			suite_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			label: "baseline",
+			prompt_version: "v1",
+		};
+		const first = await admitEvaluationRun(
+			transactionPool({ definition: definitionRow }) as never,
+			admissionInput({ benchmark }),
+		);
+		const db = transactionPool({
+			existing: {
+				id: runId,
+				project_id: projectId,
+				request_hash: first.request_hash,
+			},
+		});
+
+		await expect(
+			admitEvaluationRun(
+				db as never,
+				admissionInput({ benchmark: { ...benchmark, label: "candidate" } }),
+			),
+		).rejects.toMatchObject({ code: "CONFLICT" });
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+	});
+
 	it("fails closed when the definition or its Dataset Version is unavailable", async () => {
 		const db = transactionPool({ definition: undefined });
 
 		await expect(
 			admitEvaluationRun(db as never, admissionInput()),
 		).rejects.toBeInstanceOf(EvaluationRunRepositoryError);
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+		expect(
+			db.calls.some((call) => call.text.startsWith("INSERT INTO experiments")),
+		).toBe(false);
+	});
+
+	it("rejects an unapproved immutable target before persisting a runnable run", async () => {
+		const previous = process.env.EVALUATION_ALLOWED_MODELS;
+		process.env.EVALUATION_ALLOWED_MODELS = "openai/gpt-4o-mini";
+		const db = transactionPool({
+			definition: {
+				...definitionRow,
+				target: {
+					...definitionRow.target,
+					model: "gpt-expensive",
+				},
+			},
+		});
+		try {
+			await expect(
+				admitEvaluationRun(db as never, admissionInput()),
+			).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		} finally {
+			if (previous === undefined) delete process.env.EVALUATION_ALLOWED_MODELS;
+			else process.env.EVALUATION_ALLOWED_MODELS = previous;
+		}
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+		expect(
+			db.calls.some((call) => call.text.startsWith("INSERT INTO experiments")),
+		).toBe(false);
+	});
+
+	it("rejects an oversized Dataset Version before materializing its items", async () => {
+		const previous = process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN;
+		process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN = "1";
+		const db = transactionPool({ definition: definitionRow });
+		try {
+			await expect(
+				admitEvaluationRun(db as never, admissionInput()),
+			).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		} finally {
+			if (previous === undefined)
+				delete process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN;
+			else process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN = previous;
+		}
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("SELECT item.* FROM dataset_version_items"),
+			),
+		).toBe(false);
+	});
+
+	it("rejects a concurrent project admission before it persists runnable work", async () => {
+		const db = transactionPool({
+			definition: definitionRow,
+			activeCapacity: { project: 4, actor: 0 },
+		});
+
+		await expect(
+			admitEvaluationRun(db as never, admissionInput()),
+		).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS" });
 		expect(
 			db.calls.some((call) =>
 				call.text.startsWith("INSERT INTO evaluation_runs"),
