@@ -33,8 +33,8 @@ const developmentSecurityHeaders = {
  * `text/event-stream` responses are NOT buffered — chunks flush as the
  * upstream writes them. Without this, the default Node socket buffering
  * makes the browser only see SSE events when the upstream closes the
- * response (or after a sizable buffer fills), defeating live updates on
- * the list pages and silently falling back to the 10s polling.
+ * response (or after a sizable buffer fills), delaying live updates on
+ * the list pages until the stream is flushed.
  *
  * Also writes `cache-control: no-cache` and the nginx-convention
  * `x-accel-buffering: no` so the same proxy config works behind a

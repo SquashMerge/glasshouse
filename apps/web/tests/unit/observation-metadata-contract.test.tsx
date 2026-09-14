@@ -122,7 +122,9 @@ describe("observation metadata API-to-dashboard contract", () => {
 			),
 		);
 
-		const response = await listObservations();
+		const response = await listObservations({
+			project_id: "11111111-1111-4111-111111111111",
+		});
 		expect(response.items[0]?.metadata).toEqual(METADATA);
 
 		render(<TraceDetailPage />);

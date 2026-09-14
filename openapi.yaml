@@ -3882,6 +3882,8 @@ components:
             - TOO_MANY_REQUESTS
             - CONTRACT_VIOLATION
             - PAYLOAD_TOO_LARGE
+            - SERVICE_UNAVAILABLE
+            - GATEWAY_TIMEOUT
             - INTERNAL
           type: string
         details:
@@ -6549,11 +6551,17 @@ components:
           type:
             - string
             - 'null'
+        input_excerpt_truncated:
+          type: boolean
+        input_retained_truncated:
+          type: boolean
         input_text:
           default: ''
           type: string
         metadata:
           $ref: '#/components/schemas/ObservationMetadata'
+        metadata_truncated:
+          type: boolean
         model:
           type:
             - string
@@ -6562,6 +6570,10 @@ components:
           type: string
         observation_id:
           type: string
+        output_excerpt_truncated:
+          type: boolean
+        output_retained_truncated:
+          type: boolean
         output_text:
           default: ''
           type: string
@@ -6601,6 +6613,10 @@ components:
           items:
             $ref: '#/components/schemas/Observation'
           type: array
+        next_cursor:
+          type: string
+        response_truncated:
+          type: boolean
         total:
           type: integer
       required:
@@ -6631,6 +6647,8 @@ components:
           enum:
             - 1
           type: number
+        truncated:
+          type: boolean
       required:
         - schema_version
         - attributes
@@ -7469,11 +7487,19 @@ components:
             - 'null'
         env:
           type: string
+        input_excerpt_truncated:
+          type: boolean
+        input_retained_truncated:
+          type: boolean
         input_text:
           default: ''
           type: string
         name:
           type: string
+        output_excerpt_truncated:
+          type: boolean
+        output_retained_truncated:
+          type: boolean
         output_text:
           default: ''
           type: string
@@ -7511,6 +7537,10 @@ components:
           items:
             $ref: '#/components/schemas/Trace'
           type: array
+        next_cursor:
+          type: string
+        response_truncated:
+          type: boolean
         total:
           type: integer
       required:
@@ -13583,16 +13613,18 @@ paths:
         - projects
   /v1/observations:
     get:
-      description: Returns up to 50 observations per page sorted by start_time DESC. input_text is truncated to 200 chars.
+      description: Returns a project-scoped page sorted by start_time DESC, observation_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.
       parameters:
-        - in: query
+        - description: Default 50. Zero is allowed. Values above 200 are clamped to 200; malformed, fractional, or negative values return 400.
+          in: query
           name: limit
           required: false
           schema:
             example: 50
             minLength: 1
             type: string
-        - in: query
+        - description: v1 offset pagination. Defaults to 0. A malformed, fractional, negative, or offset above 2147483647 returns 400.
+          in: query
           name: offset
           required: false
           schema:
@@ -13604,6 +13636,15 @@ paths:
           required: true
           schema:
             format: uuid
+            type: string
+        - description: Opaque, project-scoped keyset cursor from next_cursor. Do not combine it with a positive v1 offset.
+          in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            minLength: 1
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
       responses:
         '200':
@@ -13624,6 +13665,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Trace not found
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: A response cannot fit within the raw UTF-8 byte limit
         '501':
           content:
             application/json:
@@ -13637,7 +13684,7 @@ paths:
         - traces
   /v1/observations/events:
     get:
-      description: 'Subscribes to the `observation.created` bus event and emits one `event: observation` SSE frame per published observation, with a typed versioned metadata envelope and nullable prompt provenance. Sends an `:ok` comment immediately on connect and a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s).'
+      description: 'Subscribes to the `observation.created` bus event and emits one `event: observation` SSE frame per published observation, with the Observation list projection: no organization_id, 200-Unicode-code-point input/output excerpts with retained/excerpt truncation flags, and a 2 KiB metadata envelope with metadata_truncated when omitted. It includes a typed versioned metadata envelope and nullable prompt provenance. Sends an `:ok` comment immediately on connect and a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s).'
       parameters:
         - in: query
           name: project_id
@@ -16499,16 +16546,18 @@ paths:
         - prompts
   /v1/traces:
     get:
-      description: Returns up to 50 traces sorted by start_time DESC. Each row's input_text is truncated to 200 chars.
+      description: Returns a project-scoped page sorted by start_time DESC, trace_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.
       parameters:
-        - in: query
+        - description: Default 50. Zero is allowed. Values above 200 are clamped to 200; malformed, fractional, or negative values return 400.
+          in: query
           name: limit
           required: false
           schema:
             example: 50
             minLength: 1
             type: string
-        - in: query
+        - description: v1 offset pagination. Defaults to 0. A malformed, fractional, negative, or offset above 2147483647 returns 400.
+          in: query
           name: offset
           required: false
           schema:
@@ -16520,6 +16569,15 @@ paths:
           required: true
           schema:
             format: uuid
+            type: string
+        - description: Opaque, project-scoped keyset cursor from next_cursor. Do not combine it with a positive v1 offset.
+          in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            minLength: 1
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
       responses:
         '200':
@@ -16540,6 +16598,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Trace not found
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: A response cannot fit within the raw UTF-8 byte limit
         '501':
           content:
             application/json:
@@ -16553,7 +16617,7 @@ paths:
         - traces
   /v1/traces/events:
     get:
-      description: 'Subscribes to the `trace.created` bus event and emits one `event: trace` SSE frame per published trace. Sends an `:ok` comment immediately on connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), and cleans up the bus subscription on client disconnect.'
+      description: 'Subscribes to the `trace.created` bus event and emits one `event: trace` SSE frame per published trace. Its trace payload uses the Trace list projection: no organization_id, input/output excerpts limited to 200 Unicode code points, and retained/excerpt truncation flags. Sends an `:ok` comment immediately on connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), and cleans up the bus subscription on client disconnect.'
       parameters:
         - in: query
           name: project_id
@@ -16581,7 +16645,7 @@ paths:
         - traces
   /v1/traces/{id}:
     get:
-      description: Fetch a project-scoped trace and its observations with versioned metadata envelopes. Legacy metadata arrays are exposed as attributes with null prompt provenance; invalid persisted metadata fails closed.
+      description: Fetch a project- and trace-scoped observation page in stable start_time, observation_id order. The embedded trace input/output remain 200-Unicode-code-point excerpts; each observation detail field contains the full retained value, capped at 8 KiB UTF-8, and truncation flags report source or legacy read-time clipping. The raw UTF-8 JSON body is capped at 256 KiB; response_truncated and a project- and trace-scoped next_cursor preserve byte-truncated continuation. Legacy metadata arrays are exposed as attributes with null prompt provenance, while invalid or oversized persisted metadata fails closed.
       parameters:
         - in: path
           name: id
@@ -16601,16 +16665,29 @@ paths:
           schema:
             format: uuid
             type: string
+        - description: Opaque, project- and trace-scoped keyset cursor from next_cursor.
+          in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            minLength: 1
+            pattern: ^[A-Za-z0-9_-]+$
+            type: string
       responses:
         '200':
           content:
             application/json:
               schema:
                 properties:
+                  next_cursor:
+                    type: string
                   observations:
                     items:
                       $ref: '#/components/schemas/Observation'
                     type: array
+                  response_truncated:
+                    type: boolean
                   trace:
                     $ref: '#/components/schemas/Trace'
                 required:
@@ -16635,6 +16712,12 @@ paths:
                     type: string
                 type: object
           description: Trace not found
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: A response cannot fit within the raw UTF-8 byte limit
       security:
         - basicAuth: []
       summary: Get a trace
@@ -16643,7 +16726,7 @@ paths:
   /v1/traces/{id}/events:
     get:
       description: |-
-        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with the existing observations, then forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
+        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
         data: {"status":"complete"}` and closes the stream.
       parameters:
         - in: path
@@ -16678,6 +16761,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Trace not found
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Trace snapshot query failed before the SSE upgrade; retry safely.
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Trace snapshot buffering reached its bounded limit before the SSE upgrade; retry safely.
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Trace snapshot did not complete before its bounded delivery deadline; retry safely.
       security:
         - basicAuth: []
       summary: 'SSE stream for a single trace: snapshot + live observations + complete'

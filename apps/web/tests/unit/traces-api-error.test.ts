@@ -6,7 +6,7 @@ const { authedFetch } = vi.hoisted(() => ({
 
 vi.mock("../../src/lib/auth", () => ({ authedFetch }));
 
-import { ApiError, listTraces } from "../../src/lib/api";
+import { ApiError, listObservations, listTraces } from "../../src/lib/api";
 
 describe("listTraces error contract", () => {
 	beforeEach(() => {
@@ -31,6 +31,32 @@ describe("listTraces error contract", () => {
 				code: "INTERNAL",
 				message: "Query failed; check server logs",
 			},
+		);
+	});
+
+	it("serializes the supported legacy offset for project-scoped list requests", async () => {
+		authedFetch
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 }),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 }),
+			);
+
+		await listTraces({ project_id: "project-1", limit: 10, offset: 25 });
+		await listObservations({
+			project_id: "project-1",
+			limit: 10,
+			offset: 25,
+		});
+
+		expect(authedFetch).toHaveBeenNthCalledWith(
+			1,
+			"/v1/traces?project_id=project-1&limit=10&offset=25",
+		);
+		expect(authedFetch).toHaveBeenNthCalledWith(
+			2,
+			"/v1/observations?project_id=project-1&limit=10&offset=25",
 		);
 	});
 });

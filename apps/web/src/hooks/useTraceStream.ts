@@ -47,6 +47,8 @@ export interface ObservationRowLike {
 export interface TraceStreamSnapshot {
 	trace?: TraceRow;
 	observations: ObservationRowLike[];
+	snapshot_truncated?: boolean;
+	next_cursor?: string;
 }
 
 export interface TraceStreamObservation {

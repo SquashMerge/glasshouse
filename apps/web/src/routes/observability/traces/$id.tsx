@@ -16,7 +16,12 @@ import {
 	useTraceStream,
 	type ObservationRowLike,
 } from "../../../hooks/useTraceStream";
-import { normalizeObservationMetadata, type TraceRow } from "../../../lib/api";
+import {
+	getTraceDetail,
+	normalizeObservationMetadata,
+	type ObservationRow,
+	type TraceRow,
+} from "../../../lib/api";
 import {
 	AddToDatasetDialog,
 	FeedbackControls,
@@ -72,7 +77,9 @@ function NotFound({
 	);
 }
 
-function normalizeStreamObservation(observation: ObservationRowLike) {
+function normalizeStreamObservation(
+	observation: ObservationRowLike | ObservationRow,
+) {
 	return {
 		...observation,
 		metadata: normalizeObservationMetadata(
@@ -136,9 +143,14 @@ function TraceDetailPageContent({
 	const [focusWorkspaceVersion, setFocusWorkspaceVersion] = React.useState(0);
 	const [receivedSnapshot, setReceivedSnapshot] = React.useState(false);
 	const [snapshotTimedOut, setSnapshotTimedOut] = React.useState(false);
+	const [snapshotTruncated, setSnapshotTruncated] = React.useState(false);
+	const [nextCursor, setNextCursor] = React.useState<string | null>(null);
+	const [loadingMore, setLoadingMore] = React.useState(false);
+	const [loadMoreError, setLoadMoreError] = React.useState<string | null>(null);
 	const splitContainerRef = React.useRef<HTMLDivElement>(null);
 	const highlightTimersRef = React.useRef(new Map<string, number>());
 	const highlightVersionsRef = React.useRef(new Map<string, number>());
+	const receivedSnapshotRef = React.useRef(false);
 
 	const clearHighlightTimers = React.useCallback(() => {
 		for (const timer of highlightTimersRef.current.values())
@@ -169,20 +181,34 @@ function TraceDetailPageContent({
 			onSnapshot: (snapshot: {
 				trace?: TraceRow;
 				observations: ObservationRowLike[];
+				snapshot_truncated?: boolean;
+				next_cursor?: string;
 			}) => {
+				const reconnectSnapshot = receivedSnapshotRef.current;
+				receivedSnapshotRef.current = true;
 				setReceivedSnapshot(true);
 				setSnapshotTimedOut(false);
 				setNotFound(false);
 				setRecordingStatus("recording");
-				setModel(
+				setSnapshotTruncated(snapshot.snapshot_truncated === true);
+				setNextCursor(snapshot.next_cursor ?? null);
+				setLoadMoreError(null);
+				const snapshotObservations = snapshot.observations.map(
+					normalizeStreamObservation,
+				);
+				setModel((current) =>
 					createTraceModel({
-						...snapshot,
-						observations: snapshot.observations.map(normalizeStreamObservation),
+						trace: snapshot.trace ?? current.trace,
+						observations: reconnectSnapshot
+							? [...traceModelObservations(current), ...snapshotObservations]
+							: snapshotObservations,
 					}),
 				);
-				clearHighlightTimers();
-				highlightVersionsRef.current = new Map();
-				setHighlightVersions(highlightVersionsRef.current);
+				if (!reconnectSnapshot) {
+					clearHighlightTimers();
+					highlightVersionsRef.current = new Map();
+					setHighlightVersions(highlightVersionsRef.current);
+				}
 			},
 			onObservation: ({ observation }: { observation: ObservationRowLike }) => {
 				setRecordingStatus("recording");
@@ -223,6 +249,34 @@ function TraceDetailPageContent({
 		[clearHighlightTimers],
 	);
 	const stream = useTraceStream(id, handlers, projectId);
+	const loadNextPage = React.useCallback(async () => {
+		if (!projectId || !nextCursor || loadingMore) return;
+		setLoadingMore(true);
+		setLoadMoreError(null);
+		try {
+			const page = await getTraceDetail(id, {
+				project_id: projectId,
+				cursor: nextCursor,
+			});
+			setModel((current) =>
+				createTraceModel({
+					trace: page.trace ?? current.trace,
+					observations: [
+						...traceModelObservations(current),
+						...page.observations.map(normalizeStreamObservation),
+					],
+				}),
+			);
+			setNextCursor(page.next_cursor ?? null);
+			setSnapshotTruncated(
+				page.response_truncated === true || page.next_cursor !== undefined,
+			);
+		} catch {
+			setLoadMoreError("Unable to load the next observation page. Try again.");
+		} finally {
+			setLoadingMore(false);
+		}
+	}, [id, loadingMore, nextCursor, projectId]);
 	React.useEffect(() => {
 		if (!validId || receivedSnapshot || notFound) return;
 		const timeout = window.setTimeout(
@@ -345,6 +399,33 @@ function TraceDetailPageContent({
 					>
 						Retry connection
 					</Button>
+				</div>
+			)}
+			{snapshotTruncated && (
+				<div
+					className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+					role="status"
+				>
+					<div>
+						This live snapshot is safely limited to a bounded first page.
+						{nextCursor
+							? " Load later pages to inspect the complete retained trace."
+							: " No later page is currently available."}
+					</div>
+					{nextCursor && (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							onClick={() => void loadNextPage()}
+							disabled={loadingMore}
+						>
+							{loadingMore
+								? "Loading observations…"
+								: "Load remaining observations"}
+						</Button>
+					)}
+					{loadMoreError && <div role="alert">{loadMoreError}</div>}
 				</div>
 			)}
 			<div

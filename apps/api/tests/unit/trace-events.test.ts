@@ -25,6 +25,7 @@ import {
 	streamTraceDetailEvents,
 	streamTraceEvents,
 } from "../../src/routes/trace-events";
+import { MAX_TRACE_RESPONSE_BYTES } from "../../src/db/trace-payload-bounds";
 
 // ---------------------------------------------------------------------------
 // Mocked ClickHouse + an env-tunable SSE setup BEFORE importing the app.
@@ -505,6 +506,80 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		await reader.cancel();
 	});
 
+	it("projects trace and observation list events to bounded public rows", async () => {
+		const traceResponse = await apiApp.fetch(
+			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const traceReader = traceResponse.body!.getReader();
+		await traceReader.read();
+		publishSync("trace.created", {
+			trace: {
+				...fakeTrace,
+				input_text: "界".repeat(201),
+				output_text: "x".repeat(8 * 1024),
+				input_retained_truncated: true,
+			},
+		});
+		const traceFrames = await readFramesUntil(traceReader, (frames) =>
+			frames.some((frame) => frame.event === "trace"),
+		);
+		const trace = JSON.parse(
+			traceFrames.find((frame) => frame.event === "trace")!.data,
+		).trace as Record<string, unknown>;
+		expect(Array.from(trace.input_text as string)).toHaveLength(200);
+		expect(trace.output_text).toHaveLength(200);
+		expect(trace).toMatchObject({
+			input_retained_truncated: true,
+			input_excerpt_truncated: true,
+			output_excerpt_truncated: true,
+		});
+		expect(trace).not.toHaveProperty("organization_id");
+		await traceReader.cancel();
+
+		const observationResponse = await apiApp.fetch(
+			new Request(`http://x/v1/observations/events?project_id=${PROJECT_ID}`, {
+				headers: { authorization: AUTH },
+			}),
+		);
+		const observationReader = observationResponse.body!.getReader();
+		await observationReader.read();
+		publishSync("observation.created", {
+			observation: {
+				...fakeObservation,
+				input_text: "界".repeat(201),
+				output_text: "x".repeat(8 * 1024),
+				metadata: {
+					schema_version: 1,
+					attributes: [
+						{ key: "large", value: { stringValue: "x".repeat(2_048) } },
+					],
+					prompt_provenance: null,
+				},
+			} as unknown as NormalizedObservation,
+		});
+		const observationFrames = await readFramesUntil(
+			observationReader,
+			(frames) => frames.some((frame) => frame.event === "observation"),
+		);
+		const observation = JSON.parse(
+			observationFrames.find((frame) => frame.event === "observation")!.data,
+		).observation as Record<string, unknown>;
+		expect(Array.from(observation.input_text as string)).toHaveLength(200);
+		expect(observation.output_text).toHaveLength(200);
+		expect(observation).toMatchObject({
+			input_excerpt_truncated: true,
+			output_excerpt_truncated: true,
+			metadata_truncated: true,
+			metadata: {
+				attributes: [],
+			},
+		});
+		expect(observation).not.toHaveProperty("organization_id");
+		await observationReader.cancel();
+	});
+
 	it("does not forward trace events from another organization", async () => {
 		const res = await apiApp.fetch(
 			new Request(`http://x/v1/traces/events?project_id=${PROJECT_ID}`, {
@@ -759,6 +834,113 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/traces/{id}/events (detail SSE)", () => {
+	it("keeps a multibyte snapshot's raw SSE frame within its pending-byte ceiling with its cursor", async () => {
+		const maxPendingBytes = 4_096;
+		const presentedMetadata = {
+			schema_version: 1,
+			attributes: [
+				{ key: "model", value: { stringValue: "gpt-4o" } },
+				{ key: "tokens", value: { intValue: 42 } },
+			],
+			prompt_provenance: null,
+		};
+		const first = { ...fakeObservation, metadata: presentedMetadata };
+		const continuation = {
+			...fakeObservation,
+			observation_id: "obs-boundary-multibyte",
+			metadata: presentedMetadata,
+			input_text: "",
+		};
+		continuation.input_text = "界".repeat(
+			Math.floor(
+				(maxPendingBytes -
+					new TextEncoder().encode(
+						JSON.stringify({
+							trace: fakeTrace,
+							observations: [first, continuation],
+							snapshot_truncated: true,
+						}),
+					).byteLength) /
+					3,
+			),
+		);
+		const handlers = createTraceEventHandlers({
+			assertProjectAccess: assertProjectAccessMock,
+			defaultClient: defaultClientMock,
+			getTrace: async () => ({
+				trace: fakeTrace,
+				observations: [first, continuation],
+				next_cursor: {
+					start_time: continuation.start_time,
+					id: continuation.observation_id,
+				},
+			}),
+			graceMs: 150,
+			heartbeatMs: 60,
+			maxPendingBytes,
+			subscribe: subscribeSpy,
+		});
+		const response = await createApiApp(handlers).fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+		const reader = response.body!.getReader();
+		await reader.read();
+		const snapshot = await reader.read();
+
+		expect(response.status).toBe(200);
+		expect(snapshot.done).toBe(false);
+		expect(snapshot.value!.byteLength).toBeLessThanOrEqual(maxPendingBytes);
+		expect(decoder.decode(snapshot.value!)).toStartWith("event: snapshot\n");
+		expect(decoder.decode(snapshot.value!)).toContain("snapshot_truncated");
+		expect(decoder.decode(snapshot.value!)).toContain("next_cursor");
+		await reader.cancel();
+	});
+
+	it("bounds the serialized snapshot before the SSE frame is materialized", async () => {
+		getTraceMock.mockResolvedValueOnce({
+			trace: fakeTrace,
+			observations: Array.from({ length: 100 }, (_, index) => ({
+				...fakeObservation,
+				observation_id: `bounded-${index}`,
+				input_text: "界".repeat(8_000),
+				output_text: "界".repeat(8_000),
+				metadata: JSON.stringify({
+					schema_version: 1,
+					attributes: [
+						{ key: "safe", value: { stringValue: "界".repeat(8_000) } },
+					],
+				}),
+			})),
+		});
+		const response = await createApiApp(
+			createTraceEventHandlers({
+				assertProjectAccess: assertProjectAccessMock,
+				defaultClient: defaultClientMock,
+				getTrace: getTraceMock,
+				graceMs: 150,
+				heartbeatMs: 60,
+				maxPendingBytes: MAX_TRACE_RESPONSE_BYTES,
+				subscribe: subscribeSpy,
+			}),
+		).fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+		const reader = response.body!.getReader();
+		await reader.read();
+		const snapshot = await reader.read();
+		expect(snapshot.done).toBe(false);
+		expect(snapshot.value!.byteLength).toBeLessThanOrEqual(
+			MAX_TRACE_RESPONSE_BYTES,
+		);
+		await reader.cancel();
+	});
+
 	it("404 when trace does not exist (JSON, NO SSE upgrade)", async () => {
 		getTraceMock.mockResolvedValueOnce({ trace: null, observations: [] });
 		const res = await apiApp.fetch(

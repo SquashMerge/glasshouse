@@ -10,6 +10,10 @@ import {
 } from "../../src/lib/event-bus";
 import { createOtlpIngestHandler } from "../../src/routes/otlp";
 import { TenantScopeError } from "../../src/tenancy";
+import {
+	MAX_RETAINED_METADATA_BYTES,
+	MAX_RETAINED_TEXT_BYTES,
+} from "../../src/db/trace-payload-bounds";
 
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
@@ -79,6 +83,66 @@ function validOtlp(
 }
 
 describe("OTLP ingest publishes events", () => {
+	it("redacts before bounding the rows persisted and published from a large OTLP span", async () => {
+		const secret = "secret-that-must-not-survive";
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => ({
+				mode: "all_text" as const,
+				keys: ["private.attribute"],
+			}),
+			withActiveAuthorizedProjectLock,
+		});
+		const published: unknown[] = [];
+		subscribe("observation.created", (event) => published.push(event));
+
+		const response = await handler(
+			new Request("http://x/v1/otel/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "bounded",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "gen_ai.prompt.0.content",
+									value: { stringValue: secret.repeat(2_000) },
+								},
+								{ key: "private.attribute", value: { stringValue: secret } },
+								{
+									key: "safe.attribute",
+									value: { stringValue: "界".repeat(20_000) },
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+
+		expect(response.status).toBe(200);
+		const trace = insertTraces.mock.calls.at(-1)?.[1]?.[0];
+		const observation = insertObservations.mock.calls.at(-1)?.[1]?.[0];
+		expect(trace.input_text).toBe("[REDACTED]");
+		expect(observation.input_text).toBe("[REDACTED]");
+		expect(JSON.stringify(observation.metadata)).not.toContain(secret);
+		expect(
+			new TextEncoder().encode(trace.output_text).byteLength,
+		).toBeLessThanOrEqual(MAX_RETAINED_TEXT_BYTES);
+		expect(
+			new TextEncoder().encode(JSON.stringify(observation.metadata)).byteLength,
+		).toBeLessThanOrEqual(MAX_RETAINED_METADATA_BYTES);
+		expect(JSON.stringify(published)).not.toContain(secret);
+	});
+
 	it("does not invoke ClickHouse writers when final archive or revocation revalidation fails", async () => {
 		for (const unavailable of ["archived", "revoked"]) {
 			const rejectedHandler = createOtlpIngestHandler({

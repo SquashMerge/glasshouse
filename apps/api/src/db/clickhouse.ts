@@ -23,6 +23,12 @@ export function ch(): ClickHouseClient {
 	return _client;
 }
 
+export async function closeClickHouseClient(): Promise<void> {
+	const client = _client;
+	_client = null;
+	if (client) await client.close();
+}
+
 export async function chPing(): Promise<"up" | "down"> {
 	try {
 		const c = ch();

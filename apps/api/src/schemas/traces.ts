@@ -2,6 +2,36 @@
 import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope, NotImplementedError, PageQuery } from "./common.js";
 
+const TraceCursorQuery = z
+	.string()
+	.min(1)
+	.max(2048)
+	.regex(/^[A-Za-z0-9_-]+$/)
+	.optional()
+	.openapi({
+		param: {
+			name: "cursor",
+			in: "query",
+			description:
+				"Opaque, project-scoped keyset cursor from next_cursor. Do not combine it with a positive v1 offset.",
+		},
+	});
+
+const TraceDetailCursorQuery = z
+	.string()
+	.min(1)
+	.max(2048)
+	.regex(/^[A-Za-z0-9_-]+$/)
+	.optional()
+	.openapi({
+		param: {
+			name: "cursor",
+			in: "query",
+			description:
+				"Opaque, project- and trace-scoped keyset cursor from next_cursor.",
+		},
+	});
+
 export const TraceStatus = z.enum(["ok", "error"]).openapi("TraceStatus");
 
 export const Trace = z
@@ -21,6 +51,10 @@ export const Trace = z
 		tags: z.array(z.string()).default([]),
 		input_text: z.string().default(""),
 		output_text: z.string().default(""),
+		input_retained_truncated: z.boolean().optional(),
+		output_retained_truncated: z.boolean().optional(),
+		input_excerpt_truncated: z.boolean().optional(),
+		output_excerpt_truncated: z.boolean().optional(),
 	})
 	.openapi("Trace");
 
@@ -28,6 +62,8 @@ export const TraceList = z
 	.object({
 		items: z.array(Trace),
 		total: z.number().int(),
+		response_truncated: z.boolean().optional(),
+		next_cursor: z.string().optional(),
 	})
 	.openapi("TraceList");
 
@@ -40,6 +76,7 @@ export const TraceDetailQuery = z
 	.object({
 		expand: z.string().optional(),
 		project_id: ProjectIdQuery,
+		cursor: TraceDetailCursorQuery,
 	})
 	.strict();
 
@@ -47,8 +84,35 @@ export const TraceEventsQuery = z
 	.object({ project_id: ProjectIdQuery })
 	.strict();
 export const TraceListQuery = PageQuery.extend({
+	limit: PageQuery.shape.limit.openapi({
+		param: {
+			name: "limit",
+			in: "query",
+			description:
+				"Default 50. Zero is allowed. Values above 200 are clamped to 200; malformed, fractional, or negative values return 400.",
+		},
+	}),
+	offset: PageQuery.shape.offset.openapi({
+		param: {
+			name: "offset",
+			in: "query",
+			description:
+				"v1 offset pagination. Defaults to 0. A malformed, fractional, negative, or offset above 2147483647 returns 400.",
+		},
+	}),
 	project_id: ProjectIdQuery,
-}).passthrough();
+	cursor: TraceCursorQuery,
+})
+	.passthrough()
+	.superRefine((value, context) => {
+		if (value.cursor && (value.offset ?? 0) > 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "cursor and a positive offset cannot be combined",
+				path: ["offset"],
+			});
+		}
+	});
 
 export const PromptProvenance = z
 	.object({
@@ -74,6 +138,7 @@ export const ObservationMetadata = z
 			}),
 		),
 		prompt_provenance: PromptProvenance.nullable(),
+		truncated: z.boolean().optional(),
 	})
 	.strict()
 	.openapi("ObservationMetadata");
@@ -93,6 +158,11 @@ export const Observation = z
 		model: z.string().nullable().optional(),
 		input_text: z.string().default(""),
 		output_text: z.string().default(""),
+		input_retained_truncated: z.boolean().optional(),
+		output_retained_truncated: z.boolean().optional(),
+		input_excerpt_truncated: z.boolean().optional(),
+		output_excerpt_truncated: z.boolean().optional(),
+		metadata_truncated: z.boolean().optional(),
 		metadata: ObservationMetadata,
 	})
 	.openapi("Observation");
@@ -101,6 +171,8 @@ export const ObservationList = z
 	.object({
 		items: z.array(Observation),
 		total: z.number().int(),
+		response_truncated: z.boolean().optional(),
+		next_cursor: z.string().optional(),
 	})
 	.openapi("ObservationList");
 

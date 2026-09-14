@@ -1,5 +1,6 @@
 import type { ClickHouseClient } from "@clickhouse/client";
 import { ch } from "./clickhouse.js";
+import type { TraceCursor } from "./trace-cursor.js";
 
 export interface TraceRow {
 	trace_id: string;
@@ -18,7 +19,11 @@ export interface TraceRow {
 	tags: string[];
 	input_text: string;
 	output_text: string;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
 	scores_summary: string;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
 }
 
 export interface ObservationRow {
@@ -36,7 +41,12 @@ export interface ObservationRow {
 	model: string | null;
 	input_text: string;
 	output_text: string;
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
 	metadata: string;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
+	metadata_truncated?: boolean;
 }
 
 export interface TraceListFilters {
@@ -69,18 +79,62 @@ export interface ObservationListFilters {
 }
 
 const LIST_COLUMNS =
-	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substring(input_text, 1, 200) AS input_text, output_text, scores_summary";
+	"trace_id, organization_id, project_id, name, start_time, end_time, duration_ms, status, user_id, session_id, agent_id, agent_version, env, tags, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated OR length(traces.input_text) > 8192 AS input_retained_truncated, output_retained_truncated OR length(traces.output_text) > 8192 AS output_retained_truncated, lengthUTF8(traces.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(traces.output_text) > 200 AS output_excerpt_truncated, scores_summary";
 
 const OBSERVATION_COLUMNS =
-	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substring(input_text, 1, 200) AS input_text, output_text, metadata";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, substringUTF8(input_text, 1, 200) AS input_text, substringUTF8(output_text, 1, 200) AS output_text, input_retained_truncated OR length(observations.input_text) > 8192 AS input_retained_truncated, output_retained_truncated OR length(observations.output_text) > 8192 AS output_retained_truncated, lengthUTF8(observations.input_text) > 200 AS input_excerpt_truncated, lengthUTF8(observations.output_text) > 200 AS output_excerpt_truncated, if(length(metadata) <= 2048, metadata, '') AS metadata, length(metadata) > 2048 AS metadata_truncated";
 
 const OBSERVATION_FULL_COLUMNS =
-	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, input_text, output_text, metadata";
+	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, if(length(observations.input_text) > 8192, substringUTF8(observations.input_text, 1, 2048), observations.input_text) AS input_text, if(length(observations.output_text) > 8192, substringUTF8(observations.output_text, 1, 2048), observations.output_text) AS output_text, input_retained_truncated OR length(observations.input_text) > 8192 AS input_retained_truncated, output_retained_truncated OR length(observations.output_text) > 8192 AS output_retained_truncated, if(length(metadata) <= 16384, metadata, '') AS metadata, length(metadata) > 16384 AS metadata_truncated";
 
-export const MAX_TRACE_DETAIL_OBSERVATIONS = 5_000;
+export const MAX_TRACE_DETAIL_OBSERVATIONS = 7;
+
+type ClickHouseBooleanFlags = {
+	input_retained_truncated?: boolean | number;
+	output_retained_truncated?: boolean | number;
+	input_excerpt_truncated?: boolean | number;
+	output_excerpt_truncated?: boolean | number;
+	metadata_truncated?: boolean | number;
+};
+
+type ResponseBooleanFlags = {
+	input_retained_truncated?: boolean;
+	output_retained_truncated?: boolean;
+	input_excerpt_truncated?: boolean;
+	output_excerpt_truncated?: boolean;
+	metadata_truncated?: boolean;
+};
+
+function normalizeClickHouseFlags<T extends ClickHouseBooleanFlags>(
+	row: T,
+): Omit<T, keyof ClickHouseBooleanFlags> & ResponseBooleanFlags {
+	const {
+		input_retained_truncated,
+		output_retained_truncated,
+		input_excerpt_truncated,
+		output_excerpt_truncated,
+		metadata_truncated,
+		...rest
+	} = row;
+	return {
+		...rest,
+		...(input_retained_truncated ? { input_retained_truncated: true } : {}),
+		...(output_retained_truncated ? { output_retained_truncated: true } : {}),
+		...(input_excerpt_truncated ? { input_excerpt_truncated: true } : {}),
+		...(output_excerpt_truncated ? { output_excerpt_truncated: true } : {}),
+		...(metadata_truncated ? { metadata_truncated: true } : {}),
+	};
+}
 
 function defaultClient(): ClickHouseClient {
 	return ch();
+}
+
+function clickHouseDateTime(value: string): string {
+	const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z$/.exec(
+		value,
+	);
+	return match ? `${match[1]} ${match[2]}` : value;
 }
 
 function buildWhere(
@@ -147,17 +201,32 @@ export async function listTraces(
 	client: ClickHouseClient,
 	filters: TraceListFilters,
 	limit: number,
-	offset: number,
-): Promise<{ items: TraceRow[]; total: number }> {
-	const params: Record<string, unknown> = { limit, offset };
+	cursor?: TraceCursor,
+	offset = 0,
+): Promise<{ items: TraceRow[]; total: number; next_cursor?: TraceCursor }> {
+	const params: Record<string, unknown> = {
+		limit: limit === 0 ? 0 : limit + 1,
+		...(offset > 0 ? { offset } : {}),
+	};
 	const whereClause = buildWhere(filters, params);
+	const cursorClause = cursor
+		? " AND (start_time, trace_id) < ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
+		: "";
+	const offsetClause = offset > 0 ? " OFFSET {offset: UInt32}" : "";
+	if (cursor) {
+		params.cursor_start_time = clickHouseDateTime(cursor.start_time);
+		params.cursor_id = cursor.id;
+	}
 
 	const itemsResult = await client.query({
-		query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause} ORDER BY start_time DESC, trace_id DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
+		query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause}${cursorClause} ORDER BY start_time DESC, trace_id DESC LIMIT {limit: UInt32}${offsetClause}`,
 		query_params: params,
 		format: "JSONEachRow",
 	});
-	const items = (await itemsResult.json()) as TraceRow[];
+	const rows = ((await itemsResult.json()) as TraceRow[]).map(
+		normalizeClickHouseFlags,
+	);
+	const items = rows.slice(0, limit);
 
 	const totalResult = await client.query({
 		query: `SELECT count() AS total FROM traces ${whereClause}`,
@@ -169,7 +238,14 @@ export async function listTraces(
 	}>;
 	const total = Number(totalRows[0]?.total ?? 0);
 
-	return { items, total };
+	const last = items.at(-1);
+	return {
+		items,
+		total,
+		...(rows.length > limit && last
+			? { next_cursor: { start_time: last.start_time, id: last.trace_id } }
+			: {}),
+	};
 }
 
 export async function getTrace(
@@ -178,12 +254,17 @@ export async function getTrace(
 	traceId: string,
 	projectId?: string,
 	signal?: AbortSignal,
-): Promise<{ trace: TraceRow | null; observations: ObservationRow[] }> {
+	cursor?: TraceCursor,
+): Promise<{
+	trace: TraceRow | null;
+	observations: ObservationRow[];
+	next_cursor?: TraceCursor;
+}> {
 	const query_params = {
 		organization_id: organizationId,
 		trace_id: traceId,
 		project_id: projectId ?? "",
-		limit: MAX_TRACE_DETAIL_OBSERVATIONS,
+		limit: MAX_TRACE_DETAIL_OBSERVATIONS + 1,
 	};
 	const traceResult = await client.query({
 		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} LIMIT 1`,
@@ -191,19 +272,42 @@ export async function getTrace(
 		format: "JSONEachRow",
 		abort_signal: signal,
 	});
-	const traceRows = (await traceResult.json()) as TraceRow[];
+	const traceRows = ((await traceResult.json()) as TraceRow[]).map(
+		normalizeClickHouseFlags,
+	);
 	const trace = traceRows.length > 0 ? traceRows[0] : null;
 	if (!trace) return { trace: null, observations: [] };
 
+	if (cursor) {
+		Object.assign(query_params, {
+			cursor_start_time: clickHouseDateTime(cursor.start_time),
+			cursor_id: cursor.id,
+		});
+	}
+	const cursorClause = cursor
+		? " AND (start_time, observation_id) > ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
+		: "";
 	const obsResult = await client.query({
-		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} ORDER BY start_time ASC LIMIT {limit: UInt32}`,
+		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String}${cursorClause} ORDER BY start_time ASC, observation_id ASC LIMIT {limit: UInt32}`,
 		query_params,
 		format: "JSONEachRow",
 		abort_signal: signal,
 	});
-	const observations = (await obsResult.json()) as ObservationRow[];
+	const rows = ((await obsResult.json()) as ObservationRow[]).map(
+		normalizeClickHouseFlags,
+	);
+	const observations = rows.slice(0, MAX_TRACE_DETAIL_OBSERVATIONS);
+	const last = observations.at(-1);
 
-	return { trace, observations };
+	return {
+		trace,
+		observations,
+		...(rows.length > MAX_TRACE_DETAIL_OBSERVATIONS && last
+			? {
+					next_cursor: { start_time: last.start_time, id: last.observation_id },
+				}
+			: {}),
+	};
 }
 
 function buildObservationWhere(
@@ -274,17 +378,36 @@ export async function listObservations(
 	client: ClickHouseClient,
 	filters: ObservationListFilters,
 	limit: number,
-	offset: number,
-): Promise<{ items: ObservationRow[]; total: number }> {
-	const params: Record<string, unknown> = { limit, offset };
+	cursor?: TraceCursor,
+	offset = 0,
+): Promise<{
+	items: ObservationRow[];
+	total: number;
+	next_cursor?: TraceCursor;
+}> {
+	const params: Record<string, unknown> = {
+		limit: limit === 0 ? 0 : limit + 1,
+		...(offset > 0 ? { offset } : {}),
+	};
 	const whereClause = buildObservationWhere(filters, params);
+	const cursorClause = cursor
+		? " AND (start_time, observation_id) < ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
+		: "";
+	const offsetClause = offset > 0 ? " OFFSET {offset: UInt32}" : "";
+	if (cursor) {
+		params.cursor_start_time = clickHouseDateTime(cursor.start_time);
+		params.cursor_id = cursor.id;
+	}
 
 	const itemsResult = await client.query({
-		query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause} ORDER BY start_time DESC, observation_id DESC LIMIT {limit: Int32} OFFSET {offset: Int32}`,
+		query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause}${cursorClause} ORDER BY start_time DESC, observation_id DESC LIMIT {limit: UInt32}${offsetClause}`,
 		query_params: params,
 		format: "JSONEachRow",
 	});
-	const items = (await itemsResult.json()) as ObservationRow[];
+	const rows = ((await itemsResult.json()) as ObservationRow[]).map(
+		normalizeClickHouseFlags,
+	);
+	const items = rows.slice(0, limit);
 
 	const totalResult = await client.query({
 		query: `SELECT count() AS total FROM observations ${whereClause}`,
@@ -296,7 +419,16 @@ export async function listObservations(
 	}>;
 	const total = Number(totalRows[0]?.total ?? 0);
 
-	return { items, total };
+	const last = items.at(-1);
+	return {
+		items,
+		total,
+		...(rows.length > limit && last
+			? {
+					next_cursor: { start_time: last.start_time, id: last.observation_id },
+				}
+			: {}),
+	};
 }
 
 export { defaultClient };

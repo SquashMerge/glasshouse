@@ -45,6 +45,8 @@ export const ErrorCode = z.enum([
 	"TOO_MANY_REQUESTS",
 	"CONTRACT_VIOLATION",
 	"PAYLOAD_TOO_LARGE",
+	"SERVICE_UNAVAILABLE",
+	"GATEWAY_TIMEOUT",
 	"INTERNAL",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
