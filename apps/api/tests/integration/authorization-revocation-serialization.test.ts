@@ -62,6 +62,7 @@ import {
 	createTraceEventHandlers,
 	streamTraceEvents,
 } from "../../src/routes/trace-events";
+import type { TraceRow } from "../../src/db/traces-query";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -1306,6 +1307,25 @@ test.skipIf(!databaseUrl)(
 		const projectId = randomUUID();
 		const actorId = randomUUID();
 		const subject = `trace-sse-${actorId}`;
+		const trace: TraceRow = {
+			trace_id: randomUUID().replaceAll("-", ""),
+			organization_id: organizationId,
+			project_id: projectId,
+			name: "Trace SSE revocation",
+			start_time: "2026-09-14 00:00:00.000",
+			end_time: null,
+			duration_ms: null,
+			status: "ok",
+			user_id: "",
+			session_id: "",
+			agent_id: "",
+			agent_version: "",
+			env: "test",
+			tags: [],
+			input_text: "",
+			output_text: "",
+			scores_summary: "",
+		};
 		const applicationName = "astraea-trace-sse-revocation";
 		const firstWrite = deferred();
 		const releaseFirstWrite = deferred();
@@ -1405,7 +1425,7 @@ test.skipIf(!databaseUrl)(
 			await subscriptionReady.promise;
 			const firstChunk = reader.read();
 			publishSync("trace.created", {
-				trace: { organization_id: organizationId, project_id: projectId },
+				trace,
 			});
 			await firstWrite.promise;
 			await demoter.query(`SET application_name = '${applicationName}'`);
@@ -1419,7 +1439,7 @@ test.skipIf(!databaseUrl)(
 			})();
 			await waitForLock(pool, applicationName);
 			publishSync("trace.created", {
-				trace: { organization_id: organizationId, project_id: projectId },
+				trace,
 			});
 			releaseFirstWrite.resolve();
 			await firstChunk;
