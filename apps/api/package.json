@@ -29,18 +29,18 @@
   "dependencies": {
     "@clickhouse/client": "1.23.1",
     "@hono/zod-openapi": "1.6.3",
-    "@scalar/hono-api-reference": "0.12.1",
+    "@scalar/hono-api-reference": "0.12.2",
     "config": "5.0.1",
     "dotenv": "17.4.2",
     "dotenv-expand": "1000.0.0",
-    "hono": "4.13.7",
+    "hono": "4.13.8",
     "ioredis": "6.0.0",
-    "js-yaml": "5.4.1",
+    "js-yaml": "5.4.2",
     "mustache": "4.2.0",
     "node-pg-migrate": "9.0.0",
     "pg": "8.23.0",
     "unicode-confusables": "0.1.1",
-    "zod": "4.5.4"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
