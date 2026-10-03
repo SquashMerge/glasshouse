@@ -150,7 +150,7 @@ uv pip install --python worker/.venv/bin/python -r worker/requirements.txt
 
 `make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. Use the exact allowlisted model value in both GEPA model-role fields. Astraea replaces `{model}` only inside argv elements, sends the prompt on standard input, and never reads or persists Codex OAuth credentials. The API supplies a durable provider-dispatch key to each worker; the CLI receives a per-call sequence key only through `ASTRAEA_PROVIDER_DISPATCH_KEY`. The CLI adapter is rejected under `NODE_ENV=production` unless a deliberate emergency override is configured.
 
-For autonomous coding or review work, use the locally authenticated OpenAI Codex workflow with GPT-5.6 Terra/Luna. Do not use MiniMax or silently fall back to another provider.
+For autonomous coding or review through Feature Factory, use the configured OpenCode profiles with OpenAI GPT-6 (`openai/gpt-6-astra` or `openai/gpt-6-luna`). Do not route Feature Factory roles to GPT-5.6, use MiniMax, or silently downgrade to another provider.
 
 ## Verification ladder
 

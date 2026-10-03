@@ -73,7 +73,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 
 ## Coding-agent and documentation currency
 
-- For autonomous implementation or review, use the locally authenticated OpenAI Codex workflow with GPT-5.6 Terra/Luna. Do not use MiniMax or silently downgrade to another provider.
+- For autonomous implementation or review through Feature Factory, use the configured OpenCode profiles with OpenAI GPT-6 (`openai/gpt-6-astra` or `openai/gpt-6-luna`). Do not route Feature Factory roles to GPT-5.6, use MiniMax, or silently downgrade to another provider.
 - Treat documentation as part of every PR's implementation contract. Assess `.opencode/SETUP-NOTES.md` for every PR and update it whenever developer prerequisites, environment/configuration, service topology, migrations/startup, model/provider workflow, generated clients, test commands, or operational constraints change.
 - Update this `AGENTS.md` in the same PR only for new or changed durable repository-wide instructions a coding agent needs. Keep it concise and do not duplicate feature-specific notes.
 - Update the glossary and public documentation when terminology or user-facing behavior changes. The PR description must state which documentation was updated, or why no documentation update was needed.
