@@ -286,6 +286,7 @@ jobs:
       ASTRAEA_PUBLIC_ORIGIN: http://localhost:5173
       DATABASE_URL: postgres://astraea:astraea-ci-password@localhost:5432/astraea
       UI_USERNAME: e2e-onboarding-admin
+      ASTRAEA_BOOTSTRAP_OWNER_USERNAME: e2e-onboarding-admin
       E2E_SETUP_SECRET_FILE: /tmp/astraea-ci-setup-secret
     steps:
       - name: Check out repository
