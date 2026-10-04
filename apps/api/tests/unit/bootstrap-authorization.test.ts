@@ -4,6 +4,20 @@ import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization";
 const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 
 describe("bootstrap authorization", () => {
+	it("rejects unknown bootstrap modes before connecting", async () => {
+		let ended = false;
+		await expect(
+			bootstrapAuthorization({ ASTRAEA_AUTH_BOOTSTRAP_MODE: "unexpected" }, {
+				connect: async () => {
+					throw new Error("must not connect");
+				},
+				end: async () => {
+					ended = true;
+				},
+			} as never),
+		).rejects.toThrow("ASTRAEA_AUTH_BOOTSTRAP_MODE must be basic or local");
+		expect(ended).toBe(true);
+	});
 	it("grants the configured owner manager membership for every non-deleting project", async () => {
 		const queries: Array<{ sql: string; values?: unknown[] }> = [];
 		const client = {

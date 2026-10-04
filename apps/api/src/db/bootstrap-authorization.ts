@@ -5,6 +5,11 @@ export async function bootstrapAuthorization(
 	env: NodeJS.ProcessEnv = process.env,
 	pool = new Pool({ connectionString: env.DATABASE_URL }),
 ): Promise<void> {
+	const mode = env.ASTRAEA_AUTH_BOOTSTRAP_MODE ?? "basic";
+	if (mode !== "basic" && mode !== "local") {
+		await pool.end();
+		throw new Error("ASTRAEA_AUTH_BOOTSTRAP_MODE must be basic or local");
+	}
 	const username = env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME;
 	if (!username)
 		throw new Error("ASTRAEA_BOOTSTRAP_OWNER_USERNAME must be set");
@@ -47,6 +52,10 @@ export async function bootstrapAuthorization(
 				throw new Error(
 					"Bootstrap Basic Auth identity is already linked to another actor",
 				);
+		}
+		if (mode === "local") {
+			await client.query("COMMIT");
+			return;
 		}
 		const credential = ownerCredential;
 		const organization = await client.query(

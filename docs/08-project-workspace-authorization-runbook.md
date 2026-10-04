@@ -2,6 +2,13 @@
 
 ## Bootstrap
 
+The Basic bootstrap below is the default `ASTRAEA_AUTH_BOOTSTRAP_MODE=basic`
+compatibility path. For intentional local-first installations, set the mode to
+`local` before migrating and follow the [local credential/bootstrap runbook](local-credentials-runbook.md).
+Migration 0098 preserves all existing Basic authorization and closes local setup
+when an Admin already exists. The new local storage/service slice supplies no
+login/session endpoints or setup UI yet.
+
 Set `ASTRAEA_BOOTSTRAP_OWNER_USERNAME` to exactly one username in the configured
 Basic Auth credentials. The named credential's organization and exactly one active
 `default` Project must already exist. `bun run db:migrate` applies SQL migrations,
