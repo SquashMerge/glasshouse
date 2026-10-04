@@ -59,8 +59,15 @@ describe("API integration: health + openapi", () => {
 		expect(body.status).toBe("ok");
 	});
 
-	it("GET /openapi.json returns 200 without auth", async () => {
-		const res = await apiApp.fetch(new Request("http://x/openapi.json"));
+	it("GET /openapi.json requires auth and returns the protected contract", async () => {
+		expect(
+			(await apiApp.fetch(new Request("http://x/openapi.json"))).status,
+		).toBe(401);
+		const res = await apiApp.fetch(
+			new Request("http://x/openapi.json", {
+				headers: { authorization: AUTH },
+			}),
+		);
 		expect(res.status).toBe(200);
 		const document = (await res.json()) as {
 			components?: {
@@ -76,7 +83,11 @@ describe("API integration: health + openapi", () => {
 	});
 
 	it("documents bounded trace-detail and snapshot recovery responses", async () => {
-		const res = await apiApp.fetch(new Request("http://x/openapi.json"));
+		const res = await apiApp.fetch(
+			new Request("http://x/openapi.json", {
+				headers: { authorization: AUTH },
+			}),
+		);
 		const document = (await res.json()) as {
 			paths?: Record<
 				string,
@@ -100,7 +111,11 @@ describe("API integration: health + openapi", () => {
 	});
 
 	it("production OpenAPI excludes legacy subject-keyed membership operations", async () => {
-		const res = await apiApp.fetch(new Request("http://x/openapi.json"));
+		const res = await apiApp.fetch(
+			new Request("http://x/openapi.json", {
+				headers: { authorization: AUTH },
+			}),
+		);
 		expect(res.status).toBe(200);
 		const document = (await res.json()) as {
 			paths?: Record<string, Record<string, unknown>>;
@@ -127,8 +142,13 @@ describe("API integration: health + openapi", () => {
 			expect(document.paths?.[path]?.[method]).toBeDefined();
 	});
 
-	it("GET /reference returns 200 without auth", async () => {
-		const res = await apiApp.fetch(new Request("http://x/reference"));
+	it("GET /reference requires authentication", async () => {
+		expect((await apiApp.fetch(new Request("http://x/reference"))).status).toBe(
+			401,
+		);
+		const res = await apiApp.fetch(
+			new Request("http://x/reference", { headers: { authorization: AUTH } }),
+		);
 		expect(res.status).toBe(200);
 	});
 

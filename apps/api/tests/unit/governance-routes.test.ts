@@ -345,7 +345,7 @@ describe("governance route guards", () => {
 			call.includes("UPDATE governance_retention_previews SET consumed_at"),
 		);
 		expect(consume).toContain(
-			"basic_auth_identity_matches($2, actor_subject, $5)",
+			"trusted_actor_subject_matches($2, actor_subject, $5)",
 		);
 		expect(consume).toContain("consumed_at IS NULL AND expires_at > now()");
 		expect(previewConsumeValues).toContainEqual([

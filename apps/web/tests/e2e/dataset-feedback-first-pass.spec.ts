@@ -5,6 +5,7 @@ import {
 	type APIResponse,
 	type Page,
 } from "@playwright/test";
+import { LOCAL_USER, fillLocalPassword } from "./local-auth";
 
 const USER = process.env.UI_USERNAME ?? "astraea";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
@@ -55,8 +56,8 @@ async function apiJson<T>(response: APIResponse, status = 200): Promise<T> {
 
 async function loginAndSelectE2eProject(page: Page): Promise<Project> {
 	await page.goto("/login");
-	await page.getByLabel(/Username/i).fill(USER);
-	await page.getByLabel(/Password/i).fill(PASS);
+	await page.getByLabel(/Username/i).fill(LOCAL_USER);
+	await fillLocalPassword(page);
 	await page.getByRole("button", { name: /Sign in/i }).click();
 	await page.waitForURL((url) => url.pathname === "/", { timeout: 5_000 });
 
@@ -272,8 +273,42 @@ test("records trace feedback and preserves observation provenance when adding it
 		.getByRole("button", { name: "Thumbs up trace" })
 		.locator("..");
 	await traceFeedback.getByLabel("Comment").fill("Helpful first-pass trace");
+	await expect(traceFeedback.getByLabel("Comment")).toHaveValue(
+		"Helpful first-pass trace",
+	);
+	const feedbackResponsePromise = page.waitForResponse(
+		(response) =>
+			new URL(response.url()).pathname === "/v1/feedback" &&
+			response.request().method() === "POST",
+	);
 	await traceFeedback.getByRole("button", { name: "Thumbs up trace" }).click();
-	await expect(page.getByRole("status")).toContainText("Recorded");
+	const feedbackResponse = await feedbackResponsePromise;
+	expect(feedbackResponse.request().postDataJSON()).toEqual({
+		project_id: project.id,
+		trace_id: trace.traceId,
+		value: 1,
+		metadata: {
+			feedback: {
+				schema_version: 1,
+				sentiment: "positive",
+				comment: "Helpful first-pass trace",
+			},
+		},
+	});
+	expect(feedbackResponse.status(), "browser feedback response status").toBe(
+		201,
+	);
+	expect(await feedbackResponse.json()).toMatchObject({
+		project_id: project.id,
+		trace_id: trace.traceId,
+		observation_id: null,
+		value: 1,
+		sentiment: "positive",
+		comment: "Helpful first-pass trace",
+		status: "reviewed",
+	});
+	await expect(traceFeedback.getByRole("status")).toBeVisible();
+	await expect(traceFeedback.getByRole("status")).toHaveText("Recorded");
 
 	const panel = page.getByTestId("observation-detail");
 	await expect(panel).toHaveAttribute(

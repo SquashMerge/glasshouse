@@ -32,7 +32,11 @@ export function normalizeLocalUsername(username: unknown): string {
 	return username.toLowerCase();
 }
 
-export type LocalPrincipal = { organizationId: string; actorId: string };
+export type LocalPrincipal = {
+	organizationId: string;
+	actorId: string;
+};
+type VerifiedLocalPrincipal = LocalPrincipal & { authVersion: string };
 function tokenDigest(token: string): Buffer {
 	if (
 		typeof token !== "string" ||
@@ -193,6 +197,16 @@ export class LocalCredentialStore {
 		username: string,
 		password: string,
 	): Promise<LocalPrincipal | null> {
+		const principal = await this.verifyForSession(username, password);
+		return principal
+			? { organizationId: principal.organizationId, actorId: principal.actorId }
+			: null;
+	}
+
+	async verifyForSession(
+		username: string,
+		password: string,
+	): Promise<VerifiedLocalPrincipal | null> {
 		try {
 			return await this.verifyStoredCredential(username, password);
 		} catch {
@@ -203,7 +217,7 @@ export class LocalCredentialStore {
 	private async verifyStoredCredential(
 		username: string,
 		password: string,
-	): Promise<LocalPrincipal | null> {
+	): Promise<VerifiedLocalPrincipal | null> {
 		let normalized: string;
 		try {
 			normalized = normalizeLocalUsername(username);
@@ -224,8 +238,8 @@ export class LocalCredentialStore {
 			? await hashLocalPassword(password)
 			: stored;
 		// Compare-and-set fences disablement/password changes during expensive verification.
-		const accepted = await this.pool.query(
-			"UPDATE local_credentials SET password_hash = $4, password_algorithm = $5, password_version = $6, updated_at = CASE WHEN password_hash <> $4 THEN now() ELSE updated_at END WHERE organization_id = $1 AND actor_id = $2 AND password_hash = $3 AND enabled AND password_algorithm = $7 AND password_version = $8 RETURNING actor_id",
+		const accepted = await this.pool.query<{ auth_version: string }>(
+			"UPDATE local_credentials SET password_hash = $4, password_algorithm = $5, password_version = $6, updated_at = CASE WHEN password_hash <> $4 THEN now() ELSE updated_at END WHERE organization_id = $1 AND actor_id = $2 AND password_hash = $3 AND enabled AND password_algorithm = $7 AND password_version = $8 RETURNING actor_id, auth_version",
 			[
 				this.organizationId,
 				stored.actor_id,
@@ -238,7 +252,11 @@ export class LocalCredentialStore {
 			],
 		);
 		return accepted.rowCount
-			? { organizationId: this.organizationId, actorId: stored.actor_id }
+			? {
+					organizationId: this.organizationId,
+					actorId: stored.actor_id,
+					authVersion: accepted.rows[0]!.auth_version,
+				}
 			: null;
 	}
 
@@ -363,6 +381,56 @@ export class LocalCredentialStore {
 					[enrollmentId, this.organizationId],
 				);
 				if (!result.rowCount) throw new LocalCredentialError();
+			},
+		);
+	}
+
+	async initiatePasswordReset(
+		initiator: LocalPrincipal,
+		targetActorId: string,
+	): Promise<{ enrollmentId: string; token: string }> {
+		if (initiator.organizationId !== this.organizationId)
+			throw new LocalCredentialError();
+		const token = randomBytes(32).toString("base64url");
+		return credentialTransaction(
+			this.pool,
+			async (client) => {
+				// Credential locks precede authorization rows; reset cannot race a
+				// session-authenticated effect or invert the worker/request fences.
+				await client.query(
+					"SELECT actor_id FROM local_credentials WHERE organization_id = $1 AND actor_id = ANY($2::uuid[]) ORDER BY actor_id FOR UPDATE",
+					[this.organizationId, [initiator.actorId, targetActorId]],
+				);
+				if (
+					!(await lockAuthorizedOrganization(
+						client,
+						this.organizationId,
+						initiator.actorId,
+						"organization_manage",
+					))
+				)
+					throw new LocalCredentialError();
+			},
+			async (client) => {
+				const reset = await client.query(
+					"UPDATE local_credentials SET password_hash = NULL, password_algorithm = NULL, password_version = NULL, updated_at = now() WHERE organization_id = $1 AND actor_id = $2 AND enabled RETURNING actor_id",
+					[this.organizationId, targetActorId],
+				);
+				if (!reset.rowCount) throw new LocalCredentialError();
+				await client.query(
+					"UPDATE local_account_enrollments SET revoked_at = clock_timestamp() WHERE organization_id = $1 AND actor_id = $2 AND consumed_at IS NULL AND revoked_at IS NULL",
+					[this.organizationId, targetActorId],
+				);
+				const enrollment = await client.query<{ id: string }>(
+					"INSERT INTO local_account_enrollments (organization_id, actor_id, provisioned_by, kind, token_digest) VALUES ($1, $2, $3, 'first_use', $4) RETURNING id",
+					[
+						this.organizationId,
+						targetActorId,
+						initiator.actorId,
+						tokenDigest(token),
+					],
+				);
+				return { enrollmentId: enrollment.rows[0]!.id, token };
 			},
 		);
 	}

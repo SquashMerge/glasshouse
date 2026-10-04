@@ -11,6 +11,7 @@ test("takes actor membership locks before the project fence and policy evaluatio
 	const calls: string[] = [];
 	const client = {
 		query: async (statement: string) => {
+			if (statement.includes("local_credentials")) return { rows: [] };
 			calls.push(statement);
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: "member" }] };
@@ -47,6 +48,7 @@ test("binds only the project fence parameters", async () => {
 	const calls: Array<[string, unknown[] | undefined]> = [];
 	const client = {
 		query: async (statement: string, values?: unknown[]) => {
+			if (statement.includes("local_credentials")) return { rows: [] };
 			calls.push([statement, values]);
 			if (statement.includes("organization_memberships"))
 				return { rows: [{ actor_subject: "member" }] };

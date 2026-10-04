@@ -9,6 +9,7 @@ const route = createRoute({
 	path: "/v1/health",
 	tags: ["health"],
 	summary: "Health check (Postgres + ClickHouse + Valkey)",
+	security: [],
 	description:
 		"Returns 200 with all checks up, 503 with one or more checks down.",
 	responses: {

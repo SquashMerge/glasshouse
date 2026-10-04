@@ -4,6 +4,8 @@ const KEY_PASSWORD = "astraea.auth.password";
 type Credentials = { username: string; password: string };
 
 let credentials: Credentials | null = null;
+let localSession: { username: string; csrfToken: string } | null = null;
+let sessionGeneration = 0;
 
 function removePersistedCredentials(): void {
 	if (typeof window === "undefined") return;
@@ -41,6 +43,8 @@ export function setCredentials(username: string, password: string): void {
 
 export function clearCredentials(): void {
 	credentials = null;
+	localSession = null;
+	sessionGeneration++;
 	try {
 		window.sessionStorage.removeItem(KEY_USERNAME);
 		window.sessionStorage.removeItem(KEY_PASSWORD);
@@ -52,9 +56,38 @@ export function clearCredentials(): void {
 
 export function getCredentials(): Credentials | null {
 	if (typeof window === "undefined") return null;
+	if (localSession) return { username: localSession.username, password: "" };
 	removePersistedCredentials();
 	credentials ??= readSessionCredentials();
 	return credentials;
+}
+
+export async function restoreLocalSession(
+	username = "Account",
+): Promise<boolean> {
+	const generation = sessionGeneration;
+	const response = await fetch("/v1/auth/session", {
+		credentials: "same-origin",
+	});
+	if (generation !== sessionGeneration) return localSession !== null;
+	if (!response.ok) return false;
+	const session = await response.json();
+	if (generation !== sessionGeneration) return localSession !== null;
+	if (
+		session.authentication !== "local_session" ||
+		typeof session.csrf_token !== "string" ||
+		!session.csrf_token
+	)
+		return false;
+	clearCredentials();
+	localSession = { username, csrfToken: session.csrf_token };
+	return true;
+}
+
+export async function logoutSession(): Promise<void> {
+	const response = await authedFetch("/v1/auth/logout", { method: "POST" });
+	if (!response.ok) throw new Error("Sign out failed");
+	clearCredentials();
 }
 
 export function authHeader(creds: Credentials | null): Record<string, string> {
@@ -76,11 +109,25 @@ export async function authedFetch(
 	init?: RequestInit,
 ): Promise<Response> {
 	const creds = getCredentials();
+	const generation = sessionGeneration;
 	const headers = new Headers(init?.headers);
-	const auth = authHeader(creds);
+	const auth = localSession ? {} : authHeader(creds);
 	for (const [k, v] of Object.entries(auth)) headers.set(k, v);
-	const res = await fetch(url, { ...init, headers });
-	if (res.status === 401 && creds) {
+	if (localSession) {
+		headers.delete("authorization");
+		if (
+			!["GET", "HEAD", "OPTIONS"].includes(
+				(init?.method ?? "GET").toUpperCase(),
+			)
+		)
+			headers.set("x-astraea-csrf", localSession.csrfToken);
+	}
+	const res = await fetch(url, {
+		...init,
+		headers,
+		credentials: "same-origin",
+	});
+	if (res.status === 401 && creds && generation === sessionGeneration) {
 		clearCredentials();
 		if (typeof window !== "undefined") {
 			window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT));

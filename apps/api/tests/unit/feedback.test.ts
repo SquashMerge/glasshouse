@@ -288,13 +288,15 @@ describe("feedback review persistence", () => {
 			{
 				connect: async () => ({
 					query: async (sql: string) =>
-						sql.includes("p.status = ANY($3::text[])")
-							? { rows: [{}] }
-							: sql.startsWith("SELECT authorization_allows_project")
-								? { rows: [{ allowed: true }] }
-								: sql.includes("COUNT(*)")
-									? { rows: [{ total: 1 }] }
-									: { rows: [row] },
+						sql.includes("FROM local_credentials")
+							? { rows: [] }
+							: sql.includes("p.status = ANY($3::text[])")
+								? { rows: [{}] }
+								: sql.startsWith("SELECT authorization_allows_project")
+									? { rows: [{ allowed: true }] }
+									: sql.includes("COUNT(*)")
+										? { rows: [{ total: 1 }] }
+										: { rows: [row] },
 					release() {},
 				}),
 			} as never,
@@ -515,7 +517,8 @@ describe("feedback review persistence", () => {
 						: "Feedback must be reviewed before promotion",
 			});
 			expect(queries[0]).toBe("BEGIN");
-			expect(queries[1]).toContain("FOR UPDATE");
+			expect(queries[1]).toContain("FOR SHARE");
+			expect(queries[2]).toContain("FOR UPDATE");
 			expect(queries).toContain("ROLLBACK");
 			expect(queries.some((sql) => sql.includes("SELECT i.id"))).toBe(false);
 			expect(

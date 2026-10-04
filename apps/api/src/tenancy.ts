@@ -10,6 +10,7 @@ import type {
 	ProjectOperation,
 } from "./authorization-policy.js";
 import { lockActiveAuthorizedProject } from "./db/project-authorization.js";
+import { lockSessionPrincipal } from "./db/local-sessions.js";
 
 export type AuthorizedProjectScope = TrustedTenantContext & {
 	projectId: string;
@@ -23,7 +24,7 @@ const AUTHORIZATION_LOCK_ATTEMPTS = 2;
 
 export type ActiveAuthorizedProjectScope = Pick<
 	TrustedTenantContext,
-	"actorId" | "organizationId"
+	"actorId" | "organizationId" | "sessionId"
 > & {
 	projectId: string;
 };
@@ -127,6 +128,11 @@ export async function withActiveAuthorizedProjectLock<T>(
 			transactionOpen = true;
 			if (lockTimeoutMs !== undefined)
 				await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
+			if (tenant.sessionId)
+				await lockSessionPrincipal(client, {
+					...tenant,
+					sessionId: tenant.sessionId,
+				});
 			if (
 				!(await lockActiveAuthorizedProject(client, tenant.projectId, {
 					organization_id: tenant.organizationId,

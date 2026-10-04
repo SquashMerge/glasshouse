@@ -26,7 +26,7 @@ if [ -z "${UI_PASS}" ]; then
   UI_PASS="${UI_PASSWORD:-}"
 fi
 [ -n "${UI_PASS}" ] || { echo "  ! UI_PASSWORD still unset after sourcing infra/.env"; exit 1; }
-AUTH="authorization=Basic $(printf '%s:%s' "${UI_USER}" "${UI_PASS}" | base64)"
+AUTH="authorization: Basic $(printf '%s:%s' "${UI_USER}" "${UI_PASS}" | base64)"
 
 step() { printf '\n\033[1;34m▶ %s\033[0m\n' "$1"; }
 ok() { printf '  \033[1;32m✓\033[0m %s\n' "$1"; }
@@ -41,14 +41,14 @@ echo "$HEALTH_JSON" | grep -q '"status":"ok"' || fail "health status not ok"
 ok "/health returned status=ok"
 
 step "AC4: backend /openapi.json includes supported collection roots"
-PATHS_JSON="$(curl -fsS "${BASE_API}/openapi.json" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("\n".join(d.get("paths",{}).keys()))')"
+PATHS_JSON="$(curl -fsS -H "${AUTH}" "${BASE_API}/openapi.json" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("\n".join(d.get("paths",{}).keys()))')"
 for path in /v1/experiments /v1/traces /v1/prompts /v1/datasets; do
   echo "$PATHS_JSON" | grep -q "^${path}$" || fail "openapi.json missing collection root ${path}"
 done
 ok "supported collection roots present"
 
 step "AC3: backend /reference renders Scalar UI"
-REF_CODE="$(curl -s -o /dev/null -w '%{http_code}' "${BASE_API}/reference")"
+REF_CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "${AUTH}" "${BASE_API}/reference")"
 [ "${REF_CODE}" = "200" ] || fail "/reference returned ${REF_CODE}, expected 200"
 ok "/reference returned 200"
 

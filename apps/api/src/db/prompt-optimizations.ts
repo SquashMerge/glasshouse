@@ -349,7 +349,7 @@ async function lockOptimizationExecution(
 	);
 	if (!project.rows[0]) return null;
 	const identity = await client.query<{ actor_id: string }>(
-		"SELECT actor_id FROM actor_identities AS identity JOIN prompt_optimization_jobs AS job ON job.id = $2 WHERE identity.organization_id = $1 AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(job.requested_by)",
+		"SELECT DISTINCT actor_id FROM actor_identities AS identity JOIN prompt_optimization_jobs AS job ON job.id = $2 WHERE identity.organization_id = $1 AND trusted_actor_subject_matches($1, job.requested_by, identity.actor_id)",
 		[project.rows[0].organization_id, id],
 	);
 	if (!identity.rows[0]) return null;

@@ -1,10 +1,5 @@
-// Prereqs: `make deps-up`, then `make dev-backend` + `make dev-frontend` in separate
-// terminals. UI_USERNAME / UI_PASSWORD come from infra/.env (see playwright.config).
-
 import { test, expect, type Page } from "@playwright/test";
-
-const USER = process.env.UI_USERNAME ?? "astraea";
-const PASS = process.env.UI_PASSWORD ?? "testpassword";
+import { LOCAL_USER as USER, fillLocalPassword } from "./local-auth";
 
 async function gotoFresh(page: Page, path: string) {
 	await page.context().clearCookies();
@@ -61,15 +56,48 @@ test.describe("Login flow", () => {
 	}) => {
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
+		const loginResponse = page.waitForResponse(
+			(response) => new URL(response.url()).pathname === "/v1/auth/login",
+		);
 		await page.getByRole("button", { name: /Sign in/i }).click();
+		const login = await loginResponse;
+		expect(login.status()).toBe(200);
+		expect(Boolean(login.request().headers().authorization)).toBe(false);
+		expect(Object.keys(login.request().postDataJSON()).sort()).toEqual([
+			"password",
+			"username",
+		]);
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
+		const session = await page.evaluate(async () => {
+			const response = await fetch("/v1/auth/session");
+			const body = await response.json();
+			return { status: response.status, authentication: body.authentication };
+		});
+		expect(session).toEqual({ status: 200, authentication: "local_session" });
+		expect(
+			(await page.context().cookies()).some(
+				(cookie) =>
+					cookie.name === "astraea_session" &&
+					cookie.httpOnly &&
+					cookie.sameSite === "Strict" &&
+					cookie.path === "/v1",
+			),
+		).toBe(true);
 		const stored = await page.evaluate(() => ({
 			u: window.localStorage.getItem("astraea.auth.username"),
 			p: window.localStorage.getItem("astraea.auth.password"),
+			su: window.sessionStorage.getItem("astraea.auth.username"),
+			sp: window.sessionStorage.getItem("astraea.auth.password"),
 		}));
 		expect(stored.u).toBeNull();
 		expect(stored.p).toBeNull();
+		expect(stored.su).toBeNull();
+		expect(stored.sp).toBeNull();
+		await page.reload();
+		await expect(
+			page.getByText("Operations overview", { exact: true }),
+		).toBeVisible();
 	});
 
 	test("logout clears in-memory credentials and routes to /login", async ({
@@ -77,13 +105,22 @@ test.describe("Login flow", () => {
 	}) => {
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
 		await page.getByRole("button", { name: USER }).click();
 		await page.getByRole("menuitem", { name: /Log out/i }).click();
 		await page.waitForURL(/\/login$/, { timeout: 5000 });
+		expect(
+			(await page.context().cookies()).some(
+				(cookie) => cookie.name === "astraea_session",
+			),
+		).toBe(false);
+		const status = await page.evaluate(
+			async () => (await fetch("/v1/auth/session")).status,
+		);
+		expect(status).toBe(401);
 
 		const stored = await page.evaluate(() => ({
 			u: window.localStorage.getItem("astraea.auth.username"),
@@ -94,13 +131,41 @@ test.describe("Login flow", () => {
 	});
 });
 
+test("direct API Basic compatibility remains separate from browser local sessions", async ({
+	request,
+}) => {
+	const apiBase = process.env.E2E_API_BASE ?? "http://localhost:3000";
+	const username = process.env.UI_USERNAME ?? "astraea";
+	const password = process.env.UI_PASSWORD ?? "testpassword";
+	const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+	const login = await request.post(`${apiBase}/v1/auth/login`, {
+		headers: { authorization },
+		data: {},
+	});
+	// Assert only safe scalars: failure output must never include cookie/header values.
+	expect(login.status()).toBe(200);
+	expect(Boolean(login.headers()["set-cookie"])).toBe(false);
+	const session = await request.get(`${apiBase}/v1/auth/session`, {
+		headers: { authorization },
+	});
+	expect(session.status()).toBe(200);
+	const body = await session.json();
+	expect(body.authentication).toBe("basic");
+	expect(body.csrf_token).toBeNull();
+	expect(body.expires_at).toBeNull();
+	const projects = await request.get(`${apiBase}/v1/projects`, {
+		headers: { authorization },
+	});
+	expect(projects.status()).toBe(200);
+});
+
 test.describe("Trace list", () => {
 	test("renders the trace list with shadcn table primitives", async ({
 		page,
 	}) => {
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
@@ -131,7 +196,7 @@ test.describe("Shared app workspace", () => {
 		test.setTimeout(120_000);
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
@@ -206,7 +271,7 @@ test.describe("Shared app workspace", () => {
 	}) => {
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
@@ -230,7 +295,7 @@ test.describe("Shared app workspace", () => {
 	}) => {
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 		await selectAccessibleProject(page);
@@ -307,7 +372,7 @@ test.describe("Dashboard basics", () => {
 
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
@@ -318,7 +383,7 @@ test.describe("Dashboard basics", () => {
 	test("sidebar links to /observability", async ({ page }) => {
 		await gotoFresh(page, "/login");
 		await page.getByLabel(/Username/i).fill(USER);
-		await page.getByLabel(/Password/i).fill(PASS);
+		await fillLocalPassword(page);
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 

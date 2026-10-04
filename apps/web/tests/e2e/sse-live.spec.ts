@@ -6,10 +6,6 @@
 //
 // When envReady() returns false the test skips with a clear reason rather than passing on a swallowed assertion.
 //
-// Prereqs: `make deps-up`, then `make dev-backend` + `make dev-frontend` in
-// separate terminals. UI_USERNAME / UI_PASSWORD come from infra/.env (see
-// playwright.config).
-
 import {
 	test,
 	expect,
@@ -17,6 +13,7 @@ import {
 	type APIRequestContext,
 	type Request,
 } from "@playwright/test";
+import { LOCAL_USER, fillLocalPassword } from "./local-auth";
 
 const USER = process.env.UI_USERNAME ?? "astraea";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
@@ -37,8 +34,8 @@ async function gotoFresh(page: Page, path: string) {
 
 async function login(page: Page) {
 	await gotoFresh(page, "/login");
-	await page.getByLabel(/Username/i).fill(USER);
-	await page.getByLabel(/Password/i).fill(PASS);
+	await page.getByLabel(/Username/i).fill(LOCAL_USER);
+	await fillLocalPassword(page);
 	await page.getByRole("button", { name: /Sign in/i }).click();
 	await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 	const selector = page.getByTestId("project-selector");
@@ -64,15 +61,12 @@ async function envReady(): Promise<boolean> {
 	} catch {
 		return false;
 	}
-	// Login probe — POST to /v1/auth/login and verify a 200.
+	// Probe Basic compatibility without consuming the login rate-limit bucket.
 	try {
-		const res = await fetch(`${API_BASE}/v1/auth/login`, {
-			method: "POST",
+		const res = await fetch(`${API_BASE}/v1/auth/session`, {
 			headers: {
-				"content-type": "application/json",
 				authorization: basicAuthHeader(),
 			},
-			body: "{}",
 		});
 		return res.status === 200;
 	} catch {
@@ -298,9 +292,7 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 	test("invalid id renders the 'Trace not found' placeholder (regex gate, no API)", async ({
 		page,
 	}) => {
-		// This test does NOT require the API — it is a pure client-side
-		// regex check on the new detail page. We bypass login by seeding
-		// the auth localStorage directly so the AuthGate lets us through.
+		// The invalid-id gate is client-side; AuthGate still needs a real session.
 		if (!(await envReady())) {
 			test.skip(
 				true,

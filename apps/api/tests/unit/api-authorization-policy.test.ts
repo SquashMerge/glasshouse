@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { basicAuthMiddleware } from "../../src/middleware/auth";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const originalUsername = process.env.UI_USERNAME;
@@ -17,6 +18,7 @@ afterEach(() => {
 test("classifies curation writes, executions, and governed promotions at the server boundary", async () => {
 	const operations: string[] = [];
 	const app = createApiApp({
+		authenticate: () => basicAuthMiddleware(),
 		assertTenantProjectAccess: async (_pool, _tenant, _project, operation) => {
 			operations.push(operation);
 		},

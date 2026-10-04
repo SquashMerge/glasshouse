@@ -56,6 +56,7 @@ function database(taskAvailable = true) {
 	let stored: Record<string, unknown> | undefined;
 	let inserts = 0;
 	const query = async (sql: string, values: unknown[] = []) => {
+		if (sql.includes("FROM local_credentials")) return { rows: [] };
 		if (
 			sql === "BEGIN" ||
 			sql === "COMMIT" ||

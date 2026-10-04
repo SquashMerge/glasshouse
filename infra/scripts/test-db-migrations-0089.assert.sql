@@ -54,7 +54,7 @@ BEGIN
     END IF;
 
     policy_function := pg_get_functiondef(
-        'authorization_allows_project(uuid,uuid,uuid,text)'::regprocedure
+        'public.authorization_allows_project_before_local_sessions(uuid,uuid,uuid,text)'::regprocedure
     );
     IF policy_function !~ E'WHEN\\s+effective_role\\s+=\\s+''user''\\s+THEN\\s+operation\\s+IN\\s*\\([^)]*''curation_write''' THEN
         RAISE EXCEPTION '0089 strict User curation parity guard is missing';

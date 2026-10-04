@@ -53,6 +53,7 @@ class MockClient {
 			});
 			return reply;
 		}
+		if (text.includes("FROM local_credentials")) return { rows: [] };
 		if (text.includes("FROM organization_memberships om"))
 			return { rows: [{ actor_subject: "writer" }] };
 		if (text.includes("FROM organization_actor_roles"))

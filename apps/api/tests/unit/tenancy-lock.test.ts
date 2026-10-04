@@ -43,6 +43,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 
 		expect(query.mock.calls.map(([statement]) => statement)).toEqual([
 			"BEGIN",
+			expect.stringContaining("local_credentials"),
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("organization_actor_roles"),
 			expect.stringContaining("project_memberships"),
@@ -51,7 +52,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect.stringContaining("authorization_allows_project"),
 			"COMMIT",
 		]);
-		expect(query.mock.calls[5]?.[0]).toContain("FOR UPDATE OF p");
+		expect(query.mock.calls[6]?.[0]).toContain("FOR UPDATE OF p");
 		expect(persisted).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
 	});
@@ -92,6 +93,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 		expect(release).toHaveBeenCalledTimes(2);
 		expect(query.mock.calls.map(([statement]) => statement)).toEqual([
 			"BEGIN",
+			expect.stringContaining("local_credentials"),
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("organization_actor_roles"),
 			expect.stringContaining("project_memberships"),
@@ -99,6 +101,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect.stringContaining("p.status = ANY($3::text[])"),
 			"ROLLBACK",
 			"BEGIN",
+			expect.stringContaining("local_credentials"),
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("organization_actor_roles"),
 			expect.stringContaining("project_memberships"),
@@ -160,6 +163,7 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect(persisted, reason).not.toHaveBeenCalled();
 			expect(query.mock.calls.map(([statement]) => statement)).toEqual([
 				"BEGIN",
+				expect.stringContaining("local_credentials"),
 				expect.stringContaining("organization_memberships"),
 				expect.stringContaining("organization_actor_roles"),
 				expect.stringContaining("project_memberships"),

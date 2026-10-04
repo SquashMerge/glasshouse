@@ -309,7 +309,7 @@ export function FeedbackControls({
 				variant="outline"
 				onClick={() => void record(1)}
 				aria-label={`Thumbs up ${label}`}
-				disabled={pending}
+				disabled={pending || !projectId}
 			>
 				Thumbs up
 			</Button>
@@ -319,7 +319,7 @@ export function FeedbackControls({
 				variant="outline"
 				onClick={() => setNegative(true)}
 				aria-label={`Thumbs down ${label}`}
-				disabled={pending}
+				disabled={pending || !projectId}
 			>
 				Thumbs down
 			</Button>
@@ -328,6 +328,7 @@ export function FeedbackControls({
 				placeholder="Optional comment"
 				aria-label="Comment"
 				value={comment}
+				disabled={!projectId}
 				onChange={(event) => {
 					commentRef.current = event.target.value;
 					setComment(event.target.value);
@@ -340,9 +341,14 @@ export function FeedbackControls({
 						aria-label="Reason"
 						placeholder="Reason required"
 						value={reason}
+						disabled={!projectId}
 						onChange={(event) => setReason(event.target.value)}
 					/>
-					<Button size="sm" disabled={pending} onClick={() => void record(-1)}>
+					<Button
+						size="sm"
+						disabled={pending || !projectId}
+						onClick={() => void record(-1)}
+					>
 						{pending ? "Recording..." : "Record"}
 					</Button>
 				</>

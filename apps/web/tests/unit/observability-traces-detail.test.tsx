@@ -249,6 +249,32 @@ afterEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
+describe("TraceDetailPage — feedback project readiness", () => {
+	it("does not accept a comment that project restoration would discard", () => {
+		const { rerender } = renderAt(VALID_ID);
+
+		expect(screen.getByLabelText("Comment")).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Thumbs up trace" }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Thumbs down trace" }),
+		).toBeDisabled();
+
+		selectedProjectId = PROJECT_ID;
+		rerender(<TraceDetailPage />);
+
+		expect(screen.getByLabelText("Comment")).toBeEnabled();
+		fireEvent.input(screen.getByLabelText("Comment"), {
+			target: { value: "Helpful first-pass trace" },
+		});
+		rerender(<TraceDetailPage />);
+		expect(screen.getByLabelText("Comment")).toHaveValue(
+			"Helpful first-pass trace",
+		);
+	});
+});
+
 describe("TraceDetailPage — invalid id gate", () => {
 	it("renders the 'Trace not found' placeholder for an invalid id and never opens the SSE", async () => {
 		renderAt("not-hex");
