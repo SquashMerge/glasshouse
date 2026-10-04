@@ -93,6 +93,7 @@ function fakeDb(
 	const db = {
 		queries,
 		query: async (text: string, values?: unknown[]) => {
+			if (text.includes("FROM local_credentials")) return { rows: [] };
 			queries.push({ text, values });
 			if (text.includes("p.status = ANY($3::text[])"))
 				return responses.shift() ?? { rows: [{ id: PROJECT }] };

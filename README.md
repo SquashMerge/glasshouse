@@ -160,9 +160,9 @@ For concurrent AI-assisted development, Astraea provides a Compose-based devcont
 | http://localhost:5173/observability | Trace and observation lists (auth-gated) |
 | http://localhost:5173/observability/traces/:id | Trace detail with observation tree (auth-gated) |
 | http://localhost:3000/v1/otel/v1/traces | OTLP HTTP/JSON trace ingest (auth-gated; OTel SDK target) |
-| http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (public) |
+| http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (auth-gated) |
 | http://localhost:3000/health | Backend health check (public; no auth) |
-| http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (public) |
+| http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (auth-gated) |
 
 ### Local credential foundation
 
@@ -171,8 +171,11 @@ versioned Argon2id hashes, operator-token-guarded first-Admin setup, and Admin-c
 first-password/email-invitation records. See the [operator/security runbook](docs/local-credentials-runbook.md)
 before selecting `ASTRAEA_AUTH_BOOTSTRAP_MODE=local` on a fresh install. The default
 `basic` mode preserves existing bootstrap behavior and authorization; no environment
-password is imported. Local login/session endpoints (#189) and the setup/account UI
-(#190) follow separately, so the current dashboard still signs in with Basic Auth.
+password is imported. The [local session API](docs/local-sessions-runbook.md) now supplies
+login/current-session/logout/password-change endpoints, eight-hour revocable HttpOnly
+cookies, CSRF protection and the same trusted workspace principal. Configure HTTPS,
+`NODE_ENV=production` and the exact `ASTRAEA_PUBLIC_ORIGIN` behind a proxy. The setup/account
+browser UX follows in #190; the current dashboard still signs in with Basic Auth.
 
 ### GEPA prompt optimization and LLM providers
 

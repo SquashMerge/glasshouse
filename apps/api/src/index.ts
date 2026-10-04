@@ -1,11 +1,15 @@
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { openapiApp } from "./openapi.js";
 import { handleHealth } from "./routes/health.js";
-import { basicAuthMiddleware } from "./middleware/auth.js";
+import {
+	authenticationMiddleware,
+	PUBLIC_API_ROUTES,
+} from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
-import { pgPool } from "./db/postgres.js";
+import { authenticationPool, pgPool } from "./db/postgres.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
 import { cancelInterruptedExecutionAdmissions } from "./db/execution-admissions.js";
 import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
@@ -24,6 +28,7 @@ import {
 } from "./tenancy.js";
 import type { ProjectOperation } from "./authorization-policy.js";
 import { logger } from "./lib/logger.js";
+import { AuthenticationError } from "./db/local-sessions.js";
 
 const PORT = Number(process.env.API_PORT ?? 3000);
 const MAX_BODY_BYTES = parseBodySizeLimit(process.env.API_MAX_BODY_BYTES);
@@ -36,6 +41,8 @@ export type ApiDependencies = {
 	pgPool: typeof pgPool;
 	assertTenantProjectAccess: typeof assertTenantProjectAccess;
 	resolveTenantProject: typeof resolveTenantProject;
+	authenticate: typeof authenticationMiddleware;
+	authenticationPool: typeof authenticationPool;
 };
 
 const productionApiDependencies: ApiDependencies = {
@@ -44,6 +51,8 @@ const productionApiDependencies: ApiDependencies = {
 	pgPool,
 	assertTenantProjectAccess,
 	resolveTenantProject,
+	authenticate: authenticationMiddleware,
+	authenticationPool,
 };
 
 function isUuid(value: unknown): value is string {
@@ -177,6 +186,16 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		}
 	});
 	apiApp.onError((error, c) => {
+		if (
+			error instanceof AuthenticationError ||
+			(error instanceof HTTPException &&
+				[400, 415].includes(error.status) &&
+				c.req.path.startsWith("/v1/auth/"))
+		)
+			return c.json(
+				{ code: "UNAUTHORIZED", message: "Authentication required" },
+				401,
+			);
 		logger.error("http.unhandled_error", error, {
 			method: c.req.method,
 			path: c.req.path,
@@ -207,12 +226,19 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		c.header("Cache-Control", "no-store");
 		await next();
 	});
-	apiApp.use("/v1/*", basicAuthMiddleware());
+	apiApp.use(
+		"*",
+		resolvedDependencies.authenticate(
+			resolvedDependencies.pgPool,
+			resolvedDependencies.authenticationPool,
+		),
+	);
 	apiApp.use("/v1/*", async (c, next) => {
 		try {
 			if (
 				c.req.path === "/v1/me" ||
-				c.req.path === "/v1/auth/login" ||
+				c.req.path.startsWith("/v1/auth/") ||
+				PUBLIC_API_ROUTES.has(`${c.req.method} ${c.req.path}`) ||
 				c.req.path === "/v1/otel/v1/traces" ||
 				c.req.path.startsWith("/v1/projects") ||
 				c.req.path.startsWith("/v1/admin/") ||

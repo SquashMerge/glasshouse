@@ -402,7 +402,7 @@ export async function handleGetMe(c: Context) {
 			durable_role: "admin" | "user" | "read_only";
 			default_project_id: string;
 		}>(
-			"SELECT role.role AS durable_role, o.default_project_id FROM organizations o JOIN organization_actor_roles role ON role.organization_id = o.id AND role.actor_id = $2 JOIN actor_identities identity ON identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace = 'basic:v1' WHERE o.id = $1",
+			"SELECT role.role AS durable_role, o.default_project_id FROM organizations o JOIN organization_actor_roles role ON role.organization_id = o.id AND role.actor_id = $2 WHERE o.id = $1 AND EXISTS (SELECT 1 FROM actor_identities identity WHERE identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace IN ('basic:v1', 'local:v1')) AND local_actor_authentication_enabled($1, $2)",
 			[tenant.organizationId, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
@@ -425,7 +425,7 @@ export async function handleListProjects(c: Context) {
 	try {
 		const tenant = trustedTenant(c);
 		const membership = await pgPool().query(
-			"SELECT 1 FROM organization_actor_roles role JOIN actor_identities identity ON identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace = 'basic:v1' WHERE role.organization_id = $1 AND role.actor_id = $2",
+			"SELECT 1 FROM organization_actor_roles role WHERE role.organization_id = $1 AND role.actor_id = $2 AND EXISTS (SELECT 1 FROM actor_identities identity WHERE identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace IN ('basic:v1', 'local:v1')) AND local_actor_authentication_enabled($1, $2)",
 			[tenant.organizationId, tenant.actorId],
 		);
 		if (!membership.rows[0]) throw new Error("Not found");
@@ -530,7 +530,7 @@ export async function handleCreateProject(c: Context) {
 			tenant.organizationId,
 			tenant,
 			"organization_manage",
-			"WITH authorization AS MATERIALIZED (SELECT role.actor_id FROM organization_actor_roles role JOIN actor_identities identity ON identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace = 'basic:v1' WHERE role.organization_id = $3 AND role.actor_id = $5 AND authorization_allows_organization($3, $5, 'organization_manage') FOR UPDATE OF role), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorization RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT p.id, $3, membership.actor_subject, 'manager' FROM p JOIN actor_identities identity ON identity.organization_id = $3 AND identity.actor_id = $5 AND identity.provider_namespace = 'basic:v1' JOIN organization_memberships membership ON membership.organization_id = $3 AND basic_auth_identity_matches($3, membership.actor_subject, identity.actor_id)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p), lifecycle AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
+			"WITH authorized_actor AS MATERIALIZED (SELECT role.actor_id FROM organization_actor_roles role WHERE role.organization_id = $3 AND role.actor_id = $5 AND authorization_allows_organization($3, $5, 'organization_manage') AND EXISTS (SELECT 1 FROM actor_identities identity WHERE identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id AND identity.provider_namespace IN ('basic:v1', 'local:v1')) FOR UPDATE OF role), p AS (INSERT INTO projects (name, slug, organization_id) SELECT $1, $2, $3 FROM authorized_actor RETURNING id, name, slug, status, created_at, archived_at), m AS (INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT p.id, $3, membership.actor_subject, 'manager' FROM p JOIN actor_identities identity ON identity.organization_id = $3 AND identity.actor_id = $5 AND identity.provider_namespace = 'basic:v1' JOIN organization_memberships membership ON membership.organization_id = $3 AND basic_auth_identity_matches($3, membership.actor_subject, identity.actor_id)), audit AS (INSERT INTO project_authorization_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p), lifecycle AS (INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type) SELECT $3, id, $4, 'project_created' FROM p) SELECT * FROM p",
 			[
 				input.name,
 				input.slug,

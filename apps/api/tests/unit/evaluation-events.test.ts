@@ -54,7 +54,11 @@ describe("evaluation event stream", () => {
 			pool: () =>
 				({
 					connect: async () => ({
-						query: async () => ({ rows: [{ id: projectId, allowed: true }] }),
+						query: async (sql: string) => ({
+							rows: sql.includes("FROM local_credentials")
+								? []
+								: [{ id: projectId, allowed: true }],
+						}),
 						release() {},
 					}),
 					query: async () => ({

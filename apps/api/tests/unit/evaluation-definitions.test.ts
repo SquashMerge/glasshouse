@@ -234,6 +234,7 @@ describe("Evaluation definitions", () => {
 			{
 				connect: async () => ({
 					query: async (sql: string) => {
+						if (sql.includes("FROM local_credentials")) return { rows: [] };
 						if (sql.startsWith("SELECT authorization_allows_project"))
 							return { rows: [{ allowed: true }] };
 						if (sql.startsWith("SELECT p.id FROM projects"))
@@ -281,6 +282,7 @@ describe("Evaluation definitions", () => {
 				connect: async () => ({
 					query: async (sql: string) => {
 						queries.push(sql);
+						if (sql.includes("FROM local_credentials")) return { rows: [] };
 						if (sql.startsWith("SELECT authorization_allows_project"))
 							return { rows: [{ allowed: true }] };
 						if (sql.startsWith("SELECT p.id FROM projects"))
@@ -331,6 +333,7 @@ describe("Evaluation definitions", () => {
 			{
 				connect: async () => ({
 					query: async (sql: string) => {
+						if (sql.includes("FROM local_credentials")) return { rows: [] };
 						queries.push(sql);
 						if (sql.startsWith("SELECT authorization_allows_project"))
 							return { rows: [{ allowed: true }] };

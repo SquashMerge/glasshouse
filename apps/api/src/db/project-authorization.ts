@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import type { ProjectOperation } from "../authorization-policy.js";
 import type { TrustedTenantContext } from "../middleware/auth.js";
+import { lockLocalActor } from "./local-sessions.js";
 
 export type ProjectAuthorization = {
 	organization_id: string;
@@ -104,6 +105,14 @@ export async function lockAuthorizedProject(
 	statuses: readonly AuthorizedProjectStatus[],
 	options: ProjectLockOptions = {},
 ): Promise<boolean> {
+	if (
+		!(await lockLocalActor(
+			client,
+			authorization.organization_id,
+			authorization.actor_id,
+		))
+	)
+		return false;
 	await client.query(
 		"SELECT om.actor_subject FROM organization_memberships om WHERE om.organization_id = $1 AND basic_auth_identity_matches($1, om.actor_subject, $2) FOR UPDATE",
 		[authorization.organization_id, authorization.actor_id],
@@ -155,6 +164,7 @@ export async function lockAuthorizedOrganization(
 	operation: "organization_manage" | "destructive" | "governed",
 	memberSubject?: string,
 ): Promise<boolean> {
+	if (!(await lockLocalActor(client, organizationId, actorId))) return false;
 	await client.query(
 		memberSubject
 			? "SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND (basic_auth_identity_matches($1, actor_subject, $2) OR actor_subject = $3) ORDER BY actor_subject FOR UPDATE"

@@ -104,6 +104,7 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 	if (values.includes(OTHER_PROJECT)) return { rows: [] };
 	if (
 		sql.startsWith("WITH authorization AS MATERIALIZED") ||
+		sql.startsWith("WITH authorized_actor AS MATERIALIZED") ||
 		sql.startsWith("WITH provenance AS MATERIALIZED")
 	) {
 		if (sql.includes("INSERT INTO projects") && values.includes("member"))
@@ -592,6 +593,7 @@ describe("project authorization routes", () => {
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
 			if (sql.startsWith("SELECT authorization_allows_organization"))
 				return { rows: [{ allowed: true }] };
+			if (sql.includes("FROM local_credentials")) return { rows: [] };
 			if (
 				sql.startsWith("BEGIN") ||
 				sql.startsWith("COMMIT") ||
@@ -813,7 +815,7 @@ describe("project authorization routes", () => {
 				};
 			if (
 				sql.startsWith("SELECT 1 FROM organization_actor_roles role") &&
-				sql.includes("JOIN actor_identities")
+				sql.includes("FROM actor_identities")
 			)
 				return { rows: [{ "?column?": 1 }] };
 			if (
@@ -1463,10 +1465,14 @@ describe("project authorization routes", () => {
 
 		const mutations = query.mock.calls
 			.map(([sql]) => sql)
-			.filter((sql) => sql.includes("authorization AS MATERIALIZED"));
+			.filter(
+				(sql) =>
+					sql.includes("authorization AS MATERIALIZED") ||
+					sql.includes("authorized_actor AS MATERIALIZED"),
+			);
 		expect(mutations.length).toBeGreaterThanOrEqual(5);
 		for (const sql of mutations) {
-			expect(sql).toContain("authorization AS MATERIALIZED");
+			expect(sql).toMatch(/(?:authorization|authorized_actor) AS MATERIALIZED/);
 			expect(sql).toContain("FOR UPDATE");
 			expect(sql).toContain(
 				"audit AS (INSERT INTO project_authorization_audit_events",

@@ -7556,6 +7556,15 @@ components:
     basicAuth:
       scheme: basic
       type: http
+    csrfHeader:
+      in: header
+      name: x-astraea-csrf
+      type: apiKey
+    sessionCookie:
+      description: HttpOnly opaque local session; never read or store it in JavaScript. Cookie-authenticated mutations also require x-astraea-csrf from GET /v1/auth/session.
+      in: cookie
+      name: astraea_session
+      type: apiKey
 info:
   description: Agent and LLM evaluation platform.
   title: Astraea API
@@ -7621,6 +7630,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - administration
@@ -7688,6 +7698,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - administration
@@ -7750,6 +7762,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - administration
@@ -7819,6 +7832,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - administration
@@ -7883,6 +7897,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - administration
@@ -7955,6 +7971,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - administration
@@ -8015,12 +8033,34 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - administration
-  /v1/auth/login:
+  /v1/auth/invitations/accept:
     post:
-      description: Used by the web dashboard login page to pre-validate credentials before retaining them in memory for the current page session. The endpoint requires Basic Auth itself — pass the same credentials you're trying to verify.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                password:
+                  maxLength: 1024
+                  minLength: 1
+                  type: string
+                  writeOnly: true
+                token:
+                  maxLength: 43
+                  minLength: 43
+                  type: string
+                  writeOnly: true
+              required:
+                - token
+                - password
+              type: object
+        required: true
       responses:
         '200':
           content:
@@ -8034,16 +8074,291 @@ paths:
                 required:
                   - ok
                 type: object
-          description: Credentials valid
+          description: Operation accepted
         '401':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-          description: Credentials invalid
+          description: Authentication failed (including lockout)
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Origin or CSRF verification failed
+      security: []
+      summary: Set a first password using a single-use enrollment token
+      tags:
+        - auth
+  /v1/auth/login:
+    post:
+      description: Verify a deployment-scoped local username/password and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+                - additionalProperties: false
+                  properties:
+                    password:
+                      maxLength: 1024
+                      minLength: 1
+                      type: string
+                      writeOnly: true
+                    username:
+                      maxLength: 64
+                      minLength: 1
+                      type: string
+                  required:
+                    - username
+                    - password
+                  type: object
+                - additionalProperties: false
+                  properties: {}
+                  type: object
+        required: false
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  ok:
+                    enum:
+                      - true
+                    type: boolean
+                required:
+                  - ok
+                type: object
+          description: Operation accepted
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication failed (including lockout)
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Origin or CSRF verification failed
+      security: []
+      summary: Sign in to Astraea
+      tags:
+        - auth
+  /v1/auth/logout:
+    post:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  ok:
+                    enum:
+                      - true
+                    type: boolean
+                required:
+                  - ok
+                type: object
+          description: Operation accepted
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication failed (including lockout)
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Origin or CSRF verification failed
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
-      summary: Verify Basic Auth credentials
+      summary: Revoke the current local session
+      tags:
+        - auth
+  /v1/auth/password:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                current_password:
+                  maxLength: 1024
+                  minLength: 1
+                  type: string
+                  writeOnly: true
+                new_password:
+                  maxLength: 1024
+                  minLength: 1
+                  type: string
+                  writeOnly: true
+              required:
+                - current_password
+                - new_password
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  ok:
+                    enum:
+                      - true
+                    type: boolean
+                required:
+                  - ok
+                type: object
+          description: Operation accepted
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication failed (including lockout)
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Origin or CSRF verification failed
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+      summary: Change own local password and revoke all sessions
+      tags:
+        - auth
+  /v1/auth/session:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  actor_id:
+                    format: uuid
+                    type: string
+                  authentication:
+                    enum:
+                      - local_session
+                      - basic
+                    type: string
+                  csrf_token:
+                    type:
+                      - string
+                      - 'null'
+                  expires_at:
+                    format: date-time
+                    type:
+                      - string
+                      - 'null'
+                  organization_id:
+                    format: uuid
+                    type: string
+                required:
+                  - actor_id
+                  - organization_id
+                  - authentication
+                  - expires_at
+                  - csrf_token
+                type: object
+          description: Trusted session context; CSRF value is not a bearer token
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication failed (including lockout)
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: Read the authenticated session
+      tags:
+        - auth
+  /v1/auth/setup:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  available:
+                    type: boolean
+                required:
+                  - available
+                type: object
+          description: Content-free availability only
+      security: []
+      summary: Read first-Admin setup availability
+      tags:
+        - auth
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                password:
+                  maxLength: 1024
+                  minLength: 1
+                  type: string
+                  writeOnly: true
+                token:
+                  maxLength: 43
+                  minLength: 43
+                  type: string
+                  writeOnly: true
+                username:
+                  maxLength: 64
+                  minLength: 3
+                  type: string
+              required:
+                - username
+                - password
+                - token
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  ok:
+                    enum:
+                      - true
+                    type: boolean
+                required:
+                  - ok
+                type: object
+          description: Operation accepted
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication failed (including lockout)
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Origin or CSRF verification failed
+      security: []
+      summary: Consume the operator's first-Admin setup token
       tags:
         - auth
   /v1/benchmarks:
@@ -8087,6 +8402,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List benchmark suites
       tags:
@@ -8129,6 +8445,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Create a golden-dataset benchmark suite
       tags:
@@ -8180,6 +8498,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Rank benchmark runs
       tags:
@@ -8243,6 +8562,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Run a prompt/model benchmark
       tags:
@@ -8307,6 +8628,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List project datasets
       tags:
@@ -8349,6 +8671,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Create a project dataset
       tags:
@@ -8416,6 +8740,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Archive a dataset
       tags:
@@ -8468,6 +8794,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get a dataset by stable slug
       tags:
@@ -8561,6 +8888,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Update dataset metadata
       tags:
@@ -8623,6 +8952,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get the shared dataset draft
       tags:
@@ -8706,6 +9036,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Capture redacted trace or observation evidence into a draft
       tags:
@@ -8755,6 +9087,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Discard the shared dataset draft
       tags:
@@ -8838,6 +9172,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Import up to 500 draft items atomically
       tags:
@@ -8914,6 +9250,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Reorder every draft item deterministically
       tags:
@@ -8987,6 +9325,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Delete a draft item using its UUID identity
       tags:
@@ -9064,6 +9404,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Mark a draft item as reviewed
       tags:
@@ -9124,6 +9466,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List a Dataset item's redacted revision history
       tags:
@@ -9207,6 +9550,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Upsert a draft item using its stable key
       tags:
@@ -9278,6 +9623,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Publish the shared dataset draft
       tags:
@@ -9331,6 +9678,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Validate every draft item with the current versioned contract
       tags:
@@ -9393,6 +9742,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Create or get the shared dataset draft
       tags:
@@ -9481,6 +9832,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Export a redacted Dataset draft or immutable version
       tags:
@@ -9549,6 +9901,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Restore an archived dataset
       tags:
@@ -9613,6 +9967,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Permanently tombstone an archived dataset without retained evidence
       tags:
@@ -9666,6 +10022,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List immutable dataset versions
       tags:
@@ -9725,6 +10082,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Inspect an immutable dataset version
       tags:
@@ -9776,6 +10134,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get a project dataset
       tags:
@@ -9835,6 +10194,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List dataset items
       tags:
@@ -9879,6 +10239,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Legacy dataset item write endpoint
       tags:
@@ -9931,6 +10293,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Legacy dataset item write endpoint
       tags:
@@ -9990,6 +10354,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List the latest published dataset items
       tags:
@@ -10050,6 +10415,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List Evaluation Gate approvals
       tags:
@@ -10107,6 +10473,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Approve an immutable Evaluation Definition Version for a gate
       tags:
@@ -10164,6 +10532,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Inspect an Evaluation Gate approval
       tags:
@@ -10221,6 +10590,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Inspect safe Evaluation Gate approval history
       tags:
@@ -10284,6 +10654,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Revoke an Evaluation Gate approval
       tags:
@@ -10364,6 +10736,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List Evaluation Gate Runs
       tags:
@@ -10434,6 +10807,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Run an administrator-approved pinned Evaluation Gate
       tags:
@@ -10491,6 +10866,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Inspect an Evaluation Gate Run outcome
       tags:
@@ -10564,6 +10940,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List inspectable Evaluation Runs
       tags:
@@ -10616,6 +10993,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Compare two compatible Evaluation Runs
       tags:
@@ -10667,6 +11046,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get durable Evaluation Run status
       tags:
@@ -10718,6 +11098,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Cancel a durable Evaluation Run
       tags:
@@ -10777,6 +11159,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Stream replayable durable Evaluation Run events
       tags:
@@ -10845,6 +11228,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Read bounded Evaluation Run evidence
       tags:
@@ -10896,6 +11280,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Retry failed items in a durable Evaluation Run
       tags:
@@ -11034,6 +11420,7 @@ paths:
                   - no-store
                 type: string
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get one client-reported Agent Introspection Report
       tags:
@@ -11190,6 +11577,8 @@ paths:
                   - no-store
                 type: string
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Store or replay a client-reported Agent Introspection Report
       tags:
@@ -11244,6 +11633,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List stable Evaluations
       tags:
@@ -11308,6 +11698,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Create a stable Evaluation and its draft
       tags:
@@ -11353,6 +11745,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List structural legacy evaluation compatibility links
       tags:
@@ -11416,6 +11809,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Archive an Evaluation
       tags:
@@ -11470,6 +11865,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get an Evaluation
       tags:
@@ -11531,6 +11927,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get the editable Evaluation definition
       tags:
@@ -11732,6 +12129,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Replace an Evaluation definition draft
       tags:
@@ -11793,6 +12192,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Publish an immutable Evaluation Definition Version
       tags:
@@ -11856,6 +12257,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Restore an archived Evaluation
       tags:
@@ -11931,6 +12334,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Admit and start a reproducible Evaluation Run
       tags:
@@ -12010,6 +12415,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Irreversibly tombstone an archived Evaluation
       tags:
@@ -12065,6 +12472,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List immutable Evaluation Definition Versions
       tags:
@@ -12126,6 +12534,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get an immutable Evaluation Definition Version
       tags:
@@ -12171,6 +12580,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List evaluations
       tags:
@@ -12221,6 +12631,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Create and run an LLM evaluation
       tags:
@@ -12272,6 +12684,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get an evaluation
       tags:
@@ -12323,6 +12736,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Cancel a running evaluation
       tags:
@@ -12374,6 +12789,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Stream evaluation lifecycle events
       tags:
@@ -12425,6 +12841,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get evaluation results
       tags:
@@ -12476,6 +12893,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get evaluation summary
       tags:
@@ -12588,6 +13006,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List project feedback
       tags:
@@ -12637,6 +13056,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Record human trace or Observation feedback
       tags:
@@ -12699,6 +13120,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Explicitly promote reviewed feedback into a dataset
       tags:
@@ -12755,6 +13178,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Update feedback review state
       tags:
@@ -12877,6 +13302,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - governance
@@ -13037,6 +13463,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - governance
@@ -13158,6 +13586,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - governance
@@ -13283,6 +13712,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - governance
@@ -13358,6 +13789,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - governance
@@ -13452,6 +13885,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - governance
@@ -13540,6 +13974,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal server error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - governance
@@ -13559,6 +13995,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
           description: One or more checks down
+      security: []
       summary: Health check (Postgres + ClickHouse + Valkey)
       tags:
         - health
@@ -13608,6 +14045,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -13678,6 +14116,7 @@ paths:
                 $ref: '#/components/schemas/NotImplementedError'
           description: Not implemented
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List observations (spans)
       tags:
@@ -13706,6 +14145,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Bad request
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: SSE stream of newly created observations
       tags:
@@ -13769,6 +14209,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -13810,6 +14252,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: The OTLP project selector or resource provenance is unavailable to the authenticated organization
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: OTLP HTTP/JSON trace ingest
       tags:
@@ -13868,6 +14312,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -13935,6 +14380,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14001,6 +14448,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14056,6 +14505,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14127,6 +14577,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14183,6 +14635,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14246,6 +14700,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14302,6 +14757,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14358,6 +14814,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - projects
@@ -14721,6 +15179,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Start a GEPA prompt optimization
       tags:
@@ -14975,6 +15435,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - prompt-optimization
@@ -15066,6 +15527,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - prompt-optimization
@@ -15189,6 +15651,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - prompt-optimization
@@ -15438,6 +15901,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - prompt-optimization
@@ -15488,6 +15952,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       tags:
         - prompt-optimization
@@ -15737,6 +16202,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Promote a reviewed GEPA draft
       tags:
@@ -15987,6 +16454,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       tags:
         - prompt-optimization
@@ -16051,6 +16520,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Check prompt provenance tuple status
       tags:
@@ -16108,6 +16578,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List project prompts
       tags:
@@ -16150,6 +16621,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Create a project prompt and version one
       tags:
@@ -16193,6 +16666,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Render unsaved system and user prompt drafts as plain LLM text
       tags:
@@ -16247,6 +16722,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Hard-delete a prompt and permanently reserve its identifier
       tags:
@@ -16305,6 +16782,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get a project prompt version
       tags:
@@ -16369,6 +16847,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Render a prompt version as plain LLM text
       tags:
@@ -16430,6 +16910,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List immutable prompt versions
       tags:
@@ -16487,6 +16968,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Create the next immutable prompt version
       tags:
@@ -16540,6 +17023,8 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
       security:
+        - csrfHeader: []
+          sessionCookie: []
         - basicAuth: []
       summary: Permanently remove the latest prompt version and restore the previous version
       tags:
@@ -16611,6 +17096,7 @@ paths:
                 $ref: '#/components/schemas/NotImplementedError'
           description: Not implemented
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: List traces
       tags:
@@ -16639,6 +17125,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Bad request
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: SSE stream of newly created traces
       tags:
@@ -16719,6 +17206,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: A response cannot fit within the raw UTF-8 byte limit
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: Get a trace
       tags:
@@ -16780,6 +17268,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Trace snapshot did not complete before its bounded delivery deadline; retry safely.
       security:
+        - sessionCookie: []
         - basicAuth: []
       summary: 'SSE stream for a single trace: snapshot + live observations + complete'
       tags:

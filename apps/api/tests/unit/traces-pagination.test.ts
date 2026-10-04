@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Context } from "hono";
+import { basicAuthMiddleware } from "../../src/middleware/auth";
 import { MAX_TRACE_RESPONSE_BYTES } from "../../src/db/trace-payload-bounds";
 import { encodeTraceCursor } from "../../src/db/trace-cursor";
 
@@ -28,7 +29,10 @@ const { createApiApp } = await import("../../src/index");
 const { handleListObservations, handleListTraces } = await import(
 	"../../src/routes/traces"
 );
-const apiApp = createApiApp({ assertTenantProjectAccess });
+const apiApp = createApiApp({
+	assertTenantProjectAccess,
+	authenticate: () => basicAuthMiddleware(),
+});
 
 function request(path: string): Request {
 	return new Request(`http://x${path}`, {

@@ -8,7 +8,7 @@ import {
 	TenantScopeError,
 	trustedTenant,
 } from "./tenancy.js";
-import { loginRoute, handleLogin } from "./routes/auth.js";
+import { authRoutes } from "./routes/auth.js";
 import { otlpIngestRoute, handleOtlpIngest } from "./routes/otlp.js";
 
 import {
@@ -289,6 +289,18 @@ import {
 export const openapiApp = new OpenAPIHono({
 	defaultHook: (result, c) => {
 		if (!result.success) {
+			if (
+				[
+					"/v1/auth/login",
+					"/v1/auth/setup",
+					"/v1/auth/invitations/accept",
+					"/v1/auth/password",
+				].includes(c.req.path)
+			)
+				return c.json(
+					{ code: "UNAUTHORIZED", message: "Authentication required" },
+					401,
+				);
 			const isAgentIntrospection =
 				/^\/v1\/evaluation-runs\/[^/]+\/tasks\/[^/]+\/agent-introspection\/[^/]+$/.test(
 					c.req.path,
@@ -321,8 +333,37 @@ openapiApp.openAPIRegistry.registerComponent("securitySchemes", "basicAuth", {
 	type: "http",
 	scheme: "basic",
 });
+openapiApp.openAPIRegistry.registerComponent(
+	"securitySchemes",
+	"sessionCookie",
+	{
+		type: "apiKey",
+		in: "cookie",
+		name: "astraea_session",
+		description:
+			"HttpOnly opaque local session; never read or store it in JavaScript. Cookie-authenticated mutations also require x-astraea-csrf from GET /v1/auth/session.",
+	},
+);
+openapiApp.openAPIRegistry.registerComponent("securitySchemes", "csrfHeader", {
+	type: "apiKey",
+	in: "header",
+	name: "x-astraea-csrf",
+});
 const register = (route: unknown, handler: unknown): void => {
-	openapiApp.openapi(route as never, handler as never);
+	const definition = route as {
+		method: string;
+		security?: Array<Record<string, string[]>>;
+	};
+	const cookieSecurity = ["get", "head", "options"].includes(definition.method)
+		? { sessionCookie: [] }
+		: { sessionCookie: [], csrfHeader: [] };
+	const security =
+		definition.security?.length === 0
+			? []
+			: definition.security?.some((entry) => "sessionCookie" in entry)
+				? definition.security
+				: [cookieSecurity, { basicAuth: [] }];
+	openapiApp.openapi({ ...definition, security } as never, handler as never);
 };
 
 openapiApp.use("/v1/prompts/*", async (c, next) => {
@@ -341,8 +382,7 @@ openapiApp.use("/v1/prompt-optimizations/*", async (c, next) => {
 // Health (also mounted at /health by the bare handler in index.ts).
 register(healthRoute, handleHealth);
 
-// Login: gated by basicAuthMiddleware in index.ts via the parent /v1/* mount.
-register(loginRoute, handleLogin);
+for (const [route, handler] of authRoutes) register(route, handler);
 register(otlpIngestRoute, async (c: Context) => {
 	try {
 		const scope = await resolveTenantProject(

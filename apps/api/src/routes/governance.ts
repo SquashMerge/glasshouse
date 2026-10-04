@@ -448,7 +448,7 @@ export async function handleRunRetention(c: Context) {
 			if (version.id !== policy_version_id)
 				throw new Error("Policy preview is stale");
 			const consumed = await client.query(
-				"UPDATE governance_retention_previews SET consumed_at = now() WHERE id = $1 AND organization_id = $2 AND project_id = $3 AND policy_version_id = $4 AND basic_auth_identity_matches($2, actor_subject, $5) AND consumed_at IS NULL AND expires_at > now() RETURNING id",
+				"UPDATE governance_retention_previews SET consumed_at = now() WHERE id = $1 AND organization_id = $2 AND project_id = $3 AND policy_version_id = $4 AND trusted_actor_subject_matches($2, actor_subject, $5) AND consumed_at IS NULL AND expires_at > now() RETURNING id",
 				[
 					preview_id,
 					tenant.organizationId,

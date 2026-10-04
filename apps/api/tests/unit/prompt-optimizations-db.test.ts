@@ -186,6 +186,7 @@ function job(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 function authorizationLockReply(text: string): Reply | null {
+	if (text.includes("FROM local_credentials")) return { rows: [] };
 	if (
 		text.startsWith(
 			"SELECT p.id, p.organization_id FROM projects p JOIN prompt_optimization_jobs",
@@ -198,7 +199,7 @@ function authorizationLockReply(text: string): Reply | null {
 		text === "SELECT * FROM prompt_optimization_jobs WHERE id = $1 FOR UPDATE"
 	)
 		return { rows: [job()] };
-	if (text.startsWith("SELECT actor_id FROM actor_identities"))
+	if (text.startsWith("SELECT DISTINCT actor_id FROM actor_identities"))
 		return { rows: [{ actor_id: authorization.actor_id }] };
 	if (text.includes("p.status = ANY($3::text[])"))
 		return { rows: [{ id: PROJECT }] };

@@ -29,6 +29,7 @@ function transactionPool(
 	let executionAuthorized = true;
 	const client = {
 		query: async (text: string, values: unknown[] = []) => {
+			if (text.includes("FROM local_credentials")) return { rows: [] };
 			if (text.startsWith("SELECT p.id AS authorization_project_id")) {
 				calls.push({ text, values });
 				return {
@@ -197,6 +198,7 @@ describe("durable experiment task ledger", () => {
 							},
 						],
 					};
+				if (text.includes("FROM local_credentials")) return { rows: [] };
 				if (text.includes("FROM organization_memberships om"))
 					return { rows: [{ actor_subject: "requester" }] };
 				if (text.includes("FROM organization_actor_roles"))
@@ -433,6 +435,7 @@ describe("durable experiment task ledger", () => {
 							},
 						],
 					};
+				if (text.includes("FROM local_credentials")) return { rows: [] };
 				if (text.includes("FROM organization_memberships om"))
 					return { rows: [{ actor_subject: "requester" }] };
 				if (text.includes("FROM organization_actor_roles"))

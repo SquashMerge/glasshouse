@@ -1,6 +1,6 @@
 # Local credentials and guarded bootstrap
 
-Issue #188 supplies PostgreSQL persistence and service boundaries. Local login/session endpoints (#189) and the setup/account UI (#190) follow separately. The existing dashboard and HTTP authentication still use Basic Auth in this slice.
+Issue #188 supplies PostgreSQL persistence and service boundaries. The [local login/session API](local-sessions-runbook.md) is supplied by #189; the setup/account browser UX follows in #190. The existing dashboard retains its Basic compatibility login.
 
 ## Identity and storage
 
@@ -8,7 +8,7 @@ Issue #188 supplies PostgreSQL persistence and service boundaries. Local login/s
 - A username is unique **within an Organization**. Its existing `actor_identities` provider is `local:v1`; its canonical subject is `<organization-uuid>:<normalized-username>`, preserving the registry's global provider/subject key. Composite foreign keys bind the credential to that exact Organization, Actor, and identity. The credential identity is immutable.
 - Local provisioning creates a new durable Actor. It never merges with a Basic or future IdP identity by matching username/email. Existing Basic Actor IDs, memberships, durable roles, Project grants, and audit history remain intact. Migration 0098 imports no environment passwords and seeds no local accounts or tokens.
 - Authorization remains `organization_actor_roles` and `project_actor_grants`. Identity links and role/bootstrap changes use existing content-free Admin audit events. No password, hash, token, email, or username is added to those events.
-- `enabled=false` prevents credential verification and first-password enrollment. Disabling a local credential does not edit unrelated Basic credentials or roles; there is no automatic local-to-Basic account linking. Shared request-principal/session enforcement is the subsequent API slice.
+- `enabled=false` prevents credential verification and first-password enrollment, revokes local sessions, and denies later authenticated/worker effects. Disabling a local credential does not edit unrelated Basic credentials or roles; there is no automatic local-to-Basic account linking.
 
 ## First-Admin bootstrap
 
@@ -57,7 +57,7 @@ Enrollment tokens use 32 random bytes, are stored only as SHA-256 digests, expir
 
 ## Argon2id policy and calibration
 
-`Bun.password.hash` generates the random salt and PHC string; `Bun.password.verify` performs password verification. Policy **version 1** is Argon2id v19, **64 MiB**, **3 iterations**, Bun's **p=1**. PostgreSQL stores the PHC hash, algorithm, and policy version together, or all three NULL before enrollment. The service bounds input to 1–1024 UTF-8 bytes; HTTP password-strength/rate-limit/session policies belong to #189.
+`Bun.password.hash` generates the random salt and PHC string; `Bun.password.verify` performs password verification. Policy **version 1** is Argon2id v19, **64 MiB**, **3 iterations**, Bun's **p=1**. PostgreSQL stores the PHC hash, algorithm, and policy version together, or all three NULL before enrollment. The service and HTTP boundary bound input to 1–1024 UTF-8 bytes; the [session API runbook](local-sessions-runbook.md) defines login admission and revocation.
 
 From `apps/api`, `bun run auth:calibrate-passwords` runs 20 sequential hash/verify samples and emits only runtime, public policy, count, and latency percentiles. Reference measurement on the branch devcontainer with Bun 1.3.14: hash p50/p95 **91/96 ms**, verify p50/p95 **90/97 ms**. Recalibrate on deployment hardware and size memory/concurrency admission in the later login boundary; these sequential numbers are not a production-load guarantee.
 

@@ -27,7 +27,7 @@ test("a stalled trace writer drops queued heartbeat and later trace frames at th
 		query: async (sql: string) => {
 			if (sql.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
-			return { rows: [{ id: "project" }] };
+			return { rows: [{ id: "project", enabled: true, ready: true }] };
 		},
 		release() {},
 	};
@@ -95,7 +95,7 @@ test("a stalled trace writer closes before retaining frames beyond the byte cap"
 		query: async (sql: string) => {
 			if (sql.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
-			return { rows: [{ id: "project" }] };
+			return { rows: [{ id: "project", enabled: true, ready: true }] };
 		},
 		release() {},
 	};
@@ -162,7 +162,7 @@ test("client cancellation releases a stalled frame and drops its queued heartbea
 		query: async (sql: string) => {
 			if (sql.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
-			return { rows: [{ id: "project" }] };
+			return { rows: [{ id: "project", enabled: true, ready: true }] };
 		},
 		release() {},
 	};
@@ -217,7 +217,7 @@ test("write timeout releases a stalled frame without retaining it", async () => 
 		query: async (sql: string) => {
 			if (sql.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
-			return { rows: [{ id: "project" }] };
+			return { rows: [{ id: "project", enabled: true, ready: true }] };
 		},
 		release() {},
 	};

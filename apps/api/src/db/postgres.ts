@@ -1,6 +1,16 @@
 import { Pool } from "pg";
 
 let _pool: Pool | null = null;
+let _authenticationPool: Pool | null = null;
+
+// Request fences must not exhaust the connections borrowed by repositories.
+export function authenticationPool(): Pool {
+	return (_authenticationPool ??= new Pool({
+		connectionString: postgresUrl(),
+		max: 10,
+		idleTimeoutMillis: 30_000,
+	}));
+}
 
 export function postgresUrl(): string {
 	// Fall back to component vars so a missing DATABASE_URL doesn't drop the password.
