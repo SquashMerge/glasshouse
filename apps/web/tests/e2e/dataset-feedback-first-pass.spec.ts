@@ -273,8 +273,42 @@ test("records trace feedback and preserves observation provenance when adding it
 		.getByRole("button", { name: "Thumbs up trace" })
 		.locator("..");
 	await traceFeedback.getByLabel("Comment").fill("Helpful first-pass trace");
+	await expect(traceFeedback.getByLabel("Comment")).toHaveValue(
+		"Helpful first-pass trace",
+	);
+	const feedbackResponsePromise = page.waitForResponse(
+		(response) =>
+			new URL(response.url()).pathname === "/v1/feedback" &&
+			response.request().method() === "POST",
+	);
 	await traceFeedback.getByRole("button", { name: "Thumbs up trace" }).click();
-	await expect(page.getByRole("status")).toContainText("Recorded");
+	const feedbackResponse = await feedbackResponsePromise;
+	expect(feedbackResponse.request().postDataJSON()).toEqual({
+		project_id: project.id,
+		trace_id: trace.traceId,
+		value: 1,
+		metadata: {
+			feedback: {
+				schema_version: 1,
+				sentiment: "positive",
+				comment: "Helpful first-pass trace",
+			},
+		},
+	});
+	expect(feedbackResponse.status(), "browser feedback response status").toBe(
+		201,
+	);
+	expect(await feedbackResponse.json()).toMatchObject({
+		project_id: project.id,
+		trace_id: trace.traceId,
+		observation_id: null,
+		value: 1,
+		sentiment: "positive",
+		comment: "Helpful first-pass trace",
+		status: "reviewed",
+	});
+	await expect(traceFeedback.getByRole("status")).toBeVisible();
+	await expect(traceFeedback.getByRole("status")).toHaveText("Recorded");
 
 	const panel = page.getByTestId("observation-detail");
 	await expect(panel).toHaveAttribute(

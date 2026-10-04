@@ -1,5 +1,6 @@
 import "./setup";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFeedback } from "../../src/lib/api";
 import {
 	authedFetch,
 	clearCredentials,
@@ -66,6 +67,51 @@ describe("browser local session adapter", () => {
 		await logoutSession();
 		expect(vi.mocked(fetch).mock.calls.at(-1)![0]).toBe("/v1/auth/logout");
 		expect(getCredentials()).toBeNull();
+	});
+
+	it("preserves feedback comment JSON and its result under cookie auth", async () => {
+		await restoreLocalSession();
+		const body = {
+			project_id: "11111111-1111-4111-8111-111111111111",
+			trace_id: "a".repeat(32),
+			value: 1 as const,
+			metadata: {
+				feedback: {
+					schema_version: 1,
+					sentiment: "positive",
+					comment: "Helpful first-pass trace",
+				},
+			},
+		};
+		vi.mocked(fetch).mockResolvedValueOnce(
+			Response.json(
+				{
+					project_id: body.project_id,
+					trace_id: body.trace_id,
+					value: 1,
+					comment: body.metadata.feedback.comment,
+					status: "reviewed",
+				},
+				{ status: 201 },
+			),
+		);
+
+		const feedback = await createFeedback({
+			...body,
+			idempotency_key: "feedback-comment-test",
+		});
+		const [url, init] = vi.mocked(fetch).mock.calls.at(-1)!;
+		expect(url).toBe("/v1/feedback");
+		expect(init?.method).toBe("POST");
+		expect(init?.credentials).toBe("same-origin");
+		expect(JSON.parse(init?.body as string)).toEqual(body);
+		const headers = init?.headers as Headers;
+		expect(headers.get("content-type")).toBe("application/json");
+		expect(headers.get("idempotency-key")).toBe("feedback-comment-test");
+		expect(headers.has("authorization")).toBe(false);
+		expect(headers.get("x-astraea-csrf")).toBe("test-csrf");
+		expect(feedback.comment).toBe("Helpful first-pass trace");
+		expect(feedback.status).toBe("reviewed");
 	});
 
 	it("fails closed on 401 and rejects Basic-only session restoration", async () => {
