@@ -330,6 +330,10 @@ docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0099.assert.sql"
 
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0100.assert.sql"
+
 run_evaluation_execution_bounds_upgrade() {
   local database="${POSTGRES_DB}_0095_upgrade"
   docker exec "$CONTAINER" createdb --username "$POSTGRES_USER" "$database"

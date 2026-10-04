@@ -76,9 +76,9 @@ async function admin() {
 	});
 	return { ...fixture, principal };
 }
-async function state(id: string) {
+async function state(id: string, database = pool) {
 	// No secret material or hash snapshots: only safe identifiers and auth state.
-	const result = await pool.query(
+	const result = await database.query(
 		`SELECT
 		(SELECT count(*)::int FROM actors) AS actors,
 		(SELECT count(*)::int FROM actor_identities WHERE organization_id = $1) AS identities,
@@ -178,6 +178,26 @@ async function assertFinalAdminProtected(id: string, actorId: string) {
 	}
 }
 
+async function basicAdmin(database: Pool, id: string) {
+	const actorId = randomUUID();
+	await database.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+	await database.query(
+		"INSERT INTO actor_identities (organization_id, actor_id, provider_namespace, canonical_subject) VALUES ($1, $2::uuid, 'basic:v1', $2::uuid::text)",
+		[id, actorId],
+	);
+	await database.query(
+		"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin')",
+		[id, actorId],
+	);
+	return { organizationId: id, actorId };
+}
+
+const unlinkBasicAdmin = (database: Pool, id: string, actorId: string) =>
+	database.query(
+		"DELETE FROM actor_identities WHERE organization_id = $1 AND actor_id = $2 AND provider_namespace = 'basic:v1'",
+		[id, actorId],
+	);
+
 beforeAll(async () => {
 	if (!databaseUrl)
 		throw new Error(
@@ -190,6 +210,7 @@ beforeAll(async () => {
 	await migrate({ DATABASE_URL: fresh.url });
 	await pool.query(await script("test-db-migrations-0098.assert.sql"));
 	await pool.query(await script("test-db-migrations-0099.assert.sql"));
+	await pool.query(await script("test-db-migrations-0100.assert.sql"));
 }, 60000);
 afterAll(async () => {
 	for (const pool of pools) await pool.end();
@@ -401,6 +422,120 @@ test("disabled enrolled Admin does not satisfy the final-Admin guard or block re
 		"admin",
 	]);
 });
+
+for (const status of ["pending", "revoked", "expired", "disabled"] as const) {
+	test(`${status} local Admin cannot replace an unlinked Basic Admin identity`, async () => {
+		const id = await organization();
+		const principal = await basicAdmin(pool, id);
+		const store = new LocalCredentialStore(pool, id);
+		const account = await store.provision(principal, {
+			username: "Replacement.Admin",
+			role: "admin",
+			email: "admin@example.invalid",
+		});
+		if (status === "revoked" || status === "expired")
+			await store.revokeEnrollment(principal, account.enrollmentId);
+		if (status === "expired") {
+			const expiredToken = token();
+			await pool.query(
+				"INSERT INTO local_account_enrollments (organization_id, actor_id, provisioned_by, kind, token_digest, created_at, expires_at) VALUES ($1, $2, $3, 'first_use', $4, now() - interval '8 days', now() - interval '1 day')",
+				[
+					id,
+					account.actorId,
+					principal.actorId,
+					createHash("sha256").update(expiredToken).digest(),
+				],
+			);
+			await rejectedWithoutChanges(id, () =>
+				store.enroll(expiredToken, password()),
+			);
+		}
+		if (status === "disabled") {
+			await store.enroll(account.token, password());
+			await pool.query(
+				"UPDATE local_credentials SET enabled = false WHERE organization_id = $1 AND actor_id = $2",
+				[id, account.actorId],
+			);
+		}
+		const before = await state(id);
+		await expect(unlinkBasicAdmin(pool, id, principal.actorId)).rejects.toThrow(
+			"cannot unlink the final organization Admin identity",
+		);
+		expect(await state(id)).toEqual(before);
+	});
+}
+
+test("enrolled usable local Admin permits Basic Admin identity unlink without deleting role/account rows", async () => {
+	const id = await organization();
+	const principal = await basicAdmin(pool, id);
+	const store = new LocalCredentialStore(pool, id);
+	const account = await store.provision(principal, {
+		username: "Replacement.Admin",
+		role: "admin",
+	});
+	const secret = password();
+	await store.enroll(account.token, secret);
+	expect(await store.verify("replacement.admin", secret)).toEqual({
+		organizationId: id,
+		actorId: account.actorId,
+	});
+	const before = await state(id);
+	expect((await unlinkBasicAdmin(pool, id, principal.actorId)).rowCount).toBe(
+		1,
+	);
+	expect(await state(id)).toEqual({
+		...before,
+		identities: before.identities - 1,
+	});
+	expect(await store.verify("replacement.admin", secret)).not.toBeNull();
+});
+
+test("0099 populated upgrade preserves roles/accounts and fixes Basic Admin identity unlink", async () => {
+	const upgrade = await createDatabase();
+	const directory = resolve(root, "infra/db/migrations");
+	await runner({
+		databaseUrl: upgrade.url,
+		dir: directory,
+		direction: "up",
+		migrationsTable: "pgmigrations",
+		migrationLoaderStrategies: [{ extensions: [".sql"], loader: "sql" }],
+		count: (await readdir(directory)).filter(
+			(name) => name.endsWith(".sql") && Number(name.slice(0, 4)) < 100,
+		).length,
+		singleTransaction: true,
+		log: () => {},
+	});
+	const id = localBootstrapOrganization({});
+	const principal = await basicAdmin(upgrade.pool, id);
+	await new LocalCredentialStore(upgrade.pool, id).provision(principal, {
+		username: "Upgrade.Pending",
+		role: "admin",
+	});
+	const before = await state(id, upgrade.pool);
+	const client = await upgrade.pool.connect();
+	try {
+		await client.query("BEGIN");
+		expect(
+			(
+				await client.query(
+					"DELETE FROM actor_identities WHERE organization_id = $1 AND actor_id = $2 AND provider_namespace = 'basic:v1'",
+					[id, principal.actorId],
+				)
+			).rowCount,
+		).toBe(1);
+	} finally {
+		await client.query("ROLLBACK");
+		client.release();
+	}
+	await migrate({ DATABASE_URL: upgrade.url });
+	await migrate({ DATABASE_URL: upgrade.url });
+	expect(await state(id, upgrade.pool)).toEqual(before);
+	await expect(
+		unlinkBasicAdmin(upgrade.pool, id, principal.actorId),
+	).rejects.toThrow("cannot unlink the final organization Admin identity");
+	expect(await state(id, upgrade.pool)).toEqual(before);
+	await upgrade.pool.query(await script("test-db-migrations-0100.assert.sql"));
+}, 60000);
 
 test("0098 populated upgrade preserves pending Admin records and replaces the unsafe role guard", async () => {
 	const upgrade = await createDatabase();
