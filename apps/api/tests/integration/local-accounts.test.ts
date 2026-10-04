@@ -168,9 +168,15 @@ test("fresh HTTP setup chooses scope and closes across concurrent requests and a
 	try {
 		for (let attempt = 0; attempt < 250; attempt++) {
 			const result = await pool.query(
-				"SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%FROM local_bootstrap_controls%FOR UPDATE%'",
+				`SELECT
+					count(*) FILTER (WHERE query = 'SELECT pg_advisory_xact_lock(hashtextextended($1, 98))')::int AS advisory_waiters,
+					count(*) FILTER (WHERE query LIKE '%FROM local_bootstrap_controls%FOR UPDATE%')::int AS row_waiters
+				FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`,
 			);
-			if (result.rows[0].count >= 2) {
+			if (
+				result.rows[0].advisory_waiters >= 1 &&
+				result.rows[0].row_waiters >= 1
+			) {
 				observed = true;
 				break;
 			}
@@ -179,6 +185,7 @@ test("fresh HTTP setup chooses scope and closes across concurrent requests and a
 	} finally {
 		await blocker.query("COMMIT");
 		blocker.release();
+		await Promise.allSettled(requests);
 	}
 	expect(observed).toBe(true);
 	const responses = await Promise.all(requests);
