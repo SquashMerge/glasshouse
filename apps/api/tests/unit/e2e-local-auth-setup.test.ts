@@ -19,10 +19,12 @@ test("E2E fixture consumes setup once, checks closure, and rejects replay", asyn
 		Response.json({ code: "UNAUTHORIZED" }, { status: 401 }),
 	];
 	const calls: Array<{ url: string; init?: RequestInit }> = [];
-	fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-		calls.push({ url: String(url), init });
-		return replies.shift()!;
-	});
+	fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+		async (url, init) => {
+			calls.push({ url: String(url), init });
+			return replies.shift()!;
+		},
+	);
 	await setupE2eLocalAuth(input);
 	expect(calls.map(({ init }) => init?.method ?? "GET")).toEqual([
 		"GET",
@@ -48,7 +50,9 @@ test("E2E fixture refuses an already-closed setup instead of reopening storage",
 	fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
 		Response.json({ available: false }),
 	);
-	await expect(setupE2eLocalAuth(input)).rejects.toThrow("E2E setup must be open");
+	await expect(setupE2eLocalAuth(input)).rejects.toThrow(
+		"E2E setup must be open",
+	);
 	expect(fetchSpy).toHaveBeenCalledTimes(1);
 });
 

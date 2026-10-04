@@ -117,8 +117,8 @@ test.describe("Login flow", () => {
 				(cookie) => cookie.name === "astraea_session",
 			),
 		).toBe(false);
-		const status = await page.evaluate(async () =>
-			(await fetch("/v1/auth/session")).status,
+		const status = await page.evaluate(
+			async () => (await fetch("/v1/auth/session")).status,
 		);
 		expect(status).toBe(401);
 

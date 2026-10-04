@@ -1,7 +1,11 @@
 import * as React from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { getCredentials, onAuthInvalid, restoreLocalSession } from "../lib/auth";
+import {
+	getCredentials,
+	onAuthInvalid,
+	restoreLocalSession,
+} from "../lib/auth";
 import { clearWorkspaceSession } from "./ProjectProvider";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {

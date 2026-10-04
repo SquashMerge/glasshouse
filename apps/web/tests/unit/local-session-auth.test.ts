@@ -73,7 +73,9 @@ describe("browser local session adapter", () => {
 		const invalid = vi.fn();
 		const off = onAuthInvalid(invalid);
 		try {
-			vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 401 }));
+			vi.mocked(fetch).mockResolvedValueOnce(
+				new Response(null, { status: 401 }),
+			);
 			await authedFetch("/v1/projects");
 			expect(getCredentials()).toBeNull();
 			expect(invalid).toHaveBeenCalledOnce();

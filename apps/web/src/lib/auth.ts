@@ -62,7 +62,9 @@ export function getCredentials(): Credentials | null {
 	return credentials;
 }
 
-export async function restoreLocalSession(username = "Account"): Promise<boolean> {
+export async function restoreLocalSession(
+	username = "Account",
+): Promise<boolean> {
 	const generation = sessionGeneration;
 	const response = await fetch("/v1/auth/session", {
 		credentials: "same-origin",
@@ -114,11 +116,17 @@ export async function authedFetch(
 	if (localSession) {
 		headers.delete("authorization");
 		if (
-			!["GET", "HEAD", "OPTIONS"].includes((init?.method ?? "GET").toUpperCase())
+			!["GET", "HEAD", "OPTIONS"].includes(
+				(init?.method ?? "GET").toUpperCase(),
+			)
 		)
 			headers.set("x-astraea-csrf", localSession.csrfToken);
 	}
-	const res = await fetch(url, { ...init, headers, credentials: "same-origin" });
+	const res = await fetch(url, {
+		...init,
+		headers,
+		credentials: "same-origin",
+	});
 	if (res.status === 401 && creds && generation === sessionGeneration) {
 		clearCredentials();
 		if (typeof window !== "undefined") {
