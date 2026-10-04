@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +14,7 @@ import {
 	provisionLocalBootstrap,
 } from "../../src/db/local-credentials";
 import { migrate } from "../../src/db/migrate";
+import * as postgres from "../../src/db/postgres";
 import {
 	localBootstrapOrganization,
 	provisionLocalBootstrapFromEnvironment,
@@ -22,6 +24,11 @@ import {
 	LOCAL_PASSWORD_POLICY,
 	verifyLocalPassword,
 } from "../../src/lib/local-passwords";
+import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
+import {
+	handleRecoverAdmin,
+	recoverAdmin,
+} from "../../src/routes/admin-access";
 
 const databaseUrl = process.env.DATABASE_URL;
 const root = resolve(import.meta.dir, "../../../..");
@@ -106,6 +113,71 @@ async function constraintCode(
 	}
 }
 
+async function recover(id: string, callerActorId?: string): Promise<Response> {
+	const username = `recovery-${id}`;
+	const owner = await pool.query<{ actor_id: string }>(
+		"SELECT durable_actor_id('basic:v1', $1) AS actor_id",
+		[username],
+	);
+	const actorId = owner.rows[0]!.actor_id;
+	await pool.query(
+		"INSERT INTO actors (id) VALUES ($1) ON CONFLICT DO NOTHING",
+		[actorId],
+	);
+	await pool.query(
+		"INSERT INTO actor_identities (organization_id, actor_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3) ON CONFLICT DO NOTHING",
+		[id, actorId, username],
+	);
+	const previous = {
+		credentials: process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS,
+		owner: process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME,
+	};
+	const poolProvider = spyOn(postgres, "pgPool").mockReturnValue(pool);
+	try {
+		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+			{ username, password: password(), organization_id: id },
+		]);
+		process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME = username;
+		const api = new OpenAPIHono();
+		api.use("*", async (c, next) => {
+			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+				actor: username,
+				actorId: callerActorId ?? actorId,
+				organizationId: id,
+			});
+			await next();
+		});
+		api.openapi(recoverAdmin, handleRecoverAdmin);
+		return await api.request("/v1/admin/recovery", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ confirmation: "RESTORE ADMIN" }),
+		});
+	} finally {
+		poolProvider.mockRestore();
+		for (const [key, value] of [
+			["ASTRAEA_BASIC_AUTH_CREDENTIALS", previous.credentials],
+			["ASTRAEA_BOOTSTRAP_OWNER_USERNAME", previous.owner],
+		] as const) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	}
+}
+
+async function assertFinalAdminProtected(id: string, actorId: string) {
+	const before = await state(id);
+	for (const sql of [
+		"UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
+		"DELETE FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
+	]) {
+		await expect(pool.query(sql, [id, actorId])).rejects.toThrow(
+			"cannot remove or demote the final organization Admin",
+		);
+		expect(await state(id)).toEqual(before);
+	}
+}
+
 beforeAll(async () => {
 	if (!databaseUrl)
 		throw new Error(
@@ -117,6 +189,7 @@ beforeAll(async () => {
 	credentialDatabaseUrl = fresh.url;
 	await migrate({ DATABASE_URL: fresh.url });
 	await pool.query(await script("test-db-migrations-0098.assert.sql"));
+	await pool.query(await script("test-db-migrations-0099.assert.sql"));
 }, 60000);
 afterAll(async () => {
 	for (const pool of pools) await pool.end();
@@ -242,6 +315,137 @@ test("username exact ASCII policy and server-selected organization configuration
 		localBootstrapOrganization({ ASTRAEA_DEFAULT_ORGANIZATION_ID: "bad" }),
 	).toThrow();
 });
+
+for (const revoked of [false, true]) {
+	test(`${revoked ? "revoked" : "unredeemed"} pending Admin cannot satisfy the final-Admin guard or block operator recovery`, async () => {
+		const fixture = await admin();
+		const pending = await fixture.store.provision(fixture.principal, {
+			username: "Pending.Admin",
+			role: "admin",
+			email: "admin@example.invalid",
+		});
+		if (revoked)
+			await fixture.store.revokeEnrollment(
+				fixture.principal,
+				pending.enrollmentId,
+			);
+		expect(await fixture.store.verify("pending.admin", password())).toBeNull();
+		await assertFinalAdminProtected(fixture.id, fixture.principal.actorId);
+		await pool.query(
+			"UPDATE local_credentials SET enabled = false WHERE actor_id = $1",
+			[fixture.principal.actorId],
+		);
+		const before = await state(fixture.id);
+		expect((await recover(fixture.id, pending.actorId)).status).toBe(403);
+		const response = await recover(fixture.id);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ organization_role: "admin" });
+		const after = await state(fixture.id);
+		expect(after.credential_state).toEqual(before.credential_state);
+		expect(after.enrollments).toEqual(before.enrollments);
+		expect(after.setup).toEqual(before.setup);
+		for (const role of before.roles) expect(after.roles).toContainEqual(role);
+	});
+}
+
+test("successful Admin enrollment permits demotion/removal while blocking break-glass recovery", async () => {
+	for (const remove of [false, true]) {
+		const fixture = await admin();
+		const account = await fixture.store.provision(fixture.principal, {
+			username: "Enrolled.Admin",
+			role: "admin",
+		});
+		await assertFinalAdminProtected(fixture.id, fixture.principal.actorId);
+		const secret = password();
+		await fixture.store.enroll(account.token, secret);
+		expect(await fixture.store.verify("enrolled.admin", secret)).toEqual({
+			organizationId: fixture.id,
+			actorId: account.actorId,
+		});
+		await pool.query(
+			remove
+				? "DELETE FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2"
+				: "UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
+			[fixture.id, fixture.principal.actorId],
+		);
+		const response = await recover(fixture.id);
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({
+			message: "Organization already has an active Admin",
+		});
+		await assertFinalAdminProtected(fixture.id, account.actorId);
+	}
+});
+
+test("disabled enrolled Admin does not satisfy the final-Admin guard or block recovery", async () => {
+	const fixture = await admin();
+	const account = await fixture.store.provision(fixture.principal, {
+		username: "Disabled.Admin",
+		role: "admin",
+	});
+	const secret = password();
+	await fixture.store.enroll(account.token, secret);
+	await pool.query(
+		"UPDATE local_credentials SET enabled = false WHERE actor_id = $1",
+		[account.actorId],
+	);
+	await assertFinalAdminProtected(fixture.id, fixture.principal.actorId);
+	expect(await fixture.store.verify("disabled.admin", secret)).toBeNull();
+	await pool.query(
+		"UPDATE local_credentials SET enabled = false WHERE actor_id = $1",
+		[fixture.principal.actorId],
+	);
+	expect((await recover(fixture.id)).status).toBe(200);
+	expect((await state(fixture.id)).roles).toContainEqual([
+		account.actorId,
+		"admin",
+	]);
+});
+
+test("0098 populated upgrade preserves pending Admin records and replaces the unsafe role guard", async () => {
+	const upgrade = await createDatabase();
+	const directory = resolve(root, "infra/db/migrations");
+	await runner({
+		databaseUrl: upgrade.url,
+		dir: directory,
+		direction: "up",
+		migrationsTable: "pgmigrations",
+		migrationLoaderStrategies: [{ extensions: [".sql"], loader: "sql" }],
+		count: (await readdir(directory)).filter(
+			(name) => name.endsWith(".sql") && Number(name.slice(0, 4)) < 99,
+		).length,
+		singleTransaction: true,
+		log: () => {},
+	});
+	const id = localBootstrapOrganization({});
+	const store = new LocalCredentialStore(upgrade.pool, id);
+	const secret = token();
+	await provisionLocalBootstrap(upgrade.pool, id, secret);
+	const principal = await store.bootstrap({
+		username: "Upgrade.Admin",
+		password: password(),
+		token: secret,
+	});
+	const pending = await store.provision(principal, {
+		username: "Upgrade.Pending",
+		role: "admin",
+	});
+	await store.revokeEnrollment(principal, pending.enrollmentId);
+	const snapshot = () =>
+		upgrade.pool.query(
+			"SELECT (SELECT jsonb_agg(jsonb_build_array(actor_id, enabled, password_hash IS NOT NULL, password_version, updated_at) ORDER BY actor_id) FROM local_credentials) AS credentials, (SELECT jsonb_agg(jsonb_build_array(id, actor_id, consumed_at, revoked_at) ORDER BY id) FROM local_account_enrollments) AS enrollments, (SELECT jsonb_agg(to_jsonb(t) ORDER BY actor_id) FROM organization_actor_roles t) AS roles, (SELECT jsonb_agg(jsonb_build_array(organization_id, closed_at, provisioned_at, expires_at) ORDER BY organization_id) FROM local_bootstrap_controls) AS setup",
+		);
+	const before = await snapshot();
+	await migrate({ DATABASE_URL: upgrade.url });
+	await migrate({ DATABASE_URL: upgrade.url });
+	expect((await snapshot()).rows).toEqual(before.rows);
+	await expect(
+		upgrade.pool.query(
+			"UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
+			[id, principal.actorId],
+		),
+	).rejects.toThrow("cannot remove or demote the final organization Admin");
+}, 60000);
 
 test("operator provisioning reads a secret file only in explicit local mode and binds the deployment-selected organization", async () => {
 	const id = await organization();

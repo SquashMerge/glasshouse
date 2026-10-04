@@ -547,7 +547,7 @@ export async function handleRecoverAdmin(c: Context) {
 					return "cooldown";
 				}
 				const activeAdmin = await client.query(
-					"SELECT 1 FROM organization_actor_roles role WHERE role.organization_id = $1 AND role.role = 'admin' AND EXISTS (SELECT 1 FROM actor_identities identity WHERE identity.organization_id = role.organization_id AND identity.actor_id = role.actor_id) LIMIT 1",
+					"SELECT 1 FROM organization_actor_roles role WHERE role.organization_id = $1 AND organization_actor_is_usable_admin(role.organization_id, role.actor_id) LIMIT 1",
 					[tenant.organizationId],
 				);
 				if (activeAdmin.rows[0]) {
