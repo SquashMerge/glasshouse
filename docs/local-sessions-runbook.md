@@ -1,6 +1,6 @@
 # Local authentication and revocable sessions
 
-Issue #189 adds the API over #188's [credential/bootstrap service](local-credentials-runbook.md). The existing Basic browser login remains until the #190 setup/account UX. Local API clients can already use the workspace endpoints with a cookie session.
+Issue #189 adds the API over #188's [credential/bootstrap service](local-credentials-runbook.md). Browser sign-in uses a separately provisioned local account and a revocable cookie session; Basic remains supported for direct API clients. Setup/account browser UX follows in #190.
 
 ## Deployment and transport
 
@@ -8,7 +8,7 @@ Serve the browser and `/v1` API through the **same HTTPS origin**. Set `NODE_ENV
 
 | Method/path | Contract |
 | --- | --- |
-| `POST /v1/auth/login` | JSON `{username,password}` only. Server-selected Organization, Argon2id verification, fresh random session per success; returns `{ok:true}`. Client actor/role/Organization claims are rejected. Header-only Basic prevalidation remains for the old dashboard and creates no local session. |
+| `POST /v1/auth/login` | JSON `{username,password}` only. Server-selected Organization, Argon2id verification, fresh random session per success; returns `{ok:true}`. Client actor/role/Organization claims are rejected. Header-only Basic prevalidation remains for compatibility and creates no local session. |
 | `GET /v1/auth/session` | Trusted Actor/Organization IDs, authentication kind, immutable expiry, separate `csrf_token`. Basic reports NULL expiry/CSRF. No role claims are cached. |
 | `POST /v1/auth/logout` | Cookie + CSRF revokes only this session; clears the cookie with matching attributes. Basic has no server session to revoke. |
 | `POST /v1/auth/password` | Local session + CSRF, `{current_password,new_password}`; compare-and-set verification, revocation of all account sessions and cookie clearing. Sign in again afterward. |
@@ -21,6 +21,8 @@ Sessions use **32 CSPRNG bytes**, unpadded base64url; only a SHA-256 one-way tok
 The host-only cookie explicitly sets `HttpOnly; SameSite=Strict; Path=/v1; Max-Age=28800; Expires=...` and **Secure in production**. Its raw value travels only in `Set-Cookie`/`Cookie`, never API JSON, OpenAPI examples, logs or audits. Do not read/store it in browser JavaScript or web storage. Cookie clients fetch the separate, session-bound CSRF value from `/v1/auth/session` and send `x-astraea-csrf` on **every unsafe method**, including OTLP. This value is not a bearer token. Foreign Origin and cross-site/same-site Fetch Metadata fail closed; login/setup/enrollment also check Origin to prevent login/setup CSRF. Non-browser clients may omit browser Origin/Fetch Metadata, but cookie mutations still require CSRF.
 
 **Precedence:** any presented session cookie wins over Basic, including malformed, duplicated, expired or revoked cookies. Basic cannot rescue a bad cookie or suppress CSRF. Remove a stale cookie before switching to Basic. Basic still verifies environment secrets and server-provisioned `basic:v1` identities, checks account eligibility, and uses the same downstream authorization. There is no account linking by username/email. Basic password rotation remains in deployment secrets. Retain the configured Basic operator recovery identity in local-bootstrap mode.
+
+The browser posts local credentials once, keeps the display name and CSRF value only in memory, restores session context after reload, and sends CSRF on mutations (including POST SSE requests). It does not persist local passwords or read the HttpOnly cookie. Sign-out revokes the session before clearing workspace state. Basic environment passwords are never imported into local accounts; provision a local credential separately using the guarded setup/enrollment paths.
 
 ## Failure admission, revocation and audits
 
@@ -69,3 +71,5 @@ make test-db-migrations
 ```
 
 The wrapper selects the private service-network URL, overriding copied host-local URLs. The session suite creates/drops fresh and populated-0100 databases, verifies storage guards, workspace boot, CSRF/cookies, OTLP, every protected route and per-frame SSE; it observes actual PostgreSQL waiters for both auth-vs-disable/revoke race winners and checks denied writes/audits/provider work. The Docker-backed migration CI harness also runs the suite. If nested Docker is unavailable, report the full harness unverified and run focused PostgreSQL tests on the devcontainer network.
+
+Hosted E2E starts its fresh database in local-bootstrap mode with `ASTRAEA_PUBLIC_ORIGIN=http://localhost:5173`. CI generates and masks a random one-time operator token and a separate test-only local password, runs `auth:provision-bootstrap`, then `infra/scripts/setup-e2e-local-auth.ts` checks setup availability, consumption, permanent closure, and replay rejection. Only afterward does CI grant its legacy Basic owner access through the existing bootstrap command. Browser helpers use `E2E_LOCAL_USERNAME` / `E2E_LOCAL_PASSWORD`; direct API fixtures retain `UI_USERNAME` / `UI_PASSWORD`. E2E uses one browser worker for the shared account's bounded sessions/verification capacity. Traces, screenshots, video recording, and automatic failure-page snapshots (`PLAYWRIGHT_NO_COPY_PROMPT`) are disabled to keep passwords and session cookies out of artifacts. The browser suite checks local cookie login/reload/logout and direct Basic prevalidation/session/project access separately.

@@ -1,6 +1,6 @@
 # Local credentials and guarded bootstrap
 
-Issue #188 supplies PostgreSQL persistence and service boundaries. The [local login/session API](local-sessions-runbook.md) is supplied by #189; the setup/account browser UX follows in #190. The existing dashboard retains its Basic compatibility login.
+Issue #188 supplies PostgreSQL persistence and service boundaries. The [local login/session API and browser sign-in](local-sessions-runbook.md) are supplied by #189; the setup/account browser UX follows in #190. Direct API clients retain Basic compatibility.
 
 ## Identity and storage
 

@@ -1,12 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
-
-const USER = process.env.UI_USERNAME ?? "astraea";
-const PASS = process.env.UI_PASSWORD ?? "testpassword";
+import { LOCAL_USER, fillLocalPassword } from "./local-auth";
 
 async function login(page: Page) {
 	await page.goto("/login");
-	await page.getByLabel(/Username/i).fill(USER);
-	await page.getByLabel(/Password/i).fill(PASS);
+	await page.getByLabel(/Username/i).fill(LOCAL_USER);
+	await fillLocalPassword(page);
 	await page.getByRole("button", { name: /Sign in/i }).click();
 	await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 	const selector = page.getByTestId("project-selector");

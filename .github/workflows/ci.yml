@@ -165,6 +165,9 @@ jobs:
     name: e2e
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      ASTRAEA_AUTH_BOOTSTRAP_MODE: local
+      ASTRAEA_PUBLIC_ORIGIN: http://localhost:5173
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -210,6 +213,34 @@ jobs:
       - name: Verify idempotent ClickHouse migrations
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'
 
+      - name: Generate masked test-only local credentials
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import os
+          import secrets
+          from pathlib import Path
+          token = secrets.token_urlsafe(32)
+          password = secrets.token_urlsafe(32)
+          print(f"::add-mask::{token}")
+          print(f"::add-mask::{password}")
+          Path(os.environ["RUNNER_TEMP"], "e2e-bootstrap.token").write_text(token)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"E2E_LOCAL_USERNAME=e2e-local-admin\nE2E_LOCAL_PASSWORD={password}\n")
+          PY
+
+      - name: Provision test-only local Admin through operator bootstrap and setup
+        run: |
+          set -euo pipefail
+          compose=(docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml)
+          trap 'rm -f "$RUNNER_TEMP/e2e-bootstrap.token"; "${compose[@]}" exec -T api rm -f /tmp/e2e-bootstrap.token' EXIT
+          "${compose[@]}" cp "$RUNNER_TEMP/e2e-bootstrap.token" api:/tmp/e2e-bootstrap.token
+          "${compose[@]}" exec -T -e ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE=/tmp/e2e-bootstrap.token api bun run --cwd apps/api auth:provision-bootstrap
+          ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE="$RUNNER_TEMP/e2e-bootstrap.token" \
+            bun run infra/scripts/setup-e2e-local-auth.ts
+          "${compose[@]}" exec -T -e ASTRAEA_AUTH_BOOTSTRAP_MODE=basic api bun run --cwd apps/api src/db/bootstrap-authorization.ts
+
       - name: Seed E2E projects and memberships
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING; INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, organization_id, 'astraea', 'manager' FROM projects WHERE id IN ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002') ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now();"
 
@@ -238,4 +269,6 @@ jobs:
 
       - name: Stop application stack
         if: always()
-        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml down --volumes --remove-orphans
+        run: |
+          rm -f "$RUNNER_TEMP/e2e-bootstrap.token"
+          docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml down --volumes --remove-orphans

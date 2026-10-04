@@ -31,7 +31,7 @@ import {
 	DropdownMenuSeparator,
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
-import { clearCredentials, getCredentials } from "../lib/auth";
+import { getCredentials, logoutSession } from "../lib/auth";
 import type { Project } from "../lib/api";
 import { useProjectSelection } from "./ProjectProvider";
 
@@ -50,6 +50,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	const [creds, setCreds] = React.useState(getCredentials());
 	const [collapsed, setCollapsed] = React.useState(false);
 	const [hydrated, setHydrated] = React.useState(false);
+	const [logoutError, setLogoutError] = React.useState(false);
 	const {
 		projects,
 		selectedProjectId,
@@ -79,9 +80,15 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 		});
 	}
 
-	function logout() {
+	async function logout() {
+		setLogoutError(false);
+		try {
+			await logoutSession();
+		} catch {
+			setLogoutError(true);
+			return;
+		}
 		clearSession();
-		clearCredentials();
 		setCreds(null);
 		if (typeof window !== "undefined") {
 			window.location.href = "/login";
@@ -426,6 +433,11 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 					)}
 					data-hydrated={hydrated ? "1" : "0"}
 				>
+					{logoutError && (
+						<p role="alert" className="mb-4 text-sm text-destructive">
+							Sign out failed. Please try again.
+						</p>
+					)}
 					{children}
 				</div>
 			</main>

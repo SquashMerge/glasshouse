@@ -12,7 +12,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Button } from "../components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
-import { authHeader, setCredentials } from "../lib/auth";
+import { clearCredentials, restoreLocalSession } from "../lib/auth";
 import { clearWorkspaceSession } from "../components/ProjectProvider";
 
 export function LoginPage() {
@@ -28,16 +28,19 @@ export function LoginPage() {
 		e.preventDefault();
 		setSubmitting(true);
 		setError(null);
-		const creds = { username, password };
+		clearCredentials();
 		try {
 			const res = await fetch("/v1/auth/login", {
 				method: "POST",
-				headers: { "content-type": "application/json", ...authHeader(creds) },
-				body: "{}",
+				headers: { "content-type": "application/json" },
+				credentials: "same-origin",
+				body: JSON.stringify({ username, password }),
 			});
 			if (res.status === 200) {
+				if (!(await restoreLocalSession(username)))
+					throw new Error("Unable to read session");
+				setPassword("");
 				clearWorkspaceSession(queryClient);
-				setCredentials(username, password);
 				const redirect = new URLSearchParams(location.searchStr).get(
 					"redirect",
 				);
@@ -60,9 +63,7 @@ export function LoginPage() {
 				<CardHeader>
 					<CardTitle>Sign in</CardTitle>
 					<CardDescription>
-						Use the Basic Auth credentials configured via{" "}
-						<code className="text-xs">UI_USERNAME</code> /
-						<code className="text-xs">UI_PASSWORD</code>.
+						Use your local Astraea username and password.
 					</CardDescription>
 				</CardHeader>
 				<CardContent>

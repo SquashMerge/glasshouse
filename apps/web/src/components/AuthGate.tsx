@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { getCredentials, onAuthInvalid } from "../lib/auth";
+import { getCredentials, onAuthInvalid, restoreLocalSession } from "../lib/auth";
 import { clearWorkspaceSession } from "./ProjectProvider";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -19,18 +19,29 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 			return;
 		}
 
-		const creds = getCredentials();
-		if (!creds) {
-			navigate({ to: "/login" });
-		} else {
-			setReady(true);
+		let active = true;
+		setReady(false);
+		async function checkSession() {
+			try {
+				const authenticated = getCredentials() || (await restoreLocalSession());
+				if (!active) return;
+				if (authenticated) setReady(true);
+				else navigate({ to: "/login" });
+			} catch {
+				if (active) navigate({ to: "/login" });
+			}
 		}
+		void checkSession();
 
 		const off = onAuthInvalid(() => {
+			setReady(false);
 			clearWorkspaceSession(queryClient);
 			navigate({ to: "/login" });
 		});
-		return off;
+		return () => {
+			active = false;
+			off();
+		};
 	}, [location.pathname, location.searchStr, navigate, queryClient]);
 
 	if (!ready) {

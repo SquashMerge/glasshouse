@@ -155,7 +155,7 @@ For concurrent AI-assisted development, Astraea provides a Compose-based devcont
 
 | URL | Purpose |
 |---|---|
-| http://localhost:5173/login | Sign in (Basic Auth) |
+| http://localhost:5173/login | Sign in (local account / cookie session) |
 | http://localhost:5173 | Dashboard (auth-gated; redirects to /login if not signed in) |
 | http://localhost:5173/observability | Trace and observation lists (auth-gated) |
 | http://localhost:5173/observability/traces/:id | Trace detail with observation tree (auth-gated) |
@@ -175,7 +175,8 @@ password is imported. The [local session API](docs/local-sessions-runbook.md) no
 login/current-session/logout/password-change endpoints, eight-hour revocable HttpOnly
 cookies, CSRF protection and the same trusted workspace principal. Configure HTTPS,
 `NODE_ENV=production` and the exact `ASTRAEA_PUBLIC_ORIGIN` behind a proxy. The setup/account
-browser UX follows in #190; the current dashboard still signs in with Basic Auth.
+browser UX follows in #190. Dashboard sign-in uses separately provisioned local
+credentials; direct API clients retain Basic Auth compatibility.
 
 ### GEPA prompt optimization and LLM providers
 
