@@ -13,6 +13,7 @@ import {
 } from "../lib/local-passwords.js";
 import {
 	lockAuthorizedOrganization,
+	lockFirstAdminCreation,
 	withLockPhaseTransaction,
 } from "./project-authorization.js";
 
@@ -149,39 +150,43 @@ export class LocalCredentialStore {
 		if (!validLocalPassword(input.password)) throw new LocalCredentialError();
 		tokenDigest(input.token);
 		const hash = await hashLocalPassword(input.password);
-		return transaction(this.pool, async (client) => {
-			const control = await lockBootstrap(client, this.organizationId);
-			if (
-				!control?.available ||
-				!tokenMatches(input.token, control.token_digest)
-			)
-				throw new LocalCredentialError();
-			const admin = await client.query(
-				"SELECT 1 FROM organization_actor_roles WHERE organization_id = $1 AND role = 'admin' LIMIT 1",
-				[this.organizationId],
-			);
-			if (admin.rowCount) throw new LocalCredentialError();
-			const consumed = await client.query(
-				"UPDATE local_bootstrap_controls SET closed_at = clock_timestamp(), token_digest = NULL, provisioned_at = NULL, expires_at = NULL WHERE organization_id = $1 AND closed_at IS NULL AND token_digest = $2 AND expires_at > clock_timestamp() RETURNING organization_id",
-				[this.organizationId, tokenDigest(input.token)],
-			);
-			if (!consumed.rowCount) throw new LocalCredentialError();
-			const principal = await insertAccount(
-				client,
-				this.organizationId,
-				username,
-				hash,
-			);
-			await client.query(
-				"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin')",
-				[this.organizationId, principal.actorId],
-			);
-			await client.query(
-				"SELECT audit_admin_access_event($1, NULL, $2, $2, 'bootstrap_owner_granted')",
-				[this.organizationId, principal.actorId],
-			);
-			return principal;
-		});
+		return credentialTransaction(
+			this.pool,
+			(client) => lockFirstAdminCreation(client, this.organizationId),
+			async (client) => {
+				const control = await lockBootstrap(client, this.organizationId);
+				if (
+					!control?.available ||
+					!tokenMatches(input.token, control.token_digest)
+				)
+					throw new LocalCredentialError();
+				const admin = await client.query(
+					"SELECT 1 FROM organization_actor_roles WHERE organization_id = $1 AND role = 'admin' LIMIT 1",
+					[this.organizationId],
+				);
+				if (admin.rowCount) throw new LocalCredentialError();
+				const consumed = await client.query(
+					"UPDATE local_bootstrap_controls SET closed_at = clock_timestamp(), token_digest = NULL, provisioned_at = NULL, expires_at = NULL WHERE organization_id = $1 AND closed_at IS NULL AND token_digest = $2 AND expires_at > clock_timestamp() RETURNING organization_id",
+					[this.organizationId, tokenDigest(input.token)],
+				);
+				if (!consumed.rowCount) throw new LocalCredentialError();
+				const principal = await insertAccount(
+					client,
+					this.organizationId,
+					username,
+					hash,
+				);
+				await client.query(
+					"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin')",
+					[this.organizationId, principal.actorId],
+				);
+				await client.query(
+					"SELECT audit_admin_access_event($1, NULL, $2, $2, 'bootstrap_owner_granted')",
+					[this.organizationId, principal.actorId],
+				);
+				return principal;
+			},
+		);
 	}
 
 	async verify(

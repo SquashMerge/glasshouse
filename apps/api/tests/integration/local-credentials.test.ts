@@ -113,18 +113,22 @@ async function constraintCode(
 	}
 }
 
-async function recover(id: string, callerActorId?: string): Promise<Response> {
+async function recover(
+	id: string,
+	callerActorId?: string,
+	database = pool,
+): Promise<Response> {
 	const username = `recovery-${id}`;
-	const owner = await pool.query<{ actor_id: string }>(
+	const owner = await database.query<{ actor_id: string }>(
 		"SELECT durable_actor_id('basic:v1', $1) AS actor_id",
 		[username],
 	);
 	const actorId = owner.rows[0]!.actor_id;
-	await pool.query(
+	await database.query(
 		"INSERT INTO actors (id) VALUES ($1) ON CONFLICT DO NOTHING",
 		[actorId],
 	);
-	await pool.query(
+	await database.query(
 		"INSERT INTO actor_identities (organization_id, actor_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3) ON CONFLICT DO NOTHING",
 		[id, actorId, username],
 	);
@@ -132,7 +136,7 @@ async function recover(id: string, callerActorId?: string): Promise<Response> {
 		credentials: process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS,
 		owner: process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME,
 	};
-	const poolProvider = spyOn(postgres, "pgPool").mockReturnValue(pool);
+	const poolProvider = spyOn(postgres, "pgPool").mockReturnValue(database);
 	try {
 		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
 			{ username, password: password(), organization_id: id },
@@ -734,32 +738,76 @@ test("unused tokens rotate; bootstrap commits once and replay/second setup/rotat
 });
 
 test("two genuinely overlapping setup transactions wait on the PostgreSQL fence; exactly one commits", async () => {
-	const { store, id, secret } = await setup();
+	const { id, secret } = await setup();
+	const firstApplication = `bootstrap_first_${id.replaceAll("-", "")}`;
+	const secondApplication = `bootstrap_second_${id.replaceAll("-", "")}`;
+	const firstPool = new Pool({
+		connectionString: credentialDatabaseUrl,
+		application_name: firstApplication,
+		max: 1,
+	});
+	const secondPool = new Pool({
+		connectionString: credentialDatabaseUrl,
+		application_name: secondApplication,
+		max: 1,
+	});
+	pools.push(firstPool, secondPool);
+	let attempts: Promise<{ committed: boolean }>[] = [];
 	const blocker = await pool.connect();
-	await blocker.query("BEGIN");
-	await blocker.query(
-		"SELECT organization_id FROM local_bootstrap_controls WHERE organization_id = $1 FOR UPDATE",
-		[id],
-	);
-	const attempts = ["First", "Second"].map((username) =>
-		store.bootstrap({ username, password: password(), token: secret }).then(
-			(value) => ({ committed: true, value }),
-			() => ({ committed: false }),
-		),
-	);
 	try {
-		let waiting = false;
-		for (let i = 0; i < 150; i++) {
-			const result = await pool.query(
-				"SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%FROM local_bootstrap_controls WHERE organization_id = $1 FOR UPDATE%'",
+		await blocker.query("BEGIN");
+		await blocker.query(
+			"SELECT organization_id FROM local_bootstrap_controls WHERE organization_id = $1 FOR UPDATE",
+			[id],
+		);
+		attempts = [
+			new LocalCredentialStore(firstPool, id).bootstrap({
+				username: "First",
+				password: password(),
+				token: secret,
+			}),
+			new LocalCredentialStore(secondPool, id).bootstrap({
+				username: "Second",
+				password: password(),
+				token: secret,
+			}),
+		].map((attempt) =>
+			attempt.then(
+				() => ({ committed: true }),
+				() => ({ committed: false }),
+			),
+		);
+		for (let attempt = 0; attempt < 150; attempt++) {
+			const waiting = await pool.query<{
+				application_name: string;
+				query: string;
+			}>(
+				"SELECT application_name, query FROM pg_stat_activity WHERE datname = current_database() AND application_name = ANY($1::text[]) AND wait_event_type = 'Lock'",
+				[[firstApplication, secondApplication]],
 			);
-			if (result.rows[0]?.waiting === 2) {
-				waiting = true;
+			const waitingNames = new Set(
+				waiting.rows.map((row) => row.application_name),
+			);
+			if (
+				waitingNames.has(firstApplication) &&
+				waitingNames.has(secondApplication)
+			) {
+				expect(
+					waiting.rows.some((row) =>
+						row.query.includes("pg_advisory_xact_lock"),
+					),
+				).toBe(true);
+				expect(
+					waiting.rows.some((row) =>
+						row.query.includes("local_bootstrap_controls"),
+					),
+				).toBe(true);
 				break;
 			}
+			if (attempt === 149)
+				throw new Error("Expected both setup transactions to wait");
 			await Bun.sleep(20);
 		}
-		expect(waiting).toBe(true);
 	} finally {
 		await blocker.query("COMMIT");
 		blocker.release();
@@ -770,6 +818,117 @@ test("two genuinely overlapping setup transactions wait on the PostgreSQL fence;
 	expect(after.credentials).toBe(1);
 	expect(after.roles.length).toBe(1);
 	expect(after.roles[0][1]).toBe("admin");
+}, 15000);
+
+test("first-Admin recovery waits for overlapping local bootstrap before deciding whether an Admin exists", async () => {
+	const { id, secret } = await setup();
+	const bootstrapName = `bootstrap-${id}`;
+	const recoveryName = `recovery-${id}`;
+	const bootstrapPool = new Pool({
+		connectionString: credentialDatabaseUrl,
+		application_name: bootstrapName,
+		max: 1,
+	});
+	const recoveryPool = new Pool({
+		connectionString: credentialDatabaseUrl,
+		application_name: recoveryName,
+		max: 1,
+	});
+	pools.push(bootstrapPool, recoveryPool);
+	const store = new LocalCredentialStore(bootstrapPool, id);
+	const localPassword = password();
+	const barrier = `first_admin_barrier_${id.replaceAll("-", "")}`;
+	await pool.query(`CREATE FUNCTION ${barrier}() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[0], 198));
+			RETURN NEW;
+		END;
+	$$`);
+	await pool.query(`CREATE TRIGGER ${barrier} BEFORE UPDATE ON local_bootstrap_controls
+		FOR EACH ROW WHEN (OLD.organization_id = '${id}'::uuid AND OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL)
+		EXECUTE FUNCTION ${barrier}('${id}')`);
+	const blocker = await pool.connect();
+	const attempts: Promise<unknown>[] = [];
+	const waitFor = async (applicationName: string, blockingPid: number) => {
+		for (let i = 0; i < 150; i++) {
+			const result = await pool.query<{ pid: number; query: string }>(
+				`SELECT pid, query FROM pg_stat_activity WHERE datname = current_database()
+				AND application_name = $1 AND wait_event_type = 'Lock'
+				AND $2::int = ANY(pg_blocking_pids(pid))`,
+				[applicationName, blockingPid],
+			);
+			if (result.rows[0]) return result.rows[0];
+			await Bun.sleep(20);
+		}
+		throw new Error(`Expected PostgreSQL waiter: ${applicationName}`);
+	};
+	try {
+		await blocker.query("BEGIN");
+		const controller = await blocker.query<{ pid: number }>(
+			"SELECT pg_backend_pid() AS pid, pg_advisory_xact_lock(hashtextextended($1, 198))",
+			[id],
+		);
+		const bootstrapping = store.bootstrap({
+			username: "Race.Admin",
+			password: localPassword,
+			token: secret,
+		});
+		attempts.push(bootstrapping);
+		void bootstrapping.catch(() => {});
+		const bootstrapWaiter = await waitFor(
+			bootstrapName,
+			controller.rows[0]!.pid,
+		);
+		expect(bootstrapWaiter.query).toContain("UPDATE local_bootstrap_controls");
+		const recovering = recover(id, undefined, recoveryPool);
+		attempts.push(recovering);
+		void recovering.catch(() => {});
+		const recoveryWaiter = await waitFor(recoveryName, bootstrapWaiter.pid);
+		// On the old path the INSERT proves recovery passed its no-Admin decision;
+		// the fixed path waits in the lock phase before making that decision.
+		expect(
+			recoveryWaiter.query.startsWith("SELECT pg_advisory_xact_lock") ||
+				recoveryWaiter.query.startsWith("INSERT INTO organization_actor_roles"),
+		).toBe(true);
+		await blocker.query("COMMIT");
+		const [bootstrapOutcome, recoveryOutcome] = await Promise.allSettled([
+			bootstrapping,
+			recovering,
+		]);
+		expect(bootstrapOutcome.status).toBe("fulfilled");
+		expect(recoveryOutcome.status).toBe("fulfilled");
+		if (bootstrapOutcome.status !== "fulfilled") throw bootstrapOutcome.reason;
+		if (recoveryOutcome.status !== "fulfilled") throw recoveryOutcome.reason;
+		expect(recoveryOutcome.value.status).toBe(409);
+		expect(await recoveryOutcome.value.json()).toMatchObject({
+			message: "Organization already has an active Admin",
+		});
+		expect(await store.verify("race.admin", localPassword)).toEqual(
+			bootstrapOutcome.value,
+		);
+		const admins = await pool.query<{ actor_id: string }>(
+			"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND organization_actor_is_usable_admin(organization_id, actor_id)",
+			[id],
+		);
+		expect(admins.rows).toEqual([{ actor_id: bootstrapOutcome.value.actorId }]);
+		const after = await state(id);
+		expect(after.credentials).toBe(1);
+		expect(after.roles).toEqual([[bootstrapOutcome.value.actorId, "admin"]]);
+		expect(after.setup).toEqual([expect.any(String), null, null, false]);
+		await rejectedWithoutChanges(id, () =>
+			store.bootstrap({
+				username: "Replay.Admin",
+				password: localPassword,
+				token: secret,
+			}),
+		);
+	} finally {
+		await blocker.query("ROLLBACK");
+		blocker.release();
+		await Promise.allSettled(attempts);
+		await pool.query(`DROP TRIGGER ${barrier} ON local_bootstrap_controls`);
+		await pool.query(`DROP FUNCTION ${barrier}()`);
+	}
 }, 15000);
 
 test("a duplicate local identity rolls back setup consumption, actor creation and audit; the token remains usable", async () => {

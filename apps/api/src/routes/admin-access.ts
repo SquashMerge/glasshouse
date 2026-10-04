@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import { basicCredentialsFromEnvironment } from "../middleware/auth.js";
 import { pgPool } from "../db/postgres.js";
 import {
+	lockFirstAdminCreation,
 	lockProjectAuditProvenance,
 	withLockPhaseTransaction,
 } from "../db/project-authorization.js";
@@ -516,6 +517,7 @@ export async function handleRecoverAdmin(c: Context) {
 		>(
 			pgPool(),
 			async (client) => {
+				await lockFirstAdminCreation(client, tenant.organizationId);
 				await lockAdminRoles(client, tenant.organizationId, [tenant.actorId]);
 				await client.query(
 					"SELECT organization_id FROM admin_recovery_controls WHERE organization_id = $1 FOR UPDATE",
