@@ -16,6 +16,7 @@ import {
 	lockFirstAdminCreation,
 	withLockPhaseTransaction,
 } from "./project-authorization.js";
+import { AuthenticationError, lockSessionPrincipal } from "./local-sessions.js";
 
 export const LOCAL_PROVIDER_NAMESPACE = "local:v1";
 export class LocalCredentialError extends Error {
@@ -35,6 +36,7 @@ export function normalizeLocalUsername(username: unknown): string {
 export type LocalPrincipal = {
 	organizationId: string;
 	actorId: string;
+	sessionId?: string;
 };
 type VerifiedLocalPrincipal = LocalPrincipal & { authVersion: string };
 function tokenDigest(token: string): Buffer {
@@ -68,9 +70,59 @@ async function credentialTransaction<T>(
 ): Promise<T> {
 	try {
 		return await withLockPhaseTransaction(pool, lock, run);
-	} catch {
+	} catch (cause) {
+		if (cause instanceof AuthenticationError) throw cause;
 		throw new LocalCredentialError();
 	}
+}
+
+async function lockInitiator(client: PoolClient, initiator: LocalPrincipal) {
+	if (initiator.sessionId)
+		await lockSessionPrincipal(client, {
+			...initiator,
+			sessionId: initiator.sessionId,
+		});
+}
+
+async function lockAccountManagement(
+	client: PoolClient,
+	initiator: LocalPrincipal,
+) {
+	// Serialize credential loss before role locks. Role mutations take SHARE
+	// locks on the same credentials, so reset/disable cannot race a demotion.
+	await client.query(
+		"SELECT actor_id FROM local_credentials WHERE organization_id = $1 ORDER BY actor_id FOR UPDATE",
+		[initiator.organizationId],
+	);
+	await lockInitiator(client, initiator);
+	if (
+		!(await lockAuthorizedOrganization(
+			client,
+			initiator.organizationId,
+			initiator.actorId,
+			"organization_manage",
+		))
+	)
+		throw new LocalCredentialError();
+	await client.query(
+		"SELECT pg_advisory_xact_lock(hashtextextended($1::text, 51))",
+		[initiator.organizationId],
+	);
+}
+
+async function guardUsableAdmin(
+	client: PoolClient,
+	organizationId: string,
+	targetActorId: string,
+) {
+	const result = await client.query<{ allowed: boolean }>(
+		`SELECT NOT organization_actor_is_usable_admin($1, $2) OR EXISTS (
+			SELECT 1 FROM organization_actor_roles role WHERE role.organization_id = $1
+			AND role.actor_id <> $2 AND organization_actor_is_usable_admin($1, role.actor_id)
+		) AS allowed`,
+		[organizationId, targetActorId],
+	);
+	if (!result.rows[0]?.allowed) throw new LocalCredentialError();
 }
 async function lockBootstrap(client: PoolClient, organizationId: string) {
 	const result = await client.query<{
@@ -284,6 +336,7 @@ export class LocalCredentialStore {
 		return credentialTransaction(
 			this.pool,
 			async (client) => {
+				await lockInitiator(client, initiator);
 				if (
 					!(await lockAuthorizedOrganization(
 						client,
@@ -330,6 +383,15 @@ export class LocalCredentialStore {
 		if (!validLocalPassword(password)) throw new LocalCredentialError();
 		const hash = await hashLocalPassword(password);
 		return transaction(this.pool, async (client) => {
+			const target = await client.query<{ actor_id: string }>(
+				"SELECT actor_id FROM local_account_enrollments WHERE organization_id = $1 AND token_digest = $2",
+				[this.organizationId, digest],
+			);
+			if (!target.rows[0]) throw new LocalCredentialError();
+			await client.query(
+				"SELECT actor_id FROM local_credentials WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+				[this.organizationId, target.rows[0].actor_id],
+			);
 			const enrollment = await client.query<{ id: string; actor_id: string }>(
 				"SELECT id, actor_id FROM local_account_enrollments WHERE organization_id = $1 AND token_digest = $2 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > clock_timestamp() FOR UPDATE",
 				[this.organizationId, digest],
@@ -365,6 +427,7 @@ export class LocalCredentialStore {
 		await credentialTransaction(
 			this.pool,
 			async (client) => {
+				await lockInitiator(client, initiator);
 				if (
 					!(await lockAuthorizedOrganization(
 						client,
@@ -395,23 +458,10 @@ export class LocalCredentialStore {
 		return credentialTransaction(
 			this.pool,
 			async (client) => {
-				// Credential locks precede authorization rows; reset cannot race a
-				// session-authenticated effect or invert the worker/request fences.
-				await client.query(
-					"SELECT actor_id FROM local_credentials WHERE organization_id = $1 AND actor_id = ANY($2::uuid[]) ORDER BY actor_id FOR UPDATE",
-					[this.organizationId, [initiator.actorId, targetActorId]],
-				);
-				if (
-					!(await lockAuthorizedOrganization(
-						client,
-						this.organizationId,
-						initiator.actorId,
-						"organization_manage",
-					))
-				)
-					throw new LocalCredentialError();
+				await lockAccountManagement(client, initiator);
 			},
 			async (client) => {
+				await guardUsableAdmin(client, this.organizationId, targetActorId);
 				const reset = await client.query(
 					"UPDATE local_credentials SET password_hash = NULL, password_algorithm = NULL, password_version = NULL, updated_at = now() WHERE organization_id = $1 AND actor_id = $2 AND enabled RETURNING actor_id",
 					[this.organizationId, targetActorId],
@@ -431,6 +481,33 @@ export class LocalCredentialStore {
 					],
 				);
 				return { enrollmentId: enrollment.rows[0]!.id, token };
+			},
+		);
+	}
+
+	async setEnabled(
+		initiator: LocalPrincipal,
+		targetActorId: string,
+		enabled: boolean,
+	): Promise<void> {
+		if (initiator.organizationId !== this.organizationId)
+			throw new LocalCredentialError();
+		await credentialTransaction(
+			this.pool,
+			(client) => lockAccountManagement(client, initiator),
+			async (client) => {
+				if (!enabled)
+					await guardUsableAdmin(client, this.organizationId, targetActorId);
+				const updated = await client.query(
+					"UPDATE local_credentials SET enabled = $3, updated_at = now() WHERE organization_id = $1 AND actor_id = $2 RETURNING actor_id",
+					[this.organizationId, targetActorId, enabled],
+				);
+				if (!updated.rowCount) throw new LocalCredentialError();
+				if (!enabled)
+					await client.query(
+						"UPDATE local_account_enrollments SET revoked_at = clock_timestamp() WHERE organization_id = $1 AND actor_id = $2 AND consumed_at IS NULL AND revoked_at IS NULL",
+						[this.organizationId, targetActorId],
+					);
 			},
 		);
 	}

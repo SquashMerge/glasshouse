@@ -7,6 +7,8 @@ import {
 } from "@tanstack/react-router";
 import { DashboardPage } from "./routes/index";
 import { LoginPage } from "./routes/login";
+import { SetupPage } from "./routes/setup";
+import { EnrollmentPage } from "./routes/enroll";
 import { ObservabilityPage } from "./routes/observability";
 import { TraceDetailPage } from "./routes/observability/traces/$id";
 import { PromptsPage } from "./routes/prompts";
@@ -23,6 +25,7 @@ import { FeedbackPage } from "./routes/feedback";
 import { ProjectsPage } from "./routes/projects";
 import { GovernancePage } from "./routes/governance";
 import { AdminAccessPage } from "./routes/admin-access";
+import { PasswordChangePage } from "./routes/password-change";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 import { ProjectProvider } from "./components/ProjectProvider";
@@ -35,6 +38,16 @@ const loginRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/login",
 	component: LoginPage,
+});
+const setupRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/setup",
+	component: SetupPage,
+});
+const enrollmentRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/enroll",
+	component: EnrollmentPage,
 });
 
 const protectedRoute = createRoute({
@@ -137,10 +150,17 @@ const adminAccessRoute = createRoute({
 	path: "/access",
 	component: AdminAccessPage,
 });
+const passwordChangeRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/account/password",
+	component: PasswordChangePage,
+});
 
 const router = createRouter({
 	routeTree: rootRoute.addChildren([
 		loginRoute,
+		setupRoute,
+		enrollmentRoute,
 		protectedRoute.addChildren([
 			indexRoute,
 			observabilityRoute,
@@ -158,6 +178,7 @@ const router = createRouter({
 			projectsRoute,
 			governanceRoute,
 			adminAccessRoute,
+			passwordChangeRoute,
 		]),
 	]),
 	defaultPreload: false,

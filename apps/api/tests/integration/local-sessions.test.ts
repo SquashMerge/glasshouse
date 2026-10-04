@@ -419,6 +419,18 @@ test("logout revokes one session; self password change, Admin reset and disable 
 	const f = await fixture();
 	const one = await f.signedIn();
 	const two = await f.signedIn();
+	const three = await f.signedIn();
+	const rejectedChange = await f.api.request("/v1/auth/password", {
+		method: "POST",
+		headers: two.headers,
+		body: JSON.stringify({
+			current_password: "incorrect-current-password",
+			new_password: secret(),
+		}),
+	});
+	expect(rejectedChange.status).toBe(422);
+	expect((await rejectedChange.json()).code).toBe("INVALID_CURRENT_PASSWORD");
+	expect(await f.sessions.authenticate(two.token)).not.toBeNull();
 	const logout = await f.api.request("/v1/auth/logout", {
 		method: "POST",
 		headers: one.headers,
@@ -427,6 +439,7 @@ test("logout revokes one session; self password change, Admin reset and disable 
 	expect(logout.headers.get("set-cookie")!.includes("Max-Age=0")).toBe(true);
 	expect(await f.sessions.authenticate(one.token)).toBeNull();
 	expect(await f.sessions.authenticate(two.token)).not.toBeNull();
+	expect(await f.sessions.authenticate(three.token)).not.toBeNull();
 	const newPassword = secret();
 	const changed = await f.api.request("/v1/auth/password", {
 		method: "POST",
@@ -438,6 +451,7 @@ test("logout revokes one session; self password change, Admin reset and disable 
 	});
 	expect(changed.status).toBe(200);
 	expect(await f.sessions.authenticate(two.token)).toBeNull();
+	expect(await f.sessions.authenticate(three.token)).toBeNull();
 	expect(await f.sessions.login("Local.Admin", f.password)).toBeNull();
 	expect(await f.sessions.login("Local.Admin", newPassword)).not.toBeNull();
 	const account = await f.credentials.provision(f.principal, {

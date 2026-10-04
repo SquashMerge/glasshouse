@@ -2,14 +2,10 @@ import * as React from "react";
 import { authedFetch } from "../lib/auth";
 
 /**
- * `useEventSource` — fetch-based SSE hook with auth header injection.
+ * `useEventSource` — fetch-based SSE hook with same-origin session cookies.
  *
- * **Why not native `EventSource`?** The server's `basicAuthMiddleware`
- * requires an `Authorization` header, but the browser's `EventSource`
- * cannot attach custom headers. We therefore open the SSE stream via
- * `authedFetch` (which injects `Authorization: Basic …` from
- * `localStorage`) and parse the `ReadableStream<Uint8Array>` body as
- * `text/event-stream` frames.
+ * Fetch supports abort, bounded frame parsing and Last-Event-ID replay.
+ * `authedFetch` sends the HttpOnly cookie without exposing credentials.
  *
  * **Visible-state machine**: `"connecting"` → `"open"` → `"closed"`.
  * `paused: boolean` is orthogonal: `true` only when the caller explicitly

@@ -109,7 +109,9 @@ test.describe("Login flow", () => {
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-		await page.getByRole("button", { name: USER }).click();
+		await page
+			.getByRole("button", { name: `Account menu for ${USER}` })
+			.click();
 		await page.getByRole("menuitem", { name: /Log out/i }).click();
 		await page.waitForURL(/\/login$/, { timeout: 5000 });
 		expect(

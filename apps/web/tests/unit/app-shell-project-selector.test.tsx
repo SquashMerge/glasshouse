@@ -9,6 +9,13 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const authState = vi.hoisted(() => ({
+	session: null as null | {
+		username: string;
+		authentication: "local_session" | "basic";
+	},
+}));
+
 const selection = vi.hoisted(() => ({
 	isLoading: false,
 	selectProject: vi.fn(),
@@ -43,6 +50,11 @@ vi.mock("@tanstack/react-router", () => ({
 		</a>
 	),
 }));
+vi.mock("../../src/lib/auth", () => ({
+	getAuthSession: () => authState.session,
+	logoutSession: vi.fn(),
+}));
+
 vi.mock("../../src/components/ProjectProvider", () => ({
 	useProjectSelection: () => ({
 		projects,
@@ -67,6 +79,7 @@ import { DashboardPage } from "../../src/routes/index";
 describe("AppShell project selector", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
+		authState.session = null;
 		selection.isLoading = false;
 		selection.selectProject.mockReset();
 		selection.organizationRole = "admin";
@@ -74,6 +87,39 @@ describe("AppShell project selector", () => {
 	});
 
 	afterEach(cleanup);
+
+	it("offers self-service password changes only in the signed-in account menu", () => {
+		authState.session = {
+			username: "test.admin",
+			authentication: "local_session",
+		};
+		render(
+			<AppShell currentPath="/">
+				<div>Page</div>
+			</AppShell>,
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Account menu for test.admin" }),
+		);
+		expect(
+			screen.getByRole("menuitem", { name: "Change password" }),
+		).toBeVisible();
+	});
+
+	it("does not offer local password changes in Basic compatibility sessions", () => {
+		authState.session = { username: "compat.user", authentication: "basic" };
+		render(
+			<AppShell currentPath="/">
+				<div>Page</div>
+			</AppShell>,
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Account menu for compat.user" }),
+		);
+		expect(
+			screen.queryByRole("menuitem", { name: "Change password" }),
+		).not.toBeInTheDocument();
+	});
 
 	it("exposes the selected authenticated project and Prompts navigation", () => {
 		render(

@@ -7,6 +7,18 @@ const workflow = readFileSync(
 );
 
 describe("startup migration CI contract", () => {
+	it("keeps the local-onboarding bootstrap owner aligned with its Basic username", () => {
+		const onboardingEnv =
+			workflow.split("\n  local-onboarding:\n")[1]?.split("\n    steps:\n")[0] ??
+			"";
+		const username = onboardingEnv.match(/^      UI_USERNAME: (\S+)$/m)?.[1];
+		const owner = onboardingEnv.match(
+			/^      ASTRAEA_BOOTSTRAP_OWNER_USERNAME: (\S+)$/m,
+		)?.[1];
+		expect(username).toBeTruthy();
+		expect(owner).toBe(username);
+	});
+
 	it("verifies both stores after application startup and API restart", () => {
 		expect(workflow).toContain(
 		"Verify startup migrations are complete after application boot and restart",

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
 	getCurrentActor: vi.fn(),
 	listAdminActors: vi.fn(),
+	listLocalAccounts: vi.fn(),
 	listProjects: vi.fn(),
 	listProjectGrants: vi.fn(),
 	setAdminActorRole: vi.fn(),
@@ -61,6 +62,7 @@ describe("AdminAccessPage", () => {
 			],
 		});
 		api.listProjectGrants.mockResolvedValue({ items: [] });
+		api.listLocalAccounts.mockResolvedValue({ items: [] });
 	});
 
 	it("shows accessible Admin role controls and an empty grant state", async () => {

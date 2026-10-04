@@ -17,7 +17,7 @@ import {
 	listEvaluationVersions,
 	updateEvaluationDraft,
 } from "../../src/lib/api";
-import { setCredentials } from "../../src/lib/auth";
+import { clearAuthSession } from "../../src/lib/auth";
 
 const project_id = "11111111-1111-4111-8111-111111111111";
 const definition = {
@@ -48,7 +48,7 @@ const json = () =>
 describe("evaluation API client contract", () => {
 	const fetchMock = vi.fn();
 	beforeEach(() => {
-		setCredentials("admin", "secret");
+		clearAuthSession();
 		fetchMock.mockReset();
 		vi.stubGlobal("fetch", fetchMock);
 		fetchMock.mockImplementation(() => Promise.resolve(json()));

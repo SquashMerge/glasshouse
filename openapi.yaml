@@ -3869,6 +3869,25 @@ components:
         - published_draft_revision
         - created_at
       type: object
+    EnrollmentCode:
+      additionalProperties: false
+      properties:
+        actor_id:
+          format: uuid
+          type: string
+        code:
+          description: One-time enrollment code; shown only in this response. Never store, log, or include in a URL.
+          maxLength: 43
+          minLength: 43
+          type: string
+        enrollment_id:
+          format: uuid
+          type: string
+      required:
+        - actor_id
+        - enrollment_id
+        - code
+      type: object
     ErrorEnvelope:
       properties:
         code:
@@ -6531,6 +6550,83 @@ components:
           items: {}
           type: array
       type: object
+    LocalAccount:
+      additionalProperties: false
+      properties:
+        actor_id:
+          format: uuid
+          type: string
+        enrollments:
+          items:
+            $ref: '#/components/schemas/LocalEnrollment'
+          type: array
+        organization_role:
+          enum:
+            - admin
+            - user
+            - read_only
+            - null
+          type:
+            - string
+            - 'null'
+        project_grants:
+          items:
+            additionalProperties: false
+            properties:
+              project_id:
+                format: uuid
+                type: string
+              role:
+                enum:
+                  - user
+                  - read_only
+                type: string
+            required:
+              - project_id
+              - role
+            type: object
+          type: array
+        status:
+          enum:
+            - active
+            - pending
+            - disabled
+          type: string
+        username:
+          type: string
+      required:
+        - actor_id
+        - username
+        - organization_role
+        - status
+        - project_grants
+        - enrollments
+      type: object
+    LocalEnrollment:
+      additionalProperties: false
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        status:
+          enum:
+            - pending
+            - expired
+            - revoked
+            - consumed
+          type: string
+      required:
+        - id
+        - status
+        - created_at
+        - expires_at
+      type: object
     NotImplementedError:
       allOf:
         - $ref: '#/components/schemas/ErrorEnvelope'
@@ -7766,6 +7862,368 @@ paths:
         - basicAuth: []
       tags:
         - administration
+  /v1/admin/local-accounts:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  items:
+                    items:
+                      $ref: '#/components/schemas/LocalAccount'
+                    type: array
+                required:
+                  - items
+                type: object
+          description: OK; sensitive responses are not cached
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Insufficient role
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflicting access state
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Recovery cooldown
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: List local usernames, current roles, grants and enrollment status
+      tags:
+        - administration
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                role:
+                  enum:
+                    - admin
+                    - user
+                    - read_only
+                  type: string
+                username:
+                  pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$
+                  type: string
+              required:
+                - username
+                - role
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentCode'
+          description: OK; sensitive responses are not cached
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Insufficient role
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflicting access state
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Recovery cooldown
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+      summary: Provision a local username and reveal its enrollment code once
+      tags:
+        - administration
+  /v1/admin/local-accounts/{actorId}/reset:
+    post:
+      parameters:
+        - in: path
+          name: actorId
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentCode'
+          description: OK; sensitive responses are not cached
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Insufficient role
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflicting access state
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Recovery cooldown
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+      summary: Revoke passwords, sessions and enrollments and reveal a replacement code once
+      tags:
+        - administration
+  /v1/admin/local-accounts/{actorId}/status:
+    put:
+      parameters:
+        - in: path
+          name: actorId
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                enabled:
+                  type: boolean
+              required:
+                - enabled
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  ok:
+                    enum:
+                      - true
+                    type: boolean
+                required:
+                  - ok
+                type: object
+          description: OK; sensitive responses are not cached
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Insufficient role
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflicting access state
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Recovery cooldown
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+      summary: Enable or disable a local account without removing its roles
+      tags:
+        - administration
+  /v1/admin/local-enrollments/{enrollmentId}:
+    delete:
+      parameters:
+        - in: path
+          name: enrollmentId
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  ok:
+                    enum:
+                      - true
+                    type: boolean
+                required:
+                  - ok
+                type: object
+          description: OK; sensitive responses are not cached
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Insufficient role
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Conflicting access state
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Recovery cooldown
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+      summary: Revoke an unused local enrollment code
+      tags:
+        - administration
   /v1/admin/projects/{projectId}/grants:
     get:
       parameters:
@@ -8232,6 +8690,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Origin or CSRF verification failed
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Current password was not accepted
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Password change attempts are temporarily limited
       security:
         - csrfHeader: []
           sessionCookie: []
@@ -8266,12 +8736,17 @@ paths:
                   organization_id:
                     format: uuid
                     type: string
+                  username:
+                    type:
+                      - string
+                      - 'null'
                 required:
                   - actor_id
                   - organization_id
                   - authentication
                   - expires_at
                   - csrf_token
+                  - username
                 type: object
           description: Trusted session context; CSRF value is not a bearer token
         '401':

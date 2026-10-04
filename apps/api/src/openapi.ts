@@ -9,6 +9,7 @@ import {
 	trustedTenant,
 } from "./tenancy.js";
 import { authRoutes } from "./routes/auth.js";
+import { localAccountRoutes } from "./routes/local-accounts.js";
 import { otlpIngestRoute, handleOtlpIngest } from "./routes/otlp.js";
 
 import {
@@ -365,6 +366,7 @@ const register = (route: unknown, handler: unknown): void => {
 				: [cookieSecurity, { basicAuth: [] }];
 	openapiApp.openapi({ ...definition, security } as never, handler as never);
 };
+for (const [route, handler] of localAccountRoutes) register(route, handler);
 
 openapiApp.use("/v1/prompts/*", async (c, next) => {
 	c.header("Cache-Control", "no-store");

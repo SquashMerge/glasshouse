@@ -17,7 +17,7 @@ import {
 	rollbackLatestPromptVersion,
 	startPromptOptimization,
 } from "../../src/lib/api";
-import { setCredentials } from "../../src/lib/auth";
+import { clearAuthSession } from "../../src/lib/auth";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const HASH = "a".repeat(64);
@@ -34,7 +34,7 @@ describe("prompt management API client", () => {
 
 	beforeEach(() => {
 		window.localStorage.clear();
-		setCredentials("admin", "secret");
+		clearAuthSession();
 		fetchMock.mockReset();
 		vi.stubGlobal("fetch", fetchMock);
 	});
@@ -64,7 +64,8 @@ describe("prompt management API client", () => {
 			`/v1/prompts/support-agent/versions?project_id=${PROJECT_ID}`,
 		]);
 		const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-		expect(headers.get("authorization")).toBe("Basic YWRtaW46c2VjcmV0");
+		expect(headers.get("authorization")).toBeNull();
+		expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("same-origin");
 	});
 
 	it("sends exact create, version, rollback, render, draft preview, delete, and provenance payloads", async () => {
