@@ -11,6 +11,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select } from "../components/ui/select";
 import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
+import { LocalAccounts } from "../components/LocalAccounts";
 import {
 	getCurrentActor,
 	listAdminActors,
@@ -144,6 +145,7 @@ export function AdminAccessPage() {
 	return (
 		<div className="space-y-8">
 			<PageHeader />
+			<LocalAccounts />
 			{roleMutation.isError ||
 			grantMutation.isError ||
 			revokeMutation.isError ||
@@ -306,16 +308,18 @@ export function AdminAccessPage() {
 					) : null}
 				</CardContent>
 			</Card>
-			<RecoveryCard
-				open={recoveryOpen}
-				confirmation={confirmation}
-				pending={recoveryMutation.isPending}
-				error={recoveryMutation.isError}
-				onOpen={() => setRecoveryOpen(true)}
-				onClose={() => setRecoveryOpen(false)}
-				onConfirmationChange={setConfirmation}
-				onRecover={() => recoveryMutation.mutate()}
-			/>
+			{currentActor.can_recover_admin && (
+				<RecoveryCard
+					open={recoveryOpen}
+					confirmation={confirmation}
+					pending={recoveryMutation.isPending}
+					error={recoveryMutation.isError}
+					onOpen={() => setRecoveryOpen(true)}
+					onClose={() => setRecoveryOpen(false)}
+					onConfirmationChange={setConfirmation}
+					onRecover={() => recoveryMutation.mutate()}
+				/>
+			)}
 		</div>
 	);
 }

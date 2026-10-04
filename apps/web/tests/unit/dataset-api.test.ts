@@ -10,7 +10,7 @@ import {
 	tombstoneDataset,
 	upsertDatasetDraftItem,
 } from "../../src/lib/api";
-import { setCredentials } from "../../src/lib/auth";
+import { clearAuthSession } from "../../src/lib/auth";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -19,7 +19,7 @@ describe("dataset API client", () => {
 
 	beforeEach(() => {
 		window.localStorage.clear();
-		setCredentials("user", "secret");
+		clearAuthSession();
 		fetchMock.mockReset();
 		vi.stubGlobal("fetch", fetchMock);
 	});

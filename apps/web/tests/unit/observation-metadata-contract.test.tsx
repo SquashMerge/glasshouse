@@ -65,7 +65,7 @@ import {
 	listObservations,
 	normalizeObservationMetadata,
 } from "../../src/lib/api";
-import { setCredentials } from "../../src/lib/auth";
+import { clearAuthSession } from "../../src/lib/auth";
 import { TraceDetailPage } from "../../src/routes/observability/traces/$id";
 
 const HASH = "a".repeat(64);
@@ -84,7 +84,7 @@ describe("observation metadata API-to-dashboard contract", () => {
 	beforeEach(() => {
 		stream.callbacks = null;
 		window.localStorage.clear();
-		setCredentials("admin", "secret");
+		clearAuthSession();
 		fetchMock.mockReset();
 		vi.stubGlobal("fetch", fetchMock);
 	});

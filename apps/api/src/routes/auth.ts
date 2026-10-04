@@ -93,6 +93,7 @@ export const currentSessionRoute = createRoute({
 						authentication: z.enum(["local_session", "basic"]),
 						expires_at: z.string().datetime().nullable(),
 						csrf_token: z.string().nullable(),
+						username: z.string().nullable(),
 					}),
 				},
 			},
@@ -241,9 +242,10 @@ export async function handleCurrentSession(c: Context): Promise<Response> {
 			authentication: "basic",
 			expires_at: null,
 			csrf_token: null,
+			username: null,
 		});
-	const session = await pgPool().query<{ expires_at: Date }>(
-		"SELECT expires_at FROM local_sessions WHERE id = $1 AND organization_id = $2 AND actor_id = $3 AND revoked_at IS NULL AND expires_at > clock_timestamp()",
+	const session = await pgPool().query<{ expires_at: Date; username: string }>(
+		"SELECT session.expires_at, credential.username FROM local_sessions session JOIN local_credentials credential ON credential.organization_id = session.organization_id AND credential.actor_id = session.actor_id WHERE session.id = $1 AND session.organization_id = $2 AND session.actor_id = $3 AND session.revoked_at IS NULL AND session.expires_at > clock_timestamp()",
 		[tenant.sessionId, tenant.organizationId, tenant.actorId],
 	);
 	if (!session.rows[0]) return failed(c);
@@ -253,6 +255,7 @@ export async function handleCurrentSession(c: Context): Promise<Response> {
 		authentication: "local_session",
 		expires_at: session.rows[0].expires_at.toISOString(),
 		csrf_token: csrfForSession(token),
+		username: session.rows[0].username,
 	});
 }
 export async function handleLogout(c: Context): Promise<Response> {

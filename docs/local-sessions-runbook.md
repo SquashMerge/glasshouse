@@ -1,6 +1,6 @@
 # Local authentication and revocable sessions
 
-Issue #189 adds the API over #188's [credential/bootstrap service](local-credentials-runbook.md). Browser sign-in uses a separately provisioned local account and a revocable cookie session; Basic remains supported for direct API clients. Setup/account browser UX follows in #190.
+Issue #189 adds the API over #188's [credential/bootstrap service](local-credentials-runbook.md). The [#190 browser/account flows](local-account-management.md) use these opaque cookie sessions, including fetch-based SSE; Basic remains operator/API compatibility.
 
 ## Deployment and transport
 
@@ -9,7 +9,7 @@ Serve the browser and `/v1` API through the **same HTTPS origin**. Set `NODE_ENV
 | Method/path | Contract |
 | --- | --- |
 | `POST /v1/auth/login` | JSON `{username,password}` only. Server-selected Organization, Argon2id verification, fresh random session per success; returns `{ok:true}`. Client actor/role/Organization claims are rejected. Header-only Basic prevalidation remains for compatibility and creates no local session. |
-| `GET /v1/auth/session` | Trusted Actor/Organization IDs, authentication kind, immutable expiry, separate `csrf_token`. Basic reports NULL expiry/CSRF. No role claims are cached. |
+| `GET /v1/auth/session` | Trusted Actor/Organization IDs, local username, authentication kind, immutable expiry, separate `csrf_token`. Basic reports NULL username/expiry/CSRF. No role claims are cached. |
 | `POST /v1/auth/logout` | Cookie + CSRF revokes only this session; clears the cookie with matching attributes. Basic has no server session to revoke. |
 | `POST /v1/auth/password` | Local session + CSRF, `{current_password,new_password}`; compare-and-set verification, revocation of all account sessions and cookie clearing. Sign in again afterward. |
 | `GET /v1/auth/setup` | Content-free `{available}` only. |
@@ -73,3 +73,5 @@ make test-db-migrations
 The wrapper selects the private service-network URL, overriding copied host-local URLs. The session suite creates/drops fresh and populated-0100 databases, verifies storage guards, workspace boot, CSRF/cookies, OTLP, every protected route and per-frame SSE; it observes actual PostgreSQL waiters for both auth-vs-disable/revoke race winners and checks denied writes/audits/provider work. The Docker-backed migration CI harness also runs the suite. If nested Docker is unavailable, report the full harness unverified and run focused PostgreSQL tests on the devcontainer network.
 
 Hosted E2E starts its fresh database in local-bootstrap mode with `ASTRAEA_PUBLIC_ORIGIN=http://localhost:5173`. CI generates and masks a random one-time operator token and a separate test-only local password, runs `auth:provision-bootstrap`, then `infra/scripts/setup-e2e-local-auth.ts` checks setup availability, consumption, permanent closure, and replay rejection. Only afterward does CI grant its legacy Basic owner access through the existing bootstrap command. Browser helpers use `E2E_LOCAL_USERNAME` / `E2E_LOCAL_PASSWORD`; direct API fixtures retain `UI_USERNAME` / `UI_PASSWORD`. E2E uses one browser worker for the shared account's bounded sessions/verification capacity. Traces, screenshots, video recording, and automatic failure-page snapshots (`PLAYWRIGHT_NO_COPY_PROMPT`) are disabled to keep passwords and session cookies out of artifacts. The browser suite checks local cookie login/reload/logout and direct Basic prevalidation/session/project access separately.
+
+The separate `local-onboarding` CI job keeps Basic bootstrap grants disabled and uses `infra/scripts/prepare-local-auth-e2e.ts` to provision a restricted-permission operator setup file. Its browser creates the first local Admin, consumes manual first-password enrollments, checks account-management and last-Admin behavior at mobile/desktop widths, and verifies setup stays closed after restart. Its local `UI_PASSWORD` is independently random and masked, not the Basic API fixture password; setup/enrollment/password inputs avoid secret-bearing Playwright call logs. Both auth jobs disable failure-page snapshots and auth recordings, and always remove their setup files and isolated stacks.

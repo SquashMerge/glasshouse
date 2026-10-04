@@ -69,6 +69,77 @@ function jsonRequest(body: unknown): RequestInit {
 	};
 }
 
+export interface LocalAccount {
+	actor_id: string;
+	username: string;
+	organization_role: "admin" | "user" | "read_only" | null;
+	status: "active" | "pending" | "disabled";
+	project_grants: Array<{ project_id: string; role: "user" | "read_only" }>;
+	enrollments: Array<{
+		id: string;
+		status: "pending" | "expired" | "revoked" | "consumed";
+		created_at: string;
+		expires_at: string;
+	}>;
+}
+export interface EnrollmentCode {
+	actor_id: string;
+	enrollment_id: string;
+	code: string;
+}
+export async function listLocalAccounts(): Promise<{ items: LocalAccount[] }> {
+	return responseJson(
+		await authedFetch("/v1/admin/local-accounts"),
+		"List accounts",
+	);
+}
+export async function provisionLocalAccount(
+	username: string,
+	role: NonNullable<LocalAccount["organization_role"]>,
+): Promise<EnrollmentCode> {
+	return responseJson(
+		await authedFetch(
+			"/v1/admin/local-accounts",
+			jsonRequest({ username, role }),
+		),
+		"Provision account",
+	);
+}
+export async function resetLocalAccount(
+	actorId: string,
+): Promise<EnrollmentCode> {
+	return responseJson(
+		await authedFetch(
+			`/v1/admin/local-accounts/${encodeURIComponent(actorId)}/reset`,
+			{ method: "POST" },
+		),
+		"Reset account",
+	);
+}
+export async function setLocalAccountEnabled(
+	actorId: string,
+	enabled: boolean,
+): Promise<void> {
+	await responseJson(
+		await authedFetch(
+			`/v1/admin/local-accounts/${encodeURIComponent(actorId)}/status`,
+			{ ...jsonRequest({ enabled }), method: "PUT" },
+		),
+		"Set account status",
+	);
+}
+export async function revokeLocalEnrollment(
+	enrollmentId: string,
+): Promise<void> {
+	await responseJson(
+		await authedFetch(
+			`/v1/admin/local-enrollments/${encodeURIComponent(enrollmentId)}`,
+			{ method: "DELETE" },
+		),
+		"Revoke enrollment",
+	);
+}
+
 export interface Dataset {
 	id: string;
 	project_id: string;

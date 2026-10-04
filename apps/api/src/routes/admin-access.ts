@@ -1,6 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { PoolClient } from "pg";
+import {
+	AuthenticationError,
+	lockLocalActor,
+	lockSessionPrincipal,
+} from "../db/local-sessions.js";
 import { basicCredentialsFromEnvironment } from "../middleware/auth.js";
 import { pgPool } from "../db/postgres.js";
 import {
@@ -134,6 +139,7 @@ function audit(row: AuditRow) {
 }
 
 function failure(c: Context, cause: unknown): Response {
+	if (cause instanceof AuthenticationError) throw cause;
 	const message =
 		cause instanceof Error ? cause.message : "Administration failed";
 	const code = (cause as { code?: unknown } | null)?.code;
@@ -296,6 +302,19 @@ export async function handleSetAdminActorRole(c: Context) {
 		const result = await withLockPhaseTransaction(
 			pgPool(),
 			async (client) => {
+				await client.query(
+					"SELECT actor_id FROM local_credentials WHERE organization_id = $1 ORDER BY actor_id FOR SHARE",
+					[tenant.organizationId],
+				);
+				if (tenant.sessionId)
+					await lockSessionPrincipal(client, {
+						...tenant,
+						sessionId: tenant.sessionId,
+					});
+				else if (
+					!(await lockLocalActor(client, tenant.organizationId, tenant.actorId))
+				)
+					throw new Error("Forbidden");
 				await lockAdminRoles(client, tenant.organizationId, [
 					tenant.actorId,
 					actorId,

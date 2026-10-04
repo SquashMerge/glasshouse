@@ -155,8 +155,11 @@ For concurrent AI-assisted development, Astraea provides a Compose-based devcont
 
 | URL | Purpose |
 |---|---|
-| http://localhost:5173/login | Sign in (local account / cookie session) |
-| http://localhost:5173 | Dashboard (auth-gated; redirects to /login if not signed in) |
+| http://localhost:5173/setup | First Admin setup (operator secret, only while available) |
+| http://localhost:5173/login | Local username/password sign-in (HttpOnly cookie session) |
+| http://localhost:5173/enroll | First password or re-enrollment using an Admin-provided code |
+| http://localhost:5173/access | Admin local accounts, existing roles and Project grants |
+| http://localhost:5173 | Dashboard (auth-gated; fresh setup or sign-in redirect) |
 | http://localhost:5173/observability | Trace and observation lists (auth-gated) |
 | http://localhost:5173/observability/traces/:id | Trace detail with observation tree (auth-gated) |
 | http://localhost:3000/v1/otel/v1/traces | OTLP HTTP/JSON trace ingest (auth-gated; OTel SDK target) |
@@ -175,8 +178,12 @@ password is imported. The [local session API](docs/local-sessions-runbook.md) no
 login/current-session/logout/password-change endpoints, eight-hour revocable HttpOnly
 cookies, CSRF protection and the same trusted workspace principal. Configure HTTPS,
 `NODE_ENV=production` and the exact `ASTRAEA_PUBLIC_ORIGIN` behind a proxy. The setup/account
-browser UX follows in #190. Dashboard sign-in uses separately provisioned local
-credentials; direct API clients retain Basic Auth compatibility.
+browser UX is available at `/setup`, `/login`, `/enroll` and `/access`.
+Dashboard sign-in uses separately provisioned local credentials; direct API
+clients retain Basic Auth compatibility.
+See [local account management](docs/local-account-management.md) for manual
+enrollment-code handoff, last-Admin protection, HTTPS, recovery and the Basic
+operator/API compatibility boundary. Public registration stays disabled.
 
 ### GEPA prompt optimization and LLM providers
 

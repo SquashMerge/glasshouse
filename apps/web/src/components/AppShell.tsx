@@ -31,7 +31,7 @@ import {
 	DropdownMenuSeparator,
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
-import { getCredentials, logoutSession } from "../lib/auth";
+import { getAuthSession, logoutSession } from "../lib/auth";
 import type { Project } from "../lib/api";
 import { useProjectSelection } from "./ProjectProvider";
 
@@ -47,10 +47,14 @@ interface AppShellProps {
 export function AppShell({ children, currentPath }: AppShellProps) {
 	const location = useLocation();
 	const activePath = currentPath ?? location.pathname;
-	const [creds, setCreds] = React.useState(getCredentials());
+	const [session, setSession] = React.useState(getAuthSession());
+	const [logoutError, setLogoutError] = React.useState(false);
+	const [loggingOut, setLoggingOut] = React.useState(false);
+	const creds = session
+		? { username: session.username ?? "Compatibility account" }
+		: null;
 	const [collapsed, setCollapsed] = React.useState(false);
 	const [hydrated, setHydrated] = React.useState(false);
-	const [logoutError, setLogoutError] = React.useState(false);
 	const {
 		projects,
 		selectedProjectId,
@@ -81,17 +85,17 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	}
 
 	async function logout() {
+		setLoggingOut(true);
 		setLogoutError(false);
 		try {
 			await logoutSession();
+			clearSession();
+			setSession(null);
+			window.location.href = "/login";
 		} catch {
 			setLogoutError(true);
-			return;
-		}
-		clearSession();
-		setCreds(null);
-		if (typeof window !== "undefined") {
-			window.location.href = "/login";
+		} finally {
+			setLoggingOut(false);
 		}
 	}
 
@@ -389,15 +393,21 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 									<LuChevronUp className="hidden h-3.5 w-3.5 opacity-60 sm:block" />
 								)}
 							</DropdownMenuTrigger>
-							<DropdownMenuContent align={collapsed ? "end" : "start"}>
+							<DropdownMenuContent
+								align={collapsed ? "end" : "start"}
+								className="max-w-[calc(100vw-2rem)]"
+							>
 								<DropdownMenuLabel>Signed in as</DropdownMenuLabel>
-								<div className="px-2 pb-1.5 text-xs text-muted-foreground">
+								<div className="break-all px-2 pb-1.5 text-xs text-muted-foreground">
 									{creds.username}
 								</div>
 								<DropdownMenuSeparator />
-								<DropdownMenuItem onSelect={logout}>
+								<DropdownMenuItem
+									disabled={loggingOut}
+									onSelect={() => void logout()}
+								>
 									<LuLogOut className="h-4 w-4" />
-									Log out
+									{loggingOut ? "Logging out…" : "Log out"}
 								</DropdownMenuItem>
 							</DropdownMenuContent>
 						</DropdownMenu>

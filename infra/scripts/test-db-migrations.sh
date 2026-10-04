@@ -154,6 +154,9 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
   bun test --cwd "$ROOT/apps/api" tests/integration/local-sessions.test.ts
 
+DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
+  bun test --cwd "$ROOT/apps/api" tests/integration/local-accounts.test.ts
+
 run_uuid_advisory_serialization_check() {
   local project_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
   local organization_id="00000000-0000-4000-8000-000000000001"

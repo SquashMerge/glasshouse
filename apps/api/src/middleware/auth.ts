@@ -222,6 +222,25 @@ export const PUBLIC_API_ROUTES = new Set([
 ]);
 export const AUTH_SESSION_TOKEN_CONTEXT_KEY = "authSessionToken";
 
+export function ownsAuthenticationFence(method: string, path: string): boolean {
+	return (
+		(method === "POST" &&
+			[
+				"/v1/auth/logout",
+				"/v1/auth/password",
+				"/v1/admin/local-accounts",
+			].includes(path)) ||
+		(method === "PUT" &&
+			/^\/v1\/admin\/(?:local-accounts\/[^/]+\/status|actors\/[^/]+\/role)$/.test(
+				path,
+			)) ||
+		(method === "POST" &&
+			/^\/v1\/admin\/local-accounts\/[^/]+\/reset$/.test(path)) ||
+		(method === "DELETE" &&
+			/^\/v1\/admin\/local-enrollments\/[^/]+$/.test(path))
+	);
+}
+
 export function requestSessionToken(
 	header: string | undefined,
 ): string | undefined {
@@ -341,7 +360,7 @@ export function authenticationMiddleware(
 		// Auth-control routes revalidate under their own mutation transaction.
 		// SSE releases the initial fence; every delivered frame acquires its own.
 		if (
-			["/v1/auth/logout", "/v1/auth/password"].includes(c.req.path) ||
+			ownsAuthenticationFence(c.req.method, c.req.path) ||
 			c.req.path.endsWith("/events")
 		)
 			return await next();

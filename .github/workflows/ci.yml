@@ -29,12 +29,14 @@ jobs:
             command: bun run typecheck
           - check: test
             command: bun run test
+          - check: supply-chain
+            command: bun run test:supply-chain
           - check: worker-test
             command: python3 -m pip install --user --disable-pip-version-check --require-hashes -r worker/requirements.lock && python3 -m unittest worker.test_dev_cli_llm
           - check: build
             command: bun run build
           - check: openapi-artifact
-            command: bun run openapi:check
+            command: bun run openapi:check && bun --filter @astraea/api codegen:ts
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
           - check: doctor-version
@@ -273,4 +275,60 @@ jobs:
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/e2e-bootstrap.token"
+          docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml down --volumes --remove-orphans
+
+  local-onboarding:
+    name: Local first-run browser journey
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ASTRAEA_AUTH_BOOTSTRAP_MODE: local
+      ASTRAEA_PUBLIC_ORIGIN: http://localhost:5173
+      DATABASE_URL: postgres://astraea:astraea-ci-password@localhost:5432/astraea
+      UI_USERNAME: e2e-onboarding-admin
+      E2E_SETUP_SECRET_FILE: /tmp/astraea-ci-setup-secret
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: apps/web
+        run: bunx --no-install playwright install --with-deps chromium
+      - name: Configure isolated CI stack
+        run: |
+          cp infra/.env.example infra/.env
+          sed -i 's/CHANGE_ME/astraea-ci-password/g' infra/.env
+      - name: Start fresh local-first application
+        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
+      - name: Generate masked independent local password
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import secrets
+          password = secrets.token_urlsafe(32)
+          print(f"::add-mask::{password}")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"UI_PASSWORD={password}\n")
+          PY
+      - name: Provision operator setup fixture without logging it
+        run: bun run infra/scripts/prepare-local-auth-e2e.ts
+      - name: Run first-run and manual-enrollment browser journey
+        env:
+          PLAYWRIGHT_LOCAL_ONBOARDING: "true"
+        run: bun run --cwd apps/web test:e2e
+      - name: Verify setup remains closed after process restart
+        run: |
+          docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml restart api
+          docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --detach --no-deps --wait --wait-timeout 180 api
+          curl --fail --silent http://localhost:5173/v1/auth/setup | python3 -c 'import json,sys; assert json.load(sys.stdin) == {"available": False}'
+      - name: Stop stack and remove setup fixture
+        if: always()
+        run: |
+          rm -f "$E2E_SETUP_SECRET_FILE"
           docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml down --volumes --remove-orphans
