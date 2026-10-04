@@ -127,7 +127,17 @@ export const changePasswordRoute = createRoute({
 			},
 		},
 	},
-	responses,
+	responses: {
+		...responses,
+		422: {
+			description: "Current password was not accepted",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
+		429: {
+			description: "Password change attempts are temporarily limited",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
+	},
 });
 export const setupStateRoute = createRoute({
 	method: "get",
@@ -268,7 +278,11 @@ export async function handleChangePassword(c: Context): Promise<Response> {
 	const tenant = trustedTenant(c);
 	if (!tenant.sessionId) return failed(c);
 	const sessionStore = store();
-	if (!(await sessionStore.reserveAttempt(tenant.actorId))) return failed(c);
+	if (!(await sessionStore.reserveAttempt(tenant.actorId)))
+		return c.json(
+			{ code: "TOO_MANY_REQUESTS", message: "Too many attempts" },
+			429,
+		);
 	const input = (c.req as any).valid("json") as {
 		current_password: string;
 		new_password: string;
@@ -282,7 +296,14 @@ export async function handleChangePassword(c: Context): Promise<Response> {
 		input.current_password,
 		account.rows[0],
 	);
-	if (!verified.verified) return failed(c);
+	if (!verified.verified)
+		return c.json(
+			{
+				code: "INVALID_CURRENT_PASSWORD",
+				message: "Current password is incorrect",
+			},
+			422,
+		);
 	const hash = await hashLocalPassword(input.new_password);
 	const client = await pgPool().connect();
 	try {

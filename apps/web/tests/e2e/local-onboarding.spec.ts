@@ -138,6 +138,31 @@ test("fresh setup, one-time handoff, login/logout and Admin management work at d
 		await expect(user.getByText(/Your password is set/)).toBeVisible();
 		await signIn(user, username);
 		await noSecretStorage(user);
+		await user
+			.getByRole("button", { name: `Account menu for ${username}` })
+			.click();
+		await user.getByRole("menuitem", { name: "Change password" }).click();
+		await expect(
+			user.getByRole("heading", { name: "Change password", exact: true }),
+		).toBeVisible();
+		await fillSecret(user, "Current password", PASS);
+		await fillSecret(user, "New password", "replacement-test-password");
+		await fillSecret(user, "Confirm new password", "replacement-test-password");
+		await user
+			.getByRole("button", { name: "Change password", exact: true })
+			.click();
+		await user.waitForURL((url) => url.pathname === "/login");
+		await expect(user.getByRole("status")).toContainText(
+			"Your password has been changed",
+		);
+		await noSecretStorage(user);
+		await user.getByLabel("Username", { exact: true }).fill(username);
+		await fillSecret(user, "Password", PASS);
+		await user.getByRole("button", { name: "Sign in", exact: true }).click();
+		await expect(user.getByRole("alert")).toContainText("Invalid credentials");
+		await fillSecret(user, "Password", "replacement-test-password");
+		await user.getByRole("button", { name: "Sign in", exact: true }).click();
+		await user.waitForURL((url) => url.pathname === "/");
 		await user.goto("http://localhost:5173/access");
 		await expect(user.getByText(/restricted to Admins/)).toBeVisible();
 		await page

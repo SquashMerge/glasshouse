@@ -27,6 +27,8 @@ export function LoginPage() {
 	const [submitting, setSubmitting] = React.useState(false);
 	const [error, setError] = React.useState<string | null>(null);
 	const errorRef = React.useRef<HTMLDivElement>(null);
+	const passwordChanged =
+		new URLSearchParams(location.searchStr).get("passwordChanged") === "1";
 	React.useEffect(() => {
 		if (error) errorRef.current?.focus();
 	}, [error]);
@@ -97,6 +99,14 @@ export function LoginPage() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
+					{passwordChanged && (
+						<p
+							role="status"
+							className="mb-4 rounded-md border border-border bg-muted/40 p-3 text-sm"
+						>
+							Your password has been changed. Sign in with your new password.
+						</p>
+					)}
 					{sessionNeedsSignIn() && (
 						<p
 							role="status"

@@ -140,6 +140,22 @@ export async function revokeLocalEnrollment(
 	);
 }
 
+export async function changeOwnPassword(
+	currentPassword: string,
+	newPassword: string,
+): Promise<void> {
+	await responseJson(
+		await authedFetch(
+			"/v1/auth/password",
+			jsonRequest({
+				current_password: currentPassword,
+				new_password: newPassword,
+			}),
+		),
+		"Change password",
+	);
+}
+
 export interface Dataset {
 	id: string;
 	project_id: string;

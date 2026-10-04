@@ -18,6 +18,7 @@ import {
 	LuSettings,
 	LuShieldCheck,
 	LuUsers,
+	LuKeyRound,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
@@ -402,6 +403,16 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 									{creds.username}
 								</div>
 								<DropdownMenuSeparator />
+								{session?.authentication === "local_session" && (
+									<DropdownMenuItem
+										onSelect={() =>
+											(window.location.href = "/account/password")
+										}
+									>
+										<LuKeyRound className="h-4 w-4" />
+										Change password
+									</DropdownMenuItem>
+								)}
 								<DropdownMenuItem
 									disabled={loggingOut}
 									onSelect={() => void logout()}

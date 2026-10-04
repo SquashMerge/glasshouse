@@ -1,6 +1,6 @@
 import "./setup";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createFeedback } from "../../src/lib/api";
+import { changeOwnPassword, createFeedback } from "../../src/lib/api";
 import {
 	authedFetch,
 	clearAuthSession,
@@ -188,6 +188,29 @@ describe("opaque browser sessions", () => {
 		expect(headers.get("x-astraea-csrf")).toBe(session.csrf_token);
 		expect(feedback.comment).toBe("Helpful first-pass trace");
 		expect(feedback.status).toBe("reviewed");
+	});
+
+	it("changes a local password through the same-origin cookie and CSRF contract", async () => {
+		fetchMock.mockResolvedValueOnce(json(session));
+		await readAuthSession();
+		fetchMock.mockResolvedValueOnce(json({ ok: true }));
+		await changeOwnPassword(
+			"current-test-password",
+			"replacement-test-password",
+		);
+
+		const [url, init] = fetchMock.mock.lastCall!;
+		expect(url).toBe("/v1/auth/password");
+		expect(init?.method).toBe("POST");
+		expect(init?.credentials).toBe("same-origin");
+		expect(JSON.parse(init?.body as string)).toEqual({
+			current_password: "current-test-password",
+			new_password: "replacement-test-password",
+		});
+		const headers = new Headers(init?.headers as HeadersInit);
+		expect(headers.get("content-type")).toBe("application/json");
+		expect(headers.get("x-astraea-csrf")).toBe(session.csrf_token);
+		expect(headers.has("authorization")).toBe(false);
 	});
 
 	it("coalesces concurrent session reads", async () => {
