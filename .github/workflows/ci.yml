@@ -236,6 +236,8 @@ jobs:
           compose=(docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml)
           trap 'rm -f "$RUNNER_TEMP/e2e-bootstrap.token"; "${compose[@]}" exec -T api rm -f /tmp/e2e-bootstrap.token' EXIT
           "${compose[@]}" cp "$RUNNER_TEMP/e2e-bootstrap.token" api:/tmp/e2e-bootstrap.token
+          # Docker copies as root; the API runs as bun and must also clean up the private token file.
+          "${compose[@]}" exec -T -u root api sh -c 'chown bun /tmp/e2e-bootstrap.token && chmod 600 /tmp/e2e-bootstrap.token'
           "${compose[@]}" exec -T -e ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE=/tmp/e2e-bootstrap.token api bun run --cwd apps/api auth:provision-bootstrap
           ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE="$RUNNER_TEMP/e2e-bootstrap.token" \
             bun run infra/scripts/setup-e2e-local-auth.ts
