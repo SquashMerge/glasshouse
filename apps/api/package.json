@@ -20,6 +20,8 @@
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
     "db:migrate": "bun run ../../infra/scripts/verify-pg-migration-filenames.ts && bun run src/db/migrate.ts && bun run src/db/bootstrap-authorization.ts",
+    "auth:provision-bootstrap": "bun run src/db/provision-local-bootstrap.ts",
+    "auth:calibrate-passwords": "bun run src/lib/calibrate-local-passwords.ts",
     "ch:migrate": "bun run src/db/clickhouse-migrate.ts",
     "openapi:snapshot": "bun run ../../infra/codegen/snapshot.ts",
     "openapi:check": "bash ../../infra/codegen/check-snapshot.sh",

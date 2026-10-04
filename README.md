@@ -164,6 +164,16 @@ For concurrent AI-assisted development, Astraea provides a Compose-based devcont
 | http://localhost:3000/health | Backend health check (public; no auth) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (public) |
 
+### Local credential foundation
+
+PostgreSQL local credential storage now supports organization-scoped ASCII usernames,
+versioned Argon2id hashes, operator-token-guarded first-Admin setup, and Admin-created
+first-password/email-invitation records. See the [operator/security runbook](docs/local-credentials-runbook.md)
+before selecting `ASTRAEA_AUTH_BOOTSTRAP_MODE=local` on a fresh install. The default
+`basic` mode preserves existing bootstrap behavior and authorization; no environment
+password is imported. Local login/session endpoints (#189) and the setup/account UI
+(#190) follow separately, so the current dashboard still signs in with Basic Auth.
+
 ### GEPA prompt optimization and LLM providers
 
 Prompt optimization uses the isolated Python worker with GEPA `0.1.4` and LiteLLM for normal model-string execution. The dashboard optimizes system prompts only; it does not offer user-prompt optimization. It uses held-out validation, safe GEPA budget callback telemetry, and a strict worker-side metric-call cap; GEPA's best outputs are not retained. The dashboard asks for those two model identifiers when optimization starts; it does not collect or persist API keys. The identifiers are pinned into the job configuration and must be present in `GEPA_ALLOWED_MODELS`.

@@ -30,6 +30,17 @@ export function projectAuthorization(
 	};
 }
 
+export async function lockFirstAdminCreation(
+	client: Pick<PoolClient, "query">,
+	organizationId: string,
+): Promise<void> {
+	// Bootstrap and recovery take this before row locks. Keep it separate from
+	// seed 51, which final-Admin triggers acquire after role/Project row locks.
+	await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 98))", [
+		organizationId,
+	]);
+}
+
 export async function lockProjectAuditProvenance(
 	client: Pick<PoolClient, "query">,
 	projectId: string,

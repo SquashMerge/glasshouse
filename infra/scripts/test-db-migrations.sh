@@ -148,6 +148,9 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
   UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun test --cwd "$ROOT/apps/api" tests/integration/authorization-revocation-serialization.test.ts
 
+DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
+  bun test --cwd "$ROOT/apps/api" tests/integration/local-credentials.test.ts
+
 run_uuid_advisory_serialization_check() {
   local project_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
   local organization_id="00000000-0000-4000-8000-000000000001"
@@ -322,6 +325,14 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0095.assert.sql"
+
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0099.assert.sql"
+
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0100.assert.sql"
 
 run_evaluation_execution_bounds_upgrade() {
   local database="${POSTGRES_DB}_0095_upgrade"
