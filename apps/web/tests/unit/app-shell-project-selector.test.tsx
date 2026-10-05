@@ -21,6 +21,7 @@ const selection = vi.hoisted(() => ({
 	selectProject: vi.fn(),
 	organizationRole: "admin" as "admin" | "user" | "read_only",
 	canRecoverAdmin: false,
+	emptyProjects: false,
 }));
 
 const projects = [
@@ -56,17 +57,20 @@ vi.mock("../../src/lib/auth", () => ({
 }));
 
 vi.mock("../../src/components/ProjectProvider", () => ({
-	useProjectSelection: () => ({
-		projects,
-		selectedProjectId: "11111111-1111-4111-8111-111111111111",
-		selectedProject: projects[0],
-		isLoading: selection.isLoading,
-		error: null,
-		organizationRole: selection.organizationRole,
-		canRecoverAdmin: selection.canRecoverAdmin,
-		selectProject: selection.selectProject,
-		retry: vi.fn(),
-	}),
+	useProjectSelection: () => {
+		const visibleProjects = selection.emptyProjects ? [] : projects;
+		return {
+			projects: visibleProjects,
+			selectedProjectId: visibleProjects[0]?.id ?? null,
+			selectedProject: visibleProjects[0] ?? null,
+			isLoading: selection.isLoading,
+			error: null,
+			organizationRole: selection.organizationRole,
+			canRecoverAdmin: selection.canRecoverAdmin,
+			selectProject: selection.selectProject,
+			retry: vi.fn(),
+		};
+	},
 }));
 
 vi.mock("../../src/components/HealthBadge", () => ({
@@ -84,6 +88,7 @@ describe("AppShell project selector", () => {
 		selection.selectProject.mockReset();
 		selection.organizationRole = "admin";
 		selection.canRecoverAdmin = false;
+		selection.emptyProjects = false;
 	});
 
 	afterEach(cleanup);
@@ -139,6 +144,44 @@ describe("AppShell project selector", () => {
 		});
 		expect(selection.selectProject).toHaveBeenCalledWith(
 			"11111111-1111-4111-8111-111111111111",
+		);
+	});
+
+	it("insets the expanded selector chevron without reducing its native select target", () => {
+		render(
+			<AppShell currentPath="/">
+				<div>Page</div>
+			</AppShell>,
+		);
+
+		expect(screen.getByTestId("project-selector")).toHaveClass(
+			"h-9",
+			"w-full",
+			"appearance-none",
+			"pl-2",
+			"pr-9",
+		);
+		expect(screen.getByTestId("project-selector-chevron")).toHaveClass(
+			"pointer-events-none",
+			"right-3",
+		);
+		expect(screen.getByTestId("project-selector-chevron")).toHaveAttribute(
+			"aria-hidden",
+			"true",
+		);
+	});
+
+	it("dims the inset chevron when no project can be selected", () => {
+		selection.emptyProjects = true;
+		render(
+			<AppShell currentPath="/">
+				<div>Page</div>
+			</AppShell>,
+		);
+
+		expect(screen.getByTestId("project-selector")).toBeDisabled();
+		expect(screen.getByTestId("project-selector-chevron")).toHaveClass(
+			"opacity-50",
 		);
 	});
 
