@@ -654,6 +654,15 @@ function OptimizationConfirmDialog({
 					GEPA optimizes the system prompt. Expected answers are evaluator
 					labels: they are never inserted into the production prompt.
 				</p>
+				<div className="mt-3 rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
+					<p className="font-medium text-foreground">A small example</p>
+					<p className="mt-1">
+						For a support prompt, use a rubric such as “identify the issue and
+						give the next step.” Train on “Where is order 42?” with the
+						evaluator label “status and next step”; hold out a different request
+						such as “Can I get a refund?” to check the result independently.
+					</p>
+				</div>
 				{showDevExample && (
 					<Button
 						className="mt-3"
@@ -666,7 +675,7 @@ function OptimizationConfirmDialog({
 				)}
 				<div className="mt-4 space-y-3">
 					<label className="block text-sm font-medium">
-						Scoring rubric / objective
+						Reflection rubric / objective
 						<textarea
 							className="mt-1 min-h-20 w-full rounded-md border p-2"
 							placeholder="e.g. Prioritize urgent work, preserve deadlines, and use concise grouped headings"
@@ -674,9 +683,14 @@ function OptimizationConfirmDialog({
 							onChange={(event) => setRubric(event.target.value)}
 						/>
 					</label>
+					<p className="text-sm text-muted-foreground">
+						Expected-answer labels determine metric scores; the rubric guides
+						reflection feedback.
+					</p>
 					<OptimizationExampleList
 						idPrefix="training"
 						title="Training examples"
+						description="Examples GEPA can learn from while improving the prompt. Use real input and its evaluator label."
 						examples={trainingExamples}
 						disabled={pending}
 						onAdd={() =>
@@ -703,6 +717,7 @@ function OptimizationConfirmDialog({
 					<OptimizationExampleList
 						idPrefix="validation"
 						title="Held-out validation examples"
+						description="Separate examples used to check whether the candidate improves on unseen work. Do not reuse training inputs."
 						examples={validationExamples}
 						disabled={pending}
 						onAdd={() =>
@@ -746,6 +761,10 @@ function OptimizationConfirmDialog({
 							onChange={(event) => setTaskModel(event.target.value)}
 						/>
 					</label>
+					<p className="text-sm text-muted-foreground">
+						The task model runs candidate work; the reflection model analyzes
+						feedback and suggests improvements. Both use provider calls.
+					</p>
 					<label className="block text-sm font-medium">
 						Reflection model
 						<Input
@@ -769,7 +788,15 @@ function OptimizationConfirmDialog({
 						/>
 					</label>
 					<p className="text-sm text-muted-foreground">
-						The budget must cover every held-out validation example.
+						The budget caps metric evaluations and must cover every held-out
+						example. Larger budgets can take longer and increase provider cost.
+					</p>
+					<p className="text-sm text-muted-foreground">
+						After completion, review the candidate, before/after diff, scores,
+						metric calls, and promotion state. Automatic promotion requires at
+						least two held-out examples and a validation score above its
+						baseline; otherwise a valid candidate is marked for review. Invalid
+						or leaking candidates are blocked from promotion.
 					</p>
 				</div>
 				{error && (
@@ -864,6 +891,7 @@ function inputsMateriallyOverlap(left: string, right: string): boolean {
 function OptimizationExampleList({
 	idPrefix,
 	title,
+	description,
 	examples,
 	disabled,
 	onAdd,
@@ -872,6 +900,7 @@ function OptimizationExampleList({
 }: {
 	idPrefix: string;
 	title: string;
+	description: string;
 	examples: Array<{ input: string; answer: string }>;
 	disabled: boolean;
 	onAdd: () => void;
@@ -894,6 +923,7 @@ function OptimizationExampleList({
 					Add example
 				</Button>
 			</div>
+			<p className="text-sm text-muted-foreground">{description}</p>
 			{examples.map((example, index) => (
 				<div
 					key={`${idPrefix}-${index}`}
@@ -1065,7 +1095,7 @@ function OptimizationStatus({
 			)}
 			{rubric && (
 				<div className="mt-3 border-t pt-3 text-sm">
-					<p className="font-medium">Scoring rubric / objective</p>
+					<p className="font-medium">Reflection rubric / objective</p>
 					<p className="mt-1 whitespace-pre-wrap text-muted-foreground">
 						{rubric}
 					</p>

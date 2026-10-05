@@ -369,7 +369,9 @@ describe("PromptDetailPage", () => {
 		expect(
 			screen.queryByRole("radio", { name: "User prompt" }),
 		).not.toBeInTheDocument();
-		expect(screen.getByLabelText("Scoring rubric / objective")).toHaveAttribute(
+		expect(
+			screen.getByLabelText("Reflection rubric / objective"),
+		).toHaveAttribute(
 			"placeholder",
 			"e.g. Prioritize urgent work, preserve deadlines, and use concise grouped headings",
 		);
@@ -402,7 +404,32 @@ describe("PromptDetailPage", () => {
 		);
 		expect(
 			screen.getByText(
-				"The budget must cover every held-out validation example.",
+				"The budget caps metric evaluations and must cover every held-out example. Larger budgets can take longer and increase provider cost.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"Examples GEPA can learn from while improving the prompt. Use real input and its evaluator label.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"Separate examples used to check whether the candidate improves on unseen work. Do not reuse training inputs.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"The task model runs candidate work; the reflection model analyzes feedback and suggests improvements. Both use provider calls.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"Expected-answer labels determine metric scores; the rubric guides reflection feedback.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"After completion, review the candidate, before/after diff, scores, metric calls, and promotion state. Automatic promotion requires at least two held-out examples and a validation score above its baseline; otherwise a valid candidate is marked for review. Invalid or leaking candidates are blocked from promotion.",
 			),
 		).toBeInTheDocument();
 	});
@@ -417,7 +444,7 @@ describe("PromptDetailPage", () => {
 		});
 		fireEvent.click(addExampleButtons[1]!);
 		fireEvent.click(addExampleButtons[1]!);
-		fireEvent.change(screen.getByLabelText("Scoring rubric / objective"), {
+		fireEvent.change(screen.getByLabelText("Reflection rubric / objective"), {
 			target: { value: "Preserve concise summaries." },
 		});
 		for (const [label, value] of [
@@ -823,7 +850,7 @@ describe("PromptDetailPage", () => {
 			await screen.findByRole("button", { name: "Optimize prompt" }),
 		);
 
-		fireEvent.change(screen.getByLabelText("Scoring rubric / objective"), {
+		fireEvent.change(screen.getByLabelText("Reflection rubric / objective"), {
 			target: { value: "Answer with a concise, accurate explanation." },
 		});
 		fireEvent.change(screen.getByLabelText("Training 1 input"), {

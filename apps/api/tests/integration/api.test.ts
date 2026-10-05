@@ -7,6 +7,9 @@ process.env.UI_USERNAME = USER;
 process.env.UI_PASSWORD = PASS;
 
 const { createApiApp } = await import("../../src/index");
+const { TRUSTED_ACTOR_CONTEXT_KEY, TRUSTED_TENANT_CONTEXT_KEY } = await import(
+	"../../src/middleware/auth"
+);
 const { createHealthHandler } = await import("../../src/routes/health");
 const { createOtlpIngestHandler } = await import("../../src/routes/otlp");
 const { TenantScopeError } = await import("../../src/tenancy");
@@ -286,6 +289,145 @@ describe("API integration: auth gate", () => {
 		} finally {
 			assertTenantProjectAccess.mockImplementation(async () => undefined);
 		}
+	});
+
+	it("requires authorized project scope to preview an unsaved prompt", async () => {
+		const authorizedProject = TEST_SCOPE.projectId;
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		const payload = {
+			messages: [{ role: "user", content: "Hello {{name}}" }],
+			data: { name: "Ada" },
+		};
+		const previewProjectAccess = mock(async () => undefined);
+		const scopedPreviewApp = createApiApp({
+			handleHealth: createHealthHandler({
+				chPing: async () => "up",
+				pgPing: async () => "up",
+				valkeyPing: async () => "up",
+			}),
+			handleOtlpIngest: createOtlpIngestHandler({
+				defaultClient,
+				insertObservations,
+				insertTraces,
+				publishSync: () => undefined,
+				approvedRedaction: async () => null,
+				withActiveAuthorizedProjectLock,
+			}),
+			assertTenantProjectAccess: previewProjectAccess,
+			resolveTenantProject,
+			authenticate: () => async (c, next) => {
+				c.set(TRUSTED_ACTOR_CONTEXT_KEY, USER);
+				c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+					...TEST_TENANT,
+					actorId: "00000000-0000-4000-8000-000000000003",
+				});
+				await next();
+			},
+		});
+
+		const openApiResponse = await scopedPreviewApp.fetch(
+			new Request("http://x/openapi.json"),
+		);
+		expect(openApiResponse.status).toBe(200);
+		const openApiDocument = (await openApiResponse.json()) as {
+			components?: {
+				schemas?: Record<
+					string,
+					{ required?: string[]; additionalProperties?: boolean }
+				>;
+			};
+		};
+		const previewSchema = openApiDocument.components?.schemas?.PromptPreview;
+		expect(previewSchema?.required).toContain("project_id");
+		expect(previewSchema?.additionalProperties).toBe(false);
+
+		const malformedScope = await scopedPreviewApp.fetch(
+			new Request("http://x/v1/prompts/preview", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({ ...payload, project_id: "not-a-uuid" }),
+			}),
+		);
+		expect(malformedScope.status).toBe(400);
+		expect(previewProjectAccess).not.toHaveBeenCalled();
+
+		const extraField = await scopedPreviewApp.fetch(
+			new Request("http://x/v1/prompts/preview", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({
+					...payload,
+					project_id: authorizedProject,
+					unexpected: true,
+				}),
+			}),
+		);
+		expect(extraField.status).toBe(400);
+		previewProjectAccess.mockClear();
+
+		const missingScope = await scopedPreviewApp.fetch(
+			new Request("http://x/v1/prompts/preview", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify(payload),
+			}),
+		);
+		expect(missingScope.status).toBe(400);
+		expect(previewProjectAccess).not.toHaveBeenCalled();
+
+		const authorizedPreview = await scopedPreviewApp.fetch(
+			new Request("http://x/v1/prompts/preview", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({ ...payload, project_id: authorizedProject }),
+			}),
+		);
+		expect(authorizedPreview.status).toBe(200);
+		expect(await authorizedPreview.json()).toEqual({
+			messages: [{ role: "user", content: "Hello Ada" }],
+			warnings: [],
+		});
+		expect(previewProjectAccess.mock.calls.at(-1)).toEqual([
+			expect.anything(),
+			expect.anything(),
+			authorizedProject,
+			"product_write",
+		]);
+
+		const malformedTemplate = await scopedPreviewApp.fetch(
+			new Request("http://x/v1/prompts/preview", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({
+					project_id: authorizedProject,
+					messages: [{ role: "user", content: "Hello {{constructor}}" }],
+					data: {},
+				}),
+			}),
+		);
+		expect(malformedTemplate.status).toBe(400);
+		expect(await malformedTemplate.json()).toEqual({
+			code: "BAD_REQUEST",
+			message: "Prompt templates cannot access dangerous paths",
+		});
+
+		previewProjectAccess.mockImplementationOnce(async () => {
+			throw new TenantScopeError(
+				"Project is not available to this organization",
+			);
+		});
+		const foreignPreview = await scopedPreviewApp.fetch(
+			new Request("http://x/v1/prompts/preview", {
+				method: "POST",
+				headers: { authorization: AUTH, "content-type": "application/json" },
+				body: JSON.stringify({ ...payload, project_id: foreignProject }),
+			}),
+		);
+		expect(foreignPreview.status).toBe(404);
+		expect(await foreignPreview.json()).toEqual({
+			code: "NOT_FOUND",
+			message: "Project is not available",
+		});
 	});
 
 	it("classifies Prompt rollback and hard deletion as destructive before route execution", async () => {

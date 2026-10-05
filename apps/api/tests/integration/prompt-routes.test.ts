@@ -435,6 +435,7 @@ describe("prompt route contracts", () => {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
+				project_id: PROJECT,
 				messages: [
 					{ role: "system", content: "You are helping {{customer.name}}." },
 					{

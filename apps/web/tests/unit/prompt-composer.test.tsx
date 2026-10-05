@@ -133,6 +133,7 @@ describe("PromptComposer", () => {
 		await screen.findByTestId("preview-output-user");
 		expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/prompts/preview");
 		expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+			project_id: PROJECT_ID,
 			messages: [
 				{ role: "system", content: "You are helpful." },
 				{ role: "user", content: "Hello {{name}}" },
@@ -145,6 +146,86 @@ describe("PromptComposer", () => {
 		expect(screen.getByTestId("preview-output-user")).toHaveTextContent(
 			"Hello Ada",
 		);
+	});
+
+	it("explains rejected previews without discarding the editable draft", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse(
+				{ code: "BAD_REQUEST", message: "Request validation failed" },
+				400,
+			),
+		);
+		renderComposer(<PromptComposer projectId={PROJECT_ID} onSaved={vi.fn()} />);
+
+		fireEvent.change(screen.getByLabelText("System prompt (optional)"), {
+			target: { value: "Hello {{name}}" },
+		});
+		fireEvent.change(screen.getByLabelText("Variables JSON"), {
+			target: { value: '{"name":"Ada"}' },
+		});
+		fireEvent.click(screen.getByTestId("preview-prompt"));
+
+		await screen.findByText(
+			"Preview request was rejected. Check your prompt and variables JSON, then try again.",
+		);
+		expect(screen.getByLabelText("System prompt (optional)")).toHaveValue(
+			"Hello {{name}}",
+		);
+		expect(screen.getByLabelText("Variables JSON")).toHaveValue(
+			'{"name":"Ada"}',
+		);
+	});
+
+	it("keeps the draft editable when the preview service is unavailable", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({ code: "INTERNAL", message: "Internal Server Error" }, 500),
+		);
+		renderComposer(<PromptComposer projectId={PROJECT_ID} onSaved={vi.fn()} />);
+
+		fireEvent.change(screen.getByLabelText("User prompt (optional)"), {
+			target: { value: "Hello {{name}}" },
+		});
+		fireEvent.change(screen.getByLabelText("Variables JSON"), {
+			target: { value: '{"name":"Ada"}' },
+		});
+		fireEvent.click(screen.getByTestId("preview-prompt"));
+
+		await screen.findByText(
+			"Preview service is unavailable. Your draft is still available; try again.",
+		);
+		expect(screen.getByLabelText("User prompt (optional)")).toHaveValue(
+			"Hello {{name}}",
+		);
+		expect(screen.getByLabelText("Variables JSON")).toHaveValue(
+			'{"name":"Ada"}',
+		);
+	});
+
+	it("asks for a prompt before previewing an empty draft", async () => {
+		renderComposer(<PromptComposer projectId={PROJECT_ID} onSaved={vi.fn()} />);
+		fireEvent.click(screen.getByTestId("preview-prompt"));
+
+		await screen.findByText("Enter a system or user prompt.");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("asks for a project before previewing and does not call the API", async () => {
+		renderComposer(<PromptComposer projectId={null} onSaved={vi.fn()} />);
+		fireEvent.click(screen.getByTestId("preview-prompt"));
+
+		await screen.findByText("Select a project before previewing a prompt.");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("reports non-object variables as input errors without calling preview service", async () => {
+		renderComposer(<PromptComposer projectId={PROJECT_ID} onSaved={vi.fn()} />);
+		fireEvent.change(screen.getByLabelText("Variables JSON"), {
+			target: { value: "[]" },
+		});
+		fireEvent.click(screen.getByTestId("preview-prompt"));
+
+		await screen.findByText("Variables must be a JSON object.");
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it("invalidates the rendered preview when either unsaved source changes", async () => {
