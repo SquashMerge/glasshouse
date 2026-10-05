@@ -227,7 +227,9 @@ function datasetVersionItem(row: Row) {
 		feedback_score_id: nullableText(row, "feedback_score_id"),
 		capture_context: jsonObjectOrEmpty(row, "capture_context"),
 		curated_by: nullableText(row, "curated_by"),
+		curated_by_username: nullableText(row, "curated_by_username"),
 		reviewed_by: nullableText(row, "reviewed_by"),
+		reviewed_by_username: nullableText(row, "reviewed_by_username"),
 		reviewed_at: nullableTimestamp(row, "reviewed_at"),
 		created_at: timestamp(row, "created_at"),
 	};
@@ -488,7 +490,7 @@ export async function getDatasetVersion(
 				"Dataset version not found",
 			);
 		const items = await client.query(
-			"SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at, created_at FROM dataset_version_items WHERE project_id = $1 AND dataset_version_id = $2 ORDER BY position ASC, created_at ASC, id ASC",
+			"SELECT item.id, item.item_key, item.position, item.validation_version, item.state, item.input, item.expected_output, item.metadata, item.external_id, item.source_trace_id, item.source_observation_id, item.feedback_score_id, item.capture_context, item.curated_by, CASE WHEN item.curated_by IS NULL THEN NULL ELSE COALESCE(curated_credential.username, curated_identity.canonical_subject, 'Unnamed account') END AS curated_by_username, item.reviewed_by, CASE WHEN item.reviewed_by IS NULL THEN NULL ELSE COALESCE(reviewed_credential.username, reviewed_identity.canonical_subject, 'Unnamed account') END AS reviewed_by_username, item.reviewed_at, item.created_at FROM dataset_version_items item JOIN projects project ON project.id = item.project_id LEFT JOIN local_credentials curated_credential ON curated_credential.organization_id = project.organization_id AND curated_credential.actor_id = item.curated_by LEFT JOIN actor_identities curated_identity ON curated_identity.organization_id = project.organization_id AND curated_identity.actor_id = item.curated_by AND curated_identity.provider_namespace = 'basic:v1' LEFT JOIN local_credentials reviewed_credential ON reviewed_credential.organization_id = project.organization_id AND reviewed_credential.actor_id = item.reviewed_by LEFT JOIN actor_identities reviewed_identity ON reviewed_identity.organization_id = project.organization_id AND reviewed_identity.actor_id = item.reviewed_by AND reviewed_identity.provider_namespace = 'basic:v1' WHERE item.project_id = $1 AND item.dataset_version_id = $2 ORDER BY item.position ASC, item.created_at ASC, item.id ASC",
 			[input.project_id, result.rows[0].id],
 		);
 		await client.query("COMMIT");

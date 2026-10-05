@@ -116,12 +116,12 @@ test("fresh setup, one-time handoff, login/logout and Admin management work at d
 	await expect(handoff).toHaveCount(0);
 	await page.reload();
 	await expect(handoff).toHaveCount(0);
-	await page
+	const roleControl = page
+		.getByRole("region", { name: "Local account management" })
 		.getByLabel(`Role for ${username}`, { exact: true })
-		.selectOption("read_only");
-	await expect(
-		page.getByLabel(`Role for ${username}`, { exact: true }),
-	).toHaveValue("read_only");
+		.first();
+	await roleControl.selectOption("read_only");
+	await expect(roleControl).toHaveValue("read_only");
 	const userContext = await browser.newContext({
 		baseURL: "http://localhost:5173",
 		viewport: { width: 375, height: 812 },

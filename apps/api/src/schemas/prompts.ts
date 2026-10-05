@@ -83,6 +83,7 @@ export const PromptVersion = z
 		settings: JsonObject,
 		change_summary: z.string().min(1),
 		created_by: z.string().min(1),
+		created_by_username: z.string().min(1),
 		created_at: z.string().datetime(),
 		content_hash: z.string().regex(/^[0-9a-f]{64}$/),
 		diff: z.string().nullable(),

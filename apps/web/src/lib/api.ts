@@ -211,7 +211,9 @@ export interface DatasetVersion extends DatasetVersionSummary {
 			redaction_applied?: boolean;
 		};
 		curated_by: string | null;
+		curated_by_username: string | null;
 		reviewed_by: string | null;
+		reviewed_by_username: string | null;
 		reviewed_at: string | null;
 		created_at: string;
 	}>;
@@ -1962,6 +1964,7 @@ export interface PromptVersion {
 	settings: JsonObject;
 	change_summary: string;
 	created_by: string;
+	created_by_username: string;
 	created_at: string;
 	content_hash: string;
 	diff: string | null;

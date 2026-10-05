@@ -1248,7 +1248,7 @@ function PromptVersionDetails({ prompt }: { prompt: Prompt }) {
 					</div>
 					<div>
 						<dt className="text-muted-foreground">Created by</dt>
-						<dd>{prompt.created_by}</dd>
+						<dd>{prompt.created_by_username}</dd>
 					</div>
 					<div>
 						<dt className="text-muted-foreground">Created</dt>

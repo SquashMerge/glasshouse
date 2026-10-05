@@ -3689,6 +3689,10 @@ components:
                 type:
                   - string
                   - 'null'
+              curated_by_username:
+                type:
+                  - string
+                  - 'null'
               expected_output:
                 additionalProperties: {}
                 type:
@@ -3746,6 +3750,10 @@ components:
                 type:
                   - string
                   - 'null'
+              reviewed_by_username:
+                type:
+                  - string
+                  - 'null'
               source_observation_id:
                 type:
                   - string
@@ -3777,7 +3785,9 @@ components:
               - feedback_score_id
               - capture_context
               - curated_by
+              - curated_by_username
               - reviewed_by
+              - reviewed_by_username
               - reviewed_at
               - created_at
             type: object
@@ -6886,6 +6896,9 @@ components:
         created_by:
           minLength: 1
           type: string
+        created_by_username:
+          minLength: 1
+          type: string
         description:
           type:
             - string
@@ -6930,6 +6943,7 @@ components:
         - settings
         - change_summary
         - created_by
+        - created_by_username
         - created_at
         - content_hash
         - diff
@@ -7160,6 +7174,9 @@ components:
         created_by:
           minLength: 1
           type: string
+        created_by_username:
+          minLength: 1
+          type: string
         diff:
           type:
             - string
@@ -7195,6 +7212,7 @@ components:
         - settings
         - change_summary
         - created_by
+        - created_by_username
         - created_at
         - content_hash
         - diff

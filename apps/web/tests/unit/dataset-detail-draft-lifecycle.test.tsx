@@ -112,7 +112,9 @@ const publishedItem = {
 	feedback_score_id: "55555555-5555-4555-8555-555555555555",
 	capture_context: {},
 	curated_by: "66666666-6666-4666-8666-666666666666",
+	curated_by_username: "curator.user",
 	reviewed_by: "77777777-7777-4777-8777-777777777777",
+	reviewed_by_username: "reviewer.user",
 	reviewed_at: "2026-08-14T01:00:00.000Z",
 	created_at: "2026-08-14T00:00:00.000Z",
 };
@@ -198,12 +200,14 @@ describe("DatasetDetailPage draft lifecycle", () => {
 		expect(
 			screen.getByText("Feedback score: 55555555-5555-4555-8555-555555555555"),
 		).toBeInTheDocument();
+		expect(screen.getByText("Curated by: curator.user")).toBeInTheDocument();
+		expect(screen.getByText("Reviewed by: reviewer.user")).toBeInTheDocument();
 		expect(
-			screen.getByText("Curated by: 66666666-6666-4666-8666-666666666666"),
-		).toBeInTheDocument();
+			screen.queryByText("Curated by: 66666666-6666-4666-8666-666666666666"),
+		).toBeNull();
 		expect(
-			screen.getByText("Reviewed by: 77777777-7777-4777-8777-777777777777"),
-		).toBeInTheDocument();
+			screen.queryByText("Reviewed by: 77777777-7777-4777-8777-777777777777"),
+		).toBeNull();
 		expect(
 			screen.getByText("Reviewed at: 2026-08-14T01:00:00.000Z"),
 		).toBeInTheDocument();
@@ -499,6 +503,7 @@ describe("DatasetDetailPage draft lifecycle", () => {
 					item_revision: 2,
 					action: "reviewed",
 					actor_id: "44444444-4444-4444-8444-444444444444",
+					actor_username: "account.user",
 					created_at: "2026-08-14T00:00:00.000Z",
 				},
 			],
@@ -516,7 +521,7 @@ describe("DatasetDetailPage draft lifecycle", () => {
 			}),
 		);
 		expect(createDatasetDraft).not.toHaveBeenCalled();
-		expect(screen.getByText(/reviewed by 44444444/)).toBeInTheDocument();
+		expect(screen.getByText(/reviewed by account[.]user/)).toBeInTheDocument();
 	});
 
 	it("keeps Dataset content and history readable while hiding curation controls for Read-only users", async () => {
@@ -528,6 +533,7 @@ describe("DatasetDetailPage draft lifecycle", () => {
 					item_revision: 2,
 					action: "reviewed",
 					actor_id: "44444444-4444-4444-8444-444444444444",
+					actor_username: "account.user",
 					created_at: "2026-08-14T00:00:00.000Z",
 				},
 			],
@@ -560,7 +566,7 @@ describe("DatasetDetailPage draft lifecycle", () => {
 			}),
 		);
 		expect(createDatasetDraft).not.toHaveBeenCalled();
-		expect(screen.getByText(/reviewed by 44444444/)).toBeInTheDocument();
+		expect(screen.getByText(/reviewed by account[.]user/)).toBeInTheDocument();
 	});
 
 	it("hides Dataset creation controls for Read-only users", async () => {

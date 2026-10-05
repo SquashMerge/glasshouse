@@ -1114,8 +1114,12 @@ export function DatasetDetailPage() {
 										{item.feedback_score_id && (
 											<p>Feedback score: {item.feedback_score_id}</p>
 										)}
-										{item.curated_by && <p>Curated by: {item.curated_by}</p>}
-										{item.reviewed_by && <p>Reviewed by: {item.reviewed_by}</p>}
+										{item.curated_by_username && (
+											<p>Curated by: {item.curated_by_username}</p>
+										)}
+										{item.reviewed_by_username && (
+											<p>Reviewed by: {item.reviewed_by_username}</p>
+										)}
 										{item.reviewed_at && <p>Reviewed at: {item.reviewed_at}</p>}
 									</div>
 									{item.source_trace_id && (
