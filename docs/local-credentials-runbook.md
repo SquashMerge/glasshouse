@@ -6,8 +6,8 @@ Issue #188 supplies PostgreSQL persistence and service boundaries. The [local lo
 
 - Usernames are ASCII, 3–64 characters: first character alphanumeric, then alphanumeric, `.`, `_`, or `-`. ASCII case normalizes to lowercase; whitespace and non-ASCII are rejected rather than trimmed or Unicode-normalized.
 - A username is unique **within an Organization**. Its existing `actor_identities` provider is `local:v1`; its canonical subject is `<organization-uuid>:<normalized-username>`, preserving the registry's global provider/subject key. Composite foreign keys bind the credential to that exact Organization, Actor, and identity. The credential identity is immutable.
-- Local provisioning creates a new durable Actor. It never merges with a Basic or future IdP identity by matching username/email. Existing Basic Actor IDs, memberships, durable roles, Project grants, and audit history remain intact. Migration 0098 imports no environment passwords and seeds no local accounts or tokens.
-- Authorization remains `organization_actor_roles` and `project_actor_grants`. Identity links and role/bootstrap changes use existing content-free Admin audit events. No password, hash, token, email, or username is added to those events.
+- Local provisioning creates a new durable Actor. It never merges with a Basic or future IdP identity by matching username/email. Existing Basic Actor IDs, memberships, durable roles, and audit history remain intact. Migration 0098 imports no environment passwords and seeds no local accounts or tokens.
+- Authorization uses `organization_actor_roles`; the role applies to every Project in that Organization. Identity links and role/bootstrap changes use existing content-free Admin audit events. No password, hash, token, email, or username is added to those events.
 - `enabled=false` prevents credential verification and first-password enrollment, revokes local sessions, and denies later authenticated/worker effects. Disabling a local credential does not edit unrelated Basic credentials or roles; there is no automatic local-to-Basic account linking.
 
 ## First-Admin bootstrap
@@ -46,7 +46,7 @@ Any first Admin, including a Basic/recovery-created Admin, permanently closes se
 
 ## Admin-created accounts and enrollments
 
-`LocalCredentialStore.provision` requires a server-trusted same-Organization Admin through the existing authorization lock helper. It reserves the username, creates the durable identity and chosen existing role, and creates a first-password enrollment with **no password hash until redemption**. Users/Read-only accounts still need explicit Project grants through the existing administration model.
+`LocalCredentialStore.provision` requires a server-trusted same-Organization Admin through the existing authorization lock helper. It reserves the username, creates the durable identity and chosen existing role, and creates a first-password enrollment with **no password hash until redemption**. The Organization role controls access to every Project in that Organization.
 
 Migration `0099_usable_local_admin_guard.sql` shares `organization_actor_is_usable_admin` between final-Admin role removal and break-glass recovery. Migration `0100_usable_local_admin_identity_unlink_guard.sql` applies the same usable-Admin semantics to identity unlinking, excluding the identity being removed. A local Admin counts as usable only when its credential is enabled and has a password hash. An unredeemed, revoked, or expired passwordless Admin invitation cannot justify removing/demoting or unlinking the last usable Admin or block operator recovery when no usable Admin remains. Successful enrollment makes an enabled local Admin usable; disabling it stops it counting. Legacy/non-local identity behavior is preserved. These checks leave account records, role assignments, and permanently closed setup controls intact; recovery still requires the configured Basic owner and existing confirmation, audit, and cooldown.
 

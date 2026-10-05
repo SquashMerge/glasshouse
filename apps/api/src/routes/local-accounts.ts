@@ -6,11 +6,7 @@ import {
 } from "../db/local-credentials.js";
 import { AuthenticationError } from "../db/local-sessions.js";
 import { pgPool } from "../db/postgres.js";
-import {
-	AdminErrorResponses,
-	AdminRole,
-	GrantRole,
-} from "../schemas/admin-access.js";
+import { AdminErrorResponses, AdminRole } from "../schemas/admin-access.js";
 import { assertOrganizationAccess, trustedTenant } from "../tenancy.js";
 
 const Id = z.string().uuid();
@@ -30,16 +26,15 @@ const LocalAccount = z
 		username: z.string(),
 		organization_role: AdminRole.nullable(),
 		status: z.enum(["active", "pending", "disabled"]),
-		project_grants: z.array(
-			z.object({ project_id: Id, role: GrantRole }).strict(),
-		),
 		enrollments: z.array(LocalEnrollment),
 	})
 	.strict()
 	.openapi("LocalAccount");
+const Username = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/);
 const EnrollmentCode = z
 	.object({
 		actor_id: Id,
+		username: Username,
 		enrollment_id: Id,
 		code: z.string().length(43).openapi({
 			description:
@@ -48,7 +43,6 @@ const EnrollmentCode = z
 	})
 	.strict()
 	.openapi("EnrollmentCode");
-const Username = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/);
 const body = (schema: z.ZodType) => ({
 	required: true,
 	content: { "application/json": { schema } },
@@ -67,7 +61,7 @@ export const listLocalAccountsRoute = createRoute({
 	...common,
 	method: "get",
 	path: "/v1/admin/local-accounts",
-	summary: "List local usernames, current roles, grants and enrollment status",
+	summary: "List local usernames, current roles and enrollment status",
 	responses: response(z.object({ items: z.array(LocalAccount) })),
 });
 export const provisionLocalAccountRoute = createRoute({
@@ -153,8 +147,6 @@ export async function handleListLocalAccounts(c: Context) {
 		const accounts = await pgPool().query(
 			`SELECT credential.actor_id, credential.username, role.role AS organization_role,
 			CASE WHEN NOT credential.enabled THEN 'disabled' WHEN credential.password_hash IS NULL THEN 'pending' ELSE 'active' END AS status,
-			COALESCE((SELECT jsonb_agg(jsonb_build_object('project_id', grant_row.project_id, 'role', grant_row.role) ORDER BY grant_row.project_id)
-			FROM project_actor_grants grant_row WHERE grant_row.organization_id = credential.organization_id AND grant_row.actor_id = credential.actor_id), '[]'::jsonb) AS project_grants,
 			COALESCE((SELECT jsonb_agg(jsonb_build_object('id', enrollment.id, 'status',
 			CASE WHEN enrollment.revoked_at IS NOT NULL THEN 'revoked' WHEN enrollment.consumed_at IS NOT NULL THEN 'consumed'
 			WHEN enrollment.expires_at <= clock_timestamp() THEN 'expired' ELSE 'pending' END,
@@ -174,6 +166,7 @@ export async function handleProvisionLocalAccount(c: Context) {
 		const result = await store.provision(tenant, (c.req as any).valid("json"));
 		return {
 			actor_id: result.actorId,
+			username: result.username,
 			enrollment_id: result.enrollmentId,
 			code: result.token,
 		};
@@ -197,6 +190,7 @@ export async function handleResetLocalAccount(c: Context) {
 		const result = await store.initiatePasswordReset(tenant, actorId);
 		return {
 			actor_id: actorId,
+			username: result.username,
 			enrollment_id: result.enrollmentId,
 			code: result.token,
 		};

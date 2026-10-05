@@ -488,7 +488,7 @@ export function DatasetDetailPage() {
 		items: Array<{
 			item_revision: number;
 			action: string;
-			actor_id: string;
+			actor_username: string;
 			created_at: string;
 		}>;
 	} | null>(null);
@@ -1114,8 +1114,12 @@ export function DatasetDetailPage() {
 										{item.feedback_score_id && (
 											<p>Feedback score: {item.feedback_score_id}</p>
 										)}
-										{item.curated_by && <p>Curated by: {item.curated_by}</p>}
-										{item.reviewed_by && <p>Reviewed by: {item.reviewed_by}</p>}
+										{item.curated_by_username && (
+											<p>Curated by: {item.curated_by_username}</p>
+										)}
+										{item.reviewed_by_username && (
+											<p>Reviewed by: {item.reviewed_by_username}</p>
+										)}
 										{item.reviewed_at && <p>Reviewed at: {item.reviewed_at}</p>}
 									</div>
 									{item.source_trace_id && (
@@ -1247,7 +1251,7 @@ export function DatasetDetailPage() {
 									{history.items.map((revision) => (
 										<li key={revision.item_revision}>
 											Revision {revision.item_revision}: {revision.action} by{" "}
-											{revision.actor_id}
+											{revision.actor_username}
 										</li>
 									))}
 								</ul>

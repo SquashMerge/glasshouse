@@ -477,7 +477,7 @@ work. Shipped Run evidence, comparison, and gates remain server-authoritative.
 5. Editing a dataset after publication changes only a draft. A completed past run continues to render the original dataset version and contents.
 6. A UI or SDK item upsert with the same `item_key` updates one draft item; JSON-equal items with different keys remain distinct.
 7. Deleting/archive behavior never removes a version or item snapshot referenced by an evaluation run.
-8. For every Dataset route, Admin and Project-granted User requests succeed only inside their authorized Project; Read-only mutation/import/publish/archive requests are denied server-side, and same-slug cross-Project requests return the same non-disclosing not-found result as absent resources.
+8. For every Dataset route, Admin and User requests succeed only inside the requested Project in their Organization; Read-only mutation/import/publish/archive requests are denied server-side, and same-slug cross-Organization requests return the same non-disclosing not-found result as absent resources.
 9. Database constraints reject cross-Project draft/version/run attachments even when an application caller bypasses a route guard; worker recovery and SSE use the persisted non-null Project scope and cannot emit or write against another Project.
 
 ### Evaluation attachment and execution

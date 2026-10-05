@@ -19,15 +19,11 @@ import {
 	AdminActor,
 	AdminErrorResponses,
 	OrganizationRoleInput,
-	ProjectGrant,
-	ProjectGrantInput,
 	RecoveryInput,
 } from "../schemas/admin-access.js";
 
 const Id = z.string().uuid();
 const actorParams = z.object({ actorId: Id });
-const projectParams = z.object({ projectId: Id });
-const grantParams = z.object({ projectId: Id, actorId: Id });
 const listResponse = (schema: z.ZodType) => ({
 	200: { description: "OK", content: { "application/json": { schema } } },
 	...AdminErrorResponses,
@@ -55,36 +51,6 @@ export const setAdminActorRole = createRoute({
 	responses: listResponse(AdminActor),
 });
 
-export const listProjectGrants = createRoute({
-	method: "get",
-	path: "/v1/admin/projects/{projectId}/grants",
-	tags: ["administration"],
-	security: [{ basicAuth: [] }],
-	request: { params: projectParams },
-	responses: listResponse(z.object({ items: z.array(ProjectGrant) })),
-});
-
-export const setProjectGrant = createRoute({
-	method: "put",
-	path: "/v1/admin/projects/{projectId}/grants/{actorId}",
-	tags: ["administration"],
-	security: [{ basicAuth: [] }],
-	request: {
-		params: grantParams,
-		body: { content: { "application/json": { schema: ProjectGrantInput } } },
-	},
-	responses: listResponse(ProjectGrant),
-});
-
-export const revokeProjectGrant = createRoute({
-	method: "delete",
-	path: "/v1/admin/projects/{projectId}/grants/{actorId}",
-	tags: ["administration"],
-	security: [{ basicAuth: [] }],
-	request: { params: grantParams },
-	responses: { 204: { description: "Revoked" }, ...AdminErrorResponses },
-});
-
 export const listAdminAuditEvents = createRoute({
 	method: "get",
 	path: "/v1/admin/audit-events",
@@ -106,13 +72,8 @@ export const recoverAdmin = createRoute({
 
 type ActorRow = {
 	actor_id: string;
+	username?: string | null;
 	organization_role: "admin" | "user" | "read_only" | null;
-	created_at: Date;
-};
-type GrantRow = {
-	actor_id: string;
-	project_id: string;
-	role: "user" | "read_only";
 	created_at: Date;
 };
 type AuditRow = {
@@ -127,11 +88,11 @@ type AuditRow = {
 };
 
 function actor(row: ActorRow) {
-	return { ...row, created_at: row.created_at.toISOString() };
-}
-
-function grant(row: GrantRow) {
-	return { ...row, created_at: row.created_at.toISOString() };
+	return {
+		...row,
+		username: row.username ?? null,
+		created_at: row.created_at.toISOString(),
+	};
 }
 
 function audit(row: AuditRow) {
@@ -199,7 +160,7 @@ async function isAdmin(
 	return result.rows[0]?.allowed === true;
 }
 
-async function lockTargetGrants(
+async function lockTargetProjectMemberships(
 	client: Pick<PoolClient, "query">,
 	organizationId: string,
 	targetActorId: string,
@@ -208,15 +169,8 @@ async function lockTargetGrants(
 		"SELECT membership.project_id FROM project_memberships membership JOIN actor_identities identity ON identity.organization_id = membership.organization_id AND identity.actor_id = $2 AND identity.provider_namespace = 'basic:v1' AND membership.actor_subject = identity.canonical_subject WHERE membership.organization_id = $1 ORDER BY membership.project_id FOR UPDATE OF membership",
 		[organizationId, targetActorId],
 	);
-	const grants = await client.query<{ project_id: string }>(
-		"SELECT project_id FROM project_actor_grants WHERE organization_id = $1 AND actor_id = $2 ORDER BY project_id FOR UPDATE",
-		[organizationId, targetActorId],
-	);
 	const projectIds = [
-		...new Set([
-			...grants.rows.map((row) => row.project_id),
-			...legacyGrants.rows.map((row) => row.project_id),
-		]),
+		...new Set([...legacyGrants.rows.map((row) => row.project_id)]),
 	].sort();
 	if (projectIds.length === 0) return projectIds;
 	await client.query(
@@ -237,8 +191,6 @@ async function auditEvent(
 		targetActorId?: string | null;
 		action:
 			| "organization_role_set"
-			| "project_grant_set"
-			| "project_grant_revoked"
 			| "recovery_succeeded"
 			| "recovery_denied"
 			| "recovery_rate_limited";
@@ -265,26 +217,12 @@ async function actorIsInOrganization(
 	return Boolean(result.rows[0]);
 }
 
-async function lockActiveProject(
-	client: Pick<PoolClient, "query">,
-	organizationId: string,
-	projectId: string,
-): Promise<boolean> {
-	const project = await client.query(
-		"SELECT id FROM projects WHERE id = $1 AND organization_id = $2 AND status = 'active' FOR UPDATE",
-		[projectId, organizationId],
-	);
-	if (!project.rows[0]) return false;
-	await lockProjectAuditProvenance(client, projectId);
-	return true;
-}
-
 export async function handleListAdminActors(c: Context) {
 	try {
 		await requireAdmin(c);
 		const tenant = trustedTenant(c);
 		const rows = await pgPool().query<ActorRow>(
-			"SELECT identity.actor_id, role.role AS organization_role, COALESCE(role.created_at, MIN(identity.created_at)) AS created_at FROM actor_identities identity LEFT JOIN organization_actor_roles role ON role.organization_id = identity.organization_id AND role.actor_id = identity.actor_id WHERE identity.organization_id = $1 GROUP BY identity.actor_id, role.role, role.created_at ORDER BY COALESCE(role.created_at, MIN(identity.created_at)), identity.actor_id",
+			"SELECT identity.actor_id, COALESCE(MAX(credential.username), MAX(identity.canonical_subject) FILTER (WHERE identity.provider_namespace = 'basic:v1')) AS username, role.role AS organization_role, COALESCE(role.created_at, MIN(identity.created_at)) AS created_at FROM actor_identities identity LEFT JOIN local_credentials credential ON credential.organization_id = identity.organization_id AND credential.actor_id = identity.actor_id LEFT JOIN organization_actor_roles role ON role.organization_id = identity.organization_id AND role.actor_id = identity.actor_id WHERE identity.organization_id = $1 AND NOT (identity.provider_namespace = 'internal:evaluation-worker:v1' AND identity.canonical_subject = identity.organization_id::text AND identity.actor_id = durable_actor_id('internal:evaluation-worker:v1', identity.organization_id::text)) GROUP BY identity.actor_id, role.role, role.created_at ORDER BY COALESCE(role.created_at, MIN(identity.created_at)), identity.actor_id",
 			[tenant.organizationId],
 		);
 		return c.json({ items: rows.rows.map(actor) });
@@ -325,7 +263,11 @@ export async function handleSetAdminActorRole(c: Context) {
 					!(await actorIsInOrganization(client, tenant.organizationId, actorId))
 				)
 					throw new Error("Not found");
-				await lockTargetGrants(client, tenant.organizationId, actorId);
+				await lockTargetProjectMemberships(
+					client,
+					tenant.organizationId,
+					actorId,
+				);
 			},
 			async (client) => {
 				const previous = await client.query<{
@@ -334,33 +276,16 @@ export async function handleSetAdminActorRole(c: Context) {
 					"SELECT role FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
 					[tenant.organizationId, actorId],
 				);
-				if (role === "admin") {
-					const removed = await client.query<{ project_id: string }>(
-						"DELETE FROM project_actor_grants WHERE organization_id = $1 AND actor_id = $2 RETURNING project_id",
-						[tenant.organizationId, actorId],
-					);
-					for (const removedGrant of removed.rows)
-						await auditEvent(client, {
-							organizationId: tenant.organizationId,
-							projectId: removedGrant.project_id,
-							actorId: tenant.actorId,
-							targetActorId: actorId,
-							action: "project_grant_revoked",
-						});
-				}
-				const row = await client.query<ActorRow>(
+				await client.query<ActorRow>(
 					"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, $3) ON CONFLICT (organization_id, actor_id) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE organization_actor_roles.role IS DISTINCT FROM EXCLUDED.role RETURNING actor_id, role AS organization_role, created_at",
 					[tenant.organizationId, actorId, role],
 				);
-				const current =
-					row.rows[0] ??
-					(
-						await client.query<ActorRow>(
-							"SELECT actor_id, role AS organization_role, created_at FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
-							[tenant.organizationId, actorId],
-						)
-					).rows[0];
-				if (!current) throw new Error("Not found");
+				const current = await client.query<ActorRow>(
+					"SELECT identity.actor_id, COALESCE(MAX(credential.username), MAX(identity.canonical_subject) FILTER (WHERE identity.provider_namespace = 'basic:v1')) AS username, role.role AS organization_role, COALESCE(role.created_at, MIN(identity.created_at)) AS created_at FROM actor_identities identity LEFT JOIN local_credentials credential ON credential.organization_id = identity.organization_id AND credential.actor_id = identity.actor_id LEFT JOIN organization_actor_roles role ON role.organization_id = identity.organization_id AND role.actor_id = identity.actor_id WHERE identity.organization_id = $1 AND identity.actor_id = $2 GROUP BY identity.actor_id, role.role, role.created_at",
+					[tenant.organizationId, actorId],
+				);
+				const currentActor = current.rows[0];
+				if (!currentActor) throw new Error("Not found");
 				await client.query(
 					"INSERT INTO organization_memberships (organization_id, actor_subject, role) SELECT $1, identity.canonical_subject, CASE WHEN $3 = 'admin' THEN 'owner' ELSE 'member' END FROM actor_identities identity WHERE identity.organization_id = $1 AND identity.actor_id = $2 AND identity.provider_namespace = 'basic:v1' ON CONFLICT (organization_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE organization_memberships.role IS DISTINCT FROM EXCLUDED.role",
 					[tenant.organizationId, actorId, role],
@@ -372,129 +297,10 @@ export async function handleSetAdminActorRole(c: Context) {
 						targetActorId: actorId,
 						action: "organization_role_set",
 					});
-				return current;
+				return currentActor;
 			},
 		);
 		return c.json(actor(result));
-	} catch (cause) {
-		return failure(c, cause);
-	}
-}
-
-export async function handleListProjectGrants(c: Context) {
-	try {
-		await requireAdmin(c);
-		const tenant = trustedTenant(c);
-		const { projectId } = (c.req as any).valid("param");
-		const project = await pgPool().query(
-			"SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2 AND status = 'active'",
-			[projectId, tenant.organizationId],
-		);
-		if (!project.rows[0]) throw new Error("Not found");
-		const rows = await pgPool().query<GrantRow>(
-			"SELECT actor_id, project_id, role, created_at FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 ORDER BY created_at, actor_id",
-			[projectId, tenant.organizationId],
-		);
-		return c.json({ items: rows.rows.map(grant) });
-	} catch (cause) {
-		return failure(c, cause);
-	}
-}
-
-async function mutateProjectGrant(c: Context, revoke = false) {
-	await requireAdmin(c);
-	const tenant = trustedTenant(c);
-	const { projectId, actorId } = (c.req as any).valid("param");
-	const role = revoke ? undefined : (c.req as any).valid("json").role;
-	const result = await withLockPhaseTransaction(
-		pgPool(),
-		async (client) => {
-			await lockAdminRoles(client, tenant.organizationId, [
-				tenant.actorId,
-				actorId,
-			]);
-			if (!(await isAdmin(client, tenant.organizationId, tenant.actorId)))
-				throw new Error("Forbidden");
-			if (
-				!(await actorIsInOrganization(client, tenant.organizationId, actorId))
-			)
-				throw new Error("Not found");
-			await client.query(
-				"SELECT membership.actor_subject FROM project_memberships membership JOIN actor_identities identity ON identity.organization_id = membership.organization_id AND identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' AND membership.actor_subject = identity.canonical_subject WHERE membership.project_id = $1 AND membership.organization_id = $2 FOR UPDATE OF membership",
-				[projectId, tenant.organizationId, actorId],
-			);
-			await client.query(
-				"SELECT actor_id FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3 FOR UPDATE",
-				[projectId, tenant.organizationId, actorId],
-			);
-			if (!(await lockActiveProject(client, tenant.organizationId, projectId)))
-				throw new Error("Not found");
-		},
-		async (client) => {
-			if (revoke) {
-				const deleted = await client.query(
-					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3 RETURNING project_id",
-					[projectId, tenant.organizationId, actorId],
-				);
-				if (!deleted.rows[0]) throw new Error("Not found");
-				await auditEvent(client, {
-					organizationId: tenant.organizationId,
-					projectId,
-					actorId: tenant.actorId,
-					targetActorId: actorId,
-					action: "project_grant_revoked",
-				});
-				return null;
-			}
-			const existing = await client.query<{ role: "user" | "read_only" }>(
-				"SELECT role FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
-				[projectId, tenant.organizationId, actorId],
-			);
-			const target = await client.query<{ role: string }>(
-				"SELECT role FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
-				[tenant.organizationId, actorId],
-			);
-			if (!target.rows[0] || target.rows[0].role === "admin")
-				throw new Error("Not found");
-			if (target.rows[0].role === "read_only" && role === "user")
-				throw new Error("Project grant exceeds the target organization role");
-			const row = await client.query<GrantRow>(
-				"INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, actor_id) DO UPDATE SET role = EXCLUDED.role, updated_at = now() RETURNING actor_id, project_id, role, created_at",
-				[projectId, tenant.organizationId, actorId, role],
-			);
-			if (!row.rows[0]) throw new Error("Not found");
-			if (existing.rows[0]?.role !== role)
-				await client.query(
-					"INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT $1, $2, identity.canonical_subject, CASE WHEN $4 = 'user' THEN 'manager' ELSE 'member' END FROM actor_identities identity WHERE identity.organization_id = $2 AND identity.actor_id = $3 AND identity.provider_namespace = 'basic:v1' ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now() WHERE project_memberships.role IS DISTINCT FROM EXCLUDED.role",
-					[projectId, tenant.organizationId, actorId, role],
-				);
-			if (existing.rows[0]?.role !== role)
-				await auditEvent(client, {
-					organizationId: tenant.organizationId,
-					projectId,
-					actorId: tenant.actorId,
-					targetActorId: actorId,
-					action: "project_grant_set",
-				});
-			return row.rows[0];
-		},
-	);
-	return result;
-}
-
-export async function handleSetProjectGrant(c: Context) {
-	try {
-		const result = await mutateProjectGrant(c);
-		return c.json(grant(result as GrantRow));
-	} catch (cause) {
-		return failure(c, cause);
-	}
-}
-
-export async function handleRevokeProjectGrant(c: Context) {
-	try {
-		await mutateProjectGrant(c, true);
-		return c.body(null, 204);
 	} catch (cause) {
 		return failure(c, cause);
 	}
@@ -542,7 +348,11 @@ export async function handleRecoverAdmin(c: Context) {
 					"SELECT organization_id FROM admin_recovery_controls WHERE organization_id = $1 FOR UPDATE",
 					[tenant.organizationId],
 				);
-				await lockTargetGrants(client, tenant.organizationId, tenant.actorId);
+				await lockTargetProjectMemberships(
+					client,
+					tenant.organizationId,
+					tenant.actorId,
+				);
 				await client.query(
 					"SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE",
 					[tenant.organizationId],
@@ -584,18 +394,6 @@ export async function handleRecoverAdmin(c: Context) {
 					});
 					return "active_admin";
 				}
-				const removed = await client.query<{ project_id: string }>(
-					"DELETE FROM project_actor_grants WHERE organization_id = $1 AND actor_id = $2 RETURNING project_id",
-					[tenant.organizationId, tenant.actorId],
-				);
-				for (const removedGrant of removed.rows)
-					await auditEvent(client, {
-						organizationId: tenant.organizationId,
-						projectId: removedGrant.project_id,
-						actorId: tenant.actorId,
-						targetActorId: tenant.actorId,
-						action: "project_grant_revoked",
-					});
 				const row = await client.query<ActorRow>(
 					"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin') ON CONFLICT (organization_id, actor_id) DO UPDATE SET role = 'admin', updated_at = now() RETURNING actor_id, role AS organization_role, created_at",
 					[tenant.organizationId, tenant.actorId],
@@ -612,7 +410,7 @@ export async function handleRecoverAdmin(c: Context) {
 					targetActorId: tenant.actorId,
 					action: "recovery_succeeded",
 				});
-				return value;
+				return { ...value, username: tenant.actor };
 			},
 		);
 		if (recovered === "cooldown")

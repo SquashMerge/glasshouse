@@ -34,6 +34,7 @@ export type PromptVersion = {
 	settings: JsonObject;
 	change_summary: string;
 	created_by: string;
+	created_by_username: string;
 	created_at: string;
 	content_hash: string;
 	diff: string | null;
@@ -410,6 +411,7 @@ function mapVersion(row: Row): PromptVersion {
 		settings: jsonObjectValue(row, "settings"),
 		change_summary: stringValue(row, "change_summary"),
 		created_by: stringValue(row, "created_by"),
+		created_by_username: stringValue(row, "created_by_username"),
 		created_at: timestampValue(row, "created_at"),
 		content_hash: stringValue(row, "content_hash"),
 		diff:
@@ -439,6 +441,11 @@ const versionColumns = `
   v.settings,
   v.change_message AS change_summary,
   v.created_by,
+  CASE WHEN v.created_by ~ '^actor:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN COALESCE(
+    (SELECT local_credential.username FROM projects AS creator_project JOIN local_credentials AS local_credential ON local_credential.organization_id = creator_project.organization_id WHERE creator_project.id = p.project_id AND local_credential.actor_id = substring(v.created_by FROM 7)::uuid),
+    (SELECT basic_identity.canonical_subject FROM projects AS creator_project JOIN actor_identities AS basic_identity ON basic_identity.organization_id = creator_project.organization_id WHERE creator_project.id = p.project_id AND basic_identity.actor_id = substring(v.created_by FROM 7)::uuid AND basic_identity.provider_namespace = 'basic:v1'),
+    'Unnamed account'
+  ) ELSE v.created_by END AS created_by_username,
   v.created_at,
   v.content_hash,
   previous_version.messages AS previous_messages`;
@@ -649,6 +656,7 @@ async function insertVersion(
 	client: PoolClient,
 	input: {
 		promptId: string;
+		projectId: string;
 		slug: string;
 		version: number;
 		messages: PromptMessage[];
@@ -675,6 +683,11 @@ async function insertVersion(
        settings,
        change_message AS change_summary,
        created_by,
+       CASE WHEN $8 ~ '^actor:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN COALESCE(
+         (SELECT local_credential.username FROM projects AS project JOIN local_credentials AS local_credential ON local_credential.organization_id = project.organization_id WHERE project.id = $10 AND local_credential.actor_id = substring($8 FROM 7)::uuid),
+         (SELECT basic_identity.canonical_subject FROM projects AS project JOIN actor_identities AS basic_identity ON basic_identity.organization_id = project.organization_id WHERE project.id = $10 AND basic_identity.actor_id = substring($8 FROM 7)::uuid AND basic_identity.provider_namespace = 'basic:v1'),
+         'Unnamed account'
+       ) ELSE $8 END AS created_by_username,
        created_at,
        content_hash,
        NULL::jsonb AS previous_messages`,
@@ -688,6 +701,7 @@ async function insertVersion(
 			input.changeSummary,
 			input.actor,
 			input.slug,
+			input.projectId,
 		],
 	);
 	const row = rows[0];
@@ -730,6 +744,7 @@ export async function createPrompt(
 		if (!promptRow) throw error("INTERNAL", "Prompt insert returned no row");
 		const version = await insertVersion(client, {
 			promptId,
+			projectId: input.project_id,
 			slug,
 			version: 1,
 			messages,
@@ -886,6 +901,7 @@ export async function createPromptVersion(
 			serializedSettings(jsonObjectValue(latest, "settings"));
 		return insertVersion(client, {
 			promptId: stringValue(prompt, "id"),
+			projectId: input.project_id,
 			slug: stringValue(prompt, "slug"),
 			version: latestVersion + 1,
 			messages,

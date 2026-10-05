@@ -130,7 +130,8 @@ function prompt(version = 3) {
 		model: "gpt-4o",
 		settings: { temperature: 0.2 },
 		change_summary: "Current version",
-		created_by: "admin",
+		created_by: "actor:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		created_by_username: "admin.user",
 		created_at: "2026-07-15T10:00:00.000Z",
 		content_hash: HASH,
 		diff: "--- v2\n+++ v3\n+Current {{customer}}",
@@ -226,6 +227,10 @@ describe("PromptDetailPage", () => {
 		);
 		expect(screen.getByTestId("prompt-diff")).toHaveTextContent("+++ v3");
 		expect(screen.getByText(HASH)).toBeInTheDocument();
+		expect(screen.getByText("admin.user")).toBeInTheDocument();
+		expect(
+			screen.queryByText("actor:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+		).toBeNull();
 		fireEvent.click(screen.getAllByTestId("prompt-version")[1]!);
 
 		expect(router.navigate).toHaveBeenLastCalledWith({

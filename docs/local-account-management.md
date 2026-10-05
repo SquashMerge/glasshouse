@@ -20,12 +20,12 @@ The browser uses local usernames and the existing [opaque server session](local-
 
 ## Admin controls
 
-Open **Settings → Access**. Local usernames, current existing roles, status, explicit Project grants and pending/expired/revoked/consumed enrollment history appear alongside existing durable-Actor role/grant management. Lists never retrieve codes, digests, hashes or email addresses.
+Open **Settings → Access**. Local usernames, current Organization roles, status, and pending/expired/revoked/consumed enrollment history appear alongside durable-Actor role management. Lists never retrieve codes, digests, hashes or email addresses.
 
-- **Provision:** choose a username and existing Admin/User/Read-only role. Users/Read-only accounts get no automatic Project grants; use existing Project-grant controls. Usernames accept 3–64 ASCII characters: first alphanumeric, then alphanumeric, `.`, `_` or `-`; case normalizes to lowercase.
+- **Provision:** choose a username and existing Admin/User/Read-only role. The chosen role applies to every Project in the Organization. Usernames accept 3–64 ASCII characters: first alphanumeric, then alphanumeric, `.`, `_` or `-`; case normalizes to lowercase.
 - **One-time handoff:** provisioning/reset shows the code once to the authorized Admin. Hand it off privately, then dismiss. Navigation/reload/dismissal discards it; query/mutation caches and Web Storage never contain it. If a response was lost, refresh account state and issue a replacement through re-enrollment rather than blindly repeating provisioning.
 - **Revoke enrollment:** prevents unused-code redemption, without disabling an enrolled account.
-- **Disable:** preserves identities/roles/grants, revokes every session and unused enrollment, and blocks login/enrollment. **Enable** never restores old sessions or revoked codes. Passwordless enabled accounts need a fresh code.
+- **Disable:** preserves identities/roles, revokes every session and unused enrollment, and blocks login/enrollment. **Enable** never restores old sessions or revoked codes. Passwordless enabled accounts need a fresh code.
 - **Re-enroll:** requires an enabled account and confirmation; removes the password, revokes sessions/unused codes and shows one replacement code.
 - **Role changes:** use the existing `/v1/admin/actors/{actorId}/role` and RBAC policy. Pending/expired-passwordless/revoked-passwordless/disabled/non-Admin accounts cannot replace the last usable Admin. Disable/reset/demotion share credential and existing organization-role/advisory fences, preventing simultaneous final-Admin loss.
 

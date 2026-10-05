@@ -271,7 +271,7 @@ export const DatasetDraftOrder = z
 export const DatasetDraftItemRevision = DatasetDraftItem.extend({
 	item_revision: z.number().int().positive(),
 	action: z.enum(["upserted", "captured", "imported", "reviewed", "reordered"]),
-	actor_id: z.string().uuid(),
+	actor_username: z.string(),
 	created_at: z.string().datetime(),
 }).openapi("DatasetDraftItemRevision");
 export const DatasetDraftItemRevisionList = z
@@ -362,7 +362,9 @@ export const DatasetVersion = DatasetVersionSummary.extend({
 				feedback_score_id: z.string().uuid().nullable(),
 				capture_context: DatasetCaptureContext,
 				curated_by: z.string().uuid().nullable(),
+				curated_by_username: z.string().nullable(),
 				reviewed_by: z.string().uuid().nullable(),
+				reviewed_by_username: z.string().nullable(),
 				reviewed_at: z.string().datetime().nullable(),
 				created_at: z.string().datetime(),
 			})

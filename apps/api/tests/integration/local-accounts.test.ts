@@ -137,6 +137,7 @@ async function fixture() {
 		expect(response.status).toBe(200);
 		return (await response.json()) as {
 			actor_id: string;
+			username: string;
 			enrollment_id: string;
 			code: string;
 		};
@@ -295,14 +296,16 @@ test("only same-organization current Admins may provision/list/manage, with CSRF
 		).toBe(409);
 });
 
-test("provision reveals one code, listing exposes only usernames/current roles/grants/status, enrollment is single-use", async () => {
+test("provision reveals one code, listing exposes only usernames/current roles/status, enrollment is single-use", async () => {
 	const f = await fixture();
 	const account = await f.provision("Test.Reader", "read_only");
 	expect(Object.keys(account).sort()).toEqual([
 		"actor_id",
 		"code",
 		"enrollment_id",
+		"username",
 	]);
+	expect(account.username).toBe("test.reader");
 	expect(account.code.length).toBe(43);
 	const listing = await f.request("/v1/admin/local-accounts");
 	expect(listing.headers.get("cache-control")).toBe("no-store");
@@ -314,7 +317,6 @@ test("provision reveals one code, listing exposes only usernames/current roles/g
 		username: "test.reader",
 		organization_role: "read_only",
 		status: "pending",
-		project_grants: [],
 		enrollments: [{ id: account.enrollment_id, status: "pending" }],
 	});
 	const serialized = JSON.stringify(body);
@@ -417,6 +419,7 @@ test("revoked/expired/disabled codes fail safely; disable/reset revoke sessions 
 	);
 	expect(reset.status).toBe(200);
 	const replacement = await reset.json();
+	expect(replacement.username).toBe("test.user");
 	expect(
 		(await f.request("/v1/auth/session", "GET", undefined, currentHeaders))
 			.status,

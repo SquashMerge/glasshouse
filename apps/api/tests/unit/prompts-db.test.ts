@@ -127,7 +127,8 @@ const versionRow = {
 	model: "gpt-test",
 	settings: { temperature: 0.4 },
 	change_summary: "Clarify customer context",
-	created_by: "trusted-admin",
+	created_by: "actor:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+	created_by_username: "account.user",
 	created_at: CREATED_AT,
 	content_hash: HASH,
 	previous_messages: [{ role: "system", content: "Previous {{customer}}" }],
@@ -312,6 +313,8 @@ describe("prompt repository", () => {
 							model: null,
 							settings: {},
 							change_summary: "Initial version",
+							created_by: "trusted-admin",
+							created_by_username: "trusted-admin",
 						},
 					],
 				},
@@ -344,6 +347,7 @@ describe("prompt repository", () => {
 			settings: {},
 			change_summary: "Initial version",
 			created_by: "trusted-admin",
+			created_by_username: "trusted-admin",
 			created_at: CREATED_AT,
 			content_hash: HASH,
 			diff: null,
@@ -353,6 +357,10 @@ describe("prompt repository", () => {
 		expect(pool.client.calls[2]?.values).toEqual([
 			`prompt:${PROJECT}:support-agent`,
 		]);
+		expect(pool.client.calls[6]?.text).toContain("AS created_by_username");
+		expect(pool.client.calls[6]?.text).toContain(
+			"local_credential.organization_id = project.organization_id",
+		);
 		expect(pool.client.calls[6]?.values?.slice(1, 8)).toEqual([
 			1,
 			"How can I help {{customer}}?",
@@ -362,6 +370,8 @@ describe("prompt repository", () => {
 			"Initial version",
 			"trusted-admin",
 		]);
+		expect(pool.client.calls[6]?.values?.[8]).toBe("support-agent");
+		expect(pool.client.calls[6]?.values?.[9]).toBe(PROJECT);
 		expect(pool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
 			expect.stringContaining("authorization_allows_project"),
@@ -773,6 +783,10 @@ describe("prompt repository", () => {
 		expect(history.items[0]?.messages).toEqual([
 			{ role: "system", content: "Current {{customer}}" },
 		]);
+		expect(history.items[0]?.created_by_username).toBe("account.user");
+		expect(historyPool.client.calls[2]?.text).toContain(
+			"local_credential.organization_id = creator_project.organization_id",
+		);
 		expect(historyPool.client.calls[2]?.values).toEqual([
 			PROJECT,
 			"support-agent",

@@ -158,18 +158,12 @@ import {
 import {
 	handleListAdminActors,
 	handleListAdminAuditEvents,
-	handleListProjectGrants,
 	handleRecoverAdmin,
-	handleRevokeProjectGrant,
 	handleSetAdminActorRole,
-	handleSetProjectGrant,
 	listAdminActors,
 	listAdminAuditEvents,
-	listProjectGrants,
 	recoverAdmin,
-	revokeProjectGrant,
 	setAdminActorRole,
-	setProjectGrant,
 } from "./routes/admin-access.js";
 import {
 	listBenchmarkSuites,
@@ -474,9 +468,6 @@ register(restoreProject, handleRestoreProject);
 register(listProjectAuditEvents, handleGetProjectAuditEvents);
 register(listAdminActors, handleListAdminActors);
 register(setAdminActorRole, handleSetAdminActorRole);
-register(listProjectGrants, handleListProjectGrants);
-register(setProjectGrant, handleSetProjectGrant);
-register(revokeProjectGrant, handleRevokeProjectGrant);
 register(listAdminAuditEvents, handleListAdminAuditEvents);
 register(recoverAdmin, handleRecoverAdmin);
 register(listPrompts, handleListPrompts);

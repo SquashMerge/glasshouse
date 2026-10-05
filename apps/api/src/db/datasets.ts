@@ -227,7 +227,9 @@ function datasetVersionItem(row: Row) {
 		feedback_score_id: nullableText(row, "feedback_score_id"),
 		capture_context: jsonObjectOrEmpty(row, "capture_context"),
 		curated_by: nullableText(row, "curated_by"),
+		curated_by_username: nullableText(row, "curated_by_username"),
 		reviewed_by: nullableText(row, "reviewed_by"),
+		reviewed_by_username: nullableText(row, "reviewed_by_username"),
 		reviewed_at: nullableTimestamp(row, "reviewed_at"),
 		created_at: timestamp(row, "created_at"),
 	};
@@ -488,7 +490,7 @@ export async function getDatasetVersion(
 				"Dataset version not found",
 			);
 		const items = await client.query(
-			"SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at, created_at FROM dataset_version_items WHERE project_id = $1 AND dataset_version_id = $2 ORDER BY position ASC, created_at ASC, id ASC",
+			"SELECT item.id, item.item_key, item.position, item.validation_version, item.state, item.input, item.expected_output, item.metadata, item.external_id, item.source_trace_id, item.source_observation_id, item.feedback_score_id, item.capture_context, item.curated_by, CASE WHEN item.curated_by IS NULL THEN NULL ELSE COALESCE(curated_credential.username, curated_identity.canonical_subject, 'Unnamed account') END AS curated_by_username, item.reviewed_by, CASE WHEN item.reviewed_by IS NULL THEN NULL ELSE COALESCE(reviewed_credential.username, reviewed_identity.canonical_subject, 'Unnamed account') END AS reviewed_by_username, item.reviewed_at, item.created_at FROM dataset_version_items item JOIN projects project ON project.id = item.project_id LEFT JOIN local_credentials curated_credential ON curated_credential.organization_id = project.organization_id AND curated_credential.actor_id = item.curated_by LEFT JOIN actor_identities curated_identity ON curated_identity.organization_id = project.organization_id AND curated_identity.actor_id = item.curated_by AND curated_identity.provider_namespace = 'basic:v1' LEFT JOIN local_credentials reviewed_credential ON reviewed_credential.organization_id = project.organization_id AND reviewed_credential.actor_id = item.reviewed_by LEFT JOIN actor_identities reviewed_identity ON reviewed_identity.organization_id = project.organization_id AND reviewed_identity.actor_id = item.reviewed_by AND reviewed_identity.provider_namespace = 'basic:v1' WHERE item.project_id = $1 AND item.dataset_version_id = $2 ORDER BY item.position ASC, item.created_at ASC, item.id ASC",
 			[input.project_id, result.rows[0].id],
 		);
 		await client.query("COMMIT");
@@ -1284,7 +1286,7 @@ export async function getDatasetDraftItemRevisions(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
-			`SELECT revision.*, COALESCE(revision.dataset_version_item_id, revision.draft_item_id) AS item_id FROM dataset_draft_item_revisions revision JOIN datasets dataset ON dataset.id = revision.dataset_id AND dataset.project_id = revision.project_id WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND (revision.draft_item_id = $3::uuid OR EXISTS (SELECT 1 FROM dataset_version_items item JOIN dataset_versions version ON version.id = item.dataset_version_id AND version.project_id = item.project_id WHERE item.project_id = revision.project_id AND item.id = revision.dataset_version_item_id AND version.dataset_id = revision.dataset_id AND item.id = $3::uuid)) ORDER BY revision.item_revision DESC`,
+			`SELECT revision.*, COALESCE(revision.dataset_version_item_id, revision.draft_item_id) AS item_id, COALESCE(credential.username, identity.canonical_subject, 'Unknown account') AS actor_username FROM dataset_draft_item_revisions revision JOIN datasets dataset ON dataset.id = revision.dataset_id AND dataset.project_id = revision.project_id LEFT JOIN local_credentials credential ON credential.organization_id = dataset.organization_id AND credential.actor_id = revision.actor_id LEFT JOIN actor_identities identity ON identity.organization_id = dataset.organization_id AND identity.actor_id = revision.actor_id AND identity.provider_namespace = 'basic:v1' WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND (revision.draft_item_id = $3::uuid OR EXISTS (SELECT 1 FROM dataset_version_items item JOIN dataset_versions version ON version.id = item.dataset_version_id AND version.project_id = item.project_id WHERE item.project_id = revision.project_id AND item.id = revision.dataset_version_item_id AND version.dataset_id = revision.dataset_id AND item.id = $3::uuid)) ORDER BY revision.item_revision DESC`,
 			[input.project_id, input.slug, input.item_id],
 		);
 		if (!result.rows.length) {
@@ -1305,7 +1307,7 @@ export async function getDatasetDraftItemRevisions(
 				id: text(row as Row, "item_id"),
 				item_revision: Number(row.item_revision),
 				action: text(row, "action"),
-				actor_id: text(row, "actor_id"),
+				actor_username: text(row, "actor_username"),
 				created_at: timestamp(row, "created_at"),
 			})),
 		};

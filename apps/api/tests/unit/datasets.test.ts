@@ -1050,7 +1050,9 @@ describe("dataset repository", () => {
 						feedback_score_id: "88888888-8888-4888-8888-888888888888",
 						capture_context: { redaction_applied: true },
 						curated_by: "99999999-9999-4999-8999-999999999999",
+						curated_by_username: "curator.user",
 						reviewed_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+						reviewed_by_username: "reviewer.user",
 						reviewed_at: NOW,
 						comment: "raw feedback must not be returned",
 						created_at: NOW,
@@ -1093,7 +1095,9 @@ describe("dataset repository", () => {
 			feedback_score_id: "88888888-8888-4888-8888-888888888888",
 			capture_context: { redaction_applied: true },
 			curated_by: "99999999-9999-4999-8999-999999999999",
+			curated_by_username: "curator.user",
 			reviewed_by: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			reviewed_by_username: "reviewer.user",
 			reviewed_at: NOW.toISOString(),
 		});
 		expect(result.items[0]).not.toHaveProperty("comment");
@@ -1108,6 +1112,14 @@ describe("dataset repository", () => {
 					query.text.includes("feedback_score_id") &&
 					query.text.includes("curated_by") &&
 					query.text.includes("reviewed_by") &&
+					query.text.includes("curated_by_username") &&
+					query.text.includes("reviewed_by_username") &&
+					query.text.includes(
+						"curated_credential.organization_id = project.organization_id",
+					) &&
+					query.text.includes(
+						"reviewed_credential.organization_id = project.organization_id",
+					) &&
 					query.text.includes("reviewed_at"),
 			),
 		).toBe(true);
@@ -1298,6 +1310,7 @@ describe("dataset repository", () => {
 								capture_context: {},
 								action: "reviewed",
 								actor_id: actorId,
+								actor_username: "reader",
 								created_at: NOW,
 							},
 						],
@@ -1321,7 +1334,7 @@ describe("dataset repository", () => {
 			id: draftItemId,
 			item_revision: 3,
 			action: "reviewed",
-			actor_id: actorId,
+			actor_username: "reader",
 		});
 		expect(result.items[0]?.id).not.toBe(revisionId);
 		expect(DatasetDraftItemRevision.safeParse(result.items[0]).success).toBe(
@@ -1368,6 +1381,7 @@ describe("dataset repository", () => {
 								capture_context: {},
 								action: "reviewed",
 								actor_id: actorId,
+								actor_username: "reader",
 								created_at: NOW,
 							},
 						],
@@ -1392,7 +1406,7 @@ describe("dataset repository", () => {
 			id: publishedItemId,
 			item_revision: 3,
 			action: "reviewed",
-			actor_id: actorId,
+			actor_username: "reader",
 		});
 		const historyQuery = queries.find((sql) =>
 			sql.startsWith("SELECT revision.*"),
@@ -1437,6 +1451,7 @@ describe("dataset repository", () => {
 								capture_context: {},
 								action: "upserted",
 								actor_id: actorId,
+								actor_username: "reader",
 								created_at: NOW,
 							},
 						],
@@ -1459,7 +1474,7 @@ describe("dataset repository", () => {
 		expect(result.items[0]).toMatchObject({
 			id: draftItemId,
 			action: "upserted",
-			actor_id: actorId,
+			actor_username: "reader",
 		});
 		const historyQuery = queries.find((sql) =>
 			sql.startsWith("SELECT revision.*"),

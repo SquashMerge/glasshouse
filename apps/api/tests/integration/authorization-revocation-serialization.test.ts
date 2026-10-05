@@ -174,10 +174,6 @@ async function seedDurableProjectAccess(
 		"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'user')",
 		[organizationId, actorId],
 	);
-	await pool.query(
-		"INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role) VALUES ($1, $2, $3, 'user')",
-		[projectId, organizationId, actorId],
-	);
 }
 
 async function seedDurableOrganizationAdmin(
@@ -747,7 +743,7 @@ test.skipIf(!databaseUrl)(
 
 			await demoter.query("BEGIN");
 			await demoter.query(
-				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				"UPDATE organization_actor_roles SET role = 'read_only' WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 				[projectId, organizationId, actorId],
 			);
 			await expect(
@@ -906,7 +902,7 @@ test.skipIf(!databaseUrl)(
 			const revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
@@ -1249,7 +1245,7 @@ test.skipIf(!databaseUrl)(
 			revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
@@ -1432,7 +1428,7 @@ test.skipIf(!databaseUrl)(
 			revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
@@ -1591,7 +1587,7 @@ test.skipIf(!databaseUrl)(
 			await providerEntered.promise;
 			await Promise.race([
 				pool.query(
-					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 					[projectId, organizationId, actorId],
 				),
 				Bun.sleep(500).then(() => {
@@ -1809,7 +1805,7 @@ test.skipIf(!databaseUrl)(
 			revoke = (async () => {
 				await demoter.query("BEGIN");
 				await demoter.query(
-					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 					[projectId, organizationId, actorId],
 				);
 				await demoter.query("COMMIT");
@@ -1918,7 +1914,7 @@ test.skipIf(!databaseUrl)(
 			await validated.promise;
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 				[fixture.projectId, fixture.organizationId, fixture.actorId],
 			);
 			await revoker.query("COMMIT");
@@ -2006,7 +2002,7 @@ test.skipIf(!databaseUrl)(
 				).rows[0]?.count,
 			).toBe(1);
 			await pool.query(
-				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 				[fixture.projectId, fixture.organizationId, fixture.actorId],
 			);
 			await Promise.race([
@@ -2093,7 +2089,7 @@ test.skipIf(!databaseUrl)(
 			await traceValidated.promise;
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 				[fixture.projectId, fixture.organizationId, fixture.actorId],
 			);
 			await revoker.query("COMMIT");
@@ -2258,7 +2254,7 @@ test.skipIf(!databaseUrl)(
 			await validated.promise;
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+				"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 				[projectId, organizationId, actorId],
 			);
 			await revoker.query("COMMIT");
@@ -2342,7 +2338,7 @@ test.skipIf(!databaseUrl)(
 );
 
 test.skipIf(!databaseUrl)(
-	"a revocation holding its project grant first serializes project authorization without 40P01 and fails closed",
+	"a revocation holding its organization role first serializes project authorization without 40P01 and fails closed",
 	async () => {
 		const pool = new Pool({ connectionString: databaseUrl, max: 5 });
 		const fixture = await seedExecutionExperiment(pool);
@@ -2351,8 +2347,8 @@ test.skipIf(!databaseUrl)(
 		try {
 			await revoker.query("BEGIN");
 			await revoker.query(
-				"SELECT actor_id FROM project_actor_grants WHERE project_id = $1 AND actor_id = $2 FOR UPDATE",
-				[fixture.projectId, fixture.actorId],
+				"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+				[fixture.organizationId, fixture.actorId],
 			);
 			await authorizer.query("BEGIN");
 			await authorizer.query(
@@ -2370,7 +2366,7 @@ test.skipIf(!databaseUrl)(
 			await waitForLock(pool, "astraea-grant-first-project");
 			const revoke = (async () => {
 				await revoker.query(
-					"DELETE FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 AND actor_id = $3",
+					"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
 					[fixture.projectId, fixture.organizationId, fixture.actorId],
 				);
 				await revoker.query("COMMIT");

@@ -35,7 +35,6 @@ test("management operations are protected and cookie writes require CSRF", () =>
 		"actor_id",
 		"enrollments",
 		"organization_role",
-		"project_grants",
 		"status",
 		"username",
 	]);
@@ -43,6 +42,7 @@ test("management operations are protected and cookie writes require CSRF", () =>
 		"actor_id",
 		"code",
 		"enrollment_id",
+		"username",
 	]);
 });
 

@@ -150,14 +150,13 @@ Astraea will standardize on three understandable roles:
 
 | Role | Scope and intended capability |
 |---|---|
-| **Admin** | Organization administrator. Manages organization settings, users/role assignments, Project access, identity-provider connections, governed/destructive controls, and all Projects in the organization. At least one active Admin must always remain. |
-| **User** | Normal contributor. Accesses only Projects granted to them; can perform ordinary product work permitted in those Projects, such as curating datasets, creating Evaluation drafts/runs, and participating in review. Cannot manage organization security, users, IdP connections, or protected/governed controls. |
-| **Read-only** | Viewer. Accesses only granted Projects and may inspect allowed traces, Datasets, Evaluations, runs, and audit-safe history. Cannot create, modify, execute, approve, promote, delete, or change membership/security state. |
+| **Admin** | Organization administrator. Manages organization settings, users/role assignments, identity-provider connections, governed/destructive controls, and all Projects in the organization. At least one active Admin must always remain. |
+| **User** | Normal contributor. Accesses every Project in their Organization and can perform ordinary product work, such as curating datasets, creating Evaluation drafts/runs, and participating in review. Cannot manage organization security, users, IdP connections, or protected/governed controls. |
+| **Read-only** | Viewer. Accesses every Project in their Organization and may inspect allowed traces, Datasets, Evaluations, runs, and audit-safe history. Cannot create, modify, execute, approve, promote, delete, or change membership/security state. |
 
-Organization role establishes administrative authority; Project membership is the
-visibility boundary. An Admin is authorized across the organization. User and
-Read-only access is granted per Project. This avoids a misleading “user can see
-the whole organization” default while keeping the product model simple.
+Organization role establishes authority and visibility for every Project in that
+Organization. Project selection remains a workspace/data boundary, never a
+per-user authorization grant.
 
 The current `owner` / `manager` / `member` implementation is a compatibility
 baseline, and its Basic Auth username is a compatibility subject—not a durable

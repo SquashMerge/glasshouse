@@ -3,7 +3,6 @@ import {
 	AdminActor,
 	AdminRole,
 	OrganizationRoleInput,
-	ProjectGrantInput,
 	RecoveryInput,
 } from "../../src/schemas/admin-access";
 
@@ -14,6 +13,7 @@ test("admin contracts use durable actor IDs and only Admin, User, and Read-only 
 	expect(
 		AdminActor.safeParse({
 			actor_id: actorId,
+			username: "reader",
 			organization_role: "read_only",
 			created_at: "2026-08-13T00:00:00.000Z",
 		}).success,
@@ -21,6 +21,7 @@ test("admin contracts use durable actor IDs and only Admin, User, and Read-only 
 	expect(
 		AdminActor.safeParse({
 			actor_id: actorId,
+			username: null,
 			organization_role: null,
 			created_at: "2026-08-13T00:00:00.000Z",
 		}).success,
@@ -35,7 +36,6 @@ test("admin contracts use durable actor IDs and only Admin, User, and Read-only 
 	expect(OrganizationRoleInput.safeParse({ role: "owner" }).success).toBe(
 		false,
 	);
-	expect(ProjectGrantInput.safeParse({ role: "admin" }).success).toBe(false);
 	expect(
 		RecoveryInput.safeParse({ confirmation: "RESTORE ADMIN" }).success,
 	).toBe(true);
