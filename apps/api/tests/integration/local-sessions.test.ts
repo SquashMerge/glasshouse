@@ -393,6 +393,7 @@ test("local actors boot the workspace, create projects and use current durable g
 		body: JSON.stringify({ name: "Local project", slug: "local-project" }),
 	});
 	expect(created.status).toBe(201);
+	const createdProject = await created.json();
 	const account = await f.credentials.provision(f.principal, {
 		username: "Local.Reader",
 		role: "read_only",
@@ -405,8 +406,8 @@ test("local actors boot the workspace, create projects and use current durable g
 		await f.api.request("/v1/me", { headers })
 	).json();
 	expect(
-		roleProjects.projects.map((project: { id: string }) => project.id),
-	).toEqual([f.projectId]);
+		roleProjects.projects.map((project: { id: string }) => project.id).sort(),
+	).toEqual([f.projectId, createdProject.id].sort());
 	await pool.query("DELETE FROM organization_actor_roles WHERE actor_id = $1", [
 		account.actorId,
 	]);
