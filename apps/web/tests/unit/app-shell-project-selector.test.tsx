@@ -142,6 +142,30 @@ describe("AppShell project selector", () => {
 		);
 	});
 
+	it("insets the expanded selector chevron without reducing its native select target", () => {
+		render(
+			<AppShell currentPath="/">
+				<div>Page</div>
+			</AppShell>,
+		);
+
+		expect(screen.getByTestId("project-selector")).toHaveClass(
+			"h-9",
+			"w-full",
+			"appearance-none",
+			"pl-2",
+			"pr-9",
+		);
+		expect(screen.getByTestId("project-selector-chevron")).toHaveClass(
+			"pointer-events-none",
+			"right-3",
+		);
+		expect(screen.getByTestId("project-selector-chevron")).toHaveAttribute(
+			"aria-hidden",
+			"true",
+		);
+	});
+
 	it("places the Settings group last after Prompts with nested route links", () => {
 		render(
 			<AppShell currentPath="/governance">
