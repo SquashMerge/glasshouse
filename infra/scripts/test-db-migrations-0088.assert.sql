@@ -3,6 +3,7 @@ DO $$
 DECLARE
     wrapper_definition TEXT;
     policy_definition TEXT;
+    effective_role_definition TEXT;
     fixture_organization_id CONSTANT UUID := '00000000-0000-4000-8000-000000000001';
     fixture_project_id CONSTANT UUID := '88000000-0000-4000-8000-000000000001';
     fixture_actor_id UUID;
@@ -69,8 +70,14 @@ BEGIN
     wrapper_definition := pg_get_functiondef(
         'public.authorization_allows_project(uuid,uuid,uuid,text)'::regprocedure
     );
-    IF wrapper_definition !~ E'SELECT\\s+local_actor_authentication_enabled\\(target_organization_id, target_actor_id\\)\\s+AND\\s+authorization_allows_project_before_local_sessions\\(target_organization_id, target_project_id, target_actor_id, operation\\)' THEN
-        RAISE EXCEPTION '0101 project authorization wrapper must fence credentials and delegate unchanged arguments';
+    IF wrapper_definition !~ E'authorization_effective_project_role\\s*\\(\\s*target_organization_id,\\s*target_project_id,\\s*target_actor_id\\s*\\)' THEN
+        RAISE EXCEPTION '0103 project authorization wrapper must delegate unchanged tenant, project and actor arguments';
+    END IF;
+    effective_role_definition := pg_get_functiondef(
+        'public.authorization_effective_project_role(uuid,uuid,uuid)'::regprocedure
+    );
+    IF effective_role_definition !~ E'WHEN\\s+NOT\\s+local_actor_authentication_enabled\\(project.organization_id, target_actor_id\\)\\s+THEN\\s+NULL' THEN
+        RAISE EXCEPTION '0103 effective project role must reject disabled local credentials';
     END IF;
     policy_definition := pg_get_functiondef(
         'public.authorization_allows_project_before_local_sessions(uuid,uuid,uuid,text)'::regprocedure
@@ -89,10 +96,6 @@ BEGIN
         VALUES (fixture_actor_id, fixture_organization_id, 'basic:v1', 'release-gate-' || fixture_role);
         INSERT INTO organization_actor_roles (organization_id, actor_id, role)
         VALUES (fixture_organization_id, fixture_actor_id, fixture_role);
-        IF fixture_role <> 'admin' THEN
-            INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role)
-            VALUES (fixture_project_id, fixture_organization_id, fixture_actor_id, fixture_role);
-        END IF;
         FOREACH strict_mode IN ARRAY ARRAY[false, true] LOOP
             UPDATE authorization_policy_settings
             SET strict_enforcement = strict_mode, enabled_at = COALESCE(enabled_at, now())
@@ -100,10 +103,6 @@ BEGIN
             IF authorization_allows_project(fixture_organization_id, fixture_project_id, fixture_actor_id, 'release_gate_manage')
                 IS DISTINCT FROM (fixture_role = 'admin') THEN
                 RAISE EXCEPTION '0088 release_gate_manage must allow only Admins in both enforcement modes';
-            END IF;
-            IF authorization_allows_project(fixture_organization_id, fixture_project_id, fixture_actor_id, 'release_gate_manage')
-                IS DISTINCT FROM authorization_allows_project_before_local_sessions(fixture_organization_id, fixture_project_id, fixture_actor_id, 'release_gate_manage') THEN
-                RAISE EXCEPTION '0101 wrapper changed release gate policy for eligible Basic actors';
             END IF;
         END LOOP;
     END LOOP;

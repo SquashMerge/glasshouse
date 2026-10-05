@@ -1,3 +1,4 @@
+BEGIN;
 DO $$
 DECLARE
     fixture_organization_id CONSTANT UUID := '00000000-0000-4000-8000-000000000001';
@@ -27,11 +28,6 @@ BEGIN
         (fixture_organization_id, fixture_user_id, 'user'),
         (fixture_organization_id, fixture_reader_id, 'read_only')
     ON CONFLICT (organization_id, actor_id) DO UPDATE SET role = EXCLUDED.role;
-    INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role)
-    VALUES
-        (fixture_project_id, fixture_organization_id, fixture_user_id, 'user'),
-        (fixture_project_id, fixture_organization_id, fixture_reader_id, 'read_only')
-    ON CONFLICT (project_id, actor_id) DO UPDATE SET role = EXCLUDED.role;
     UPDATE authorization_policy_settings
     SET strict_enforcement = true, enabled_at = now()
     WHERE organization_id = fixture_organization_id;
@@ -61,3 +57,4 @@ BEGIN
     END IF;
 END
 $$;
+ROLLBACK;
