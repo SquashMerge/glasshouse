@@ -411,9 +411,9 @@ test("local actors boot the workspace, create projects and use current durable g
 	await pool.query("DELETE FROM organization_actor_roles WHERE actor_id = $1", [
 		account.actorId,
 	]);
-	expect(
-		(await (await f.api.request("/v1/me", { headers })).json()).projects,
-	).toEqual([]);
+	const revokedResponse = await f.api.request("/v1/me", { headers });
+	expect(revokedResponse.status).toBe(404);
+	expect(await revokedResponse.json()).not.toHaveProperty("projects");
 	expect(
 		(
 			await pool.query(
