@@ -6,11 +6,7 @@ const api = vi.hoisted(() => ({
 	getCurrentActor: vi.fn(),
 	listAdminActors: vi.fn(),
 	listLocalAccounts: vi.fn(),
-	listProjects: vi.fn(),
-	listProjectGrants: vi.fn(),
 	setAdminActorRole: vi.fn(),
-	setProjectGrant: vi.fn(),
-	revokeProjectGrant: vi.fn(),
 	recoverAdmin: vi.fn(),
 }));
 
@@ -42,55 +38,35 @@ describe("AdminAccessPage", () => {
 			items: [
 				{
 					actor_id: CURRENT_ACTOR_ID,
+					username: "owner",
 					organization_role: "admin",
 					created_at: "2026-08-13T00:00:00.000Z",
 				},
 				{
 					actor_id: UNRESOLVED_ACTOR_ID,
+					username: "reader",
 					organization_role: "read_only",
 					created_at: "2026-08-14T00:00:00.000Z",
 				},
 			],
 		});
-		api.listProjects.mockResolvedValue({
-			items: [
-				{
-					id: "22222222-2222-4222-8222-222222222222",
-					name: "Active Project",
-					status: "active",
-				},
-			],
-		});
-		api.listProjectGrants.mockResolvedValue({ items: [] });
 		api.listLocalAccounts.mockResolvedValue({ items: [] });
 	});
 
-	it("shows accessible Admin role controls and an empty grant state", async () => {
+	it("shows accessible Admin role controls without Project grant management", async () => {
 		renderPage();
 
 		expect(
 			await screen.findByRole("heading", { name: "Access" }),
 		).toBeVisible();
 		expect(screen.getByLabelText("Role for owner")).toHaveValue("admin");
-		expect(
-			await screen.findByText("No explicit grants for this Project."),
-		).toBeVisible();
+		expect(screen.queryByText("Project grants")).toBeNull();
 		expect(
 			screen.getByRole("button", { name: "Recover Admin access" }),
 		).toBeVisible();
 	});
 
-	it("shows the authenticated subject and accessible compact fallbacks", async () => {
-		api.listProjectGrants.mockResolvedValue({
-			items: [
-				{
-					actor_id: UNRESOLVED_ACTOR_ID,
-					project_id: "22222222-2222-4222-8222-222222222222",
-					role: "read_only",
-					created_at: "2026-08-14T00:00:00.000Z",
-				},
-			],
-		});
+	it("shows usernames without exposing Actor IDs", async () => {
 		renderPage();
 
 		expect(await screen.findByText("owner")).toBeVisible();
@@ -98,15 +74,7 @@ describe("AdminAccessPage", () => {
 		expect(currentActor).not.toHaveAttribute("title", CURRENT_ACTOR_ID);
 		expect(screen.queryByText(CURRENT_ACTOR_ID)).toBeNull();
 		expect(screen.queryByText(UNRESOLVED_ACTOR_ID)).toBeNull();
-		await screen.findByRole("button", { name: "Revoke grant" });
-		const fallbacks = screen.getAllByLabelText(
-			`Actor ID ${UNRESOLVED_ACTOR_ID}`,
-		);
-		expect(fallbacks).toHaveLength(2);
-		for (const fallback of fallbacks) {
-			expect(fallback).toHaveTextContent("Actor 33333333");
-			expect(fallback).toHaveAttribute("title", UNRESOLVED_ACTOR_ID);
-		}
+		expect(screen.getByText("reader")).toBeVisible();
 	});
 
 	it("does not leak administration controls to non-Admins", async () => {

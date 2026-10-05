@@ -214,6 +214,19 @@ test("local login issues only a production HttpOnly cookie with bounded hashed s
 	delete process.env.NODE_ENV;
 });
 
+test("disabled local accounts lose SQL-level project authorization", async () => {
+	const f = await fixture();
+	await pool.query(
+		"UPDATE local_credentials SET enabled = false WHERE actor_id = $1",
+		[f.principal.actorId],
+	);
+	const authorization = await pool.query<{ allowed: boolean }>(
+		"SELECT authorization_allows_project($1, $2, $3, 'product_read') AS allowed",
+		[f.id, f.projectId, f.principal.actorId],
+	);
+	expect(authorization.rows[0]?.allowed).toBe(false);
+});
+
 test("wrong-user/password, disabled, malformed and locked-out logins have the same safe failure and bounded limiter rows", async () => {
 	const f = await fixture();
 	const expected = { code: "UNAUTHORIZED", message: "Authentication required" };
@@ -388,18 +401,13 @@ test("local actors boot the workspace, create projects and use current durable g
 	await f.credentials.enroll(account.token, password);
 	const session = (await f.sessions.login("local.reader", password))!;
 	const headers = { cookie: `astraea_session=${session.token}` };
-	const noGrants = await (await f.api.request("/v1/me", { headers })).json();
-	expect(noGrants.projects).toEqual([]);
-	await pool.query(
-		"INSERT INTO project_actor_grants(organization_id, project_id, actor_id, role) VALUES ($1, $2, $3, 'read_only')",
-		[f.id, f.projectId, account.actorId],
-	);
+	const roleProjects = await (
+		await f.api.request("/v1/me", { headers })
+	).json();
 	expect(
-		(await (await f.api.request("/v1/me", { headers })).json()).projects.map(
-			(project: { id: string }) => project.id,
-		),
+		roleProjects.projects.map((project: { id: string }) => project.id),
 	).toEqual([f.projectId]);
-	await pool.query("DELETE FROM project_actor_grants WHERE actor_id = $1", [
+	await pool.query("DELETE FROM organization_actor_roles WHERE actor_id = $1", [
 		account.actorId,
 	]);
 	expect(

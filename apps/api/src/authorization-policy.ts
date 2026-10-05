@@ -25,34 +25,24 @@ const projectOperations: readonly ProjectOperation[] = [
 	"project_manage",
 ];
 
-export function effectiveRoleForLegacyAssignment(
+export function effectiveRoleForOrganizationRole(
 	organizationRole: string | null,
-	projectRole: string | null,
 ): EffectiveProjectRole | null {
-	if (organizationRole === "owner") return "admin";
-	if (organizationRole !== "member") return null;
-	if (projectRole === "manager") return "user";
-	if (projectRole === "member") return "read_only";
+	if (
+		organizationRole === "admin" ||
+		organizationRole === "user" ||
+		organizationRole === "read_only"
+	)
+		return organizationRole;
 	return null;
 }
 
 export function projectOperationAllowed(
-	enforcement: AuthorizationEnforcement,
+	_enforcement: AuthorizationEnforcement,
 	role: EffectiveProjectRole,
 	operation: ProjectOperation,
 ): boolean {
 	if (role === "admin") return projectOperations.includes(operation);
-	if (role === "user" && enforcement === "compatibility")
-		return [
-			"product_read",
-			"product_write",
-			"curation_write",
-			"execute",
-			"ingest",
-			"audit_read",
-			"project_manage",
-			"governed",
-		].includes(operation);
 	if (role === "user")
 		return [
 			"product_read",
@@ -62,9 +52,5 @@ export function projectOperationAllowed(
 			"ingest",
 			"audit_read",
 		].includes(operation);
-	if (enforcement === "compatibility")
-		return ["product_read", "product_write", "execute", "ingest"].includes(
-			operation,
-		);
 	return operation === "product_read" || operation === "audit_read";
 }

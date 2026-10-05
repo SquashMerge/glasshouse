@@ -488,7 +488,7 @@ export function DatasetDetailPage() {
 		items: Array<{
 			item_revision: number;
 			action: string;
-			actor_id: string;
+			actor_username: string;
 			created_at: string;
 		}>;
 	} | null>(null);
@@ -1247,7 +1247,7 @@ export function DatasetDetailPage() {
 									{history.items.map((revision) => (
 										<li key={revision.item_revision}>
 											Revision {revision.item_revision}: {revision.action} by{" "}
-											{revision.actor_id}
+											{revision.actor_username}
 										</li>
 									))}
 								</ul>

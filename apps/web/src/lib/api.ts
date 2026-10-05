@@ -74,7 +74,6 @@ export interface LocalAccount {
 	username: string;
 	organization_role: "admin" | "user" | "read_only" | null;
 	status: "active" | "pending" | "disabled";
-	project_grants: Array<{ project_id: string; role: "user" | "read_only" }>;
 	enrollments: Array<{
 		id: string;
 		status: "pending" | "expired" | "revoked" | "consumed";
@@ -84,6 +83,7 @@ export interface LocalAccount {
 }
 export interface EnrollmentCode {
 	actor_id: string;
+	username: string;
 	enrollment_id: string;
 	code: string;
 }
@@ -1246,7 +1246,7 @@ export async function listDatasetDraftItemRevisions(input: {
 		DatasetDraftItem & {
 			item_revision: number;
 			action: "upserted" | "captured" | "imported" | "reviewed" | "reordered";
-			actor_id: string;
+			actor_username: string;
 			created_at: string;
 		}
 	>;
@@ -1910,14 +1910,8 @@ export async function getCurrentActor(): Promise<CurrentActor> {
 
 export interface AdminActor {
 	actor_id: string;
+	username: string | null;
 	organization_role: "admin" | "user" | "read_only" | null;
-	created_at: string;
-}
-
-export interface ProjectGrant {
-	actor_id: string;
-	project_id: string;
-	role: "user" | "read_only";
 	created_at: string;
 }
 
@@ -1940,46 +1934,6 @@ export async function setAdminActorRole(input: {
 		),
 		"setAdminActorRole",
 	);
-}
-
-export async function listProjectGrants(
-	projectId: string,
-): Promise<{ items: ProjectGrant[] }> {
-	return responseJson(
-		await authedFetch(
-			`/v1/admin/projects/${encodeURIComponent(projectId)}/grants`,
-		),
-		"listProjectGrants",
-	);
-}
-
-export async function setProjectGrant(input: {
-	projectId: string;
-	actorId: string;
-	role: ProjectGrant["role"];
-}): Promise<ProjectGrant> {
-	return responseJson(
-		await authedFetch(
-			`/v1/admin/projects/${encodeURIComponent(input.projectId)}/grants/${encodeURIComponent(input.actorId)}`,
-			{
-				method: "PUT",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ role: input.role }),
-			},
-		),
-		"setProjectGrant",
-	);
-}
-
-export async function revokeProjectGrant(input: {
-	projectId: string;
-	actorId: string;
-}): Promise<void> {
-	const response = await authedFetch(
-		`/v1/admin/projects/${encodeURIComponent(input.projectId)}/grants/${encodeURIComponent(input.actorId)}`,
-		{ method: "DELETE" },
-	);
-	if (!response.ok) await responseJson<never>(response, "revokeProjectGrant");
 }
 
 export async function recoverAdmin(): Promise<AdminActor> {

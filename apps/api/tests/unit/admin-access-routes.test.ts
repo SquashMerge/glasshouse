@@ -27,6 +27,31 @@ const query = mock(async (sql: string, values: unknown[] = []) => {
 				},
 			],
 		};
+	if (
+		sql.includes("FROM actor_identities identity LEFT JOIN") &&
+		sql.includes("AS username")
+	) {
+		const actors = [
+			{
+				actor_id: OWNER,
+				username: "owner",
+				organization_role: "admin",
+				created_at: createdAt,
+			},
+			{
+				actor_id: USER,
+				username: "reader",
+				organization_role: "read_only",
+				created_at: createdAt,
+			},
+		];
+		return {
+			rows:
+				values.length > 1
+					? actors.filter((actor) => actor.actor_id === values[1])
+					: actors,
+		};
+	}
 	if (sql.includes("FROM actor_identities identity LEFT JOIN"))
 		return {
 			rows: [
@@ -89,7 +114,7 @@ function app() {
 	return api;
 }
 
-test("Admin actor management exposes durable IDs only and records role changes", async () => {
+test("Access lists human usernames and excludes internal worker identities", async () => {
 	const api = app();
 	const listed = await api.request("/v1/admin/actors");
 	const updated = await api.request(`/v1/admin/actors/${USER}/role`, {
@@ -103,17 +128,40 @@ test("Admin actor management exposes durable IDs only and records role changes",
 		items: [
 			{
 				actor_id: OWNER,
+				username: "owner",
 				organization_role: "admin",
 				created_at: createdAt.toISOString(),
 			},
 			{
 				actor_id: USER,
+				username: "reader",
 				organization_role: "read_only",
 				created_at: createdAt.toISOString(),
 			},
 		],
 	});
+	expect(
+		query.mock.calls.some(([sql]) =>
+			String(sql).includes("internal:evaluation-worker:v1"),
+		),
+	).toBe(true);
 	expect(updated.status).toBe(200);
+	expect(await updated.json()).toMatchObject({
+		actor_id: USER,
+		username: "reader",
+		organization_role: "read_only",
+	});
+	const identityFilter = query.mock.calls
+		.map(([sql]) => String(sql))
+		.find(
+			(sql) =>
+				sql.includes("FROM actor_identities identity") &&
+				sql.includes("internal:evaluation-worker:v1"),
+		);
+	expect(identityFilter).toContain(
+		"identity.canonical_subject = identity.organization_id::text",
+	);
+	expect(identityFilter).toContain("durable_actor_id");
 	expect(
 		query.mock.calls.some(([sql]) =>
 			String(sql).includes("audit_admin_access_event"),

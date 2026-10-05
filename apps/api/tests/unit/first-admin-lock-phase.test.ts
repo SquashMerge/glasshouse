@@ -102,6 +102,7 @@ for (const operation of ["bootstrap", "recovery"] as const) {
 						body: JSON.stringify({ confirmation: "RESTORE ADMIN" }),
 					});
 					expect(response.status).toBe(200);
+					expect(await response.json()).toMatchObject({ username: "owner" });
 				} finally {
 					poolProvider.mockRestore();
 					for (const [key, value] of [

@@ -324,7 +324,6 @@ const deletionCleanupSql = [
 	"DELETE FROM governance_policy_approvals WHERE project_id = $1",
 	"DELETE FROM governance_policy_versions WHERE project_id = $1",
 	"DELETE FROM governance_policies WHERE project_id = $1",
-	"DELETE FROM project_actor_grants WHERE project_id = $1",
 	"DELETE FROM project_memberships WHERE project_id = $1",
 ];
 function failure(c: Context, error: unknown): Response {
@@ -691,10 +690,6 @@ export async function handleDeleteProject(c: Context) {
 				await finalize.query("BEGIN");
 				await finalize.query(
 					"SELECT actor_subject FROM project_memberships WHERE project_id = $1 AND organization_id = $2 ORDER BY actor_subject FOR UPDATE",
-					[id, tenant.organizationId],
-				);
-				await finalize.query(
-					"SELECT actor_id FROM project_actor_grants WHERE project_id = $1 AND organization_id = $2 ORDER BY actor_id FOR UPDATE",
 					[id, tenant.organizationId],
 				);
 				const deletionProject = await finalize.query(

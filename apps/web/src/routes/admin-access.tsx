@@ -15,25 +15,14 @@ import { LocalAccounts } from "../components/LocalAccounts";
 import {
 	getCurrentActor,
 	listAdminActors,
-	listProjectGrants,
-	listProjects,
 	recoverAdmin,
-	revokeProjectGrant,
 	setAdminActorRole,
-	setProjectGrant,
 	type AdminActor,
 	type CurrentActor,
 } from "../lib/api";
 
-const shortActor = (actorId: string) => actorId.slice(0, 8);
-
 export function AdminAccessPage() {
 	const queryClient = useQueryClient();
-	const [projectId, setProjectId] = React.useState("");
-	const [grantActorId, setGrantActorId] = React.useState("");
-	const [grantRole, setGrantRole] = React.useState<"user" | "read_only">(
-		"read_only",
-	);
 	const [recoveryOpen, setRecoveryOpen] = React.useState(false);
 	const [confirmation, setConfirmation] = React.useState("");
 	const actorQuery = useQuery({ queryKey: ["me"], queryFn: getCurrentActor });
@@ -41,17 +30,6 @@ export function AdminAccessPage() {
 		queryKey: ["admin", "actors"],
 		queryFn: listAdminActors,
 		enabled: actorQuery.data?.organization_role === "admin",
-	});
-	const projectsQuery = useQuery({
-		queryKey: ["projects", "management"],
-		queryFn: () => listProjects(true),
-		enabled: actorQuery.data?.organization_role === "admin",
-	});
-	const grantsQuery = useQuery({
-		queryKey: ["admin", "grants", projectId],
-		queryFn: () => listProjectGrants(projectId),
-		enabled:
-			actorQuery.data?.organization_role === "admin" && Boolean(projectId),
 	});
 	const invalidate = () => {
 		void queryClient.invalidateQueries({ queryKey: ["admin"] });
@@ -62,17 +40,6 @@ export function AdminAccessPage() {
 		mutationFn: setAdminActorRole,
 		onSuccess: invalidate,
 	});
-	const grantMutation = useMutation({
-		mutationFn: setProjectGrant,
-		onSuccess: () => {
-			setGrantActorId("");
-			invalidate();
-		},
-	});
-	const revokeMutation = useMutation({
-		mutationFn: revokeProjectGrant,
-		onSuccess: invalidate,
-	});
 	const recoveryMutation = useMutation({
 		mutationFn: recoverAdmin,
 		onSuccess: () => {
@@ -81,14 +48,6 @@ export function AdminAccessPage() {
 			invalidate();
 		},
 	});
-
-	React.useEffect(() => {
-		if (projectId || !projectsQuery.data) return;
-		setProjectId(
-			projectsQuery.data.items.find((project) => project.status === "active")
-				?.id ?? "",
-		);
-	}, [projectId, projectsQuery.data]);
 
 	if (actorQuery.isLoading)
 		return <ListLoadingSkeleton testId="admin-access-loading" />;
@@ -129,9 +88,9 @@ export function AdminAccessPage() {
 				)}
 			</div>
 		);
-	if (actorsQuery.isLoading || projectsQuery.isLoading)
+	if (actorsQuery.isLoading)
 		return <ListLoadingSkeleton testId="admin-access-loading" />;
-	if (actorsQuery.isError || projectsQuery.isError)
+	if (actorsQuery.isError)
 		return (
 			<PageError
 				message="Access data could not be loaded."
@@ -139,26 +98,17 @@ export function AdminAccessPage() {
 			/>
 		);
 
-	const activeProjects = projectsQuery.data?.items.filter(
-		(project) => project.status === "active",
-	);
 	return (
 		<div className="space-y-8">
 			<PageHeader />
 			<LocalAccounts />
-			{roleMutation.isError ||
-			grantMutation.isError ||
-			revokeMutation.isError ||
-			recoveryMutation.isError ? (
+			{roleMutation.isError || recoveryMutation.isError ? (
 				<p className="text-sm text-destructive" role="alert">
 					The access change could not be completed. Review the current access
 					state and retry.
 				</p>
 			) : null}
-			{roleMutation.isSuccess ||
-			grantMutation.isSuccess ||
-			revokeMutation.isSuccess ||
-			recoveryMutation.isSuccess ? (
+			{roleMutation.isSuccess || recoveryMutation.isSuccess ? (
 				<p
 					className="text-sm text-emerald-700 dark:text-emerald-400"
 					role="status"
@@ -192,120 +142,6 @@ export function AdminAccessPage() {
 							/>
 						))
 					)}
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Project grants</CardTitle>
-					<p className="text-sm text-muted-foreground">
-						User and Read-only actors need an explicit grant for each active
-						Project.
-					</p>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<Label className="grid max-w-sm gap-2">
-						Project
-						<Select
-							value={projectId}
-							onChange={(event) => setProjectId(event.target.value)}
-						>
-							<option value="">Select an active Project</option>
-							{activeProjects?.map((project) => (
-								<option key={project.id} value={project.id}>
-									{project.name}
-								</option>
-							))}
-						</Select>
-					</Label>
-					{projectId ? (
-						<>
-							<form
-								className="flex flex-wrap items-end gap-3 border-y border-border py-4"
-								onSubmit={(event) => {
-									event.preventDefault();
-									grantMutation.mutate({
-										projectId,
-										actorId: grantActorId,
-										role: grantRole,
-									});
-								}}
-							>
-								<Label className="grid min-w-56 gap-2">
-									Actor ID
-									<Input
-										aria-label="Actor ID for grant"
-										required
-										value={grantActorId}
-										onChange={(event) => setGrantActorId(event.target.value)}
-									/>
-								</Label>
-								<Label className="grid gap-2">
-									Grant role
-									<Select
-										aria-label="Grant role"
-										value={grantRole}
-										onChange={(event) =>
-											setGrantRole(event.target.value as "user" | "read_only")
-										}
-									>
-										<option value="read_only">Read-only</option>
-										<option value="user">User</option>
-									</Select>
-								</Label>
-								<Button
-									type="submit"
-									disabled={grantMutation.isPending || !grantActorId}
-								>
-									Set grant
-								</Button>
-							</form>
-							{grantsQuery.isLoading ? (
-								<p className="text-sm text-muted-foreground" role="status">
-									Loading grants...
-								</p>
-							) : grantsQuery.isError ? (
-								<PageError
-									message="Grants could not be loaded."
-									retry={grantsQuery.refetch}
-								/>
-							) : grantsQuery.data?.items.length === 0 ? (
-								<p className="text-sm text-muted-foreground">
-									No explicit grants for this Project.
-								</p>
-							) : (
-								grantsQuery.data?.items.map((grant) => (
-									<div
-										key={grant.actor_id}
-										className="flex flex-wrap items-center justify-between gap-3"
-									>
-										<ActorIdentifier
-											actorId={grant.actor_id}
-											currentActor={currentActor}
-										/>
-										<div className="flex items-center gap-3">
-											<span className="text-sm text-muted-foreground">
-												{grant.role === "read_only" ? "Read-only" : "User"}
-											</span>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												onClick={() =>
-													revokeMutation.mutate({
-														projectId,
-														actorId: grant.actor_id,
-													})
-												}
-												disabled={revokeMutation.isPending}
-											>
-												Revoke grant
-											</Button>
-										</div>
-									</div>
-								))
-							)}
-						</>
-					) : null}
 				</CardContent>
 			</Card>
 			{currentActor.can_recover_admin && (
@@ -422,7 +258,7 @@ function PageHeader() {
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">Access</h1>
 			<p className="text-sm text-muted-foreground">
-				Manage organization roles and explicit Project grants.
+				Manage organization roles across every Project in this organization.
 			</p>
 		</div>
 	);
@@ -450,11 +286,10 @@ function ActorRoleRow({
 	disabled: boolean;
 	onChange: (role: Exclude<AdminActor["organization_role"], null>) => void;
 }) {
-	const subject = actorSubject(actor.actor_id, currentActor);
-	const controlName = subject ?? `actor ${shortActor(actor.actor_id)}`;
+	const controlName = actor.username ?? "unnamed account";
 	return (
 		<div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
-			<ActorIdentifier actorId={actor.actor_id} currentActor={currentActor} />
+			<ActorIdentifier actor={actor} currentActor={currentActor} />
 			<Label className="flex items-center gap-2 text-sm">
 				<span className="sr-only">Role for {controlName}</span>
 				<Select
@@ -482,41 +317,25 @@ function ActorRoleRow({
 	);
 }
 
-function actorSubject(
-	actorId: string,
-	currentActor: Pick<CurrentActor, "actor_id" | "actor_subject">,
-): string | null {
-	if (actorId !== currentActor.actor_id) return null;
-	return currentActor.actor_subject.trim() || null;
-}
-
 function ActorIdentifier({
-	actorId,
+	actor,
 	currentActor,
 }: {
-	actorId: string;
+	actor: AdminActor;
 	currentActor: Pick<CurrentActor, "actor_id" | "actor_subject">;
 }) {
-	const subject = actorSubject(actorId, currentActor);
-	if (subject)
+	const username = actor.username ?? "Unnamed account";
+	if (actor.actor_id === currentActor.actor_id)
 		return (
 			<span
 				className="flex min-w-0 items-baseline gap-2"
-				aria-label={`${subject}, current user`}
+				aria-label={`${username}, current user`}
 			>
-				<span className="truncate text-sm font-medium">{subject}</span>
+				<span className="truncate text-sm font-medium">{username}</span>
 				<span className="text-xs text-muted-foreground" aria-hidden="true">
 					(you)
 				</span>
 			</span>
 		);
-	return (
-		<span
-			className="font-mono text-sm"
-			aria-label={`Actor ID ${actorId}`}
-			title={actorId}
-		>
-			Actor {shortActor(actorId)}
-		</span>
-	);
+	return <span className="truncate text-sm font-medium">{username}</span>;
 }

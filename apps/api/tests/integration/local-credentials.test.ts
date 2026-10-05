@@ -364,7 +364,10 @@ for (const revoked of [false, true]) {
 		expect((await recover(fixture.id, pending.actorId)).status).toBe(403);
 		const response = await recover(fixture.id);
 		expect(response.status).toBe(200);
-		expect(await response.json()).toMatchObject({ organization_role: "admin" });
+		expect(await response.json()).toMatchObject({
+			username: `recovery-${fixture.id}`,
+			organization_role: "admin",
+		});
 		const after = await state(fixture.id);
 		expect(after.credential_state).toEqual(before.credential_state);
 		expect(after.enrollments).toEqual(before.enrollments);

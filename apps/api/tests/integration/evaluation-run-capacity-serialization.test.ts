@@ -59,10 +59,6 @@ async function seedRunAdmission(pool: Pool) {
 		[organizationId, actorId],
 	);
 	await pool.query(
-		"INSERT INTO project_actor_grants (project_id, organization_id, actor_id, role) VALUES ($1, $2, $3, 'user')",
-		[projectId, organizationId, actorId],
-	);
-	await pool.query(
 		"INSERT INTO datasets (id, project_id, slug, name) VALUES ($1, $2, 'capacity-dataset', 'Capacity dataset')",
 		[datasetId, projectId],
 	);

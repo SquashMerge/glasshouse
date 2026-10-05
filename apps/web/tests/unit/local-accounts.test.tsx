@@ -21,6 +21,7 @@ describe("local account administration", () => {
 	it("shows a provisioned code only in ephemeral state, focuses it, and discards it on dismissal", async () => {
 		const code = {
 			actor_id: "test-actor",
+			username: "new.user",
 			enrollment_id: "test-enrollment",
 			code: "test-only-code".padEnd(43, "x"),
 		};
@@ -45,6 +46,8 @@ describe("local account administration", () => {
 		const field = await screen.findByLabelText("Enrollment code (shown once)");
 		await waitFor(() => expect(field).toHaveFocus());
 		expect(field).toHaveValue(code.code);
+		expect(screen.getByText("Account username:")).toBeVisible();
+		expect(screen.getByText("new.user")).toBeVisible();
 		expect(
 			JSON.stringify(
 				client
@@ -71,7 +74,6 @@ describe("local account administration", () => {
 					username: "disabled.user",
 					organization_role: "read_only",
 					status: "disabled",
-					project_grants: [],
 					enrollments: [
 						{
 							id: "expired",

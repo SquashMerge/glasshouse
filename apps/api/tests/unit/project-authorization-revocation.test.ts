@@ -19,8 +19,6 @@ test("takes actor membership locks before the project fence and policy evaluatio
 				return { rows: [{ actor_id: authorization.actor_id }] };
 			if (statement.includes("project_memberships"))
 				return { rows: [{ actor_subject: "member" }] };
-			if (statement.includes("project_actor_grants"))
-				return { rows: [{ actor_id: authorization.actor_id }] };
 			if (statement.includes("FROM projects p"))
 				return { rows: [{ id: "project" }] };
 			return { rows: [{ allowed: false }] };
@@ -30,18 +28,16 @@ test("takes actor membership locks before the project fence and policy evaluatio
 	await expect(
 		lockActiveAuthorizedProject(client as never, "project", authorization),
 	).resolves.toBe(false);
-	expect(calls).toHaveLength(6);
+	expect(calls).toHaveLength(5);
 	expect(calls[0]).toContain("organization_memberships");
 	expect(calls[0]).toContain("FOR UPDATE");
 	expect(calls[1]).toContain("organization_actor_roles");
 	expect(calls[1]).toContain("FOR UPDATE");
 	expect(calls[2]).toContain("project_memberships");
 	expect(calls[2]).toContain("FOR UPDATE");
-	expect(calls[3]).toContain("project_actor_grants");
+	expect(calls[3]).toContain("p.status = ANY($3::text[])");
 	expect(calls[3]).toContain("FOR UPDATE");
-	expect(calls[4]).toContain("p.status = ANY($3::text[])");
-	expect(calls[4]).toContain("FOR UPDATE");
-	expect(calls[5]).toContain("authorization_allows_project");
+	expect(calls[4]).toContain("authorization_allows_project");
 });
 
 test("binds only the project fence parameters", async () => {
@@ -56,8 +52,6 @@ test("binds only the project fence parameters", async () => {
 				return { rows: [{ actor_id: authorization.actor_id }] };
 			if (statement.includes("project_memberships"))
 				return { rows: [{ actor_subject: "member" }] };
-			if (statement.includes("project_actor_grants"))
-				return { rows: [{ actor_id: authorization.actor_id }] };
 			if (statement.includes("FROM projects p"))
 				return { rows: [{ id: "project" }] };
 			return { rows: [{ allowed: true }] };
@@ -68,7 +62,7 @@ test("binds only the project fence parameters", async () => {
 		lockActiveAuthorizedProject(client as never, "project", authorization),
 	).resolves.toBe(true);
 
-	expect(calls[4]).toEqual([
+	expect(calls[3]).toEqual([
 		expect.stringContaining("p.status = ANY($3::text[])"),
 		["project", authorization.organization_id, ["active"]],
 	]);

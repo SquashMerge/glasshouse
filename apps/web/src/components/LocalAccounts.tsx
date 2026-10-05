@@ -90,9 +90,8 @@ export function LocalAccounts() {
 				<CardHeader>
 					<CardTitle>Local accounts</CardTitle>
 					<CardDescription>
-						Provision usernames with existing roles. Hand off the one-time code
-						privately. User and Read-only accounts need explicit Project grants
-						below.
+						Provision usernames with organization roles. Hand off the one-time
+						code privately.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-5">
@@ -179,6 +178,10 @@ export function LocalAccounts() {
 								spellCheck={false}
 								className="font-mono"
 							/>
+							<p className="text-sm">
+								<span className="font-medium">Account username:</span>{" "}
+								{code.username}
+							</p>
 							<p className="text-sm text-muted-foreground">
 								Valid for seven days. Privately give this code and the username
 								to the account holder. They enter it at /enroll. It cannot be
@@ -276,9 +279,6 @@ export function LocalAccounts() {
 									</CardTitle>
 									<Badge variant="outline">{account.status}</Badge>
 								</div>
-								<CardDescription className="break-all">
-									Actor {account.actor_id}
-								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-5">
 								<div className="space-y-2">
@@ -310,7 +310,7 @@ export function LocalAccounts() {
 								<p className="text-sm text-muted-foreground">
 									{account.organization_role === "admin"
 										? "Admin access uses the existing organization policy."
-										: `${account.project_grants.length} explicit Project grant(s). Manage grants below.`}
+										: "This role applies to every Project in this organization."}
 								</p>
 								<div className="flex flex-wrap gap-3">
 									<Button

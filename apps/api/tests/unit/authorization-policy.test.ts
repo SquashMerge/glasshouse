@@ -1,27 +1,22 @@
 import { describe, expect, it } from "bun:test";
 import {
-	effectiveRoleForLegacyAssignment,
+	effectiveRoleForOrganizationRole,
 	projectOperationAllowed,
 } from "../../src/authorization-policy";
 
 describe("Admin/User/Read-only authorization policy", () => {
-	it("maps legacy assignments explicitly without granting cross-project access", () => {
-		expect(effectiveRoleForLegacyAssignment("owner", null)).toBe("admin");
-		expect(effectiveRoleForLegacyAssignment("member", "manager")).toBe("user");
-		expect(effectiveRoleForLegacyAssignment("member", "member")).toBe(
-			"read_only",
-		);
-		expect(effectiveRoleForLegacyAssignment("member", null)).toBeNull();
-		expect(effectiveRoleForLegacyAssignment("owner", "member")).toBe("admin");
+	it("maps every organization role to access across its organization", () => {
+		expect(effectiveRoleForOrganizationRole("admin")).toBe("admin");
+		expect(effectiveRoleForOrganizationRole("user")).toBe("user");
+		expect(effectiveRoleForOrganizationRole("read_only")).toBe("read_only");
+		expect(effectiveRoleForOrganizationRole(null)).toBeNull();
 	});
 
-	it("preserves legacy member product access only until strict enforcement is enabled", () => {
-		expect(
-			projectOperationAllowed("compatibility", "read_only", "product_write"),
-		).toBe(true);
-		expect(
-			projectOperationAllowed("strict", "read_only", "product_write"),
-		).toBe(false);
+	it("denies Read-only writes in every enforcement mode", () => {
+		for (const enforcement of ["compatibility", "strict"] as const)
+			expect(
+				projectOperationAllowed(enforcement, "read_only", "product_write"),
+			).toBe(false);
 	});
 
 	it("denies Read-only curation in compatibility and strict enforcement", () => {
@@ -52,13 +47,11 @@ describe("Admin/User/Read-only authorization policy", () => {
 		);
 	});
 
-	it("does not broaden legacy member audit visibility during compatibility", () => {
-		expect(
-			projectOperationAllowed("compatibility", "read_only", "audit_read"),
-		).toBe(false);
-		expect(projectOperationAllowed("strict", "read_only", "audit_read")).toBe(
-			true,
-		);
+	it("allows Read-only project evidence reads in every enforcement mode", () => {
+		for (const enforcement of ["compatibility", "strict"] as const)
+			expect(
+				projectOperationAllowed(enforcement, "read_only", "audit_read"),
+			).toBe(true);
 	});
 
 	it("limits Users to ordinary project work and reserves governed operations for Admins", () => {
@@ -78,20 +71,18 @@ describe("Admin/User/Read-only authorization policy", () => {
 		);
 	});
 
-	it("keeps legacy manager lifecycle access during compatibility without carrying it into strict mode", () => {
-		expect(
-			projectOperationAllowed("compatibility", "user", "project_manage"),
-		).toBe(true);
-		expect(projectOperationAllowed("strict", "user", "project_manage")).toBe(
-			false,
-		);
+	it("reserves project lifecycle access for Admins in every enforcement mode", () => {
+		for (const enforcement of ["compatibility", "strict"] as const)
+			expect(
+				projectOperationAllowed(enforcement, "user", "project_manage"),
+			).toBe(false);
 	});
 
-	it("keeps legacy manager governance access only during compatibility", () => {
-		expect(projectOperationAllowed("compatibility", "user", "governed")).toBe(
-			true,
-		);
-		expect(projectOperationAllowed("strict", "user", "governed")).toBe(false);
+	it("reserves governance access for Admins in every enforcement mode", () => {
+		for (const enforcement of ["compatibility", "strict"] as const)
+			expect(projectOperationAllowed(enforcement, "user", "governed")).toBe(
+				false,
+			);
 	});
 
 	it("keeps release-gate approval and invocation Admin-only in every enforcement mode", () => {

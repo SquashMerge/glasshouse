@@ -1284,7 +1284,7 @@ export async function getDatasetDraftItemRevisions(
 		)
 			throw new DatasetRepositoryError("NOT_FOUND", "Project is not available");
 		const result = await client.query(
-			`SELECT revision.*, COALESCE(revision.dataset_version_item_id, revision.draft_item_id) AS item_id FROM dataset_draft_item_revisions revision JOIN datasets dataset ON dataset.id = revision.dataset_id AND dataset.project_id = revision.project_id WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND (revision.draft_item_id = $3::uuid OR EXISTS (SELECT 1 FROM dataset_version_items item JOIN dataset_versions version ON version.id = item.dataset_version_id AND version.project_id = item.project_id WHERE item.project_id = revision.project_id AND item.id = revision.dataset_version_item_id AND version.dataset_id = revision.dataset_id AND item.id = $3::uuid)) ORDER BY revision.item_revision DESC`,
+			`SELECT revision.*, COALESCE(revision.dataset_version_item_id, revision.draft_item_id) AS item_id, COALESCE(credential.username, identity.canonical_subject, 'Unknown account') AS actor_username FROM dataset_draft_item_revisions revision JOIN datasets dataset ON dataset.id = revision.dataset_id AND dataset.project_id = revision.project_id LEFT JOIN local_credentials credential ON credential.organization_id = dataset.organization_id AND credential.actor_id = revision.actor_id LEFT JOIN actor_identities identity ON identity.organization_id = dataset.organization_id AND identity.actor_id = revision.actor_id AND identity.provider_namespace = 'basic:v1' WHERE dataset.project_id = $1 AND dataset.slug = $2 AND dataset.archived_at IS NULL AND (revision.draft_item_id = $3::uuid OR EXISTS (SELECT 1 FROM dataset_version_items item JOIN dataset_versions version ON version.id = item.dataset_version_id AND version.project_id = item.project_id WHERE item.project_id = revision.project_id AND item.id = revision.dataset_version_item_id AND version.dataset_id = revision.dataset_id AND item.id = $3::uuid)) ORDER BY revision.item_revision DESC`,
 			[input.project_id, input.slug, input.item_id],
 		);
 		if (!result.rows.length) {
@@ -1305,7 +1305,7 @@ export async function getDatasetDraftItemRevisions(
 				id: text(row as Row, "item_id"),
 				item_revision: Number(row.item_revision),
 				action: text(row, "action"),
-				actor_id: text(row, "actor_id"),
+				actor_username: text(row, "actor_username"),
 				created_at: timestamp(row, "created_at"),
 			})),
 		};

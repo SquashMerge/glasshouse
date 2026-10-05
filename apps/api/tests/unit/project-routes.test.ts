@@ -466,16 +466,6 @@ describe("project authorization routes", () => {
 			),
 		).toBe(true);
 		expect(
-			query.mock.calls.some(([sql]) =>
-				sql.startsWith("SELECT actor_id FROM project_actor_grants"),
-			),
-		).toBe(true);
-		expect(
-			query.mock.calls.some(([sql]) =>
-				sql.startsWith("DELETE FROM project_actor_grants"),
-			),
-		).toBe(true);
-		expect(
 			query.mock.calls.some(([sql]) => sql.includes("SET project_id = NULL")),
 		).toBe(false);
 	});
@@ -1498,9 +1488,6 @@ describe("project authorization routes", () => {
 		const statements = query.mock.calls.map(([sql]) => sql);
 		expect(statements).toContainEqual(
 			expect.stringContaining("SELECT actor_id FROM organization_actor_roles"),
-		);
-		expect(statements).toContainEqual(
-			expect.stringContaining("SELECT actor_id FROM project_actor_grants"),
 		);
 		const durableAuthorization = statements.find((statement) =>
 			statement.startsWith("SELECT access.effective_role AS project_role"),

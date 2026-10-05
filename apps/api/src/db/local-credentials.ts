@@ -319,7 +319,9 @@ export class LocalCredentialStore {
 			role: "admin" | "user" | "read_only";
 			email?: string;
 		},
-	): Promise<LocalPrincipal & { enrollmentId: string; token: string }> {
+	): Promise<
+		LocalPrincipal & { username: string; enrollmentId: string; token: string }
+	> {
 		if (
 			initiator.organizationId !== this.organizationId ||
 			!["admin", "user", "read_only"].includes(input.role)
@@ -373,7 +375,12 @@ export class LocalCredentialStore {
 						tokenDigest(token),
 					],
 				);
-				return { ...principal, enrollmentId: enrollment.rows[0]!.id, token };
+				return {
+					...principal,
+					username,
+					enrollmentId: enrollment.rows[0]!.id,
+					token,
+				};
 			},
 		);
 	}
@@ -451,7 +458,7 @@ export class LocalCredentialStore {
 	async initiatePasswordReset(
 		initiator: LocalPrincipal,
 		targetActorId: string,
-	): Promise<{ enrollmentId: string; token: string }> {
+	): Promise<{ username: string; enrollmentId: string; token: string }> {
 		if (initiator.organizationId !== this.organizationId)
 			throw new LocalCredentialError();
 		const token = randomBytes(32).toString("base64url");
@@ -463,7 +470,7 @@ export class LocalCredentialStore {
 			async (client) => {
 				await guardUsableAdmin(client, this.organizationId, targetActorId);
 				const reset = await client.query(
-					"UPDATE local_credentials SET password_hash = NULL, password_algorithm = NULL, password_version = NULL, updated_at = now() WHERE organization_id = $1 AND actor_id = $2 AND enabled RETURNING actor_id",
+					"UPDATE local_credentials SET password_hash = NULL, password_algorithm = NULL, password_version = NULL, updated_at = now() WHERE organization_id = $1 AND actor_id = $2 AND enabled RETURNING actor_id, username",
 					[this.organizationId, targetActorId],
 				);
 				if (!reset.rowCount) throw new LocalCredentialError();
@@ -480,7 +487,11 @@ export class LocalCredentialStore {
 						tokenDigest(token),
 					],
 				);
-				return { enrollmentId: enrollment.rows[0]!.id, token };
+				return {
+					username: reset.rows[0]!.username,
+					enrollmentId: enrollment.rows[0]!.id,
+					token,
+				};
 			},
 		);
 	}

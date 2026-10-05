@@ -1298,6 +1298,7 @@ describe("dataset repository", () => {
 								capture_context: {},
 								action: "reviewed",
 								actor_id: actorId,
+								actor_username: "reader",
 								created_at: NOW,
 							},
 						],
@@ -1321,7 +1322,7 @@ describe("dataset repository", () => {
 			id: draftItemId,
 			item_revision: 3,
 			action: "reviewed",
-			actor_id: actorId,
+			actor_username: "reader",
 		});
 		expect(result.items[0]?.id).not.toBe(revisionId);
 		expect(DatasetDraftItemRevision.safeParse(result.items[0]).success).toBe(
@@ -1368,6 +1369,7 @@ describe("dataset repository", () => {
 								capture_context: {},
 								action: "reviewed",
 								actor_id: actorId,
+								actor_username: "reader",
 								created_at: NOW,
 							},
 						],
@@ -1392,7 +1394,7 @@ describe("dataset repository", () => {
 			id: publishedItemId,
 			item_revision: 3,
 			action: "reviewed",
-			actor_id: actorId,
+			actor_username: "reader",
 		});
 		const historyQuery = queries.find((sql) =>
 			sql.startsWith("SELECT revision.*"),
@@ -1437,6 +1439,7 @@ describe("dataset repository", () => {
 								capture_context: {},
 								action: "upserted",
 								actor_id: actorId,
+								actor_username: "reader",
 								created_at: NOW,
 							},
 						],
@@ -1459,7 +1462,7 @@ describe("dataset repository", () => {
 		expect(result.items[0]).toMatchObject({
 			id: draftItemId,
 			action: "upserted",
-			actor_id: actorId,
+			actor_username: "reader",
 		});
 		const historyQuery = queries.find((sql) =>
 			sql.startsWith("SELECT revision.*"),

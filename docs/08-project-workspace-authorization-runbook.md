@@ -66,17 +66,14 @@ experiment after restoring appropriate execute access.
 
 ## Admin access and break-glass recovery
 
-Migration `0051_admin_membership_project_grants_recovery.sql` makes durable Actor
-IDs the administration and authorization source of truth. The `/access` dashboard
-and `/v1/admin/*` endpoints are Admin-only: they list every organization-scoped
-durable actor, set only **Admin**, **User**, or **Read-only** organization roles,
-and list, set, or revoke explicit **User** or **Read-only** grants for active
-same-organization Projects. The API never accepts a username, email, IdP claim,
-or caller-selected organization as the authorization subject. Basic Auth subjects
-remain a compatibility projection and are never returned by this administration
-surface. Admins hold organization-wide authority; User and Read-only actors have
-only their explicit active-Project grants. A Read-only organization role is a
-ceiling: it cannot receive or retain a User-level Project grant.
+Migration `0103_organization_role_project_access.sql` makes durable Organization
+roles the sole effective Project authorization source. The `/access` dashboard and
+`/v1/admin/*` endpoints are Admin-only management surfaces: they list human
+usernames, set only **Admin**, **User**, or **Read-only** organization roles, and
+have no per-Project grant flow. The API never accepts a username, email, IdP claim,
+or caller-selected organization as the authorization subject. Durable Actor IDs
+remain internal. Admins hold full organization-wide authority; User and Read-only
+roles apply to every Project in the same Organization.
 
 The existing `ASTRAEA_BOOTSTRAP_OWNER_USERNAME` credential is the only supported
 break-glass authority. It must match exactly one configured Basic Auth credential
@@ -94,7 +91,7 @@ never create an application-side recovery credential.
 
 The database rejects removal, demotion, and identity unlinking of the final active
 Admin. Administration mutations lock compatibility membership rows, durable role
-and Project-grant rows, Project rows, and audit UUIDs in that order; retries occur
+rows, Project rows, and audit UUIDs in that order; retries occur
 only before mutation code begins. Do not bypass these guards for fixtures or manual
 repair. Inspect `/v1/admin/audit-events` for content-free access evidence.
 
@@ -152,8 +149,8 @@ all effects that have not already won their own claim.
 In strict mode, use Admins to create Projects, change the organization default,
 permanently delete non-default Projects, manage organization members, perform
 lifecycle/recovery actions, and approve governed/destructive work. Users may do
-ordinary product work and executions only in granted active Projects. Read-only
-actors may inspect granted active Project evidence and content-free audit history;
+ordinary product work and executions in every active Project in their Organization.
+Read-only actors may inspect active Project evidence and content-free audit history;
 they cannot write, execute, ingest, cancel, approve, promote, delete, or change
 membership/security state. Archive is non-destructive and blocks product reads,
 writes, subscriptions, and direct OTLP. Restore does not resume old jobs.

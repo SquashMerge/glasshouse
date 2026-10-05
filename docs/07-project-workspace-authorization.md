@@ -39,9 +39,9 @@ implementation contract.
 organization-wide authority over active Projects and organization security,
 membership, lifecycle, governed, destructive, and recovery actions. A **User**
 can perform ordinary product work, execute/cancel permitted work, and read
-content-free audit history only in explicitly granted active Projects. A
+content-free audit history in every active Project in their Organization. A
 **Read-only** actor can inspect evidence, results, and content-free audit history
-only in explicitly granted active Projects. Users and Read-only actors cannot
+in every active Project in their Organization. Users and Read-only actors cannot
 manage organization security, lifecycle, membership, governed approvals, or
 destructive/recovery actions. The database serializes transitions and prevents
 removal or demotion of the final Admin; it also preserves the final active
@@ -53,7 +53,7 @@ Project User safeguard inherited from the compatibility manager record.
    without an authorized explicit Project target fail safely.
 4. **OTLP targeting:** direct OTLP ingestion requires one explicit
    `x-astraea-project-id` resource target. The server validates it against the
-   authenticated actor, active Project membership, and organization before
+    authenticated actor, active Project, and organization-role policy before
    decoding/writing telemetry. OTLP resource attributes never establish scope;
    missing, conflicting, archived, or unauthorized targets are rejected.
    Internal server-originated ingestion uses the same validated scope, not a
@@ -131,7 +131,7 @@ Add typed Zod/OpenAPI routes and generated clients for:
 - actor identity and accessible Projects (`GET /v1/me`, `GET /v1/projects`);
 - project creation, authorized detail, safe metadata update, archive, and
   restore;
-- Admin-governed durable Actor role and explicit Project-grant management.
+- Admin-governed durable Actor role management.
 
 `PATCH /v1/projects/{id}` accepts a non-empty subset of `name` and `slug`.
 Names and slugs use the same validation as creation; slugs remain unique within
@@ -143,12 +143,12 @@ that Project. Unauthorized Project targets return the same non-enumerating
 response as other Project lifecycle routes.
 
 Admins manage organization-scoped durable Actors through `GET
-/v1/admin/actors` and `PUT /v1/admin/actors/{actorId}/role`. They manage
-explicit active-Project grants through `GET`, `PUT`, and `DELETE
-/v1/admin/projects/{projectId}/grants/{actorId}`. The API accepts durable actor
-UUIDs only, preserves the final-Admin safeguard, and records content-free,
-append-only audit evidence. Legacy Basic Auth membership rows remain internal
-compatibility projections and are not an administration surface.
+/v1/admin/actors` and `PUT /v1/admin/actors/{actorId}/role`. A role applies to
+every Project in that Organization; no per-Project grant API exists. The API
+uses durable actor UUIDs internally, returns usernames for human-facing labels,
+preserves the final-Admin safeguard, and records content-free append-only audit
+evidence. Legacy Basic Auth membership rows remain internal compatibility
+projections and are not an administration surface.
 
 Projects have stable IDs. Archive is non-destructive, removes a Project from
 normal selection, and blocks new product-data writes until explicit restore.

@@ -27,8 +27,6 @@ describe("withActiveAuthorizedProjectLock", () => {
 				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.includes("project_memberships"))
 				return { rows: [{ actor_subject: "member" }] };
-			if (statement.includes("project_actor_grants"))
-				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
 			return { rows: [] };
@@ -47,12 +45,11 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("organization_actor_roles"),
 			expect.stringContaining("project_memberships"),
-			expect.stringContaining("project_actor_grants"),
 			expect.stringContaining("p.status = ANY($3::text[])"),
 			expect.stringContaining("authorization_allows_project"),
 			"COMMIT",
 		]);
-		expect(query.mock.calls[6]?.[0]).toContain("FOR UPDATE OF p");
+		expect(query.mock.calls[5]?.[0]).toContain("FOR UPDATE OF p");
 		expect(persisted).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
 	});
@@ -74,8 +71,6 @@ describe("withActiveAuthorizedProjectLock", () => {
 				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.includes("project_memberships"))
 				return { rows: [{ actor_subject: scope.actor }] };
-			if (statement.includes("project_actor_grants"))
-				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
 			return { rows: [] };
@@ -97,7 +92,6 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("organization_actor_roles"),
 			expect.stringContaining("project_memberships"),
-			expect.stringContaining("project_actor_grants"),
 			expect.stringContaining("p.status = ANY($3::text[])"),
 			"ROLLBACK",
 			"BEGIN",
@@ -105,7 +99,6 @@ describe("withActiveAuthorizedProjectLock", () => {
 			expect.stringContaining("organization_memberships"),
 			expect.stringContaining("organization_actor_roles"),
 			expect.stringContaining("project_memberships"),
-			expect.stringContaining("project_actor_grants"),
 			expect.stringContaining("p.status = ANY($3::text[])"),
 			expect.stringContaining("authorization_allows_project"),
 			"COMMIT",
@@ -126,8 +119,6 @@ describe("withActiveAuthorizedProjectLock", () => {
 				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.includes("project_memberships"))
 				return { rows: [{ actor_subject: scope.actor }] };
-			if (statement.includes("project_actor_grants"))
-				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
 			if (statement === "COMMIT") throw serializationFailure;
@@ -167,7 +158,6 @@ describe("withActiveAuthorizedProjectLock", () => {
 				expect.stringContaining("organization_memberships"),
 				expect.stringContaining("organization_actor_roles"),
 				expect.stringContaining("project_memberships"),
-				expect.stringContaining("project_actor_grants"),
 				expect.stringContaining("p.status = ANY($3::text[])"),
 				"ROLLBACK",
 			]);
@@ -185,8 +175,6 @@ describe("withActiveAuthorizedProjectLock", () => {
 				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.includes("project_memberships"))
 				return { rows: [{ actor_subject: "member" }] };
-			if (statement.includes("project_actor_grants"))
-				return { rows: [{ actor_id: scope.actorId }] };
 			if (statement.startsWith("SELECT authorization_allows_project"))
 				return { rows: [{ allowed: true }] };
 			if (statement === "ROLLBACK") throw new Error("rollback failed");
