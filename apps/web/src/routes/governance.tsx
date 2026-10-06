@@ -12,6 +12,7 @@ import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select } from "../components/ui/select";
+import { PageHeader } from "../components/ui/page-header";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	approveGovernancePolicy,
@@ -190,12 +191,10 @@ export function GovernancePage() {
 	);
 	return (
 		<div className="space-y-8">
-			<div>
-				<h1 className="text-2xl font-semibold tracking-tight">Governance</h1>
-				<p className="text-sm text-muted-foreground">
-					Review policy state, approve drafts, and run bounded retention.
-				</p>
-			</div>
+			<PageHeader
+				title="Governance"
+				description="Review policy state, approve drafts, and run bounded retention."
+			/>
 			<section
 				className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]"
 				aria-label="Policy status"

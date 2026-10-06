@@ -1,4 +1,5 @@
 import { Button } from "../components/ui/button";
+import { DialogContent, DialogOverlay } from "../components/ui/dialog";
 
 export function RollbackLatestVersionDialog({
 	pending,
@@ -12,15 +13,12 @@ export function RollbackLatestVersionDialog({
 	onConfirm: () => void;
 }) {
 	return (
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4"
-			onMouseDown={onClose}
-		>
-			<div
+		<DialogOverlay onMouseDown={onClose}>
+			<DialogContent
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="rollback-latest-version-title"
-				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+				className="max-w-md"
 				onMouseDown={(event) => event.stopPropagation()}
 			>
 				<h2
@@ -60,7 +58,7 @@ export function RollbackLatestVersionDialog({
 						{pending ? "Rolling back..." : "Rollback version"}
 					</Button>
 				</div>
-			</div>
-		</div>
+			</DialogContent>
+		</DialogOverlay>
 	);
 }

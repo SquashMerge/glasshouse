@@ -1,6 +1,9 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "../components/ui/button";
+import { DialogContent, DialogOverlay } from "../components/ui/dialog";
+import { Input } from "../components/ui/input";
+import { PageHeader } from "../components/ui/page-header";
 import { useProjectSelection } from "../components/ProjectProvider";
 import {
 	archiveProject,
@@ -140,12 +143,10 @@ export function ProjectsPage() {
 
 	return (
 		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
-				<p className="text-sm text-muted-foreground">
-					Manage the projects you can access.
-				</p>
-			</div>
+			<PageHeader
+				title="Projects"
+				description="Manage the projects you can access."
+			/>
 			{operationError && !deleting && (
 				<p className="text-sm text-destructive" role="alert">
 					{operationError}
@@ -162,23 +163,23 @@ export function ProjectsPage() {
 				>
 					<label className="grid gap-1 text-sm">
 						Project name
-						<input
+						<Input
 							aria-label="Project name"
 							required
 							value={name}
 							onChange={(event) => setName(event.target.value)}
-							className="h-9 rounded-md border border-input bg-background px-2"
+							className="h-9 px-2"
 						/>
 					</label>
 					<label className="grid gap-1 text-sm">
 						Project slug
-						<input
+						<Input
 							aria-label="Project slug"
 							required
 							pattern="[a-z0-9][a-z0-9-]*"
 							value={slug}
 							onChange={(event) => setSlug(event.target.value)}
-							className="h-9 rounded-md border border-input bg-background px-2"
+							className="h-9 px-2"
 						/>
 					</label>
 					<Button type="submit" disabled={createMutation.isPending}>
@@ -285,67 +286,70 @@ export function ProjectsPage() {
 				</section>
 			)}
 			{deleting && (
-				<div
-					className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
-					role="dialog"
-					aria-modal="true"
-					aria-labelledby="delete-project-title"
-				>
-					<form
-						className="w-full max-w-md space-y-4 rounded-lg border border-border bg-background p-6 shadow-lg"
-						onSubmit={(event) => {
-							event.preventDefault();
-							setOperationError(null);
-							deleteMutation.mutate({
-								id: deleting.id,
-								confirmation_name: confirmationName,
-							});
-						}}
+				<DialogOverlay>
+					<DialogContent
+						className="max-w-md space-y-4"
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="delete-project-title"
 					>
-						<div>
-							<h2 id="delete-project-title" className="text-lg font-semibold">
-								Delete {deleting.name}?
-							</h2>
-							<p className="mt-2 text-sm text-muted-foreground">
-								This permanently deletes this Project and its project-owned
-								data. This cannot be undone.
-							</p>
-						</div>
-						{operationError && (
-							<p className="text-sm text-destructive" role="alert">
-								{operationError}
-							</p>
-						)}
-						<label className="grid gap-2 text-sm font-medium">
-							Type {deleting.name} to confirm
-							<input
-								aria-label="Project deletion confirmation"
-								autoFocus
-								value={confirmationName}
-								onChange={(event) => setConfirmationName(event.target.value)}
-								className="h-9 rounded-md border border-input bg-background px-2 font-normal"
-							/>
-						</label>
-						<div className="flex justify-end gap-2">
-							<Button
-								type="button"
-								variant="outline"
-								onClick={() => setDeleting(null)}
-							>
-								Cancel
-							</Button>
-							<Button
-								type="submit"
-								variant="destructive"
-								disabled={
-									confirmationName !== deleting.name || deleteMutation.isPending
-								}
-							>
-								Delete project
-							</Button>
-						</div>
-					</form>
-				</div>
+						<form
+							className="space-y-4"
+							onSubmit={(event) => {
+								event.preventDefault();
+								setOperationError(null);
+								deleteMutation.mutate({
+									id: deleting.id,
+									confirmation_name: confirmationName,
+								});
+							}}
+						>
+							<div>
+								<h2 id="delete-project-title" className="text-lg font-semibold">
+									Delete {deleting.name}?
+								</h2>
+								<p className="mt-2 text-sm text-muted-foreground">
+									This permanently deletes this Project and its project-owned
+									data. This cannot be undone.
+								</p>
+							</div>
+							{operationError && (
+								<p className="text-sm text-destructive" role="alert">
+									{operationError}
+								</p>
+							)}
+							<label className="grid gap-2 text-sm font-medium">
+								Type {deleting.name} to confirm
+								<Input
+									aria-label="Project deletion confirmation"
+									autoFocus
+									value={confirmationName}
+									onChange={(event) => setConfirmationName(event.target.value)}
+									className="h-9 px-2 font-normal"
+								/>
+							</label>
+							<div className="flex justify-end gap-2">
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => setDeleting(null)}
+								>
+									Cancel
+								</Button>
+								<Button
+									type="submit"
+									variant="destructive"
+									disabled={
+										confirmationName !== deleting.name ||
+										deleteMutation.isPending
+									}
+								>
+									Delete project
+								</Button>
+							</div>
+						</form>
+					</DialogContent>
+				</DialogOverlay>
 			)}
 		</div>
 	);
@@ -400,11 +404,11 @@ function DeletingProjectRecovery({
 				>
 					<label className="grid gap-1 text-sm">
 						Type {project.name} to retry
-						<input
+						<Input
 							aria-label={`Deletion confirmation for ${project.name}`}
 							value={confirmationName}
 							onChange={(event) => setConfirmationName(event.target.value)}
-							className="h-9 rounded-md border border-input bg-background px-2"
+							className="h-9 px-2"
 						/>
 					</label>
 					<Button
@@ -468,20 +472,20 @@ function ProjectList({
 								onSave(project);
 							}}
 						>
-							<input
+							<Input
 								aria-label={`New name for ${project.name}`}
 								required
 								value={editedName}
 								onChange={(event) => onEditedName(event.target.value)}
-								className="h-9 rounded-md border border-input bg-background px-2"
+								className="h-9 px-2"
 							/>
-							<input
+							<Input
 								aria-label={`New slug for ${project.name}`}
 								required
 								pattern="[a-z0-9][a-z0-9-]*"
 								value={editedSlug}
 								onChange={(event) => onEditedSlug(event.target.value)}
-								className="h-9 rounded-md border border-input bg-background px-2"
+								className="h-9 px-2"
 							/>
 							<Button type="submit" size="sm">
 								Save name

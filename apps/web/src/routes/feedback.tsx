@@ -11,6 +11,7 @@ import {
 import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Select } from "../components/ui/select";
+import { PageHeader } from "../components/ui/page-header";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Skeleton } from "../components/ui/skeleton";
 import { PageMessage } from "./prompts";
@@ -43,12 +44,10 @@ export function FeedbackPage() {
 	const canCurate = selectedProject.project_role !== "read_only";
 	return (
 		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold">Feedback</h1>
-				<p className="text-sm text-muted-foreground">
-					Human signals require explicit review before adding a dataset case.
-				</p>
-			</div>
+			<PageHeader
+				title="Feedback"
+				description="Human signals require explicit review before adding a dataset case."
+			/>
 			<div className="flex gap-2">
 				<Button
 					variant={queue ? "default" : "outline"}

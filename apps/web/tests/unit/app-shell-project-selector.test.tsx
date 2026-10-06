@@ -161,11 +161,11 @@ describe("AppShell project selector", () => {
 			"pl-2",
 			"pr-9",
 		);
-		expect(screen.getByTestId("project-selector-chevron")).toHaveClass(
+		expect(screen.getByTestId("select-chevron")).toHaveClass(
 			"pointer-events-none",
 			"right-3",
 		);
-		expect(screen.getByTestId("project-selector-chevron")).toHaveAttribute(
+		expect(screen.getByTestId("select-chevron")).toHaveAttribute(
 			"aria-hidden",
 			"true",
 		);
@@ -180,9 +180,7 @@ describe("AppShell project selector", () => {
 		);
 
 		expect(screen.getByTestId("project-selector")).toBeDisabled();
-		expect(screen.getByTestId("project-selector-chevron")).toHaveClass(
-			"opacity-50",
-		);
+		expect(screen.getByTestId("select-chevron")).toHaveClass("opacity-50");
 	});
 
 	it("places the Settings group last after Prompts with nested route links", () => {

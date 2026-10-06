@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { LuLoaderCircle, LuPlus } from "react-icons/lu";
 import { Button, buttonVariants } from "../components/ui/button";
+import { PageHeader } from "../components/ui/page-header";
 import {
 	Card,
 	CardContent,
@@ -61,12 +62,7 @@ export function PromptsPage() {
 	return (
 		<div className="space-y-6" data-testid="prompts-page">
 			<div className="flex flex-wrap items-center justify-between gap-3">
-				<div>
-					<h1 className="text-2xl font-semibold tracking-tight">Prompts</h1>
-					<p className="text-sm text-muted-foreground">
-						{selectedProject.name}
-					</p>
-				</div>
+				<PageHeader title="Prompts" description={selectedProject.name} />
 				<Link
 					to="/prompts/new"
 					aria-label="New prompt"

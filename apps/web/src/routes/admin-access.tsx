@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "../components/ui/button";
+import { DialogContent, DialogOverlay } from "../components/ui/dialog";
 import {
 	Card,
 	CardContent,
@@ -10,6 +11,7 @@ import {
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select } from "../components/ui/select";
+import { PageHeader as SharedPageHeader } from "../components/ui/page-header";
 import { ListLoadingSkeleton } from "../components/LoadingSkeletons";
 import { LocalAccounts } from "../components/LocalAccounts";
 import {
@@ -202,52 +204,54 @@ function RecoveryCard({
 				</p>
 			) : null}
 			{open ? (
-				<div
-					className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
-					role="dialog"
-					aria-modal="true"
-					aria-labelledby="recovery-title"
-				>
-					<form
-						className="w-full max-w-md space-y-4 rounded-lg border border-border bg-background p-6 shadow-lg"
-						onSubmit={(event) => {
-							event.preventDefault();
-							onRecover();
-						}}
+				<DialogOverlay>
+					<DialogContent
+						className="max-w-md space-y-4"
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="recovery-title"
 					>
-						<div>
-							<h2 id="recovery-title" className="text-lg font-semibold">
-								Restore Admin access?
-							</h2>
-							<p className="mt-2 text-sm text-muted-foreground">
-								This destructive break-glass action is allowed only when the
-								organization has no active Admin. It is rate-limited and audited
-								without credentials or content.
-							</p>
-						</div>
-						<Label className="grid gap-2">
-							Type RESTORE ADMIN to confirm
-							<Input
-								autoFocus
-								aria-label="Recovery confirmation"
-								value={confirmation}
-								onChange={(event) => onConfirmationChange(event.target.value)}
-							/>
-						</Label>
-						<div className="flex justify-end gap-2">
-							<Button type="button" variant="outline" onClick={onClose}>
-								Cancel
-							</Button>
-							<Button
-								type="submit"
-								variant="destructive"
-								disabled={confirmation !== "RESTORE ADMIN" || pending}
-							>
-								Restore Admin
-							</Button>
-						</div>
-					</form>
-				</div>
+						<form
+							className="space-y-4"
+							onSubmit={(event) => {
+								event.preventDefault();
+								onRecover();
+							}}
+						>
+							<div>
+								<h2 id="recovery-title" className="text-lg font-semibold">
+									Restore Admin access?
+								</h2>
+								<p className="mt-2 text-sm text-muted-foreground">
+									This destructive break-glass action is allowed only when the
+									organization has no active Admin. It is rate-limited and
+									audited without credentials or content.
+								</p>
+							</div>
+							<Label className="grid gap-2">
+								Type RESTORE ADMIN to confirm
+								<Input
+									autoFocus
+									aria-label="Recovery confirmation"
+									value={confirmation}
+									onChange={(event) => onConfirmationChange(event.target.value)}
+								/>
+							</Label>
+							<div className="flex justify-end gap-2">
+								<Button type="button" variant="outline" onClick={onClose}>
+									Cancel
+								</Button>
+								<Button
+									type="submit"
+									variant="destructive"
+									disabled={confirmation !== "RESTORE ADMIN" || pending}
+								>
+									Restore Admin
+								</Button>
+							</div>
+						</form>
+					</DialogContent>
+				</DialogOverlay>
 			) : null}
 		</>
 	);
@@ -255,12 +259,10 @@ function RecoveryCard({
 
 function PageHeader() {
 	return (
-		<div>
-			<h1 className="text-2xl font-semibold tracking-tight">Access</h1>
-			<p className="text-sm text-muted-foreground">
-				Manage organization roles across every Project in this organization.
-			</p>
-		</div>
+		<SharedPageHeader
+			title="Access"
+			description="Manage organization roles across every Project in this organization."
+		/>
 	);
 }
 

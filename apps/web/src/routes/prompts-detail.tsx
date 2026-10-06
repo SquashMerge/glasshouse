@@ -5,6 +5,8 @@ import { LuLoaderCircle } from "react-icons/lu";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { DetailLoadingSkeleton } from "../components/LoadingSkeletons";
 import { Button } from "../components/ui/button";
+import { DialogContent, DialogOverlay } from "../components/ui/dialog";
+import { PageHeader } from "../components/ui/page-header";
 import {
 	Card,
 	CardContent,
@@ -12,6 +14,7 @@ import {
 	CardTitle,
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { Textarea } from "../components/ui/textarea";
 import { useEventSource } from "../hooks/useEventSource";
 import {
 	isOptimizationActive,
@@ -337,14 +340,14 @@ export function PromptDetailPage() {
 	return (
 		<div className="space-y-6" data-testid="prompt-detail">
 			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<h1 className="text-2xl font-semibold tracking-tight">
-						{prompt.name}
-					</h1>
-					<p className="font-mono text-sm text-muted-foreground">
-						{prompt.id}@{prompt.version}
-					</p>
-				</div>
+				<PageHeader
+					title={prompt.name}
+					description={
+						<span className="font-mono">
+							{prompt.id}@{prompt.version}
+						</span>
+					}
+				/>
 				<div className="flex flex-wrap gap-2">
 					<Button
 						variant="outline"
@@ -640,12 +643,12 @@ function OptimizationConfirmDialog({
 			Number(maxMetricCalls) <= MAX_OPTIMIZATION_METRIC_CALLS,
 	);
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4">
-			<div
+		<DialogOverlay>
+			<DialogContent
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="optimization-title"
-				className="max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto rounded-lg border border-border bg-background p-6 shadow-lg"
+				className="max-w-3xl"
 			>
 				<h2 id="optimization-title" className="text-lg font-semibold">
 					Start optimization
@@ -676,8 +679,8 @@ function OptimizationConfirmDialog({
 				<div className="mt-4 space-y-3">
 					<label className="block text-sm font-medium">
 						Reflection rubric / objective
-						<textarea
-							className="mt-1 min-h-20 w-full rounded-md border p-2"
+						<Textarea
+							className="mt-1 min-h-20 p-2"
 							placeholder="e.g. Prioritize urgent work, preserve deadlines, and use concise grouped headings"
 							value={rubric}
 							onChange={(event) => setRubric(event.target.value)}
@@ -833,8 +836,8 @@ function OptimizationConfirmDialog({
 						{pending ? "Starting…" : "Start optimization"}
 					</Button>
 				</div>
-			</div>
-		</div>
+			</DialogContent>
+		</DialogOverlay>
 	);
 }
 
@@ -945,8 +948,8 @@ function OptimizationExampleList({
 					</div>
 					<label className="block text-sm">
 						{title.replace(" examples", "")} {index + 1} input
-						<textarea
-							className="mt-1 min-h-20 w-full rounded-md border bg-background p-2"
+						<Textarea
+							className="mt-1 min-h-20 p-2"
 							value={example.input}
 							onChange={(event) => onUpdate(index, "input", event.target.value)}
 							disabled={disabled}
@@ -954,8 +957,8 @@ function OptimizationExampleList({
 					</label>
 					<label className="block text-sm">
 						{title.replace(" examples", "")} {index + 1} expected answer
-						<textarea
-							className="mt-1 min-h-20 w-full rounded-md border bg-background p-2"
+						<Textarea
+							className="mt-1 min-h-20 p-2"
 							value={example.answer}
 							onChange={(event) =>
 								onUpdate(index, "answer", event.target.value)
@@ -1373,16 +1376,13 @@ function DeletePromptDialog({
 	}, [isDeleting, onClose]);
 
 	return (
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4"
-			onMouseDown={onClose}
-		>
-			<div
+		<DialogOverlay onMouseDown={onClose}>
+			<DialogContent
 				ref={dialogRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="delete-prompt-title"
-				className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg"
+				className="max-w-md"
 				onMouseDown={(event) => event.stopPropagation()}
 			>
 				<h2 id="delete-prompt-title" className="text-lg font-semibold">
@@ -1435,8 +1435,8 @@ function DeletePromptDialog({
 						{isDeleting ? "Deleting…" : "Delete prompt"}
 					</Button>
 				</div>
-			</div>
-		</div>
+			</DialogContent>
+		</DialogOverlay>
 	);
 }
 

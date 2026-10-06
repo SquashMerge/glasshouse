@@ -1,6 +1,6 @@
-import { LuCalendar, LuChevronDown } from "react-icons/lu";
+import { LuCalendar } from "react-icons/lu";
 import { Input } from "./ui/input";
-import { cn } from "../lib/utils";
+import { Select } from "./ui/select";
 
 export type TimeRange =
 	| { kind: "all" }
@@ -114,26 +114,22 @@ export function TimeRangePicker({
 				Time range
 			</span>
 
-			<label className="relative">
-				<select
+			<label>
+				<Select
 					value={selectedLabel}
 					onChange={(e) => {
 						const preset = PRESETS.find((p) => p.label === e.target.value);
 						if (!preset) return;
 						onChange(preset.value);
 					}}
-					className={cn(
-						"h-8 appearance-none rounded-md border border-input bg-background pl-3 pr-8 text-xs",
-						"focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-					)}
+					className="h-8 w-auto text-xs"
 				>
 					{PRESETS.map((p) => (
 						<option key={p.label} value={p.label}>
 							{p.label}
 						</option>
 					))}
-				</select>
-				<LuChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+				</Select>
 			</label>
 
 			{isCustom && (
