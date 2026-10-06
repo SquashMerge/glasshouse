@@ -11,6 +11,7 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Textarea } from "../components/ui/textarea";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { PageMessage } from "./prompts";
 import {
@@ -24,8 +25,7 @@ import {
 	type PromptPreviewResponse,
 } from "../lib/api";
 
-const TEXTAREA_CLASS =
-	"min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+const TEXTAREA_CLASS = "min-h-28 font-mono";
 
 interface PromptComposerProps {
 	projectId: string | null;
@@ -179,7 +179,7 @@ export function PromptComposer({
 								System prompt{" "}
 								<span className="text-muted-foreground">(optional)</span>
 							</Label>
-							<textarea
+							<Textarea
 								id="prompt-system-source"
 								className={TEXTAREA_CLASS}
 								value={systemSource}
@@ -202,7 +202,7 @@ export function PromptComposer({
 								User prompt{" "}
 								<span className="text-muted-foreground">(optional)</span>
 							</Label>
-							<textarea
+							<Textarea
 								id="prompt-user-source"
 								className={TEXTAREA_CLASS}
 								value={userSource}
@@ -235,7 +235,7 @@ export function PromptComposer({
 							</div>
 							<div className="space-y-2">
 								<Label htmlFor="prompt-settings">Settings JSON</Label>
-								<textarea
+								<Textarea
 									id="prompt-settings"
 									className={TEXTAREA_CLASS}
 									value={settingsText}
@@ -313,7 +313,7 @@ function ServerPreview({
 				</p>
 				<div className="space-y-2">
 					<Label htmlFor="prompt-variables">Variables JSON</Label>
-					<textarea
+					<Textarea
 						id="prompt-variables"
 						className={TEXTAREA_CLASS}
 						value={variablesText}

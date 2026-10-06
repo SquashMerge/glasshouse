@@ -103,7 +103,7 @@ const defaultQuery = async (sql: string, values: string[] = []) => {
 		};
 	if (values.includes(OTHER_PROJECT)) return { rows: [] };
 	if (
-		sql.startsWith("WITH authorization AS MATERIALIZED") ||
+		sql.startsWith("WITH authz AS MATERIALIZED") ||
 		sql.startsWith("WITH authorized_actor AS MATERIALIZED") ||
 		sql.startsWith("WITH provenance AS MATERIALIZED")
 	) {
@@ -1046,7 +1046,7 @@ describe("project authorization routes", () => {
 	it("lets a durable Admin update a project without a legacy manager projection", async () => {
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
 			if (
-				sql.startsWith("WITH authorization AS MATERIALIZED") &&
+				sql.startsWith("WITH authz AS MATERIALIZED") &&
 				sql.includes("UPDATE projects") &&
 				sql.includes("om.role = 'owner' OR pm.role = 'manager'")
 			)
@@ -1136,7 +1136,7 @@ describe("project authorization routes", () => {
 	it("uses the verified actor ID for durable project authorization", async () => {
 		const verifiedActorId = "33333333-3333-4333-8333-333333333333";
 		query.mockImplementation(async (sql: string, values: string[] = []) => {
-			if (sql.includes("authorization AS MATERIALIZED")) {
+			if (sql.includes("authz AS MATERIALIZED")) {
 				return values.at(-1) === verifiedActorId
 					? defaultQuery(sql, values)
 					: { rows: [] };
@@ -1172,7 +1172,7 @@ describe("project authorization routes", () => {
 		expect(collision.status).toBe(404);
 		expect(quarantined.status).toBe(404);
 		const [sql, values] = query.mock.calls.find(([sql]) =>
-			(sql as string).includes("authorization AS MATERIALIZED"),
+			(sql as string).includes("authz AS MATERIALIZED"),
 		)!;
 		expect(sql).toContain(
 			"authorization_effective_project_role(p.organization_id, p.id, $6)",
@@ -1457,12 +1457,12 @@ describe("project authorization routes", () => {
 			.map(([sql]) => sql)
 			.filter(
 				(sql) =>
-					sql.includes("authorization AS MATERIALIZED") ||
+					sql.includes("authz AS MATERIALIZED") ||
 					sql.includes("authorized_actor AS MATERIALIZED"),
 			);
 		expect(mutations.length).toBeGreaterThanOrEqual(5);
 		for (const sql of mutations) {
-			expect(sql).toMatch(/(?:authorization|authorized_actor) AS MATERIALIZED/);
+			expect(sql).toMatch(/(?:authz|authorized_actor) AS MATERIALIZED/);
 			expect(sql).toContain("FOR UPDATE");
 			expect(sql).toContain(
 				"audit AS (INSERT INTO project_authorization_audit_events",

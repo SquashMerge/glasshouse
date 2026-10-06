@@ -9,7 +9,6 @@ import {
 	LuLogIn,
 	LuChevronLeft,
 	LuChevronRight,
-	LuChevronDown,
 	LuChevronUp,
 	LuDatabase,
 	LuChartLine,
@@ -22,6 +21,7 @@ import {
 	LuKeyRound,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
+import { Select } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { Skeleton } from "./ui/skeleton";
 import {
@@ -176,32 +176,22 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 							<label htmlFor="selected-project" className="sr-only">
 								Selected project
 							</label>
-							<div className="relative">
-								<select
-									id="selected-project"
-									aria-label="Selected project"
-									value={selectedProjectId ?? ""}
-									disabled={projects.length === 0}
-									onChange={(event) => selectProject(event.target.value)}
-									className="h-9 w-full appearance-none rounded-md border border-input bg-background pl-2 pr-9 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-									data-testid="project-selector"
-								>
-									<option value="">Select a project</option>
-									{projects.map((project) => (
-										<option key={project.id} value={project.id}>
-											{project.name}
-										</option>
-									))}
-								</select>
-								<LuChevronDown
-									className={cn(
-										"pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground",
-										projects.length === 0 && "opacity-50",
-									)}
-									data-testid="project-selector-chevron"
-									aria-hidden="true"
-								/>
-							</div>
+							<Select
+								id="selected-project"
+								aria-label="Selected project"
+								value={selectedProjectId ?? ""}
+								disabled={projects.length === 0}
+								onChange={(event) => selectProject(event.target.value)}
+								className="h-9 pl-2 pr-9 text-sm"
+								data-testid="project-selector"
+							>
+								<option value="">Select a project</option>
+								{projects.map((project) => (
+									<option key={project.id} value={project.id}>
+										{project.name}
+									</option>
+								))}
+							</Select>
 						</>
 					)}
 					{projectsError && (

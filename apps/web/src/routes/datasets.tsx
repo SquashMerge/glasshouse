@@ -17,6 +17,8 @@ import {
 } from "../components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Input } from "../components/ui/input";
+import { PageHeader } from "../components/ui/page-header";
+import { Textarea } from "../components/ui/textarea";
 import {
 	ApiError,
 	archiveDataset,
@@ -167,10 +169,7 @@ export function DatasetsPage() {
 	}
 	return (
 		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold">Datasets</h1>
-				<p className="text-sm text-muted-foreground">{selectedProject.name}</p>
-			</div>
+			<PageHeader title="Datasets" description={selectedProject.name} />
 			{canCurate && (
 				<div className="flex flex-wrap gap-2">
 					<label className="sr-only" htmlFor="dataset-name">
@@ -834,12 +833,10 @@ export function DatasetDetailPage() {
 				<Link className="text-sm underline" to="/datasets">
 					Datasets
 				</Link>
-				<h1 className="text-2xl font-semibold">
-					{dataset.data?.name ?? "Dataset"}
-				</h1>
-				<p className="text-sm text-muted-foreground">
-					{dataset.data?.description}
-				</p>
+				<PageHeader
+					title={dataset.data?.name ?? "Dataset"}
+					description={dataset.data?.description}
+				/>
 				{dataset.data?.latest_published_version ? (
 					<p className="mt-2 text-sm text-muted-foreground">
 						Latest immutable version:{" "}
@@ -931,9 +928,9 @@ export function DatasetDetailPage() {
 							htmlFor="dataset-input"
 						>
 							Input
-							<textarea
+							<Textarea
 								id="dataset-input"
-								className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="min-h-24 font-mono text-xs"
 								value={input}
 								onChange={(event) => setInput(event.target.value)}
 							/>
@@ -943,9 +940,9 @@ export function DatasetDetailPage() {
 							htmlFor="dataset-expected"
 						>
 							Expected output (optional)
-							<textarea
+							<Textarea
 								id="dataset-expected"
-								className="min-h-20 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="min-h-20 font-mono text-xs"
 								value={expected}
 								onChange={(event) => setExpected(event.target.value)}
 							/>
@@ -955,9 +952,9 @@ export function DatasetDetailPage() {
 							htmlFor="dataset-metadata"
 						>
 							Metadata
-							<textarea
+							<Textarea
 								id="dataset-metadata"
-								className="min-h-16 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="min-h-16 font-mono text-xs"
 								value={metadata}
 								onChange={(event) => setMetadata(event.target.value)}
 							/>
@@ -1015,9 +1012,9 @@ export function DatasetDetailPage() {
 							htmlFor="dataset-import"
 						>
 							JSON array
-							<textarea
+							<Textarea
 								id="dataset-import"
-								className="min-h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="min-h-24 font-mono text-xs"
 								placeholder='[{"item_key":"case-1","input":{"question":"..."}}]'
 								value={importValue}
 								onChange={(event) => setImportValue(event.target.value)}

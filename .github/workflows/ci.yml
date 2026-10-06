@@ -212,6 +212,13 @@ jobs:
           "${compose[@]}" up --detach --no-deps --wait --wait-timeout 180 api
           verify_migrations
 
+      - name: Verify project mutation SQL against PostgreSQL
+        run: |
+          bash infra/scripts/with-local-env.sh bash -c '
+            export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-astraea}"
+            bun --cwd apps/api test tests/integration/project-mutation-sql.test.ts
+          '
+
       - name: Verify idempotent ClickHouse migrations
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'
 

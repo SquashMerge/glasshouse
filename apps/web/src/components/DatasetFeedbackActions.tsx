@@ -7,8 +7,10 @@ import {
 	listDatasets,
 } from "../lib/api";
 import { Button } from "./ui/button";
+import { DialogContent, DialogOverlay } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
+import { Select } from "./ui/select";
 
 export function AddToDatasetDialog({
 	projectId,
@@ -127,12 +129,8 @@ export function AddToDatasetDialog({
 				Add to dataset
 			</Button>
 			{open && (
-				<div
+				<DialogOverlay
 					ref={dialogRef}
-					className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
-					role="dialog"
-					aria-modal="true"
-					aria-labelledby="add-to-dataset-title"
 					onKeyDown={(event) => {
 						if (event.key === "Escape") {
 							close();
@@ -158,15 +156,20 @@ export function AddToDatasetDialog({
 						}
 					}}
 				>
-					<div className="w-full max-w-xl space-y-3 rounded-lg bg-background p-5 shadow-lg">
+					<DialogContent
+						className="max-w-xl space-y-3 p-5"
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="add-to-dataset-title"
+					>
 						<h2 id="add-to-dataset-title" className="font-semibold">
 							Capture {label} as a Dataset draft
 						</h2>
 						<label className="block text-sm" htmlFor="dataset-choice">
 							Dataset
-							<select
+							<Select
 								id="dataset-choice"
-								className="h-9 w-full rounded border px-2"
+								className="h-9"
 								value={datasetId}
 								onChange={(event) => {
 									captureAttempt.current = null;
@@ -179,7 +182,7 @@ export function AddToDatasetDialog({
 										{dataset.name}
 									</option>
 								))}
-							</select>
+							</Select>
 						</label>
 						{datasetLoading && (
 							<Skeleton
@@ -228,8 +231,8 @@ export function AddToDatasetDialog({
 								{pending ? "Capturing..." : "Capture redacted case"}
 							</Button>
 						</div>
-					</div>
-				</div>
+					</DialogContent>
+				</DialogOverlay>
 			)}
 		</>
 	);

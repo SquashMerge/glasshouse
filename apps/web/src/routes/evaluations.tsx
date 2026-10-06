@@ -39,6 +39,7 @@ import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
+import { PageHeader } from "../components/ui/page-header";
 import {
 	DetailLoadingSkeleton,
 	ListLoadingSkeleton,
@@ -335,12 +336,10 @@ export function EvaluationsPage() {
 	}
 	return (
 		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold">Evaluations</h1>
-				<p className="text-sm text-muted-foreground">
-					Configured LLM runs against a dataset.
-				</p>
-			</div>
+			<PageHeader
+				title="Evaluations"
+				description="Configured LLM runs against a dataset."
+			/>
 			<section className="grid gap-2 rounded border p-4">
 				<h2 className="text-lg font-medium">Reusable definition</h2>
 				{canCurate ? (
@@ -1822,9 +1821,7 @@ export function EvaluationDetailPage() {
 			<Link className="text-sm underline" to="/evaluations">
 				Evaluations
 			</Link>
-			<h1 className="text-2xl font-semibold">
-				{experiment.data.name || "Evaluation"}
-			</h1>
+			<PageHeader title={experiment.data.name || "Evaluation"} />
 			<p>Status: {experiment.data.status}</p>
 			<Link
 				className="underline"
@@ -1949,12 +1946,10 @@ export function EvaluationDefinitionDetailPage() {
 			<Link className="text-sm underline" to="/evaluations">
 				Evaluations
 			</Link>
-			<div>
-				<h1 className="text-2xl font-semibold">{detail.data.name}</h1>
-				<p className="text-sm text-muted-foreground">
-					Stable ID: {detail.data.slug}
-				</p>
-			</div>
+			<PageHeader
+				title={detail.data.name}
+				description={`Stable ID: ${detail.data.slug}`}
+			/>
 			{detail.data.description && <p>{detail.data.description}</p>}
 			<section
 				className="space-y-3 rounded border p-4"
