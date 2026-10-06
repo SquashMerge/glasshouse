@@ -13,8 +13,11 @@ import {
 } from "../db/prompts.js";
 import type { JsonObject } from "../db/prompts.js";
 import { pgPool } from "../db/postgres.js";
+import {
+	PromptTemplateError,
+	renderPromptTemplatesWithWarnings,
+} from "../lib/prompt-templates.js";
 import { logger } from "../lib/logger.js";
-import { renderPromptTemplatesWithWarnings } from "../lib/prompt-templates.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
 import { projectAuthorization } from "../db/project-authorization.js";
 import { trustedTenant } from "../tenancy.js";
@@ -52,7 +55,13 @@ function failure(c: Context, cause: unknown): Response {
 	const known =
 		cause instanceof PromptRepositoryError
 			? cause
-			: new PromptRepositoryError("INTERNAL", "Prompt operation failed", cause);
+			: cause instanceof PromptTemplateError
+				? new PromptRepositoryError("BAD_REQUEST", cause.message)
+				: new PromptRepositoryError(
+						"INTERNAL",
+						"Prompt operation failed",
+						cause,
+					);
 	if (known.status === 500) logger.error("prompts.request_failed", cause);
 	return c.json(
 		{

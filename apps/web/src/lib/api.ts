@@ -2307,6 +2307,7 @@ export async function renderPrompt(
 }
 
 export async function previewPrompt(input: {
+	project_id: string;
 	messages: PromptMessage[];
 	data: JsonObject;
 }): Promise<PromptPreviewResponse> {

@@ -126,6 +126,7 @@ describe("prompt management API client", () => {
 			data: { name: "Ada" },
 		});
 		await previewPrompt({
+			project_id: PROJECT_ID,
 			messages: [
 				{ role: "system", content: "System {{name}}" },
 				{ role: "user", content: "User {{name}}" },
@@ -186,6 +187,7 @@ describe("prompt management API client", () => {
 				url: "/v1/prompts/preview",
 				method: "POST",
 				body: JSON.stringify({
+					project_id: PROJECT_ID,
 					messages: [
 						{ role: "system", content: "System {{name}}" },
 						{ role: "user", content: "User {{name}}" },

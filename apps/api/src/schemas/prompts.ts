@@ -136,6 +136,7 @@ export const PromptRender = z
 
 export const PromptPreview = z
 	.object({
+		project_id: z.string().uuid(),
 		messages: PromptMessages,
 		data: JsonObject.superRefine((value, context) => {
 			const budgetError = renderDataBudgetError(value);

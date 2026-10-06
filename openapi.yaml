@@ -7028,7 +7028,11 @@ components:
           maxItems: 2
           minItems: 1
           type: array
+        project_id:
+          format: uuid
+          type: string
       required:
+        - project_id
         - messages
         - data
       type: object

@@ -16,6 +16,7 @@ import { PageMessage } from "./prompts";
 import {
 	createPrompt,
 	createPromptVersion,
+	ApiError,
 	previewPrompt,
 	type JsonObject,
 	type Prompt,
@@ -103,8 +104,11 @@ export function PromptComposer({
 
 	const previewMutation = useMutation({
 		mutationFn: async () => {
+			if (!projectId)
+				throw new Error("Select a project before previewing a prompt.");
 			const data = parseObject(variablesText, "Variables");
 			return previewPrompt({
+				project_id: projectId,
 				messages: promptMessages(systemSource, userSource),
 				data,
 			});
@@ -112,12 +116,7 @@ export function PromptComposer({
 		onMutate: () => {
 			setPreviewError(null);
 		},
-		onError: (error) =>
-			setPreviewError(
-				error instanceof Error
-					? error.message
-					: "Preview could not be rendered.",
-			),
+		onError: (error) => setPreviewError(previewErrorMessage(error)),
 	});
 
 	function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -411,6 +410,23 @@ function parseObject(value: string, label: string): JsonObject {
 			throw error;
 		throw new Error(`${label} must be valid JSON.`);
 	}
+}
+
+function previewErrorMessage(error: unknown): string {
+	if (
+		error instanceof Error &&
+		(error.message === "Select a project before previewing a prompt." ||
+			error.message === "Enter a system or user prompt." ||
+			error.message.endsWith("must be valid JSON.") ||
+			error.message.endsWith("must be a JSON object."))
+	)
+		return error.message;
+	if (error instanceof ApiError && error.status === 400) {
+		if (error.message === "Request validation failed")
+			return "Preview request was rejected. Check your prompt and variables JSON, then try again.";
+		return error.message;
+	}
+	return "Preview service is unavailable. Your draft is still available; try again.";
 }
 
 function prettyJson(value: JsonObject): string {
