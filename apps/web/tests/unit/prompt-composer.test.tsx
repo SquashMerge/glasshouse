@@ -318,6 +318,7 @@ describe("PromptComposer", () => {
 		await screen.findByTestId("preview-output-system");
 		expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/prompts/preview");
 		expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+			project_id: PROJECT_ID,
 			messages: [{ role: "system", content: "Draft {{customer}}" }],
 			data: { customer: "Ada" },
 		});
