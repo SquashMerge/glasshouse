@@ -81,11 +81,26 @@ describe("ObservationDetailPanel JSON tree", () => {
 		expect(tree.querySelector('[data-json-type="string"]')).toHaveTextContent(
 			'"<script>alert(1)</script>"',
 		);
+		expect(tree.querySelector('[data-json-type="string"]')).toHaveClass(
+			"text-json-type-string",
+		);
 		expect(tree.querySelector('[data-json-type="number"]')).toHaveTextContent(
 			"7",
 		);
+		expect(tree.querySelector('[data-json-type="number"]')).toHaveClass(
+			"text-json-type-number",
+		);
 		expect(tree.querySelector('[data-json-type="boolean"]')).toHaveTextContent(
 			"true",
+		);
+		expect(tree.querySelector('[data-json-type="boolean"]')).toHaveClass(
+			"text-json-type-boolean",
+		);
+		expect(tree.querySelector('[data-json-type="array"]')).toHaveClass(
+			"text-json-type-array",
+		);
+		expect(tree.querySelector('[data-json-type="object"]')).toHaveClass(
+			"text-json-type-object",
 		);
 		expect(tree.querySelector('[data-json-type="null"]')).toHaveTextContent(
 			"null",

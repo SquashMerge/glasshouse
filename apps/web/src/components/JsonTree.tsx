@@ -162,12 +162,12 @@ function omittedMessage(node: JsonTreeNode, maxNodes: number): string {
 }
 
 const TYPE_CLASS: Record<JsonType, string> = {
-	array: "text-cyan-700 dark:text-cyan-300",
-	boolean: "text-amber-700 dark:text-amber-300",
+	array: "text-json-type-array",
+	boolean: "text-json-type-boolean",
 	null: "text-muted-foreground",
-	number: "text-blue-700 dark:text-blue-300",
-	object: "text-violet-700 dark:text-violet-300",
-	string: "text-emerald-700 dark:text-emerald-300",
+	number: "text-json-type-number",
+	object: "text-json-type-object",
+	string: "text-json-type-string",
 	undefined: "text-muted-foreground",
 };
 
