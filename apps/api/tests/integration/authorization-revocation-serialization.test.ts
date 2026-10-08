@@ -863,7 +863,8 @@ test.skipIf(!databaseUrl)(
 		const creator = await pool.connect();
 		let revokerStarted = false;
 		let creatorStarted = false;
-		let ownerActorId: string | undefined;
+		let memberActorId: string | undefined;
+		let memberSubject: string | undefined;
 		try {
 			await seedOrganizationWithDefaultProject(
 				pool,
@@ -871,13 +872,22 @@ test.skipIf(!databaseUrl)(
 				"Project creation/revocation lock order",
 				`project-revoke-lock-${organizationId}`,
 			);
-			ownerActorId = (
-				await seedAdditionalOrganizationOwner(
-					pool,
-					organizationId,
-					"project-revoke-lock",
+			const defaultProjectId = (
+				await pool.query<{ default_project_id: string }>(
+					"SELECT default_project_id FROM organizations WHERE id = $1",
+					[organizationId],
 				)
-			).actorId;
+			).rows[0]?.default_project_id;
+			if (!defaultProjectId)
+				throw new Error("default project fixture is missing");
+			const member = await seedAdditionalProjectManager(
+				pool,
+				organizationId,
+				defaultProjectId,
+				"project-revoke-lock",
+			);
+			memberActorId = member.actorId;
+			memberSubject = member.subject;
 
 			await revoker.query("BEGIN");
 			revokerStarted = true;
@@ -886,7 +896,7 @@ test.skipIf(!databaseUrl)(
 			);
 			await revoker.query(
 				"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
-				[organizationId, ownerActorId],
+				[organizationId, memberActorId],
 			);
 
 			await creator.query("BEGIN");
@@ -931,18 +941,14 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
+				"DELETE FROM project_memberships WHERE organization_id = $1 AND actor_subject = $2",
+				[organizationId, memberSubject],
+			);
+			await pool.query(
 				"DELETE FROM organization_memberships WHERE organization_id = $1",
 				[organizationId],
 			);
-			await pool.query(
-				"DELETE FROM organization_actor_roles WHERE organization_id = $1",
-				[organizationId],
-			);
-			await pool.query(
-				"DELETE FROM actor_identities WHERE organization_id = $1",
-				[organizationId],
-			);
-			if (ownerActorId) await deleteScenarioActor(pool, ownerActorId);
+			if (memberActorId) await deleteScenarioActor(pool, memberActorId);
 			await pool.end();
 		}
 	},
@@ -2979,6 +2985,10 @@ test.skipIf(!databaseUrl)(
 			try {
 				await cleanup.query("BEGIN");
 				await cleanup.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[fixture.projectId],
+				);
+				await cleanup.query(
 					"DELETE FROM dataset_retention_holds WHERE project_id = $1",
 					[fixture.projectId],
 				);
@@ -3009,6 +3019,11 @@ test.skipIf(!databaseUrl)(
 					"DELETE FROM governance_policy_versions WHERE project_id = $1",
 					[fixture.projectId],
 				);
+				const unlinkedAuditReferences = await cleanup.query<{ count: string }>(
+					"SELECT count(*)::text AS count FROM governance_audit_events AS audit_event LEFT JOIN governance_policy_versions AS policy_version ON policy_version.id = audit_event.policy_version_id WHERE audit_event.project_id = $1 AND audit_event.policy_version_id IS NOT NULL AND policy_version.id IS NULL",
+					[fixture.projectId],
+				);
+				expect(unlinkedAuditReferences.rows[0]?.count).toBe("0");
 				await cleanup.query(
 					"DELETE FROM governance_policies WHERE project_id = $1",
 					[fixture.projectId],
@@ -3020,6 +3035,8 @@ test.skipIf(!databaseUrl)(
 					"DELETE FROM organization_memberships WHERE organization_id = $1",
 					[fixture.organizationId],
 				);
+				// The policy-version FK has already run with triggers enabled; bypass only the final-Admin guard for fixture cleanup.
+				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
 					"DELETE FROM organization_actor_roles WHERE organization_id = $1",
 					[fixture.organizationId],
@@ -3161,8 +3178,6 @@ test.skipIf(!databaseUrl)(
 			const cleanup = await pool.connect();
 			try {
 				await cleanup.query("BEGIN");
-				// Bypass only this disposable fixture's final-Admin guard during teardown.
-				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
 					"SELECT set_config('astraea.project_deletion_id', $1, true)",
 					[fixture.projectId],
@@ -3191,6 +3206,11 @@ test.skipIf(!databaseUrl)(
 					"DELETE FROM governance_policy_versions WHERE project_id = $1",
 					[fixture.projectId],
 				);
+				const unlinkedAuditReferences = await cleanup.query<{ count: string }>(
+					"SELECT count(*)::text AS count FROM governance_audit_events AS audit_event LEFT JOIN governance_policy_versions AS policy_version ON policy_version.id = audit_event.policy_version_id WHERE audit_event.project_id = $1 AND audit_event.policy_version_id IS NOT NULL AND policy_version.id IS NULL",
+					[fixture.projectId],
+				);
+				expect(unlinkedAuditReferences.rows[0]?.count).toBe("0");
 				await cleanup.query(
 					"DELETE FROM governance_policies WHERE project_id = $1",
 					[fixture.projectId],
@@ -3202,6 +3222,8 @@ test.skipIf(!databaseUrl)(
 					"DELETE FROM organization_memberships WHERE organization_id = $1",
 					[fixture.organizationId],
 				);
+				// The policy-version FK has already run with triggers enabled; bypass only the final-Admin guard for fixture cleanup.
+				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
 					"DELETE FROM organization_actor_roles WHERE organization_id = $1",
 					[fixture.organizationId],
