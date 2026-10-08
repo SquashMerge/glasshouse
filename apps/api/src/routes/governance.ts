@@ -191,12 +191,22 @@ async function versions(
 					WHERE identity.organization_id = gp.organization_id
 					  AND identity.provider_namespace = 'basic:v1'
 					  AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)
-				       ) THEN 'Unknown account'
-				       ELSE COALESCE((
-					SELECT credential.username FROM local_credentials credential
+				       ) AND EXISTS (
+					SELECT 1 FROM local_credentials credential
 					WHERE credential.organization_id = gp.organization_id
-					  AND a.actor_subject = 'actor:' || credential.actor_id::text LIMIT 1
-				       ), 'Unknown account') END
+					  AND a.actor_subject = 'actor:' || credential.actor_id::text
+				       ) THEN 'Unknown account'
+				       ELSE COALESCE(
+					(SELECT credential.username FROM local_credentials credential
+					 WHERE credential.organization_id = gp.organization_id
+					   AND a.actor_subject = 'actor:' || credential.actor_id::text LIMIT 1),
+					(SELECT identity.canonical_subject FROM actor_identities identity
+					 WHERE identity.organization_id = gp.organization_id
+					   AND identity.provider_namespace = 'basic:v1'
+					   AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)
+					 LIMIT 1),
+					'Unknown account'
+				       ) END
 				     WHEN btrim(a.actor_subject) = '' OR normalize(a.actor_subject, NFKC) !~ '^[ -~]+$'
 				       THEN 'Unknown account'
 				     ELSE COALESCE((
