@@ -855,25 +855,15 @@ describe("TraceDetailPage — span detail tabs", () => {
 			/OUTPUT_TEXT_HERE/,
 		);
 
-		// Expand the structured metadata path to the retained attribute value.
+		// The metadata tree opens fully expanded in the detail panel.
 		fireEvent.click(screen.getByRole("tab", { name: /Metadata/i }));
 		const metadataTree = screen.getByTestId("detail-metadata");
-		fireEvent.click(
-			within(metadataTree).getByRole("button", {
-				name: "Expand $.attributes (array, 2 items)",
-			}),
-		);
-		fireEvent.click(
-			within(metadataTree).getByRole("button", {
-				name: "Expand $.attributes[0] (object, 2 items)",
-			}),
-		);
-		fireEvent.click(
-			within(metadataTree).getByRole("button", {
-				name: "Expand $.attributes[0].value (object, 1 item)",
-			}),
-		);
 		expect(within(metadataTree).getByText('"x"')).toBeInTheDocument();
+		expect(
+			within(metadataTree).getByRole("button", {
+				name: "Collapse all JSON nodes",
+			}),
+		).toBeInTheDocument();
 	});
 
 	it("identifies retained-field truncation without presenting excerpts as full values", async () => {

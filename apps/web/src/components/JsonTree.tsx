@@ -17,6 +17,7 @@ interface JsonTreeProps {
 	onCopyValue?: (value: unknown, path: string) => void;
 	onCopyPath?: (path: string) => void;
 	maxNodes?: number;
+	expandAllByDefault?: boolean;
 }
 
 interface JsonTreeNode {
@@ -137,6 +138,21 @@ function countNodes(node: JsonTreeNode): number {
 	return 1 + node.children.reduce((sum, child) => sum + countNodes(child), 0);
 }
 
+function isExpandable(node: JsonTreeNode): boolean {
+	return (
+		(node.type === "object" || node.type === "array") &&
+		(node.itemCount > 0 || node.omittedCount > 0) &&
+		!node.circular
+	);
+}
+
+function getExpandablePaths(node: JsonTreeNode): string[] {
+	return [
+		...(isExpandable(node) ? [node.path] : []),
+		...node.children.flatMap(getExpandablePaths),
+	];
+}
+
 function containsOmittedContent(node: JsonTreeNode): boolean {
 	return (
 		node.omittedCount > 0 ||
@@ -177,6 +193,7 @@ export function JsonTree({
 	onCopyValue,
 	onCopyPath,
 	maxNodes = MAX_JSON_TREE_NODES,
+	expandAllByDefault = false,
 }: JsonTreeProps) {
 	const nodeLimit = Math.max(
 		1,
@@ -196,13 +213,14 @@ export function JsonTree({
 			),
 		[nodeLimit, value, rootLabel],
 	);
+	const expandablePaths = React.useMemo(() => getExpandablePaths(root), [root]);
 	const [expandedPaths, setExpandedPaths] = React.useState(
-		() => new Set(["$"]),
+		() => new Set(expandAllByDefault ? expandablePaths : ["$"]),
 	);
 
 	React.useEffect(() => {
-		setExpandedPaths(new Set(["$"]));
-	}, [root]);
+		setExpandedPaths(new Set(expandAllByDefault ? expandablePaths : ["$"]));
+	}, [expandAllByDefault, expandablePaths]);
 
 	function toggle(path: string) {
 		setExpandedPaths((previous) => {
@@ -213,11 +231,13 @@ export function JsonTree({
 		});
 	}
 
+	const allExpanded = expandablePaths.every((path) => expandedPaths.has(path));
+	function toggleAll() {
+		setExpandedPaths(new Set(allExpanded ? [] : expandablePaths));
+	}
+
 	function renderNode(node: JsonTreeNode): React.ReactNode {
-		const expandable =
-			(node.type === "object" || node.type === "array") &&
-			(node.itemCount > 0 || node.omittedCount > 0) &&
-			!node.circular;
+		const expandable = isExpandable(node);
 		const expanded = expandedPaths.has(node.path);
 		const summary = `${node.type}, ${node.itemCount} ${node.itemCount === 1 ? "item" : "items"}`;
 		const label = node.depth === 0 ? rootLabel : node.path;
@@ -293,6 +313,18 @@ export function JsonTree({
 			data-json-tree-node-count={countNodes(root)}
 			className="min-w-0 max-w-full overflow-x-auto rounded-md border bg-muted/20 p-2 text-xs"
 		>
+			{expandablePaths.length > 0 && (
+				<div className="mb-1 flex justify-end">
+					<button
+						type="button"
+						className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						aria-label={`${allExpanded ? "Collapse" : "Expand"} all JSON nodes`}
+						onClick={toggleAll}
+					>
+						{allExpanded ? "Collapse all" : "Expand all"}
+					</button>
+				</div>
+			)}
 			{isLimited && (
 				<p
 					data-testid="json-tree-limit-notice"

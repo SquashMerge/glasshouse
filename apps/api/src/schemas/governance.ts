@@ -27,6 +27,7 @@ export const PolicyVersion = z.object({
 	created_by: z.string(),
 	created_at: z.string(),
 	approved_by: z.string().nullable(),
+	approved_by_username: z.string().nullable(),
 	approved_at: z.string().nullable(),
 });
 export const PolicyHistory = z.object({ items: z.array(PolicyVersion) });

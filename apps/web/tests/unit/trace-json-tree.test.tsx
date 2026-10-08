@@ -40,6 +40,45 @@ function observation(
 }
 
 describe("ObservationDetailPanel JSON tree", () => {
+	it("shows metadata fully expanded with one control to collapse and expand it", () => {
+		render(
+			<ObservationDetailPanel
+				traceId={TRACE_ID}
+				observation={observation({
+					metadata: { nested: { value: "visible" } },
+				})}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
+		const tree = screen.getByTestId("detail-metadata");
+		const nestedToggle = within(tree).getByRole("button", {
+			name: /^Collapse \$\.nested \(/,
+		});
+		expect(nestedToggle).toHaveAttribute("aria-expanded", "true");
+		expect(tree).toHaveTextContent('"visible"');
+
+		fireEvent.click(
+			within(tree).getByRole("button", { name: "Collapse all JSON nodes" }),
+		);
+		expect(
+			within(tree).getByRole("button", {
+				name: "Expand Metadata (object, 1 item)",
+			}),
+		).toHaveAttribute("aria-expanded", "false");
+		expect(tree).not.toHaveTextContent('"visible"');
+
+		fireEvent.click(
+			within(tree).getByRole("button", { name: "Expand all JSON nodes" }),
+		);
+		expect(
+			within(tree).getByRole("button", {
+				name: "Collapse $.nested (object, 1 item)",
+			}),
+		).toHaveAttribute("aria-expanded", "true");
+		expect(tree).toHaveTextContent('"visible"');
+	});
+
 	it("expands nested metadata and renders scalar types as safe text", () => {
 		render(
 			<ObservationDetailPanel
@@ -57,13 +96,15 @@ describe("ObservationDetailPanel JSON tree", () => {
 		fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
 		const tree = screen.getByTestId("detail-metadata");
 		const nestedToggle = within(tree).getByRole("button", {
-			name: /Expand \$\.nested/,
+			name: /^Collapse \$\.nested \(/,
 		});
-		expect(nestedToggle).toHaveAttribute("aria-expanded", "false");
+		expect(nestedToggle).toHaveAttribute("aria-expanded", "true");
 		expect(nestedToggle.tagName).toBe("BUTTON");
 		expect(nestedToggle.tabIndex).toBe(0);
 		nestedToggle.focus();
 		expect(nestedToggle).toHaveFocus();
+		fireEvent.click(nestedToggle);
+		expect(nestedToggle).toHaveAttribute("aria-expanded", "false");
 		fireEvent.click(nestedToggle);
 		expect(nestedToggle).toHaveAttribute("aria-expanded", "true");
 		expect(within(tree).getByTestId("json-tree")).toHaveClass(
@@ -73,8 +114,10 @@ describe("ObservationDetailPanel JSON tree", () => {
 		);
 
 		const itemsToggle = within(tree).getByRole("button", {
-			name: /Expand \$\.nested\.items/,
+			name: /^Collapse \$\.nested\.items \(/,
 		});
+		expect(itemsToggle).toHaveAttribute("aria-expanded", "true");
+		fireEvent.click(itemsToggle);
 		expect(itemsToggle).toHaveAttribute("aria-expanded", "false");
 		fireEvent.click(itemsToggle);
 
@@ -228,11 +271,6 @@ describe("ObservationDetailPanel JSON tree", () => {
 
 		fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
 		const tree = screen.getByTestId("detail-metadata");
-		fireEvent.click(
-			within(tree).getByRole("button", {
-				name: "Expand $.wide (array, 120 items)",
-			}),
-		);
 		expect(tree.querySelectorAll('[data-json-type="number"]')).toHaveLength(
 			100,
 		);
@@ -240,21 +278,18 @@ describe("ObservationDetailPanel JSON tree", () => {
 		expect(
 			within(tree).getByTestId("json-tree-limit-notice"),
 		).toHaveTextContent("500 nodes");
+		expect(tree).toHaveTextContent("Depth limit (12 levels) reached.");
 
 		fireEvent.click(
-			within(tree).getByRole("button", {
-				name: "Collapse $.wide (array, 120 items)",
-			}),
+			within(tree).getByRole("button", { name: "Collapse all JSON nodes" }),
 		);
-		for (let depth = 1; depth <= 12; depth += 1) {
-			const path = `$.deep${".child".repeat(depth - 1)}`;
-			fireEvent.click(
-				within(tree).getByRole("button", {
-					name: `Expand ${path} (object, 1 item)`,
-				}),
-			);
-		}
-		expect(tree).toHaveTextContent("Depth limit (12 levels) reached.");
+		expect(tree.querySelectorAll('[data-json-type="number"]')).toHaveLength(0);
+		fireEvent.click(
+			within(tree).getByRole("button", { name: "Expand all JSON nodes" }),
+		);
+		expect(tree.querySelectorAll('[data-json-type="number"]')).toHaveLength(
+			100,
+		);
 	});
 
 	it("shares the bounded render budget across all structured attribute values", () => {

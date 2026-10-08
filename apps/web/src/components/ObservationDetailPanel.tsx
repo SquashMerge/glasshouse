@@ -545,6 +545,7 @@ export function ObservationDetailPanel({
 								rootLabel="Metadata"
 								onCopyValue={copyStructuredValue}
 								onCopyPath={copyStructuredPath}
+								expandAllByDefault
 							/>
 						) : (
 							<p className="rounded-md bg-muted p-3 text-xs text-muted-foreground">

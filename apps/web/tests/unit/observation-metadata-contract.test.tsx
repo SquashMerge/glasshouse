@@ -144,9 +144,20 @@ describe("observation metadata API-to-dashboard contract", () => {
 		expect(
 			within(metadataTree).getByText("schema_version"),
 		).toBeInTheDocument();
+		const provenanceToggle = within(metadataTree).getByRole("button", {
+			name: "Collapse $.prompt_provenance (object, 3 items)",
+		});
+		expect(provenanceToggle).toHaveAttribute("aria-expanded", "true");
+		expect(metadataTree).toHaveTextContent("support-agent");
 		fireEvent.click(
 			within(metadataTree).getByRole("button", {
-				name: /Expand \$\.prompt_provenance/,
+				name: "Collapse all JSON nodes",
+			}),
+		);
+		expect(metadataTree).not.toHaveTextContent("support-agent");
+		fireEvent.click(
+			within(metadataTree).getByRole("button", {
+				name: "Expand all JSON nodes",
 			}),
 		);
 		expect(metadataTree).toHaveTextContent("support-agent");

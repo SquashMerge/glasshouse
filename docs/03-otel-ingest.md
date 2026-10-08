@@ -142,7 +142,7 @@ Astraea accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normaliz
 
 ## Viewing trace metadata
 
-On the Observability trace-detail page, structured Observation attributes, events, and links are shown as expandable JSON trees. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
+On the Observability trace-detail page, structured Observation attributes, events, and links are shown as expandable JSON trees. The metadata tree opens fully expanded; use its compact **Collapse all** / **Expand all** control to fold or reveal the whole tree, or use individual node controls. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
 
 The tree is a bounded presentation: it renders at most 500 nodes per detail view, up to 100 children per object or array, and 12 nested levels. When any limit is reached, the UI identifies how many entries were omitted. These display limits do not change stored telemetry; omitted entries remain part of the retained metadata when available through the API. A limited tree is not evidence that ingestion or storage dropped the omitted data.
 
