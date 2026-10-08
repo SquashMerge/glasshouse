@@ -182,7 +182,9 @@ describe("trace viewer acceptance", () => {
 		});
 		fireEvent.change(search, { target: { value: "agent" } });
 
-		expect(screen.getByText("agent.id")).toBeInTheDocument();
+		expect(
+			screen.getByText("agent.id", { selector: "dt" }),
+		).toBeInTheDocument();
 		expect(screen.queryByText("zebra")).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: /copy agent.id value/i }),

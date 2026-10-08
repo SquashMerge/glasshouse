@@ -21,6 +21,7 @@ import {
 	act,
 	fireEvent,
 	cleanup,
+	within,
 } from "@testing-library/react";
 import { TraceDetailPage } from "../../src/routes/observability/traces/$id";
 import { ObservationDetailPanel } from "../../src/components/ObservationDetailPanel";
@@ -854,10 +855,25 @@ describe("TraceDetailPage — span detail tabs", () => {
 			/OUTPUT_TEXT_HERE/,
 		);
 
-		// Switch to the Metadata tab and check pretty-printed JSON.
+		// Expand the structured metadata path to the retained attribute value.
 		fireEvent.click(screen.getByRole("tab", { name: /Metadata/i }));
-		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"tool"/);
-		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(/"x"/);
+		const metadataTree = screen.getByTestId("detail-metadata");
+		fireEvent.click(
+			within(metadataTree).getByRole("button", {
+				name: "Expand $.attributes (array, 2 items)",
+			}),
+		);
+		fireEvent.click(
+			within(metadataTree).getByRole("button", {
+				name: "Expand $.attributes[0] (object, 2 items)",
+			}),
+		);
+		fireEvent.click(
+			within(metadataTree).getByRole("button", {
+				name: "Expand $.attributes[0].value (object, 1 item)",
+			}),
+		);
+		expect(within(metadataTree).getByText('"x"')).toBeInTheDocument();
 	});
 
 	it("identifies retained-field truncation without presenting excerpts as full values", async () => {

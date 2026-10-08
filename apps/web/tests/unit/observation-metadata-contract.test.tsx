@@ -6,6 +6,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 
 const stream = vi.hoisted(() => ({
@@ -94,7 +95,7 @@ describe("observation metadata API-to-dashboard contract", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("propagates the typed API envelope through SSE detail and renders metadata as text", async () => {
+	it("propagates the typed API envelope through SSE detail and renders metadata as a structured tree", async () => {
 		fetchMock.mockResolvedValue(
 			new Response(
 				JSON.stringify({
@@ -139,12 +140,16 @@ describe("observation metadata API-to-dashboard contract", () => {
 
 		await screen.findByTestId("observation-detail");
 		fireEvent.click(screen.getByRole("tab", { name: "Metadata" }));
-		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(
-			'"schema_version": 1',
+		const metadataTree = screen.getByTestId("detail-metadata");
+		expect(
+			within(metadataTree).getByText("schema_version"),
+		).toBeInTheDocument();
+		fireEvent.click(
+			within(metadataTree).getByRole("button", {
+				name: /Expand \$\.prompt_provenance/,
+			}),
 		);
-		expect(screen.getByTestId("detail-metadata")).toHaveTextContent(
-			'"support-agent"',
-		);
+		expect(metadataTree).toHaveTextContent("support-agent");
 		expect(screen.getByTestId("provenance-propagation")).toHaveTextContent(
 			JSON.stringify(PROVENANCE),
 		);

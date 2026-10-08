@@ -23,6 +23,11 @@
 		--destructive-foreground: 210 40% 98%;
 		--ring: 222 47% 11%;
 		--radius: 0.5rem;
+		--json-type-array: 188 77% 26%;
+		--json-type-boolean: 37 92% 32%;
+		--json-type-number: 221 83% 35%;
+		--json-type-object: 262 53% 36%;
+		--json-type-string: 142 72% 24%;
 	}
 
 	.dark {
@@ -45,6 +50,11 @@
 		--destructive: 0 63% 50%;
 		--destructive-foreground: 210 40% 98%;
 		--ring: 215 20% 65%;
+		--json-type-array: 187 80% 72%;
+		--json-type-boolean: 42 96% 70%;
+		--json-type-number: 217 95% 75%;
+		--json-type-object: 263 67% 77%;
+		--json-type-string: 142 60% 70%;
 	}
 
 	* {
