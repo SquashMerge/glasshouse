@@ -15,6 +15,13 @@ const migrationHarness = readFileSync(
 	resolve(root, "infra/scripts/test-db-migrations.sh"),
 	"utf8",
 );
+const actorIdentityMigration = readFileSync(
+	resolve(
+		root,
+		"infra/db/migrations/0106_governance_approval_actor_identity.sql",
+	),
+	"utf8",
+);
 const serializationIntegration = readFileSync(
 	resolve(
 		root,
@@ -59,6 +66,17 @@ test("0105 provisions one immutable approved baseline for existing and new Proje
 		"new project did not receive the approved default policy",
 	);
 	expect(migrationHarness).toContain("test-db-migrations-0105.assert.sql");
+});
+
+test("0106 preserves durable actor identity separately from legacy approval subjects", () => {
+	expect(actorIdentityMigration).toContain(
+		"ADD COLUMN IF NOT EXISTS approved_by_actor_id UUID",
+	);
+	expect(actorIdentityMigration).toContain("REFERENCES actors(id)");
+	expect(actorIdentityMigration).toContain("ON DELETE RESTRICT");
+	expect(actorIdentityMigration).not.toContain(
+		"UPDATE governance_policy_approvals",
+	);
 });
 
 test("governance fixture cleanup removes audit rows before disabling cascades", () => {

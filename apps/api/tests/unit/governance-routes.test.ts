@@ -11,6 +11,7 @@ const previewId = "55555555-5555-4555-8555-555555555555";
 const previewExpiresAt = new Date("2026-08-29T20:00:00.000Z");
 const calls: string[] = [];
 const previewConsumeValues: string[][] = [];
+const approvalInsertValues: string[][] = [];
 let approvalConflict = false;
 let permittedActorId = verifiedActorId;
 let approvedPolicyAvailable = false;
@@ -68,7 +69,7 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		return values[0] === otherProjectId
 			? { rows: [] }
 			: { rows: [{ id: projectId }] };
-	if (statement.includes("MAX(credential.username)"))
+	if (statement.startsWith("SELECT COALESCE(MAX(credential.username)"))
 		return { rows: [{ username: "dan" }] };
 	if (statement.includes("FROM organization_memberships om"))
 		return { rows: [{ actor_subject: "manager" }] };
@@ -119,6 +120,8 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		statement.startsWith("SELECT count(*)::text AS count FROM feedback_reviews")
 	)
 		return { rows: [{ count: "7" }] };
+	if (statement.startsWith("INSERT INTO governance_policy_approvals"))
+		approvalInsertValues.push(values);
 	if (statement.startsWith("INSERT INTO governance_retention_previews"))
 		return { rows: [{ id: previewId, expires_at: previewExpiresAt }] };
 	if (statement.startsWith("INSERT INTO governance_policy_approvals"))
@@ -206,6 +209,10 @@ describe("governance route guards", () => {
 			expect(history).toContain("actor_identities");
 			expect(history).toContain("local_credentials");
 			expect(history).toContain("approved_by_username");
+			expect(history).toContain("a.approved_by_actor_id");
+			expect(history).toContain(
+				"normalize(a.actor_subject, NFKC) !~ '^[ -~]+$'",
+			);
 			expect(history).toContain(
 				"a.actor_subject = 'actor:' || credential.actor_id::text",
 			);
@@ -312,7 +319,10 @@ describe("governance route guards", () => {
 		const response = await request(
 			"manager",
 			`/v1/governance/policy/${policyId}/approve?project_id=${projectId}`,
-			{ method: "POST" },
+			{
+				method: "POST",
+				headers: { "x-test-actor-id": verifiedActorId },
+			},
 		);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
@@ -320,6 +330,13 @@ describe("governance route guards", () => {
 				approved_by_username: "dan",
 			},
 		});
+		expect(approvalInsertValues.at(-1)).toEqual([
+			policyId,
+			organizationId,
+			projectId,
+			"manager",
+			verifiedActorId,
+		]);
 		const index = (prefix: string) =>
 			calls.findIndex((statement) => statement.startsWith(prefix));
 		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(

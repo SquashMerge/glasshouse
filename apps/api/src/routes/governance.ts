@@ -173,7 +173,49 @@ async function versions(
 	actorId: string,
 ) {
 	return pgPool().query<VersionRow>(
-		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, CASE WHEN a.actor_subject IS NULL THEN NULL ELSE COALESCE((SELECT credential.username FROM local_credentials credential WHERE credential.organization_id = gp.organization_id AND a.actor_subject = 'actor:' || credential.actor_id::text LIMIT 1), (SELECT identity.canonical_subject FROM actor_identities identity WHERE identity.organization_id = gp.organization_id AND identity.provider_namespace = 'basic:v1' AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject) LIMIT 1), CASE WHEN a.actor_subject = 'system:governance-defaults' THEN 'System' ELSE 'Unknown account' END) END AS approved_by_username, a.approved_at FROM governance_policy_versions v JOIN governance_policies gp ON gp.id = v.policy_id JOIN projects p ON p.id = gp.project_id AND p.organization_id = gp.organization_id AND p.status = 'active' LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE gp.project_id = $1 AND gp.organization_id = $2 AND authorization_allows_project(gp.organization_id, gp.project_id, $3, 'governed') ORDER BY v.version DESC",
+		`SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at,
+			a.actor_subject AS approved_by,
+			CASE WHEN a.actor_subject IS NULL THEN NULL ELSE COALESCE(
+				(SELECT MAX(credential.username) FROM local_credentials credential
+				 WHERE credential.organization_id = gp.organization_id
+				   AND credential.actor_id = a.approved_by_actor_id),
+				(SELECT identity.canonical_subject FROM actor_identities identity
+				 WHERE identity.organization_id = gp.organization_id
+				   AND identity.actor_id = a.approved_by_actor_id
+				   AND identity.provider_namespace = 'basic:v1' LIMIT 1),
+				CASE WHEN a.approved_by_actor_id IS NOT NULL THEN 'Unknown account'
+				     WHEN a.actor_subject = 'system:governance-defaults' THEN 'System'
+				     WHEN a.actor_subject ~ '^actor:[0-9a-fA-F-]{36}$' THEN
+				       CASE WHEN EXISTS (
+					SELECT 1 FROM actor_identities identity
+					WHERE identity.organization_id = gp.organization_id
+					  AND identity.provider_namespace = 'basic:v1'
+					  AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)
+				       ) THEN 'Unknown account'
+				       ELSE COALESCE((
+					SELECT credential.username FROM local_credentials credential
+					WHERE credential.organization_id = gp.organization_id
+					  AND a.actor_subject = 'actor:' || credential.actor_id::text LIMIT 1
+				       ), 'Unknown account') END
+				     WHEN btrim(a.actor_subject) = '' OR normalize(a.actor_subject, NFKC) !~ '^[ -~]+$'
+				       THEN 'Unknown account'
+				     ELSE COALESCE((
+					SELECT identity.canonical_subject FROM actor_identities identity
+					WHERE identity.organization_id = gp.organization_id
+					  AND identity.provider_namespace = 'basic:v1'
+					  AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)
+					LIMIT 1
+				       ), 'Unknown account')
+				END
+			) END AS approved_by_username,
+			a.approved_at
+		 FROM governance_policy_versions v
+		 JOIN governance_policies gp ON gp.id = v.policy_id
+		 JOIN projects p ON p.id = gp.project_id AND p.organization_id = gp.organization_id AND p.status = 'active'
+		 LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id
+		 WHERE gp.project_id = $1 AND gp.organization_id = $2
+		   AND authorization_allows_project(gp.organization_id, gp.project_id, $3, 'governed')
+		 ORDER BY v.version DESC`,
 		[projectId, organizationId, actorId],
 	);
 }
@@ -320,8 +362,8 @@ export async function handleApprovePolicy(c: Context) {
 			).rows[0];
 			if (!version) throw new Error("Not found");
 			const approval = await client.query(
-				"INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES ($1, $2, $3, $4) ON CONFLICT (policy_version_id) DO NOTHING RETURNING approved_at",
-				[id, tenant.organizationId, project_id, tenant.actor],
+				"INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject, approved_by_actor_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (policy_version_id) DO NOTHING RETURNING approved_at",
+				[id, tenant.organizationId, project_id, tenant.actor, tenant.actorId],
 			);
 			if (!approval.rows[0]) throw new Error("Policy is already approved");
 			await client.query(
