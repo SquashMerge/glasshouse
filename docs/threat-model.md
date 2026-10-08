@@ -28,7 +28,7 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 - Keep organizations and Projects isolated across reads, writes, search, exports, OTLP ingestion, events, worker work, and recovery.
 - Allow only currently authorized actors to use product data or perform governed, destructive, administrative, and recovery actions; revoke future effects when authority is removed.
-- Protect passwords, one-time setup/enrollment tokens, session cookies/CSRF values, Basic credentials, database/cache credentials, and model-provider keys from clients, logs, audits, URLs, browser storage, and untrusted reports.
+- Protect passwords, one-time setup/enrollment tokens, session cookies/CSRF values, Basic credentials, database/cache credentials, and model-provider keys from unauthorized clients, logs, audits, URLs, browser storage, and untrusted reports. Enrollment codes are intentionally returned once to an authorized provisioning/reset caller; never disclose them outside that one-time handoff or in lists, logs, audits, or URLs.
 - Preserve the confidentiality and integrity of prompts, trace input/output, dataset examples, feedback, evaluation definitions/results, and audit/provenance records.
 - Bound resource use and make asynchronous work, destructive operations, and failures recoverable without unsafe replay or cross-tenant effects.
 - Make security-sensitive behavior reviewable through typed contracts, migrations, safe audit evidence, and reproducible tests.
@@ -102,7 +102,9 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 Provider credentials are configured by the operator, not the caller. The current OpenAI-compatible client sends the API key to the configured base URL; changing `OPENAI_API_BASE` therefore changes the credential recipient. Restrict that setting to an explicitly trusted HTTPS endpoint and do not let request or dataset content select it. Provider responses are untrusted input and must be bounded/validated before persistence or user display.
 
-The optional GEPA worker receives a structured request over stdin and has bounded/validated output and filtered diagnostics, but the API spawns it with inherited environment variables. It is not an OS/container sandbox and may have access to the API process's provider credentials. Do not run untrusted worker code/configuration in production or claim isolation based only on the JSON protocol. The development CLI provider is development-only by default; production enablement is an explicit risk-bearing override. See `apps/api/src/lib/gepa-worker.ts`, `worker/gepa_worker.py`, `apps/api/src/lib/llm.ts`, and `docs/02-roadmap.md`.
+The development CLI provider introduces a separate command-execution boundary. `ASTRAEA_DEV_LLM_COMMAND` is parsed as a JSON argv array and spawned by the API; the child receives the API process environment and prompt input. Keep the command and executable operator-controlled, never derive them from request/dataset content, and assume the child can read every inherited secret. This provider is blocked in production unless `ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION=true`; that override is risk-bearing, not a sandbox. If enabled, separately constrain the command, environment, filesystem, and network egress.
+
+The optional GEPA worker receives a structured request over stdin and has bounded/validated output and filtered diagnostics, but the API spawns it with inherited environment variables. It is not an OS/container sandbox and may have access to the API process's provider credentials. Do not run untrusted worker code/configuration in production or claim isolation based only on the JSON protocol. See `apps/api/src/lib/gepa-worker.ts`, `worker/gepa_worker.py`, `apps/api/src/lib/llm.ts`, and `docs/02-roadmap.md`.
 
 ### G. Supply chain, CI, and deployment compromise (high impact)
 
