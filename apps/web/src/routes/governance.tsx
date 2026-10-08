@@ -430,9 +430,15 @@ export function GovernancePage() {
 							<Button type="submit" disabled={draft.isPending}>
 								Create draft
 							</Button>
-							{draft.isSuccess && (
+							{draft.isSuccess && draft.data?.created && (
 								<p className="text-sm" role="status">
 									Draft created and ready for review.
+								</p>
+							)}
+							{draft.isSuccess && !draft.data?.created && (
+								<p className="text-sm" role="status">
+									An equivalent policy version already exists; no new draft was
+									created.
 								</p>
 							)}
 							{draft.isError && (

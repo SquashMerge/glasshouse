@@ -17,15 +17,19 @@ const migrationHarness = readFileSync(
 );
 
 test("0105 provisions one immutable approved baseline for existing and new Projects", () => {
-	expect(migration).toContain(
+	const ensureFunction = migration.split(
+		"CREATE OR REPLACE FUNCTION provision_default_governance_policy_for_project",
+	)[0];
+	expect(ensureFunction).toContain(
 		"CREATE OR REPLACE FUNCTION ensure_default_governance_policy",
+	);
+	expect(ensureFunction).not.toMatch(
+		/FROM\s+(?:organization_memberships|organization_actor_roles|project_memberships)[\s\S]{0,160}FOR UPDATE/i,
 	);
 	expect(migration).toContain(
 		"CREATE TRIGGER projects_default_governance_policy",
 	);
 	expect(migration).toContain("AFTER INSERT ON projects");
-	expect(migration).toContain("FROM organization_memberships");
-	expect(migration).toContain("FROM project_memberships");
 	expect(migration).toContain(
 		"lock_project_audit_provenance(target_project_id)",
 	);

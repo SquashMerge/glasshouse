@@ -1715,11 +1715,15 @@ export async function createGovernancePolicyDraft(input: {
 	project_id: string;
 	retention: GovernancePolicyVersion["retention"];
 	redaction: GovernancePolicyVersion["redaction"];
-}): Promise<{ policy: GovernancePolicyVersion }> {
-	return responseJson(
-		await authedFetch("/v1/governance/policy/drafts", jsonRequest(input)),
-		"createGovernancePolicyDraft",
+}): Promise<{ policy: GovernancePolicyVersion; created: boolean }> {
+	const response = await authedFetch(
+		"/v1/governance/policy/drafts",
+		jsonRequest(input),
 	);
+	return {
+		...(await responseJson(response, "createGovernancePolicyDraft")),
+		created: response.status === 201,
+	};
 }
 export async function approveGovernancePolicy(input: {
 	project_id: string;

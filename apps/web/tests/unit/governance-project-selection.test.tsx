@@ -118,6 +118,26 @@ describe("GovernancePage project-scoped mutations", () => {
 		});
 	});
 
+	it("reports an equivalent policy as a no-op rather than claiming a draft was created", async () => {
+		api.createGovernancePolicyDraft.mockResolvedValueOnce({
+			policy: policy(POLICY_A),
+			created: false,
+		});
+		renderPage();
+		await screen.findByTestId("active-policy-card");
+
+		fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+
+		expect(
+			await screen.findByText(
+				"An equivalent policy version already exists; no new draft was created.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("Draft created and ready for review."),
+		).toBeNull();
+	});
+
 	it("drops a deferred preview from the previously selected project", async () => {
 		const delayed = deferred<{
 			policy_version_id: string;

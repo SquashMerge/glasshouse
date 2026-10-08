@@ -67,6 +67,11 @@ export const createPolicyDraft = createRoute({
 		},
 	},
 	responses: {
+		200: {
+			description:
+				"An equivalent policy version already exists; no new draft was created",
+			content: { "application/json": { schema: PolicyResponse } },
+		},
 		201: {
 			description: "Created",
 			content: { "application/json": { schema: PolicyResponse } },
@@ -248,7 +253,7 @@ export async function handleCreatePolicyDraft(c: Context) {
 			);
 			if (existing.rows[0]) {
 				await client.query("COMMIT");
-				return c.json({ policy: output(existing.rows[0]) }, 201);
+				return c.json({ policy: output(existing.rows[0]) }, 200);
 			}
 			const created = await client.query<VersionRow>(
 				"INSERT INTO governance_policy_versions (policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) SELECT $1, $2, $3, COALESCE(max(version) + 1, 1), $4::jsonb, $5::jsonb, $6, $7 FROM governance_policy_versions WHERE policy_id = $1 RETURNING id, version, retention, redaction, content_hash, created_by, created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at",

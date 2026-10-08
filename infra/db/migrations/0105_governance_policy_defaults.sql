@@ -27,25 +27,11 @@ DECLARE
     approved_version_id UUID;
     created_version BOOLEAN := false;
 BEGIN
-    PERFORM 1
-    FROM organization_memberships
-    WHERE organization_id = target_organization_id
-    ORDER BY actor_subject
-    FOR UPDATE;
-
-    PERFORM 1
-    FROM organization_actor_roles
-    WHERE organization_id = target_organization_id
-    ORDER BY actor_id
-    FOR UPDATE;
-
-    PERFORM 1
-    FROM project_memberships
-    WHERE organization_id = target_organization_id
-      AND project_id = target_project_id
-    ORDER BY actor_subject
-    FOR UPDATE;
-
+    -- This helper is called by an AFTER INSERT trigger as well as during the
+    -- backfill. Keep it independent of organization/project membership locks:
+    -- project creation may already hold project rows, while revocation paths
+    -- take membership locks before project rows. Authorization is fenced by
+    -- the API transaction; this system-owned baseline needs no membership read.
     PERFORM 1
     FROM projects
     WHERE id = target_project_id
