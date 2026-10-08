@@ -1,10 +1,12 @@
 # Glasshouse — Future Agent Registry Explainer
 
-> **Archived research, not an implementation commitment:** This pre-roadmap document preserves historical Agent Registry exploration only. Its detailed framework, HTTP, CI, promotion, drift, and rollback examples are superseded by `docs/02-roadmap.md`; they do not describe current behavior or an accepted P4/P5 contract. Current Glasshouse provides the foundation-first project-scoped observability, mutable Dataset, configured-LLM Experiment, feedback-review, and governance loop described in `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
+> **Archived research, not an implementation commitment:** This pre-roadmap document preserves historical Agent Registry exploration only. Its detailed framework, HTTP, CI, promotion, drift, and rollback examples are superseded by `docs/02-roadmap.md`; they do not describe current behavior or an accepted P4/P5 contract. Historical product-name, feature, and licensing statements below are proposals, not current product or license terms; see the repository-root `README.md` and `LICENSE` for the current description and license. Current Glasshouse provides the foundation-first project-scoped observability, mutable Dataset, configured-LLM Experiment, feedback-review, and governance loop described in `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
 
 ## The 30-second future pitch
 
-Hermes is an open-source evaluation platform for AI agents and LLM workflows. You point it at your agent — any agent, any framework, any language — and it tells you whether that agent is actually working the way you think it is, lets you replay real conversations against new prompt versions, and stops bad changes from reaching production.
+> **Historical product/licensing proposal only:** The following pitch predates the Glasshouse rename and BSL 1.1 adoption. It is not a description of the current product, release status, or license.
+>
+> Hermes was once pitched as an open-source evaluation platform for AI agents and LLM workflows. The proposed product would have pointed at an agent—any agent, framework, or language—and evaluated it, replayed conversations against prompt versions, and prevented regressions from reaching production.
 
 The part that's different: most eval platforms treat "agents" as a thing you re-implement in their eval framework, or as a single LLM call with a prompt. Hermes treats your **agent as a versioned contract** — the manifest captures not just prompts, but the tools, routing rules, guardrails, and dependencies your agent runs with. So when you change a prompt, the eval knows exactly which tool config and routing rule it was paired with. When you ship a regression, you can bisect it. When you roll back, you roll back the whole atomic unit, not just one prompt while the rest stays broken.
 
