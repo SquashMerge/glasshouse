@@ -185,7 +185,7 @@ The single platform works regardless of which framework your team picked or pick
 
 ### Why OSS + single-binary dev mode matters
 
-Most enterprise AI teams have a procurement gate: "no closed-source tools touching customer data." Langfuse has proven MIT + self-host is a viable business (they're at scale). Phoenix has proven Apache 2 + single-binary dev mode wins GitHub stars. Hermes combines both: MIT license + single-binary `hermes dev` mode (SQLite only, zero Docker) for instant first-run, plus full Docker Compose / Kubernetes for production self-host.
+Most enterprise AI teams have a procurement gate: "no closed-source tools touching customer data." Langfuse has proven MIT + self-host is a viable business (they're at scale). Phoenix has proven Apache 2 + single-binary dev mode wins GitHub stars. The archived Hermes proposal referenced an MIT license and a single-binary dev mode; Astraea's current source is licensed under Business Source License 1.1. Production use is subject to the Additional Use Grant in the repository-root `LICENSE`.
 
 The dev-mode difference is real: `cargo install hermes && hermes dev` gets you to "first trace visible in dashboard" in 60 seconds. Compare to Langfuse's first-run which requires standing up Postgres + ClickHouse + Redis + S3. For evaluation, the dev loop matters.
 

@@ -15,7 +15,7 @@ Shorthand: if a task touches a library (OpenAI SDK, Anthropic SDK, React, Hono, 
 
 ## Repo conventions
 
-- License: MIT (see LICENSE)
+- License: Business Source License 1.1 (SPDX identifier: BUSL-1.1; see LICENSE)
 - Branch: `main` (force-push with `--force-with-lease`)
 - Don't introduce additional git remotes without asking.
 

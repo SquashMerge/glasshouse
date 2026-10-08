@@ -62,7 +62,7 @@ Atomic manifest rollback is deferred to P6, after the access, Dataset, Evaluatio
 
 ## License
 
-MIT core. A sealed `enterprise/` wheel for premium features (SSO, RBAC, AI-assisted eval suggestions, SOC2 evidence packs) is a future packaging option; it is not currently distributed.
+Licensed under the [Business Source License 1.1](LICENSE) (SPDX identifier: `BUSL-1.1`). The Licensed Work is Glasshouse, © 2026 SquashMerge. Production-use eligibility and restrictions are governed by the Additional Use Grant; the Change Date and Change License are specified in `LICENSE`. Third-party materials that carry their own license remain under their original terms.
 
 ## Quick Start
 
