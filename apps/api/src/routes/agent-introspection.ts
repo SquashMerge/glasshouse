@@ -26,7 +26,7 @@ export const putAgentIntrospectionRoute = createRoute({
 	tags: [tag],
 	summary: "Store or replay a client-reported Agent Introspection Report",
 	description:
-		"Stores one immutable references-only client report. Astraea did not execute or verify the reported agent activity.",
+		"Stores one immutable references-only client report. Glasshouse did not execute or verify the reported agent activity.",
 	security: [{ basicAuth: [] }],
 	request: {
 		params: AgentIntrospectionPath,

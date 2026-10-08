@@ -11,8 +11,8 @@ import { copyText } from "../lib/clipboard";
 import { listTraces } from "../lib/api";
 
 const OTLP_SETUP = `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000/v1/otel
-export ASTRAEA_PROJECT_ID="<project-uuid>"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic <base64(username:password)>,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+export GLASSHOUSE_PROJECT_ID="<project-uuid>"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic <base64(username:password)>,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME=my-agent`;
 
 export function DashboardPage() {
@@ -53,7 +53,7 @@ export function DashboardPage() {
 			</header>
 
 			<section
-				className="grid gap-6 md:grid-cols-3"
+				className="grid grid-cols-1 gap-6 md:grid-cols-3"
 				aria-label="Telemetry summary"
 			>
 				<Card className="transition-colors hover:bg-muted/70">
@@ -110,7 +110,7 @@ export function DashboardPage() {
 			</section>
 
 			<section
-				className="grid gap-6 lg:grid-cols-2"
+				className="grid grid-cols-1 gap-6 lg:grid-cols-2"
 				aria-label="Dashboard actions"
 			>
 				<Card>
@@ -119,7 +119,7 @@ export function DashboardPage() {
 							<h2 className="font-semibold">Recent traces</h2>
 							<Link
 								to="/observability"
-								className="text-sm text-primary hover:underline"
+								className="text-sm text-link underline underline-offset-4"
 							>
 								View all
 							</Link>
@@ -182,7 +182,7 @@ export function DashboardPage() {
 								href="/reference"
 								target="_blank"
 								rel="noreferrer"
-								className="inline-flex items-center text-sm text-primary hover:underline"
+								className="inline-flex items-center text-sm text-link underline underline-offset-4"
 							>
 								API reference <LuExternalLink className="ml-1 h-3.5 w-3.5" />
 							</a>

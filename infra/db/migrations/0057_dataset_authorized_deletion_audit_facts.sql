@@ -27,8 +27,8 @@ LANGUAGE plpgsql
 STABLE
 AS $$
 DECLARE
-    run_id_text TEXT := current_setting('astraea.dataset_retention_run_id', true);
-    owner_token_text TEXT := current_setting('astraea.dataset_retention_owner_token', true);
+    run_id_text TEXT := current_setting('glasshouse.dataset_retention_run_id', true);
+    owner_token_text TEXT := current_setting('glasshouse.dataset_retention_owner_token', true);
 BEGIN
     IF run_id_text IS NULL OR owner_token_text IS NULL
         OR run_id_text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'

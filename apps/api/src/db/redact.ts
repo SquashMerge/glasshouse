@@ -7,11 +7,11 @@ import {
 export const REDACTED = "[REDACTED]";
 
 function shouldRedactInput(): boolean {
-	return (process.env.ASTRAEA_REDACT_INPUT ?? "").toLowerCase() === "true";
+	return (process.env.GLASSHOUSE_REDACT_INPUT ?? "").toLowerCase() === "true";
 }
 
 function redactKeys(): string[] {
-	const raw = process.env.ASTRAEA_REDACT_KEYS ?? "";
+	const raw = process.env.GLASSHOUSE_REDACT_KEYS ?? "";
 	return raw
 		.split(",")
 		.map((s) => s.trim())

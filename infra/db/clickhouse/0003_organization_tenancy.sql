@@ -1,4 +1,4 @@
--- Astraea ClickHouse schema: organization tenancy
+-- Glasshouse ClickHouse schema: organization tenancy
 -- Existing rows retain an empty organization_id because their historical
 -- tenant cannot be determined safely. Tenant-scoped queries exclude them.
 

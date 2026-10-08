@@ -23,7 +23,7 @@ describe("ClickHouse migrations", () => {
 				query_params?: { migration: string; checksum: string };
 			}) => {
 				commands.push(query);
-				if (query.startsWith("INSERT INTO astraea_schema_migrations"))
+				if (query.startsWith("INSERT INTO glasshouse_schema_migrations"))
 					applied.set(query_params!.migration, query_params!.checksum);
 			},
 			query: async () => ({
@@ -42,7 +42,7 @@ describe("ClickHouse migrations", () => {
 
 		const migrationStatements = commands.filter(
 			(query) =>
-				!query.includes("astraea_schema_migrations") &&
+				!query.includes("glasshouse_schema_migrations") &&
 				!query.startsWith("INSERT INTO"),
 		);
 		expect(migrationStatements).toHaveLength(18);
@@ -107,7 +107,7 @@ describe("ClickHouse migrations", () => {
 
 		expect(commands.slice(commandsAfterFirstStartup)).toEqual([
 			expect.stringContaining(
-				"CREATE TABLE IF NOT EXISTS astraea_schema_migrations",
+				"CREATE TABLE IF NOT EXISTS glasshouse_schema_migrations",
 			),
 		]);
 		expect(closed).toBe(2);
@@ -124,7 +124,7 @@ describe("ClickHouse migrations", () => {
 				query: string;
 				query_params?: { migration: string; checksum: string };
 			}) => {
-				if (query.startsWith("INSERT INTO astraea_schema_migrations")) {
+				if (query.startsWith("INSERT INTO glasshouse_schema_migrations")) {
 					inserted += 1;
 					applied.set(query_params!.migration, query_params!.checksum);
 				}

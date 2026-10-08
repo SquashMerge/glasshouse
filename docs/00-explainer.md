@@ -1,6 +1,6 @@
-# Astraea — Future Agent Registry Explainer
+# Glasshouse — Future Agent Registry Explainer
 
-> **Archived research, not an implementation commitment:** This pre-roadmap document preserves historical Agent Registry exploration only. Its detailed framework, HTTP, CI, promotion, drift, and rollback examples are superseded by `docs/02-roadmap.md`; they do not describe current behavior or an accepted P4/P5 contract. Current Astraea provides the foundation-first project-scoped observability, mutable Dataset, configured-LLM Experiment, feedback-review, and governance loop described in `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
+> **Archived research, not an implementation commitment:** This pre-roadmap document preserves historical Agent Registry exploration only. Its detailed framework, HTTP, CI, promotion, drift, and rollback examples are superseded by `docs/02-roadmap.md`; they do not describe current behavior or an accepted P4/P5 contract. Current Glasshouse provides the foundation-first project-scoped observability, mutable Dataset, configured-LLM Experiment, feedback-review, and governance loop described in `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
 
 ## The 30-second future pitch
 
@@ -185,7 +185,7 @@ The single platform works regardless of which framework your team picked or pick
 
 ### Why OSS + single-binary dev mode matters
 
-Most enterprise AI teams have a procurement gate: "no closed-source tools touching customer data." Langfuse has proven MIT + self-host is a viable business (they're at scale). Phoenix has proven Apache 2 + single-binary dev mode wins GitHub stars. The archived Hermes proposal referenced an MIT license and a single-binary dev mode; Astraea's current source is licensed under Business Source License 1.1. Production use is subject to the Additional Use Grant in the repository-root `LICENSE`.
+Most enterprise AI teams have a procurement gate: "no closed-source tools touching customer data." Langfuse has proven MIT + self-host is a viable business (they're at scale). Phoenix has proven Apache 2 + single-binary dev mode wins GitHub stars. The archived Hermes proposal referenced an MIT license and a single-binary dev mode; Glasshouse's current source is licensed under Business Source License 1.1. Production use is subject to the Additional Use Grant in the repository-root `LICENSE`.
 
 The dev-mode difference is real: `cargo install hermes && hermes dev` gets you to "first trace visible in dashboard" in 60 seconds. Compare to Langfuse's first-run which requires standing up Postgres + ClickHouse + Redis + S3. For evaluation, the dev loop matters.
 

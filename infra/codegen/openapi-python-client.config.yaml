@@ -1,6 +1,6 @@
 # openapi-python-client config
-project_name_override: astraea-client
-package_name_override: astraea_client
+project_name_override: glasshouse-client
+package_name_override: glasshouse_client
 path: ../../openapi.yaml
 custom_template_path: ~
 meta: none

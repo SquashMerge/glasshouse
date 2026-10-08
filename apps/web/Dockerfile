@@ -6,13 +6,13 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
-RUN bun install --frozen-lockfile --filter "@astraea/*"
+RUN bun install --frozen-lockfile --filter "@glasshouse/*"
 
 FROM base AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN bun --filter "@astraea/web" build
+RUN bun --filter "@glasshouse/web" build
 
 FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app

@@ -55,7 +55,7 @@ export const loginRoute = createRoute({
 	method: "post",
 	path: "/v1/auth/login",
 	tags: [tag],
-	summary: "Sign in to Astraea",
+	summary: "Sign in to Glasshouse",
 	description:
 		"Verify a deployment-scoped local username/password and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.",
 	security: [],

@@ -125,7 +125,7 @@ export function providerDispatchKey(
 	workId: string,
 	attempt = 1,
 ): string {
-	return `astraea:${workKind}:${workId}:${executionOperationKey("provider_dispatch", attempt)}`;
+	return `glasshouse:${workKind}:${workId}:${executionOperationKey("provider_dispatch", attempt)}`;
 }
 
 export async function cancelExecutionAdmission(

@@ -27,7 +27,7 @@ set +a
 # A devcontainer runs the API and its data services on a private Compose
 # network. Local `infra/.env` overrides describe host-published ports, so they
 # must not cross that boundary when the devcontainer opts in.
-if [ "${ASTRAEA_CONTAINER_NETWORK:-}" = "1" ]; then
+if [ "${GLASSHOUSE_CONTAINER_NETWORK:-}" = "1" ]; then
   export POSTGRES_HOST=postgres
   export POSTGRES_PORT=5432
   export CLICKHOUSE_HOST=clickhouse

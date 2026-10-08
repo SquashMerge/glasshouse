@@ -7,7 +7,7 @@ import {
 } from "@playwright/test";
 import { LOCAL_USER, fillLocalPassword } from "./local-auth";
 
-const USER = process.env.UI_USERNAME ?? "astraea";
+const USER = process.env.UI_USERNAME ?? "glasshouse";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:3000";
 
@@ -142,7 +142,7 @@ async function ingestProjectTrace(
 		headers: {
 			authorization: authorization(),
 			"content-type": "application/json",
-			"x-astraea-project-id": projectId,
+			"x-glasshouse-project-id": projectId,
 		},
 		data: {
 			resource_spans: [
@@ -151,7 +151,7 @@ async function ingestProjectTrace(
 						attributes: [
 							{ key: "service.name", value: { stringValue: "first-pass-e2e" } },
 							{
-								key: "astraea.project.id",
+								key: "glasshouse.project.id",
 								value: { stringValue: projectId },
 							},
 						],

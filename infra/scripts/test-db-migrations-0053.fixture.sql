@@ -31,7 +31,7 @@ BEGIN
       AND status = 'deleting'
     FOR UPDATE;
     PERFORM lock_project_audit_provenance(retired_project_id);
-    PERFORM set_config('astraea.project_deletion_id', retired_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', retired_project_id::text, true);
     DELETE FROM projects WHERE id = retired_project_id;
 
     IF EXISTS (SELECT 1 FROM projects WHERE id = retired_project_id) THEN

@@ -7632,16 +7632,16 @@ components:
       type: http
     csrfHeader:
       in: header
-      name: x-astraea-csrf
+      name: x-glasshouse-csrf
       type: apiKey
     sessionCookie:
-      description: HttpOnly opaque local session; never read or store it in JavaScript. Cookie-authenticated mutations also require x-astraea-csrf from GET /v1/auth/session.
+      description: HttpOnly opaque local session; never read or store it in JavaScript. Cookie-authenticated mutations also require x-glasshouse-csrf from GET /v1/auth/session.
       in: cookie
-      name: astraea_session
+      name: glasshouse_session
       type: apiKey
 info:
   description: Agent and LLM evaluation platform.
-  title: Astraea API
+  title: Glasshouse API
   version: 0.1.0
 openapi: 3.1.0
 paths:
@@ -8371,7 +8371,7 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Origin or CSRF verification failed
       security: []
-      summary: Sign in to Astraea
+      summary: Sign in to Glasshouse
       tags:
         - auth
   /v1/auth/logout:
@@ -10046,7 +10046,7 @@ paths:
               required: true
               schema:
                 type: string
-            X-Astraea-Dataset-Export-Limit:
+            X-Glasshouse-Dataset-Export-Limit:
               required: true
               schema:
                 type: string
@@ -11669,7 +11669,7 @@ paths:
       tags:
         - agent-introspection
     put:
-      description: Stores one immutable references-only client report. Astraea did not execute or verify the reported agent activity.
+      description: Stores one immutable references-only client report. Glasshouse did not execute or verify the reported agent activity.
       parameters:
         - in: path
           name: run_id
@@ -14563,7 +14563,7 @@ paths:
       parameters:
         - description: Project selector, verified against the authenticated organization
           in: header
-          name: x-astraea-project-id
+          name: x-glasshouse-project-id
           required: true
           schema:
             description: Project selector, verified against the authenticated organization

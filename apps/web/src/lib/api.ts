@@ -2489,7 +2489,7 @@ function sanitizeMetadataAttributes(
 	attributes: OtlpAttribute[],
 ): OtlpAttribute[] {
 	return attributes.filter(
-		(attribute) => !attribute.key.startsWith("astraea.prompt."),
+		(attribute) => !attribute.key.startsWith("glasshouse.prompt."),
 	);
 }
 
@@ -2713,7 +2713,7 @@ export async function seedRandomTrace(): Promise<{
 			resource_spans: [
 				{
 					resource: { attributes: [] },
-					scope_spans: [{ scope: { name: "astraea.sse-debug" }, spans }],
+					scope_spans: [{ scope: { name: "glasshouse.sse-debug" }, spans }],
 				},
 			],
 		}),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Astraea smoke checks for an already-running stack.
+# Glasshouse smoke checks for an already-running stack.
 # Exits 0 on full pass, non-zero on first failure.
 
 # CRLF guard: re-exec through a normalized copy if checked out with \r.
@@ -17,7 +17,7 @@ API_PORT="${API_PORT:-3000}"
 BASE_API="http://localhost:${API_PORT}"
 
 # Auth: pull creds from infra/.env (sourced by make dev-backend).
-UI_USER="${UI_USERNAME:-astraea}"
+UI_USER="${UI_USERNAME:-glasshouse}"
 UI_PASS="${UI_PASSWORD:-}"
 if [ -z "${UI_PASS}" ]; then
   echo "  ! UI_PASSWORD not set; sourcing infra/.env"
@@ -61,9 +61,9 @@ echo "${WWW_AUTH}" | grep -qi 'Basic' || fail "WWW-Authenticate header missing B
 ok "unauthenticated /v1/traces returns 401 with WWW-Authenticate: Basic"
 
 step "AC7: /v1/auth/login with valid creds returns 200 { ok: true }"
-LOGIN_RESP="$(curl -s -o /tmp/astraea_login.json -w '%{http_code}' -H "${AUTH}" -X POST "${BASE_API}/v1/auth/login")"
+LOGIN_RESP="$(curl -s -o /tmp/glasshouse_login.json -w '%{http_code}' -H "${AUTH}" -X POST "${BASE_API}/v1/auth/login")"
 [ "${LOGIN_RESP}" = "200" ] || fail "POST /v1/auth/login returned ${LOGIN_RESP}, expected 200"
-grep -q '"ok":true' /tmp/astraea_login.json || fail "/v1/auth/login body missing { ok: true }"
+grep -q '"ok":true' /tmp/glasshouse_login.json || fail "/v1/auth/login body missing { ok: true }"
 ok "POST /v1/auth/login returns 200 { ok: true }"
 
 step "AC1: POST /v1/otel/v1/traces with gen_ai.* attrs persists to ClickHouse"
@@ -99,12 +99,12 @@ EOF
 )
 TRACE_ID_ACTUAL=$(echo "${OTLP_PAYLOAD}" | python3 -c 'import sys,json; print(json.load(sys.stdin)["resource_spans"][0]["scope_spans"][0]["spans"][0]["trace_id"])')
 echo "  POSTing trace_id=${TRACE_ID_ACTUAL}"
-INGEST_RESP="$(curl -s -o /tmp/astraea_otlp.json -w '%{http_code}' \
+INGEST_RESP="$(curl -s -o /tmp/glasshouse_otlp.json -w '%{http_code}' \
   -H "Content-Type: application/json" \
   -H "${AUTH}" \
   -X POST --data "${OTLP_PAYLOAD}" \
   "${BASE_API}/v1/otel/v1/traces")"
-[ "${INGEST_RESP}" = "200" ] || { cat /tmp/astraea_otlp.json; fail "OTLP ingest returned ${INGEST_RESP}, expected 200"; }
+[ "${INGEST_RESP}" = "200" ] || { cat /tmp/glasshouse_otlp.json; fail "OTLP ingest returned ${INGEST_RESP}, expected 200"; }
 ok "OTLP ingest returned 200"
 
 # Verify the trace is queryable.
@@ -123,13 +123,13 @@ print('  ✓ trace + observation persisted correctly')
 ok "trace persists with correct agent_id, scores_summary, observations"
 
 step "AC3: malformed OTLP body returns 400"
-BAD_CODE="$(curl -s -o /tmp/astraea_otlp_bad.json -w '%{http_code}' \
+BAD_CODE="$(curl -s -o /tmp/glasshouse_otlp_bad.json -w '%{http_code}' \
   -H "Content-Type: application/json" \
   -H "${AUTH}" \
   -X POST --data 'not json' \
   "${BASE_API}/v1/otel/v1/traces")"
 [ "${BAD_CODE}" = "400" ] || fail "malformed OTLP body returned ${BAD_CODE}, expected 400"
-grep -q 'BAD_REQUEST' /tmp/astraea_otlp_bad.json || fail "malformed OTLP body missing BAD_REQUEST code"
+grep -q 'BAD_REQUEST' /tmp/glasshouse_otlp_bad.json || fail "malformed OTLP body missing BAD_REQUEST code"
 ok "malformed OTLP body returns 400 with BAD_REQUEST"
 
 step "AC2: dashboard renders with zero console errors (Playwright)"

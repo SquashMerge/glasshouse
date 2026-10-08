@@ -362,7 +362,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Astraea-specific
+# Glasshouse-specific
 .opencode/factory/
 .opencode/worktrees/
 .factory.lock

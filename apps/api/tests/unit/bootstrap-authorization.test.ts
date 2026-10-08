@@ -7,7 +7,7 @@ describe("bootstrap authorization", () => {
 	it("rejects unknown bootstrap modes before connecting", async () => {
 		let ended = false;
 		await expect(
-			bootstrapAuthorization({ ASTRAEA_AUTH_BOOTSTRAP_MODE: "unexpected" }, {
+			bootstrapAuthorization({ GLASSHOUSE_AUTH_BOOTSTRAP_MODE: "unexpected" }, {
 				connect: async () => {
 					throw new Error("must not connect");
 				},
@@ -15,7 +15,7 @@ describe("bootstrap authorization", () => {
 					ended = true;
 				},
 			} as never),
-		).rejects.toThrow("ASTRAEA_AUTH_BOOTSTRAP_MODE must be basic or local");
+		).rejects.toThrow("GLASSHOUSE_AUTH_BOOTSTRAP_MODE must be basic or local");
 		expect(ended).toBe(true);
 	});
 	it("grants the configured owner manager membership for every non-deleting project", async () => {
@@ -46,8 +46,8 @@ describe("bootstrap authorization", () => {
 
 		await bootstrapAuthorization(
 			{
-				ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
-				ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+				GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "owner",
+				GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([
 					{
 						username: "owner",
 						password: "secret",
@@ -120,8 +120,8 @@ describe("bootstrap authorization", () => {
 
 		await bootstrapAuthorization(
 			{
-				ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
-				ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+				GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "owner",
+				GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([
 					{
 						username: "owner",
 						password: "secret",
@@ -166,8 +166,8 @@ describe("bootstrap authorization", () => {
 
 		await bootstrapAuthorization(
 			{
-				ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
-				ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+				GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "owner",
+				GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([
 					{
 						username: "owner",
 						password: "secret",
@@ -206,8 +206,8 @@ describe("bootstrap authorization", () => {
 
 		await bootstrapAuthorization(
 			{
-				ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
-				ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+				GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "owner",
+				GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([
 					{
 						username: "owner",
 						password: "secret",
@@ -245,8 +245,8 @@ describe("bootstrap authorization", () => {
 		await expect(
 			bootstrapAuthorization(
 				{
-					ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
-					ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+					GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "owner",
+					GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([
 						{
 							username: "owner",
 							password: "secret",
@@ -280,8 +280,8 @@ describe("bootstrap authorization", () => {
 		await expect(
 			bootstrapAuthorization(
 				{
-					ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "owner",
-					ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+					GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "owner",
+					GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([
 						{
 							username: "owner",
 							password: "secret",
@@ -325,8 +325,8 @@ describe("bootstrap authorization", () => {
 			await expect(
 				bootstrapAuthorization(
 					{
-						ASTRAEA_BOOTSTRAP_OWNER_USERNAME: username,
-						ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([
+						GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: username,
+						GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([
 							{
 								username,
 								password: "secret",

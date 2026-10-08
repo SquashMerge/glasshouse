@@ -82,12 +82,13 @@ export function SseDebugOverlay({
 	// doesn't bring it back.
 	const [dismissed, setDismissed] = React.useState<boolean>(() => {
 		if (typeof sessionStorage === "undefined") return false;
-		return sessionStorage.getItem("astraea.sse-debug.dismissed") === "1";
+		return sessionStorage.getItem("glasshouse.sse-debug.dismissed") === "1";
 	});
 	React.useEffect(() => {
 		if (typeof sessionStorage === "undefined") return;
-		if (dismissed) sessionStorage.setItem("astraea.sse-debug.dismissed", "1");
-		else sessionStorage.removeItem("astraea.sse-debug.dismissed");
+		if (dismissed)
+			sessionStorage.setItem("glasshouse.sse-debug.dismissed", "1");
+		else sessionStorage.removeItem("glasshouse.sse-debug.dismissed");
 	}, [dismissed]);
 
 	if (dismissed) return null;

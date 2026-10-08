@@ -282,7 +282,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	apiApp.post("/v1/otel/v1/traces", async (c) => {
 		try {
 			const tenant = trustedTenant(c);
-			const header = c.req.header("x-astraea-project-id");
+			const header = c.req.header("x-glasshouse-project-id");
 			if (!header || !isUuid(header))
 				throw new TenantScopeError("Project target is required");
 			const requestedProjectId = header;

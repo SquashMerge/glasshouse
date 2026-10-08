@@ -1,7 +1,7 @@
-# Astraea Agent + LLM Evaluation Platform — Future Agent Registry Design
+# Glasshouse Agent + LLM Evaluation Platform — Future Agent Registry Design
 
 **Date:** July 4, 2026
-**Status:** Archived pre-roadmap research, not an implementation commitment. The detailed Agent Registry, framework, HTTP, CI/GitOps, drift, and rollback examples below are superseded by `docs/02-roadmap.md`; they do not define P4/P5 scope. Current Astraea ships the foundation-first configured-LLM Experiment and observability loop; see `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
+**Status:** Archived pre-roadmap research, not an implementation commitment. The detailed Agent Registry, framework, HTTP, CI/GitOps, drift, and rollback examples below are superseded by `docs/02-roadmap.md`; they do not define P4/P5 scope. Current Glasshouse ships the foundation-first configured-LLM Experiment and observability loop; see `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
 
 ---
 
@@ -26,11 +26,11 @@
 
 ### Tier 1 — Zero-config OTLP (60 seconds)
 ```bash
-# Current Astraea receiver configuration; replace these placeholders for your deployment.
+# Current Glasshouse receiver configuration; replace these placeholders for your deployment.
 AUTH=$(printf '%s:%s' "$UI_USERNAME" "$UI_PASSWORD" | base64)
 export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
-export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 python my_agent.py    # works for any framework that emits OTel
 ```
 

@@ -61,7 +61,7 @@ export function resolveEvaluationExecutionPolicy(
 	const provider =
 		typeof target.provider === "string"
 			? target.provider
-			: (environment.ASTRAEA_EVAL_LLM_PROVIDER ?? "openai");
+			: (environment.GLASSHOUSE_EVAL_LLM_PROVIDER ?? "openai");
 	const model =
 		typeof target.model === "string" && target.model.trim()
 			? target.model.trim()

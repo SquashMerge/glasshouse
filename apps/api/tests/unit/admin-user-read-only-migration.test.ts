@@ -137,11 +137,11 @@ test("migration fixture clears prior feedback probes before testing protected pr
 	const feedbackProbe =
 		"VALUES ('a4000000-0000-4000-8000-000000000008', '22222222-2222-2222-2222-222222222222', 'human.feedback', 1);";
 	const deletionContext =
-		"'astraea.project_deletion_id',\n        '22222222-2222-2222-2222-222222222222',";
+		"'glasshouse.project_deletion_id',\n        '22222222-2222-2222-2222-222222222222',";
 	const feedbackCleanup =
 		"DELETE FROM scores\n    WHERE id = 'a4000000-0000-4000-8000-000000000008';";
 	const clearedDeletionContext =
-		"PERFORM set_config('astraea.project_deletion_id', '', true);";
+		"PERFORM set_config('glasshouse.project_deletion_id', '', true);";
 	const projectDeletionProbe =
 		"DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';";
 
@@ -392,9 +392,9 @@ test("covers deleting project cleanup without its marker and protects the final 
 		migrationAssertion.indexOf("Permanent Deletion Fixture"),
 	);
 	const marker =
-		"PERFORM set_config('astraea.project_deletion_id', test_project_id::text, true);";
+		"PERFORM set_config('glasshouse.project_deletion_id', test_project_id::text, true);";
 	const clearedMarker =
-		"PERFORM set_config('astraea.project_deletion_id', '', true);";
+		"PERFORM set_config('glasshouse.project_deletion_id', '', true);";
 	const deletingStatus = "SET status = 'deleting'";
 
 	expect(lifecycleBlock).toContain(marker);

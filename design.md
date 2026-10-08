@@ -1,96 +1,152 @@
-# Astraea UI design guide
+---
+title: Glasshouse design system
+version: 1.1.0
+product: Glasshouse by SquashMerge
+status: implementation baseline
+---
 
-This guide describes the visual and interaction conventions for the Astraea web app. It is grounded in the current implementation, not a redesign proposal. Keep it aligned with the durable agent rules in [`AGENTS.md`](AGENTS.md) and the actual tokens and shared components cited below.
+# Glasshouse design system
 
-## Design intent
+This is the product-specific adaptation of SquashMerge's shared design language for the Glasshouse web application. It defines the current visual baseline; it does not imply unshipped features, integrations, pricing, availability, or performance claims. Keep this file aligned with the actual UI and the central token definitions in `apps/web/src/styles/globals.css`.
 
-Astraea is a data-rich workspace for inspecting and managing AI evaluations, datasets, feedback, prompts, and traces. The UI should feel calm, precise, and operational: clear hierarchy, compact but readable information, neutral surfaces, and obvious actions. Prefer consistency with the existing application over introducing a page-specific visual language.
+## Product identity
 
-## Color and theme
+- **SquashMerge** is the parent company and shared design language.
+- **Glasshouse** is SquashMerge's observability and evaluation product for agentic applications.
+- First reference in external-facing copy: **Glasshouse by SquashMerge**. Thereafter use **Glasshouse**.
+- The software and Licensed Work were formerly called Astraea. Preserve that historical mapping only where it is needed for repository/license context; use Glasshouse for current UI, APIs, configuration, and product documentation.
+- Do not invent launch dates, pricing, integration availability, or performance claims.
 
-Use semantic Tailwind classes backed by the CSS custom properties in `apps/web/src/styles/globals.css`. The app supports light mode at `:root` and dark mode through `.dark`; keep both themes legible when adding a semantic color.
+## Principles
 
-| Role | Light HSL values | Dark HSL values |
+1. Make system state, evidence, source references, and relationships visible.
+2. Use hierarchy, alignment, and spacing to make technical structure understandable.
+3. Make the next action clear and its result observable.
+4. Keep neutral surfaces dominant; accents convey action, selection, focus, or status.
+5. Be warm and precise, using restrained botanical cues and geometric paths only where they aid the product.
+
+Avoid glossy 3D, neon glow, heavy shadows, decorative animated backgrounds, arbitrary product colors, and unrelated icon styles. The garden metaphor belongs in brand identity, not technical instructions.
+
+## Logo and assets
+
+The supplied Glasshouse artwork is stored at `apps/web/public/brand/glasshouse-logo-dark-v1.png` (1254 × 1254 RGB PNG with a dark background). Use the checked-in image unchanged: preserve aspect ratio, colors, artwork, and background. Do not crop, distort, recolor, filter, erase the background, trace, or recreate the wordmark. Its native artwork has two interior nodes, one amber and one purple.
+
+The current sidebar uses the complete square artwork at 112 × 112 px on the expanded desktop navigation, leaving enough room for its wordmark to remain part of the artwork. On narrow or collapsed navigation, the application uses a text-only `Glasshouse` label rather than squeezing the presentation image into a nav icon. This is a responsive use of the supplied artwork, not a separately approved horizontal or compact mark. If a compact nav mark or horizontal lockup is needed, request a dedicated approved export rather than editing this image. The home link retains its accessible name in every layout. When adjacent text already names the product, treat the image as decorative; otherwise give it meaningful alt text. A linked logo must have an accessible link name.
+
+The image is dark-background artwork; do not use it on an incompatible light surface. No favicon, transparent, editable SVG, or alternate responsive lockup is included in the supplied kit.
+
+## Color system
+
+The dark palette below is the current baseline. Values are centralized in `apps/web/src/styles/globals.css` as `--gh-*` HSL channels; Tailwind semantic colors reference those aliases. Change the palette there rather than scattering hex/RGB values through components. `design.md` records the corresponding design values; update it with intentional palette changes.
+
+| Token | Hex | Use |
 | --- | --- | --- |
-| Background / card | `0 0% 100%` | `222 47% 6%` |
-| Foreground / card text | `222 47% 11%` | `210 40% 98%` |
-| Popover | `0 0% 100%` | `222 47% 9%` |
-| Border / input | `214 32% 91%` | `217 33% 17%` |
-| Primary | `222 47% 11%` | `210 40% 98%` |
-| Primary foreground | `210 40% 98%` | `222 47% 11%` |
-| Secondary / muted / accent | `210 40% 96%` | `217 33% 17%` |
-| Secondary / accent foreground | `222 47% 11%` | `210 40% 98%` |
-| Muted foreground | `215 16% 47%` | `215 20% 65%` |
-| Destructive | `0 84% 60%` | `0 63% 50%` |
-| Destructive foreground | `210 40% 98%` | `210 40% 98%` |
-| Focus ring | `222 47% 11%` | `215 20% 65%` |
+| Ink | `#0B0C10` | Page background and text on bright actions |
+| Surface | `#14151D` | Cards and popovers |
+| Raised | `#1D1E2A` | Quiet navigation and raised groups |
+| Line | `#343644` | Decorative dividers |
+| Control | `#777A8E` | Meaningful input/control boundaries |
+| White | `#F7F7FB` | Primary text |
+| Muted | `#B8BAC8` | Secondary text |
+| Gold | `#FFC20A` | Warm highlight |
+| Amber | `#FFAA10` | Primary action and brand accent |
+| Orange | `#FF7A00` | Warm gradient endpoint |
+| Lavender | `#ABA5FF` | Links and focus on dark surfaces |
+| Purple | `#7770DC` | Selection and structural accent |
+| Deep purple | `#5D55C8` | Cool gradient endpoint |
+| Green | `#57D6A0` | Success, always paired with a label/icon |
+| Red | `#FF8E9A` | Error, always paired with a label/icon |
+| Blue | `#85C7FF` | Information |
 
-Use classes such as `bg-background`, `text-foreground`, `bg-card`, `text-muted-foreground`, `border-border`, `bg-primary`, and `text-destructive`. Avoid hard-coded page-level colors; if a semantic role is genuinely missing, add it to both light and dark CSS variables and map it in `apps/web/tailwind.config.ts` rather than creating one-off styles.
+Use ink text on amber and purple fills; white on the specified amber or purple does not meet normal-text contrast. Links use lavender and remain underlined. Brand colors are not a universal success/failure mapping. Warm gradients run from gold to orange, cool gradients from lavender to deep purple; do not blend the warm and cool families or put gradients behind body copy. Large brand artwork only; no gradients are currently needed for ordinary application surfaces.
 
-**Token gap to keep in mind:** `tailwind.config.ts` maps `success` to `--success`, but `globals.css` currently does not declare `--success`. Do not treat that as a complete, theme-safe token for new UI until both theme values exist; status should also be conveyed with text or an icon, not color alone.
+Light mode is not defined by this baseline. Do not invert dark values mechanically; introduce separately reviewed semantic aliases and contrast evidence before adding a light theme.
 
-## Typography and shape
+## Typography
 
-- The global font stack is the system sans-serif stack defined on `body` in `globals.css`; do not add a second product font for an individual page.
-- Use a small, consistent hierarchy: one clear page `h1`, section/card headings, normal body copy, then muted supporting text and compact metadata. Shared card headings and descriptions use `text-2xl font-semibold tracking-tight` and `text-sm text-muted-foreground` respectively.
-- The shared radius token is `--radius: 0.5rem`; Tailwind `rounded-lg`, `rounded-md`, and `rounded-sm` are derived from it. Prefer shared radii over arbitrary values.
-- Use `cn` from `apps/web/src/lib/utils.ts` when composing conditional classes.
+| Role | Family | Weight |
+| --- | --- | --- |
+| Display and headings | Manrope | 600–800; display default 750 |
+| Body and interface | Inter | 400 body, 600 labels, 650 emphasis |
+| Code, IDs, and metrics | JetBrains Mono | 400 |
 
-## Application layout
+The font files are not bundled. Until approved files are available, use the existing system UI stack and monospace fallback; do not fetch unrelated fonts or retype the supplied wordmark. Use `font-display: swap` when adding licensed font files. Use sentence case, semantic headings, comfortable line height, restrained emphasis, and tabular numerals for aligned numeric values.
 
-Authenticated pages live inside `AppShell`. Its content area intentionally uses the full workspace width (`APP_WORKSPACE_CLASS = "max-w-none"`), with `px-4 py-5` and `sm:px-6 sm:py-8`. Do not add arbitrary outer max-widths to product pages; use a local width constraint only when the content itself calls for it, such as a compact form, dialog, or popover.
+| Role | Size / line height |
+| --- | --- |
+| Display | 48 / 56 px |
+| H1 | 32 / 40 px |
+| H2 | 24 / 32 px |
+| H3 | 18 / 26 px |
+| Body | 16 / 24 px |
+| Label | 14 / 20 px |
+| Caption | 12 / 18 px |
+| Code | 13 / 20 px |
 
-The navigation is collapsible and responsive, with a compact project selector at small widths. Keep the main content `min-w-0`, allow toolbars and action groups to wrap or stack, and prevent tables, cards, and long identifiers from forcing horizontal page overflow. Keep project context and the shared shell visible in the normal authenticated workflow.
+## Layout and components
 
-## Page composition and spacing
+- Spacing scale: 4, 8, 12, 16, 24, 32, 48, 64 px.
+- Component internals: 8–16 px; between groups: 24–32 px; between sections: 48–64 px.
+- Radius: 4 px details, 8 px controls, 12 px cards. Reserve fully rounded shapes for chips, avatar crops, and status dots.
+- Typical content width: 1120–1280 px where useful; data-heavy views may be wider when the content needs it.
+- Mobile inset: 16–24 px. At 320 CSS px avoid whole-page horizontal scrolling; allow deliberate local overflow for code and wide tables with accessible access to the full content.
+- Dividers: 1 px; ordinary UI icon stroke: 2 px. Do not apply logo strokes to interface icons.
+- Align related components, padding, control heights, and labels consistently.
 
-- Give the page title, description, primary action, filters, and main content clear visual separation. Prefer a simple heading/action row followed by sections or cards.
-- Reuse `Card`, `CardHeader`, `CardTitle`, `CardDescription`, and `CardContent` for grouped content. The card primitives already supply border, radius, background, padding, and typography; avoid rebuilding those styles per page.
-- Maintain a deliberate spacing rhythm. Existing form patterns use `space-y-2` between a label and its field, `space-y-4` for related setup/status content, and `space-y-5` between form rows. Use clear gaps between adjacent cards and sections; do not let borders visually fuse.
-- Keep primary actions easy to find and use the shared button variants. Use destructive styling for consequential destructive actions, not as a decorative accent.
+### Buttons and forms
 
-## Shared components and controls
+Primary buttons use amber fill, ink text, an 8 px radius, a 14/20 px label, and a 44 px minimum height where layout permits. Secondary actions use neutral surfaces and visible boundaries. Destructive actions use explicit wording and semantic error styling; preserve established confirmation behavior. Use buttons for actions and links for navigation, with labels such as `Run evaluation`, `Open source`, or `Review changes`. Keep dimensions stable while loading and prevent duplicate submissions where appropriate.
 
-Prefer the existing shadcn-style primitives in `apps/web/src/components/ui/` over raw replicas: `Button`, `Input`, `Label`, `Card`, `Alert`, `Badge`, `Select`, `Separator`, `Skeleton`, and the dropdown/menu components. Extend or add a shared primitive when a reusable pattern is missing instead of copying a slightly different version into each route.
+Forms use persistent visible labels; placeholders are examples, not labels. Explain errors beside the affected field. Maintain visible keyboard focus, starting with a 2 px lavender ring and 3 px offset on dark surfaces. Reuse existing accessible dialogs, menus, selects, and validation components.
 
-Use the provided control sizes and interaction states: buttons are compact, inputs are full-width by default, focus-visible rings are explicit, and disabled controls are visibly disabled. Link each visible form label to its control; pair hints and validation messages through accessible descriptions. For forms, show actionable errors close to the relevant content and preserve values only when it is safe and useful to do so.
+### Cards and technical data
 
-## Data-dense screens and feedback states
+Use cards to group related information, not to wrap every sentence. Use semantic tables for comparable records, label units, and align numeric values. Render paths and IDs in monospace; if shortened, provide an accessible way to reveal or copy the full value.
 
-Use shared table and filter patterns such as `FilterableTable` where their behavior fits. Keep column headings, row actions, filters, and counts scannable; use compact muted text for secondary metadata without shrinking primary values into unreadable text. Preserve the established data hierarchy rather than adding extra chrome around every value.
+Required UI states:
 
-Design each data view for loading, empty, no-match, error, retry, and populated states. Reuse `Skeleton` for loading, `Alert` or `role="alert"` for errors, and a clear retry action when recovery is possible. Empty states should tell the user what is absent and, where appropriate, what action to take. For live updates, use the shared accent/highlight treatment briefly and do not make animation the only indication of change.
+- **Empty:** explain what belongs here and give the relevant next action.
+- **Loading:** use a stable skeleton or meaningful progress; avoid layout jumps.
+- **Error:** explain failure and recovery; do not imply success before a result.
+- **Disabled:** communicate unavailability without relying on faint color alone.
+- **Focus, hover, selected:** visibly distinct and keyboard-operable.
 
-## Accessibility and interaction
+## Product visualization and status
 
-- Use semantic landmarks and heading order; provide an accessible name for icon-only controls.
-- Preserve keyboard access, visible focus, logical focus order, and sufficient touch targets at narrow widths.
-- Use native labels, buttons, links, and form controls when possible. Do not use placeholder text as a substitute for a label.
-- Associate helper/error text with its field. Announce dynamic errors/statuses with the appropriate live-region semantics and move focus only when the workflow requires it.
-- Do not communicate status, selection, or severity through color alone. Respect reduced-motion preferences and avoid unnecessary motion.
-- Treat WCAG contrast as a design target when adding or changing color pairs; this guide is not a claim that every existing surface has been audited.
+- Make graph relationships functional, not decorative; use arrows when direction matters and avoid ambiguous crossings.
+- Prefer short orthogonal connectors and keep source references beside the items they explain.
+- Label observed, inferred, and planned relationships. Never fabricate source links, evaluations, trace IDs, or results.
+- Use consistent units and scales. Mark illustrative or synthetic data clearly.
+- Status uses words plus a shape, icon, or line style; never color alone.
+- Glasshouse emphasizes observability and evaluations; these content differences do not create a separate product color scheme.
 
-## Do and avoid
+## Motion
 
-**Do**
-- Use semantic theme classes and shared primitives.
-- Match established spacing, typography, control sizes, and focus states.
-- Keep authenticated product pages aligned to `AppShell` and the project workspace.
-- Check the same page at desktop, tablet, and mobile widths, including loading and error states.
+Use 120 ms hover, 180 ms local-state changes, and 240 ms panel transitions with `cubic-bezier(0.2, 0, 0, 1)`. Prefer opacity and small movement. Do not continuously animate logos. Respect `prefers-reduced-motion`; remove decorative movement and use immediate state changes when practical.
 
-**Avoid**
-- Page-local palettes, ad hoc shadows/radii, and custom CSS when shared tokens and utilities suffice.
-- Arbitrary width caps around full workspace pages.
-- Fused card layouts, cramped label/control spacing, and unwrapped action rows on mobile.
-- One-off control implementations that diverge from the shared primitives.
-- New status colors or success styles that are not defined for both themes.
+## Voice
 
-## Implementation references
+Be precise, calm, capable, and warm. Name the action, object, and evidence. Explain limitations plainly.
 
-- Global tokens, dark theme, and font stack: `apps/web/src/styles/globals.css`
-- Tailwind semantic color/radius mappings: `apps/web/tailwind.config.ts`
-- Workspace contract and responsive navigation: `apps/web/src/components/AppShell.tsx`
-- Shared buttons, inputs, labels, cards, alerts, and badges: `apps/web/src/components/ui/`
-- Shared table and filter pattern: `apps/web/src/components/FilterableTable.tsx`
-- Representative compact form composition: `apps/web/src/routes/password-change.tsx`
-- Repository-level UI quality bar: `AGENTS.md` (UI design and quality section)
+Working company description: `SquashMerge builds tools for understanding, evaluating and developing agentic applications.`
+
+Prefer `Inspect the trace and compare evaluation results.` Avoid `Unlock revolutionary AI insights.` Keep technical terms concrete: evaluations, source-linked diagrams, memory, and pull requests. Do not introduce unsupported superlatives, pricing, availability, or integration promises.
+
+## Accessibility and verification
+
+- Target 4.5:1 contrast for normal text and 3:1 for large text under the applicable definition. Meaningful UI graphics and control boundaries need 3:1 where applicable.
+- Contrast of a token pair alone does not prove a full interface passes; check real surfaces, focus, gradients, and interaction states.
+- Preserve keyboard access, correct roles, accessible names, and visible focus. Reuse the repository's accessible interaction patterns.
+- Do not rely on color, hover alone, or animation to communicate required information.
+- Check affected flows at narrow and wide widths with realistic long content and all important states. Visually inspect the rendered changes and run relevant lint, type-check, build, and tests.
+
+Primary references: [WCAG text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html) and [WCAG non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html).
+
+## Coding-agent workflow
+
+1. Identify the current Glasshouse UI scope, styling system, shared components, and existing product status.
+2. Read this file and the central semantic tokens. Resolve actual asset paths before using logos.
+3. Implement only the requested scope using shared components and token aliases; do not restyle unrelated pages.
+4. Preserve product status and claims. Ask for product direction when an unconfirmed commercial decision is necessary.
+5. Inspect the rendered result, responsive layout, contrast, focus, and important states. Run focused tests and relevant project checks.
+6. Report what changed, how it was verified, and any material limitation. Do not claim a whole-product update when only one flow changed.

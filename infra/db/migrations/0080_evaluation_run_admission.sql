@@ -137,7 +137,7 @@ CREATE OR REPLACE FUNCTION prevent_evaluation_run_input_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        IF current_setting('astraea.evaluation_run_admission_run_id', true)
+        IF current_setting('glasshouse.evaluation_run_admission_run_id', true)
             IS DISTINCT FROM NEW.run_id::text
             OR EXISTS (
                 SELECT 1

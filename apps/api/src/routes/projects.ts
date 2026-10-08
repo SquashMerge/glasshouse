@@ -238,7 +238,7 @@ function legacyOrganizationRole(role: "admin" | "user") {
 	return role === "admin" ? ("owner" as const) : ("member" as const);
 }
 function canRecoverAdmin(tenant: ReturnType<typeof trustedTenant>) {
-	const username = process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME;
+	const username = process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME;
 	if (!username) return false;
 	const matches = basicCredentialsFromEnvironment().filter(
 		(credential) => credential.username === username,
@@ -699,7 +699,7 @@ export async function handleDeleteProject(c: Context) {
 				if (!deletionProject.rows[0]) throw new Error("Not found");
 				await lockProjectAuditProvenance(finalize, id);
 				await finalize.query(
-					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
 					[id],
 				);
 				for (const sql of deletionCleanupSql) await finalize.query(sql, [id]);

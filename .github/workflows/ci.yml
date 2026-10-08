@@ -36,7 +36,7 @@ jobs:
           - check: build
             command: bun run build
           - check: openapi-artifact
-            command: bun run openapi:check && bun --filter @astraea/api codegen:ts
+            command: bun run openapi:check && bun --filter @glasshouse/api codegen:ts
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
           - check: doctor-version
@@ -82,22 +82,22 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: astraea
-          POSTGRES_PASSWORD: astraea-ci-password
-          POSTGRES_DB: astraea
+          POSTGRES_USER: glasshouse
+          POSTGRES_PASSWORD: glasshouse-ci-password
+          POSTGRES_DB: glasshouse
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U astraea -d astraea"
+          --health-cmd "pg_isready -U glasshouse -d glasshouse"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 30
       clickhouse:
         image: clickhouse/clickhouse-server:24-alpine
         env:
-          CLICKHOUSE_DB: astraea
-          CLICKHOUSE_USER: astraea
-          CLICKHOUSE_PASSWORD: astraea-ci-password
+          CLICKHOUSE_DB: glasshouse
+          CLICKHOUSE_USER: glasshouse
+          CLICKHOUSE_PASSWORD: glasshouse-ci-password
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
         ports:
           - 8123:8123
@@ -120,30 +120,30 @@ jobs:
 
       - name: Apply ClickHouse migrations concurrently
         env:
-          DATABASE_URL: postgres://astraea:astraea-ci-password@localhost:5432/astraea
+          DATABASE_URL: postgres://glasshouse:glasshouse-ci-password@localhost:5432/glasshouse
           CLICKHOUSE_URL: http://localhost:8123
-          CLICKHOUSE_USER: astraea
-          CLICKHOUSE_PASSWORD: astraea-ci-password
-          CLICKHOUSE_DB: astraea
+          CLICKHOUSE_USER: glasshouse
+          CLICKHOUSE_PASSWORD: glasshouse-ci-password
+          CLICKHOUSE_DB: glasshouse
         run: |
-          bun --filter @astraea/api ch:migrate &
+          bun --filter @glasshouse/api ch:migrate &
           first=$!
-          bun --filter @astraea/api ch:migrate &
+          bun --filter @glasshouse/api ch:migrate &
           second=$!
           wait "$first"
           wait "$second"
           expected="$(find infra/db/clickhouse -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
-          actual="$(curl --fail --silent --show-error --user astraea:astraea-ci-password --data-binary 'SELECT count() FROM astraea_schema_migrations FORMAT TabSeparated' 'http://localhost:8123/?database=astraea')"
+          actual="$(curl --fail --silent --show-error --user glasshouse:glasshouse-ci-password --data-binary 'SELECT count() FROM glasshouse_schema_migrations FORMAT TabSeparated' 'http://localhost:8123/?database=glasshouse')"
           test "$actual" = "$expected"
 
       - name: Verify ClickHouse schema
         env:
-          DATABASE_URL: postgres://astraea:astraea-ci-password@localhost:5432/astraea
+          DATABASE_URL: postgres://glasshouse:glasshouse-ci-password@localhost:5432/glasshouse
           CLICKHOUSE_URL: http://localhost:8123
-          CLICKHOUSE_USER: astraea
-          CLICKHOUSE_PASSWORD: astraea-ci-password
-          CLICKHOUSE_DB: astraea
-        run: bun --filter @astraea/api test:clickhouse
+          CLICKHOUSE_USER: glasshouse
+          CLICKHOUSE_PASSWORD: glasshouse-ci-password
+          CLICKHOUSE_DB: glasshouse
+        run: bun --filter @glasshouse/api test:clickhouse
 
   postgres-migrations:
     name: PostgreSQL migration upgrade
@@ -168,8 +168,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      ASTRAEA_AUTH_BOOTSTRAP_MODE: local
-      ASTRAEA_PUBLIC_ORIGIN: http://localhost:5173
+      GLASSHOUSE_AUTH_BOOTSTRAP_MODE: local
+      GLASSHOUSE_PUBLIC_ORIGIN: http://localhost:5173
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -188,7 +188,7 @@ jobs:
       - name: Configure deterministic CI environment
         run: |
           cp infra/.env.example infra/.env
-          sed -i 's/CHANGE_ME/astraea-ci-password/g' infra/.env
+          sed -i 's/CHANGE_ME/glasshouse-ci-password/g' infra/.env
 
       - name: Start application stack
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
@@ -201,8 +201,8 @@ jobs:
           expected_clickhouse="$(find infra/db/clickhouse -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')"
 
           verify_migrations() {
-            actual_postgres="$("${compose[@]}" exec -T postgres psql -U astraea -d astraea -Atqc 'SELECT count(*) FROM pgmigrations')"
-            actual_clickhouse="$("${compose[@]}" exec -T clickhouse clickhouse-client --user astraea --password astraea-ci-password --database astraea --query 'SELECT count() FROM astraea_schema_migrations')"
+            actual_postgres="$("${compose[@]}" exec -T postgres psql -U glasshouse -d glasshouse -Atqc 'SELECT count(*) FROM pgmigrations')"
+            actual_clickhouse="$("${compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse --password glasshouse-ci-password --database glasshouse --query 'SELECT count() FROM glasshouse_schema_migrations')"
             test "$actual_postgres" = "$expected_postgres"
             test "$actual_clickhouse" = "$expected_clickhouse"
           }
@@ -215,7 +215,7 @@ jobs:
       - name: Verify project mutation SQL against PostgreSQL
         run: |
           bash infra/scripts/with-local-env.sh bash -c '
-            export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-astraea}"
+            export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-glasshouse}"
             bun --cwd apps/api test tests/integration/project-mutation-sql.test.ts
           '
 
@@ -247,19 +247,19 @@ jobs:
           "${compose[@]}" cp "$RUNNER_TEMP/e2e-bootstrap.token" api:/tmp/e2e-bootstrap.token
           # Docker copies as root; the API runs as bun and must also clean up the private token file.
           "${compose[@]}" exec -T -u root api sh -c 'chown bun /tmp/e2e-bootstrap.token && chmod 600 /tmp/e2e-bootstrap.token'
-          "${compose[@]}" exec -T -e ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE=/tmp/e2e-bootstrap.token api bun run --cwd apps/api auth:provision-bootstrap
-          ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE="$RUNNER_TEMP/e2e-bootstrap.token" \
+          "${compose[@]}" exec -T -e GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE=/tmp/e2e-bootstrap.token api bun run --cwd apps/api auth:provision-bootstrap
+          GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE="$RUNNER_TEMP/e2e-bootstrap.token" \
             bun run infra/scripts/setup-e2e-local-auth.ts
-          "${compose[@]}" exec -T -e ASTRAEA_AUTH_BOOTSTRAP_MODE=basic api bun run --cwd apps/api src/db/bootstrap-authorization.ts
+          "${compose[@]}" exec -T -e GLASSHOUSE_AUTH_BOOTSTRAP_MODE=basic api bun run --cwd apps/api src/db/bootstrap-authorization.ts
 
       - name: Seed E2E projects and memberships
-        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U astraea -d astraea -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING; INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, organization_id, 'astraea', 'manager' FROM projects WHERE id IN ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002') ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now();"
+        run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U glasshouse -d glasshouse -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING; INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, organization_id, 'glasshouse', 'manager' FROM projects WHERE id IN ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002') ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now();"
 
       - name: Run Playwright E2E suite
         env:
           PLAYWRIGHT_E2E: "true"
-          UI_USERNAME: astraea
-          UI_PASSWORD: astraea-ci-password
+          UI_USERNAME: glasshouse
+          UI_PASSWORD: glasshouse-ci-password
         run: cd apps/web && bun run test:e2e
 
       - name: Dump application diagnostics
@@ -289,12 +289,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      ASTRAEA_AUTH_BOOTSTRAP_MODE: local
-      ASTRAEA_PUBLIC_ORIGIN: http://localhost:5173
-      DATABASE_URL: postgres://astraea:astraea-ci-password@localhost:5432/astraea
+      GLASSHOUSE_AUTH_BOOTSTRAP_MODE: local
+      GLASSHOUSE_PUBLIC_ORIGIN: http://localhost:5173
+      DATABASE_URL: postgres://glasshouse:glasshouse-ci-password@localhost:5432/glasshouse
       UI_USERNAME: e2e-onboarding-admin
-      ASTRAEA_BOOTSTRAP_OWNER_USERNAME: e2e-onboarding-admin
-      E2E_SETUP_SECRET_FILE: /tmp/astraea-ci-setup-secret
+      GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: e2e-onboarding-admin
+      E2E_SETUP_SECRET_FILE: /tmp/glasshouse-ci-setup-secret
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -310,7 +310,7 @@ jobs:
       - name: Configure isolated CI stack
         run: |
           cp infra/.env.example infra/.env
-          sed -i 's/CHANGE_ME/astraea-ci-password/g' infra/.env
+          sed -i 's/CHANGE_ME/glasshouse-ci-password/g' infra/.env
       - name: Start fresh local-first application
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180
       - name: Generate masked independent local password

@@ -107,14 +107,14 @@ function validCredential(value: unknown): value is {
 export function basicCredentialsFromEnvironment(
 	env: NodeJS.ProcessEnv = process.env,
 ): BasicCredential[] {
-	const configured = env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
+	const configured = env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
 	if (configured) {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(configured);
 		} catch {
 			throw new Error(
-				"basicAuthMiddleware: ASTRAEA_BASIC_AUTH_CREDENTIALS must be valid JSON",
+				"basicAuthMiddleware: GLASSHOUSE_BASIC_AUTH_CREDENTIALS must be valid JSON",
 			);
 		}
 		if (
@@ -123,7 +123,7 @@ export function basicCredentialsFromEnvironment(
 			!parsed.every(validCredential)
 		) {
 			throw new Error(
-				"basicAuthMiddleware: ASTRAEA_BASIC_AUTH_CREDENTIALS must be a non-empty array of { username, password, organization_id UUID } credentials",
+				"basicAuthMiddleware: GLASSHOUSE_BASIC_AUTH_CREDENTIALS must be a non-empty array of { username, password, organization_id UUID } credentials",
 			);
 		}
 		const subjects = new Set<string>();
@@ -131,7 +131,7 @@ export function basicCredentialsFromEnvironment(
 			const canonicalSubject = canonicalBasicAuthSubject(credential.username);
 			if (subjects.has(canonicalSubject)) {
 				throw new Error(
-					"basicAuthMiddleware: ASTRAEA_BASIC_AUTH_CREDENTIALS canonical usernames must be unique",
+					"basicAuthMiddleware: GLASSHOUSE_BASIC_AUTH_CREDENTIALS canonical usernames must be unique",
 				);
 			}
 			subjects.add(canonicalSubject);
@@ -153,10 +153,10 @@ export function basicCredentialsFromEnvironment(
 		);
 	}
 	const organizationId =
-		env.ASTRAEA_DEFAULT_ORGANIZATION_ID ?? DEFAULT_ORGANIZATION_ID;
+		env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID ?? DEFAULT_ORGANIZATION_ID;
 	if (!isUuid(organizationId)) {
 		throw new Error(
-			"basicAuthMiddleware: ASTRAEA_DEFAULT_ORGANIZATION_ID must be a UUID",
+			"basicAuthMiddleware: GLASSHOUSE_DEFAULT_ORGANIZATION_ID must be a UUID",
 		);
 	}
 	const canonicalSubject = canonicalBasicAuthSubject(username);
@@ -194,7 +194,7 @@ export function basicAuthMiddleware(): MiddlewareHandler {
 			parseBasic(c.req.header("authorization")),
 		);
 		if (!credential) {
-			c.header("WWW-Authenticate", 'Basic realm="astraea", charset="UTF-8"');
+			c.header("WWW-Authenticate", 'Basic realm="glasshouse", charset="UTF-8"');
 			return c.json(
 				{ code: "UNAUTHORIZED", message: "Authentication required" },
 				401,
@@ -258,15 +258,15 @@ export function requestSessionToken(
 export function localAuthOrganization(
 	env: NodeJS.ProcessEnv = process.env,
 ): string {
-	const id = env.ASTRAEA_DEFAULT_ORGANIZATION_ID ?? DEFAULT_ORGANIZATION_ID;
+	const id = env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID ?? DEFAULT_ORGANIZATION_ID;
 	if (!isUuid(id)) throw new Error("Invalid local authentication organization");
 	return id;
 }
 
 export function configuredBasicCredentials(): BasicCredential[] {
 	if (
-		process.env.ASTRAEA_AUTH_BOOTSTRAP_MODE === "local" &&
-		!process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS &&
+		process.env.GLASSHOUSE_AUTH_BOOTSTRAP_MODE === "local" &&
+		!process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS &&
 		!process.env.UI_USERNAME &&
 		!process.env.UI_PASSWORD
 	)
@@ -285,7 +285,7 @@ export function trustedRequestOrigin(c: {
 	req: { url: string; header: (name: string) => string | undefined };
 }): boolean {
 	const expected =
-		process.env.ASTRAEA_PUBLIC_ORIGIN || new URL(c.req.url).origin;
+		process.env.GLASSHOUSE_PUBLIC_ORIGIN || new URL(c.req.url).origin;
 	const origin = c.req.header("origin");
 	return (
 		(!origin || origin === expected) &&
@@ -337,7 +337,7 @@ export function authenticationMiddleware(
 				};
 		}
 		if (!principal) {
-			c.header("WWW-Authenticate", 'Basic realm="astraea", charset="UTF-8"');
+			c.header("WWW-Authenticate", 'Basic realm="glasshouse", charset="UTF-8"');
 			return c.json(
 				{ code: "UNAUTHORIZED", message: "Authentication required" },
 				401,

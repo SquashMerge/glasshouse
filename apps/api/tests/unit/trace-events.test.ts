@@ -149,7 +149,7 @@ const subscribeSpy = mock(
 	},
 );
 
-const USER = "astraea";
+const USER = "glasshouse";
 const PASS = "secret";
 const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 process.env.UI_USERNAME = USER;
@@ -407,7 +407,7 @@ describe("GET /v1/traces/events (list SSE)", () => {
 		const res = await apiApp.fetch(new Request("http://x/v1/traces/events"));
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toMatch(
-			/^Basic realm="astraea"/,
+			/^Basic realm="glasshouse"/,
 		);
 	});
 
@@ -663,7 +663,7 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 		);
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toMatch(
-			/^Basic realm="astraea"/,
+			/^Basic realm="glasshouse"/,
 		);
 	});
 
@@ -998,7 +998,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		);
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toMatch(
-			/^Basic realm="astraea"/,
+			/^Basic realm="glasshouse"/,
 		);
 	});
 

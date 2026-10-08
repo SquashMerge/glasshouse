@@ -27,11 +27,11 @@ const password = randomBytes(24).toString("base64url");
 const credential = { username, password, organization_id: organizationId };
 const legacyText = "界".repeat(3_000);
 const previousDatabase = process.env.CLICKHOUSE_DB;
-const previousCredentials = process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
+const previousCredentials = process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
 const admin = createClient({
 	url: clickhouseUrl(),
 	database: "default",
-	username: process.env.CLICKHOUSE_USER ?? "astraea",
+	username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 	password: process.env.CLICKHOUSE_PASSWORD ?? "",
 });
 const pg = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -89,8 +89,8 @@ afterAll(async () => {
 	if (previousDatabase === undefined) delete process.env.CLICKHOUSE_DB;
 	else process.env.CLICKHOUSE_DB = previousDatabase;
 	if (previousCredentials === undefined)
-		delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-	else process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = previousCredentials;
+		delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+	else process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = previousCredentials;
 	await closeClickHouseClient();
 	await fixture?.close();
 	await admin.command({ query: `DROP DATABASE IF EXISTS ${database}` });
@@ -104,7 +104,7 @@ describe("legacy pre-0006 trace payload upgrade", () => {
 		fixture = createClient({
 			url: clickhouseUrl(),
 			database,
-			username: process.env.CLICKHOUSE_USER ?? "astraea",
+			username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 			password: process.env.CLICKHOUSE_PASSWORD ?? "",
 		});
 		await applyBeforePayloadBounds(fixture);
@@ -165,7 +165,7 @@ describe("legacy pre-0006 trace payload upgrade", () => {
 			createClient({
 				url: clickhouseUrl(),
 				database,
-				username: process.env.CLICKHOUSE_USER ?? "astraea",
+				username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 				password: process.env.CLICKHOUSE_PASSWORD ?? "",
 			}),
 		);
@@ -192,11 +192,13 @@ describe("legacy pre-0006 trace payload upgrade", () => {
 		);
 		await bootstrapAuthorization({
 			...process.env,
-			ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([credential]),
-			ASTRAEA_BOOTSTRAP_OWNER_USERNAME: username,
+			GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([credential]),
+			GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: username,
 		});
 		process.env.CLICKHOUSE_DB = database;
-		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([credential]);
+		process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+			credential,
+		]);
 		server = Bun.serve({ port: 0, fetch: createApiApp().fetch });
 		const baseUrl = server.url.toString().replace(/\/$/, "");
 		const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;

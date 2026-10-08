@@ -38,7 +38,7 @@ import { cn } from "../../../lib/utils";
 
 const TRACE_ID_REGEX = /^[0-9a-f]{32}$/;
 const HIGHLIGHT_MS = 1_500;
-const SPLIT_STORAGE_KEY = "astraea.trace-detail.workspace-width";
+const SPLIT_STORAGE_KEY = "glasshouse.trace-detail.workspace-width";
 const MIN_WORKSPACE_WIDTH = 35;
 const MAX_WORKSPACE_WIDTH = 70;
 const SNAPSHOT_TIMEOUT_MS = 10_000;

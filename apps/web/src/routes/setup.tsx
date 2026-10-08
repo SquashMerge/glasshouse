@@ -18,7 +18,7 @@ export function SetupPage() {
 	});
 	return (
 		<AuthCard
-			title="Set up Astraea"
+			title="Set up Glasshouse"
 			description="Create the first local Admin for this deployment. Your organization and initial Project access are assigned by the server."
 		>
 			{completed ? (

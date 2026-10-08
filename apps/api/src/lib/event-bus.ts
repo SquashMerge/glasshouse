@@ -18,7 +18,7 @@ export interface BusMessage {
 
 export type BusHandler = (msg: BusMessage) => void;
 
-const CHANNEL_PREFIX = "astraea:";
+const CHANNEL_PREFIX = "glasshouse:";
 const INSTANCE_ID = randomUUID();
 
 const handlers: Map<BusEvent, Set<BusHandler>> = new Map();

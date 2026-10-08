@@ -15,7 +15,7 @@ import {
 } from "@playwright/test";
 import { LOCAL_USER, fillLocalPassword } from "./local-auth";
 
-const USER = process.env.UI_USERNAME ?? "astraea";
+const USER = process.env.UI_USERNAME ?? "glasshouse";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:3000";
 const E2E_PROJECT_ID = "00000000-0000-4000-8000-000000000001";
@@ -133,16 +133,16 @@ function buildTracePayload(
 			{
 				resource: {
 					attributes: [
-						{ key: "service.name", value: { stringValue: "astraea-e2e" } },
+						{ key: "service.name", value: { stringValue: "glasshouse-e2e" } },
 						{
-							key: "astraea.project.id",
+							key: "glasshouse.project.id",
 							value: { stringValue: E2E_PROJECT_ID },
 						},
 					],
 				},
 				scope_spans: [
 					{
-						scope: { name: "astraea-e2e", version: "1.0.0" },
+						scope: { name: "glasshouse-e2e", version: "1.0.0" },
 						spans,
 					},
 				],
@@ -178,7 +178,7 @@ async function postTrace(
 		headers: {
 			"content-type": "application/json",
 			authorization: basicAuthHeader(),
-			"x-astraea-project-id": E2E_PROJECT_ID,
+			"x-glasshouse-project-id": E2E_PROJECT_ID,
 		},
 	});
 	expect(

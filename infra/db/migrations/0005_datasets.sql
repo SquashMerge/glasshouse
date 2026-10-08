@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0005_datasets
+-- Glasshouse Postgres migrations: 0005_datasets
 -- Datasets and their items. Items are JSONB-typed inputs/outputs.
 
 CREATE TABLE IF NOT EXISTS datasets (

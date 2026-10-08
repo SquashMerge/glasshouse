@@ -70,21 +70,21 @@ for (const operation of ["bootstrap", "recovery"] as const) {
 				});
 			} else {
 				const previous = {
-					credentials: process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS,
-					owner: process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME,
+					credentials: process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS,
+					owner: process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME,
 				};
 				const poolProvider = spyOn(postgres, "pgPool").mockReturnValue(
 					database as never,
 				);
 				try {
-					process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+					process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
 						{
 							username: "owner",
 							password: randomBytes(32).toString("base64url"),
 							organization_id: organizationId,
 						},
 					]);
-					process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME = "owner";
+					process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME = "owner";
 					const owner = basicCredentialsFromEnvironment()[0]!;
 					const api = new OpenAPIHono();
 					api.use("*", async (c, next) => {
@@ -106,8 +106,8 @@ for (const operation of ["bootstrap", "recovery"] as const) {
 				} finally {
 					poolProvider.mockRestore();
 					for (const [key, value] of [
-						["ASTRAEA_BASIC_AUTH_CREDENTIALS", previous.credentials],
-						["ASTRAEA_BOOTSTRAP_OWNER_USERNAME", previous.owner],
+						["GLASSHOUSE_BASIC_AUTH_CREDENTIALS", previous.credentials],
+						["GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME", previous.owner],
 					] as const) {
 						if (value === undefined) delete process.env[key];
 						else process.env[key] = value;

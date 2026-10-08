@@ -76,9 +76,12 @@ describe("redactAttributesJson", () => {
 			{
 				schema_version: 1,
 				attributes: [
-					{ key: "astraea.prompt.template", value: { stringValue: "secret" } },
 					{
-						key: "astraea.prompt.unknown",
+						key: "glasshouse.prompt.template",
+						value: { stringValue: "secret" },
+					},
+					{
+						key: "glasshouse.prompt.unknown",
 						value: { stringValue: "also secret" },
 					},
 					{ key: "user.email", value: { stringValue: "a@b.c" } },
@@ -124,18 +127,18 @@ describe("redactDatasetCapture", () => {
 });
 
 describe("loadRedactionOptions", () => {
-	const ORIG_INPUT = process.env.ASTRAEA_REDACT_INPUT;
-	const ORIG_KEYS = process.env.ASTRAEA_REDACT_KEYS;
+	const ORIG_INPUT = process.env.GLASSHOUSE_REDACT_INPUT;
+	const ORIG_KEYS = process.env.GLASSHOUSE_REDACT_KEYS;
 
 	beforeEach(() => {
-		delete process.env.ASTRAEA_REDACT_INPUT;
-		delete process.env.ASTRAEA_REDACT_KEYS;
+		delete process.env.GLASSHOUSE_REDACT_INPUT;
+		delete process.env.GLASSHOUSE_REDACT_KEYS;
 	});
 	afterEach(() => {
-		if (ORIG_INPUT === undefined) delete process.env.ASTRAEA_REDACT_INPUT;
-		else process.env.ASTRAEA_REDACT_INPUT = ORIG_INPUT;
-		if (ORIG_KEYS === undefined) delete process.env.ASTRAEA_REDACT_KEYS;
-		else process.env.ASTRAEA_REDACT_KEYS = ORIG_KEYS;
+		if (ORIG_INPUT === undefined) delete process.env.GLASSHOUSE_REDACT_INPUT;
+		else process.env.GLASSHOUSE_REDACT_INPUT = ORIG_INPUT;
+		if (ORIG_KEYS === undefined) delete process.env.GLASSHOUSE_REDACT_KEYS;
+		else process.env.GLASSHOUSE_REDACT_KEYS = ORIG_KEYS;
 	});
 
 	it("defaults to redactInput=false and empty redactKeys", () => {
@@ -145,18 +148,18 @@ describe("loadRedactionOptions", () => {
 		});
 	});
 
-	it("parses ASTRAEA_REDACT_INPUT=true", () => {
-		process.env.ASTRAEA_REDACT_INPUT = "true";
+	it("parses GLASSHOUSE_REDACT_INPUT=true", () => {
+		process.env.GLASSHOUSE_REDACT_INPUT = "true";
 		expect(loadRedactionOptions().redactInput).toBe(true);
 	});
 
-	it("parses ASTRAEA_REDACT_INPUT=TRUE (case-insensitive)", () => {
-		process.env.ASTRAEA_REDACT_INPUT = "TRUE";
+	it("parses GLASSHOUSE_REDACT_INPUT=TRUE (case-insensitive)", () => {
+		process.env.GLASSHOUSE_REDACT_INPUT = "TRUE";
 		expect(loadRedactionOptions().redactInput).toBe(true);
 	});
 
-	it("parses comma-separated ASTRAEA_REDACT_KEYS", () => {
-		process.env.ASTRAEA_REDACT_KEYS = "user.email, user.ip , http.url";
+	it("parses comma-separated GLASSHOUSE_REDACT_KEYS", () => {
+		process.env.GLASSHOUSE_REDACT_KEYS = "user.email, user.ip , http.url";
 		expect(loadRedactionOptions().redactKeys).toEqual([
 			"user.email",
 			"user.ip",

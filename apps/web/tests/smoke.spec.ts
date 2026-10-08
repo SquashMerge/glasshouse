@@ -13,10 +13,10 @@ test("dashboard renders with title, links, zero console errors", async ({
 
 	await page.goto("/", { waitUntil: "networkidle" });
 
-	await expect(page).toHaveTitle("Astraea · MVP Foundation");
+	await expect(page).toHaveTitle("Glasshouse · MVP Foundation");
 
 	const h1 = page.locator("h1");
-	await expect(h1).toContainText("Astraea");
+	await expect(h1).toContainText("Glasshouse");
 
 	const referenceLink = page.locator('a[href="/reference"]');
 	const healthLink = page.locator('a[href="/health"]');

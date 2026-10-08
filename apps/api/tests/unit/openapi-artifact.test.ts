@@ -9,7 +9,7 @@ const checkScript = join(root, "infra/codegen/check-snapshot.sh");
 
 describe("OpenAPI canonical artifact", () => {
 	it("fails before generation when the canonical artifact is absent", () => {
-		const directory = mkdtempSync(join(tmpdir(), "astraea-openapi-"));
+		const directory = mkdtempSync(join(tmpdir(), "glasshouse-openapi-"));
 		const canonicalPath = join(directory, "missing.yaml");
 		try {
 			const result = spawnSync("bash", [checkScript], {

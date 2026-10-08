@@ -34,7 +34,7 @@ Archive, restore, and tombstone `204` responses return their quoted lifecycle
 
 ## Decision summary (target model)
 
-Astraea datasets work like prompts: a stable, named resource has immutable versions. A **Dataset** is the reusable logical collection; a **Dataset version** is the exact immutable item snapshot consumed by an evaluation. An **Evaluation definition** is a reusable, versioned recipe that binds one target selector, one dataset selector, mappings, evaluators, and execution defaults. An **Evaluation run** is one execution of a definition revision against resolved immutable versions.
+Glasshouse datasets work like prompts: a stable, named resource has immutable versions. A **Dataset** is the reusable logical collection; a **Dataset version** is the exact immutable item snapshot consumed by an evaluation. An **Evaluation definition** is a reusable, versioned recipe that binds one target selector, one dataset selector, mappings, evaluators, and execution defaults. An **Evaluation run** is one execution of a definition revision against resolved immutable versions.
 
 The shipped Definition target selector supports the configured-LLM contract before the Agent Registry exists. A future Agent/Manifest target uses the same selector and resolution boundary rather than creating a second Evaluation model. The dashboard and REST API use the same Evaluation identity/Definition Version entities; SDK invocation remains future work. There is no separate “UI dataset” or “SDK dataset,” and no Evaluation Run may execute a mutable draft.
 
@@ -121,9 +121,9 @@ surface is listed below.
 
 1. User opens **Datasets** and selects **New dataset**.
 2. They enter name, optional slug/description/tags, and choose **Start empty**, **Import CSV/JSONL**, or **From traces**.
-3. The editor shows a required input mapping and optional expected-output/metadata mappings. For an empty dataset, Astraea offers a canonical row editor; for import, it previews source columns and requires the user to confirm mappings before any publish.
+3. The editor shows a required input mapping and optional expected-output/metadata mappings. For an empty dataset, Glasshouse offers a canonical row editor; for import, it previews source columns and requires the user to confirm mappings before any publish.
 4. User adds/edits cases in the draft. Validation errors are per-cell and publishing is disabled until all rows meet the saved schema.
-5. User selects **Publish v1**. The confirmation states item count, validation state, and that published versions cannot be edited. Astraea creates `dataset@1` and returns to its Overview.
+5. User selects **Publish v1**. The confirmation states item count, validation state, and that published versions cannot be edited. Glasshouse creates `dataset@1` and returns to its Overview.
 6. User selects **Run evaluation**. If no evaluation exists, the inline wizard creates one with: selected dataset pinned to `@1`, selected target, evaluator(s), and a name. If one exists, the picker shows whether it pins a version or follows latest published.
 7. The review screen shows the resolved target snapshot, Dataset version, evaluator versions/settings, estimated case count, and sample rate. **Start run** queues an immutable run.
 8. Results link every failed case to its input, expected output, output, scores, generated trace, and source production trace when available.
@@ -132,8 +132,8 @@ surface is listed below.
 
 1. On a trace/observation detail, user chooses **Add to dataset**.
 2. A modal identifies the selected observation and asks for a destination dataset. Selecting **Create dataset** does not leave context.
-3. The browser submits only `source_trace_id` and optional `source_observation_id`. Astraea rereads that project-scoped source on the server, applies the active redaction policy, and stores only the resulting safe draft content and provenance.
-4. If the destination has a draft, the case is added there. Otherwise Astraea creates a draft from the latest published version and labels it “Unpublished changes.”
+3. The browser submits only `source_trace_id` and optional `source_observation_id`. Glasshouse rereads that project-scoped source on the server, applies the active redaction policy, and stores only the resulting safe draft content and provenance.
+4. If the destination has a draft, the case is added there. Otherwise Glasshouse creates a draft from the latest published version and labels it “Unpublished changes.”
 5. Dataset Overview visibly shows “1 unpublished change.” The user must publish a new version before an attached pinned evaluation can consume it.
 6. User can launch a comparison run from the publish confirmation: baseline `@N` versus candidate `@N+1`, same target/evaluators.
 
@@ -149,8 +149,8 @@ surface is listed below.
 
 1. An evaluator creates “Checkout quality gate” in the UI and publishes definition `@3` with `checkout-regression@8` pinned.
 2. CI invokes `client.evaluations.run(definition="checkout-quality-gate", version=3)`.
-3. Astraea resolves the already-pinned definition and returns a run ID. CI waits for completion and evaluates the configured threshold.
-4. If a user later edits either object, Astraea creates `dataset@9` and/or `evaluation@4`; CI continues using `@3` until its code is changed. The UI makes this intentional divergence obvious.
+3. Glasshouse resolves the already-pinned definition and returns a run ID. CI waits for completion and evaluates the configured threshold.
+4. If a user later edits either object, Glasshouse creates `dataset@9` and/or `evaluation@4`; CI continues using `@3` until its code is changed. The UI makes this intentional divergence obvious.
 
 ## Data model and target execution invariants
 
@@ -360,9 +360,9 @@ bounds through the admitted Evaluation Run.
 ### Future Python SDK
 
 ```python
-from astraea import Astraea
+from glasshouse import Glasshouse
 
-client = Astraea(project="support")
+client = Glasshouse(project="support")
 
 # Create once, then mutate a draft through a stable slug.
 dataset = client.datasets.ensure(

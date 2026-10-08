@@ -27,7 +27,7 @@ describe("distributed migration lock verification", () => {
 
 	it("queries ClickHouse migration metadata in the configured database", () => {
 		expect(workflow).toContain(
-		"'http://localhost:8123/?database=astraea'",
+		"'http://localhost:8123/?database=glasshouse'",
 	);
 	});
 });

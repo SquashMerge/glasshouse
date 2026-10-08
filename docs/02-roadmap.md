@@ -1,8 +1,8 @@
-# Astraea product roadmap
+# Glasshouse product roadmap
 
 **Status:** Authoritative product sequencing; shipped capability status is noted below.
 
-Astraea is an **agent-first observability and evaluation platform**. Its durable
+Glasshouse is an **agent-first observability and evaluation platform**. Its durable
 product promise is not a generic trace dashboard or a prompt playground: teams
 can turn production evidence into governed regression cases, run reproducible
 evaluations, understand the result, and deliberately improve their system.
@@ -10,7 +10,7 @@ evaluations, understand the result, and deliberately improve their system.
 The Agent Registry remains strategic, but it is **not the next implementation
 slice**. We will first make the Dataset and Evaluation foundations dependable
 for real teams, with a simple user/role model and Bring Your Own Identity
-Provider (BYO IdP) support. An agent is introduced only after Astraea can
+Provider (BYO IdP) support. An agent is introduced only after Glasshouse can
 reliably manage the data, evaluation definitions, access controls, and evidence
 that give an agent version meaning.
 
@@ -23,7 +23,7 @@ that give an agent version meaning.
 2. **Foundation before surface area.** A feature is not complete because a page
    or endpoint exists. It needs durable schema contracts, project isolation,
    authorization, provenance, lifecycle/recovery behavior, migration coverage,
-   and trustworthy UI state before Astraea expands it.
+   and trustworthy UI state before Glasshouse expands it.
 3. **One product model across UI, API, and SDK.** A Dataset or Evaluation made
    in the dashboard is the same resource used by the API and future SDK/CI
    integrations. There are no separate “UI datasets” or hidden execution paths.
@@ -83,7 +83,7 @@ Run a configured-LLM Experiment
 Inspect evidence and deliberately improve a prompt or Dataset, repeat
 ```
 
-The target P2/P3 Astraea loop is:
+The target P2/P3 Glasshouse loop is:
 
 ```text
 Authorized user in an organization / Project
@@ -140,13 +140,13 @@ convenience.
 
 ### P1 — Identity, roles, and BYO IdP foundation
 
-**Goal:** make Astraea usable by real organizations without overbuilding an RBAC
+**Goal:** make Glasshouse usable by real organizations without overbuilding an RBAC
 platform, while preserving the existing server-authorized organization/Project
 boundary.
 
 #### Target access model
 
-Astraea will standardize on three understandable roles:
+Glasshouse will standardize on three understandable roles:
 
 | Role | Scope and intended capability |
 |---|---|
@@ -171,10 +171,10 @@ role.
 
 #### BYO IdP / SSO contract
 
-Astraea will support organization-configured SSO, beginning with standard
+Glasshouse will support organization-configured SSO, beginning with standard
 **OpenID Connect (OIDC) Authorization Code + PKCE** and a durable provider
 connection model that also accommodates **SAML 2.0** connections. The goal is
-customers using their own identity provider—not an Astraea-hosted directory.
+customers using their own identity provider—not an Glasshouse-hosted directory.
 
 Required behavior:
 
@@ -184,11 +184,11 @@ Required behavior:
 - bind each IdP connection to exactly one organization and validate issuer,
   audience/client, redirect URI, signature/key rotation, nonce, state, PKCE,
   and session lifetime;
-- map users to Astraea roles and Project memberships through an explicit,
+- map users to Glasshouse roles and Project memberships through an explicit,
   auditable administrator-controlled mapping. An IdP group/claim is never an
   authorization decision until it is mapped and validated server-side;
 - support a safe bootstrap and break-glass Admin path during rollout, and never
-  let a malformed IdP connection lock an organization out of Astraea;
+  let a malformed IdP connection lock an organization out of Glasshouse;
 - make SSO enforcement an explicit organization setting after connection testing
   and administrator confirmation, not an implicit behavior change;
 - record content-free audit evidence for provider changes, login/link events,
@@ -322,7 +322,7 @@ as a strict, immutable `client_reported` report attached to an existing
 Evaluation Run task. It does not activate legacy Agent routes or ship Agent
 identity, manifests, targets, execution, Agno, or SDK support.
 
-**Goal:** introduce Agents only when Astraea has reliable data, evaluation,
+**Goal:** introduce Agents only when Glasshouse has reliable data, evaluation,
 identity, and execution foundations to make a first-class Agent useful.
 
 The Agent Registry remains the differentiated strategic primitive, but it ships
@@ -371,10 +371,10 @@ Only after the evidence loop is reliable:
 |---|---|
 | Build identity/roles/SSO before expanding Dataset/Evaluation collaboration. | Shared curation, governance, and future release gates require accountable users and enforceable authority. |
 | Build Dataset versions before reusable Evaluation definitions. | An Evaluation cannot be reproducible if its source suite remains mutable. |
-| Build Evaluation Definitions/Runs before Agent Registry. | Astraea needs a dependable place to bind and evaluate a future Agent version; configured-LLM targets let us prove the execution model now. |
+| Build Evaluation Definitions/Runs before Agent Registry. | Glasshouse needs a dependable place to bind and evaluate a future Agent version; configured-LLM targets let us prove the execution model now. |
 | Keep #50 Agent Registry deferred while landing #166a contract groundwork. | A references-only client report establishes a safe P4 evidence boundary without pretending a Registry or framework integration exists. |
 | Add SCIM, complex RBAC, and broad IdP catalogs later. | The three-role, Project-scoped model must prove secure and usable before automating administration. |
-| Defer automatic Dataset/model/deployment changes and unguarded prompt promotion. | Astraea should make evidence and decisions stronger before it automates consequential changes; the existing held-out-validation, leakage-checked, source-version-guarded GEPA prompt exception remains deliberately narrow. |
+| Defer automatic Dataset/model/deployment changes and unguarded prompt promotion. | Glasshouse should make evidence and decisions stronger before it automates consequential changes; the existing held-out-validation, leakage-checked, source-version-guarded GEPA prompt exception remains deliberately narrow. |
 
 ## Measures that tell us the roadmap is working
 
@@ -386,7 +386,7 @@ Only after the evidence loop is reliable:
   bad configuration without tenant leakage or lockout.
 - Any completed Evaluation Run can be reproduced and explained from stored,
   immutable references.
-- A customer can adopt Astraea's future Agent integration without rewriting an
+- A customer can adopt Glasshouse's future Agent integration without rewriting an
   existing framework agent or hand-authoring a manifest.
 
 ## Deferred intentionally

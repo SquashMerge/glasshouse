@@ -25,7 +25,7 @@ interface StoredObservationMetadata {
 	truncated?: true;
 }
 
-const PROMPT_ATTRIBUTE_PREFIX = "astraea.prompt.";
+const PROMPT_ATTRIBUTE_PREFIX = "glasshouse.prompt.";
 const CONTENT_HASH = /^[0-9a-f]{64}$/;
 const CANONICAL_POSITIVE_INTEGER = /^[1-9]\d*$/;
 
@@ -99,13 +99,13 @@ export function promptProvenanceFromAttributes(
 	if (!isGeneration) return null;
 
 	const id = attributes.filter(
-		(attribute) => attribute.key === "astraea.prompt.id",
+		(attribute) => attribute.key === "glasshouse.prompt.id",
 	);
 	const version = attributes.filter(
-		(attribute) => attribute.key === "astraea.prompt.version",
+		(attribute) => attribute.key === "glasshouse.prompt.version",
 	);
 	const contentHash = attributes.filter(
-		(attribute) => attribute.key === "astraea.prompt.content_hash",
+		(attribute) => attribute.key === "glasshouse.prompt.content_hash",
 	);
 	if (id.length !== 1 || version.length !== 1 || contentHash.length !== 1)
 		return null;

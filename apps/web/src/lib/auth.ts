@@ -11,13 +11,16 @@ let session: AuthSession | null = null;
 let loading: Promise<AuthSession | null> | null = null;
 let generation = 0;
 let expired = false;
-const AUTH_INVALID_EVENT = "astraea:auth-invalid";
+const AUTH_INVALID_EVENT = "glasshouse:auth-invalid";
 
 function removeLegacyCredentials(): void {
 	if (typeof window === "undefined") return;
 	for (const name of ["localStorage", "sessionStorage"] as const) {
 		try {
-			for (const key of ["astraea.auth.username", "astraea.auth.password"])
+			for (const key of [
+				"glasshouse.auth.username",
+				"glasshouse.auth.password",
+			])
 				window[name].removeItem(key);
 		} catch {
 			// Storage is optional; authentication uses only the server cookie.
@@ -93,7 +96,8 @@ export async function authedFetch(
 	const headers = new Headers(init?.headers);
 	headers.delete("authorization");
 	if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-		if (session?.csrf_token) headers.set("x-astraea-csrf", session.csrf_token);
+		if (session?.csrf_token)
+			headers.set("x-glasshouse-csrf", session.csrf_token);
 	}
 	const started = generation;
 	const response = await fetch(url, {

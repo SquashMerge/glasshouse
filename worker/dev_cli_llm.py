@@ -30,27 +30,27 @@ def _positive_integer(name, default, maximum):
 
 
 def command_for_model(model):
-    raw_command = os.environ.get("ASTRAEA_DEV_LLM_COMMAND")
+    raw_command = os.environ.get("GLASSHOUSE_DEV_LLM_COMMAND")
     if not raw_command:
-        raise DevCliLlmError("ASTRAEA_DEV_LLM_COMMAND must configure a JSON argv array")
+        raise DevCliLlmError("GLASSHOUSE_DEV_LLM_COMMAND must configure a JSON argv array")
     try:
         command = json.loads(raw_command)
     except json.JSONDecodeError as error:
-        raise DevCliLlmError("ASTRAEA_DEV_LLM_COMMAND must be a JSON argv array") from error
+        raise DevCliLlmError("GLASSHOUSE_DEV_LLM_COMMAND must be a JSON argv array") from error
     if not isinstance(command, list) or not command or not all(isinstance(argument, str) and argument for argument in command):
-        raise DevCliLlmError("ASTRAEA_DEV_LLM_COMMAND must be a non-empty JSON argv array of strings")
+        raise DevCliLlmError("GLASSHOUSE_DEV_LLM_COMMAND must be a non-empty JSON argv array of strings")
     return [argument.replace("{model}", model) for argument in command]
 
 
 def run_dev_cli(prompt, model, provider_dispatch_key=None):
     if not isinstance(prompt, str) or not isinstance(model, str) or not model:
         raise DevCliLlmError("development CLI requires a prompt and model")
-    timeout = _positive_integer("ASTRAEA_DEV_LLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
-    max_output_bytes = _positive_integer("ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES)
+    timeout = _positive_integer("GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
+    max_output_bytes = _positive_integer("GLASSHOUSE_DEV_LLM_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES)
     try:
         environment = os.environ.copy()
         if provider_dispatch_key is not None:
-            environment["ASTRAEA_PROVIDER_DISPATCH_KEY"] = provider_dispatch_key
+            environment["GLASSHOUSE_PROVIDER_DISPATCH_KEY"] = provider_dispatch_key
         process = subprocess.Popen(
             command_for_model(model),
             stdin=subprocess.PIPE,

@@ -457,7 +457,7 @@ describe("project authorization routes", () => {
 			expect(input.query).toContain("SETTINGS mutations_sync = 1");
 		expect(
 			query.mock.calls.some(([sql]) =>
-				sql.startsWith("SELECT set_config('astraea.project_deletion_id'"),
+				sql.startsWith("SELECT set_config('glasshouse.project_deletion_id'"),
 			),
 		).toBe(true);
 		expect(

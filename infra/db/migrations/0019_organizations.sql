@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0019_organizations
+-- Glasshouse Postgres migrations: 0019_organizations
 -- Organizations are the top-level tenant boundary. Existing single-tenant
 -- installations are assigned to the deterministic default organization.
 

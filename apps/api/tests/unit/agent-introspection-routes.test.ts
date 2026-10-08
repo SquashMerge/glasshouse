@@ -167,8 +167,8 @@ describe("agent introspection HTTP handlers", () => {
 			expect(scoped.status).toBe(404);
 			expect(scoped.headers.get("cache-control")).toBe("no-store");
 
-			const credentials = process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-			process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+			const credentials = process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+			process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
 				{
 					username: "reporter",
 					password: "secret",
@@ -182,8 +182,8 @@ describe("agent introspection HTTP handlers", () => {
 				expect(unauthorized.headers.get("www-authenticate")).toContain("Basic");
 			} finally {
 				if (credentials === undefined)
-					delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-				else process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = credentials;
+					delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+				else process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = credentials;
 			}
 		} finally {
 			postgresSpy.mockRestore();

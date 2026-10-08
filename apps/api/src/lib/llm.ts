@@ -31,13 +31,13 @@ const DEFAULT_DEV_TIMEOUT_MS = 60_000;
 const MAX_DEV_TIMEOUT_MS = 1_800_000;
 
 function configuredDevCommand(model: string): string[] {
-	const raw = process.env.ASTRAEA_DEV_LLM_COMMAND;
-	if (!raw) throw new Error("ASTRAEA_DEV_LLM_COMMAND is not configured");
+	const raw = process.env.GLASSHOUSE_DEV_LLM_COMMAND;
+	if (!raw) throw new Error("GLASSHOUSE_DEV_LLM_COMMAND is not configured");
 	let command: unknown;
 	try {
 		command = JSON.parse(raw);
 	} catch {
-		throw new Error("ASTRAEA_DEV_LLM_COMMAND must be a JSON argv array");
+		throw new Error("GLASSHOUSE_DEV_LLM_COMMAND must be a JSON argv array");
 	}
 	if (
 		!Array.isArray(command) ||
@@ -45,7 +45,7 @@ function configuredDevCommand(model: string): string[] {
 		!command.every((value) => typeof value === "string" && value.length > 0)
 	)
 		throw new Error(
-			"ASTRAEA_DEV_LLM_COMMAND must be a non-empty JSON argv array",
+			"GLASSHOUSE_DEV_LLM_COMMAND must be a non-empty JSON argv array",
 		);
 	return (command as string[]).map((argument) =>
 		argument.replaceAll("{model}", model),
@@ -101,11 +101,11 @@ async function invokeDevelopmentCli(
 ): Promise<string> {
 	if (
 		process.env.NODE_ENV === "production" &&
-		process.env.ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION !== "true"
+		process.env.GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION !== "true"
 	)
 		throw new Error("development CLI provider is disabled in production");
 	const timeoutValue = Number(
-		process.env.ASTRAEA_DEV_LLM_TIMEOUT_SECONDS ?? 60,
+		process.env.GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS ?? 60,
 	);
 	const timeoutMs =
 		Number.isFinite(timeoutValue) && timeoutValue > 0
@@ -121,7 +121,7 @@ async function invokeDevelopmentCli(
 			env: {
 				...process.env,
 				...(providerDispatchKey
-					? { ASTRAEA_PROVIDER_DISPATCH_KEY: providerDispatchKey }
+					? { GLASSHOUSE_PROVIDER_DISPATCH_KEY: providerDispatchKey }
 					: {}),
 			},
 		},
@@ -163,7 +163,7 @@ export async function invokeConfiguredLlm(
 	const provider =
 		typeof config.provider === "string"
 			? config.provider
-			: (process.env.ASTRAEA_EVAL_LLM_PROVIDER ?? "openai");
+			: (process.env.GLASSHOUSE_EVAL_LLM_PROVIDER ?? "openai");
 	const system =
 		typeof config.system_prompt === "string"
 			? config.system_prompt

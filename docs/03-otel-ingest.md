@@ -1,18 +1,18 @@
-# OTel Ingest (Astraea)
+# OTel Ingest (Glasshouse)
 
-This page explains how to point an OpenTelemetry-instrumented agent at Astraea's `/v1/otel/v1/traces` endpoint.
+This page explains how to point an OpenTelemetry-instrumented agent at Glasshouse's `/v1/otel/v1/traces` endpoint.
 
 ## TL;DR — set these five env vars on your agent
 
 ```sh
 export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel" # receiver mount; no trailing /v1/traces
-export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'astraea:YOUR_PASSWORD' | base64),x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'glasshouse:YOUR_PASSWORD' | base64),x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-`OTEL_EXPORTER_OTLP_ENDPOINT` should point at Astraea's **receiver mount** (`/v1/otel`), without the final `/v1/traces` suffix. The OTel SDK appends `/v1/traces` by default, producing Astraea's `POST /v1/otel/v1/traces` endpoint. If your SDK uses a non-standard path, see [Custom path](#custom-path) below.
+`OTEL_EXPORTER_OTLP_ENDPOINT` should point at Glasshouse's **receiver mount** (`/v1/otel`), without the final `/v1/traces` suffix. The OTel SDK appends `/v1/traces` by default, producing Glasshouse's `POST /v1/otel/v1/traces` endpoint. If your SDK uses a non-standard path, see [Custom path](#custom-path) below.
 
 ## Authentication
 
@@ -21,21 +21,21 @@ The endpoint requires HTTP Basic Auth using the same `UI_USERNAME` / `UI_PASSWOR
 ```sh
 # macOS / Linux
 AUTH=$(printf '%s:%s' "$UI_USERNAME" "$UI_PASSWORD" | base64)
-export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
 The credentials are the same ones you'd use to log in at `http://localhost:5173/login`.
 
 ## Organization and project routing
 
-Every Basic-auth credential resolves to a server-configured organization. OTLP payload attributes cannot select or override it. The exporter must select a project with `x-astraea-project-id`; Astraea verifies that project belongs to the credential's organization before accepting the batch.
+Every Basic-auth credential resolves to a server-configured organization. OTLP payload attributes cannot select or override it. The exporter must select a project with `x-glasshouse-project-id`; Glasshouse verifies that project belongs to the credential's organization before accepting the batch.
 
 ```sh
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
-For a multi-organization deployment, configure `ASTRAEA_BASIC_AUTH_CREDENTIALS` on the API as JSON objects with `username`, `password`, and `organization_id`. The organization and selected project must already exist in Postgres; credentials are authentication configuration, not caller-controlled tenant metadata.
+For a multi-organization deployment, configure `GLASSHOUSE_BASIC_AUTH_CREDENTIALS` on the API as JSON objects with `username`, `password`, and `organization_id`. The organization and selected project must already exist in Postgres; credentials are authentication configuration, not caller-controlled tenant metadata.
 
 ## Python example
 
@@ -59,7 +59,7 @@ exporter = OTLPSpanExporter(
 provider.add_span_processor(BatchSpanProcessor(exporter))
 trace.set_tracer_provider(provider)
 
-# Any spans created with this tracer go to Astraea.
+# Any spans created with this tracer go to Glasshouse.
 tracer = trace.get_tracer(__name__)
 with tracer.start_as_current_span("hello") as span:
     span.set_attribute("gen_ai.system", "openai")
@@ -100,33 +100,33 @@ Generation spans may identify the exact managed prompt version that produced the
 
 | Attribute | Value |
 |---|---|
-| `astraea.prompt.id` | Canonical public prompt slug (for example `support-agent`) |
-| `astraea.prompt.version` | Positive safe integer (`intValue`; a string form must be canonical decimal such as `"7"`) |
-| `astraea.prompt.content_hash` | 64-character lowercase hexadecimal content hash |
+| `glasshouse.prompt.id` | Canonical public prompt slug (for example `support-agent`) |
+| `glasshouse.prompt.version` | Positive safe integer (`intValue`; a string form must be canonical decimal such as `"7"`) |
+| `glasshouse.prompt.content_hash` | 64-character lowercase hexadecimal content hash |
 
-The tuple is atomic: a missing, duplicate, or malformed member means no provenance is recorded. Astraea accepts it only for observations classified as `generation`.
+The tuple is atomic: a missing, duplicate, or malformed member means no provenance is recorded. Glasshouse accepts it only for observations classified as `generation`.
 
-Astraea removes every incoming `astraea.prompt.*` attribute before it stores metadata or publishes events, including invalid and unknown keys. Do not send template source, rendered prompts or outputs, variables, or settings under that namespace: they are intentionally unavailable after ingest. Stored observation metadata is a versioned envelope containing sanitized attributes and, when valid, the typed provenance tuple.
+Glasshouse removes every incoming `glasshouse.prompt.*` attribute before it stores metadata or publishes events, including invalid and unknown keys. Do not send template source, rendered prompts or outputs, variables, or settings under that namespace: they are intentionally unavailable after ingest. Stored observation metadata is a versioned envelope containing sanitized attributes and, when valid, the typed provenance tuple.
 
 ## Redacting sensitive data
 
-Astraea stores `input_text`, `output_text`, and sanitized OTLP attributes in a `metadata` JSON column. If your agents send PII or other sensitive data through the trace pipeline, configure redaction on the server side (set in the api container's env / compose env / .env):
+Glasshouse stores `input_text`, `output_text`, and sanitized OTLP attributes in a `metadata` JSON column. If your agents send PII or other sensitive data through the trace pipeline, configure redaction on the server side (set in the api container's env / compose env / .env):
 
 ```sh
 # Replace input_text + output_text with "[REDACTED]" before persistence
-ASTRAEA_REDACT_INPUT=true
+GLASSHOUSE_REDACT_INPUT=true
 
 # Strip these keys from the metadata column entirely (e.g. user emails, IPs)
-ASTRAEA_REDACT_KEYS=user.email,user.ip,http.url
+GLASSHOUSE_REDACT_KEYS=user.email,user.ip,http.url
 ```
 
-Both flags default to off (dev-friendly). In production we recommend `ASTRAEA_REDACT_INPUT=true` and a curated `ASTRAEA_REDACT_KEYS` list.
+Both flags default to off (dev-friendly). In production we recommend `GLASSHOUSE_REDACT_INPUT=true` and a curated `GLASSHOUSE_REDACT_KEYS` list.
 
 ## What gets captured
 
-Astraea accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normalized into:
+Glasshouse accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normalized into:
 
-| Astraea column | Source |
+| Glasshouse column | Source |
 |---|---|
 | `trace_id`, `name`, `start_time`, `end_time`, `duration_ms` | OTLP span fields |
 | `status` | OTLP `status.code` (2 = error) or `exception.type` attribute |
@@ -160,7 +160,7 @@ Trace and Observation list `limit` defaults to 50, accepts zero, and clamps a la
 
 If your OTel SDK needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or the SDK's equivalent) to the complete receiver URL, for example `https://api.example.com/v1/otel/v1/traces`.
 
-If you're sending spans to Astraea behind a reverse proxy with a different receiver mount, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to that proxy's complete trace URL.
+If you're sending spans to Glasshouse behind a reverse proxy with a different receiver mount, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to that proxy's complete trace URL.
 
 ## After sending — where do traces go?
 
@@ -170,5 +170,5 @@ Traces appear in the dashboard at `http://localhost:5173/observability`. Click a
 
 - Replace Basic Auth with mTLS or signed JWT (the OTel SDKs support custom exporters / headers).
 - Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com/v1/otel`).
-- Configure tenant routing with server-managed Basic credentials and select an authorized project with `x-astraea-project-id`.
+- Configure tenant routing with server-managed Basic credentials and select an authorized project with `x-glasshouse-project-id`.
 - Enable trace sampling at the agent side for high-volume services (see OTel SDK samplers).

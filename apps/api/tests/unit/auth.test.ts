@@ -8,7 +8,7 @@ import {
 
 describe("basicAuthMiddleware", () => {
 	beforeAll(() => {
-		process.env.UI_USERNAME = "astraea";
+		process.env.UI_USERNAME = "glasshouse";
 		process.env.UI_PASSWORD = "secret123";
 	});
 
@@ -26,7 +26,7 @@ describe("basicAuthMiddleware", () => {
 		const res = await app.request("/v1/protected");
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toMatch(
-			/^Basic realm="astraea"/,
+			/^Basic realm="glasshouse"/,
 		);
 		const body = (await res.json()) as { code: string };
 		expect(body.code).toBe("UNAUTHORIZED");
@@ -76,7 +76,7 @@ describe("basicAuthMiddleware", () => {
 
 	it("rejects requests with wrong password", async () => {
 		const app = buildApp();
-		const wrong = Buffer.from("astraea:wrongpass").toString("base64");
+		const wrong = Buffer.from("glasshouse:wrongpass").toString("base64");
 		const res = await app.request("/v1/protected", {
 			headers: { authorization: `Basic ${wrong}` },
 		});
@@ -94,7 +94,7 @@ describe("basicAuthMiddleware", () => {
 
 	it("accepts requests with correct credentials", async () => {
 		const app = buildApp();
-		const correct = Buffer.from("astraea:secret123").toString("base64");
+		const correct = Buffer.from("glasshouse:secret123").toString("base64");
 		const res = await app.request("/v1/protected", {
 			headers: { authorization: `Basic ${correct}` },
 		});
@@ -112,13 +112,13 @@ describe("basicAuthMiddleware", () => {
 
 	it("stores the verified username as the trusted actor", async () => {
 		const app = buildApp();
-		const correct = Buffer.from("astraea:secret123").toString("base64");
+		const correct = Buffer.from("glasshouse:secret123").toString("base64");
 		const res = await app.request("/v1/protected", {
 			headers: { authorization: `Basic ${correct}` },
 		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean; actor: string };
-		expect(body.actor).toBe("astraea");
+		expect(body.actor).toBe("glasshouse");
 	});
 
 	it("stores the default organization as trusted server context for legacy credentials", async () => {
@@ -127,14 +127,14 @@ describe("basicAuthMiddleware", () => {
 		app.get("/v1/protected", (c) =>
 			c.json({ tenant: c.get(TRUSTED_TENANT_CONTEXT_KEY) }),
 		);
-		const correct = Buffer.from("astraea:secret123").toString("base64");
+		const correct = Buffer.from("glasshouse:secret123").toString("base64");
 		const res = await app.request("/v1/protected", {
 			headers: { authorization: `Basic ${correct}` },
 		});
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({
 			tenant: {
-				actor: "astraea",
+				actor: "glasshouse",
 				actorId: expect.stringMatching(/^[0-9a-f-]{36}$/),
 				organizationId: "00000000-0000-4000-8000-000000000001",
 			},
@@ -142,8 +142,8 @@ describe("basicAuthMiddleware", () => {
 	});
 
 	it("assigns each configured credential only its configured organization", async () => {
-		const original = process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+		const original = process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+		process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
 			{
 				username: "org-a-user",
 				password: "org-a-secret",
@@ -175,14 +175,14 @@ describe("basicAuthMiddleware", () => {
 			});
 		} finally {
 			if (original === undefined)
-				delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-			else process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = original;
+				delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+			else process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = original;
 		}
 	});
 
 	it("rejects Basic credentials that collide after canonical normalization", () => {
-		const original = process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+		const original = process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+		process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
 			{
 				username: "Alice",
 				password: "one",
@@ -198,8 +198,8 @@ describe("basicAuthMiddleware", () => {
 			expect(() => basicAuthMiddleware()).toThrow(/canonical usernames/);
 		} finally {
 			if (original === undefined)
-				delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-			else process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = original;
+				delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+			else process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = original;
 		}
 	});
 

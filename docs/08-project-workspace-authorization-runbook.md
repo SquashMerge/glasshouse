@@ -2,14 +2,14 @@
 
 ## Bootstrap
 
-The Basic bootstrap below is the default `ASTRAEA_AUTH_BOOTSTRAP_MODE=basic`
+The Basic bootstrap below is the default `GLASSHOUSE_AUTH_BOOTSTRAP_MODE=basic`
 compatibility path. For intentional local-first installations, set the mode to
 `local` before migrating and follow the [local credential/bootstrap runbook](local-credentials-runbook.md).
 Migration 0098 preserves all existing Basic authorization and closes local setup
 when an Admin already exists. The new local storage/service slice supplies no
 login/session endpoints or setup UI yet.
 
-Set `ASTRAEA_BOOTSTRAP_OWNER_USERNAME` to exactly one username in the configured
+Set `GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME` to exactly one username in the configured
 Basic Auth credentials. The named credential's organization and exactly one active
 `default` Project must already exist. `bun run db:migrate` applies SQL migrations,
 then atomically grants that actor organization-owner and default-Project-manager
@@ -75,7 +75,7 @@ or caller-selected organization as the authorization subject. Durable Actor IDs
 remain internal. Admins hold full organization-wide authority; User and Read-only
 roles apply to every Project in the same Organization.
 
-The existing `ASTRAEA_BOOTSTRAP_OWNER_USERNAME` credential is the only supported
+The existing `GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME` credential is the only supported
 break-glass authority. It must match exactly one configured Basic Auth credential
 for the authenticated organization and its deterministic durable Actor ID. No
 emergency password, token, or secret is created, stored, logged, returned, or sent
@@ -138,10 +138,10 @@ backpressure, or disconnect drops queued frames and closes or declines the strea
 `EXECUTION_ADMISSION_TIMEOUT_MS` defaults
 to 30000 ms (accepted range 1000-300000 ms) and
 `EXECUTION_ADMISSION_POLL_MS` defaults to 250 ms (accepted range 50-5000 ms).
-These limits bound Astraea-side cancellation. The effect claim is a logical
+These limits bound Glasshouse-side cancellation. The effect claim is a logical
 PostgreSQL decision, not a distributed transaction: a provider or ClickHouse
 write whose claim committed before revocation can still have a remote side effect.
-PostgreSQL cannot undo that request, but Astraea cancels local work and suppresses
+PostgreSQL cannot undo that request, but Glasshouse cancels local work and suppresses
 all effects that have not already won their own claim.
 
 ## Operations
@@ -169,6 +169,6 @@ cascades Project-owned relational rows, and preserves only content-free lifecycl
 ## OTLP
 
 Every direct request to `POST /v1/otel/v1/traces` needs one
-`x-astraea-project-id` header for an active Project the Basic-auth actor can access.
+`x-glasshouse-project-id` header for an active Project the Basic-auth actor can access.
 Resource attributes may match that target but never select it. Missing, conflicting,
 archived, or inaccessible IDs are rejected without disclosing cross-workspace data.

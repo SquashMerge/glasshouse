@@ -7,11 +7,11 @@ services:
     volumes:
       # Compose-based devcontainers do not receive the default workspace bind
       # mount. Declare it explicitly so postCreateCommand runs in the repo.
-      - ..:/workspaces/astraea:cached
+      - ..:/workspaces/glasshouse:cached
     env_file:
       - ../infra/.env
     environment:
-      ASTRAEA_CONTAINER_NETWORK: "1"
+      GLASSHOUSE_CONTAINER_NETWORK: "1"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       CLICKHOUSE_HOST: clickhouse

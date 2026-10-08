@@ -15,7 +15,7 @@ describe("parseAddedPackageVersions", () => {
 +    "@scope/widget": ["@scope/widget@2.3.4", "", {}, "sha512-example"],
 +    "plain-package": ["plain-package@1.2.3", "", {}, "sha512-example"],
 +    "alias": ["alias@npm:aliased-package@1.2.3", "", {}, "sha512-example"],
-+    "@astraea/api": ["@astraea/api@workspace:apps/api"],
++    "@glasshouse/api": ["@glasshouse/api@workspace:apps/api"],
 +`;
 
 		expect(parseAddedPackageVersions(diff)).toEqual([
@@ -113,7 +113,7 @@ describe("assertReleaseAges", () => {
 
 describe("release-age CLI", () => {
 	it("checks a stale pull request from its common merge base", () => {
-		const repository = mkdtempSync(join(tmpdir(), "astraea-release-age-"));
+		const repository = mkdtempSync(join(tmpdir(), "glasshouse-release-age-"));
 		try {
 			const git = (args: string[]) =>
 				Bun.spawnSync(["git", ...args], { cwd: repository });

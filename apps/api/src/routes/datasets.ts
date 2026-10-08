@@ -550,7 +550,7 @@ export const exportDataset = createRoute({
 			description: "Complete redacted export",
 			headers: z.object({
 				"Content-Disposition": z.string(),
-				"X-Astraea-Dataset-Export-Limit": z.string(),
+				"X-Glasshouse-Dataset-Export-Limit": z.string(),
 			}),
 			content: {
 				"text/csv": { schema: z.string() },
@@ -1295,7 +1295,7 @@ export function createDatasetRouteHandlers(
 					headers: {
 						"content-type": `${result.content_type}; charset=utf-8`,
 						"content-disposition": `attachment; filename=\"${result.filename}\"`,
-						"x-astraea-dataset-export-limit": "500 items; 1048576 bytes",
+						"x-glasshouse-dataset-export-limit": "500 items; 1048576 bytes",
 						"cache-control": "no-store",
 					},
 				});

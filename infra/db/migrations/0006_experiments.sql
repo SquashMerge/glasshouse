@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0006_experiments
+-- Glasshouse Postgres migrations: 0006_experiments
 -- Experiments and their per-item results. agent_id / dataset_id are RESTRICT
 -- (we never lose results by deleting an upstream resource).
 

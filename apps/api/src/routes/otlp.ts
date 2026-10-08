@@ -46,7 +46,7 @@ export const otlpIngestRoute = createRoute({
 	security: [{ basicAuth: [] }],
 	request: {
 		headers: z.object({
-			"x-astraea-project-id": z.string().uuid().openapi({
+			"x-glasshouse-project-id": z.string().uuid().openapi({
 				description:
 					"Project selector, verified against the authenticated organization",
 			}),
@@ -144,8 +144,8 @@ function otlpDeduplicationTokens(
 		)
 		.digest("hex");
 	return {
-		traces: `astraea:otlp:traces:${digest}`,
-		observations: `astraea:otlp:observations:${digest}`,
+		traces: `glasshouse:otlp:traces:${digest}`,
+		observations: `glasshouse:otlp:observations:${digest}`,
 	};
 }
 

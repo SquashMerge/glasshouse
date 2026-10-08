@@ -41,10 +41,10 @@ const secret = () => randomBytes(32).toString("base64url");
 const envKeys = [
 	"UI_USERNAME",
 	"UI_PASSWORD",
-	"ASTRAEA_BASIC_AUTH_CREDENTIALS",
-	"ASTRAEA_DEFAULT_ORGANIZATION_ID",
-	"ASTRAEA_PUBLIC_ORIGIN",
-	"ASTRAEA_AUTH_BOOTSTRAP_MODE",
+	"GLASSHOUSE_BASIC_AUTH_CREDENTIALS",
+	"GLASSHOUSE_DEFAULT_ORGANIZATION_ID",
+	"GLASSHOUSE_PUBLIC_ORIGIN",
+	"GLASSHOUSE_AUTH_BOOTSTRAP_MODE",
 	"NODE_ENV",
 ] as const;
 const originalEnv = Object.fromEntries(
@@ -84,9 +84,9 @@ beforeAll(async () => {
 	poolSpy = spyOn(postgres, "pgPool").mockReturnValue(pool);
 	process.env.UI_USERNAME = "session-compat";
 	process.env.UI_PASSWORD = secret();
-	delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-	process.env.ASTRAEA_PUBLIC_ORIGIN = "https://astraea.example";
-	process.env.ASTRAEA_AUTH_BOOTSTRAP_MODE = "local";
+	delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+	process.env.GLASSHOUSE_PUBLIC_ORIGIN = "https://glasshouse.example";
+	process.env.GLASSHOUSE_AUTH_BOOTSTRAP_MODE = "local";
 	({ createApiApp } = await import("../../src/index"));
 }, 60000);
 afterAll(async () => {
@@ -118,7 +118,7 @@ async function fixture() {
 		password,
 		token: bootstrapToken,
 	});
-	process.env.ASTRAEA_DEFAULT_ORGANIZATION_ID = id;
+	process.env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID = id;
 	const sessions = new LocalSessionStore(pool, id);
 	const api = createApiApp({
 		pgPool: () => pool,
@@ -131,7 +131,7 @@ async function fixture() {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				origin: "https://astraea.example",
+				origin: "https://glasshouse.example",
 			},
 			body: JSON.stringify({ username, password: inputPassword }),
 		});
@@ -139,15 +139,15 @@ async function fixture() {
 		const response = await login();
 		expect(response.status).toBe(200);
 		const cookie = response.headers.get("set-cookie")!.split(";", 1)[0]!;
-		const token = cookie.slice("astraea_session=".length);
+		const token = cookie.slice("glasshouse_session=".length);
 		return {
 			response,
 			cookie,
 			token,
 			headers: {
 				cookie,
-				"x-astraea-csrf": csrfForSession(token),
-				origin: "https://astraea.example",
+				"x-glasshouse-csrf": csrfForSession(token),
+				origin: "https://glasshouse.example",
 				"content-type": "application/json",
 			},
 		};
@@ -293,11 +293,11 @@ test("malformed, duplicate, expired, cross-organization and revoked session cook
 		[f.principal.actorId, sessionDigest(expired)],
 	);
 	for (const cookie of [
-		"astraea_session=bad",
-		"astraea_session=%ZZ",
-		"astraea_session",
+		"glasshouse_session=bad",
+		"glasshouse_session=%ZZ",
+		"glasshouse_session",
 		`${signed.cookie}; ${signed.cookie}`,
-		`astraea_session=${expired}`,
+		`glasshouse_session=${expired}`,
 	])
 		expect(
 			(
@@ -334,13 +334,13 @@ test("CSRF rejects cookie mutations and mixed Basic headers before writes; login
 	const before = await count();
 	for (const extra of [
 		{},
-		{ "x-astraea-csrf": "bad" },
+		{ "x-glasshouse-csrf": "bad" },
 		{
-			"x-astraea-csrf": csrfForSession(signed.token),
+			"x-glasshouse-csrf": csrfForSession(signed.token),
 			origin: "https://evil.example",
 		},
 		{
-			"x-astraea-csrf": csrfForSession(signed.token),
+			"x-glasshouse-csrf": csrfForSession(signed.token),
 			"sec-fetch-site": "same-site",
 		},
 	]) {
@@ -401,7 +401,7 @@ test("local actors boot the workspace, create projects and use current durable g
 	const password = secret();
 	await f.credentials.enroll(account.token, password);
 	const session = (await f.sessions.login("local.reader", password))!;
-	const headers = { cookie: `astraea_session=${session.token}` };
+	const headers = { cookie: `glasshouse_session=${session.token}` };
 	const roleProjects = await (
 		await f.api.request("/v1/me", { headers })
 	).json();
@@ -791,14 +791,14 @@ test("raw OTLP accepts the trusted local principal and denies tenant, CSRF and c
 			headers,
 			body: JSON.stringify({ resource_spans: [] }),
 		});
-	const headers = { ...signed.headers, "x-astraea-project-id": f.projectId };
+	const headers = { ...signed.headers, "x-glasshouse-project-id": f.projectId };
 	expect((await request(headers)).status).toBe(200);
 	expect(
-		(await request({ ...headers, "x-astraea-project-id": randomUUID() }))
+		(await request({ ...headers, "x-glasshouse-project-id": randomUUID() }))
 			.status,
 	).toBe(404);
 	expect(
-		(await request({ ...headers, "x-astraea-csrf": "wrong" })).status,
+		(await request({ ...headers, "x-glasshouse-csrf": "wrong" })).status,
 	).toBe(403);
 	await pool.query(
 		"UPDATE authorization_policy_settings SET strict_enforcement = true, enabled_at = now() WHERE organization_id = $1",
@@ -828,7 +828,7 @@ test("setup and invitation transports are operator/single-use guarded and never 
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				origin: "https://astraea.example",
+				origin: "https://glasshouse.example",
 			},
 			body: JSON.stringify({ token, password: secret() }),
 		});

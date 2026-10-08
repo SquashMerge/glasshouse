@@ -256,7 +256,7 @@ export function DatasetsPage() {
 								</div>
 							) : (
 								<Link
-									className="block hover:text-primary"
+									className="block text-link underline underline-offset-4"
 									to="/datasets/$id"
 									params={{ id: dataset.id }}
 								>
@@ -887,7 +887,7 @@ export function DatasetDetailPage() {
 					<AlertTitle>Shared draft changed</AlertTitle>
 					<AlertDescription className="space-y-3">
 						<p>
-							The current revision is {conflict.currentRevision}. Astraea did
+							The current revision is {conflict.currentRevision}. Glasshouse did
 							not merge your changes automatically.
 						</p>
 						<ul className="list-disc space-y-1 pl-5 text-xs">

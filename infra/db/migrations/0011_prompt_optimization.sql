@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0011_prompt_optimization
+-- Glasshouse Postgres migrations: 0011_prompt_optimization
 
 CREATE TABLE IF NOT EXISTS prompt_optimization_jobs (
     id UUID PRIMARY KEY,

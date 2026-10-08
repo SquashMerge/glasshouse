@@ -333,7 +333,7 @@ async function seedExecutionExperiment(pool: Pool) {
 			try {
 				await cleanup.query("BEGIN");
 				await cleanup.query(
-					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
 					[projectId],
 				);
 				await cleanup.query(
@@ -396,7 +396,7 @@ async function seedExecutionExperiment(pool: Pool) {
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query(
@@ -788,13 +788,13 @@ test.skipIf(!databaseUrl)(
 			).rejects.toMatchObject({ code: "55P03" });
 
 			await writer.query("BEGIN");
-			await writer.query("SET application_name = 'astraea-revocation-race'");
+			await writer.query("SET application_name = 'glasshouse-revocation-race'");
 			const authorization = lockActiveAuthorizedProject(writer, projectId, {
 				organization_id: organizationId,
 				actor_id: actorId,
 				operation: "product_write",
 			});
-			await waitForLock(pool, "astraea-revocation-race");
+			await waitForLock(pool, "glasshouse-revocation-race");
 			await demoter.query("COMMIT");
 
 			const allowed = await authorization;
@@ -861,7 +861,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -906,7 +906,7 @@ test.skipIf(!databaseUrl)(
 			await revoker.query("BEGIN");
 			revokerStarted = true;
 			await revoker.query(
-				"SET LOCAL application_name = 'astraea-project-revoke-lock-revoker'",
+				"SET LOCAL application_name = 'glasshouse-project-revoke-lock-revoker'",
 			);
 			await revoker.query(
 				"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
@@ -916,7 +916,7 @@ test.skipIf(!databaseUrl)(
 			await creator.query("BEGIN");
 			creatorStarted = true;
 			await creator.query(
-				"SET LOCAL application_name = 'astraea-project-revoke-lock-creator'",
+				"SET LOCAL application_name = 'glasshouse-project-revoke-lock-creator'",
 			);
 			await creator.query(
 				"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
@@ -951,7 +951,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), events AS (DELETE FROM governance_audit_events WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM events) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), events AS (DELETE FROM governance_audit_events WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM events) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1010,7 +1010,7 @@ test.skipIf(!databaseUrl)(
 			).actorId;
 			await writer.query("BEGIN");
 			await writer.query(
-				"SET application_name = 'astraea-authorized-lock-order'",
+				"SET application_name = 'glasshouse-authorized-lock-order'",
 			);
 			expect(
 				await lockActiveAuthorizedProject(writer, projectId, {
@@ -1020,7 +1020,7 @@ test.skipIf(!databaseUrl)(
 				}),
 			).toBe(true);
 			await demoter.query(
-				"SET application_name = 'astraea-revocation-lock-order'",
+				"SET application_name = 'glasshouse-revocation-lock-order'",
 			);
 			const revoke = (async () => {
 				await demoter.query("BEGIN");
@@ -1030,7 +1030,7 @@ test.skipIf(!databaseUrl)(
 				);
 				await demoter.query("COMMIT");
 			})();
-			await waitForLock(pool, "astraea-revocation-lock-order");
+			await waitForLock(pool, "glasshouse-revocation-lock-order");
 			await writer.query("COMMIT");
 			await Promise.race([
 				revoke,
@@ -1052,7 +1052,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1080,7 +1080,7 @@ test.skipIf(!databaseUrl)(
 				pool,
 				async (client) => {
 					await client.query(
-						"SET LOCAL application_name = 'astraea-audit-race-manager-first'",
+						"SET LOCAL application_name = 'glasshouse-audit-race-manager-first'",
 					);
 					if (
 						!(await lockActiveAuthorizedProject(client, fixture.projectId, {
@@ -1108,7 +1108,7 @@ test.skipIf(!databaseUrl)(
 			await mutationStarted.promise;
 			await demoter.query("BEGIN");
 			await demoter.query(
-				"SET LOCAL application_name = 'astraea-audit-race-owner-second'",
+				"SET LOCAL application_name = 'glasshouse-audit-race-owner-second'",
 			);
 			const demotion = (async () => {
 				if (
@@ -1140,7 +1140,7 @@ test.skipIf(!databaseUrl)(
 				);
 				await demoter.query("COMMIT");
 			})();
-			await waitForLock(pool, "astraea-audit-race-owner-second");
+			await waitForLock(pool, "glasshouse-audit-race-owner-second");
 			releaseMutation.resolve();
 			await mutation;
 			await Promise.race([
@@ -1186,7 +1186,7 @@ test.skipIf(!databaseUrl)(
 		try {
 			await demoter.query("BEGIN");
 			await demoter.query(
-				"SET LOCAL application_name = 'astraea-audit-race-owner-first'",
+				"SET LOCAL application_name = 'glasshouse-audit-race-owner-first'",
 			);
 			if (
 				!(await lockAuthorizedOrganization(
@@ -1213,7 +1213,7 @@ test.skipIf(!databaseUrl)(
 				pool,
 				async (client) => {
 					await client.query(
-						"SET LOCAL application_name = 'astraea-audit-race-manager-second'",
+						"SET LOCAL application_name = 'glasshouse-audit-race-manager-second'",
 					);
 					if (
 						!(await lockActiveAuthorizedProject(client, fixture.projectId, {
@@ -1230,7 +1230,7 @@ test.skipIf(!databaseUrl)(
 				},
 			);
 			await demotionLocked.promise;
-			await waitForLock(pool, "astraea-audit-race-manager-second");
+			await waitForLock(pool, "glasshouse-audit-race-manager-second");
 			await demoter.query(
 				"UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
 				[fixture.organizationId, fixture.managerActorId],
@@ -1268,7 +1268,7 @@ test.skipIf(!databaseUrl)(
 		const actorId = randomUUID();
 		const jobId = randomUUID();
 		const subject = `optimization-sse-${actorId}`;
-		const applicationName = "astraea-optimization-sse-revocation";
+		const applicationName = "glasshouse-optimization-sse-revocation";
 		const firstWrite = deferred();
 		const releaseFirstWrite = deferred();
 		const demoter = await pool.connect();
@@ -1403,7 +1403,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1445,7 +1445,7 @@ test.skipIf(!databaseUrl)(
 			output_text: "",
 			scores_summary: "",
 		};
-		const applicationName = "astraea-trace-sse-revocation";
+		const applicationName = "glasshouse-trace-sse-revocation";
 		const firstWrite = deferred();
 		const releaseFirstWrite = deferred();
 		const subscriptionReady = deferred();
@@ -1586,7 +1586,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1779,7 +1779,7 @@ test.skipIf(!databaseUrl)(
 			try {
 				await cleanup.query("BEGIN");
 				await cleanup.query(
-					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
 					[projectId],
 				);
 				await cleanup.query(
@@ -1814,7 +1814,7 @@ test.skipIf(!databaseUrl)(
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query("COMMIT");
@@ -1935,7 +1935,7 @@ test.skipIf(!databaseUrl)(
 			await reader.read();
 			await firstWrite.promise;
 			await demoter.query(
-				"SET application_name = 'astraea-experiment-sse-revocation'",
+				"SET application_name = 'glasshouse-experiment-sse-revocation'",
 			);
 			revoke = (async () => {
 				await demoter.query("BEGIN");
@@ -1945,7 +1945,7 @@ test.skipIf(!databaseUrl)(
 				);
 				await demoter.query("COMMIT");
 			})();
-			await waitForLock(pool, "astraea-experiment-sse-revocation");
+			await waitForLock(pool, "glasshouse-experiment-sse-revocation");
 			releaseFirstWrite.resolve();
 			await revoke;
 			let body = "";
@@ -1981,7 +1981,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -2413,7 +2413,7 @@ test.skipIf(!databaseUrl)(
 			try {
 				await cleanup.query("BEGIN");
 				await cleanup.query(
-					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
 					[projectId],
 				);
 				await cleanup.query(
@@ -2458,7 +2458,7 @@ test.skipIf(!databaseUrl)(
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query(
@@ -2499,7 +2499,7 @@ test.skipIf(!databaseUrl)(
 			);
 			await authorizer.query("BEGIN");
 			await authorizer.query(
-				"SET application_name = 'astraea-grant-first-project'",
+				"SET application_name = 'glasshouse-grant-first-project'",
 			);
 			const authorized = lockActiveAuthorizedProject(
 				authorizer,
@@ -2510,7 +2510,7 @@ test.skipIf(!databaseUrl)(
 					operation: "product_write",
 				},
 			);
-			await waitForLock(pool, "astraea-grant-first-project");
+			await waitForLock(pool, "glasshouse-grant-first-project");
 			const revoke = (async () => {
 				await revoker.query(
 					"DELETE FROM organization_actor_roles WHERE organization_id = $2 AND actor_id = $3 AND EXISTS (SELECT 1 FROM projects WHERE id = $1 AND organization_id = $2)",
@@ -2583,7 +2583,7 @@ test.skipIf(!databaseUrl)(
 			);
 			await defaultProject.query("BEGIN");
 			await defaultProject.query(
-				"SET application_name = 'astraea-role-first-default'",
+				"SET application_name = 'glasshouse-role-first-default'",
 			);
 			const authorized = lockActiveAuthorizedOrganizationProject(
 				defaultProject,
@@ -2592,7 +2592,7 @@ test.skipIf(!databaseUrl)(
 				actorId,
 				"destructive",
 			);
-			await waitForLock(pool, "astraea-role-first-default");
+			await waitForLock(pool, "glasshouse-role-first-default");
 			const revoke = (async () => {
 				await revoker.query(
 					"DELETE FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
@@ -2618,7 +2618,7 @@ test.skipIf(!databaseUrl)(
 			defaultProject.release();
 			revoker.release();
 			await pool.query(
-				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('glasshouse.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			// The default project and its remaining Admin are retained by design.
@@ -2664,7 +2664,7 @@ test.skipIf(!databaseUrl)(
 			});
 			await second.query("BEGIN");
 			await second.query(
-				"SET application_name = 'astraea-effect-claim-replay'",
+				"SET application_name = 'glasshouse-effect-claim-replay'",
 			);
 			const replay = claimExecutionAdmission(second, {
 				id: admissionId,
@@ -2672,7 +2672,7 @@ test.skipIf(!databaseUrl)(
 				effect: "provider_dispatch",
 				effect_key: "provider",
 			});
-			await waitForLock(pool, "astraea-effect-claim-replay");
+			await waitForLock(pool, "glasshouse-effect-claim-replay");
 			await first.query("COMMIT");
 			if (created.status === "created") providerDispatches += 1;
 			const existing = await replay;
@@ -2996,7 +2996,7 @@ test.skipIf(!databaseUrl)(
 				await cleanup.query("BEGIN");
 				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
-					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
 					[fixture.projectId],
 				);
 				await cleanup.query(
@@ -3108,7 +3108,7 @@ test.skipIf(!databaseUrl)(
 
 			await retention.query("BEGIN");
 			await retention.query(
-				"SET application_name = 'astraea-dataset-retention-slug-race'",
+				"SET application_name = 'glasshouse-dataset-retention-slug-race'",
 			);
 			retentionStarted = true;
 			const deleting = deleteSafeDatasetRetentionBatch(
@@ -3119,7 +3119,7 @@ test.skipIf(!databaseUrl)(
 				randomUUID(),
 				randomUUID(),
 			);
-			await waitForLock(pool, "astraea-dataset-retention-slug-race");
+			await waitForLock(pool, "glasshouse-dataset-retention-slug-race");
 			expect(
 				(
 					await pool.query<{ acquired: boolean }>(
@@ -3131,7 +3131,7 @@ test.skipIf(!databaseUrl)(
 
 			await creating.query("BEGIN");
 			await creating.query(
-				"SET application_name = 'astraea-dataset-create-slug-race'",
+				"SET application_name = 'glasshouse-dataset-create-slug-race'",
 			);
 			createStarted = true;
 			// The production path takes audit provenance before this shared slug phase.
@@ -3144,7 +3144,7 @@ test.skipIf(!databaseUrl)(
 				() => null,
 				(cause) => cause,
 			);
-			await waitForLock(pool, "astraea-dataset-create-slug-race");
+			await waitForLock(pool, "glasshouse-dataset-create-slug-race");
 			await gate.query("SELECT pg_advisory_unlock(hashtext($1))", [gateKey]);
 			gateHeld = false;
 			expect(await deleting).toEqual({ deleted: 1, skipped: 0 });
@@ -3195,7 +3195,7 @@ test.skipIf(!databaseUrl)(
 				await cleanup.query("BEGIN");
 				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
-					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
 					[fixture.projectId],
 				);
 				await cleanup.query(

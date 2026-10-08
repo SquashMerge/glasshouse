@@ -1,10 +1,12 @@
-# Astraea
+# Glasshouse
 
-**Astraea** is an open-source observability and evaluation platform for AI agents and LLM workflows. The shipped foundation provides project-scoped OTLP observability, immutable prompt and Dataset versions, configured-LLM Evaluation Runs with bounded evidence/comparison/release gates, feedback review, and governance. A strict `client_reported` Agent Introspection Report contract is shipped as P4 groundwork; versioned Agent manifests, real-agent execution, Agno/SDK integrations, and Agent Registry workflows remain future work. Drift detection remains planned P5 behavior.
+**Glasshouse by SquashMerge (formerly Astraea)** is a source-available observability and evaluation product for agentic applications. “Glasshouse” is the name of the Licensed Work in the repository-root [Business Source License 1.1](LICENSE); it refers to this software, previously developed under the Astraea name. The shipped foundation provides project-scoped OTLP observability, immutable prompt and Dataset versions, configured-LLM Evaluation Runs with bounded evidence/comparison/release gates, feedback review, and governance. A strict `client_reported` Agent Introspection Report contract is shipped as P4 groundwork; versioned Agent manifests, real-agent execution, Agno/SDK integrations, and Agent Registry workflows remain future work. Drift detection remains planned P5 behavior.
 
-> Named for the Titan goddess of precision: the idea that an agent eval platform should be honest about what your agent actually is, not just optimistic about what it could be.
+> Glasshouse is designed to make agent behavior visible, inspectable, and testable.
 
 **Local dev stack:** Postgres 16 + ClickHouse 24 + [Valkey 8](https://valkey.io) (open-source Redis fork) + Hono + React dashboard, behind `make dev`.
+
+The Compose files use Glasshouse logical volume keys while keeping the established physical data-volume IDs for PostgreSQL, ClickHouse, and Valkey, so this branding change does not orphan existing stores.
 
 ## Why it exists
 
@@ -30,7 +32,7 @@ User message
 
 The LLM call is maybe 30% of the actual behavior. The other 70% is routing, tools, prompts, guardrails, and business logic — all of which change independently and can regress independently.
 
-Most evaluation platforms measure a single LLM call. **Future P4/P5 Astraea** is designed to measure the whole agent as one versioned unit after the foundation-first Dataset, Evaluation, identity, and authorization work is complete.
+Most evaluation platforms measure a single LLM call. **Future P4/P5 Glasshouse** is designed to measure the whole agent as one versioned unit after the foundation-first Dataset, Evaluation, identity, and authorization work is complete.
 
 ## Planned P4/P5 agent-platform vision (not current behavior)
 
@@ -41,7 +43,7 @@ Most evaluation platforms measure a single LLM call. **Future P4/P5 Astraea** is
 
 ## What makes it different
 
-| | Langfuse | Braintrust | LangSmith | Maxim | Helicone | **Astraea roadmap phase** |
+| | Langfuse | Braintrust | LangSmith | Maxim | Helicone | **Glasshouse roadmap phase** |
 |---|---|---|---|---|---|---|
 | Narrow real-agent target execution | ⚠ | ⚠ | ✅ | ✅ | ❌ | P4 |
 | Agent as typed first-class entity | ❌ | ❌ | ⚠ | ❌ | ❌ | P4 |
@@ -149,7 +151,7 @@ Don't run `make dev` and `make deps-up` at the same time — the ports collide.
 
 ### Isolated OpenCode development with Dev Containers
 
-For concurrent AI-assisted development, Astraea provides a Compose-based devcontainer at `.devcontainer/`. It runs PostgreSQL, ClickHouse, and Valkey on the branch container network without publishing their ports to the host. With the `opencode-devcontainers` plugin configured, start an isolated branch with `/devcontainer <branch-name>` and use `make devcontainer-db-migrate` / `make devcontainer-ch-schema` for migrations. See [`.devcontainer/README.md`](.devcontainer/README.md) for the complete workflow and required `infra/.env` setup.
+For concurrent AI-assisted development, Glasshouse provides a Compose-based devcontainer at `.devcontainer/`. It runs PostgreSQL, ClickHouse, and Valkey on the branch container network without publishing their ports to the host. With the `opencode-devcontainers` plugin configured, start an isolated branch with `/devcontainer <branch-name>` and use `make devcontainer-db-migrate` / `make devcontainer-ch-schema` for migrations. See [`.devcontainer/README.md`](.devcontainer/README.md) for the complete workflow and required `infra/.env` setup.
 
 ### URLs after `make dev` (or local workflow)
 
@@ -172,12 +174,12 @@ For concurrent AI-assisted development, Astraea provides a Compose-based devcont
 PostgreSQL local credential storage now supports organization-scoped ASCII usernames,
 versioned Argon2id hashes, operator-token-guarded first-Admin setup, and Admin-created
 first-password/email-invitation records. See the [operator/security runbook](docs/local-credentials-runbook.md)
-before selecting `ASTRAEA_AUTH_BOOTSTRAP_MODE=local` on a fresh install. The default
+before selecting `GLASSHOUSE_AUTH_BOOTSTRAP_MODE=local` on a fresh install. The default
 `basic` mode preserves existing bootstrap behavior and authorization; no environment
 password is imported. The [local session API](docs/local-sessions-runbook.md) now supplies
 login/current-session/logout/password-change endpoints, eight-hour revocable HttpOnly
 cookies, CSRF protection and the same trusted workspace principal. Configure HTTPS,
-`NODE_ENV=production` and the exact `ASTRAEA_PUBLIC_ORIGIN` behind a proxy. The setup/account
+`NODE_ENV=production` and the exact `GLASSHOUSE_PUBLIC_ORIGIN` behind a proxy. The setup/account
 browser UX is available at `/setup`, `/login`, `/enroll` and `/access`.
 Dashboard sign-in uses separately provisioned local credentials; direct API
 clients retain Basic Auth compatibility.
@@ -203,7 +205,7 @@ GEPA_ALLOWED_MODELS=anthropic/claude-sonnet-4-20250514
 ANTHROPIC_API_KEY=your-key-here
 ```
 
-GEPA accepts provider-prefixed model names through its default adapter. Common LiteLLM-compatible providers include OpenAI, Anthropic, Google/Gemini, Azure OpenAI, and AWS Bedrock; the exact model format and required environment variables are provider-specific and must be supported by the installed GEPA/LiteLLM stack. Astraea does not currently maintain a provider catalog or model discovery endpoint.
+GEPA accepts provider-prefixed model names through its default adapter. Common LiteLLM-compatible providers include OpenAI, Anthropic, Google/Gemini, Azure OpenAI, and AWS Bedrock; the exact model format and required environment variables are provider-specific and must be supported by the installed GEPA/LiteLLM stack. Glasshouse does not currently maintain a provider catalog or model discovery endpoint.
 
 An OpenAI-compatible LiteLLM proxy can be used by pointing the worker's OpenAI adapter at the proxy and supplying the proxy credential as the OpenAI key, for example:
 
@@ -221,7 +223,7 @@ Every new optimization pins an embedded `dataset.version: 1` snapshot containing
 
 The default adapter executes candidates against expected-answer labels. Training score is a diagnostic only. GEPA ranks candidates by held-out validation score, and automatic publication requires at least two independent held-out examples, a finite candidate validation score that strictly improves on the source prompt's held-out score, and a passed leakage check. A one-example validation score, including `1`, is not evidence of general quality and produces a review-required draft instead of a new prompt version.
 
-Expected answers are evaluation labels, not few-shot prompt material. Astraea's reflection adapter does not put them in proposal feedback, and the API blocks normalized full expected-answer token multisets and copied material spans of at least eight normalized tokens and 48 characters, including reordered copies. The check removes control, format, and combining Unicode characters before comparison. Blocked candidates are never stored as drafts or published. Intentional few-shot prompt authoring is a separate reviewed authoring concern and is not created by optimization.
+Expected answers are evaluation labels, not few-shot prompt material. Glasshouse's reflection adapter does not put them in proposal feedback, and the API blocks normalized full expected-answer token multisets and copied material spans of at least eight normalized tokens and 48 characters, including reordered copies. The check removes control, format, and combining Unicode characters before comparison. Blocked candidates are never stored as drafts or published. Intentional few-shot prompt authoring is a separate reviewed authoring concern and is not created by optimization.
 
 Review-required drafts retain the safe candidate, source/candidate diff, rubric, split counts, baseline and candidate held-out metrics, and leakage outcome. An authenticated actor scoped to the same project may promote a safe draft through `POST /v1/prompt-optimizations/{id}/promote`; promotion fails if the source version is no longer current. This preserves an explicit human review boundary without putting credentials, worker diagnostics, or expected-answer text in lifecycle events.
 
@@ -229,7 +231,7 @@ Review-required drafts retain the safe candidate, source/candidate diff, rubric,
 
 For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenticated LLM CLI instead of a provider API key. The complete Codex setup is:
 
-1. Install and authenticate Codex on the **same host where the Astraea API runs**:
+1. Install and authenticate Codex on the **same host where the Glasshouse API runs**:
 
    ```sh
    npm install -g @openai/codex
@@ -250,7 +252,7 @@ For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenti
    ```env
    GEPA_WORKER_MODE=cli
    GEPA_ALLOWED_MODELS=gpt-5.6-terra,gpt-5.6-luna
-   ASTRAEA_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
+   GLASSHOUSE_DEV_LLM_COMMAND='["codex","exec","--model","{model}","-"]'
    GEPA_PYTHON="$PWD/worker/.venv/bin/python"
    ```
 
@@ -263,18 +265,18 @@ For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenti
 
 5. In the GEPA optimization dialog, enter either `gpt-5.6-terra` or `gpt-5.6-luna` for both the task model and reflection model. The value must be present in `GEPA_ALLOWED_MODELS`.
 
-`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. The `{model}` placeholder is replaced only within argv elements; Astraea sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
+`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. The `{model}` placeholder is replaced only within argv elements; Glasshouse sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
 
-Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Astraea. This mode is development-only: it is rejected when `NODE_ENV=production` unless `ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION=true` is explicitly set. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `ASTRAEA_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 1800) and `ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
+Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Glasshouse. This mode is development-only: it is rejected when `NODE_ENV=production` unless `GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION=true` is explicitly set. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 1800) and `GLASSHOUSE_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
 
 ### Sending traces from your agent
 
-Set these five env vars on your instrumented agent. `ASTRAEA_PROJECT_ID` must be the UUID of a project that belongs to the authenticated user's organization:
+Set these five env vars on your instrumented agent. `GLASSHOUSE_PROJECT_ID` must be the UUID of a project that belongs to the authenticated user's organization:
 
 ```sh
 export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel"
-export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'astraea:YOUR_PASSWORD' | base64),x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'glasshouse:YOUR_PASSWORD' | base64),x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```

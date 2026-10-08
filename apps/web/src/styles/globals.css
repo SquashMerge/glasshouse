@@ -3,58 +3,58 @@
 
 @layer base {
 	:root {
-		--background: 0 0% 100%;
-		--foreground: 222 47% 11%;
-		--card: 0 0% 100%;
-		--card-foreground: 222 47% 11%;
-		--popover: 0 0% 100%;
-		--popover-foreground: 222 47% 11%;
-		--border: 214 32% 91%;
-		--input: 214 32% 91%;
-		--primary: 222 47% 11%;
-		--primary-foreground: 210 40% 98%;
-		--secondary: 210 40% 96%;
-		--secondary-foreground: 222 47% 11%;
-		--muted: 210 40% 96%;
-		--muted-foreground: 215 16% 47%;
-		--accent: 210 40% 96%;
-		--accent-foreground: 222 47% 11%;
-		--destructive: 0 84% 60%;
-		--destructive-foreground: 210 40% 98%;
-		--ring: 222 47% 11%;
-		--radius: 0.5rem;
-		--json-type-array: 188 77% 26%;
-		--json-type-boolean: 37 92% 32%;
-		--json-type-number: 221 83% 35%;
-		--json-type-object: 262 53% 36%;
-		--json-type-string: 142 72% 24%;
+		/* Glasshouse palette: adjust these aliases to retheme the whole application. */
+		--gh-ink: 228 18.5% 5.3%;
+		--gh-surface: 233.3 18.4% 9.6%;
+		--gh-raised: 235.4 18.3% 13.9%;
+		--gh-line: 232.5 13.3% 23.5%;
+		--gh-control: 232.2 9.2% 51.2%;
+		--gh-white: 240 33.3% 97.7%;
+		--gh-muted: 232.5 12.7% 75.3%;
+		--gh-gold: 45.1 100% 52%;
+		--gh-amber: 38.7 100% 53.1%;
+		--gh-orange: 28.7 100% 50%;
+		--gh-lavender: 244 100% 82.4%;
+		--gh-purple: 243.9 60.7% 65.1%;
+		--gh-deep-purple: 244.2 51.1% 55.9%;
+		--gh-green: 154.5 60.8% 59%;
+		--gh-red: 353.6 100% 77.8%;
+		--gh-blue: 207.5 100% 76.1%;
+
+		/* Semantic Tailwind aliases. Keep component colors semantic, not literal. */
+		--background: var(--gh-ink);
+		--foreground: var(--gh-white);
+		--card: var(--gh-surface);
+		--card-foreground: var(--gh-white);
+		--popover: var(--gh-surface);
+		--popover-foreground: var(--gh-white);
+		--border: var(--gh-line);
+		--input: var(--gh-control);
+		--primary: var(--gh-amber);
+		--primary-foreground: var(--gh-ink);
+		--secondary: var(--gh-raised);
+		--secondary-foreground: var(--gh-white);
+		--muted: var(--gh-raised);
+		--muted-foreground: var(--gh-muted);
+		--accent: var(--gh-purple);
+		--accent-foreground: var(--gh-ink);
+		--destructive: var(--gh-red);
+		--destructive-foreground: var(--gh-ink);
+		--success: var(--gh-green);
+		--link: var(--gh-lavender);
+		--ring: var(--gh-lavender);
+		--radius: 0.75rem;
+
+		/* Structured data accents remain centralized and themeable as well. */
+		--json-type-array: var(--gh-purple);
+		--json-type-boolean: var(--gh-gold);
+		--json-type-number: var(--gh-blue);
+		--json-type-object: var(--gh-lavender);
+		--json-type-string: var(--gh-green);
 	}
 
 	.dark {
-		--background: 222 47% 6%;
-		--foreground: 210 40% 98%;
-		--card: 222 47% 6%;
-		--card-foreground: 210 40% 98%;
-		--popover: 222 47% 9%;
-		--popover-foreground: 210 40% 98%;
-		--border: 217 33% 17%;
-		--input: 217 33% 17%;
-		--primary: 210 40% 98%;
-		--primary-foreground: 222 47% 11%;
-		--secondary: 217 33% 17%;
-		--secondary-foreground: 210 40% 98%;
-		--muted: 217 33% 17%;
-		--muted-foreground: 215 20% 65%;
-		--accent: 217 33% 17%;
-		--accent-foreground: 210 40% 98%;
-		--destructive: 0 63% 50%;
-		--destructive-foreground: 210 40% 98%;
-		--ring: 215 20% 65%;
-		--json-type-array: 187 80% 72%;
-		--json-type-boolean: 42 96% 70%;
-		--json-type-number: 217 95% 75%;
-		--json-type-object: 263 67% 77%;
-		--json-type-string: 142 60% 70%;
+		color-scheme: dark;
 	}
 
 	* {
@@ -71,5 +71,16 @@
 		font-family:
 			ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
 			Roboto, sans-serif;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			scroll-behavior: auto !important;
+			animation-duration: 0.01ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.01ms !important;
+		}
 	}
 }

@@ -4,9 +4,9 @@ The browser uses local usernames and the existing [opaque server session](local-
 
 ## First deployment
 
-1. Select the existing Organization with `ASTRAEA_DEFAULT_ORGANIZATION_ID`. Set `ASTRAEA_AUTH_BOOTSTRAP_MODE=local` **before first start**; default Basic bootstrap would create its Admin and close local setup. Startup still applies PostgreSQL/ClickHouse migrations before serving.
+1. Select the existing Organization with `GLASSHOUSE_DEFAULT_ORGANIZATION_ID`. Set `GLASSHOUSE_AUTH_BOOTSTRAP_MODE=local` **before first start**; default Basic bootstrap would create its Admin and close local setup. Startup still applies PostgreSQL/ClickHouse migrations before serving.
 2. Follow [the bootstrap runbook](local-credentials-runbook.md#first-admin-bootstrap) to generate a 32-byte base64url secret in a restricted operator file and run `auth:provision-bootstrap`. Provisioning stores only a digest and gives it 24 hours. Replace an unused/expired secret by generating a replacement file and rerunning the command; this invalidates the previous secret. Startup never provisions or extends it.
-3. Serve browser and `/v1` on one HTTPS origin. Set `NODE_ENV=production` and `ASTRAEA_PUBLIC_ORIGIN` to that exact origin. Exclude auth bodies, Authorization/Cookie/Set-Cookie headers and code responses from proxy/APM diagnostics, analytics, browser session replay and support recordings.
+3. Serve browser and `/v1` on one HTTPS origin. Set `NODE_ENV=production` and `GLASSHOUSE_PUBLIC_ORIGIN` to that exact origin. Exclude auth bodies, Authorization/Cookie/Set-Cookie headers and code responses from proxy/APM diagnostics, analytics, browser session replay and support recordings.
 4. Visit `/setup` (fresh protected visits redirect there only when the server permits setup). Enter secret, username and password. The server chooses Organization, Admin role and existing initial Project authority. No arbitrary scope/role or fabricated Project/legacy grants are accepted.
 5. Sign in at `/login` after commit. Setup stays closed across reload/restart and later account changes. Concurrent setup has at most one winner; later attempts have uniform authentication failures. `/setup` only reports “unavailable or already initialized,” without account/tenant details. Delete the used secret file.
 

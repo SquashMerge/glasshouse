@@ -4,8 +4,8 @@ import { clickhouseUrl } from "../../src/db/clickhouse";
 
 const client = createClient({
 	url: clickhouseUrl(),
-	database: process.env.CLICKHOUSE_DB ?? "astraea",
-	username: process.env.CLICKHOUSE_USER ?? "astraea",
+	database: process.env.CLICKHOUSE_DB ?? "glasshouse",
+	username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 	password: process.env.CLICKHOUSE_PASSWORD ?? "",
 });
 

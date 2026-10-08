@@ -135,7 +135,7 @@ ON CONFLICT (report_id) DO NOTHING;
 CREATE OR REPLACE FUNCTION prevent_agent_introspection_report_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
-    IF current_setting('astraea.agent_introspection_scope_remediation', true) = 'on' THEN
+    IF current_setting('glasshouse.agent_introspection_scope_remediation', true) = 'on' THEN
         IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
         RETURN NEW;
     END IF;
@@ -143,7 +143,7 @@ BEGIN
     RAISE EXCEPTION 'agent introspection reports are immutable' USING ERRCODE = '55000';
 END $$;
 
-SELECT set_config('astraea.agent_introspection_scope_remediation', 'on', false);
+SELECT set_config('glasshouse.agent_introspection_scope_remediation', 'on', false);
 DELETE FROM agent_introspection_reports AS report
 USING experiment_task_run_item_mismatch_quarantine AS quarantine
 WHERE quarantine.task_id = report.task_id
@@ -187,7 +187,7 @@ WHERE quarantine.task_id = report.task_id
   AND quarantine.project_id = report.project_id
   AND quarantine.evaluation_run_id = report.evaluation_run_id
   AND quarantine.remediated_evaluation_run_item_id IS NOT NULL;
-SELECT set_config('astraea.agent_introspection_scope_remediation', 'off', false);
+SELECT set_config('glasshouse.agent_introspection_scope_remediation', 'off', false);
 
 DO $$
 BEGIN

@@ -78,17 +78,17 @@ test.describe("Login flow", () => {
 		expect(
 			(await page.context().cookies()).some(
 				(cookie) =>
-					cookie.name === "astraea_session" &&
+					cookie.name === "glasshouse_session" &&
 					cookie.httpOnly &&
 					cookie.sameSite === "Strict" &&
 					cookie.path === "/v1",
 			),
 		).toBe(true);
 		const stored = await page.evaluate(() => ({
-			u: window.localStorage.getItem("astraea.auth.username"),
-			p: window.localStorage.getItem("astraea.auth.password"),
-			su: window.sessionStorage.getItem("astraea.auth.username"),
-			sp: window.sessionStorage.getItem("astraea.auth.password"),
+			u: window.localStorage.getItem("glasshouse.auth.username"),
+			p: window.localStorage.getItem("glasshouse.auth.password"),
+			su: window.sessionStorage.getItem("glasshouse.auth.username"),
+			sp: window.sessionStorage.getItem("glasshouse.auth.password"),
 		}));
 		expect(stored.u).toBeNull();
 		expect(stored.p).toBeNull();
@@ -116,7 +116,7 @@ test.describe("Login flow", () => {
 		await page.waitForURL(/\/login$/, { timeout: 5000 });
 		expect(
 			(await page.context().cookies()).some(
-				(cookie) => cookie.name === "astraea_session",
+				(cookie) => cookie.name === "glasshouse_session",
 			),
 		).toBe(false);
 		const status = await page.evaluate(
@@ -125,8 +125,8 @@ test.describe("Login flow", () => {
 		expect(status).toBe(401);
 
 		const stored = await page.evaluate(() => ({
-			u: window.localStorage.getItem("astraea.auth.username"),
-			p: window.localStorage.getItem("astraea.auth.password"),
+			u: window.localStorage.getItem("glasshouse.auth.username"),
+			p: window.localStorage.getItem("glasshouse.auth.password"),
 		}));
 		expect(stored.u).toBeNull();
 		expect(stored.p).toBeNull();
@@ -137,7 +137,7 @@ test("direct API Basic compatibility remains separate from browser local session
 	request,
 }) => {
 	const apiBase = process.env.E2E_API_BASE ?? "http://localhost:3000";
-	const username = process.env.UI_USERNAME ?? "astraea";
+	const username = process.env.UI_USERNAME ?? "glasshouse";
 	const password = process.env.UI_PASSWORD ?? "testpassword";
 	const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 	const login = await request.post(`${apiBase}/v1/auth/login`, {
@@ -305,12 +305,12 @@ test.describe("Shared app workspace", () => {
 		await page.goto("/");
 
 		const sidebar = page.getByLabel("Primary");
-		const home = sidebar.getByRole("link", { name: "Astraea home" });
+		const home = sidebar.getByRole("link", { name: "Glasshouse home" });
 		const projectControl = sidebar.getByRole("button", {
 			name: /Current project: (?!No project selected).+\. Switch project/,
 		});
 		await expect(sidebar).toBeVisible();
-		await expect(home.getByText("Astraea", { exact: true })).toBeHidden();
+		await expect(home.getByText("Glasshouse", { exact: true })).toBeHidden();
 		await expect(projectControl).toBeVisible();
 
 		const sidebarBounds = await sidebar.boundingBox();
@@ -378,7 +378,7 @@ test.describe("Dashboard basics", () => {
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-		await expect(page.getByText("Astraea", { exact: true })).toBeVisible();
+		await expect(page.getByText("Glasshouse", { exact: true })).toBeVisible();
 		expect(errors, `console errors observed: ${errors.join("\n")}`).toEqual([]);
 	});
 

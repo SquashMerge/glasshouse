@@ -8,7 +8,7 @@ The first policy contract is deliberately narrow:
 
 - Retention supports `traces`, `datasets`, and `feedback`, each with a whole-day interval from 1 to 3650 days.
 - Ingress redaction supports `all_text` for trace input/output and literal metadata attribute key replacement. Attribute keys are validated, sorted, and deduplicated.
-- Redaction is applied during OTLP normalization before ClickHouse persistence, logging, events, SSE, and audit data. Existing `astraea.prompt.*` stripping remains in force.
+- Redaction is applied during OTLP normalization before ClickHouse persistence, logging, events, SSE, and audit data. Existing `glasshouse.prompt.*` stripping remains in force.
 - No retroactive rewrite, arbitrary patterns, ML redaction, or RBAC changes are provided. The only automated approval is the audited baseline provisioned for Projects without an approved policy.
 
 ## Operator workflow

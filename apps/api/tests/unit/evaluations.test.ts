@@ -65,7 +65,7 @@ describe("evaluation MVP", () => {
 
 		expect(ExportTraceServiceRequest.safeParse(payload).success).toBe(true);
 		expect(payload.resource_spans[0]?.resource.attributes).toContainEqual({
-			key: "astraea.project.id",
+			key: "glasshouse.project.id",
 			value: { stringValue: projectId },
 		});
 

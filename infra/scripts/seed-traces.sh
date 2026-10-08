@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Astraea trace seeder. Posts OTLP traces to the local api to bulk-load
+# Glasshouse trace seeder. Posts OTLP traces to the local api to bulk-load
 # traces + observations for query-perf testing or UI demos.
 #
 # Usage:
@@ -17,14 +17,14 @@
 #   --concurrency N   parallel POST workers  (default 8)
 #   --url URL         api base url           (default http://localhost:3000)
 #   --project-id ID   target project UUID (default: authenticated org's default project)
-#   --username NAME   Basic auth username (default: UI_USERNAME or astraea)
+#   --username NAME   Basic auth username (default: UI_USERNAME or glasshouse)
 #   --password VALUE  Basic auth password (default: UI_PASSWORD)
 #   --dry-run         build payloads without POSTing
 #   --seed N          rng seed for reproducibility
 #
 # Prereqs: API running (`make dev-backend` or `make dev`) and a configured Basic
 # credential. Use UI_USERNAME + UI_PASSWORD from infra/.env, or pass --username
-# and --password for one entry in ASTRAEA_BASIC_AUTH_CREDENTIALS.
+# and --password for one entry in GLASSHOUSE_BASIC_AUTH_CREDENTIALS.
 
 if grep -q $'\r' "$0" 2>/dev/null; then
   TMP="$(mktemp)"

@@ -1,16 +1,16 @@
 {
   "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
-  "name": "Astraea",
+  "name": "Glasshouse",
   "dockerComposeFile": "compose.yaml",
   "service": "workspace",
-  "workspaceFolder": "/workspaces/astraea",
+  "workspaceFolder": "/workspaces/glasshouse",
   "remoteUser": "bun",
   "updateRemoteUserUID": true,
   "shutdownAction": "stopCompose",
   "forwardPorts": [3000],
   "portsAttributes": {
     "3000": {
-      "label": "Astraea API"
+      "label": "Glasshouse API"
     }
   },
   "containerEnv": {

@@ -1,5 +1,5 @@
 {
-  "name": "@astraea/web",
+  "name": "@glasshouse/web",
   "version": "0.3.0",
   "private": true,
   "type": "module",

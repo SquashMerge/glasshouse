@@ -272,10 +272,10 @@ export function createEvaluationTracePayload(
 					attributes: [
 						{
 							key: "service.name",
-							value: { stringValue: "astraea-evaluation" },
+							value: { stringValue: "glasshouse-evaluation" },
 						},
 						{
-							key: "astraea.project.id",
+							key: "glasshouse.project.id",
 							value: { stringValue: input.project_id },
 						},
 					],

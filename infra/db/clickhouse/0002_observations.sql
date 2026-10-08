@@ -1,4 +1,4 @@
--- Astraea ClickHouse schema: observations
+-- Glasshouse ClickHouse schema: observations
 -- Companion to traces. One trace has many observations.
 
 CREATE TABLE IF NOT EXISTS observations (

@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0009_prompt_management_canonical
+-- Glasshouse Postgres migrations: 0009_prompt_management_canonical
 
 DO $$
 DECLARE
