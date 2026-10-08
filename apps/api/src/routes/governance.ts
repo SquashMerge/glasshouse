@@ -138,6 +138,7 @@ type VersionRow = {
 	created_by: string;
 	created_at: Date;
 	approved_by: string | null;
+	approved_by_username: string | null;
 	approved_at: Date | null;
 };
 const output = (row: VersionRow) => ({
@@ -145,6 +146,17 @@ const output = (row: VersionRow) => ({
 	created_at: row.created_at.toISOString(),
 	approved_at: row.approved_at?.toISOString() ?? null,
 });
+async function actorUsername(
+	client: PoolClient,
+	organizationId: string,
+	actorId: string,
+): Promise<string> {
+	const result = await client.query<{ username: string }>(
+		"SELECT COALESCE(MAX(credential.username), MAX(identity.canonical_subject) FILTER (WHERE identity.provider_namespace = 'basic:v1'), 'Unknown account') AS username FROM actor_identities identity LEFT JOIN local_credentials credential ON credential.organization_id = identity.organization_id AND credential.actor_id = identity.actor_id WHERE identity.organization_id = $1 AND identity.actor_id = $2",
+		[organizationId, actorId],
+	);
+	return result.rows[0]?.username ?? "Unknown account";
+}
 async function manager(c: Context, projectId: string) {
 	const tenant = trustedTenant(c);
 	try {
@@ -161,7 +173,59 @@ async function versions(
 	actorId: string,
 ) {
 	return pgPool().query<VersionRow>(
-		"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, a.actor_subject AS approved_by, a.approved_at FROM governance_policy_versions v JOIN governance_policies gp ON gp.id = v.policy_id JOIN projects p ON p.id = gp.project_id AND p.organization_id = gp.organization_id AND p.status = 'active' LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id WHERE gp.project_id = $1 AND gp.organization_id = $2 AND authorization_allows_project(gp.organization_id, gp.project_id, $3, 'governed') ORDER BY v.version DESC",
+		`SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at,
+			a.actor_subject AS approved_by,
+			CASE WHEN a.actor_subject IS NULL THEN NULL ELSE COALESCE(
+				(SELECT MAX(credential.username) FROM local_credentials credential
+				 WHERE credential.organization_id = gp.organization_id
+				   AND credential.actor_id = a.approved_by_actor_id),
+				(SELECT identity.canonical_subject FROM actor_identities identity
+				 WHERE identity.organization_id = gp.organization_id
+				   AND identity.actor_id = a.approved_by_actor_id
+				   AND identity.provider_namespace = 'basic:v1' LIMIT 1),
+				CASE WHEN a.approved_by_actor_id IS NOT NULL THEN 'Unknown account'
+				     WHEN a.actor_subject = 'system:governance-defaults' THEN 'System'
+				     WHEN a.actor_subject ~ '^actor:[0-9a-fA-F-]{36}$' THEN
+				       CASE WHEN EXISTS (
+					SELECT 1 FROM actor_identities identity
+					WHERE identity.organization_id = gp.organization_id
+					  AND identity.provider_namespace = 'basic:v1'
+					  AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)
+				       ) AND EXISTS (
+					SELECT 1 FROM local_credentials credential
+					WHERE credential.organization_id = gp.organization_id
+					  AND a.actor_subject = 'actor:' || credential.actor_id::text
+				       ) THEN 'Unknown account'
+				       ELSE COALESCE(
+					(SELECT credential.username FROM local_credentials credential
+					 WHERE credential.organization_id = gp.organization_id
+					   AND a.actor_subject = 'actor:' || credential.actor_id::text LIMIT 1),
+					(SELECT identity.canonical_subject FROM actor_identities identity
+					 WHERE identity.organization_id = gp.organization_id
+					   AND identity.provider_namespace = 'basic:v1'
+					   AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)
+					 LIMIT 1),
+					'Unknown account'
+				       ) END
+				     WHEN btrim(a.actor_subject) = '' OR normalize(a.actor_subject, NFKC) !~ '^[ -~]+$'
+				       THEN 'Unknown account'
+				     ELSE COALESCE((
+					SELECT identity.canonical_subject FROM actor_identities identity
+					WHERE identity.organization_id = gp.organization_id
+					  AND identity.provider_namespace = 'basic:v1'
+					  AND identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)
+					LIMIT 1
+				       ), 'Unknown account')
+				END
+			) END AS approved_by_username,
+			a.approved_at
+		 FROM governance_policy_versions v
+		 JOIN governance_policies gp ON gp.id = v.policy_id
+		 JOIN projects p ON p.id = gp.project_id AND p.organization_id = gp.organization_id AND p.status = 'active'
+		 LEFT JOIN governance_policy_approvals a ON a.policy_version_id = v.id
+		 WHERE gp.project_id = $1 AND gp.organization_id = $2
+		   AND authorization_allows_project(gp.organization_id, gp.project_id, $3, 'governed')
+		 ORDER BY v.version DESC`,
 		[projectId, organizationId, actorId],
 	);
 }
@@ -248,7 +312,7 @@ export async function handleCreatePolicyDraft(c: Context) {
 			const policyId = policyRow.rows[0]?.id;
 			if (!policyId) throw new Error("Not found");
 			const existing = await client.query<VersionRow>(
-				"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at FROM governance_policy_versions v WHERE v.policy_id = $1 AND v.content_hash = $2",
+				"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::text AS approved_by_username, NULL::timestamptz AS approved_at FROM governance_policy_versions v WHERE v.policy_id = $1 AND v.content_hash = $2",
 				[policyId, hash],
 			);
 			if (existing.rows[0]) {
@@ -256,7 +320,7 @@ export async function handleCreatePolicyDraft(c: Context) {
 				return c.json({ policy: output(existing.rows[0]) }, 200);
 			}
 			const created = await client.query<VersionRow>(
-				"INSERT INTO governance_policy_versions (policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) SELECT $1, $2, $3, COALESCE(max(version) + 1, 1), $4::jsonb, $5::jsonb, $6, $7 FROM governance_policy_versions WHERE policy_id = $1 RETURNING id, version, retention, redaction, content_hash, created_by, created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at",
+				"INSERT INTO governance_policy_versions (policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) SELECT $1, $2, $3, COALESCE(max(version) + 1, 1), $4::jsonb, $5::jsonb, $6, $7 FROM governance_policy_versions WHERE policy_id = $1 RETURNING id, version, retention, redaction, content_hash, created_by, created_at, NULL::text AS approved_by, NULL::text AS approved_by_username, NULL::timestamptz AS approved_at",
 				[
 					policyId,
 					tenant.organizationId,
@@ -302,25 +366,31 @@ export async function handleApprovePolicy(c: Context) {
 			await lockProjectAuditProvenance(client, project_id);
 			const version = (
 				await client.query<VersionRow>(
-					"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::timestamptz AS approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id WHERE v.id = $1 AND p.project_id = $2 AND p.organization_id = $3",
+					"SELECT v.id, v.version, v.retention, v.redaction, v.content_hash, v.created_by, v.created_at, NULL::text AS approved_by, NULL::text AS approved_by_username, NULL::timestamptz AS approved_at FROM governance_policy_versions v JOIN governance_policies p ON p.id = v.policy_id WHERE v.id = $1 AND p.project_id = $2 AND p.organization_id = $3",
 					[id, project_id, tenant.organizationId],
 				)
 			).rows[0];
 			if (!version) throw new Error("Not found");
 			const approval = await client.query(
-				"INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES ($1, $2, $3, $4) ON CONFLICT (policy_version_id) DO NOTHING RETURNING approved_at",
-				[id, tenant.organizationId, project_id, tenant.actor],
+				"INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject, approved_by_actor_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (policy_version_id) DO NOTHING RETURNING approved_at",
+				[id, tenant.organizationId, project_id, tenant.actor, tenant.actorId],
 			);
 			if (!approval.rows[0]) throw new Error("Policy is already approved");
 			await client.query(
 				"INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type) VALUES ($1, $2, $3, $4, 'policy_approved')",
 				[tenant.organizationId, project_id, id, tenant.actor],
 			);
+			const approvedByUsername = await actorUsername(
+				client,
+				tenant.organizationId,
+				tenant.actorId,
+			);
 			await client.query("COMMIT");
 			return c.json({
 				policy: output({
 					...version,
 					approved_by: tenant.actor,
+					approved_by_username: approvedByUsername,
 					approved_at: approval.rows[0].approved_at,
 				}),
 			});

@@ -55,6 +55,7 @@ function policy(id: string) {
 		created_by: "owner",
 		created_at: "2026-01-01T00:00:00.000Z",
 		approved_by: "owner",
+		approved_by_username: "owner",
 		approved_at: "2026-01-01T00:00:00.000Z",
 	};
 }
@@ -89,6 +90,29 @@ describe("GovernancePage project-scoped mutations", () => {
 		});
 	});
 	afterEach(cleanup);
+
+	it("shows approver usernames instead of internal actor identifiers in policy history", async () => {
+		const actorId = "2f8f3ab2-d5d3-47d7-a79a-fc5c030bd8f5";
+		const activePolicy = policy(POLICY_A);
+		const previousPolicy = {
+			...policy(POLICY_B),
+			version: 3,
+			approved_by: `actor:${actorId}`,
+			approved_by_username: "dan",
+		};
+		api.getEffectiveGovernancePolicy.mockResolvedValue({
+			policy: activePolicy,
+		});
+		api.listGovernancePolicyHistory.mockResolvedValue({
+			items: [activePolicy, previousPolicy],
+		});
+
+		renderPage();
+
+		await screen.findByText("Approved policy history");
+		expect(await screen.findByText("Approved by dan")).toBeVisible();
+		expect(screen.queryByText(`Approved by actor:${actorId}`)).toBeNull();
+	});
 
 	it("starts a policy draft at the documented baseline with text retention selected first", async () => {
 		renderPage();
@@ -376,6 +400,7 @@ describe("GovernancePage project-scoped mutations", () => {
 			redaction: { mode: "none" as const, keys: ["user.email"] },
 			created_by: "reviewer",
 			approved_by: null,
+			approved_by_username: null,
 			approved_at: null,
 		};
 		api.getEffectiveGovernancePolicy.mockResolvedValue({
@@ -388,6 +413,7 @@ describe("GovernancePage project-scoped mutations", () => {
 			policy: {
 				...pendingDraft,
 				approved_by: "owner",
+				approved_by_username: "owner",
 				approved_at: "2026-01-02T00:00:00.000Z",
 			},
 		});

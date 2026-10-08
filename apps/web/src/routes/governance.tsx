@@ -246,8 +246,8 @@ export function GovernancePage() {
 									</div>
 								</dl>
 								<p className="text-xs text-muted-foreground">
-									Approved by {policy.approved_by} on{" "}
-									{new Date(policy.approved_at!).toLocaleString()}.
+									Approved by {policy.approved_by_username ?? "Unknown account"}{" "}
+									on {new Date(policy.approved_at!).toLocaleString()}.
 								</p>
 							</div>
 						) : (
@@ -592,7 +592,8 @@ export function GovernancePage() {
 										</p>
 									</div>
 									<p className="text-xs text-muted-foreground">
-										Approved by {version.approved_by}
+										Approved by{" "}
+										{version.approved_by_username ?? "Unknown account"}
 									</p>
 								</li>
 							))}

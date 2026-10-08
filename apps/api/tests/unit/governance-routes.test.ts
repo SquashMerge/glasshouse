@@ -11,6 +11,7 @@ const previewId = "55555555-5555-4555-8555-555555555555";
 const previewExpiresAt = new Date("2026-08-29T20:00:00.000Z");
 const calls: string[] = [];
 const previewConsumeValues: string[][] = [];
+const approvalInsertValues: string[][] = [];
 let approvalConflict = false;
 let permittedActorId = verifiedActorId;
 let approvedPolicyAvailable = false;
@@ -25,7 +26,8 @@ function approvedPolicy() {
 		content_hash: "a".repeat(64),
 		created_by: "manager",
 		created_at: new Date("2026-01-01T00:00:00Z"),
-		approved_by: "manager",
+		approved_by: `actor:${verifiedActorId}`,
+		approved_by_username: "dan",
 		approved_at: new Date("2026-01-01T00:00:00Z"),
 	};
 }
@@ -67,6 +69,8 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		return values[0] === otherProjectId
 			? { rows: [] }
 			: { rows: [{ id: projectId }] };
+	if (statement.startsWith("SELECT COALESCE(MAX(credential.username)"))
+		return { rows: [{ username: "dan" }] };
 	if (statement.includes("FROM organization_memberships om"))
 		return { rows: [{ actor_subject: "manager" }] };
 	if (statement.includes("FROM project_memberships pm"))
@@ -101,6 +105,7 @@ const query = mock(async (statement: string, values: string[] = []) => {
 					created_by: "manager",
 					created_at: new Date("2026-01-01T00:00:00Z"),
 					approved_by: null,
+					approved_by_username: null,
 					approved_at: null,
 				},
 			],
@@ -115,6 +120,8 @@ const query = mock(async (statement: string, values: string[] = []) => {
 		statement.startsWith("SELECT count(*)::text AS count FROM feedback_reviews")
 	)
 		return { rows: [{ count: "7" }] };
+	if (statement.startsWith("INSERT INTO governance_policy_approvals"))
+		approvalInsertValues.push(values);
 	if (statement.startsWith("INSERT INTO governance_retention_previews"))
 		return { rows: [{ id: previewId, expires_at: previewExpiresAt }] };
 	if (statement.startsWith("INSERT INTO governance_policy_approvals"))
@@ -132,10 +139,12 @@ const {
 	approvePolicy,
 	handleApprovePolicy,
 	handleGetEffectivePolicy,
+	handleListPolicyHistory,
 	handleListRetentionRuns,
 	handlePreviewRetention,
 	handleRunRetention,
 	getEffectivePolicy,
+	listPolicyHistory,
 	listRetentionRuns,
 	previewRetention,
 	runRetention,
@@ -164,6 +173,7 @@ app.openapi(previewRetention, handlePreviewRetention);
 app.openapi(approvePolicy, handleApprovePolicy);
 app.openapi(runRetention, handleRunRetention);
 app.openapi(getEffectivePolicy, handleGetEffectivePolicy);
+app.openapi(listPolicyHistory, handleListPolicyHistory);
 app.openapi(listRetentionRuns, handleListRetentionRuns);
 
 function request(actor: string, path: string, init?: RequestInit) {
@@ -178,6 +188,42 @@ function request(actor: string, path: string, init?: RequestInit) {
 }
 
 describe("governance route guards", () => {
+	it("resolves approved actor IDs to usernames in policy history", async () => {
+		calls.length = 0;
+		approvedPolicyAvailable = true;
+		try {
+			const response = await request(
+				"manager",
+				`/v1/governance/policy/history?project_id=${projectId}`,
+			);
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual({
+				items: [
+					expect.objectContaining({
+						approved_by: `actor:${verifiedActorId}`,
+						approved_by_username: "dan",
+					}),
+				],
+			});
+			const history = calls.find((call) => call.startsWith("SELECT v.id"));
+			expect(history).toContain("actor_identities");
+			expect(history).toContain("local_credentials");
+			expect(history).toContain("approved_by_username");
+			expect(history).toContain("a.approved_by_actor_id");
+			expect(history).toContain(
+				"normalize(a.actor_subject, NFKC) !~ '^[ -~]+$'",
+			);
+			expect(history).toContain(
+				"a.actor_subject = 'actor:' || credential.actor_id::text",
+			);
+			expect(history).toContain(
+				"identity.canonical_subject = basic_auth_canonical_subject(a.actor_subject)",
+			);
+		} finally {
+			approvedPolicyAvailable = false;
+		}
+	});
+
 	it("issues a complete preview for a durable governed actor without a legacy role projection", async () => {
 		calls.length = 0;
 		approvedPolicyAvailable = true;
@@ -273,9 +319,24 @@ describe("governance route guards", () => {
 		const response = await request(
 			"manager",
 			`/v1/governance/policy/${policyId}/approve?project_id=${projectId}`,
-			{ method: "POST" },
+			{
+				method: "POST",
+				headers: { "x-test-actor-id": verifiedActorId },
+			},
 		);
 		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			policy: {
+				approved_by_username: "dan",
+			},
+		});
+		expect(approvalInsertValues.at(-1)).toEqual([
+			policyId,
+			organizationId,
+			projectId,
+			"manager",
+			verifiedActorId,
+		]);
 		const index = (prefix: string) =>
 			calls.findIndex((statement) => statement.startsWith(prefix));
 		expect(index("SELECT lock_project_audit_provenance")).toBeGreaterThan(

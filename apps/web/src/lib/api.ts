@@ -1691,6 +1691,7 @@ export interface GovernancePolicyVersion {
 	created_by: string;
 	created_at: string;
 	approved_by: string | null;
+	approved_by_username: string | null;
 	approved_at: string | null;
 }
 export async function getEffectiveGovernancePolicy(

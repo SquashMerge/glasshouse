@@ -13452,6 +13452,10 @@ paths:
                         type:
                           - string
                           - 'null'
+                      approved_by_username:
+                        type:
+                          - string
+                          - 'null'
                       content_hash:
                         type: string
                       created_at:
@@ -13506,6 +13510,7 @@ paths:
                       - created_by
                       - created_at
                       - approved_by
+                      - approved_by_username
                       - approved_at
                     type:
                       - object
@@ -13615,6 +13620,10 @@ paths:
                         type:
                           - string
                           - 'null'
+                      approved_by_username:
+                        type:
+                          - string
+                          - 'null'
                       content_hash:
                         type: string
                       created_at:
@@ -13669,6 +13678,7 @@ paths:
                       - created_by
                       - created_at
                       - approved_by
+                      - approved_by_username
                       - approved_at
                     type: object
                 required:
@@ -13690,6 +13700,10 @@ paths:
                         type:
                           - string
                           - 'null'
+                      approved_by_username:
+                        type:
+                          - string
+                          - 'null'
                       content_hash:
                         type: string
                       created_at:
@@ -13744,6 +13758,7 @@ paths:
                       - created_by
                       - created_at
                       - approved_by
+                      - approved_by_username
                       - approved_at
                     type: object
                 required:
@@ -13812,6 +13827,10 @@ paths:
                           type:
                             - string
                             - 'null'
+                        approved_by_username:
+                          type:
+                            - string
+                            - 'null'
                         content_hash:
                           type: string
                         created_at:
@@ -13866,6 +13885,7 @@ paths:
                         - created_by
                         - created_at
                         - approved_by
+                        - approved_by_username
                         - approved_at
                       type: object
                     type: array
@@ -13939,6 +13959,10 @@ paths:
                         type:
                           - string
                           - 'null'
+                      approved_by_username:
+                        type:
+                          - string
+                          - 'null'
                       content_hash:
                         type: string
                       created_at:
@@ -13993,6 +14017,7 @@ paths:
                       - created_by
                       - created_at
                       - approved_by
+                      - approved_by_username
                       - approved_at
                     type: object
                 required:
