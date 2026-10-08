@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { policyHash, validatePolicy } from "../../src/db/governance";
+import {
+	DEFAULT_GOVERNANCE_POLICY,
+	policyHash,
+	validatePolicy,
+} from "../../src/db/governance";
 import {
 	policyRedactionOptions,
 	redactMetadata,
@@ -7,6 +11,33 @@ import {
 } from "../../src/db/redact";
 
 describe("governance policy validation", () => {
+	it("defines the automatically approved baseline without enabling redaction", () => {
+		expect(DEFAULT_GOVERNANCE_POLICY).toEqual({
+			retention: { traces: 30, datasets: 90, feedback: 90 },
+			redaction: { mode: "none", keys: [] },
+		});
+		expect(validatePolicy(DEFAULT_GOVERNANCE_POLICY)).toEqual(
+			DEFAULT_GOVERNANCE_POLICY,
+		);
+		const input = process.env.ASTRAEA_REDACT_INPUT;
+		const keys = process.env.ASTRAEA_REDACT_KEYS;
+		process.env.ASTRAEA_REDACT_INPUT = "false";
+		process.env.ASTRAEA_REDACT_KEYS = "";
+		try {
+			expect(
+				policyRedactionOptions(DEFAULT_GOVERNANCE_POLICY.redaction),
+			).toEqual({
+				redactInput: false,
+				redactKeys: [],
+			});
+		} finally {
+			if (input === undefined) delete process.env.ASTRAEA_REDACT_INPUT;
+			else process.env.ASTRAEA_REDACT_INPUT = input;
+			if (keys === undefined) delete process.env.ASTRAEA_REDACT_KEYS;
+			else process.env.ASTRAEA_REDACT_KEYS = keys;
+		}
+	});
+
 	it("canonicalizes equivalent policy content for idempotency", () => {
 		const first = validatePolicy({
 			retention: { traces: 30, datasets: 90 },

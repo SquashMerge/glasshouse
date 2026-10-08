@@ -164,6 +164,29 @@ async function seedAdditionalProjectManager(
 	return { actorId, subject };
 }
 
+async function seedAdditionalOrganizationMember(
+	pool: Pool,
+	organizationId: string,
+	prefix: string,
+) {
+	const actorId = randomUUID();
+	const subject = `${prefix}-other-${actorId}`;
+	await pool.query("INSERT INTO actors (id) VALUES ($1)", [actorId]);
+	await pool.query(
+		"INSERT INTO actor_identities (actor_id, organization_id, provider_namespace, canonical_subject) VALUES ($1, $2, 'basic:v1', $3)",
+		[actorId, organizationId, subject],
+	);
+	await pool.query(
+		"INSERT INTO organization_memberships (organization_id, actor_subject, role) VALUES ($1, $2, 'member')",
+		[organizationId, subject],
+	);
+	await pool.query(
+		"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'user')",
+		[organizationId, actorId],
+	);
+	return { actorId, subject };
+}
+
 async function seedDurableProjectAccess(
 	pool: Pool,
 	organizationId: string,
@@ -361,7 +384,19 @@ async function seedExecutionExperiment(pool: Pool) {
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query(
@@ -826,7 +861,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -836,6 +871,94 @@ test.skipIf(!databaseUrl)(
 			await deleteScenarioActor(pool, actorId);
 			if (additionalManagerActorId)
 				await deleteScenarioActor(pool, additionalManagerActorId);
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"project creation does not deadlock with organization member revocation",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+		const organizationId = randomUUID();
+		const projectId = randomUUID();
+		const revoker = await pool.connect();
+		const creator = await pool.connect();
+		let revokerStarted = false;
+		let creatorStarted = false;
+		let memberActorId: string | undefined;
+		let memberSubject: string | undefined;
+		try {
+			await seedOrganizationWithDefaultProject(
+				pool,
+				organizationId,
+				"Project creation/revocation lock order",
+				`project-revoke-lock-${organizationId}`,
+			);
+			const member = await seedAdditionalOrganizationMember(
+				pool,
+				organizationId,
+				"project-revoke-lock",
+			);
+			memberActorId = member.actorId;
+			memberSubject = member.subject;
+
+			await revoker.query("BEGIN");
+			revokerStarted = true;
+			await revoker.query(
+				"SET LOCAL application_name = 'astraea-project-revoke-lock-revoker'",
+			);
+			await revoker.query(
+				"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR UPDATE",
+				[organizationId, memberActorId],
+			);
+
+			await creator.query("BEGIN");
+			creatorStarted = true;
+			await creator.query(
+				"SET LOCAL application_name = 'astraea-project-revoke-lock-creator'",
+			);
+			await creator.query(
+				"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
+				[organizationId],
+			);
+			const insertCompleted = await Promise.race([
+				creator
+					.query(
+						"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1, $2, 'Race project', $3)",
+						[projectId, organizationId, `race-${projectId}`],
+					)
+					.then(() => true),
+				Bun.sleep(1_000).then(() => false),
+			]);
+			expect(insertCompleted).toBe(true);
+
+			await creator.query("COMMIT");
+			creatorStarted = false;
+			await revoker.query(
+				"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id FOR UPDATE",
+				[organizationId],
+			);
+			await revoker.query("COMMIT");
+			revokerStarted = false;
+		} finally {
+			if (revokerStarted) await revoker.query("ROLLBACK").catch(() => {});
+			if (creatorStarted) await creator.query("ROLLBACK").catch(() => {});
+			revoker.release();
+			creator.release();
+			await pool.query(
+				"UPDATE projects SET status = 'archived' WHERE id = $1",
+				[projectId],
+			);
+			await pool.query(
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), events AS (DELETE FROM governance_audit_events WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM events) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
+				[projectId],
+			);
+			await pool.query(
+				"DELETE FROM organization_memberships WHERE organization_id = $1 AND actor_subject = $2",
+				[organizationId, memberSubject],
+			);
+			if (memberActorId) await deleteScenarioActor(pool, memberActorId);
 			await pool.end();
 		}
 	},
@@ -929,7 +1052,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1280,7 +1403,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1463,7 +1586,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1679,7 +1802,19 @@ test.skipIf(!databaseUrl)(
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query("COMMIT");
@@ -1846,7 +1981,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -2311,7 +2446,19 @@ test.skipIf(!databaseUrl)(
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query(
@@ -2471,7 +2618,7 @@ test.skipIf(!databaseUrl)(
 			defaultProject.release();
 			revoker.release();
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			// The default project and its remaining Admin are retained by design.
@@ -2849,6 +2996,10 @@ test.skipIf(!databaseUrl)(
 				await cleanup.query("BEGIN");
 				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
+					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					[fixture.projectId],
+				);
+				await cleanup.query(
 					"DELETE FROM dataset_retention_holds WHERE project_id = $1",
 					[fixture.projectId],
 				);
@@ -2869,6 +3020,29 @@ test.skipIf(!databaseUrl)(
 				);
 				await cleanup.query(
 					"DELETE FROM project_actor_grants WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("SET LOCAL session_replication_role = origin");
+				await cleanup.query(
+					"DELETE FROM governance_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				const unlinkedAuditReferences = await cleanup.query<{ count: string }>(
+					"SELECT count(*)::text AS count FROM governance_audit_events AS audit_event LEFT JOIN governance_policy_versions AS policy_version ON policy_version.id = audit_event.policy_version_id WHERE audit_event.project_id = $1 AND audit_event.policy_version_id IS NOT NULL AND policy_version.id IS NULL",
+					[fixture.projectId],
+				);
+				expect(unlinkedAuditReferences.rows[0]?.count).toBe("0");
+				await cleanup.query("SET LOCAL session_replication_role = replica");
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
 					[fixture.projectId],
 				);
 				await cleanup.query("DELETE FROM projects WHERE id = $1", [
@@ -3019,7 +3193,6 @@ test.skipIf(!databaseUrl)(
 			const cleanup = await pool.connect();
 			try {
 				await cleanup.query("BEGIN");
-				// Bypass only this disposable fixture's final-Admin guard during teardown.
 				await cleanup.query("SET LOCAL session_replication_role = replica");
 				await cleanup.query(
 					"SELECT set_config('astraea.project_deletion_id', $1, true)",
@@ -3039,6 +3212,29 @@ test.skipIf(!databaseUrl)(
 				);
 				await cleanup.query(
 					"DELETE FROM project_actor_grants WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query("SET LOCAL session_replication_role = origin");
+				await cleanup.query(
+					"DELETE FROM governance_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				const unlinkedAuditReferences = await cleanup.query<{ count: string }>(
+					"SELECT count(*)::text AS count FROM governance_audit_events AS audit_event LEFT JOIN governance_policy_versions AS policy_version ON policy_version.id = audit_event.policy_version_id WHERE audit_event.project_id = $1 AND audit_event.policy_version_id IS NOT NULL AND policy_version.id IS NULL",
+					[fixture.projectId],
+				);
+				expect(unlinkedAuditReferences.rows[0]?.count).toBe("0");
+				await cleanup.query("SET LOCAL session_replication_role = replica");
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
 					[fixture.projectId],
 				);
 				await cleanup.query("DELETE FROM projects WHERE id = $1", [

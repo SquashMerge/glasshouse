@@ -13600,6 +13600,81 @@ paths:
               type: object
         required: true
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  policy:
+                    properties:
+                      approved_at:
+                        type:
+                          - string
+                          - 'null'
+                      approved_by:
+                        type:
+                          - string
+                          - 'null'
+                      content_hash:
+                        type: string
+                      created_at:
+                        type: string
+                      created_by:
+                        type: string
+                      id:
+                        format: uuid
+                        type: string
+                      redaction:
+                        additionalProperties: false
+                        properties:
+                          keys:
+                            items:
+                              pattern: ^[a-zA-Z0-9_.-]{1,128}$
+                              type: string
+                            maxItems: 64
+                            type: array
+                          mode:
+                            enum:
+                              - none
+                              - all_text
+                            type: string
+                        required:
+                          - mode
+                          - keys
+                        type: object
+                      retention:
+                        additionalProperties: false
+                        properties:
+                          datasets:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          feedback:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          traces:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                        type: object
+                      version:
+                        type: integer
+                    required:
+                      - id
+                      - version
+                      - retention
+                      - redaction
+                      - content_hash
+                      - created_by
+                      - created_at
+                      - approved_by
+                      - approved_at
+                    type: object
+                required:
+                  - policy
+                type: object
+          description: An equivalent policy version already exists; no new draft was created
         '201':
           content:
             application/json:

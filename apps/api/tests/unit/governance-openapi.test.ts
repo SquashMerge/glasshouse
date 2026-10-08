@@ -77,6 +77,10 @@ describe("governance OpenAPI contracts", () => {
 			"/v1/governance/retention/runs",
 		] as const)
 			expect(document.paths?.[path]?.post?.requestBody?.required).toBe(true);
+		const draft =
+			document.paths?.["/v1/governance/policy/drafts"]?.post?.responses;
+		expect(draft?.["200"]?.description).toContain("no new draft was created");
+		expect(draft?.["201"]).toBeDefined();
 		const preview = document.paths?.["/v1/governance/retention/preview"]?.post
 			?.responses?.["200"] as any;
 		expect(preview.content["application/json"].schema.required).toEqual(

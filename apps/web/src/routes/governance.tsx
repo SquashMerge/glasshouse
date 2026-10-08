@@ -34,7 +34,7 @@ export function GovernancePage() {
 	const [traces, setTraces] = React.useState("30");
 	const [datasets, setDatasets] = React.useState("90");
 	const [feedback, setFeedback] = React.useState("90");
-	const [mode, setMode] = React.useState<"none" | "all_text">("all_text");
+	const [mode, setMode] = React.useState<"none" | "all_text">("none");
 	const [keys, setKeys] = React.useState("");
 	const [preview, setPreview] = React.useState<Record<string, number> | null>(
 		null,
@@ -407,10 +407,10 @@ export function GovernancePage() {
 									setMode(event.target.value as "none" | "all_text")
 								}
 							>
+								<option value="none">Keep trace input/output text</option>
 								<option value="all_text">
 									Replace all trace input/output text
 								</option>
-								<option value="none">Keep trace input/output text</option>
 							</Select>
 						</div>
 						<div className="grid gap-2 sm:col-span-2">
@@ -430,9 +430,15 @@ export function GovernancePage() {
 							<Button type="submit" disabled={draft.isPending}>
 								Create draft
 							</Button>
-							{draft.isSuccess && (
+							{draft.isSuccess && draft.data?.created && (
 								<p className="text-sm" role="status">
 									Draft created and ready for review.
+								</p>
+							)}
+							{draft.isSuccess && !draft.data?.created && (
+								<p className="text-sm" role="status">
+									An equivalent policy version already exists; no new draft was
+									created.
 								</p>
 							)}
 							{draft.isError && (

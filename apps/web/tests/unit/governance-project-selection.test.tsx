@@ -90,6 +90,54 @@ describe("GovernancePage project-scoped mutations", () => {
 	});
 	afterEach(cleanup);
 
+	it("starts a policy draft at the documented baseline with text retention selected first", async () => {
+		renderPage();
+		await screen.findByTestId("active-policy-card");
+
+		const redaction = screen.getByLabelText("Ingress redaction");
+		expect(redaction).toHaveValue("none");
+		expect(
+			within(redaction)
+				.getAllByRole("option")
+				.map((option) => option.textContent),
+		).toEqual([
+			"Keep trace input/output text",
+			"Replace all trace input/output text",
+		]);
+
+		fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+		await waitFor(() => {
+			expect(api.createGovernancePolicyDraft).toHaveBeenCalledWith(
+				expect.objectContaining({
+					project_id: PROJECT_A,
+					retention: { traces: 30, datasets: 90, feedback: 90 },
+					redaction: { mode: "none", keys: [] },
+				}),
+				expect.anything(),
+			);
+		});
+	});
+
+	it("reports an equivalent policy as a no-op rather than claiming a draft was created", async () => {
+		api.createGovernancePolicyDraft.mockResolvedValueOnce({
+			policy: policy(POLICY_A),
+			created: false,
+		});
+		renderPage();
+		await screen.findByTestId("active-policy-card");
+
+		fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+
+		expect(
+			await screen.findByText(
+				"An equivalent policy version already exists; no new draft was created.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("Draft created and ready for review."),
+		).toBeNull();
+	});
+
 	it("drops a deferred preview from the previously selected project", async () => {
 		const delayed = deferred<{
 			policy_version_id: string;
