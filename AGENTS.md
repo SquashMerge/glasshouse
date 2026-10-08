@@ -67,6 +67,12 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 - Candidate publication must preserve the full message snapshot while deriving canonical `prompt_versions.content` from the optimized target role. Add a system-target regression test whenever this path changes.
 - Evaluation Run active-capacity admissions are a PostgreSQL quota ledger: every pending/running Run must hold one active row, terminal/cancelled/revoked Runs must release it once, and admission, retry, and recovery paths must reconcile it at the storage boundary.
 
+## Security threat model
+
+- Before security-sensitive design, implementation, or review, read `docs/threat-model.md`. Treat it as a map of current trust boundaries and residual risks, not proof that controls work; verify claims against the exact code, schema, configuration, and tests under review.
+- Follow its review guidance across REST, OTLP, SSE, workers, retries, recovery, and migrations as applicable. Client-selected identifiers and model/telemetry content are untrusted input, never authorization proof.
+- Update `docs/threat-model.md` in the same change when a material security boundary, asset, data flow, control, or residual risk changes. Distinguish shipped behavior, deployment assumptions, and planned features; do not overclaim guarantees.
+
 ## Review and verification
 
 - Review the exact PR head, not a stale local branch or an author's fix comment. Map every blocker to code and regression coverage before declaring it addressed.
