@@ -102,7 +102,7 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 - **Benchmark suite** — project-scoped, longitudinal evaluation definition backed by a grounded golden Dataset whose items all provide expected outputs. Each run records its model/prompt label and ranks against prior runs. API: `/v1/benchmarks`.
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 - **Feedback** — immutable `human.feedback` Score plus mutable project-scoped review state; negative `new` feedback appears in `/feedback` Needs review. Promotion appends a provenance-linked Dataset draft item rather than mutating a published Dataset. API: `/v1/feedback`.
-- **Governance policy version** — immutable project-scoped retention and ingress-redaction configuration. It has no effect until one version is explicitly approved; equivalent content is hash-idempotent. API/UI: `apps/api/src/routes/governance.ts`, `/governance`.
+- **Governance policy version** — immutable project-scoped retention and ingress-redaction configuration. Each Project receives an audited automatically approved 30/90/90, no-redaction baseline; later Project-specific versions still require approval, and equivalent content is hash-idempotent. API/UI: `apps/api/src/routes/governance.ts`, `infra/db/migrations/0105_governance_policy_defaults.sql`, `/governance`.
 - **Retention run** — one bounded, project-scoped application of an approved governance policy. Its stored evidence has IDs, safe counts, status, and timings only; it never includes deleted source data. Summaries are available through `/v1/governance/retention/runs` and `/governance`. See `infra/db/migrations/0029_governance_policies.sql`.
 
 ## Storage roles

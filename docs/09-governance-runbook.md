@@ -2,14 +2,14 @@
 
 ## Scope and safety
 
-Governance is project-scoped. The API derives organization and actor from Basic Auth and verifies active project manager or organization-owner access; callers cannot supply trusted organization metadata. Drafts never change runtime behavior. No retention can run without an approved immutable policy version.
+Governance is project-scoped. Every Project is provisioned with an immutable, automatically approved baseline (traces 30 days, datasets 90 days, feedback 90 days, and ingress redaction `none` with no keys). The API derives organization and actor from Basic Auth and verifies active project manager or organization-owner access; callers cannot supply trusted organization metadata. Project-specific approved policies remain effective, and existing drafts remain immutable history when the baseline is provisioned. Drafts never change runtime behavior. No retention can run without an approved immutable policy version, and provisioning the baseline never starts a retention run.
 
 The first policy contract is deliberately narrow:
 
 - Retention supports `traces`, `datasets`, and `feedback`, each with a whole-day interval from 1 to 3650 days.
 - Ingress redaction supports `all_text` for trace input/output and literal metadata attribute key replacement. Attribute keys are validated, sorted, and deduplicated.
 - Redaction is applied during OTLP normalization before ClickHouse persistence, logging, events, SSE, and audit data. Existing `astraea.prompt.*` stripping remains in force.
-- No retroactive rewrite, arbitrary patterns, ML redaction, RBAC changes, or automated approval is provided.
+- No retroactive rewrite, arbitrary patterns, ML redaction, or RBAC changes are provided. The only automated approval is the audited baseline provisioned for Projects without an approved policy.
 
 ## Operator workflow
 

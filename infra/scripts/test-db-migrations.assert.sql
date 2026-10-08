@@ -1427,6 +1427,11 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'deleting project did not clean up its User membership';
     END IF;
+    PERFORM set_config('astraea.project_deletion_id', test_project_id::text, true);
+    DELETE FROM governance_policy_approvals WHERE project_id = test_project_id;
+    DELETE FROM governance_audit_events WHERE project_id = test_project_id;
+    DELETE FROM governance_policy_versions WHERE project_id = test_project_id;
+    DELETE FROM governance_policies WHERE project_id = test_project_id;
     DELETE FROM projects
     WHERE id = test_project_id;
     IF EXISTS (SELECT 1 FROM projects WHERE id = test_project_id) THEN
@@ -1557,8 +1562,20 @@ BEGIN
     DELETE FROM dataset_lifecycle_audit_events WHERE project_id = dataset_project_id;
     DELETE FROM dataset_tombstones WHERE project_id = dataset_project_id;
     DELETE FROM datasets WHERE project_id = dataset_project_id;
+    DELETE FROM governance_policy_approvals WHERE project_id = dataset_project_id;
+    DELETE FROM governance_audit_events WHERE project_id = dataset_project_id;
+    DELETE FROM governance_policy_versions WHERE project_id = dataset_project_id;
+    DELETE FROM governance_policies WHERE project_id = dataset_project_id;
     DELETE FROM projects WHERE id = dataset_project_id;
     DELETE FROM datasets WHERE project_id = other_project_id;
+    PERFORM set_config('astraea.project_deletion_id', other_project_id::text, true);
+    IF NOT project_deletion_is_authorized(other_project_id) THEN
+        RAISE EXCEPTION 'other-project deletion authorization was not retained';
+    END IF;
+    DELETE FROM governance_policy_approvals WHERE project_id = other_project_id;
+    DELETE FROM governance_audit_events WHERE project_id = other_project_id;
+    DELETE FROM governance_policy_versions WHERE project_id = other_project_id;
+    DELETE FROM governance_policies WHERE project_id = other_project_id;
     DELETE FROM projects WHERE id = other_project_id;
     DELETE FROM actor_identities WHERE actor_id = untrusted_actor_id;
     DELETE FROM actors WHERE id = untrusted_actor_id;
@@ -1591,6 +1608,10 @@ BEGIN
     IF EXISTS (SELECT 1 FROM prompt_tombstones WHERE project_id = deletion_project_id) THEN
         RAISE EXCEPTION 'project deletion escape did not remove the scoped tombstone';
     END IF;
+    DELETE FROM governance_policy_approvals WHERE project_id = deletion_project_id;
+    DELETE FROM governance_audit_events WHERE project_id = deletion_project_id;
+    DELETE FROM governance_policy_versions WHERE project_id = deletion_project_id;
+    DELETE FROM governance_policies WHERE project_id = deletion_project_id;
     DELETE FROM projects WHERE id = deletion_project_id;
 	INSERT INTO project_lifecycle_audit_events (organization_id, project_id, actor_subject, event_type, result)
 	VALUES (
@@ -1639,11 +1660,12 @@ $$;
 
 DO $$
 DECLARE
+    target_policy_id UUID;
     version_id UUID := '99999999-0000-4000-8000-000000000001';
 BEGIN
     INSERT INTO projects (id, name, slug, organization_id) VALUES ('99999999-0000-4000-8000-000000000011', 'Governance Test Project', 'governance-test', '88888888-8888-4888-8888-888888888888') ON CONFLICT DO NOTHING;
-    INSERT INTO governance_policies (id, organization_id, project_id) VALUES ('99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111') ON CONFLICT DO NOTHING;
-    INSERT INTO governance_policy_versions (id, policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) VALUES (version_id, '99999999-0000-4000-8000-000000000020', '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', 1, '{}', '{"mode":"none","keys":[]}', repeat('a', 64), 'migration-test') ON CONFLICT DO NOTHING;
+    SELECT id INTO target_policy_id FROM governance_policies WHERE organization_id = '00000000-0000-4000-8000-000000000001' AND project_id = '11111111-1111-1111-1111-111111111111';
+    INSERT INTO governance_policy_versions (id, policy_id, organization_id, project_id, version, retention, redaction, content_hash, created_by) SELECT version_id, target_policy_id, '00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', COALESCE(max(version_row.version) + 1, 1), '{}', '{"mode":"none","keys":[]}', repeat('a', 64), 'migration-test' FROM governance_policy_versions version_row WHERE version_row.policy_id = target_policy_id ON CONFLICT DO NOTHING;
     BEGIN
         INSERT INTO governance_policy_approvals (policy_version_id, organization_id, project_id, actor_subject) VALUES (version_id, '88888888-8888-4888-8888-888888888888', '99999999-0000-4000-8000-000000000011', 'migration-test');
         RAISE EXCEPTION 'governance approval provenance mismatch was accepted';

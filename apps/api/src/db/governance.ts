@@ -14,6 +14,11 @@ export type GovernancePolicyInput = {
 	redaction: GovernanceRedaction;
 };
 
+export const DEFAULT_GOVERNANCE_POLICY: GovernancePolicyInput = {
+	retention: { traces: 30, datasets: 90, feedback: 90 },
+	redaction: { mode: "none", keys: [] },
+};
+
 const keyPattern = /^[a-zA-Z0-9_.-]{1,128}$/;
 export function validatePolicy(
 	input: GovernancePolicyInput,

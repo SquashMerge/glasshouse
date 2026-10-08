@@ -361,7 +361,19 @@ async function seedExecutionExperiment(pool: Pool) {
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query(
@@ -826,7 +838,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -929,7 +941,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1280,7 +1292,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1463,7 +1475,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -1679,7 +1691,19 @@ test.skipIf(!databaseUrl)(
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query("COMMIT");
@@ -1846,7 +1870,7 @@ test.skipIf(!databaseUrl)(
 				[projectId],
 			);
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			await pool.query(
@@ -2311,7 +2335,19 @@ test.skipIf(!databaseUrl)(
 					[projectId],
 				);
 				await cleanup.query(
-					"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
+					[projectId],
+				);
+				await cleanup.query(
+					"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 					[projectId],
 				);
 				await cleanup.query(
@@ -2471,7 +2507,7 @@ test.skipIf(!databaseUrl)(
 			defaultProject.release();
 			revoker.release();
 			await pool.query(
-				"WITH grants AS (DELETE FROM project_actor_grants WHERE project_id = $1) DELETE FROM projects WHERE id = $1",
+				"WITH deletion_scope AS MATERIALIZED (SELECT set_config('astraea.project_deletion_id', $1, true)), approvals AS (DELETE FROM governance_policy_approvals WHERE project_id = $1::uuid AND (SELECT count(*) FROM deletion_scope) >= 0 RETURNING policy_version_id), versions AS (DELETE FROM governance_policy_versions WHERE project_id = $1::uuid AND (SELECT count(*) FROM approvals) >= 0 RETURNING id), policies AS (DELETE FROM governance_policies WHERE project_id = $1::uuid AND (SELECT count(*) FROM versions) >= 0 RETURNING id), grants AS (DELETE FROM project_actor_grants WHERE project_id = $1::uuid AND (SELECT count(*) FROM policies) >= 0 RETURNING project_id) DELETE FROM projects WHERE id = $1::uuid AND (SELECT count(*) FROM grants) >= 0",
 				[projectId],
 			);
 			// The default project and its remaining Admin are retained by design.
@@ -2871,6 +2907,18 @@ test.skipIf(!databaseUrl)(
 					"DELETE FROM project_actor_grants WHERE project_id = $1",
 					[fixture.projectId],
 				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
+					[fixture.projectId],
+				);
 				await cleanup.query("DELETE FROM projects WHERE id = $1", [
 					fixture.projectId,
 				]);
@@ -3039,6 +3087,18 @@ test.skipIf(!databaseUrl)(
 				);
 				await cleanup.query(
 					"DELETE FROM project_actor_grants WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_approvals WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policy_versions WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM governance_policies WHERE project_id = $1",
 					[fixture.projectId],
 				);
 				await cleanup.query("DELETE FROM projects WHERE id = $1", [

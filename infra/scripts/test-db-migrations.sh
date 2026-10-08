@@ -205,7 +205,7 @@ run_uuid_advisory_serialization_check() {
   wait "$UUID_INSERT_PID"
   docker exec "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-    --command "DELETE FROM projects WHERE id = '$project_id'"
+    --command "BEGIN; SELECT set_config('astraea.project_deletion_id', '$project_id', true); DELETE FROM governance_policy_approvals WHERE project_id = '$project_id'; DELETE FROM governance_audit_events WHERE project_id = '$project_id'; DELETE FROM governance_policy_versions WHERE project_id = '$project_id'; DELETE FROM governance_policies WHERE project_id = '$project_id'; DELETE FROM projects WHERE id = '$project_id'; COMMIT;"
   rm -f "$UUID_LOCK_INPUT" "$UUID_LOCK_OUTPUT" "$UUID_INSERT_OUTPUT"
   UUID_LOCK_PID=
   UUID_INSERT_PID=
@@ -343,6 +343,10 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0103.assert.sql"
+
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0105.assert.sql"
 
 run_evaluation_execution_bounds_upgrade() {
   local database="${POSTGRES_DB}_0095_upgrade"
