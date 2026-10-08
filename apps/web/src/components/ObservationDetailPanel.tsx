@@ -6,7 +6,6 @@ import { Input } from "./ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { copyJson, copyText } from "../lib/clipboard";
 import {
-	formatMetadata,
 	metadataAttributes,
 	metadataFallback,
 	parseMetadata,
@@ -20,6 +19,9 @@ import {
 	type ObservationMetadataInput,
 } from "../lib/api";
 import { PromptProvenanceCard } from "./PromptProvenanceCard";
+import { JsonTree, MAX_JSON_TREE_NODES } from "./JsonTree";
+
+const MAX_JSON_TREE_LIST_ENTRIES = 100;
 
 export interface ObservationDetailPanelProps {
 	observation: CanonicalObservation | null;
@@ -105,41 +107,72 @@ function MetadataList({
 	values,
 	emptyLabel,
 	onCopyValue,
+	onCopyJsonValue,
+	onCopyPath,
+	structuredValues = false,
 }: {
 	values: MetadataAttribute[];
 	emptyLabel: string;
 	onCopyValue?: (value: unknown, key: string) => void;
+	onCopyJsonValue?: (value: unknown, path: string) => void;
+	onCopyPath?: (path: string) => void;
+	structuredValues?: boolean;
 }) {
 	if (values.length === 0)
 		return <p className="text-xs text-muted-foreground">{emptyLabel}</p>;
+	const visibleValues = structuredValues
+		? values.slice(0, MAX_JSON_TREE_LIST_ENTRIES)
+		: values;
+	const omittedEntryCount = values.length - visibleValues.length;
+	const nodeLimitPerValue = structuredValues
+		? Math.max(1, Math.floor(MAX_JSON_TREE_NODES / visibleValues.length))
+		: MAX_JSON_TREE_NODES;
 	return (
-		<dl className="space-y-2 text-xs">
-			{values.map(({ key, value }) => (
-				<div
-					key={key}
-					className="grid gap-1 border-b pb-2 sm:grid-cols-[minmax(8rem,12rem)_1fr]"
-				>
-					<dt className="font-mono text-muted-foreground">{key}</dt>
-					<dd className="flex min-w-0 items-start gap-2">
-						<span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-							{printable(value)}
-						</span>
-						{onCopyValue && (
-							<Button
-								type="button"
-								size="sm"
-								variant="ghost"
-								className="h-6 shrink-0 px-2 text-[10px]"
-								onClick={() => onCopyValue(value, key)}
-								aria-label={`Copy ${key} value`}
-							>
-								Copy
-							</Button>
-						)}
-					</dd>
-				</div>
-			))}
-		</dl>
+		<>
+			<dl className="space-y-2 text-xs">
+				{visibleValues.map(({ key, value }) => (
+					<div
+						key={key}
+						className="grid gap-1 border-b pb-2 sm:grid-cols-[minmax(8rem,12rem)_1fr]"
+					>
+						<dt className="font-mono text-muted-foreground">{key}</dt>
+						<dd className="flex min-w-0 items-start gap-2">
+							{structuredValues ? (
+								<JsonTree
+									value={value}
+									rootLabel={key}
+									onCopyValue={onCopyJsonValue}
+									onCopyPath={onCopyPath}
+									maxNodes={nodeLimitPerValue}
+								/>
+							) : (
+								<span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+									{printable(value)}
+								</span>
+							)}
+							{onCopyValue && (
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									className="h-6 shrink-0 px-2 text-[10px]"
+									onClick={() => onCopyValue(value, key)}
+									aria-label={`Copy ${key} value`}
+								>
+									Copy
+								</Button>
+							)}
+						</dd>
+					</div>
+				))}
+			</dl>
+			{omittedEntryCount > 0 && (
+				<p role="status" className="mt-2 text-xs text-muted-foreground">
+					{omittedEntryCount} more structured entries not shown (
+					{MAX_JSON_TREE_LIST_ENTRIES}-entry limit).
+				</p>
+			)}
+		</>
 	);
 }
 
@@ -169,10 +202,6 @@ export function ObservationDetailPanel({
 				observation?.type === "generation",
 			).prompt_provenance,
 		[observation?.metadata, observation?.type],
-	);
-	const formattedMetadata = React.useMemo(
-		() => formatMetadata(metadata),
-		[metadata],
 	);
 	const attributes = React.useMemo(() => {
 		const arrayAttributes = metadataAttributes(metadata);
@@ -284,6 +313,19 @@ export function ObservationDetailPanel({
 		setCopyMessage(
 			result.ok ? "Observation JSON copied" : "Unable to copy observation JSON",
 		);
+	}
+
+	async function copyStructuredValue(value: unknown, path: string) {
+		const result = await copyJson(value);
+		setCopyMessage(
+			result.ok
+				? `JSON value at ${path} copied`
+				: `Unable to copy JSON value at ${path}`,
+		);
+	}
+
+	function copyStructuredPath(path: string) {
+		void copy(path, `JSON path ${path}`);
 	}
 
 	function copyAttributeValue(value: unknown, key: string) {
@@ -460,6 +502,9 @@ export function ObservationDetailPanel({
 								: "No attributes supplied."
 						}
 						onCopyValue={copyAttributeValue}
+						onCopyJsonValue={copyStructuredValue}
+						onCopyPath={copyStructuredPath}
+						structuredValues
 					/>
 				</TabsContent>
 				<TabsContent value="events" data-testid="detail-events">
@@ -467,6 +512,9 @@ export function ObservationDetailPanel({
 						values={detailEntries(events, "Event")}
 						emptyLabel="No events supplied."
 						onCopyValue={copyAttributeValue}
+						onCopyJsonValue={copyStructuredValue}
+						onCopyPath={copyStructuredPath}
+						structuredValues
 					/>
 				</TabsContent>
 				<TabsContent value="links" data-testid="detail-links">
@@ -474,21 +522,36 @@ export function ObservationDetailPanel({
 						values={detailEntries(links, "Link")}
 						emptyLabel="No links supplied."
 						onCopyValue={copyAttributeValue}
+						onCopyJsonValue={copyStructuredValue}
+						onCopyPath={copyStructuredPath}
+						structuredValues
 					/>
 				</TabsContent>
 				<TabsContent value="resource">
 					<MetadataList
 						values={objectEntries(resource)}
 						emptyLabel="No resource attributes supplied."
+						onCopyValue={copyAttributeValue}
+						onCopyJsonValue={copyStructuredValue}
+						onCopyPath={copyStructuredPath}
+						structuredValues
 					/>
 				</TabsContent>
 				<TabsContent value="metadata">
-					<pre
-						className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs"
-						data-testid="detail-metadata"
-					>
-						{formattedMetadata ?? metadataFallback(metadata)}
-					</pre>
+					<div data-testid="detail-metadata" className="max-h-80 overflow-auto">
+						{metadata.state === "valid" ? (
+							<JsonTree
+								value={metadata.value}
+								rootLabel="Metadata"
+								onCopyValue={copyStructuredValue}
+								onCopyPath={copyStructuredPath}
+							/>
+						) : (
+							<p className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+								{metadataFallback(metadata)}
+							</p>
+						)}
+					</div>
 				</TabsContent>
 			</Tabs>
 			{observation.type === "generation" && (

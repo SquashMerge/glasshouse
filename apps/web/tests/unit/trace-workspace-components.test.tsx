@@ -162,7 +162,9 @@ describe("ObservationDetailPanel", () => {
 		fireEvent.click(screen.getByRole("tab", { name: "Input" }));
 		expect(screen.getByTestId("detail-input")).toHaveTextContent("input text");
 		fireEvent.click(screen.getByRole("tab", { name: "Resource" }));
-		expect(screen.getByText("service.name")).toBeInTheDocument();
+		expect(
+			screen.getByText("service.name", { selector: "dt" }),
+		).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("tab", { name: "Events" }));
 		expect(screen.getByTestId("detail-events")).toHaveTextContent("exception");
 		expect(
