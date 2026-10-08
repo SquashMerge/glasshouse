@@ -3028,6 +3028,10 @@ test.skipIf(!databaseUrl)(
 				);
 				await cleanup.query("SET LOCAL session_replication_role = origin");
 				await cleanup.query(
+					"DELETE FROM governance_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				await cleanup.query(
 					"DELETE FROM governance_policy_versions WHERE project_id = $1",
 					[fixture.projectId],
 				);
@@ -3215,6 +3219,10 @@ test.skipIf(!databaseUrl)(
 					[fixture.projectId],
 				);
 				await cleanup.query("SET LOCAL session_replication_role = origin");
+				await cleanup.query(
+					"DELETE FROM governance_audit_events WHERE project_id = $1",
+					[fixture.projectId],
+				);
 				await cleanup.query(
 					"DELETE FROM governance_policy_versions WHERE project_id = $1",
 					[fixture.projectId],

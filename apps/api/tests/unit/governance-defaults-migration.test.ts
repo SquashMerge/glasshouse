@@ -15,6 +15,13 @@ const migrationHarness = readFileSync(
 	resolve(root, "infra/scripts/test-db-migrations.sh"),
 	"utf8",
 );
+const serializationIntegration = readFileSync(
+	resolve(
+		root,
+		"apps/api/tests/integration/authorization-revocation-serialization.test.ts",
+	),
+	"utf8",
+);
 
 test("0105 provisions one immutable approved baseline for existing and new Projects", () => {
 	const ensureFunction = migration.split(
@@ -52,4 +59,21 @@ test("0105 provisions one immutable approved baseline for existing and new Proje
 		"new project did not receive the approved default policy",
 	);
 	expect(migrationHarness).toContain("test-db-migrations-0105.assert.sql");
+});
+
+test("governance fixture cleanup removes audit rows before disabling cascades", () => {
+	const versionCleanupWindows = [
+		...serializationIntegration.matchAll(
+			/SET LOCAL session_replication_role = origin([\s\S]*?)SET LOCAL session_replication_role = replica/g,
+		),
+	];
+	expect(versionCleanupWindows).toHaveLength(2);
+	for (const cleanup of versionCleanupWindows) {
+		expect(cleanup[1]).toContain(
+			"DELETE FROM governance_audit_events WHERE project_id = $1",
+		);
+		expect(cleanup[1]).toContain(
+			"DELETE FROM governance_policy_versions WHERE project_id = $1",
+		);
+	}
 });
