@@ -310,13 +310,25 @@ test.describe("Shared app workspace", () => {
 			name: /Current project: (?!No project selected).+\. Switch project/,
 		});
 		await expect(sidebar).toBeVisible();
-		await expect(home.getByText("Glasshouse", { exact: true })).toBeHidden();
+		await expect(home.getByText("Glasshouse", { exact: true })).toBeVisible();
+		await expect(home.locator("img")).toBeHidden();
 		await expect(projectControl).toBeVisible();
 
 		const sidebarBounds = await sidebar.boundingBox();
 		expect(sidebarBounds).not.toBeNull();
+		const homeBounds = await home.boundingBox();
+		expect(homeBounds).not.toBeNull();
+		expect(homeBounds!.width).toBe(48);
+		expect(homeBounds!.height).toBe(48);
+		expect(
+			Math.abs(
+				homeBounds!.x +
+					homeBounds!.width / 2 -
+					(sidebarBounds!.x + sidebarBounds!.width / 2),
+			),
+		).toBeLessThanOrEqual(1);
+
 		for (const target of [
-			home,
 			projectControl,
 			...[
 				"Dashboard",
@@ -378,7 +390,13 @@ test.describe("Dashboard basics", () => {
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-		await expect(page.getByText("Glasshouse", { exact: true })).toBeVisible();
+		const brandLogo = page.locator(
+			'img[src="/brand/glasshouse-logo-dark-v1.png"]',
+		);
+		await expect(brandLogo).toBeVisible();
+		expect(
+			await brandLogo.evaluate((image: HTMLImageElement) => image.naturalWidth),
+		).toBe(1254);
 		expect(errors, `console errors observed: ${errors.join("\n")}`).toEqual([]);
 	});
 
