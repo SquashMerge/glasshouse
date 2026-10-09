@@ -334,15 +334,15 @@ openapiApp.openAPIRegistry.registerComponent(
 	{
 		type: "apiKey",
 		in: "cookie",
-		name: "astraea_session",
+		name: "glasshouse_session",
 		description:
-			"HttpOnly opaque local session; never read or store it in JavaScript. Cookie-authenticated mutations also require x-astraea-csrf from GET /v1/auth/session.",
+			"HttpOnly opaque local session; never read or store it in JavaScript. Cookie-authenticated mutations also require x-glasshouse-csrf from GET /v1/auth/session.",
 	},
 );
 openapiApp.openAPIRegistry.registerComponent("securitySchemes", "csrfHeader", {
 	type: "apiKey",
 	in: "header",
-	name: "x-astraea-csrf",
+	name: "x-glasshouse-csrf",
 });
 const register = (route: unknown, handler: unknown): void => {
 	const definition = route as {
@@ -384,7 +384,7 @@ register(otlpIngestRoute, async (c: Context) => {
 		const scope = await resolveTenantProject(
 			pgPool(),
 			trustedTenant(c),
-			c.req.header("x-astraea-project-id") ?? undefined,
+			c.req.header("x-glasshouse-project-id") ?? undefined,
 		);
 		return handleOtlpIngest(c.req.raw, scope);
 	} catch (cause) {
@@ -533,7 +533,7 @@ register(listRetentionRuns, handleListRetentionRuns);
 openapiApp.doc("/openapi.json", {
 	openapi: "3.1.0",
 	info: {
-		title: "Astraea API",
+		title: "Glasshouse API",
 		version: "0.1.0",
 		description: "Agent and LLM evaluation platform.",
 	},

@@ -435,13 +435,13 @@ BEGIN
     INSERT INTO prompt_tombstones (project_id, slug)
     VALUES ('22222222-2222-2222-2222-222222222222', 'project-reservation');
     PERFORM set_config(
-        'astraea.project_deletion_id',
+        'glasshouse.project_deletion_id',
         '22222222-2222-2222-2222-222222222222',
         true
     );
     DELETE FROM scores
     WHERE id = 'a4000000-0000-4000-8000-000000000008';
-    PERFORM set_config('astraea.project_deletion_id', '', true);
+    PERFORM set_config('glasshouse.project_deletion_id', '', true);
     BEGIN
         DELETE FROM projects WHERE id = '22222222-2222-2222-2222-222222222222';
         RAISE EXCEPTION 'project deletion removed a prompt tombstone';
@@ -1347,7 +1347,7 @@ BEGIN
         RAISE EXCEPTION 'project deletion lifecycle fixture is not an active non-default project with one User';
     END IF;
 
-    PERFORM set_config('astraea.project_deletion_id', test_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', test_project_id::text, true);
     BEGIN
         UPDATE project_memberships
         SET role = 'member'
@@ -1409,8 +1409,8 @@ BEGIN
         RAISE EXCEPTION 'final organization Admin guard did not preserve its membership';
     END IF;
 
-    PERFORM set_config('astraea.project_deletion_id', '', true);
-    IF current_setting('astraea.project_deletion_id', true) IS DISTINCT FROM '' THEN
+    PERFORM set_config('glasshouse.project_deletion_id', '', true);
+    IF current_setting('glasshouse.project_deletion_id', true) IS DISTINCT FROM '' THEN
         RAISE EXCEPTION 'project deletion context was not cleared before deleting cleanup';
     END IF;
 
@@ -1427,7 +1427,7 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'deleting project did not clean up its User membership';
     END IF;
-    PERFORM set_config('astraea.project_deletion_id', test_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', test_project_id::text, true);
     DELETE FROM governance_policy_approvals WHERE project_id = test_project_id;
     DELETE FROM governance_audit_events WHERE project_id = test_project_id;
     DELETE FROM governance_policy_versions WHERE project_id = test_project_id;
@@ -1549,7 +1549,7 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '55000' THEN
         NULL;
     END;
-    PERFORM set_config('astraea.dataset_retention_project_id', dataset_project_id::text, true);
+    PERFORM set_config('glasshouse.dataset_retention_project_id', dataset_project_id::text, true);
     BEGIN
         DELETE FROM dataset_lifecycle_audit_events WHERE dataset_id = fixture_dataset_id;
         RAISE EXCEPTION 'dataset retention context deleted append-only lifecycle evidence';
@@ -1558,7 +1558,7 @@ BEGIN
     END;
     INSERT INTO dataset_tombstones (project_id, slug)
     VALUES (dataset_project_id, 'retained-dataset');
-    PERFORM set_config('astraea.project_deletion_id', dataset_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', dataset_project_id::text, true);
     DELETE FROM dataset_lifecycle_audit_events WHERE project_id = dataset_project_id;
     DELETE FROM dataset_tombstones WHERE project_id = dataset_project_id;
     DELETE FROM datasets WHERE project_id = dataset_project_id;
@@ -1568,7 +1568,7 @@ BEGIN
     DELETE FROM governance_policies WHERE project_id = dataset_project_id;
     DELETE FROM projects WHERE id = dataset_project_id;
     DELETE FROM datasets WHERE project_id = other_project_id;
-    PERFORM set_config('astraea.project_deletion_id', other_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', other_project_id::text, true);
     IF NOT project_deletion_is_authorized(other_project_id) THEN
         RAISE EXCEPTION 'other-project deletion authorization was not retained';
     END IF;
@@ -1603,7 +1603,7 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '55000' THEN
         NULL;
     END;
-    PERFORM set_config('astraea.project_deletion_id', deletion_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', deletion_project_id::text, true);
     DELETE FROM prompt_tombstones WHERE project_id = deletion_project_id;
     IF EXISTS (SELECT 1 FROM prompt_tombstones WHERE project_id = deletion_project_id) THEN
         RAISE EXCEPTION 'project deletion escape did not remove the scoped tombstone';
@@ -1683,7 +1683,7 @@ BEGIN
     END;
     INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type)
     VALUES ('00000000-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111', version_id, 'migration-test', 'policy_created');
-    PERFORM set_config('astraea.project_deletion_id', '11111111-1111-1111-1111-111111111111', true);
+    PERFORM set_config('glasshouse.project_deletion_id', '11111111-1111-1111-1111-111111111111', true);
     DELETE FROM governance_policy_versions WHERE id = version_id;
     IF NOT EXISTS (
         SELECT 1 FROM governance_audit_events

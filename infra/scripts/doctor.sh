@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Astraea dev-env doctor. Asserts:
+# Glasshouse dev-env doctor. Asserts:
 #   - infra/.env exists (not .env.example)
 #   - .env does NOT contain any CHANGE_ME placeholders
 #   - Required tools are installed at minimum versions
@@ -60,7 +60,7 @@ fi
 ok "no CHANGE_ME placeholders"
 
 step "Required env vars present and non-empty in infra/.env"
-REQUIRED_VARS=(POSTGRES_USER POSTGRES_PASSWORD CLICKHOUSE_USER CLICKHOUSE_PASSWORD VALKEY_PASSWORD UI_USERNAME UI_PASSWORD ASTRAEA_BOOTSTRAP_OWNER_USERNAME GEPA_ALLOWED_MODELS)
+REQUIRED_VARS=(POSTGRES_USER POSTGRES_PASSWORD CLICKHOUSE_USER CLICKHOUSE_PASSWORD VALKEY_PASSWORD UI_USERNAME UI_PASSWORD GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME GEPA_ALLOWED_MODELS)
 MISSING=0
 for v in "${REQUIRED_VARS[@]}"; do
   line=$(grep "^${v}=" infra/.env || true)
@@ -80,14 +80,14 @@ done
 [ "$MISSING" = "0" ] || fail "missing required vars; edit infra/.env"
 
 step "Optional redaction env vars are well-formed (if set)"
-for v in ASTRAEA_REDACT_INPUT ASTRAEA_REDACT_KEYS API_MAX_BODY_BYTES; do
+for v in GLASSHOUSE_REDACT_INPUT GLASSHOUSE_REDACT_KEYS API_MAX_BODY_BYTES; do
   line=$(grep "^${v}=" infra/.env || true)
   [ -z "$line" ] && continue
   if ! val=$(effective_env_value "$v"); then
     fail "unable to source infra/.env while validating ${v}"
   fi
   case "$v" in
-    ASTRAEA_REDACT_INPUT)
+    GLASSHOUSE_REDACT_INPUT)
       case "$val" in
         true|false) ;;
         *) echo "  ! ${v} must be 'true' or 'false' (got: $val)"; MISSING=1 ;;

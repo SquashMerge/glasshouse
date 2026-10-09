@@ -1,4 +1,4 @@
-# Astraea threat model
+# Glasshouse threat model
 
 **Status:** Living security design baseline; not a certification, penetration-test report, or guarantee that every control is correctly implemented.
 
@@ -6,7 +6,7 @@
 
 ## How agents must use this document
 
-Use this model to identify relevant attacker goals, trust boundaries, assets, and residual risks when reviewing or changing Astraea. It is a map for analysis, not authorization to assume that a control works. Verify each relied-upon control in current code, schema/migrations, configuration, and tests. Treat documented-but-unverified behavior as an assumption, not proof. If the implementation differs, report the discrepancy and update this document in the same change when the model is affected.
+Use this model to identify relevant attacker goals, trust boundaries, assets, and residual risks when reviewing or changing Glasshouse. It is a map for analysis, not authorization to assume that a control works. Verify each relied-upon control in current code, schema/migrations, configuration, and tests. Treat documented-but-unverified behavior as an assumption, not proof. If the implementation differs, report the discrepancy and update this document in the same change when the model is affected.
 
 For a security-sensitive change:
 
@@ -18,7 +18,7 @@ For a security-sensitive change:
 
 ## System and scope
 
-Astraea is a self-hosted observability and evaluation platform. The shipped system includes a React/Vite web application, a TypeScript/Hono API, PostgreSQL transactional state, ClickHouse trace/evidence data, Valkey coordination/pub-sub, and asynchronous evaluation/optimization work. The API can send evaluation or optimization inputs to configured LLM providers. The optional GEPA Python worker is a child process of the API. Operators deploy the application and its dependencies; deployment topology, TLS, network policy, backups, and secret delivery are operator-controlled.
+Glasshouse is a self-hosted observability and evaluation platform. The shipped system includes a React/Vite web application, a TypeScript/Hono API, PostgreSQL transactional state, ClickHouse trace/evidence data, Valkey coordination/pub-sub, and asynchronous evaluation/optimization work. The API can send evaluation or optimization inputs to configured LLM providers. The optional GEPA Python worker is a child process of the API. Operators deploy the application and its dependencies; deployment topology, TLS, network policy, backups, and secret delivery are operator-controlled.
 
 In scope: confidentiality, integrity, and availability of authentication material, organization/Project data, telemetry, prompts, datasets, evaluation evidence, governance decisions, provider credentials, and deployment configuration; tenant isolation; authorization and revocation; data egress; abuse of public/authenticated interfaces; and the software delivery path.
 
@@ -102,7 +102,7 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 Provider credentials are configured by the operator, not the caller. The current OpenAI-compatible client sends the API key to the configured base URL; changing `OPENAI_API_BASE` therefore changes the credential recipient. Restrict that setting to an explicitly trusted HTTPS endpoint and do not let request or dataset content select it. Provider responses are untrusted input and must be bounded/validated before persistence or user display.
 
-The development CLI provider introduces a separate command-execution boundary. `ASTRAEA_DEV_LLM_COMMAND` is parsed as a JSON argv array and spawned by the API; the child receives the API process environment and prompt input. Keep the command and executable operator-controlled, never derive them from request/dataset content, and assume the child can read every inherited secret. This provider is blocked in production unless `ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION=true`; that override is risk-bearing, not a sandbox. If enabled, separately constrain the command, environment, filesystem, and network egress.
+The development CLI provider introduces a separate command-execution boundary. `GLASSHOUSE_DEV_LLM_COMMAND` is parsed as a JSON argv array and spawned by the API; the child receives the API process environment and prompt input. Keep the command and executable operator-controlled, never derive them from request/dataset content, and assume the child can read every inherited secret. This provider is blocked in production unless `GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION=true`; that override is risk-bearing, not a sandbox. If enabled, separately constrain the command, environment, filesystem, and network egress.
 
 The optional GEPA worker receives a structured request over stdin and has bounded/validated output and filtered diagnostics, but the API spawns it with inherited environment variables. It is not an OS/container sandbox and may have access to the API process's provider credentials. Do not run untrusted worker code/configuration in production or claim isolation based only on the JSON protocol. See `apps/api/src/lib/gepa-worker.ts`, `worker/gepa_worker.py`, `apps/api/src/lib/llm.ts`, and `docs/02-roadmap.md`.
 

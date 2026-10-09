@@ -122,11 +122,14 @@ describe("insertObservations metadata", () => {
 			start_time_unix_nano: 1_700_000_000_000_000_000,
 			attributes: [
 				{ key: "gen_ai.request.model", value: { stringValue: "gpt-4o" } },
-				{ key: "astraea.prompt.id", value: { stringValue: "support-agent" } },
-				{ key: "astraea.prompt.version", value: { intValue: 7 } },
-				{ key: "astraea.prompt.content_hash", value: { stringValue: HASH } },
 				{
-					key: "astraea.prompt.rendered",
+					key: "glasshouse.prompt.id",
+					value: { stringValue: "support-agent" },
+				},
+				{ key: "glasshouse.prompt.version", value: { intValue: 7 } },
+				{ key: "glasshouse.prompt.content_hash", value: { stringValue: HASH } },
+				{
+					key: "glasshouse.prompt.rendered",
 					value: { stringValue: "must not persist" },
 				},
 			],

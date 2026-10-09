@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0008_prompt_management
+-- Glasshouse Postgres migrations: 0008_prompt_management
 
 ALTER TABLE prompts ADD COLUMN IF NOT EXISTS slug TEXT;
 

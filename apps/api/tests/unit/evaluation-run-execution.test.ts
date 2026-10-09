@@ -924,8 +924,8 @@ describe("durable Evaluation Run execution", () => {
 
 		expect(invocations).toBe(1);
 		expect(dispatchKeys).toEqual([
-			"astraea:experiment_task:task-replay:provider_dispatch:1",
-			"astraea:experiment_task:task-replay:provider_dispatch:2",
+			"glasshouse:experiment_task:task-replay:provider_dispatch:1",
+			"glasshouse:experiment_task:task-replay:provider_dispatch:2",
 		]);
 		expect(reconciliations).toBe(1);
 	});

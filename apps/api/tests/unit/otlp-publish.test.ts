@@ -31,7 +31,7 @@ const rawHandleOtlpIngest = createOtlpIngestHandler({
 	withActiveAuthorizedProjectLock,
 });
 
-const USER = "astraea";
+const USER = "glasshouse";
 const PASS = "secret";
 const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 
@@ -198,7 +198,7 @@ describe("OTLP ingest publishes events", () => {
 								start_time_unix_nano: String(NOW_NS),
 								attributes: [
 									{
-										key: "astraea.project.id",
+										key: "glasshouse.project.id",
 										value: { stringValue: OTHER_PROJECT_ID },
 									},
 								],
@@ -206,7 +206,7 @@ describe("OTLP ingest publishes events", () => {
 						],
 						[
 							{
-								key: "astraea.project.id",
+								key: "glasshouse.project.id",
 								value: { stringValue: PROJECT_ID },
 							},
 						],
@@ -240,7 +240,7 @@ describe("OTLP ingest publishes events", () => {
 								start_time_unix_nano: String(NOW_NS),
 								attributes: [
 									{
-										key: "astraea.project.id",
+										key: "glasshouse.project.id",
 										value: { stringValue: PROJECT_ID },
 									},
 								],
@@ -258,7 +258,7 @@ describe("OTLP ingest publishes events", () => {
 							],
 							[
 								{
-									key: "astraea.project.id",
+									key: "glasshouse.project.id",
 									value: { stringValue: "not-a-project-id" },
 								},
 							],
@@ -308,7 +308,7 @@ describe("OTLP ingest publishes events", () => {
 							],
 							[
 								{
-									key: "astraea.project.id",
+									key: "glasshouse.project.id",
 									value: { stringValue: PROJECT_ID },
 								},
 							],
@@ -358,7 +358,7 @@ describe("OTLP ingest publishes events", () => {
 							],
 							[
 								{
-									key: "astraea.project.id",
+									key: "glasshouse.project.id",
 									value: { stringValue: PROJECT_ID },
 								},
 							],
@@ -375,7 +375,7 @@ describe("OTLP ingest publishes events", () => {
 							],
 							[
 								{
-									key: "astraea.project.id",
+									key: "glasshouse.project.id",
 									value: { stringValue: OTHER_PROJECT_ID },
 								},
 							],
@@ -442,7 +442,7 @@ describe("OTLP ingest publishes events", () => {
 								start_time_unix_nano: String(NOW_NS),
 								attributes: [
 									{
-										key: "astraea.organization_id",
+										key: "glasshouse.organization_id",
 										value: {
 											stringValue: "00000000-0000-4000-8000-000000000099",
 										},
@@ -452,7 +452,7 @@ describe("OTLP ingest publishes events", () => {
 						],
 						[
 							{
-								key: "astraea.project.id",
+								key: "glasshouse.project.id",
 								value: { stringValue: PROJECT_ID },
 							},
 						],
@@ -623,16 +623,16 @@ describe("OTLP ingest publishes events", () => {
 									value: { stringValue: "gpt-4o" },
 								},
 								{
-									key: "astraea.prompt.id",
+									key: "glasshouse.prompt.id",
 									value: { stringValue: "support-agent" },
 								},
-								{ key: "astraea.prompt.version", value: { intValue: 7 } },
+								{ key: "glasshouse.prompt.version", value: { intValue: 7 } },
 								{
-									key: "astraea.prompt.content_hash",
+									key: "glasshouse.prompt.content_hash",
 									value: { stringValue: HASH },
 								},
 								{
-									key: "astraea.prompt.source",
+									key: "glasshouse.prompt.source",
 									value: { stringValue: "never persisted" },
 								},
 							],
@@ -761,12 +761,12 @@ describe("OTLP ingest publishes events", () => {
 		const retryHandler = createOtlpIngestHandler({
 			defaultClient: () => ({}),
 			insertTraces: async (_client, traces, token) => {
-				expect(token).toMatch(/^astraea:otlp:traces:[0-9a-f]{64}$/);
+				expect(token).toMatch(/^glasshouse:otlp:traces:[0-9a-f]{64}$/);
 				if (!traceTokens.has(token)) persistedTraces.push(...traces);
 				traceTokens.add(token);
 			},
 			insertObservations: async (_client, observations, token) => {
-				expect(token).toMatch(/^astraea:otlp:observations:[0-9a-f]{64}$/);
+				expect(token).toMatch(/^glasshouse:otlp:observations:[0-9a-f]{64}$/);
 				if (failObservations) {
 					failObservations = false;
 					throw new Error("simulated observation insert failure");

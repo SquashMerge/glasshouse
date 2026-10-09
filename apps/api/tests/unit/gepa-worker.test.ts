@@ -39,7 +39,7 @@ describe("GEPA worker adapter", () => {
 				},
 				budget: { max_metric_calls: 2 },
 				provider_dispatch_key:
-					"astraea:optimization:job-id:provider_dispatch:1",
+					"glasshouse:optimization:job-id:provider_dispatch:1",
 			},
 			new AbortController().signal,
 		);
@@ -87,7 +87,7 @@ describe("GEPA worker adapter", () => {
 			start(controller) {
 				controller.enqueue(
 					new TextEncoder().encode(
-						'Iteration 0 started\nASTRAEA_GEPA_PROGRESS {"metric_calls_used":3}\n',
+						'Iteration 0 started\nGLASSHOUSE_GEPA_PROGRESS {"metric_calls_used":3}\n',
 					),
 				);
 				controller.close();
@@ -107,7 +107,7 @@ describe("GEPA worker adapter", () => {
 			start(controller) {
 				controller.enqueue(
 					new TextEncoder().encode(
-						'ASTRAEA_GEPA_PROGRESS {"metric_calls_used":3}\n',
+						'GLASSHOUSE_GEPA_PROGRESS {"metric_calls_used":3}\n',
 					),
 				);
 				controller.close();
@@ -123,10 +123,10 @@ describe("GEPA worker adapter", () => {
 	it("records only the allowlisted worker failure kind", () => {
 		expect(
 			diagnosticSummary(
-				"ASTRAEA_GEPA_RUNTIME 0.1.4\nASTRAEA_GEPA_FAILURE RuntimeError gepa:123\nprovider token must not be retained",
+				"GLASSHOUSE_GEPA_RUNTIME 0.1.4\nGLASSHOUSE_GEPA_FAILURE RuntimeError gepa:123\nprovider token must not be retained",
 			),
 		).toEqual({
-			diagnostic_bytes: 105,
+			diagnostic_bytes: 111,
 			diagnostic_lines: 3,
 			worker_failure_kind: "RuntimeError",
 			worker_failure_site: "gepa:123",
@@ -134,15 +134,15 @@ describe("GEPA worker adapter", () => {
 		});
 		expect(
 			diagnosticSummary(
-				"ASTRAEA_GEPA_FAILURE RuntimeError provider-token.py:1",
+				"GLASSHOUSE_GEPA_FAILURE RuntimeError provider-token.py:1",
 			),
 		).toEqual({
-			diagnostic_bytes: 53,
+			diagnostic_bytes: 56,
 			diagnostic_lines: 1,
 			worker_failure_kind: "RuntimeError",
 		});
-		expect(diagnosticSummary("ASTRAEA_GEPA_FAILURE TokenSecret")).toEqual({
-			diagnostic_bytes: 32,
+		expect(diagnosticSummary("GLASSHOUSE_GEPA_FAILURE TokenSecret")).toEqual({
+			diagnostic_bytes: 35,
 			diagnostic_lines: 1,
 		});
 	});
@@ -176,7 +176,7 @@ describe("GEPA worker adapter", () => {
 						},
 						budget: { max_metric_calls: 2 },
 						provider_dispatch_key:
-							"astraea:optimization:job-id:provider_dispatch:1",
+							"glasshouse:optimization:job-id:provider_dispatch:1",
 					},
 					new AbortController().signal,
 				),

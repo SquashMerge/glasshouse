@@ -13,7 +13,7 @@ describe("startup migration CI contract", () => {
 			"";
 		const username = onboardingEnv.match(/^      UI_USERNAME: (\S+)$/m)?.[1];
 		const owner = onboardingEnv.match(
-			/^      ASTRAEA_BOOTSTRAP_OWNER_USERNAME: (\S+)$/m,
+			/^      GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: (\S+)$/m,
 		)?.[1];
 		expect(username).toBeTruthy();
 		expect(owner).toBe(username);
@@ -25,7 +25,7 @@ describe("startup migration CI contract", () => {
 	);
 		expect(workflow).toContain("SELECT count(*) FROM pgmigrations");
 		expect(workflow).toContain(
-		"SELECT count() FROM astraea_schema_migrations",
+		"SELECT count() FROM glasshouse_schema_migrations",
 	);
 		expect(workflow).toContain("restart api");
 		expect(workflow).toMatch(

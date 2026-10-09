@@ -97,7 +97,7 @@ BEGIN
         evaluation_run_id
     );
 
-    IF current_setting('astraea.project_deletion_id', true) IS NOT NULL THEN
+    IF current_setting('glasshouse.project_deletion_id', true) IS NOT NULL THEN
         RAISE EXCEPTION 'deletion context GUC was not unset for the regression';
     END IF;
     BEGIN
@@ -110,7 +110,7 @@ BEGIN
         RAISE EXCEPTION 'admitted experiment was deleted without deletion context';
     END IF;
 
-    PERFORM set_config('astraea.project_deletion_id', other_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', other_project_id::text, true);
     BEGIN
         DELETE FROM experiments WHERE id = admitted_experiment_id;
         RAISE EXCEPTION 'admitted experiment deletion was accepted with mismatched deletion context';
@@ -143,7 +143,7 @@ BEGIN
         RAISE EXCEPTION 'unadmitted experiment deletion was rejected';
     END IF;
 
-    PERFORM set_config('astraea.project_deletion_id', fixture_project_id::text, true);
+    PERFORM set_config('glasshouse.project_deletion_id', fixture_project_id::text, true);
     DELETE FROM experiments WHERE id = admitted_experiment_id;
     IF EXISTS (SELECT 1 FROM experiments WHERE id = admitted_experiment_id) THEN
         RAISE EXCEPTION 'authorized project deletion did not remove admitted experiment';

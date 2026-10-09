@@ -239,7 +239,7 @@ describe("AppShell project selector", () => {
 	});
 
 	it("keeps compact project switching accessible by mouse and keyboard", () => {
-		window.localStorage.setItem("astraea.nav.collapsed", "1");
+		window.localStorage.setItem("glasshouse.nav.collapsed", "1");
 		render(
 			<AppShell currentPath="/">
 				<div>Page</div>
@@ -317,10 +317,16 @@ describe("AppShell project selector", () => {
 		expect(screen.getByTestId("expanded-project-selector")).toHaveClass(
 			"sm:block",
 		);
-		expect(screen.getByRole("link", { name: "Astraea home" })).toHaveClass(
-			"h-9",
-			"w-9",
+		expect(screen.getByRole("link", { name: "Glasshouse home" })).toHaveClass(
+			"h-12",
+			"w-12",
 		);
+		expect(
+			screen
+				.getByRole("link", { name: "Glasshouse home" })
+				.querySelector("img"),
+		).toHaveAttribute("src", "/brand/glasshouse-logo-dark-v1.png");
+		expect(screen.getByText("Glasshouse", { exact: true })).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: "Collapse sidebar" }),
 		).toHaveClass("max-sm:!hidden");
@@ -344,21 +350,29 @@ describe("AppShell project selector", () => {
 		expect(container.querySelector("aside")).not.toHaveClass("overflow-hidden");
 	});
 
-	it("renders a mark-only named home control when explicitly collapsed", () => {
-		window.localStorage.setItem("astraea.nav.collapsed", "1");
+	it("uses a text-only product label when the sidebar is collapsed", () => {
+		window.localStorage.setItem("glasshouse.nav.collapsed", "1");
 		render(
 			<AppShell currentPath="/">
 				<div>Page</div>
 			</AppShell>,
 		);
 
-		expect(screen.getByRole("link", { name: "Astraea home" })).toHaveClass(
-			"h-9",
-			"w-9",
+		expect(screen.getByRole("link", { name: "Glasshouse home" })).toHaveClass(
+			"h-12",
+			"w-12",
 		);
 		expect(
-			screen.queryByText("Astraea", { exact: true }),
-		).not.toBeInTheDocument();
+			screen
+				.getByRole("link", { name: "Glasshouse home" })
+				.querySelector("img"),
+		).toHaveAttribute("src", "/brand/glasshouse-logo-dark-v1.png");
+		expect(screen.getByText("Glasshouse", { exact: true })).toBeInTheDocument();
+		expect(
+			screen
+				.getByRole("link", { name: "Glasshouse home" })
+				.querySelector("img"),
+		).toHaveClass("hidden");
 	});
 
 	it("uses the shared full-width workspace class for authenticated pages", () => {

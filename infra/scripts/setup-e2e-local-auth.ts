@@ -39,20 +39,20 @@ if (import.meta.main) {
 	try {
 		const env = process.env;
 		if (
-			env.ASTRAEA_AUTH_BOOTSTRAP_MODE !== "local" ||
-			!env.ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE ||
+			env.GLASSHOUSE_AUTH_BOOTSTRAP_MODE !== "local" ||
+			!env.GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE ||
 			!env.E2E_LOCAL_USERNAME ||
 			!env.E2E_LOCAL_PASSWORD ||
-			!env.ASTRAEA_PUBLIC_ORIGIN
+			!env.GLASSHOUSE_PUBLIC_ORIGIN
 		)
 			throw new Error("Missing E2E local setup configuration");
 		await setupE2eLocalAuth({
 			apiBase: env.E2E_API_BASE ?? "http://localhost:3000",
-			origin: env.ASTRAEA_PUBLIC_ORIGIN,
+			origin: env.GLASSHOUSE_PUBLIC_ORIGIN,
 			username: env.E2E_LOCAL_USERNAME,
 			password: env.E2E_LOCAL_PASSWORD,
 			token: (
-				await readFile(env.ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE, "utf8")
+				await readFile(env.GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE, "utf8")
 			).trim(),
 		});
 	} catch {

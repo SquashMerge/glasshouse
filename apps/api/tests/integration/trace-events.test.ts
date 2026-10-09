@@ -82,7 +82,7 @@ const defaultClientMock = mock(() => ({}));
 process.env.SSE_HEARTBEAT_MS = "50";
 process.env.TRACE_COMPLETE_GRACE_MS = "200";
 
-const USER = "astraea";
+const USER = "glasshouse";
 const PASS = "secret";
 const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 process.env.UI_USERNAME = USER;
@@ -203,7 +203,7 @@ describe("SSE endpoints: auth gate (AC8 proxy via 401)", () => {
 		const res = await apiApp.fetch(new Request("http://x/v1/traces/events"));
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toMatch(
-			/^Basic realm="astraea"/,
+			/^Basic realm="glasshouse"/,
 		);
 	});
 

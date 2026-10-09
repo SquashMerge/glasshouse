@@ -12,23 +12,23 @@ Issue #188 supplies PostgreSQL persistence and service boundaries. The [local lo
 
 ## First-Admin bootstrap
 
-The historical `db:migrate` command runs SQL **and then grants the configured Basic owner Admin**. That remains the default (`ASTRAEA_AUTH_BOOTSTRAP_MODE=basic`) for continuity. It also closes local setup. For an intentionally fresh local-first deployment, set `ASTRAEA_AUTH_BOOTSTRAP_MODE=local` **before the first migration/start**. Local mode still validates the configured Basic recovery owner and provisions configured Basic identity mappings, but skips membership/Admin/Project bootstrap grants; it never removes existing identities, roles, or memberships. This retains the operator's existing recovery identity without granting it ordinary product access. An unsupported mode fails startup.
+The historical `db:migrate` command runs SQL **and then grants the configured Basic owner Admin**. That remains the default (`GLASSHOUSE_AUTH_BOOTSTRAP_MODE=basic`) for continuity. It also closes local setup. For an intentionally fresh local-first deployment, set `GLASSHOUSE_AUTH_BOOTSTRAP_MODE=local` **before the first migration/start**. Local mode still validates the configured Basic recovery owner and provisions configured Basic identity mappings, but skips membership/Admin/Project bootstrap grants; it never removes existing identities, roles, or memberships. This retains the operator's existing recovery identity without granting it ordinary product access. An unsupported mode fails startup.
 
-The target Organization must already exist. `ASTRAEA_DEFAULT_ORGANIZATION_ID` selects it server-side, defaulting to the seeded `00000000-0000-4000-8000-000000000001`. Provisioning never creates a tenant from request input. Retain required Basic configuration while the existing API/dashboard use it; local mode does not give fresh Basic credentials product access automatically. Switching back to Basic mode deliberately restores its existing bootstrap behavior.
+The target Organization must already exist. `GLASSHOUSE_DEFAULT_ORGANIZATION_ID` selects it server-side, defaulting to the seeded `00000000-0000-4000-8000-000000000001`. Provisioning never creates a tenant from request input. Retain required Basic configuration while the existing API/dashboard use it; local mode does not give fresh Basic credentials product access automatically. Switching back to Basic mode deliberately restores its existing bootstrap behavior.
 
 Provision a **32-byte CSPRNG token encoded as unpadded base64url (43 characters)** in an operator-managed, restricted-permission file. For example, in the deployment environment:
 
 ```sh
 umask 077
-openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > /secure/astraea-local-bootstrap.token
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > /secure/glasshouse-local-bootstrap.token
 ```
 
 Do not put the token in argv, a ticket, Git, ordinary logs, or API metadata. Mount the file into the operator command environment and set:
 
 ```env
-ASTRAEA_AUTH_BOOTSTRAP_MODE=local
-ASTRAEA_DEFAULT_ORGANIZATION_ID=00000000-0000-4000-8000-000000000001
-ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE=/secure/astraea-local-bootstrap.token
+GLASSHOUSE_AUTH_BOOTSTRAP_MODE=local
+GLASSHOUSE_DEFAULT_ORGANIZATION_ID=00000000-0000-4000-8000-000000000001
+GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE=/secure/glasshouse-local-bootstrap.token
 ```
 
 With `DATABASE_URL` configured on the deployment/service network, run from `apps/api`:
@@ -38,7 +38,7 @@ bun run db:migrate
 bun run auth:provision-bootstrap
 ```
 
-In an Astraea devcontainer use `make devcontainer-db-migrate`; run all application commands inside that workspace and use its PostgreSQL service-network URL. The token-file setting is needed only by the explicit operator command, not by normal startup. Production images already contain the API source, Bun runtime, migration runner, and root-relative SQL directory; the token file must be supplied by deployment secret mounting.
+In an Glasshouse devcontainer use `make devcontainer-db-migrate`; run all application commands inside that workspace and use its PostgreSQL service-network URL. The token-file setting is needed only by the explicit operator command, not by normal startup. Production images already contain the API source, Bun runtime, migration runner, and root-relative SQL directory; the token file must be supplied by deployment secret mounting.
 
 Provisioning stores only a SHA-256 digest of this high-entropy token, with an exact **24-hour** PostgreSQL expiry. It can rotate/replace an unused token; normal startup neither provisions nor extends its lifetime. Replacing it invalidates the previous token. The first setup transaction locks the Organization's bootstrap-control row, verifies the digest using `timingSafeEqual`, rechecks expiry at consumption, creates the salted password hash/Actor/identity/Admin role, appends existing audit facts, and consumes/closes the token atomically. A rollback restores the unused token. Concurrent, malformed, invalid, expired, replayed, and cross-Organization setup attempts fail without changing credentials or authorization.
 

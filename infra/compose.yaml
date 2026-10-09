@@ -1,18 +1,18 @@
-name: astraea
+name: glasshouse
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: astraea-postgres
+    container_name: glasshouse-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      POSTGRES_DB: ${POSTGRES_DB:-astraea}
+      POSTGRES_DB: ${POSTGRES_DB:-glasshouse}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - astraea_pg_data:/var/lib/postgresql/data
+      - glasshouse_pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -21,13 +21,13 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
-    container_name: astraea-clickhouse
+    container_name: glasshouse-clickhouse
     restart: unless-stopped
     platform: linux/amd64
     cap_add:
       - SYS_NICE
     environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-glasshouse}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:?CLICKHOUSE_USER must be set}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
@@ -35,7 +35,7 @@ services:
       - "127.0.0.1:${CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
     volumes:
-      - astraea_ch_data:/var/lib/clickhouse
+      - glasshouse_ch_data:/var/lib/clickhouse
     ulimits:
       nofile:
         soft: 262144
@@ -49,7 +49,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    container_name: astraea-valkey
+    container_name: glasshouse-valkey
     restart: unless-stopped
     command:
       - valkey-server
@@ -60,7 +60,7 @@ services:
       - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
     volumes:
       - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
-      - astraea_valkey_data:/data
+      - glasshouse_valkey_data:/data
     healthcheck:
       test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}", "ping"]
       interval: 5s
@@ -71,32 +71,32 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    container_name: astraea-api
+    container_name: glasshouse-api
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       API_PORT: ${API_PORT:-3000}
       API_MAX_BODY_BYTES: ${API_MAX_BODY_BYTES:-1048576}
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-astraea}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-glasshouse}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in infra/.env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in infra/.env}
-      POSTGRES_DB: ${POSTGRES_DB:-astraea}
+      POSTGRES_DB: ${POSTGRES_DB:-glasshouse}
       UI_USERNAME: ${UI_USERNAME:?UI_USERNAME must be set in infra/.env}
       UI_PASSWORD: ${UI_PASSWORD:?UI_PASSWORD must be set in infra/.env}
-      ASTRAEA_BASIC_AUTH_CREDENTIALS: ${ASTRAEA_BASIC_AUTH_CREDENTIALS:-}
-      ASTRAEA_AUTH_BOOTSTRAP_MODE: ${ASTRAEA_AUTH_BOOTSTRAP_MODE:-basic}
-      ASTRAEA_PUBLIC_ORIGIN: ${ASTRAEA_PUBLIC_ORIGIN:-}
-      ASTRAEA_DEFAULT_ORGANIZATION_ID: ${ASTRAEA_DEFAULT_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
-      ASTRAEA_REDACT_INPUT: ${ASTRAEA_REDACT_INPUT:-false}
-      ASTRAEA_REDACT_KEYS: ${ASTRAEA_REDACT_KEYS:-}
-      ASTRAEA_BOOTSTRAP_OWNER_USERNAME: ${ASTRAEA_BOOTSTRAP_OWNER_USERNAME:?ASTRAEA_BOOTSTRAP_OWNER_USERNAME must be set in infra/.env}
+      GLASSHOUSE_BASIC_AUTH_CREDENTIALS: ${GLASSHOUSE_BASIC_AUTH_CREDENTIALS:-}
+      GLASSHOUSE_AUTH_BOOTSTRAP_MODE: ${GLASSHOUSE_AUTH_BOOTSTRAP_MODE:-basic}
+      GLASSHOUSE_PUBLIC_ORIGIN: ${GLASSHOUSE_PUBLIC_ORIGIN:-}
+      GLASSHOUSE_DEFAULT_ORGANIZATION_ID: ${GLASSHOUSE_DEFAULT_ORGANIZATION_ID:-00000000-0000-4000-8000-000000000001}
+      GLASSHOUSE_REDACT_INPUT: ${GLASSHOUSE_REDACT_INPUT:-false}
+      GLASSHOUSE_REDACT_KEYS: ${GLASSHOUSE_REDACT_KEYS:-}
+      GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: ${GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME:?GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME must be set in infra/.env}
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-glasshouse}
       VALKEY_URL: redis://:${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}@valkey:6379
       EVALUATION_ALLOWED_MODELS: ${EVALUATION_ALLOWED_MODELS:-openai/gpt-4o-mini}
       EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT: ${EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT:-4}
@@ -128,7 +128,7 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
-    container_name: astraea-web
+    container_name: glasshouse-web
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-development}
@@ -145,10 +145,14 @@ services:
       timeout: 3s
       retries: 10
 
+# Preserve existing physical stores while the logical service names are Glasshouse.
 volumes:
-  astraea_pg_data:
+  glasshouse_pg_data:
+    name: astraea_astraea_pg_data
     driver: local
-  astraea_ch_data:
+  glasshouse_ch_data:
+    name: astraea_astraea_ch_data
     driver: local
-  astraea_valkey_data:
+  glasshouse_valkey_data:
+    name: astraea_astraea_valkey_data
     driver: local

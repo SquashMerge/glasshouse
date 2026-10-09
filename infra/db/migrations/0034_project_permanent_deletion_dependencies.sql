@@ -19,7 +19,7 @@ RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
 AS $$
-    SELECT current_setting('astraea.project_deletion_id', true) = target_project_id::text
+    SELECT current_setting('glasshouse.project_deletion_id', true) = target_project_id::text
 $$;
 
 CREATE OR REPLACE FUNCTION prevent_prompt_tombstone_mutation()

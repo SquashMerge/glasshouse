@@ -17,7 +17,7 @@ BEGIN
         '82000000-0000-4000-8000-000000000013', actor_id,
         '0095-execution-bounds', repeat('9', 64), repeat('a', 64)
     );
-    PERFORM set_config('astraea.evaluation_run_admission_run_id', fixture_run_id::text, true);
+    PERFORM set_config('glasshouse.evaluation_run_admission_run_id', fixture_run_id::text, true);
     INSERT INTO evaluation_run_inputs (
         run_id, organization_id, project_id, target, target_version,
         target_fingerprint, evaluator, evaluator_version, evaluator_fingerprint,

@@ -10,7 +10,7 @@ Evidence is read-time bounded. Sensitive-key redaction and size/depth limits alw
 
 ## Client-reported introspection
 
-`agent-introspection.v1` is separate supplementary evidence attached to one Run task/invocation. It is explicitly `source: "client_reported"`; Astraea did not execute or verify the described agent. It contains strict references and typed summaries only and never changes canonical Run lifecycle, result, comparison, or gate data. See [the normative contract](agent-introspection-contract.md). SSE remains lifecycle notification only and never carries introspection reports.
+`agent-introspection.v1` is separate supplementary evidence attached to one Run task/invocation. It is explicitly `source: "client_reported"`; Glasshouse did not execute or verify the described agent. It contains strict references and typed summaries only and never changes canonical Run lifecycle, result, comparison, or gate data. See [the normative contract](agent-introspection-contract.md). SSE remains lifecycle notification only and never carries introspection reports.
 
 ## Comparison rules
 

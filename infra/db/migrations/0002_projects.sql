@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0002_projects
+-- Glasshouse Postgres migrations: 0002_projects
 -- Projects are the tenant boundary in MVP; multi-org is post-MVP.
 
 CREATE TABLE IF NOT EXISTS projects (

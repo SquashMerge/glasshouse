@@ -3,10 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CONTAINER="astraea-db-migrations-${RANDOM}-${RANDOM}"
-POSTGRES_USER="astraea_migrations"
-POSTGRES_PASSWORD="astraea_migrations"
-POSTGRES_DB="astraea_migrations"
+CONTAINER="glasshouse-db-migrations-${RANDOM}-${RANDOM}"
+POSTGRES_USER="glasshouse_migrations"
+POSTGRES_PASSWORD="glasshouse_migrations"
+POSTGRES_DB="glasshouse_migrations"
 
 cleanup() {
   [[ -n "${UUID_LOCK_PID:-}" ]] && kill "$UUID_LOCK_PID" >/dev/null 2>&1 || true
@@ -72,7 +72,7 @@ run_db_migrate() {
 run_db_migrate_for_database() {
   local database="$1"
   DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$database" \
-    UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+    UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
     bun run --cwd "$ROOT/apps/api" db:migrate
 }
 
@@ -132,20 +132,20 @@ docker exec "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$LEGACY_0023_ORDER_DATABASE" \
   --command "INSERT INTO pgmigrations (name, run_on) VALUES ('0023_prompt_optimization_metric_calls', timestamp '2026-01-01 00:00:00' + ($legacy_migration_index * interval '1 second'));"
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$LEGACY_0023_ORDER_DATABASE" \
-  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun run --cwd "$ROOT/apps/api" db:migrate
 docker exec "$CONTAINER" \
   psql --tuples-only --no-align --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$LEGACY_0023_ORDER_DATABASE" \
   --command "SELECT to_regclass('public.project_memberships'), EXISTS (SELECT 1 FROM pgmigrations WHERE name = '0023_project_workspace_authorization');" \
   | grep -q 'project_memberships|t'
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$LEGACY_0023_ORDER_DATABASE" \
-  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun run --cwd "$ROOT/apps/api" db:migrate
 
 # These races require two live PostgreSQL connections. Keeping them here makes
 # the revocation linearization checks mandatory in the Docker-backed CI job.
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password ASTRAEA_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
+  UI_USERNAME=bootstrap-owner UI_PASSWORD=bootstrap-password GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=bootstrap-owner \
   bun test --cwd "$ROOT/apps/api" tests/integration/authorization-revocation-serialization.test.ts
 
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
@@ -205,7 +205,7 @@ run_uuid_advisory_serialization_check() {
   wait "$UUID_INSERT_PID"
   docker exec "$CONTAINER" \
     psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-    --command "BEGIN; SELECT set_config('astraea.project_deletion_id', '$project_id', true); DELETE FROM governance_policy_approvals WHERE project_id = '$project_id'; DELETE FROM governance_audit_events WHERE project_id = '$project_id'; DELETE FROM governance_policy_versions WHERE project_id = '$project_id'; DELETE FROM governance_policies WHERE project_id = '$project_id'; DELETE FROM projects WHERE id = '$project_id'; COMMIT;"
+    --command "BEGIN; SELECT set_config('glasshouse.project_deletion_id', '$project_id', true); DELETE FROM governance_policy_approvals WHERE project_id = '$project_id'; DELETE FROM governance_audit_events WHERE project_id = '$project_id'; DELETE FROM governance_policy_versions WHERE project_id = '$project_id'; DELETE FROM governance_policies WHERE project_id = '$project_id'; DELETE FROM projects WHERE id = '$project_id'; COMMIT;"
   rm -f "$UUID_LOCK_INPUT" "$UUID_LOCK_OUTPUT" "$UUID_INSERT_OUTPUT"
   UUID_LOCK_PID=
   UUID_INSERT_PID=
@@ -347,6 +347,9 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-0105.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-0107.assert.sql"
 
 run_evaluation_execution_bounds_upgrade() {
   local database="${POSTGRES_DB}_0095_upgrade"

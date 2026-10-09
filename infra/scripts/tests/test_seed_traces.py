@@ -72,7 +72,7 @@ class SeedTraceProjectRoutingTests(unittest.TestCase):
             requests[0][0].get_header("Authorization"), "Basic test-auth"
         )
         self.assertEqual(
-            requests[1][0].get_header("X-astraea-project-id"), default_project_id
+            requests[1][0].get_header("X-glasshouse-project-id"), default_project_id
         )
 
     def test_prefers_an_explicit_project_id_without_listing_projects(self):
@@ -109,30 +109,30 @@ class SeedTracePromptProvenanceTests(unittest.TestCase):
         root_keys = {attribute["key"] for attribute in root["attributes"]}
         llm_attributes = {attribute["key"]: attribute["value"] for attribute in llm["attributes"]}
 
-        self.assertFalse(any(key.startswith("astraea.prompt.") for key in root_keys))
+        self.assertFalse(any(key.startswith("glasshouse.prompt.") for key in root_keys))
         self.assertEqual(
             set(llm_attributes).intersection(
                 {
-                    "astraea.prompt.id",
-                    "astraea.prompt.version",
-                    "astraea.prompt.content_hash",
+                    "glasshouse.prompt.id",
+                    "glasshouse.prompt.version",
+                    "glasshouse.prompt.content_hash",
                 }
             ),
             {
-                "astraea.prompt.id",
-                "astraea.prompt.version",
-                "astraea.prompt.content_hash",
+                "glasshouse.prompt.id",
+                "glasshouse.prompt.version",
+                "glasshouse.prompt.content_hash",
             },
         )
         self.assertRegex(
-            llm_attributes["astraea.prompt.id"]["stringValue"],
+            llm_attributes["glasshouse.prompt.id"]["stringValue"],
             r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
         )
         self.assertRegex(
-            llm_attributes["astraea.prompt.version"]["intValue"], r"^[1-9]\d*$"
+            llm_attributes["glasshouse.prompt.version"]["intValue"], r"^[1-9]\d*$"
         )
         self.assertRegex(
-            llm_attributes["astraea.prompt.content_hash"]["stringValue"], r"^[0-9a-f]{64}$"
+            llm_attributes["glasshouse.prompt.content_hash"]["stringValue"], r"^[0-9a-f]{64}$"
         )
 
 

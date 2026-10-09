@@ -11,10 +11,10 @@ import * as postgres from "../../src/db/postgres";
 
 const secret = () => randomBytes(32).toString("base64url");
 const envKeys = [
-	"ASTRAEA_DEFAULT_ORGANIZATION_ID",
-	"ASTRAEA_AUTH_BOOTSTRAP_MODE",
-	"ASTRAEA_PUBLIC_ORIGIN",
-	"ASTRAEA_BASIC_AUTH_CREDENTIALS",
+	"GLASSHOUSE_DEFAULT_ORGANIZATION_ID",
+	"GLASSHOUSE_AUTH_BOOTSTRAP_MODE",
+	"GLASSHOUSE_PUBLIC_ORIGIN",
+	"GLASSHOUSE_BASIC_AUTH_CREDENTIALS",
 	"UI_USERNAME",
 	"UI_PASSWORD",
 ] as const;
@@ -40,9 +40,9 @@ beforeAll(async () => {
 	fences = new Pool({ connectionString: url.toString(), max: 12 });
 	await migrate({ DATABASE_URL: url.toString() });
 	poolSpy = spyOn(postgres, "pgPool").mockReturnValue(pool);
-	process.env.ASTRAEA_AUTH_BOOTSTRAP_MODE = "local";
-	process.env.ASTRAEA_PUBLIC_ORIGIN = "https://astraea.example";
-	delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
+	process.env.GLASSHOUSE_AUTH_BOOTSTRAP_MODE = "local";
+	process.env.GLASSHOUSE_PUBLIC_ORIGIN = "https://glasshouse.example";
+	delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
 	delete process.env.UI_USERNAME;
 	delete process.env.UI_PASSWORD;
 	({ createApiApp } = await import("../../src/index"));
@@ -66,7 +66,7 @@ async function fresh() {
 		"WITH o AS (INSERT INTO organizations(id, name, slug, default_project_id) VALUES ($1::uuid, 'Accounts', $1::text, $2) RETURNING id) INSERT INTO projects(id, organization_id, name, slug) SELECT $2, id, 'Default', 'default' FROM o",
 		[id, projectId],
 	);
-	process.env.ASTRAEA_DEFAULT_ORGANIZATION_ID = id;
+	process.env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID = id;
 	const store = new LocalCredentialStore(pool, id);
 	const setupSecret = secret();
 	const password = secret();
@@ -79,7 +79,7 @@ async function fresh() {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				origin: "https://astraea.example",
+				origin: "https://glasshouse.example",
 			},
 			body: JSON.stringify(input),
 		});
@@ -90,11 +90,11 @@ async function fresh() {
 		});
 		if (!response.ok) throw new Error("Test login failed");
 		const cookie = response.headers.get("set-cookie")!.split(";", 1)[0]!;
-		const token = cookie.slice("astraea_session=".length);
+		const token = cookie.slice("glasshouse_session=".length);
 		return {
 			cookie,
-			"x-astraea-csrf": csrfForSession(token),
-			origin: "https://astraea.example",
+			"x-glasshouse-csrf": csrfForSession(token),
+			origin: "https://glasshouse.example",
 			"content-type": "application/json",
 		};
 	};
@@ -235,7 +235,7 @@ test("only same-organization current Admins may provision/list/manage, with CSRF
 			(await f.api.request("/v1/admin/local-accounts", { method })).status,
 		).toBe(401);
 	const noCsrf = { ...f.headers };
-	delete (noCsrf as Record<string, string>)["x-astraea-csrf"];
+	delete (noCsrf as Record<string, string>)["x-glasshouse-csrf"];
 	expect(
 		(
 			await f.request(

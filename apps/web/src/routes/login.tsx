@@ -94,8 +94,8 @@ export function LoginPage() {
 				<CardHeader>
 					<h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
 					<CardDescription>
-						Use your local Astraea username and password. Sessions expire after
-						eight hours; sign in again if your session has expired.
+						Use your local Glasshouse username and password. Sessions expire
+						after eight hours; sign in again if your session has expired.
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
@@ -191,7 +191,7 @@ export function safeRedirect(value: string | null): string {
 	// successful login back into the same redirect chain forever.
 	if (
 		["/login", "/setup", "/enroll"].includes(
-			new URL(value, "http://astraea.local").pathname,
+			new URL(value, "http://glasshouse.local").pathname,
 		)
 	) {
 		return "/";

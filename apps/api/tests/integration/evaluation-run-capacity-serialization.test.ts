@@ -108,7 +108,7 @@ async function seedRunAdmission(pool: Pool) {
 			try {
 				await client.query("BEGIN");
 				await client.query(
-					"SELECT set_config('astraea.project_deletion_id', $1, true)",
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
 					[projectId],
 				);
 				await client.query(

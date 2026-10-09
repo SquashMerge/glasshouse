@@ -30,7 +30,7 @@ function attrString(attrs: Attribute[], key: string): string | undefined {
 
 export function resourceProjectId(attrs: OtlpAttribute[]): string {
 	const value = attrs.find(
-		(attribute) => attribute.key === "astraea.project.id",
+		(attribute) => attribute.key === "glasshouse.project.id",
 	)?.value;
 	if (
 		typeof value !== "object" ||

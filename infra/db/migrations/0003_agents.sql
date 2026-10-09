@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0003_agents
+-- Glasshouse Postgres migrations: 0003_agents
 -- Agents are the typed first-class entity; manifest populated by SDK later.
 
 CREATE TABLE IF NOT EXISTS agents (

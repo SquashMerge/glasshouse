@@ -1,10 +1,10 @@
-# Astraea devcontainer
+# Glasshouse devcontainer
 
 This Compose-based devcontainer gives each OpenCode workspace its own PostgreSQL 16, ClickHouse 24, and Valkey 8 network. Data-service ports are intentionally **not** published to the host, so concurrent branches do not collide.
 
 ## OpenCode
 
-From an Astraea checkout, start an isolated branch environment with:
+From an Glasshouse checkout, start an isolated branch environment with:
 
 ```sh
 /devcontainer <branch-name>
@@ -14,7 +14,7 @@ The `opencode-devcontainers` plugin clones the branch, copies the ignored `infra
 
 ## Inside the devcontainer
 
-`postCreateCommand` installs the frozen Bun workspace dependencies and the isolated GEPA Python environment. `ASTRAEA_CONTAINER_NETWORK=1` intentionally overrides any host-local database URL settings from `infra/.env`, so the normal local-runtime commands connect to the private Compose service DNS names automatically:
+`postCreateCommand` installs the frozen Bun workspace dependencies and the isolated GEPA Python environment. `GLASSHOUSE_CONTAINER_NETWORK=1` intentionally overrides any host-local database URL settings from `infra/.env`, so the normal local-runtime commands connect to the private Compose service DNS names automatically:
 
 ```sh
 make dev-backend
@@ -38,4 +38,4 @@ The repo needs a valid, gitignored `infra/.env`. Create it from `infra/.env.exam
 - `/devcontainer off` stops routing OpenCode shell work into the container.
 - `/devcontainer rm <branch-name>` removes that branch's container and clone after you no longer need it.
 
-If the host container engine is unavailable, do not fall back to running Astraea builds or tests on the host; repair the engine first.
+If the host container engine is unavailable, do not fall back to running Glasshouse builds or tests on the host; repair the engine first.

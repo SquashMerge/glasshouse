@@ -321,7 +321,7 @@ export async function handleListAdminAuditEvents(c: Context) {
 }
 
 function isConfiguredBootstrapOwner(tenant: ReturnType<typeof trustedTenant>) {
-	const username = process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME;
+	const username = process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME;
 	if (!username) return false;
 	const matches = basicCredentialsFromEnvironment().filter(
 		(credential) => credential.username === username,

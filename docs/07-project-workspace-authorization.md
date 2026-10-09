@@ -5,7 +5,7 @@
 ## Purpose
 
 Establish the smallest durable, server-enforced organization actor and Project
-membership boundary that lets Astraea safely isolate all product data by the
+membership boundary that lets Glasshouse safely isolate all product data by the
 selected Project. This is a prerequisite for #49 governance and #50 Agent
 Registry work.
 
@@ -52,7 +52,7 @@ Project User safeguard inherited from the compatibility manager record.
    organization owner sees the create-Project action; all product-data requests
    without an authorized explicit Project target fail safely.
 4. **OTLP targeting:** direct OTLP ingestion requires one explicit
-   `x-astraea-project-id` resource target. The server validates it against the
+   `x-glasshouse-project-id` resource target. The server validates it against the
     authenticated actor, active Project, and organization-role policy before
    decoding/writing telemetry. OTLP resource attributes never establish scope;
    missing, conflicting, archived, or unauthorized targets are rejected.

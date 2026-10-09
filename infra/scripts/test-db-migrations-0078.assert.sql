@@ -51,7 +51,7 @@ BEGIN
     END IF;
 
     PERFORM set_config(
-        'astraea.project_deletion_id',
+        'glasshouse.project_deletion_id',
         fixture_project_id::text,
         true
     );

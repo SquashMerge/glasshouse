@@ -33,7 +33,7 @@ INSERT INTO evaluation_definition_versions (id, evaluation_id, organization_id, 
 VALUES ('91000000-0000-4000-8000-000000000009', '91000000-0000-4000-8000-000000000008', '91000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000002', 1, '91000000-0000-4000-8000-000000000006', '{}', '{}', '{}', '{}', repeat('b', 64), '91000000-0000-4000-8000-000000000003', 1);
 INSERT INTO evaluation_runs (id, organization_id, project_id, evaluation_id, definition_version_id, dataset_version_id, requested_by_actor_id, idempotency_key, request_hash, resolved_inputs_hash)
 VALUES ('91000000-0000-4000-8000-000000000010', '91000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000002', '91000000-0000-4000-8000-000000000008', '91000000-0000-4000-8000-000000000009', '91000000-0000-4000-8000-000000000006', '91000000-0000-4000-8000-000000000003', 'post-0091-run', repeat('c', 64), repeat('d', 64));
-SELECT set_config('astraea.evaluation_run_admission_run_id', '91000000-0000-4000-8000-000000000010', false);
+SELECT set_config('glasshouse.evaluation_run_admission_run_id', '91000000-0000-4000-8000-000000000010', false);
 INSERT INTO evaluation_run_items (id, organization_id, project_id, run_id, dataset_version_item_id, position, item_key, input)
 VALUES
     ('91000000-0000-4000-8000-000000000011', '91000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000002', '91000000-0000-4000-8000-000000000010', '91000000-0000-4000-8000-000000000007', 0, 'post-0091-item', '{"input":"post-0091"}'),

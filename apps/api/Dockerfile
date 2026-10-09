@@ -12,7 +12,7 @@ FROM base AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN bun --filter "@astraea/api" build
+RUN bun --filter "@glasshouse/api" build
 
 FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app

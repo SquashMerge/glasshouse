@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from worker.dev_cli_llm import DevCliLlmError, run_dev_cli
 
-PROVIDER_DISPATCH_KEY = "astraea:optimization:22222222-2222-4222-8222-222222222222:provider_dispatch:1"
+PROVIDER_DISPATCH_KEY = "glasshouse:optimization:22222222-2222-4222-8222-222222222222:provider_dispatch:1"
 
 
 def optimization_dataset(training_examples=None, validation_examples=None):
@@ -37,7 +37,7 @@ class DevCliLlmTests(unittest.TestCase):
             "elif mode == 'failure': sys.exit(7)\n"
             "elif mode == 'large': print('x' * 200)\n"
             "elif mode == 'argv': pathlib.Path(sys.argv[2]).write_text(repr(sys.argv[3:])); print(sys.stdin.read())\n"
-            "elif mode == 'key': pathlib.Path(sys.argv[2]).write_text(os.environ.get('ASTRAEA_PROVIDER_DISPATCH_KEY', '')); print(sys.stdin.read())\n"
+            "elif mode == 'key': pathlib.Path(sys.argv[2]).write_text(os.environ.get('GLASSHOUSE_PROVIDER_DISPATCH_KEY', '')); print(sys.stdin.read())\n"
             "elif mode == 'timeout-child':\n"
             f"    child = subprocess.Popen([{sys.executable!r}, '-c', 'import time; time.sleep(10)'])\n"
             "    pathlib.Path(sys.argv[2]).write_text(str(child.pid)); time.sleep(10)\n"
@@ -51,13 +51,13 @@ class DevCliLlmTests(unittest.TestCase):
     def test_success_substitutes_model_and_sends_stdin(self):
         with tempfile.TemporaryDirectory() as directory:
             cli = self.fake_cli(directory)
-            with patch.dict(os.environ, {"ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "success", "{{model}}"]'}, clear=True):
+            with patch.dict(os.environ, {"GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "success", "{{model}}"]'}, clear=True):
                 self.assertEqual(run_dev_cli("hello", "test-model"), "hello|test-model\n")
 
     def test_timeout_is_sanitized(self):
         with tempfile.TemporaryDirectory() as directory:
             cli = self.fake_cli(directory)
-            with patch.dict(os.environ, {"ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "timeout"]', "ASTRAEA_DEV_LLM_TIMEOUT_SECONDS": "1"}, clear=True):
+            with patch.dict(os.environ, {"GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "timeout"]', "GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS": "1"}, clear=True):
                 with self.assertRaisesRegex(DevCliLlmError, "timed out"):
                     run_dev_cli("hello", "model")
 
@@ -66,8 +66,8 @@ class DevCliLlmTests(unittest.TestCase):
             cli = self.fake_cli(directory)
             child_pid = Path(directory) / "child.pid"
             environment = {
-                "ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "timeout-child", "{child_pid}"]',
-                "ASTRAEA_DEV_LLM_TIMEOUT_SECONDS": "1",
+                "GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "timeout-child", "{child_pid}"]',
+                "GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS": "1",
             }
             started_at = time.monotonic()
             with patch.dict(os.environ, environment, clear=True):
@@ -86,8 +86,8 @@ class DevCliLlmTests(unittest.TestCase):
             cli = self.fake_cli(directory)
             child_pid = Path(directory) / "child.pid"
             environment = {
-                "ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "orphan-child", "{child_pid}"]',
-                "ASTRAEA_DEV_LLM_TIMEOUT_SECONDS": "1",
+                "GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "orphan-child", "{child_pid}"]',
+                "GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS": "1",
             }
             started_at = time.monotonic()
             with patch.dict(os.environ, environment, clear=True):
@@ -104,14 +104,14 @@ class DevCliLlmTests(unittest.TestCase):
     def test_nonzero_exit_is_sanitized(self):
         with tempfile.TemporaryDirectory() as directory:
             cli = self.fake_cli(directory)
-            with patch.dict(os.environ, {"ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "failure"]'}, clear=True):
+            with patch.dict(os.environ, {"GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "failure"]'}, clear=True):
                 with self.assertRaisesRegex(DevCliLlmError, "exited unsuccessfully"):
                     run_dev_cli("hello", "model")
 
     def test_output_limit_is_enforced(self):
         with tempfile.TemporaryDirectory() as directory:
             cli = self.fake_cli(directory)
-            environment = {"ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "large"]', "ASTRAEA_DEV_LLM_MAX_OUTPUT_BYTES": "100"}
+            environment = {"GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "large"]', "GLASSHOUSE_DEV_LLM_MAX_OUTPUT_BYTES": "100"}
             with patch.dict(os.environ, environment, clear=True):
                 with self.assertRaisesRegex(DevCliLlmError, "size limit"):
                     run_dev_cli("hello", "model")
@@ -121,7 +121,7 @@ class DevCliLlmTests(unittest.TestCase):
             cli = self.fake_cli(directory)
             argv_file = Path(directory) / "argv.txt"
             command = f'["{cli}", "argv", "{argv_file}", "{{model}}"]'
-            with patch.dict(os.environ, {"ASTRAEA_DEV_LLM_COMMAND": command}, clear=True):
+            with patch.dict(os.environ, {"GLASSHOUSE_DEV_LLM_COMMAND": command}, clear=True):
                 prompt = "$(touch should-not-exist); `whoami`; ; &"
                 self.assertEqual(run_dev_cli(prompt, "model;$(touch nope)"), f"{prompt}\n")
             self.assertEqual(argv_file.read_text(), "['model;$(touch nope)']")
@@ -133,7 +133,7 @@ class DevCliLlmTests(unittest.TestCase):
             key_file = Path(directory) / "provider_dispatch_key.txt"
             with patch.dict(
                 os.environ,
-                {"ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "key", "{key_file}"]'},
+                {"GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "key", "{key_file}"]'},
                 clear=True,
             ):
                 self.assertEqual(
@@ -405,9 +405,9 @@ class DevCliLlmTests(unittest.TestCase):
             environment = {
                 "GEPA_WORKER_MODE": "cli",
                 "GEPA_ALLOWED_MODELS": "task-model,reflection-model",
-                "ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "success", "{{model}}"]',
+                "GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "success", "{{model}}"]',
                 "NODE_ENV": "production",
-                "ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION": "true",
+                "GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION": "true",
                 "PYTHONPATH": directory,
             }
             worker = Path(__file__).with_name("gepa_worker.py")
@@ -433,13 +433,13 @@ class DevCliLlmTests(unittest.TestCase):
             )
             self.assertNotIn(training_answer, output["candidate"])
             self.assertNotIn(held_out_answer, output["candidate"])
-            self.assertIn('ASTRAEA_GEPA_PROGRESS {"metric_calls_used": 1}', result.stderr)
+            self.assertIn('GLASSHOUSE_GEPA_PROGRESS {"metric_calls_used": 1}', result.stderr)
             self.assertNotIn("very sensitive prompt text", result.stderr)
             self.assertNotIn("training stdout sentinel", result.stdout)
             self.assertNotIn("training stderr sentinel", result.stderr)
             self.assertTrue(
                 all(
-                    line.startswith("ASTRAEA_GEPA_PROGRESS ")
+                    line.startswith("GLASSHOUSE_GEPA_PROGRESS ")
                     for line in result.stderr.splitlines()
                     if line
                 )
@@ -626,7 +626,7 @@ class DevCliLlmTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertRegex(
             result.stderr,
-            r"ASTRAEA_GEPA_FAILURE RuntimeError gepa:[1-9][0-9]*$",
+            r"GLASSHOUSE_GEPA_FAILURE RuntimeError gepa:[1-9][0-9]*$",
         )
         self.assertNotIn("provider token", result.stderr)
 
@@ -681,7 +681,7 @@ class DevCliLlmTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertRegex(
             result.stderr,
-            r"ASTRAEA_GEPA_RUNTIME 0\.1\.4\nASTRAEA_GEPA_FAILURE TypeError gepa:[1-9][0-9]*$",
+            r"GLASSHOUSE_GEPA_RUNTIME 0\.1\.4\nGLASSHOUSE_GEPA_FAILURE TypeError gepa:[1-9][0-9]*$",
         )
         self.assertNotIn("provider token", result.stderr)
 
@@ -733,7 +733,7 @@ class DevCliLlmTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertEqual(result.stderr, "ASTRAEA_GEPA_FAILURE TypeError")
+        self.assertEqual(result.stderr, "GLASSHOUSE_GEPA_FAILURE TypeError")
         self.assertNotIn("provider-token", result.stderr)
 
     def test_real_gepa_minimum_dataset_stops_within_metric_budget(self):
@@ -788,9 +788,9 @@ class DevCliLlmTests(unittest.TestCase):
                     **os.environ,
                     "GEPA_WORKER_MODE": "cli",
                     "GEPA_ALLOWED_MODELS": "task-model,reflection-model",
-                    "ASTRAEA_DEV_LLM_COMMAND": f'["{cli}", "{{model}}"]',
+                    "GLASSHOUSE_DEV_LLM_COMMAND": f'["{cli}", "{{model}}"]',
                     "NODE_ENV": "production",
-                    "ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION": "true",
+                    "GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION": "true",
                 },
                 check=False,
             )
@@ -802,11 +802,11 @@ class DevCliLlmTests(unittest.TestCase):
         self.assertLessEqual(
             max(
                 [
-                    json.loads(line.removeprefix("ASTRAEA_GEPA_PROGRESS "))[
+                    json.loads(line.removeprefix("GLASSHOUSE_GEPA_PROGRESS "))[
                         "metric_calls_used"
                     ]
                     for line in result.stderr.splitlines()
-                    if line.startswith("ASTRAEA_GEPA_PROGRESS ")
+                    if line.startswith("GLASSHOUSE_GEPA_PROGRESS ")
                 ],
                 default=0,
             ),

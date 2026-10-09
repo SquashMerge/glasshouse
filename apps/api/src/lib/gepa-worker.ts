@@ -32,8 +32,8 @@ function workerPath(): string {
 	return new URL("../../../../worker/gepa_worker.py", import.meta.url).pathname;
 }
 
-const WORKER_FAILURE_PREFIX = "ASTRAEA_GEPA_FAILURE ";
-const WORKER_RUNTIME_PREFIX = "ASTRAEA_GEPA_RUNTIME ";
+const WORKER_FAILURE_PREFIX = "GLASSHOUSE_GEPA_FAILURE ";
+const WORKER_RUNTIME_PREFIX = "GLASSHOUSE_GEPA_RUNTIME ";
 const SAFE_WORKER_FAILURE_KINDS = new Set([
 	"AssertionError",
 	"AttributeError",
@@ -43,7 +43,8 @@ const SAFE_WORKER_FAILURE_KINDS = new Set([
 	"UnknownError",
 	"ValueError",
 ]);
-const SAFE_WORKER_FAILURE_SITE = /^(?:astraea_worker|gepa):[1-9][0-9]{0,5}$/u;
+const SAFE_WORKER_FAILURE_SITE =
+	/^(?:glasshouse_worker|gepa):[1-9][0-9]{0,5}$/u;
 const SAFE_WORKER_GEPA_VERSION = /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/u;
 
 export function diagnosticSummary(
@@ -161,7 +162,7 @@ export function parseWorkerResult(
 	}
 }
 
-const PROGRESS_PREFIX = "ASTRAEA_GEPA_PROGRESS ";
+const PROGRESS_PREFIX = "GLASSHOUSE_GEPA_PROGRESS ";
 
 export async function readWorkerDiagnostics(
 	stream: ReadableStream<Uint8Array>,

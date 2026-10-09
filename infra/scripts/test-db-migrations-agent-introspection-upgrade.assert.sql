@@ -1,4 +1,4 @@
-SELECT set_config('astraea.test.include_report', :'include_report', false);
+SELECT set_config('glasshouse.test.include_report', :'include_report', false);
 
 DO $$
 DECLARE
@@ -207,7 +207,7 @@ END $$;
 
 DO $$
 DECLARE
-    include_report BOOLEAN := current_setting('astraea.test.include_report')::boolean;
+    include_report BOOLEAN := current_setting('glasshouse.test.include_report')::boolean;
 BEGIN
     IF include_report THEN
         IF NOT EXISTS (

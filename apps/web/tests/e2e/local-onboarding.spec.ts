@@ -63,7 +63,7 @@ test("fresh setup, one-time handoff, login/logout and Admin management work at d
 	await page.goto("/");
 	await page.waitForURL((url) => url.pathname === "/setup");
 	await expect(
-		page.getByRole("heading", { name: "Set up Astraea" }),
+		page.getByRole("heading", { name: "Set up Glasshouse" }),
 	).toBeVisible();
 	await noHorizontalOverflow(page);
 	await page.getByLabel("Username", { exact: true }).focus();
@@ -85,7 +85,7 @@ test("fresh setup, one-time handoff, login/logout and Admin management work at d
 	await page.reload();
 	await expect(page.getByLabel("Primary")).toBeVisible();
 	const cookieProperties = (await page.context().cookies())
-		.filter((cookie) => cookie.name === "astraea_session")
+		.filter((cookie) => cookie.name === "glasshouse_session")
 		.map(({ httpOnly, sameSite, path }) => ({ httpOnly, sameSite, path }));
 	expect(cookieProperties).toEqual([
 		{ httpOnly: true, sameSite: "Strict", path: "/v1" },

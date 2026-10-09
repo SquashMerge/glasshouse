@@ -193,7 +193,7 @@ function PromptOptimizationActivity({
 		<Link
 			to="/prompts/$slug"
 			params={{ slug: promptId }}
-			className="flex w-fit items-center gap-1 rounded-sm text-xs text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			className="flex w-fit items-center gap-1 rounded-sm text-xs text-link underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			aria-label={`View ${promptName} optimization status: ${label}`}
 			data-testid="optimization-status-link"
 		>

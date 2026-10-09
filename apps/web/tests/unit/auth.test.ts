@@ -34,14 +34,14 @@ describe("opaque browser sessions", () => {
 	});
 	it("removes legacy credentials from both stores and retains only safe session context in memory", async () => {
 		for (const storage of [window.localStorage, window.sessionStorage]) {
-			storage.setItem("astraea.auth.username", "old-test-user");
-			storage.setItem("astraea.auth.password", "old-test-password");
+			storage.setItem("glasshouse.auth.username", "old-test-user");
+			storage.setItem("glasshouse.auth.password", "old-test-password");
 		}
 		fetchMock.mockResolvedValue(json(session));
 		await readAuthSession();
 		for (const storage of [window.localStorage, window.sessionStorage]) {
-			expect(storage.getItem("astraea.auth.username")).toBeNull();
-			expect(storage.getItem("astraea.auth.password")).toBeNull();
+			expect(storage.getItem("glasshouse.auth.username")).toBeNull();
+			expect(storage.getItem("glasshouse.auth.password")).toBeNull();
 			expect(JSON.stringify(storage)).not.toContain(session.csrf_token);
 		}
 		expect(getAuthSession()).toEqual(session);
@@ -59,7 +59,7 @@ describe("opaque browser sessions", () => {
 			const headers = init.headers as Headers;
 			expect(init.credentials).toBe("same-origin");
 			expect(headers.get("authorization")).toBeNull();
-			expect(headers.get("x-astraea-csrf")).toBe(
+			expect(headers.get("x-glasshouse-csrf")).toBe(
 				["GET", "HEAD"].includes(method) ? null : session.csrf_token,
 			);
 		}
@@ -185,7 +185,7 @@ describe("opaque browser sessions", () => {
 		expect(headers.get("content-type")).toBe("application/json");
 		expect(headers.get("idempotency-key")).toBe("feedback-comment-test");
 		expect(headers.has("authorization")).toBe(false);
-		expect(headers.get("x-astraea-csrf")).toBe(session.csrf_token);
+		expect(headers.get("x-glasshouse-csrf")).toBe(session.csrf_token);
 		expect(feedback.comment).toBe("Helpful first-pass trace");
 		expect(feedback.status).toBe("reviewed");
 	});
@@ -209,7 +209,7 @@ describe("opaque browser sessions", () => {
 		});
 		const headers = new Headers(init?.headers as HeadersInit);
 		expect(headers.get("content-type")).toBe("application/json");
-		expect(headers.get("x-astraea-csrf")).toBe(session.csrf_token);
+		expect(headers.get("x-glasshouse-csrf")).toBe(session.csrf_token);
 		expect(headers.has("authorization")).toBe(false);
 	});
 

@@ -92,7 +92,7 @@ describe("event-bus + Valkey pub/sub (mocked)", () => {
 		await new Promise((r) => setTimeout(r, 10));
 		expect(valkeyPubsubMock.subscribeToChannel).toHaveBeenCalledTimes(1);
 		expect(valkeyPubsubMock.publishOnChannel).toHaveBeenCalledTimes(1);
-		expect(publishedCalls[0]?.channel).toBe("astraea:trace.created");
+		expect(publishedCalls[0]?.channel).toBe("glasshouse:trace.created");
 		// The local in-process dispatch fires once; the instance ignores its own
 		// Valkey echo. Other instances accept the message because their origin differs.
 		expect(got).toHaveLength(1);
@@ -132,18 +132,18 @@ describe("event-bus + Valkey pub/sub (mocked)", () => {
 		expect(traceCalls).toHaveLength(1);
 		expect(obsCalls).toHaveLength(1);
 		// Each subscriber registered on its own Valkey channel.
-		expect(channels.has("astraea:trace.created")).toBe(true);
-		expect(channels.has("astraea:observation.created")).toBe(true);
+		expect(channels.has("glasshouse:trace.created")).toBe(true);
+		expect(channels.has("glasshouse:observation.created")).toBe(true);
 		// Each publish landed on its own channel.
 		const usedChannels = publishedCalls.map((c) => c.channel);
-		expect(usedChannels).toContain("astraea:trace.created");
-		expect(usedChannels).toContain("astraea:observation.created");
+		expect(usedChannels).toContain("glasshouse:trace.created");
+		expect(usedChannels).toContain("glasshouse:observation.created");
 
 		unsubscribeTrace();
-		expect(channels.has("astraea:trace.created")).toBe(false);
-		expect(channels.has("astraea:observation.created")).toBe(true);
+		expect(channels.has("glasshouse:trace.created")).toBe(false);
+		expect(channels.has("glasshouse:observation.created")).toBe(true);
 		unsubscribeObservation();
-		expect(channels.has("astraea:observation.created")).toBe(false);
+		expect(channels.has("glasshouse:observation.created")).toBe(false);
 	});
 
 	it("Valkey-down fallback: publishOnChannel throws, in-process still fires", async () => {
@@ -168,7 +168,7 @@ describe("event-bus + Valkey pub/sub (mocked)", () => {
 
 		// Simulate a remote instance publishing by invoking the mock's
 		// registered handlers directly (skipping the bus's own publish path).
-		const handlers = Array.from(channels.get("astraea:trace.created") ?? []);
+		const handlers = Array.from(channels.get("glasshouse:trace.created") ?? []);
 		expect(handlers.length).toBeGreaterThan(0);
 		for (const h of handlers) {
 			h(
@@ -203,7 +203,7 @@ describe("event-bus + Valkey pub/sub (mocked)", () => {
 
 		// Get the bus-installed Valkey handler (the one registered by subscribe).
 		// The mock's subscribeToChannel tracks handlers in `channels`.
-		const handlers = Array.from(channels.get("astraea:trace.created") ?? []);
+		const handlers = Array.from(channels.get("glasshouse:trace.created") ?? []);
 		// Exactly one bus-installed Valkey handler exists.
 		expect(handlers.length).toBe(1);
 

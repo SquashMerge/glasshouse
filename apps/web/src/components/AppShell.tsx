@@ -1,7 +1,6 @@
 import * as React from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import {
-	LuHexagon,
 	LuHouse,
 	LuActivity,
 	LuFileText,
@@ -37,7 +36,7 @@ import { getAuthSession, logoutSession } from "../lib/auth";
 import type { Project } from "../lib/api";
 import { useProjectSelection } from "./ProjectProvider";
 
-const COLLAPSE_KEY = "astraea.nav.collapsed";
+const COLLAPSE_KEY = "glasshouse.nav.collapsed";
 
 export const APP_WORKSPACE_CLASS = "max-w-none";
 
@@ -120,27 +119,43 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 			>
 				<div
 					className={cn(
-						"flex h-14 shrink-0 items-center border-b border-border",
+						"flex shrink-0 items-center border-b border-border",
 						collapsed
-							? "justify-center px-2"
-							: "justify-center px-2 sm:justify-between sm:px-4",
+							? "h-14 justify-center px-1"
+							: "h-14 justify-center px-1 sm:h-32 sm:justify-between sm:px-4",
 					)}
 				>
 					<Link
 						to="/"
-						aria-label="Astraea home"
+						aria-label="Glasshouse home"
 						aria-current={activePath === "/" ? "page" : undefined}
-						title="Astraea home"
+						title="Glasshouse home"
 						className={cn(
-							"flex h-9 w-9 shrink-0 items-center justify-center rounded-md font-semibold tracking-tight transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-							!collapsed &&
-								"sm:h-auto sm:w-auto sm:justify-start sm:gap-2 sm:px-0",
+							"flex shrink-0 items-center justify-center rounded-md font-semibold tracking-tight transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+							collapsed
+								? "h-12 w-12"
+								: "h-12 w-12 sm:h-28 sm:w-28 sm:justify-start",
 						)}
 					>
-						<LuHexagon className="h-5 w-5 shrink-0" aria-hidden="true" />
-						{!collapsed && (
-							<span className="hidden text-base sm:inline">Astraea</span>
-						)}
+						<img
+							src="/brand/glasshouse-logo-dark-v1.png"
+							alt=""
+							aria-hidden="true"
+							width={1254}
+							height={1254}
+							className={cn(
+								"hidden shrink-0 object-contain",
+								!collapsed && "sm:block sm:h-28 sm:w-28",
+							)}
+						/>
+						<span
+							className={cn(
+								"whitespace-nowrap text-[8px] leading-[10px]",
+								!collapsed && "sm:hidden",
+							)}
+						>
+							Glasshouse
+						</span>
 					</Link>
 					{!collapsed && (
 						<Button

@@ -16,7 +16,7 @@ const OUT_PATH =
 const doc = openapiApp.getOpenAPI31Document({
   openapi: "3.1.0",
   info: {
-    title: "Astraea API",
+    title: "Glasshouse API",
     version: "0.1.0",
     description: "Agent and LLM evaluation platform.",
   },

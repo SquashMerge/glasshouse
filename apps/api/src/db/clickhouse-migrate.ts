@@ -10,8 +10,8 @@ import { logger } from "../lib/logger.js";
 const migrationsDirectory = fileURLToPath(
 	new URL("../../../../infra/db/clickhouse/", import.meta.url),
 );
-const migrationTable = "astraea_schema_migrations";
-const migrationLockName = "astraea.clickhouse-schema-migrations";
+const migrationTable = "glasshouse_schema_migrations";
+const migrationLockName = "glasshouse.clickhouse-schema-migrations";
 
 type AppliedMigration = {
 	migration: string;
@@ -79,8 +79,8 @@ async function appliedMigrations(
 export async function applyClickHouseMigrations(
 	client: ClickHouseClient = createClient({
 		url: clickhouseUrl(),
-		database: process.env.CLICKHOUSE_DB ?? "astraea",
-		username: process.env.CLICKHOUSE_USER ?? "astraea",
+		database: process.env.CLICKHOUSE_DB ?? "glasshouse",
+		username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 		password: process.env.CLICKHOUSE_PASSWORD ?? "",
 	}),
 	withMigrationLock: MigrationLock = withClickHouseMigrationLock,

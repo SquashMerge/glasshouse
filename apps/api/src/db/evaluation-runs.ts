@@ -1162,7 +1162,7 @@ export async function admitEvaluationRun(
 				updated_at: new Date(),
 			};
 			await client.query(
-				"SELECT set_config('astraea.evaluation_run_admission_run_id', $1, true)",
+				"SELECT set_config('glasshouse.evaluation_run_admission_run_id', $1, true)",
 				[runId],
 			);
 			await activateEvaluationRunCapacity(client, {

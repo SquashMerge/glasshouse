@@ -133,15 +133,15 @@ async function recover(
 		[id, actorId, username],
 	);
 	const previous = {
-		credentials: process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS,
-		owner: process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME,
+		credentials: process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS,
+		owner: process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME,
 	};
 	const poolProvider = spyOn(postgres, "pgPool").mockReturnValue(database);
 	try {
-		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+		process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
 			{ username, password: password(), organization_id: id },
 		]);
-		process.env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME = username;
+		process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME = username;
 		const api = new OpenAPIHono();
 		api.use("*", async (c, next) => {
 			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
@@ -160,8 +160,8 @@ async function recover(
 	} finally {
 		poolProvider.mockRestore();
 		for (const [key, value] of [
-			["ASTRAEA_BASIC_AUTH_CREDENTIALS", previous.credentials],
-			["ASTRAEA_BOOTSTRAP_OWNER_USERNAME", previous.owner],
+			["GLASSHOUSE_BASIC_AUTH_CREDENTIALS", previous.credentials],
+			["GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME", previous.owner],
 		] as const) {
 			if (value === undefined) delete process.env[key];
 			else process.env[key] = value;
@@ -254,11 +254,11 @@ test("0097 populated upgrade preserves all Basic identity, membership, grant and
 	);
 	await migrate({ DATABASE_URL: upgrade.url });
 	await bootstrapAuthorization({
-		ASTRAEA_AUTH_BOOTSTRAP_MODE: "local",
+		GLASSHOUSE_AUTH_BOOTSTRAP_MODE: "local",
 		DATABASE_URL: upgrade.url,
 		UI_USERNAME: "local-upgrade-owner",
 		UI_PASSWORD: password(),
-		ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "local-upgrade-owner",
+		GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "local-upgrade-owner",
 	});
 	expect(
 		(
@@ -276,11 +276,11 @@ test("fresh local mode does not auto-grant Basic Admin; legacy Basic mode still 
 		DATABASE_URL: fresh.url,
 		UI_USERNAME: "compat-owner",
 		UI_PASSWORD: password(),
-		ASTRAEA_BOOTSTRAP_OWNER_USERNAME: "compat-owner",
+		GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "compat-owner",
 	};
 	await bootstrapAuthorization({
 		...configuration,
-		ASTRAEA_AUTH_BOOTSTRAP_MODE: "local",
+		GLASSHOUSE_AUTH_BOOTSTRAP_MODE: "local",
 	});
 	expect(
 		(
@@ -337,7 +337,7 @@ test("username exact ASCII policy and server-selected organization configuration
 		"00000000-0000-4000-8000-000000000001",
 	);
 	expect(() =>
-		localBootstrapOrganization({ ASTRAEA_DEFAULT_ORGANIZATION_ID: "bad" }),
+		localBootstrapOrganization({ GLASSHOUSE_DEFAULT_ORGANIZATION_ID: "bad" }),
 	).toThrow();
 });
 
@@ -592,20 +592,20 @@ test("0098 populated upgrade preserves pending Admin records and replaces the un
 test("operator provisioning reads a secret file only in explicit local mode and binds the deployment-selected organization", async () => {
 	const id = await organization();
 	const secret = token();
-	const directory = await mkdtemp(resolve(tmpdir(), "astraea-bootstrap-"));
+	const directory = await mkdtemp(resolve(tmpdir(), "glasshouse-bootstrap-"));
 	const file = resolve(directory, "token");
 	try {
 		await writeFile(file, secret, { mode: 0o600 });
 		const configuration = {
 			DATABASE_URL: credentialDatabaseUrl,
-			ASTRAEA_AUTH_BOOTSTRAP_MODE: "local",
-			ASTRAEA_DEFAULT_ORGANIZATION_ID: id,
-			ASTRAEA_LOCAL_BOOTSTRAP_TOKEN_FILE: file,
+			GLASSHOUSE_AUTH_BOOTSTRAP_MODE: "local",
+			GLASSHOUSE_DEFAULT_ORGANIZATION_ID: id,
+			GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE: file,
 		};
 		await expect(
 			provisionLocalBootstrapFromEnvironment({
 				...configuration,
-				ASTRAEA_AUTH_BOOTSTRAP_MODE: "basic",
+				GLASSHOUSE_AUTH_BOOTSTRAP_MODE: "basic",
 			}),
 		).rejects.toThrow("Local bootstrap requires local mode");
 		await provisionLocalBootstrapFromEnvironment(configuration);

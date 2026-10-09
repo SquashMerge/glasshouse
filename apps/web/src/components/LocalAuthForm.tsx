@@ -18,7 +18,7 @@ export function AuthCard({
 		<main className="min-h-screen grid place-items-center bg-background px-4 py-10 text-foreground">
 			<div className="w-full max-w-md space-y-6">
 				<p className="text-center text-lg font-semibold tracking-tight">
-					Astraea
+					Glasshouse
 				</p>
 				<Card>
 					<CardHeader className="space-y-2">

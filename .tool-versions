@@ -1,4 +1,4 @@
-# Astraea local dev tool versions (asdf).
+# Glasshouse local dev tool versions (asdf).
 # https://asdf-vm.com/manage/configuration.html
 #
 # `make setup-tools` (infra/scripts/setup-tools.sh) installs these via asdf.

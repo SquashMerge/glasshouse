@@ -13,8 +13,8 @@ import {
 } from "./local-credentials.js";
 
 export const SESSION_LIFETIME_SECONDS = 8 * 60 * 60;
-export const SESSION_COOKIE = "astraea_session";
-export const CSRF_HEADER = "x-astraea-csrf";
+export const SESSION_COOKIE = "glasshouse_session";
+export const CSRF_HEADER = "x-glasshouse-csrf";
 export class AuthenticationError extends Error {
 	constructor() {
 		super("Authentication required");
@@ -30,7 +30,7 @@ export function sessionDigest(token: string): Buffer | null {
 }
 export function csrfForSession(token: string): string {
 	return createHash("sha256")
-		.update("astraea:csrf:v1:")
+		.update("glasshouse:csrf:v1:")
 		.update(token)
 		.digest("base64url");
 }

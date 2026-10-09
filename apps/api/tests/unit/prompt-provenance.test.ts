@@ -6,9 +6,9 @@ const SPAN_ID = "0011223344556677";
 const HASH = "a".repeat(64);
 
 const tuple = [
-	{ key: "astraea.prompt.id", value: { stringValue: "support-agent" } },
-	{ key: "astraea.prompt.version", value: { intValue: 7 } },
-	{ key: "astraea.prompt.content_hash", value: { stringValue: HASH } },
+	{ key: "glasshouse.prompt.id", value: { stringValue: "support-agent" } },
+	{ key: "glasshouse.prompt.version", value: { intValue: 7 } },
+	{ key: "glasshouse.prompt.content_hash", value: { stringValue: HASH } },
 ];
 
 function normalize(attributes: unknown[]) {
@@ -43,7 +43,7 @@ describe("prompt provenance OTLP normalization", () => {
 	it("accepts the current canonical decimal string intValue representation", () => {
 		const observation = normalize([
 			tuple[0],
-			{ key: "astraea.prompt.version", value: { intValue: "7" } },
+			{ key: "glasshouse.prompt.version", value: { intValue: "7" } },
 			tuple[2],
 		]);
 		expect(observation.metadata.prompt_provenance).toEqual({
@@ -54,9 +54,9 @@ describe("prompt provenance OTLP normalization", () => {
 	});
 
 	for (const missing of [
-		"astraea.prompt.id",
-		"astraea.prompt.version",
-		"astraea.prompt.content_hash",
+		"glasshouse.prompt.id",
+		"glasshouse.prompt.version",
+		"glasshouse.prompt.content_hash",
 	]) {
 		it(`rejects provenance when ${missing} is missing`, () => {
 			expect(
@@ -67,9 +67,9 @@ describe("prompt provenance OTLP normalization", () => {
 	}
 
 	for (const duplicate of [
-		"astraea.prompt.id",
-		"astraea.prompt.version",
-		"astraea.prompt.content_hash",
+		"glasshouse.prompt.id",
+		"glasshouse.prompt.version",
+		"glasshouse.prompt.content_hash",
 	]) {
 		it(`rejects provenance when ${duplicate} is duplicated`, () => {
 			const attribute = tuple.find((candidate) => candidate.key === duplicate)!;
@@ -80,10 +80,10 @@ describe("prompt provenance OTLP normalization", () => {
 	}
 
 	for (const malformed of [
-		{ key: "astraea.prompt.id", value: { stringValue: "Support Agent" } },
-		{ key: "astraea.prompt.version", value: { intValue: "07" } },
+		{ key: "glasshouse.prompt.id", value: { stringValue: "Support Agent" } },
+		{ key: "glasshouse.prompt.version", value: { intValue: "07" } },
 		{
-			key: "astraea.prompt.content_hash",
+			key: "glasshouse.prompt.content_hash",
 			value: { stringValue: HASH.toUpperCase() },
 		},
 	]) {
@@ -114,11 +114,11 @@ describe("prompt provenance OTLP normalization", () => {
 		const observation = normalize([
 			...tuple,
 			{
-				key: "astraea.prompt.template",
+				key: "glasshouse.prompt.template",
 				value: { stringValue: "secret template" },
 			},
 			{
-				key: "astraea.prompt.variables",
+				key: "glasshouse.prompt.variables",
 				value: { stringValue: "secret variables" },
 			},
 			{ key: "custom.value", value: { stringValue: "retained" } },

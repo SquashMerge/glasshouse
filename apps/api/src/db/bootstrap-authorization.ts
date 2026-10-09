@@ -5,21 +5,21 @@ export async function bootstrapAuthorization(
 	env: NodeJS.ProcessEnv = process.env,
 	pool = new Pool({ connectionString: env.DATABASE_URL }),
 ): Promise<void> {
-	const mode = env.ASTRAEA_AUTH_BOOTSTRAP_MODE ?? "basic";
+	const mode = env.GLASSHOUSE_AUTH_BOOTSTRAP_MODE ?? "basic";
 	if (mode !== "basic" && mode !== "local") {
 		await pool.end();
-		throw new Error("ASTRAEA_AUTH_BOOTSTRAP_MODE must be basic or local");
+		throw new Error("GLASSHOUSE_AUTH_BOOTSTRAP_MODE must be basic or local");
 	}
-	const username = env.ASTRAEA_BOOTSTRAP_OWNER_USERNAME;
+	const username = env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME;
 	if (!username)
-		throw new Error("ASTRAEA_BOOTSTRAP_OWNER_USERNAME must be set");
+		throw new Error("GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME must be set");
 	const credentials = basicCredentialsFromEnvironment(env);
 	const matches = credentials.filter(
 		(credential) => credential.username === username,
 	);
 	if (matches.length !== 1)
 		throw new Error(
-			"ASTRAEA_BOOTSTRAP_OWNER_USERNAME must match exactly one configured credential",
+			"GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME must match exactly one configured credential",
 		);
 	const ownerCredential = matches[0]!;
 	const client = await pool.connect();

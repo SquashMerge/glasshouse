@@ -29,8 +29,8 @@ const credential = {
 };
 const client = createClient({
 	url: clickhouseUrl(),
-	database: process.env.CLICKHOUSE_DB ?? "astraea",
-	username: process.env.CLICKHOUSE_USER ?? "astraea",
+	database: process.env.CLICKHOUSE_DB ?? "glasshouse",
+	username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 	password: process.env.CLICKHOUSE_PASSWORD ?? "",
 });
 const pg = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -156,19 +156,22 @@ describe("real OTLP retained trace bounds", () => {
 		);
 		const bootstrapEnv = {
 			...process.env,
-			ASTRAEA_BASIC_AUTH_CREDENTIALS: JSON.stringify([credential]),
-			ASTRAEA_BOOTSTRAP_OWNER_USERNAME: credential.username,
+			GLASSHOUSE_BASIC_AUTH_CREDENTIALS: JSON.stringify([credential]),
+			GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: credential.username,
 		};
 		await bootstrapAuthorization(bootstrapEnv);
 		authorization = `Basic ${Buffer.from(`${credential.username}:${credential.password}`).toString("base64")}`;
-		const configuredCredentials = process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-		process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = JSON.stringify([credential]);
+		const configuredCredentials = process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+		process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+			credential,
+		]);
 		try {
 			server = Bun.serve({ port: 0, fetch: createApiApp().fetch });
 		} finally {
 			if (configuredCredentials === undefined)
-				delete process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS;
-			else process.env.ASTRAEA_BASIC_AUTH_CREDENTIALS = configuredCredentials;
+				delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+			else
+				process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = configuredCredentials;
 		}
 		baseUrl = server.url.toString().replace(/\/$/, "");
 
@@ -182,7 +185,7 @@ describe("real OTLP retained trace bounds", () => {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				"x-astraea-project-id": projectId,
+				"x-glasshouse-project-id": projectId,
 			},
 			body: JSON.stringify({
 				resource_spans: [
@@ -436,7 +439,7 @@ describe("real OTLP retained trace bounds", () => {
 				method: "POST",
 				headers: {
 					"content-type": "application/json",
-					"x-astraea-project-id": projectId,
+					"x-glasshouse-project-id": projectId,
 				},
 				body: JSON.stringify({
 					resource_spans: [

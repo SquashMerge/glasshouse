@@ -13,8 +13,8 @@ export function ch(): ClickHouseClient {
 	if (_client) return _client;
 	_client = createClient({
 		url: clickhouseUrl(),
-		database: process.env.CLICKHOUSE_DB ?? "astraea",
-		username: process.env.CLICKHOUSE_USER ?? "astraea",
+		database: process.env.CLICKHOUSE_DB ?? "glasshouse",
+		username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 		password: process.env.CLICKHOUSE_PASSWORD ?? "",
 		clickhouse_settings: {
 			cancel_http_readonly_queries_on_client_close: 1,

@@ -19,10 +19,10 @@ describe("governance policy validation", () => {
 		expect(validatePolicy(DEFAULT_GOVERNANCE_POLICY)).toEqual(
 			DEFAULT_GOVERNANCE_POLICY,
 		);
-		const input = process.env.ASTRAEA_REDACT_INPUT;
-		const keys = process.env.ASTRAEA_REDACT_KEYS;
-		process.env.ASTRAEA_REDACT_INPUT = "false";
-		process.env.ASTRAEA_REDACT_KEYS = "";
+		const input = process.env.GLASSHOUSE_REDACT_INPUT;
+		const keys = process.env.GLASSHOUSE_REDACT_KEYS;
+		process.env.GLASSHOUSE_REDACT_INPUT = "false";
+		process.env.GLASSHOUSE_REDACT_KEYS = "";
 		try {
 			expect(
 				policyRedactionOptions(DEFAULT_GOVERNANCE_POLICY.redaction),
@@ -31,10 +31,10 @@ describe("governance policy validation", () => {
 				redactKeys: [],
 			});
 		} finally {
-			if (input === undefined) delete process.env.ASTRAEA_REDACT_INPUT;
-			else process.env.ASTRAEA_REDACT_INPUT = input;
-			if (keys === undefined) delete process.env.ASTRAEA_REDACT_KEYS;
-			else process.env.ASTRAEA_REDACT_KEYS = keys;
+			if (input === undefined) delete process.env.GLASSHOUSE_REDACT_INPUT;
+			else process.env.GLASSHOUSE_REDACT_INPUT = input;
+			if (keys === undefined) delete process.env.GLASSHOUSE_REDACT_KEYS;
+			else process.env.GLASSHOUSE_REDACT_KEYS = keys;
 		}
 	});
 
@@ -72,10 +72,10 @@ describe("governance policy validation", () => {
 
 describe("approved policy redaction", () => {
 	it("preserves operator redaction as a non-relaxable baseline", () => {
-		const input = process.env.ASTRAEA_REDACT_INPUT;
-		const keys = process.env.ASTRAEA_REDACT_KEYS;
-		process.env.ASTRAEA_REDACT_INPUT = "true";
-		process.env.ASTRAEA_REDACT_KEYS = "operator.secret, user.email";
+		const input = process.env.GLASSHOUSE_REDACT_INPUT;
+		const keys = process.env.GLASSHOUSE_REDACT_KEYS;
+		process.env.GLASSHOUSE_REDACT_INPUT = "true";
+		process.env.GLASSHOUSE_REDACT_KEYS = "operator.secret, user.email";
 		try {
 			expect(policyRedactionOptions({ mode: "none", keys: [] })).toEqual({
 				redactInput: true,
@@ -88,10 +88,10 @@ describe("approved policy redaction", () => {
 				redactKeys: ["operator.secret", "user.email", "policy.secret"],
 			});
 		} finally {
-			if (input === undefined) delete process.env.ASTRAEA_REDACT_INPUT;
-			else process.env.ASTRAEA_REDACT_INPUT = input;
-			if (keys === undefined) delete process.env.ASTRAEA_REDACT_KEYS;
-			else process.env.ASTRAEA_REDACT_KEYS = keys;
+			if (input === undefined) delete process.env.GLASSHOUSE_REDACT_INPUT;
+			else process.env.GLASSHOUSE_REDACT_INPUT = input;
+			if (keys === undefined) delete process.env.GLASSHOUSE_REDACT_KEYS;
+			else process.env.GLASSHOUSE_REDACT_KEYS = keys;
 		}
 	});
 

@@ -9,8 +9,8 @@ deps_compose = Path("infra/compose.deps.yaml").read_text()
 required = (
     "      - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro",
     "      context: .",
-    "      ASTRAEA_BOOTSTRAP_OWNER_USERNAME: ${ASTRAEA_BOOTSTRAP_OWNER_USERNAME:?ASTRAEA_BOOTSTRAP_OWNER_USERNAME must be set in infra/.env}",
-    "      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-astraea}",
+    "      GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: ${GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME:?GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME must be set in infra/.env}",
+    "      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-glasshouse}",
     "      EVALUATION_ALLOWED_MODELS: ${EVALUATION_ALLOWED_MODELS:-openai/gpt-4o-mini}",
     "      EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT: ${EVALUATION_MAX_ACTIVE_RUNS_PER_PROJECT:-4}",
     "      EVALUATION_MAX_ACTIVE_RUNS_PER_ACTOR: ${EVALUATION_MAX_ACTIVE_RUNS_PER_ACTOR:-2}",

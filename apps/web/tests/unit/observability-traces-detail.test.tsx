@@ -895,7 +895,10 @@ describe("TraceDetailPage — span detail tabs", () => {
 	});
 
 	it("persists the keyboard-accessible split and moves the closed inspector trigger into a distinct rail", async () => {
-		window.localStorage.setItem("astraea.trace-detail.workspace-width", "44");
+		window.localStorage.setItem(
+			"glasshouse.trace-detail.workspace-width",
+			"44",
+		);
 		renderAt(VALID_ID);
 		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
 		const handle = handleByTraceId.get(VALID_ID)!;
@@ -910,7 +913,7 @@ describe("TraceDetailPage — span detail tabs", () => {
 		fireEvent.keyDown(splitter, { key: "ArrowRight" });
 		expect(splitter).toHaveAttribute("aria-valuenow", "46");
 		expect(
-			window.localStorage.getItem("astraea.trace-detail.workspace-width"),
+			window.localStorage.getItem("glasshouse.trace-detail.workspace-width"),
 		).toBe("46");
 
 		fireEvent.keyDown(screen.getByTestId("observation-detail"), {

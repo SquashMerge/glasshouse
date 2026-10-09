@@ -4,7 +4,7 @@ import { basicAuthMiddleware } from "../../src/middleware/auth";
 import { MAX_TRACE_RESPONSE_BYTES } from "../../src/db/trace-payload-bounds";
 import { encodeTraceCursor } from "../../src/db/trace-cursor";
 
-const USER = "astraea";
+const USER = "glasshouse";
 const PASS = "secret";
 const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 

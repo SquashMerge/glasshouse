@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Astraea dev tool installer via asdf.
+# Glasshouse dev tool installer via asdf.
 # Reads .tool-versions and ensures every listed tool is installed with the
 # pinned version. Adds missing asdf plugins as needed.
 #

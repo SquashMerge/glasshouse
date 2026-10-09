@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JSON-lines boundary for the optional GEPA runtime; credentials stay outside Astraea."""
+"""JSON-lines boundary for the optional GEPA runtime; credentials stay outside Glasshouse."""
 import json
 import math
 import os
@@ -49,7 +49,7 @@ class StderrLogger:
 
     def progress(self, metric_calls_used):
         print(
-            "ASTRAEA_GEPA_PROGRESS " + json.dumps({"metric_calls_used": metric_calls_used}),
+            "GLASSHOUSE_GEPA_PROGRESS " + json.dumps({"metric_calls_used": metric_calls_used}),
             file=self._stream,
             flush=True,
         )
@@ -164,7 +164,7 @@ def safe_optimization_failure_site(error):
     filename = os.path.realpath(frame.filename)
     worker_directory = os.path.realpath(os.path.dirname(__file__))
     if filename.startswith(f"{worker_directory}{os.sep}"):
-        return f"astraea_worker:{frame.lineno}"
+        return f"glasshouse_worker:{frame.lineno}"
     if "gepa" in filename.split(os.sep):
         return f"gepa:{frame.lineno}"
     return None
@@ -338,7 +338,7 @@ def litellm_model_for_dispatch(model, dispatches, role):
 
 def cli_mode_is_allowed():
     # This explicitly prevents a locally authenticated developer CLI in production.
-    return os.environ.get("NODE_ENV") != "production" or os.environ.get("ASTRAEA_ALLOW_DEV_LLM_IN_PRODUCTION") == "true"
+    return os.environ.get("NODE_ENV") != "production" or os.environ.get("GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION") == "true"
 
 
 def average(scores, name):
@@ -387,7 +387,7 @@ except ImportError:
     sys.exit(2)
 
 
-class AstraeaDefaultAdapter(DefaultAdapter):
+class GlasshouseDefaultAdapter(DefaultAdapter):
     """Use labels for scoring only; reflection sees generalized feedback, never labels."""
 
     def __init__(self, model, rubric):
@@ -428,7 +428,7 @@ try:
     )
     logger = StderrLogger(progress_stream)
     adapter = ProgressReportingAdapter(
-        AstraeaDefaultAdapter(model=task_lm, rubric=rubric), logger, max_metric_calls
+        GlasshouseDefaultAdapter(model=task_lm, rubric=rubric), logger, max_metric_calls
     )
     reflection_minibatch_size = min(3, len(trainset))
     with SuppressThirdPartyOutput():
@@ -479,8 +479,8 @@ except Exception as error:
     site = safe_optimization_failure_site(error)
     runtime_version = safe_gepa_runtime_version()
     if runtime_version:
-        sys.stderr.write(f"ASTRAEA_GEPA_RUNTIME {runtime_version}\n")
+        sys.stderr.write(f"GLASSHOUSE_GEPA_RUNTIME {runtime_version}\n")
     sys.stderr.write(
-        f"ASTRAEA_GEPA_FAILURE {kind}" + (f" {site}" if site else "")
+        f"GLASSHOUSE_GEPA_FAILURE {kind}" + (f" {site}" if site else "")
     )
     sys.exit(1)

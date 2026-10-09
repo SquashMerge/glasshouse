@@ -25,7 +25,7 @@ AS $$
 BEGIN
     IF TG_OP = 'DELETE' AND (
         project_deletion_is_authorized(OLD.project_id)
-        OR current_setting('astraea.dataset_retention_project_id', true) = OLD.project_id::text
+        OR current_setting('glasshouse.dataset_retention_project_id', true) = OLD.project_id::text
     ) THEN
         RETURN OLD;
     END IF;

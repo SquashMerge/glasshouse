@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0007_scores
+-- Glasshouse Postgres migrations: 0007_scores
 -- Top-level score stream. Scores can exist without a trace_id (e.g., heuristic
 -- evaluations against datasets). experiment_id is SET NULL on experiment deletion
 -- so scores survive experiment cleanup.

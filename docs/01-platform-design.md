@@ -1,14 +1,16 @@
-# Astraea Agent + LLM Evaluation Platform — Future Agent Registry Design
+# Glasshouse Agent + LLM Evaluation Platform — Future Agent Registry Design
 
 **Date:** July 4, 2026
-**Status:** Archived pre-roadmap research, not an implementation commitment. The detailed Agent Registry, framework, HTTP, CI/GitOps, drift, and rollback examples below are superseded by `docs/02-roadmap.md`; they do not define P4/P5 scope. Current Astraea ships the foundation-first configured-LLM Experiment and observability loop; see `docs/02-roadmap.md` and `docs/06-dataset-feedback-future.md`.
+**Status:** Archived pre-roadmap research, not an implementation commitment. The detailed Agent Registry, framework, HTTP, CI/GitOps, drift, and rollback examples below are superseded by `docs/02-roadmap.md`; they do not define P4/P5 scope. Historical product-name, feature, and licensing statements below are proposals, not current product or license terms. Current Glasshouse ships the foundation-first configured-LLM Experiment and observability loop; see `docs/02-roadmap.md`, `docs/06-dataset-feedback-future.md`, the repository-root `README.md`, and `LICENSE`.
 
 ---
 
 ## 1. The Wedge — "Manifest-bound eval of your real agent"
 
+**Historical product/licensing proposal only:** The following pitch predates the Glasshouse rename and BSL 1.1 adoption. It is not the current product roadmap or license. Current product and license terms are documented in the repository-root [README](../README.md) and [LICENSE](../LICENSE).
+
 **One-sentence pitch:**
-> "The OSS eval platform that calls your real deployed agent — prompts, tools, routing, guardrails bundled into one versioned manifest. Failures detected by deviation from manifest intent. Prompts + tools + routing optimized as one unit. GitOps-native, MIT-licensed, single-binary dev mode."
+> "The proposed OSS eval platform that would call your real deployed agent — prompts, tools, routing, guardrails bundled into one versioned manifest. Failures detected by deviation from manifest intent. Prompts + tools + routing optimized as one unit. GitOps-native, MIT-licensed, single-binary dev mode."
 
 **Refined after competitive research:**
 > "We call your real deployed agent — like Maxim, like Braintrust sandboxes, like LangSmith Deployment. But unlike them, your agent is a *versioned, typed entity* — `agent.yaml` captures prompts, tools, routing, and guardrails as one atomic unit. PRs change agents. CI runs evals against pinned versions. Drift between trace and manifest becomes a product surface, not a debug session."
@@ -26,11 +28,11 @@
 
 ### Tier 1 — Zero-config OTLP (60 seconds)
 ```bash
-# Current Astraea receiver configuration; replace these placeholders for your deployment.
+# Current Glasshouse receiver configuration; replace these placeholders for your deployment.
 AUTH=$(printf '%s:%s' "$UI_USERNAME" "$UI_PASSWORD" | base64)
 export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
-export ASTRAEA_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-astraea-project-id=$ASTRAEA_PROJECT_ID"
+export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 python my_agent.py    # works for any framework that emits OTel
 ```
 

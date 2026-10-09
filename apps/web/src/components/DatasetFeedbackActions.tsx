@@ -211,9 +211,10 @@ export function AddToDatasetDialog({
 							className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground"
 							role="status"
 						>
-							Astraea reads the selected source again on the server, applies the
-							active redaction policy, and saves an unpublished item for review.
-							Source text in this browser is never submitted as Dataset content.
+							Glasshouse reads the selected source again on the server, applies
+							the active redaction policy, and saves an unpublished item for
+							review. Source text in this browser is never submitted as Dataset
+							content.
 						</p>
 						{error && (
 							<p className="text-sm text-destructive" role="alert">

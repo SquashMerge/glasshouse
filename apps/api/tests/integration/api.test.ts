@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, mock } from "bun:test";
 
-const USER = "astraea";
+const USER = "glasshouse";
 const PASS = "secret";
 const AUTH = "Basic " + Buffer.from(`${USER}:${PASS}`).toString("base64");
 process.env.UI_USERNAME = USER;
@@ -168,7 +168,7 @@ describe("API integration: auth gate", () => {
 		const res = await apiApp.fetch(new Request("http://x/v1/traces"));
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toMatch(
-			/^Basic realm="astraea"/,
+			/^Basic realm="glasshouse"/,
 		);
 	});
 
@@ -562,7 +562,7 @@ describe("API integration: OTLP ingest", () => {
 		return {
 			authorization: AUTH,
 			"content-type": "application/json",
-			"x-astraea-project-id": projectId,
+			"x-glasshouse-project-id": projectId,
 		};
 	}
 
@@ -672,7 +672,7 @@ describe("API integration: OTLP ingest", () => {
 				authorization: AUTH,
 				"content-type": "application/json",
 			});
-			if (header) headers.set("x-astraea-project-id", header);
+			if (header) headers.set("x-glasshouse-project-id", header);
 
 			const res = await apiApp.fetch(
 				new Request("http://x/v1/otel/v1/traces", {
@@ -723,7 +723,7 @@ describe("API integration: OTLP ingest", () => {
 				body: JSON.stringify(
 					validOtlp({}, [
 						{
-							key: "astraea.project.id",
+							key: "glasshouse.project.id",
 							value: { stringValue: resourceProject },
 						},
 					]),
@@ -736,8 +736,8 @@ describe("API integration: OTLP ingest", () => {
 		expect(insertObservations).not.toHaveBeenCalled();
 	});
 
-	it("applies ASTRAEA_REDACT_INPUT=true when ingesting", async () => {
-		process.env.ASTRAEA_REDACT_INPUT = "true";
+	it("applies GLASSHOUSE_REDACT_INPUT=true when ingesting", async () => {
+		process.env.GLASSHOUSE_REDACT_INPUT = "true";
 		insertTraces.mockClear();
 		insertObservations.mockClear();
 		try {
@@ -763,7 +763,7 @@ describe("API integration: OTLP ingest", () => {
 			}>;
 			expect(traces[0]?.input_text).toBe("[REDACTED]");
 		} finally {
-			delete process.env.ASTRAEA_REDACT_INPUT;
+			delete process.env.GLASSHOUSE_REDACT_INPUT;
 		}
 	});
 

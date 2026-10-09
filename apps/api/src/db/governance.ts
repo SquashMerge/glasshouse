@@ -115,7 +115,7 @@ export async function deleteSafeDatasetRetentionBatch(
 ): Promise<{ deleted: number; skipped: number }> {
 	await lockProjectAuditProvenance(client, projectId);
 	await client.query(
-		"SELECT set_config('astraea.dataset_retention_run_id', $1, true), set_config('astraea.dataset_retention_owner_token', $2, true)",
+		"SELECT set_config('glasshouse.dataset_retention_run_id', $1, true), set_config('glasshouse.dataset_retention_owner_token', $2, true)",
 		[runId, ownerToken],
 	);
 	const result = await client.query<{ id: string | null; skipped: string }>(

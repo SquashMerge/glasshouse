@@ -425,7 +425,7 @@ describe("Evaluation Run admission", () => {
 
 	it("installs database fences for immutable run items and linked requester", () => {
 		expect(migration).toContain(
-			"current_setting('astraea.evaluation_run_admission_run_id', true)",
+			"current_setting('glasshouse.evaluation_run_admission_run_id', true)",
 		);
 		expect(migration).toContain(
 			"NEW.requested_by_actor_id IS DISTINCT FROM OLD.requested_by_actor_id",

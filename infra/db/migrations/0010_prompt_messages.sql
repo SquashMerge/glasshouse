@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0010_prompt_messages
+-- Glasshouse Postgres migrations: 0010_prompt_messages
 -- A prompt version holds its system and user messages together.
 
 DROP TRIGGER IF EXISTS prompts_role_immutable ON prompts;

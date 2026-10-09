@@ -1,4 +1,4 @@
--- Astraea ClickHouse schema: traces
+-- Glasshouse ClickHouse schema: traces
 -- Partition by month; sort key (organization_id, project_id, start_time, trace_id);
 -- skip indexes + bloom filters + tokenbf_v1 full-text per design doc §10.
 

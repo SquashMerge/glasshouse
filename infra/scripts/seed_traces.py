@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Seed a large number of OTLP traces into Astraea via POST /v1/otel/v1/traces.
+Seed a large number of OTLP traces into Glasshouse via POST /v1/otel/v1/traces.
 
 Three conventions are supported via --convention:
   - genai:        OTel GenAI semantic conventions (gen_ai.* attrs)
@@ -136,9 +136,9 @@ def prompt_provenance_attrs(agent_id: str) -> list[dict]:
     version, template = PROMPT_TEMPLATES[agent_id]
     content_hash = hashlib.sha256(template.encode("utf-8")).hexdigest()
     return [
-        make_attr("astraea.prompt.id", agent_id),
-        make_attr("astraea.prompt.version", version),
-        make_attr("astraea.prompt.content_hash", content_hash),
+        make_attr("glasshouse.prompt.id", agent_id),
+        make_attr("glasshouse.prompt.version", version),
+        make_attr("glasshouse.prompt.content_hash", content_hash),
     ]
 
 
@@ -328,7 +328,7 @@ def build_trace_payload(ctx: TraceContext, num_children: int, conv: str) -> dict
         "resource_spans": [{
             "resource": {"attributes": resource_attrs},
             "scope_spans": [{
-                "scope": {"name": "astraea-seed", "version": "1.0.0"},
+                "scope": {"name": "glasshouse-seed", "version": "1.0.0"},
                 "spans": spans,
             }],
         }],
@@ -391,7 +391,7 @@ def post_otlp(
         headers={
             "content-type": "application/json",
             "authorization": auth_header,
-            "x-astraea-project-id": project_id,
+            "x-glasshouse-project-id": project_id,
         },
     )
     try:
@@ -407,10 +407,10 @@ def post_otlp(
 
 def parse_args() -> argparse.Namespace:
     env = os.environ
-    p = argparse.ArgumentParser(description="Seed OTLP traces into Astraea.")
-    p.add_argument("--url", default=env.get("API_URL", "http://localhost:3000"), help="Astraea API base URL")
+    p = argparse.ArgumentParser(description="Seed OTLP traces into Glasshouse.")
+    p.add_argument("--url", default=env.get("API_URL", "http://localhost:3000"), help="Glasshouse API base URL")
     p.add_argument("--project-id", default=env.get("SEED_PROJECT_ID"), help="Target project UUID (default: authenticated org's default project)")
-    p.add_argument("--username", default=env.get("UI_USERNAME", "astraea"), help="Basic auth username")
+    p.add_argument("--username", default=env.get("UI_USERNAME", "glasshouse"), help="Basic auth username")
     p.add_argument("--password", default=env.get("UI_PASSWORD", ""), help="Basic auth password")
     p.add_argument("--count", type=int, default=int(env.get("SEED_COUNT", "100000")), help="Number of traces to seed")
     p.add_argument("--convention", choices=["genai", "openinference", "mixed"], default=env.get("SEED_CONVENTION", "mixed"), help="Attribute convention")
@@ -421,10 +421,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--concurrency", type=int, default=int(env.get("SEED_CONCURRENCY", "8")), help="Parallel OTLP requests in flight")
     p.add_argument("--dry-run", action="store_true", help="Build payloads but don't POST")
     p.add_argument("--reset", action="store_true", help="Truncate traces + observations tables before seeding (uses docker exec)")
-    p.add_argument("--clickhouse-container", default=env.get("CLICKHOUSE_CONTAINER", "astraea-clickhouse"), help="ClickHouse container name for --reset")
-    p.add_argument("--clickhouse-user", default=env.get("CLICKHOUSE_USER", "astraea"), help="ClickHouse user for --reset")
+    p.add_argument("--clickhouse-container", default=env.get("CLICKHOUSE_CONTAINER", "glasshouse-clickhouse"), help="ClickHouse container name for --reset")
+    p.add_argument("--clickhouse-user", default=env.get("CLICKHOUSE_USER", "glasshouse"), help="ClickHouse user for --reset")
     p.add_argument("--clickhouse-password", default=env.get("CLICKHOUSE_PASSWORD", ""), help="ClickHouse password for --reset")
-    p.add_argument("--clickhouse-db", default=env.get("CLICKHOUSE_DB", "astraea"), help="ClickHouse database for --reset")
+    p.add_argument("--clickhouse-db", default=env.get("CLICKHOUSE_DB", "glasshouse"), help="ClickHouse database for --reset")
     p.add_argument("--seed", type=int, default=None, help="RNG seed for reproducible output")
     return p.parse_args()
 

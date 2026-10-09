@@ -4,7 +4,7 @@ import { invokeConfiguredLlm } from "../../src/lib/llm";
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalBase = process.env.OPENAI_API_BASE;
-const originalDevCommand = process.env.ASTRAEA_DEV_LLM_COMMAND;
+const originalDevCommand = process.env.GLASSHOUSE_DEV_LLM_COMMAND;
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
@@ -13,8 +13,8 @@ afterEach(() => {
 	if (originalBase === undefined) delete process.env.OPENAI_API_BASE;
 	else process.env.OPENAI_API_BASE = originalBase;
 	if (originalDevCommand === undefined)
-		delete process.env.ASTRAEA_DEV_LLM_COMMAND;
-	else process.env.ASTRAEA_DEV_LLM_COMMAND = originalDevCommand;
+		delete process.env.GLASSHOUSE_DEV_LLM_COMMAND;
+	else process.env.GLASSHOUSE_DEV_LLM_COMMAND = originalDevCommand;
 });
 
 test("passes the immutable OpenAI execution defaults and stable dispatch headers", async () => {
@@ -41,14 +41,14 @@ test("passes the immutable OpenAI execution defaults and stable dispatch headers
 			system_prompt: "Use the pinned rubric.",
 		},
 		undefined,
-		"astraea:experiment_task:task-id:provider_dispatch:1",
+		"glasshouse:experiment_task:task-id:provider_dispatch:1",
 	);
 
 	expect(new Headers(request?.headers).get("idempotency-key")).toBe(
-		"astraea:experiment_task:task-id:provider_dispatch:1",
+		"glasshouse:experiment_task:task-id:provider_dispatch:1",
 	);
 	expect(new Headers(request?.headers).get("x-client-request-id")).toBe(
-		"astraea:experiment_task:task-id:provider_dispatch:1",
+		"glasshouse:experiment_task:task-id:provider_dispatch:1",
 	);
 	expect(JSON.parse(String(request?.body))).toEqual({
 		model: "test-model",
@@ -62,21 +62,21 @@ test("passes the immutable OpenAI execution defaults and stable dispatch headers
 });
 
 test("passes the stable logical dispatch key to the development CLI", async () => {
-	process.env.ASTRAEA_DEV_LLM_COMMAND = JSON.stringify([
+	process.env.GLASSHOUSE_DEV_LLM_COMMAND = JSON.stringify([
 		process.execPath,
 		"-e",
-		"process.stdout.write(process.env.ASTRAEA_PROVIDER_DISPATCH_KEY ?? '')",
+		"process.stdout.write(process.env.GLASSHOUSE_PROVIDER_DISPATCH_KEY ?? '')",
 	]);
 
 	const response = await invokeConfiguredLlm(
 		{ question: "test" },
 		{ provider: "codex_cli", model: "test-model" },
 		undefined,
-		"astraea:experiment_task:task-id:provider_dispatch:1",
+		"glasshouse:experiment_task:task-id:provider_dispatch:1",
 	);
 
 	expect(response.output).toEqual({
-		value: "astraea:experiment_task:task-id:provider_dispatch:1",
+		value: "glasshouse:experiment_task:task-id:provider_dispatch:1",
 	});
 });
 

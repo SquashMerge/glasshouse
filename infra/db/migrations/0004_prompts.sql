@@ -1,4 +1,4 @@
--- Astraea Postgres migrations: 0004_prompts
+-- Glasshouse Postgres migrations: 0004_prompts
 -- Prompts, their versions, and label bindings (production/staging/development).
 
 CREATE TABLE IF NOT EXISTS prompts (

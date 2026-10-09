@@ -6,21 +6,21 @@
 # Don't run `make dev` (full stack) at the same time as `make deps-up` — the
 # ports collide.
 
-name: astraea-deps
+name: glasshouse-deps
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: astraea-postgres
+    container_name: glasshouse-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in infra/.env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in infra/.env}
-      POSTGRES_DB: ${POSTGRES_DB:-astraea}
+      POSTGRES_DB: ${POSTGRES_DB:-glasshouse}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - astraea_pg_data:/var/lib/postgresql/data
+      - glasshouse_pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -29,13 +29,13 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
-    container_name: astraea-clickhouse
+    container_name: glasshouse-clickhouse
     restart: unless-stopped
     platform: linux/amd64
     cap_add:
       - SYS_NICE
     environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-astraea}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-glasshouse}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:?CLICKHOUSE_USER must be set in infra/.env}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set in infra/.env}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
@@ -43,7 +43,7 @@ services:
       - "127.0.0.1:${CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
     volumes:
-      - astraea_ch_data:/var/lib/clickhouse
+      - glasshouse_ch_data:/var/lib/clickhouse
     ulimits:
       nofile:
         soft: 262144
@@ -57,7 +57,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    container_name: astraea-valkey
+    container_name: glasshouse-valkey
     restart: unless-stopped
     command:
       - valkey-server
@@ -68,17 +68,21 @@ services:
       - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
     volumes:
       - ./valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
-      - astraea_valkey_data:/data
+      - glasshouse_valkey_data:/data
     healthcheck:
       test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+# Preserve existing physical stores while the logical service names are Glasshouse.
 volumes:
-  astraea_pg_data:
+  glasshouse_pg_data:
+    name: astraea-deps_astraea_pg_data
     driver: local
-  astraea_ch_data:
+  glasshouse_ch_data:
+    name: astraea-deps_astraea_ch_data
     driver: local
-  astraea_valkey_data:
+  glasshouse_valkey_data:
+    name: astraea-deps_astraea_valkey_data
     driver: local
