@@ -321,12 +321,14 @@ describe("AppShell project selector", () => {
 			"h-12",
 			"w-12",
 		);
+		const brandLink = screen.getByRole("link", { name: "Glasshouse home" });
+		const brandIcon = brandLink.querySelector("img");
+		expect(brandIcon).toHaveAttribute("src", "/brand/glasshouse-icon.png");
+		expect(brandIcon).toHaveClass("h-10", "w-10");
+		expect(brandIcon).not.toHaveClass("hidden");
 		expect(
-			screen
-				.getByRole("link", { name: "Glasshouse home" })
-				.querySelector("img"),
-		).toHaveAttribute("src", "/brand/glasshouse-logo-dark-v1.png");
-		expect(screen.getByText("Glasshouse", { exact: true })).toBeInTheDocument();
+			screen.queryByText("Glasshouse", { exact: true }),
+		).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: "Collapse sidebar" }),
 		).toHaveClass("max-sm:!hidden");
@@ -350,7 +352,7 @@ describe("AppShell project selector", () => {
 		expect(container.querySelector("aside")).not.toHaveClass("overflow-hidden");
 	});
 
-	it("uses a text-only product label when the sidebar is collapsed", () => {
+	it("keeps icon-only branding visible when the sidebar is collapsed", () => {
 		window.localStorage.setItem("glasshouse.nav.collapsed", "1");
 		render(
 			<AppShell currentPath="/">
@@ -362,17 +364,14 @@ describe("AppShell project selector", () => {
 			"h-12",
 			"w-12",
 		);
+		const brandLink = screen.getByRole("link", { name: "Glasshouse home" });
+		const brandIcon = brandLink.querySelector("img");
+		expect(brandIcon).toHaveAttribute("src", "/brand/glasshouse-icon.png");
+		expect(brandIcon).toHaveClass("h-10", "w-10");
+		expect(brandIcon).not.toHaveClass("hidden");
 		expect(
-			screen
-				.getByRole("link", { name: "Glasshouse home" })
-				.querySelector("img"),
-		).toHaveAttribute("src", "/brand/glasshouse-logo-dark-v1.png");
-		expect(screen.getByText("Glasshouse", { exact: true })).toBeInTheDocument();
-		expect(
-			screen
-				.getByRole("link", { name: "Glasshouse home" })
-				.querySelector("img"),
-		).toHaveClass("hidden");
+			screen.queryByText("Glasshouse", { exact: true }),
+		).not.toBeInTheDocument();
 	});
 
 	it("uses the shared full-width workspace class for authenticated pages", () => {
