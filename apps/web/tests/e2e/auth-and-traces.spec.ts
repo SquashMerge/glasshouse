@@ -301,20 +301,53 @@ test.describe("Shared app workspace", () => {
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 		await selectAccessibleProject(page);
+
+		const sidebar = page.getByLabel("Primary");
+		const desktopHome = sidebar.getByRole("link", { name: "Glasshouse home" });
+		const desktopIcon = desktopHome.locator("img");
+		await expect(desktopIcon).toBeVisible();
+		await expect(
+			desktopHome.getByText("Glasshouse", { exact: true }),
+		).toHaveCount(0);
+		await expect(desktopIcon).toHaveAttribute(
+			"src",
+			"/brand/glasshouse-icon.png",
+		);
+		await sidebar.getByRole("button", { name: "Collapse sidebar" }).click();
+		await expect(desktopIcon).toBeVisible();
+		const collapsedSidebarBounds = await sidebar.boundingBox();
+		const collapsedIconBounds = await desktopIcon.boundingBox();
+		expect(collapsedSidebarBounds).not.toBeNull();
+		expect(collapsedIconBounds).not.toBeNull();
+		expect(
+			Math.abs(
+				collapsedIconBounds!.x +
+					collapsedIconBounds!.width / 2 -
+					(collapsedSidebarBounds!.x + collapsedSidebarBounds!.width / 2),
+			),
+		).toBeLessThanOrEqual(1);
+		await sidebar.getByRole("button", { name: "Expand sidebar" }).click();
+		await expect(desktopIcon).toBeVisible();
+
 		await page.setViewportSize({ width: 375, height: 812 });
 		await page.goto("/");
 
-		const sidebar = page.getByLabel("Primary");
-		const home = sidebar.getByRole("link", { name: "Glasshouse home" });
-		const projectControl = sidebar.getByRole("button", {
+		const mobileSidebar = page.getByLabel("Primary");
+		const home = mobileSidebar.getByRole("link", { name: "Glasshouse home" });
+		const projectControl = mobileSidebar.getByRole("button", {
 			name: /Current project: (?!No project selected).+\. Switch project/,
 		});
-		await expect(sidebar).toBeVisible();
-		await expect(home.getByText("Glasshouse", { exact: true })).toBeVisible();
-		await expect(home.locator("img")).toBeHidden();
+		await expect(mobileSidebar).toBeVisible();
+		const brandIcon = home.locator("img");
+		await expect(brandIcon).toBeVisible();
+		await expect(brandIcon).toHaveAttribute(
+			"src",
+			"/brand/glasshouse-icon.png",
+		);
+		await expect(home.getByText("Glasshouse", { exact: true })).toHaveCount(0);
 		await expect(projectControl).toBeVisible();
 
-		const sidebarBounds = await sidebar.boundingBox();
+		const sidebarBounds = await mobileSidebar.boundingBox();
 		expect(sidebarBounds).not.toBeNull();
 		const homeBounds = await home.boundingBox();
 		expect(homeBounds).not.toBeNull();
@@ -337,7 +370,7 @@ test.describe("Shared app workspace", () => {
 				"Feedback",
 				"Observability",
 				"Prompts",
-			].map((label) => sidebar.getByRole("link", { name: label })),
+			].map((label) => mobileSidebar.getByRole("link", { name: label })),
 		]) {
 			const bounds = await target.boundingBox();
 			expect(bounds).not.toBeNull();
@@ -353,7 +386,7 @@ test.describe("Shared app workspace", () => {
 		}
 
 		expect(
-			await sidebar.evaluate(
+			await mobileSidebar.evaluate(
 				(element) => element.scrollWidth <= element.clientWidth,
 			),
 		).toBe(true);
@@ -390,13 +423,16 @@ test.describe("Dashboard basics", () => {
 		await page.getByRole("button", { name: /Sign in/i }).click();
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
-		const brandLogo = page.locator(
-			'img[src="/brand/glasshouse-logo-dark-v1.png"]',
-		);
+		const brandLogo = page.locator('img[src="/brand/glasshouse-icon.png"]');
 		await expect(brandLogo).toBeVisible();
 		expect(
 			await brandLogo.evaluate((image: HTMLImageElement) => image.naturalWidth),
-		).toBe(1254);
+		).toBeGreaterThan(0);
+		await expect(
+			page
+				.getByRole("link", { name: "Glasshouse home" })
+				.getByText("Glasshouse", { exact: true }),
+		).toHaveCount(0);
 		expect(errors, `console errors observed: ${errors.join("\n")}`).toEqual([]);
 	});
 

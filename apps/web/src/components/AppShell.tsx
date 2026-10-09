@@ -122,7 +122,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						"flex shrink-0 items-center border-b border-border",
 						collapsed
 							? "h-14 justify-center px-1"
-							: "h-14 justify-center px-1 sm:h-32 sm:justify-between sm:px-4",
+							: "h-14 justify-center px-1 sm:justify-between sm:px-3",
 					)}
 				>
 					<Link
@@ -132,30 +132,17 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						title="Glasshouse home"
 						className={cn(
 							"flex shrink-0 items-center justify-center rounded-md font-semibold tracking-tight transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-							collapsed
-								? "h-12 w-12"
-								: "h-12 w-12 sm:h-28 sm:w-28 sm:justify-start",
+							collapsed ? "h-12 w-12" : "h-12 w-12 sm:justify-start",
 						)}
 					>
 						<img
-							src="/brand/glasshouse-logo-dark-v1.png"
+							src="/brand/glasshouse-icon.png"
 							alt=""
 							aria-hidden="true"
-							width={1254}
-							height={1254}
-							className={cn(
-								"hidden shrink-0 object-contain",
-								!collapsed && "sm:block sm:h-28 sm:w-28",
-							)}
+							width={570}
+							height={560}
+							className="h-10 w-10 shrink-0 object-contain"
 						/>
-						<span
-							className={cn(
-								"whitespace-nowrap text-[8px] leading-[10px]",
-								!collapsed && "sm:hidden",
-							)}
-						>
-							Glasshouse
-						</span>
 					</Link>
 					{!collapsed && (
 						<Button
