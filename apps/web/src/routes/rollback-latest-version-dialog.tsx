@@ -13,7 +13,7 @@ export function RollbackLatestVersionDialog({
 	onConfirm: () => void;
 }) {
 	return (
-		<DialogOverlay onMouseDown={onClose}>
+		<DialogOverlay onEscape={() => !pending && onClose()} onMouseDown={onClose}>
 			<DialogContent
 				role="dialog"
 				aria-modal="true"

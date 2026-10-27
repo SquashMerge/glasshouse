@@ -286,7 +286,14 @@ export function ProjectsPage() {
 				</section>
 			)}
 			{deleting && (
-				<DialogOverlay>
+				<DialogOverlay
+					onEscape={() => {
+						if (!deleteMutation.isPending) {
+							setDeleting(null);
+							setConfirmationName("");
+						}
+					}}
+				>
 					<DialogContent
 						className="max-w-md space-y-4"
 						role="dialog"
@@ -502,7 +509,7 @@ function ProjectList({
 						</span>
 					)}
 					{canManage(project) && (
-						<div className="flex gap-2">
+						<div className="flex flex-wrap gap-2">
 							<Button
 								type="button"
 								variant="outline"

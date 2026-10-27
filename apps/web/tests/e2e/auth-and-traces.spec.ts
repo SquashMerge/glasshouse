@@ -218,6 +218,7 @@ test.describe("Shared app workspace", () => {
 			{ path: "/datasets", content: "Datasets" },
 			{ path: "/evaluations", content: "Evaluations" },
 			{ path: "/feedback", content: "Feedback" },
+			{ path: "/projects", content: "Projects" },
 		];
 		const viewports = [
 			{ width: 2560, height: 1440 },
@@ -255,6 +256,13 @@ test.describe("Shared app workspace", () => {
 
 				if (viewport.width === 1920) {
 					expect(bounds!.width).toBeGreaterThan(1600);
+				}
+
+				if (!route.hasWideTable && viewport.width <= 768) {
+					const documentWidth = await page.evaluate(
+						() => document.documentElement.scrollWidth,
+					);
+					expect(documentWidth).toBeLessThanOrEqual(viewport.width + 1);
 				}
 
 				if (viewport.width <= 375 && route.hasWideTable) {
