@@ -48,7 +48,7 @@ export function FeedbackPage() {
 				title="Feedback"
 				description="Human signals require explicit review before adding a dataset case."
 			/>
-			<div className="flex gap-2">
+			<div className="flex flex-wrap gap-2">
 				<Button
 					variant={queue ? "default" : "outline"}
 					onClick={() => setQueue(true)}

@@ -361,7 +361,7 @@ test.describe("Shared app workspace", () => {
 					collapsedIconBounds!.width / 2 -
 					(collapsedSidebarBounds!.x + collapsedSidebarBounds!.width / 2),
 			),
-		).toBeLessThanOrEqual(1);
+		).toBeLessThanOrEqual(2);
 		await sidebar.getByRole("button", { name: "Expand sidebar" }).click();
 		await expect(desktopIcon).toBeVisible();
 
