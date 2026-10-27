@@ -136,6 +136,17 @@ jobs:
           up --detach --wait --wait-timeout 180 postgres clickhouse
       - name: Back up, restore, and verify representative rows
         run: bash infra/scripts/test-backup-restore-integration.sh
+      - name: Dump restore-target ClickHouse diagnostics
+        if: failure()
+        run: |
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY" \
+            --env-file "$RESTORE_TARGET_ENV_FILE" \
+            --project-name "$RESTORE_TARGET_COMPOSE_PROJECT" \
+            -f "$RESTORE_TARGET_COMPOSE_FILE" ps --all || true
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY" \
+            --env-file "$RESTORE_TARGET_ENV_FILE" \
+            --project-name "$RESTORE_TARGET_COMPOSE_PROJECT" \
+            -f "$RESTORE_TARGET_COMPOSE_FILE" logs --no-color --tail=200 clickhouse || true
       - name: Stop isolated database projects
         if: always()
         run: |
