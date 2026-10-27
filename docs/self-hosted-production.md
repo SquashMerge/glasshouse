@@ -8,10 +8,12 @@ separate from the development workflow: `make dev`, `infra/compose.yaml`, and
 
 Run `infra/compose.production.yaml` from the repository root with a deployment
 environment file. PostgreSQL, ClickHouse, and Valkey have no host port
-bindings and are reachable only by the API on the private Compose network.
-The API and web server bind to `127.0.0.1` by default; they are not published
-to all host interfaces. Place an operator-managed TLS reverse proxy in front
-of those loopback ports and expose only the intended HTTPS origin.
+bindings. They share Compose's private default network with the other services;
+the API is configured to use them, though any container on that network can
+reach their service ports. The API and web server bind to `127.0.0.1` by default;
+they are not published to all host interfaces. Place an operator-managed TLS
+reverse proxy in front of those loopback ports and expose only the intended
+HTTPS origin.
 
 The proxy must route `/` to the web service and `/v1`, `/health`, and any
 OpenAPI/reference routes that operators choose to expose to the API. Do not
