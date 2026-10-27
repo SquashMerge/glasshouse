@@ -549,6 +549,8 @@ test("runs a pinned Evaluation and retains its results after navigation", async 
 		{ question: "deterministic-evaluation-question" },
 		expected,
 	);
+	await page.getByRole("button", { name: "Mark reviewed" }).click();
+	await expect(page.getByText("Reviewed", { exact: true })).toBeVisible();
 	await publishDatasetVersionInBrowser(page);
 
 	const name = unique("Deterministic Evaluation");
