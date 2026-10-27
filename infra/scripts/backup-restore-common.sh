@@ -37,6 +37,38 @@ print(value)
 ' "$service" "$key"
 }
 
+create_clickhouse_client_config() {
+	local service="$1"
+	local user="$2"
+	local password="$3"
+	shift 3
+	local path
+	path="$("$@" exec -T "$service" sh -ec 'umask 077; mktemp /tmp/glasshouse-clickhouse-client.XXXXXX')"
+	if [[ ! "$path" =~ ^/tmp/glasshouse-clickhouse-client\.[A-Za-z0-9]+$ ]]; then
+		printf 'Failed to create a private ClickHouse client config.\n' >&2
+		return 1
+	fi
+	if ! printf '%s\0%s' "$user" "$password" | python3 -c '
+import sys
+from xml.sax.saxutils import escape
+
+user, password = sys.stdin.buffer.read().decode().split("\0", 1)
+sys.stdout.write(f"<clickhouse><user>{escape(user)}</user><password>{escape(password)}</password></clickhouse>\n")
+' | "$@" exec -T "$service" sh -ec 'cat > "$1"; chmod 600 "$1"' sh "$path"; then
+		"$@" exec -T "$service" sh -ec 'rm -f -- "$1"' sh "$path" >/dev/null 2>&1 || true
+		return 1
+	fi
+	printf '%s\n' "$path"
+}
+
+remove_clickhouse_client_config() {
+	local service="$1"
+	local path="$2"
+	shift 2
+	[[ "$path" =~ ^/tmp/glasshouse-clickhouse-client\.[A-Za-z0-9]+$ ]] || return 0
+	"$@" exec -T "$service" sh -ec 'rm -f -- "$1"' sh "$path" >/dev/null 2>&1 || true
+}
+
 inspect_compose_project() {
 	docker inspect --format='{{index .Config.Labels "com.docker.compose.project"}}' "$1"
 }

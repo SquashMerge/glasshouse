@@ -19,6 +19,26 @@ with zipfile.ZipFile(pathlib.Path(sys.argv[1]), "w") as archive:
 PY
 (cd "$tmp/artifact" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" --validate-only >/dev/null
+cp "$tmp/artifact/clickhouse.zip" "$tmp/valid-clickhouse.zip"
+python3 - "$tmp/artifact/clickhouse.zip" <<'PY'
+import pathlib
+import sys
+import zipfile
+
+with zipfile.ZipFile(pathlib.Path(sys.argv[1]), "w") as archive:
+    archive.writestr("metadata.txt", "tampered but valid zip\n")
+PY
+(cd "$tmp/artifact" && sha256sum postgres.dump > SHA256SUMS)
+if BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" --validate-only >"$tmp/missing-checksum-output" 2>&1; then
+	printf 'artifact without a ClickHouse checksum was accepted\n' >&2
+	exit 1
+fi
+if ! grep -q 'checksum' "$tmp/missing-checksum-output"; then
+	printf 'missing checksum refusal did not identify the checksum check\n' >&2
+	exit 1
+fi
+cp "$tmp/valid-clickhouse.zip" "$tmp/artifact/clickhouse.zip"
+(cd "$tmp/artifact" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 printf z >> "$tmp/artifact/clickhouse.zip"
 if BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" --validate-only >"$tmp/corrupt-output" 2>&1; then
 	printf 'corrupt artifact was accepted\n' >&2
@@ -45,7 +65,30 @@ if RESTORE_TARGET_ID=source RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO source' 
 fi
 if ! grep -q 'differ from source identity' "$tmp/output"; then
 	printf 'unsafe target refusal did not identify the source-identity check\n' >&2
- exit 1
+	 exit 1
+fi
+python3 - "$root_dir/infra/scripts/restore.sh" <<'PY'
+from pathlib import Path
+import sys
+
+restore = Path(sys.argv[1]).read_text()
+if "relnamespace = 'public'::regnamespace" in restore:
+    raise SystemExit("PostgreSQL empty-target guard is restricted to public")
+if "pg_namespace" not in restore or "information_schema" not in restore:
+    raise SystemExit("PostgreSQL empty-target guard must inspect user schemas")
+if "relkind IN ('r','p','v','m','S','f','c')" not in restore:
+    raise SystemExit("PostgreSQL empty-target guard must include all restorable relations")
+for catalog in ("pg_proc", "pg_type", "pg_largeobject_metadata"):
+    if catalog not in restore:
+        raise SystemExit(f"PostgreSQL empty-target guard must include user objects from {catalog}")
+PY
+if grep -Eq -- 'clickhouse-client.*--password' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh"; then
+	printf 'ClickHouse passwords must not be passed in process arguments\n' >&2
+	exit 1
+fi
+if grep -Fq 'env "PGPASSWORD=$pg_password"' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh"; then
+	printf 'PostgreSQL passwords must not be passed as docker exec arguments\n' >&2
+	exit 1
 fi
 
 mkdir -p "$tmp/source/infra" "$tmp/target/infra" "$tmp/bin"
@@ -76,4 +119,35 @@ PATH="$tmp/bin:$PATH" bash -c '
   [[ "$(compose_service_value target-postgres POSTGRES_PASSWORD "${target_compose[@]}")" == target_password ]]
   [[ "$(compose_service_value target-clickhouse CLICKHOUSE_DB "${target_compose[@]}")" == target_ch_db ]]
 ' _ "$root_dir" "$tmp"
+mkdir -p "$tmp/secure-bin"
+cat > "$tmp/secure-bin/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\0' "$@" > "$CLICKHOUSE_DOCKER_ARGS"
+if [[ "$*" == *'mktemp /tmp/glasshouse-clickhouse-client.XXXXXX'* ]]; then
+    printf '%s\n' "$CLICKHOUSE_CONFIG_PATH"
+else
+    cat > "$CLICKHOUSE_CONFIG_CAPTURE"
+fi
+SH
+chmod 700 "$tmp/secure-bin/docker"
+PATH="$tmp/secure-bin:$PATH" CLICKHOUSE_DOCKER_ARGS="$tmp/clickhouse-argv" CLICKHOUSE_CONFIG_CAPTURE="$tmp/clickhouse-client.xml" CLICKHOUSE_CONFIG_PATH=/tmp/glasshouse-clickhouse-client.fixture123 bash -c '
+  set -euo pipefail
+  source "$1/infra/scripts/backup-restore-common.sh"
+  config="$(create_clickhouse_client_config clickhouse fixture-user "fixture<&>password" docker compose --project-name fixture)"
+  [[ "$config" == "$CLICKHOUSE_CONFIG_PATH" ]]
+' _ "$root_dir"
+python3 - "$tmp/clickhouse-argv" "$tmp/clickhouse-client.xml" <<'PY'
+from pathlib import Path
+import sys
+
+arguments = Path(sys.argv[1]).read_bytes().split(b"\0")
+config = Path(sys.argv[2]).read_text()
+if any(b"fixture<&>password" in argument for argument in arguments):
+    raise SystemExit("ClickHouse password appeared in Docker process arguments")
+if "<password>fixture&lt;&amp;&gt;password</password>" not in config:
+    raise SystemExit("ClickHouse config did not preserve an XML-escaped password")
+if not any(b"chmod 600" in argument for argument in arguments):
+    raise SystemExit("ClickHouse client config is not created with mode 0600")
+PY
 printf 'backup/restore safety checks passed\n'

@@ -30,6 +30,8 @@ if [[ ! "$backup_id" =~ ^[A-Za-z0-9._-]+$ || ! "$pg_database" =~ ^[A-Za-z0-9_]+$
 	printf 'Backup ID and database names must use only safe ASCII identifier characters.\n' >&2
 	exit 1
 fi
+ch_remote="/var/lib/clickhouse/backup/glasshouse-${backup_id}-$$.zip"
+ch_client_config=""
 
 if [[ "$destination" != /* ]]; then
 	destination="$root_dir/$destination"
@@ -42,24 +44,28 @@ final="$destination/$backup_id"
 mkdir "$staging"
 chmod 700 "$staging"
 cleanup() {
+	if [[ -n "$ch_client_config" ]]; then
+		remove_clickhouse_client_config "$ch_service" "$ch_client_config" "${compose[@]}"
+	fi
+	"${compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote" >/dev/null 2>&1 || true
 	rm -rf -- "$staging"
 }
 trap cleanup EXIT
+ch_client_config="$(create_clickhouse_client_config "$ch_service" "$ch_user" "$ch_password" "${compose[@]}")"
 
 printf 'Creating PostgreSQL backup...\n'
-"${compose[@]}" exec -T "$pg_service" env "PGPASSWORD=$pg_password" pg_dump --format=custom --no-owner --no-privileges --username="$pg_user" "$pg_database" > "$staging/postgres.dump"
+PGPASSWORD="$pg_password" "${compose[@]}" exec -T -e PGPASSWORD "$pg_service" pg_dump --no-password --format=custom --no-owner --no-privileges --username="$pg_user" "$pg_database" > "$staging/postgres.dump"
 chmod 600 "$staging/postgres.dump"
 
-ch_remote="/var/lib/clickhouse/backup/glasshouse-${backup_id}-$$.zip"
 printf 'Creating ClickHouse backup...\n'
 "${compose[@]}" exec -T "$ch_service" sh -ec 'mkdir -p /var/lib/clickhouse/backup && rm -f -- "$1"' sh "$ch_remote"
-"${compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "$ch_password" --database "$ch_database" --query "BACKUP DATABASE \`$ch_database\` TO File('$ch_remote')"
+"${compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query "BACKUP DATABASE \`$ch_database\` TO File('$ch_remote')"
 "${compose[@]}" cp "$ch_service:$ch_remote" "$staging/clickhouse.zip"
 "${compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote"
 chmod 600 "$staging/clickhouse.zip"
 
-pg_version="$("${compose[@]}" exec -T "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT current_setting('server_version')" | tr -d '\r' | tr -d '[:space:]')"
-ch_version="$("${compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "$ch_password" --query='SELECT version()' | tr -d '\r' | tr -d '[:space:]')"
+pg_version="$(PGPASSWORD="$pg_password" "${compose[@]}" exec -T -e PGPASSWORD "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT current_setting('server_version')" | tr -d '\r' | tr -d '[:space:]')"
+ch_version="$("${compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --query='SELECT version()' | tr -d '\r' | tr -d '[:space:]')"
 
 (cd "$staging" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 chmod 600 "$staging/SHA256SUMS"
@@ -120,5 +126,6 @@ if [[ -e "$final" ]]; then
 	exit 1
 fi
 mv -- "$staging" "$final"
+cleanup
 trap - EXIT
 printf 'Backup complete: %s\n' "$final"

@@ -4,7 +4,7 @@ These commands are repository-supported operator tooling for the durable Glassho
 
 ## Backup
 
-Install the client/runtime prerequisites used by the operator host: Docker Compose v2, GNU Make, `python3`, `sha256sum`, and a running repository stack. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; no password is passed on the command line to PostgreSQL, and command output never includes credentials.
+Install the client/runtime prerequisites used by the operator host: Docker Compose v2, GNU Make, `python3`, `sha256sum`, and a running repository stack. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
 
 Choose a destination with restrictive permissions. The destination can be a local disk, an encrypted mounted filesystem, or an operator-managed object-storage sync target. The script itself writes only to a local filesystem path.
 
@@ -32,9 +32,9 @@ Valkey is disposable coordination/cache state and is intentionally not included.
 
 ## Isolated restore
 
-Restore is never an in-place repair command. Prepare a stopped or separately running target deployment in a different directory and Compose project. Its PostgreSQL and ClickHouse volumes must have unique names and must not be bind mounts or named volumes used by the live/source stack. The target database must be empty except for the server’s system objects and the ClickHouse schema-migration bookkeeping table. Do not use the source `infra/compose.yaml` as the target file. Do not delete volumes or databases to make a target empty.
+Restore is never an in-place repair command. Prepare a stopped or separately running target deployment in a different directory and Compose project. Its PostgreSQL and ClickHouse volumes must have unique names and must not be bind mounts or named volumes used by the live/source stack. Both target databases must be empty except for server system objects and the PostgreSQL `pgmigrations` / ClickHouse `glasshouse_schema_migrations` bookkeeping tables. Do not use the source `infra/compose.yaml` as the target file. Do not delete volumes or databases to make a target empty.
 
-The target Compose file must use the same supported service images, and its `infra/.env` must contain target-only credentials. Start only the isolated target data services, then run:
+The target Compose file must use the same supported service images, and the selected target environment file must contain target-only credentials; it may be the default `infra/.env` or an external secret file passed via `RESTORE_TARGET_ENV_FILE`. Start only the isolated target data services, then run:
 
 ```sh
 BACKUP_ARTIFACT=/secure/glasshouse-backups/20261027T120000Z-1234 \

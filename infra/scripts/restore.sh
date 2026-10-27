@@ -46,10 +46,21 @@ if not zipfile.is_zipfile(archive):
 with zipfile.ZipFile(archive) as clickhouse_archive:
     if clickhouse_archive.testzip() is not None:
         raise SystemExit("clickhouse.zip contains corrupt data")
+expected = {"postgres.dump", "clickhouse.zip"}
+checksums = {}
 for line in (root / "SHA256SUMS").read_text().splitlines():
-    digest, name = line.split("  ", 1)
-    if name not in {"postgres.dump", "clickhouse.zip"}:
-        raise SystemExit(f"unexpected checksum entry: {name}")
+    try:
+        digest, name = line.split("  ", 1)
+    except ValueError:
+        raise SystemExit("malformed SHA256SUMS entry")
+    if name not in expected or name in checksums:
+        raise SystemExit(f"unexpected or duplicate checksum entry: {name}")
+    if len(digest) != 64 or any(char not in "0123456789abcdefABCDEF" for char in digest):
+        raise SystemExit(f"malformed checksum for: {name}")
+    checksums[name] = digest.lower()
+if set(checksums) != expected:
+    raise SystemExit("SHA256SUMS must contain exactly one checksum for each backup file")
+for name, digest in checksums.items():
     if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:
         raise SystemExit(f"checksum mismatch: {name}")
 PY
@@ -139,18 +150,46 @@ if [[ ! "$pg_database" =~ ^[A-Za-z0-9_]+$ || ! "$ch_database" =~ ^[A-Za-z0-9_]+$
 	printf 'Restore database names must use only safe ASCII identifier characters.\n' >&2
 	exit 1
 fi
-pg_tables="$("${target_compose[@]}" exec -T "$pg_service" env "PGPASSWORD=$pg_password" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r','p') AND relname NOT IN ('pgmigrations');" | tr -d '[:space:]')"
-ch_tables="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "$ch_password" --database "$ch_database" --query="SELECT count() FROM system.tables WHERE database = '$ch_database' AND name != 'glasshouse_schema_migrations'" | tr -d '[:space:]')"
+ch_remote="/var/lib/clickhouse/backup/restore-${target_id}-$$.zip"
+ch_client_config=""
+restore_cleanup() {
+	if [[ -n "$ch_client_config" ]]; then
+		remove_clickhouse_client_config "$ch_service" "$ch_client_config" "${target_compose[@]}"
+	fi
+	"${target_compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote" >/dev/null 2>&1 || true
+}
+trap restore_cleanup EXIT
+ch_client_config="$(create_clickhouse_client_config "$ch_service" "$ch_user" "$ch_password" "${target_compose[@]}")"
+pg_empty_query="$(cat <<'SQL'
+SELECT
+  (SELECT count(*) FROM pg_namespace
+   WHERE nspname NOT IN ('pg_catalog','information_schema','public')
+     AND nspname NOT LIKE 'pg_toast%'
+     AND nspname NOT LIKE 'pg_temp%')
+  + (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+       AND n.nspname NOT LIKE 'pg_toast%'
+       AND n.nspname NOT LIKE 'pg_temp%'
+       AND c.relkind IN ('r','p','v','m','S','f','c')
+       AND NOT (n.nspname = 'public' AND c.relname = 'pgmigrations'))
+  + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public')
+  + (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE n.nspname = 'public' AND t.typname NOT IN ('pgmigrations','_pgmigrations'))
+  + (SELECT count(*) FROM pg_largeobject_metadata);
+SQL
+)"
+pg_tables="$(PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="$pg_empty_query" | tr -d '[:space:]')"
+ch_tables="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query="SELECT count() FROM system.tables WHERE database = '$ch_database' AND name != 'glasshouse_schema_migrations'" | tr -d '[:space:]')"
 if [[ "$pg_tables" != "0" || "$ch_tables" != "0" ]]; then
 	printf 'Refusing restore: target data stores are not empty.\n' >&2
 	exit 1
 fi
 
 printf 'Restoring PostgreSQL...\n'
-cat "$artifact/postgres.dump" | "${target_compose[@]}" exec -T -i "$pg_service" env "PGPASSWORD=$pg_password" pg_restore --no-owner --no-privileges --username="$pg_user" --dbname="$pg_database"
-ch_remote="/var/lib/clickhouse/backup/restore-${target_id}-$$.zip"
+cat "$artifact/postgres.dump" | PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -i -e PGPASSWORD "$pg_service" pg_restore --no-password --no-owner --no-privileges --username="$pg_user" --dbname="$pg_database"
 "${target_compose[@]}" cp "$artifact/clickhouse.zip" "$ch_service:$ch_remote"
 printf 'Restoring ClickHouse...\n'
-"${target_compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "$ch_password" --database "$ch_database" --query="RESTORE DATABASE \`$ch_database\` FROM File('$ch_remote')"
+"${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query="RESTORE DATABASE \`$ch_database\` FROM File('$ch_remote')"
 "${target_compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote"
 printf 'Restore complete. Run the target migrations and health smoke checks before serving traffic.\n'
