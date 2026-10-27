@@ -85,7 +85,7 @@ describe("Compose API database configuration", () => {
 			resolve(import.meta.dir, "../../../../infra/compose.production.yaml"),
 			"utf8",
 		);
-		expect(compose).toContain("NODE_ENV:?NODE_ENV=production is required");
+		expect(compose).toContain("NODE_ENV: production");
 		expect(compose).toContain('"127.0.0.1:${API_PORT:-3000}:3000"');
 		expect(compose).toContain('"127.0.0.1:${WEB_PORT:-5173}:5173"');
 		for (const service of ["postgres", "clickhouse", "valkey"]) {
@@ -93,6 +93,20 @@ describe("Compose API database configuration", () => {
 			expect(block.slice(0, block.indexOf("\n  ", 4))).not.toContain("ports:");
 		}
 		expect(compose).not.toContain("GEPA_WORKER_MODE: cli");
+	});
+
+	it("pins the production API container to the production startup mode", () => {
+		const compose = readFileSync(
+			resolve(import.meta.dir, "../../../../infra/compose.production.yaml"),
+			"utf8",
+		);
+		const apiEnvironment = compose.slice(
+			compose.indexOf("  api:\n"),
+			compose.indexOf("  web:\n"),
+		);
+
+		expect(apiEnvironment).toContain("NODE_ENV: production");
+		expect(apiEnvironment).not.toContain("NODE_ENV: ${");
 	});
 
 	it("provides a real migration URL and component variables without a placeholder password", () => {
