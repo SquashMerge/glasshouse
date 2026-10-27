@@ -82,11 +82,11 @@ for catalog in ("pg_proc", "pg_type", "pg_largeobject_metadata"):
     if catalog not in restore:
         raise SystemExit(f"PostgreSQL empty-target guard must include user objects from {catalog}")
 PY
-if grep -Eq -- 'clickhouse-client.*--password' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh"; then
+if grep -Eq -- 'clickhouse-client.*--password' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh" "$root_dir/infra/scripts/test-backup-restore-integration.sh"; then
 	printf 'ClickHouse passwords must not be passed in process arguments\n' >&2
 	exit 1
 fi
-if grep -Fq 'env "PGPASSWORD=$pg_password"' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh"; then
+if grep -Fq 'env "PGPASSWORD=' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh" "$root_dir/infra/scripts/test-backup-restore-integration.sh"; then
 	printf 'PostgreSQL passwords must not be passed as docker exec arguments\n' >&2
 	exit 1
 fi
