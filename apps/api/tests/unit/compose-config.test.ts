@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 
 const composeRoot = resolve(import.meta.dir, "../../../..");
 
-function renderComposeConfig(overrides: Record<string, string> = {}) {
+function renderComposeConfig(
+	overrides: Record<string, string> = {},
+	composeFile = "infra/compose.yaml",
+) {
 	const environment = {
 		...process.env,
 		POSTGRES_USER: "compose-test",
@@ -32,7 +35,7 @@ function renderComposeConfig(overrides: Record<string, string> = {}) {
 			"--env-file",
 			"/dev/null",
 			"-f",
-			"infra/compose.yaml",
+			composeFile,
 			"config",
 			"--format",
 			"json",
@@ -56,6 +59,24 @@ function renderComposeConfig(overrides: Record<string, string> = {}) {
 			{ logging?: { driver?: string; options?: Record<string, string> } }
 		>;
 	};
+}
+
+function expectSourceLogSettings(compose: string, services: string[]) {
+	for (const service of services) {
+		const header = `  ${service}:\n`;
+		const start = compose.indexOf(header);
+		expect(start).toBeGreaterThanOrEqual(0);
+		const bodyStart = start + header.length;
+		const body = compose.slice(bodyStart);
+		const nextService = /\n  [a-z][a-z0-9_-]*:\n/.exec(body);
+		const serviceBlock = compose.slice(
+			start,
+			nextService ? bodyStart + nextService.index : undefined,
+		);
+		expect(serviceBlock).toContain("driver: ${DOCKER_LOG_DRIVER:-local}");
+		expect(serviceBlock).toContain("max-size: ${DOCKER_LOG_MAX_SIZE:-10m}");
+		expect(serviceBlock).toContain("max-file: ${DOCKER_LOG_MAX_FILE:-3}");
+	}
 }
 
 describe("Compose API database configuration", () => {
@@ -138,11 +159,13 @@ describe("Compose API database configuration", () => {
 				resolve(composeRoot, "infra/compose.yaml"),
 				"utf8",
 			);
-			expect(
-				compose.match(
-					/driver: \$\{DOCKER_LOG_DRIVER:-local\}\n      options:\n        max-size: \$\{DOCKER_LOG_MAX_SIZE:-10m\}\n        max-file: \$\{DOCKER_LOG_MAX_FILE:-3\}/g,
-				)?.length,
-			).toBe(5);
+			expectSourceLogSettings(compose, [
+				"postgres",
+				"clickhouse",
+				"valkey",
+				"api",
+				"web",
+			]);
 			return;
 		}
 
@@ -165,13 +188,62 @@ describe("Compose API database configuration", () => {
 				resolve(composeRoot, "infra/compose.yaml"),
 				"utf8",
 			);
-			expect(compose).toContain("driver: ${DOCKER_LOG_DRIVER:-local}");
-			expect(compose).toContain("max-size: ${DOCKER_LOG_MAX_SIZE:-10m}");
-			expect(compose).toContain("max-file: ${DOCKER_LOG_MAX_FILE:-3}");
+			expectSourceLogSettings(compose, [
+				"postgres",
+				"clickhouse",
+				"valkey",
+				"api",
+				"web",
+			]);
 			return;
 		}
 
 		for (const service of ["postgres", "clickhouse", "valkey", "api", "web"]) {
+			expect(config.services[service]?.logging).toEqual({
+				driver: "json-file",
+				options: { "max-file": "7", "max-size": "25m" },
+			});
+		}
+	});
+
+	it("renders bounded default Docker log rotation for dependency services", () => {
+		const config = renderComposeConfig({}, "infra/compose.deps.yaml");
+		if (!config) {
+			const compose = readFileSync(
+				resolve(composeRoot, "infra/compose.deps.yaml"),
+				"utf8",
+			);
+			expectSourceLogSettings(compose, ["postgres", "clickhouse", "valkey"]);
+			return;
+		}
+
+		for (const service of ["postgres", "clickhouse", "valkey"]) {
+			expect(config.services[service]?.logging).toEqual({
+				driver: "local",
+				options: { "max-file": "3", "max-size": "10m" },
+			});
+		}
+	});
+
+	it("renders dependency-service operator-selected driver and rotation settings", () => {
+		const config = renderComposeConfig(
+			{
+				DOCKER_LOG_DRIVER: "json-file",
+				DOCKER_LOG_MAX_SIZE: "25m",
+				DOCKER_LOG_MAX_FILE: "7",
+			},
+			"infra/compose.deps.yaml",
+		);
+		if (!config) {
+			const compose = readFileSync(
+				resolve(composeRoot, "infra/compose.deps.yaml"),
+				"utf8",
+			);
+			expectSourceLogSettings(compose, ["postgres", "clickhouse", "valkey"]);
+			return;
+		}
+
+		for (const service of ["postgres", "clickhouse", "valkey"]) {
 			expect(config.services[service]?.logging).toEqual({
 				driver: "json-file",
 				options: { "max-file": "7", "max-size": "25m" },
