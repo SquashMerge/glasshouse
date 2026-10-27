@@ -6,6 +6,8 @@
 
 **Local dev stack:** Postgres 16 + ClickHouse 24 + [Valkey 8](https://valkey.io) (open-source Redis fork) + Hono + React dashboard, behind `make dev`.
 
+For the separate self-hosted production path, use [`docs/self-hosted-production.md`](docs/self-hosted-production.md) and `infra/compose.production.yaml`. The other Compose files and `make dev` are development-only.
+
 The Compose files use Glasshouse logical volume keys while keeping the established physical data-volume IDs for PostgreSQL, ClickHouse, and Valkey, so this branding change does not orphan existing stores.
 
 ### Container log rotation

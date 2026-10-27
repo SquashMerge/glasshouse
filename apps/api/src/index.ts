@@ -29,7 +29,9 @@ import {
 import type { ProjectOperation } from "./authorization-policy.js";
 import { logger } from "./lib/logger.js";
 import { AuthenticationError } from "./db/local-sessions.js";
+import { assertProductionConfiguration } from "./lib/production-config.js";
 
+if (process.env.NODE_ENV === "production") assertProductionConfiguration();
 const PORT = Number(process.env.API_PORT ?? 3000);
 const MAX_BODY_BYTES = parseBodySizeLimit(process.env.API_MAX_BODY_BYTES);
 const AGENT_INTROSPECTION_PATH =

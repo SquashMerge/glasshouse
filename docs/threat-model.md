@@ -126,6 +126,18 @@ The optional GEPA worker receives a structured request over stdin and has bounde
 
 **Review focus:** check direct API calls as well as UI flows; preserve approval/version semantics; ensure destructive actions are scoped, auditable, bounded, and replay-safe; inspect each data store's actual retention/deletion coverage. A documented retention run is not proof that every resource class is deleted.
 
+## Production deployment path
+
+The supported single-host production topology is `infra/compose.production.yaml`
+with an operator-managed HTTPS reverse proxy in front of loopback-bound API and
+web ports. PostgreSQL, ClickHouse, and Valkey have no host port bindings in
+that file. The API rejects non-production `NODE_ENV`, non-HTTPS public origins,
+weak required secrets, the development GEPA CLI mode, and the explicit
+development LLM override at startup. These are configuration controls, not a
+replacement for host firewalling, proxy hardening, secret management, or
+backup/restore testing. The local `make dev` Compose path remains development-
+only and is not a production security boundary.
+
 ## Important assumptions and non-guarantees
 
 - This is a self-hosted application; operators control TLS termination, firewall/network reachability, runtime secrets, database access, backup/restore, and host security. Do not assume the repository's development Compose defaults are safe production settings.
