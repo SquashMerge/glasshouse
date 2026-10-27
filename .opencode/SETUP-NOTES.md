@@ -16,6 +16,7 @@ Do not put real credentials, local paths, auth-state locations, copied diagnosti
 - Bun workspace: Hono API in `apps/api` and React/Vite web app in `apps/web`.
 - PostgreSQL stores transactional data; ClickHouse stores trace/OLAP data; Valkey is the Redis-compatible queue/cache service.
 - Production runs the PostgreSQL and ClickHouse migration runners concurrently before every API start; the API starts only after both succeed. PostgreSQL tracks applied migrations, while ClickHouse records checksum-verified changesets so later starts skip already-applied SQL. They remain separate schema systems and local host development invokes their runners explicitly.
+- The development Compose files mount `infra/clickhouse/backup.xml` into ClickHouse so the repository's `File()` backup/restore scripts have a restricted `backups.allowed_disk` and `backups.allowed_path`; custom Compose files must provide equivalent server configuration.
 - Python is isolated to compute-heavy integrations such as the GEPA worker; keep credentials at the worker/deployment boundary.
 
 ## Prerequisites

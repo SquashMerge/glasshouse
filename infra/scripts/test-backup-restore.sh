@@ -210,4 +210,27 @@ with tempfile.TemporaryDirectory() as temporary:
     alias.symlink_to(real, target_is_directory=True)
     check([bind(real)], [bind(alias / "restore")], True)
 PY
+python3 - "$root_dir" <<'PY'
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+root = Path(sys.argv[1])
+config_path = root / "infra/clickhouse/backup.xml"
+config = ET.parse(config_path).getroot()
+expected = {
+    "storage_configuration/disks/glasshouse_backups/path": "/var/lib/clickhouse/backup/",
+    "backups/allowed_disk": "glasshouse_backups",
+    "backups/allowed_path": "/var/lib/clickhouse/backup/",
+}
+for path, value in expected.items():
+    node = config.find(path)
+    if node is None or node.text != value:
+        raise SystemExit(f"ClickHouse backup config must set {path} to {value}")
+mount = "./infra/clickhouse/backup.xml:/etc/clickhouse-server/config.d/glasshouse-backup.xml:ro"
+for compose_name in ("infra/compose.yaml", "infra/compose.deps.yaml", ".github/compose.backup-restore.yaml"):
+    compose = (root / compose_name).read_text()
+    if compose.count(mount) != 1:
+        raise SystemExit(f"{compose_name} must mount the restricted ClickHouse backup config exactly once")
+PY
 printf 'backup/restore safety checks passed\n'

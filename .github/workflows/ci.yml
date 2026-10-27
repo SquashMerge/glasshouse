@@ -92,7 +92,8 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          mkdir -p "$RESTORE_TARGET_DIRECTORY"
+          mkdir -p "$RESTORE_TARGET_DIRECTORY/infra/clickhouse"
+          cp "$GITHUB_WORKSPACE/infra/clickhouse/backup.xml" "$RESTORE_TARGET_DIRECTORY/infra/clickhouse/backup.xml"
           python3 - <<'PY'
           import os
           import secrets
