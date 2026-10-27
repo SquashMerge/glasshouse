@@ -38,7 +38,7 @@ export const EvaluationEvaluator = z
 export const EvaluationTarget = z
 	.object({
 		kind: z.literal("configured_llm"),
-		provider: z.enum(["openai", "codex_cli"]).optional(),
+		provider: z.enum(["openai", "codex_cli", "fake"]).optional(),
 		model: z.string().trim().min(1).max(200).nullable().default(null),
 		system_prompt: z.string().max(16000).nullable().default(null),
 	})

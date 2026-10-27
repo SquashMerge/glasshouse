@@ -129,6 +129,34 @@ async function addCaseInBrowser(
 	).toBeVisible();
 }
 
+async function publishDatasetVersionInBrowser(page: Page) {
+	await page.getByRole("button", { name: "Publish reviewed draft" }).click();
+	await expect(page.getByText("Published version 1")).toBeVisible();
+	await expect(page.getByText(/Immutable snapshot with 1 cases/)).toBeVisible();
+}
+
+async function createAndPublishEvaluationInBrowser(
+	page: Page,
+	dataset: Dataset,
+	name: string,
+	slug: string,
+) {
+	await page.goto("/evaluations");
+	await page.locator("#evaluation-definition-dataset").selectOption(dataset.id);
+	await page.getByLabel("Definition name").fill(name);
+	await page.getByLabel("Stable ID").fill(slug);
+	await page
+		.locator("#evaluation-definition-dataset-version")
+		.selectOption({ label: "Version 1" });
+	await page.getByRole("button", { name: "Create definition draft" }).click();
+	const definition = page.locator("li").filter({ hasText: name });
+	await expect(definition).toBeVisible();
+	await definition
+		.getByRole("button", { name: "Publish immutable version" })
+		.click();
+	await expect(definition.getByText("Version 1")).toBeVisible();
+}
+
 async function ingestProjectTrace(
 	request: APIRequestContext,
 	projectId: string,
@@ -504,4 +532,56 @@ test("blocks an evaluation run until an Evaluation and immutable version are pin
 		}),
 	);
 	expect(after.total).toBe(before.total);
+});
+
+test("runs a pinned Evaluation and retains its results after navigation", async ({
+	page,
+}) => {
+	await loginAndSelectE2eProject(page);
+	const dataset = await createDatasetInBrowser(
+		page,
+		unique("evaluation-dataset"),
+	);
+	const expected = { value: "e2e-deterministic-answer" };
+	await addCaseInBrowser(
+		page,
+		dataset,
+		{ question: "deterministic-evaluation-question" },
+		expected,
+	);
+	await publishDatasetVersionInBrowser(page);
+
+	const name = unique("Deterministic Evaluation");
+	const slug = unique("deterministic-evaluation");
+	await createAndPublishEvaluationInBrowser(page, dataset, name, slug);
+
+	await page
+		.locator("#run-evaluation")
+		.selectOption({ label: `${name} (${slug})` });
+	await page.locator("#run-definition-version").selectOption("1");
+	await expect(page.getByLabel("Pinned run inputs")).toContainText(
+		"Pinned Definition Version 1",
+	);
+	await page.getByRole("button", { name: "Run evaluation" }).click();
+
+	const lifecycle = page.getByLabel("Evaluation Run lifecycle");
+	await expect(lifecycle).toContainText("completed", { timeout: 30_000 });
+	await expect(lifecycle).toContainText("1 of 1 selected");
+	await expect(lifecycle).toContainText("1 evaluated");
+	await expect(lifecycle).toContainText("100.0% pass");
+	await expect(lifecycle).toContainText("e2e-deterministic-answer");
+	const runId = await lifecycle.locator("p.font-mono").textContent();
+	expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+
+	await page.goto("/");
+	await page.goto("/evaluations");
+	const persistedRun = page
+		.getByLabel("Evaluation Run summaries")
+		.locator("li")
+		.filter({ hasText: runId! });
+	await expect(persistedRun).toContainText("completed");
+	await persistedRun.getByRole("button", { name: "Inspect evidence" }).click();
+	await expect(page.getByLabel("Evaluation Run lifecycle")).toContainText(
+		"e2e-deterministic-answer",
+	);
 });

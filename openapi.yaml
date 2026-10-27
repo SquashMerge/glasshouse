@@ -4088,6 +4088,7 @@ components:
                   enum:
                     - openai
                     - codex_cli
+                    - fake
                   type: string
                 system_prompt:
                   default: null
@@ -4265,6 +4266,7 @@ components:
                   enum:
                     - openai
                     - codex_cli
+                    - fake
                   type: string
                 system_prompt:
                   default: null
@@ -4489,6 +4491,7 @@ components:
                   enum:
                     - openai
                     - codex_cli
+                    - fake
                   type: string
                 system_prompt:
                   default: null
@@ -12303,6 +12306,7 @@ paths:
                       enum:
                         - openai
                         - codex_cli
+                        - fake
                       type: string
                     system_prompt:
                       default: null
