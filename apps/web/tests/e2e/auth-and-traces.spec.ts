@@ -220,10 +220,15 @@ test.describe("Shared app workspace", () => {
 			{ path: "/feedback", content: "Feedback" },
 		];
 		const viewports = [
+			{ width: 2560, height: 1440 },
 			{ width: 1920, height: 1080 },
 			{ width: 1440, height: 900 },
+			{ width: 1280, height: 800 },
 			{ width: 1024, height: 768 },
+			{ width: 768, height: 1024 },
+			{ width: 414, height: 896 },
 			{ width: 375, height: 812 },
+			{ width: 320, height: 640 },
 		];
 
 		for (const viewport of viewports) {
@@ -252,7 +257,7 @@ test.describe("Shared app workspace", () => {
 					expect(bounds!.width).toBeGreaterThan(1600);
 				}
 
-				if (viewport.width === 375 && route.hasWideTable) {
+				if (viewport.width <= 375 && route.hasWideTable) {
 					const tableViewport = page.locator("table").locator("..");
 					const tableMetrics = await tableViewport.evaluate((element) => ({
 						clientWidth: element.clientWidth,
