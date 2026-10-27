@@ -192,6 +192,7 @@ fi
 printf 'Restoring PostgreSQL...\n'
 cat "$artifact/postgres.dump" | PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -i -e PGPASSWORD "$pg_service" pg_restore --no-password --no-owner --no-privileges --username="$pg_user" --dbname="$pg_database"
 "${target_compose[@]}" cp "$artifact/clickhouse.zip" "$ch_service:$ch_remote"
+"${target_compose[@]}" exec -T --user root "$ch_service" sh -ec 'chown clickhouse:clickhouse "$1" && chmod 600 "$1"' sh "$ch_remote"
 printf 'Restoring ClickHouse...\n'
 "${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query="RESTORE DATABASE \`$ch_database\` FROM File('$ch_remote')"
 "${target_compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote"
