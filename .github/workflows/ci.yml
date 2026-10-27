@@ -39,6 +39,8 @@ jobs:
             command: bun run openapi:check && bun --filter @glasshouse/api codegen:ts
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
+          - check: backup-restore-safety
+            command: bash infra/scripts/test-backup-restore.sh
           - check: doctor-version
             command: bash infra/scripts/test-doctor-version.sh
     steps:
