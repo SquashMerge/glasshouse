@@ -30,6 +30,14 @@ import sys
 import zipfile
 
 root = pathlib.Path(sys.argv[1])
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
 manifest = json.loads((root / "manifest.json").read_text())
 if manifest.get("format") != "glasshouse-backup-v1" or manifest.get("complete") is not True:
     raise SystemExit("backup is incomplete or unsupported")
@@ -61,7 +69,7 @@ for line in (root / "SHA256SUMS").read_text().splitlines():
 if set(checksums) != expected:
     raise SystemExit("SHA256SUMS must contain exactly one checksum for each backup file")
 for name, digest in checksums.items():
-    if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:
+    if sha256_file(root / name) != digest:
         raise SystemExit(f"checksum mismatch: {name}")
 PY
 
@@ -129,14 +137,10 @@ if [[ "$target_project" == "$source_container_project" || "$target_project" == "
 	printf 'Refusing restore: target Compose project is the live/source project.\n' >&2
 	exit 1
 fi
-source_mounts="$(docker inspect --format='{{range .Mounts}}{{.Name}}|{{.Source}} {{end}}' "$source_pg" "$source_ch")"
-target_mounts="$(docker inspect --format='{{range .Mounts}}{{.Name}}|{{.Source}} {{end}}' "$target_pg" "$target_ch")"
-for mount in $source_mounts; do
-	if [[ "$mount" != '|' && " $target_mounts " == *" $mount "* ]]; then
-		printf 'Refusing restore: target shares source volume %s.\n' "$mount" >&2
-		exit 1
-	fi
-done
+if ! docker inspect "$source_pg" "$source_ch" "$target_pg" "$target_ch" | python3 "$root_dir/infra/scripts/check-restore-mounts.py"; then
+	printf 'Refusing restore: source and target storage mounts overlap or could not be inspected.\n' >&2
+	exit 1
+fi
 
 pg_service="${RESTORE_POSTGRES_SERVICE:-postgres}"
 ch_service="${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}"
@@ -170,17 +174,16 @@ SELECT
      WHERE n.nspname NOT IN ('pg_catalog','information_schema')
        AND n.nspname NOT LIKE 'pg_toast%'
        AND n.nspname NOT LIKE 'pg_temp%'
-       AND c.relkind IN ('r','p','v','m','S','f','c')
-       AND NOT (n.nspname = 'public' AND c.relname = 'pgmigrations'))
+       AND c.relkind IN ('r','p','v','m','S','f','c'))
   + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public')
   + (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-     WHERE n.nspname = 'public' AND t.typname NOT IN ('pgmigrations','_pgmigrations'))
+     WHERE n.nspname = 'public')
   + (SELECT count(*) FROM pg_largeobject_metadata);
 SQL
 )"
 pg_tables="$(PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="$pg_empty_query" | tr -d '[:space:]')"
-ch_tables="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query="SELECT count() FROM system.tables WHERE database = '$ch_database' AND name != 'glasshouse_schema_migrations'" | tr -d '[:space:]')"
+ch_tables="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query="SELECT count() FROM system.tables WHERE database = '$ch_database'" | tr -d '[:space:]')"
 if [[ "$pg_tables" != "0" || "$ch_tables" != "0" ]]; then
 	printf 'Refusing restore: target data stores are not empty.\n' >&2
 	exit 1

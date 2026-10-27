@@ -98,6 +98,14 @@ import sys
 import zipfile
 
 root = pathlib.Path(sys.argv[1])
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
 manifest = json.loads((root / "manifest.json").read_text())
 if manifest.get("format") != "glasshouse-backup-v1" or manifest.get("complete") is not True:
     raise SystemExit("backup manifest is not complete")
@@ -116,7 +124,7 @@ for line in (root / "SHA256SUMS").read_text().splitlines():
     digest, name = line.split("  ", 1)
     if name not in {"postgres.dump", "clickhouse.zip"}:
         raise SystemExit(f"unexpected checksum entry: {name}")
-    actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+    actual = sha256_file(root / name)
     if digest != actual:
         raise SystemExit(f"checksum mismatch: {name}")
 PY

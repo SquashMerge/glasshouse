@@ -72,6 +72,9 @@ from pathlib import Path
 import sys
 
 restore = Path(sys.argv[1]).read_text()
+backup = Path(sys.argv[1]).with_name("backup.sh").read_text()
+if ".read_bytes()" in restore or ".read_bytes()" in backup:
+    raise SystemExit("backup checksums must stream files instead of loading them into memory")
 if "relnamespace = 'public'::regnamespace" in restore:
     raise SystemExit("PostgreSQL empty-target guard is restricted to public")
 if "pg_namespace" not in restore or "information_schema" not in restore:
@@ -81,6 +84,10 @@ if "relkind IN ('r','p','v','m','S','f','c')" not in restore:
 for catalog in ("pg_proc", "pg_type", "pg_largeobject_metadata"):
     if catalog not in restore:
         raise SystemExit(f"PostgreSQL empty-target guard must include user objects from {catalog}")
+if "c.relname = 'pgmigrations'" in restore:
+    raise SystemExit("PostgreSQL restore target must reject an existing migration table")
+if "name != 'glasshouse_schema_migrations'" in restore:
+    raise SystemExit("ClickHouse restore target must reject existing tables")
 PY
 if grep -Eq -- 'clickhouse-client.*--password' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh" "$root_dir/infra/scripts/test-backup-restore-integration.sh"; then
 	printf 'ClickHouse passwords must not be passed in process arguments\n' >&2
@@ -149,5 +156,58 @@ if "<password>fixture&lt;&amp;&gt;password</password>" not in config:
     raise SystemExit("ClickHouse config did not preserve an XML-escaped password")
 if not any(b"chmod 600" in argument for argument in arguments):
     raise SystemExit("ClickHouse client config is not created with mode 0600")
+PY
+python3 - "$root_dir/infra/scripts/check-restore-mounts.py" <<'PY'
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+checker = sys.argv[1]
+
+def check(source, target, should_overlap):
+    data = [
+        {"Mounts": source},
+        {"Mounts": []},
+        {"Mounts": target},
+        {"Mounts": []},
+    ]
+    result = subprocess.run(
+        [sys.executable, checker],
+        input=json.dumps(data),
+        text=True,
+        capture_output=True,
+    )
+    if (result.returncode == 0) == should_overlap:
+        raise SystemExit(
+            f"mount overlap check failed for {source!r} vs {target!r}: "
+            f"exit={result.returncode}, stderr={result.stderr}"
+        )
+
+
+def bind(path):
+    return {"Type": "bind", "Name": "", "Source": str(path)}
+
+check([bind("/srv/db")], [bind("/srv/db/restore")], True)
+check([bind("/srv/db/restore")], [bind("/srv/db")], True)
+check([bind("/srv/db")], [bind("/srv/db2")], False)
+check(
+    [{"Type": "volume", "Name": "glasshouse_data", "Source": "/var/lib/docker/volumes/glasshouse_data/_data"}],
+    [{"Type": "volume", "Name": "glasshouse_data", "Source": "/var/lib/docker/volumes/glasshouse_data/_data"}],
+    True,
+)
+check(
+    [{"Type": "volume", "Name": "source_data", "Source": "/var/lib/docker/volumes/source_data/_data"}],
+    [{"Type": "volume", "Name": "target_data", "Source": "/var/lib/docker/volumes/target_data/_data"}],
+    False,
+)
+with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    real = root / "real"
+    real.mkdir()
+    alias = root / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    check([bind(real)], [bind(alias / "restore")], True)
 PY
 printf 'backup/restore safety checks passed\n'
