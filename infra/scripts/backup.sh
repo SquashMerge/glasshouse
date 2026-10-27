@@ -6,27 +6,31 @@ umask 077
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root_dir"
+source "$(dirname "${BASH_SOURCE[0]}")/backup-restore-common.sh"
 
 destination="${BACKUP_DESTINATION:-$root_dir/backups}"
 source_id="${BACKUP_SOURCE_ID:-glasshouse-local}"
 backup_id="${BACKUP_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
-compose=(docker compose --project-directory "$root_dir" --env-file "$root_dir/infra/.env" -f "$root_dir/infra/compose.yaml")
+source_compose_file="$(resolve_path "$root_dir" "${BACKUP_SOURCE_COMPOSE_FILE:-infra/compose.yaml}")"
+source_env_file="$(resolve_path "$root_dir" "${BACKUP_SOURCE_ENV_FILE:-infra/.env}")"
+source_project="${BACKUP_SOURCE_COMPOSE_PROJECT:-glasshouse}"
+require_file 'BACKUP_SOURCE_COMPOSE_FILE' "$source_compose_file"
+require_file 'BACKUP_SOURCE_ENV_FILE' "$source_env_file"
+compose=(docker compose --project-directory "$root_dir" --env-file "$source_env_file" --project-name "$source_project" -f "$source_compose_file")
 pg_service="${BACKUP_POSTGRES_SERVICE:-postgres}"
 ch_service="${BACKUP_CLICKHOUSE_SERVICE:-clickhouse}"
-pg_user="${POSTGRES_USER:-glasshouse}"
-pg_database="${POSTGRES_DB:-glasshouse}"
-ch_user="${CLICKHOUSE_USER:-glasshouse}"
-ch_database="${CLICKHOUSE_DB:-glasshouse}"
+pg_user="$(compose_service_value "$pg_service" POSTGRES_USER "${compose[@]}")"
+pg_password="$(compose_service_value "$pg_service" POSTGRES_PASSWORD "${compose[@]}")"
+pg_database="$(compose_service_value "$pg_service" POSTGRES_DB "${compose[@]}")"
+ch_user="$(compose_service_value "$ch_service" CLICKHOUSE_USER "${compose[@]}")"
+ch_database="$(compose_service_value "$ch_service" CLICKHOUSE_DB "${compose[@]}")"
+ch_password="$(compose_service_value "$ch_service" CLICKHOUSE_PASSWORD "${compose[@]}")"
 
 if [[ ! "$backup_id" =~ ^[A-Za-z0-9._-]+$ || ! "$pg_database" =~ ^[A-Za-z0-9_]+$ || ! "$ch_database" =~ ^[A-Za-z0-9_]+$ ]]; then
 	printf 'Backup ID and database names must use only safe ASCII identifier characters.\n' >&2
 	exit 1
 fi
 
-if [[ ! -f "$root_dir/infra/.env" ]]; then
-	printf 'infra/.env is required; credentials are read by Compose, not printed.\n' >&2
-	exit 1
-fi
 if [[ "$destination" != /* ]]; then
 	destination="$root_dir/$destination"
 fi
@@ -43,19 +47,19 @@ cleanup() {
 trap cleanup EXIT
 
 printf 'Creating PostgreSQL backup...\n'
-"${compose[@]}" exec -T "$pg_service" pg_dump --format=custom --no-owner --no-privileges --username="$pg_user" "$pg_database" > "$staging/postgres.dump"
+"${compose[@]}" exec -T "$pg_service" env "PGPASSWORD=$pg_password" pg_dump --format=custom --no-owner --no-privileges --username="$pg_user" "$pg_database" > "$staging/postgres.dump"
 chmod 600 "$staging/postgres.dump"
 
 ch_remote="/var/lib/clickhouse/backup/glasshouse-${backup_id}-$$.zip"
 printf 'Creating ClickHouse backup...\n'
 "${compose[@]}" exec -T "$ch_service" sh -ec 'mkdir -p /var/lib/clickhouse/backup && rm -f -- "$1"' sh "$ch_remote"
-"${compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "${CLICKHOUSE_PASSWORD:-}" --database "$ch_database" --query "BACKUP DATABASE \`$ch_database\` TO File('$ch_remote')"
+"${compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "$ch_password" --database "$ch_database" --query "BACKUP DATABASE \`$ch_database\` TO File('$ch_remote')"
 "${compose[@]}" cp "$ch_service:$ch_remote" "$staging/clickhouse.zip"
 "${compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote"
 chmod 600 "$staging/clickhouse.zip"
 
 pg_version="$("${compose[@]}" exec -T "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT current_setting('server_version')" | tr -d '\r' | tr -d '[:space:]')"
-ch_version="$("${compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "${CLICKHOUSE_PASSWORD:-}" --query='SELECT version()' | tr -d '\r' | tr -d '[:space:]')"
+ch_version="$("${compose[@]}" exec -T "$ch_service" clickhouse-client --user "$ch_user" --password "$ch_password" --query='SELECT version()' | tr -d '\r' | tr -d '[:space:]')"
 
 (cd "$staging" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 chmod 600 "$staging/SHA256SUMS"
@@ -85,6 +89,7 @@ import hashlib
 import json
 import pathlib
 import sys
+import zipfile
 
 root = pathlib.Path(sys.argv[1])
 manifest = json.loads((root / "manifest.json").read_text())
@@ -95,6 +100,12 @@ if not isinstance(manifest.get("source_id"), str) or not manifest["source_id"].s
 for name in ("postgres.dump", "clickhouse.zip", "SHA256SUMS"):
     if not (root / name).is_file() or (root / name).stat().st_size == 0:
         raise SystemExit(f"backup file is missing or empty: {name}")
+archive = root / "clickhouse.zip"
+if not zipfile.is_zipfile(archive):
+    raise SystemExit("clickhouse.zip is not a valid ZIP archive")
+with zipfile.ZipFile(archive) as clickhouse_archive:
+    if clickhouse_archive.testzip() is not None:
+        raise SystemExit("clickhouse.zip contains corrupt data")
 for line in (root / "SHA256SUMS").read_text().splitlines():
     digest, name = line.split("  ", 1)
     if name not in {"postgres.dump", "clickhouse.zip"}:

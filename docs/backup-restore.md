@@ -11,6 +11,9 @@ Choose a destination with restrictive permissions. The destination can be a loca
 ```sh
 BACKUP_DESTINATION=/secure/glasshouse-backups \
 BACKUP_SOURCE_ID=production-eu-1 \
+BACKUP_SOURCE_COMPOSE_FILE=/srv/glasshouse/infra/compose.production.yaml \
+BACKUP_SOURCE_ENV_FILE=/run/secrets/glasshouse-production.env \
+BACKUP_SOURCE_COMPOSE_PROJECT=glasshouse-production \
 make backup
 ```
 
@@ -39,10 +42,13 @@ RESTORE_TARGET_ID=restore-drill-2026-10-27 \
 RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO restore-drill-2026-10-27' \
 RESTORE_TARGET_LIVE=false \
 RESTORE_TARGET_DIRECTORY=/srv/glasshouse-restore \
-RESTORE_TARGET_COMPOSE_FILE=/srv/glasshouse-restore/infra/compose.yaml \
+RESTORE_TARGET_COMPOSE_FILE=/srv/glasshouse-restore/infra/compose.production.yaml \
+RESTORE_TARGET_ENV_FILE=/run/secrets/glasshouse-restore.env \
 RESTORE_TARGET_COMPOSE_PROJECT=glasshouse-restore-20261027 \
 make restore
 ```
+
+`BACKUP_SOURCE_COMPOSE_FILE`, `BACKUP_SOURCE_ENV_FILE`, and `BACKUP_SOURCE_COMPOSE_PROJECT` default to `infra/compose.yaml`, `infra/.env`, and `glasshouse`. Restore uses those same source defaults for its live/source checks. `RESTORE_TARGET_ENV_FILE` defaults to `infra/.env` below the target directory and may point to an external production secret env file; the selected Compose service configuration supplies both database usernames and passwords, so no credential variables need to be copied into the command or documentation.
 
 The exact confirmation, an explicit target identity, a distinct Compose project, distinct inspected volume names, and empty target stores are mandatory. The command fails before any restore write when confirmation is missing, the target is marked live, the target is the source checkout, a service/container/volume is shared, or either target store is non-empty. It does not use `--clean`, drop a database, remove a volume, or overwrite an existing installation.
 
