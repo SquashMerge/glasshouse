@@ -64,6 +64,91 @@ jobs:
       - name: Run ${{ matrix.check }}
         run: ${{ matrix.command }}
 
+  backup-restore-integration:
+    name: Backup/restore integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BACKUP_SOURCE_COMPOSE_FILE: .github/compose.backup-restore.yaml
+      BACKUP_SOURCE_ENV_FILE: ${{ runner.temp }}/backup-restore-source.env
+      BACKUP_SOURCE_COMPOSE_PROJECT: backup-restore-source-${{ github.run_id }}-${{ github.run_attempt }}
+      BACKUP_SOURCE_ID: ci-source
+      BACKUP_RESTORE_DESTINATION: ${{ runner.temp }}/backup-restore-artifacts
+      BACKUP_POSTGRES_SERVICE: postgres
+      BACKUP_CLICKHOUSE_SERVICE: clickhouse
+      RESTORE_TARGET_ID: ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
+      RESTORE_CONFIRMATION: RESTORE GLASSHOUSE TO ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
+      RESTORE_TARGET_LIVE: "false"
+      RESTORE_TARGET_DIRECTORY: ${{ runner.temp }}/backup-restore-target
+      RESTORE_TARGET_COMPOSE_FILE: ${{ github.workspace }}/.github/compose.backup-restore.yaml
+      RESTORE_TARGET_ENV_FILE: ${{ runner.temp }}/backup-restore-target.env
+      RESTORE_TARGET_COMPOSE_PROJECT: backup-restore-target-${{ github.run_id }}-${{ github.run_attempt }}
+      RESTORE_POSTGRES_SERVICE: postgres
+      RESTORE_CLICKHOUSE_SERVICE: clickhouse
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Prepare isolated source and target environments
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RESTORE_TARGET_DIRECTORY"
+          python3 - <<'PY'
+          import os
+          import secrets
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          for name in ("backup-restore-source.env", "backup-restore-target.env"):
+              postgres_password = secrets.token_hex(24)
+              clickhouse_password = secrets.token_hex(24)
+              contents = "\n".join((
+                  "POSTGRES_USER=glasshouse_ci",
+                  f"POSTGRES_PASSWORD={postgres_password}",
+                  "POSTGRES_DB=glasshouse",
+                  "CLICKHOUSE_USER=glasshouse_ci",
+                  f"CLICKHOUSE_PASSWORD={clickhouse_password}",
+                  "CLICKHOUSE_DB=glasshouse",
+                  "",
+              ))
+              path = temp / name
+              path.write_text(contents)
+              path.chmod(0o600)
+              print(f"::add-mask::{postgres_password}")
+              print(f"::add-mask::{clickhouse_password}")
+          PY
+      - name: Start isolated source databases
+        run: >-
+          docker compose --project-directory "$GITHUB_WORKSPACE"
+          --env-file "$BACKUP_SOURCE_ENV_FILE"
+          --project-name "$BACKUP_SOURCE_COMPOSE_PROJECT"
+          -f "$GITHUB_WORKSPACE/$BACKUP_SOURCE_COMPOSE_FILE"
+          up --detach --wait --wait-timeout 180 postgres clickhouse
+      - name: Start isolated empty restore target
+        run: >-
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY"
+          --env-file "$RESTORE_TARGET_ENV_FILE"
+          --project-name "$RESTORE_TARGET_COMPOSE_PROJECT"
+          -f "$RESTORE_TARGET_COMPOSE_FILE"
+          up --detach --wait --wait-timeout 180 postgres clickhouse
+      - name: Back up, restore, and verify representative rows
+        run: bash infra/scripts/test-backup-restore-integration.sh
+      - name: Stop isolated database projects
+        if: always()
+        run: |
+          docker compose --project-directory "$GITHUB_WORKSPACE" \
+            --env-file "$BACKUP_SOURCE_ENV_FILE" \
+            --project-name "$BACKUP_SOURCE_COMPOSE_PROJECT" \
+            -f "$GITHUB_WORKSPACE/$BACKUP_SOURCE_COMPOSE_FILE" \
+            down --volumes --remove-orphans || true
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY" \
+            --env-file "$RESTORE_TARGET_ENV_FILE" \
+            --project-name "$RESTORE_TARGET_COMPOSE_PROJECT" \
+            -f "$RESTORE_TARGET_COMPOSE_FILE" \
+            down --volumes --remove-orphans || true
+          rm -f "$BACKUP_SOURCE_ENV_FILE" "$RESTORE_TARGET_ENV_FILE"
+          rm -rf "$BACKUP_DESTINATION" "$RESTORE_TARGET_DIRECTORY"
+
   security:
     name: Security scan
     runs-on: ubuntu-latest
