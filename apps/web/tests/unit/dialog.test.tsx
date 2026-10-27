@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DialogContent, DialogOverlay } from "../../src/components/ui/dialog";
+import { RollbackLatestVersionDialog } from "../../src/routes/rollback-latest-version-dialog";
 
 describe("Dialog shell", () => {
 	it("uses shared overlay and content tokens while allowing content sizing", () => {
@@ -29,6 +30,21 @@ describe("Dialog shell", () => {
 			"bg-background",
 			"shadow-lg",
 		);
+	});
+
+	it("does not dismiss a pending rollback from the backdrop", () => {
+		const onClose = vi.fn();
+		render(
+			<RollbackLatestVersionDialog
+				pending
+				error={null}
+				onClose={onClose}
+				onConfirm={vi.fn()}
+			/>,
+		);
+
+		fireEvent.mouseDown(screen.getByRole("dialog").parentElement!);
+		expect(onClose).not.toHaveBeenCalled();
 	});
 
 	it("contains keyboard focus and closes on Escape, restoring focus to the opener", async () => {

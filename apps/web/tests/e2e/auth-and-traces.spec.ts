@@ -269,7 +269,10 @@ test.describe("Shared app workspace", () => {
 							let parent = element.parentElement;
 							while (parent && parent !== document.body) {
 								const overflowX = getComputedStyle(parent).overflowX;
-								if (["auto", "scroll", "hidden", "clip"].includes(overflowX))
+								if (
+									(overflowX === "auto" || overflowX === "scroll") &&
+									parent.scrollWidth > parent.clientWidth + 1
+								)
 									return false;
 								parent = parent.parentElement;
 							}
