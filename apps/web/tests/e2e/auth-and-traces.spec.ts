@@ -259,10 +259,33 @@ test.describe("Shared app workspace", () => {
 				}
 
 				if (!route.hasWideTable && viewport.width <= 768) {
-					const documentWidth = await page.evaluate(
-						() => document.documentElement.scrollWidth,
-					);
-					expect(documentWidth).toBeLessThanOrEqual(viewport.width + 1);
+					const overflow = await page.evaluate(() => {
+						const offenders = Array.from(
+							document.querySelectorAll<HTMLElement>("body *"),
+						).filter((element) => {
+							const bounds = element.getBoundingClientRect();
+							if (bounds.width === 0) return false;
+							let parent = element.parentElement;
+							while (parent && parent !== document.body) {
+								const overflowX = getComputedStyle(parent).overflowX;
+								if (["auto", "scroll", "hidden", "clip"].includes(overflowX))
+									return false;
+								parent = parent.parentElement;
+							}
+							return bounds.left < -1 || bounds.right > window.innerWidth + 1;
+						});
+						return offenders.slice(0, 5).map((element) => ({
+							tag: element.tagName,
+							className:
+								typeof element.className === "string" ? element.className : "",
+							left: Math.round(element.getBoundingClientRect().left),
+							right: Math.round(element.getBoundingClientRect().right),
+						}));
+					});
+					expect(
+						overflow,
+						`${route.path} overflows at ${viewport.width}px`,
+					).toEqual([]);
 				}
 
 				if (viewport.width <= 375 && route.hasWideTable) {
