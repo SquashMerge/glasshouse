@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DialogContent, DialogOverlay } from "../../src/components/ui/dialog";
@@ -45,6 +45,38 @@ describe("Dialog shell", () => {
 
 		fireEvent.mouseDown(screen.getByRole("dialog").parentElement!);
 		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it("keeps initial dialog focus under React StrictMode effect replay", async () => {
+		function Example() {
+			const [open, setOpen] = useState(false);
+			return (
+				<>
+					<button type="button" onClick={() => setOpen(true)}>
+						Open strict dialog
+					</button>
+					{open ? (
+						<DialogOverlay>
+							<DialogContent role="dialog" aria-label="Strict dialog">
+								<button type="button">Dialog action</button>
+							</DialogContent>
+						</DialogOverlay>
+					) : null}
+				</>
+			);
+		}
+
+		render(
+			<StrictMode>
+				<Example />
+			</StrictMode>,
+		);
+		const opener = screen.getByRole("button", { name: "Open strict dialog" });
+		opener.focus();
+		fireEvent.click(opener);
+		const dialogAction = screen.getByRole("button", { name: "Dialog action" });
+		await new Promise((resolve) => window.setTimeout(resolve, 10));
+		expect(dialogAction).toHaveFocus();
 	});
 
 	it("contains keyboard focus and closes on Escape, restoring focus to the opener", async () => {

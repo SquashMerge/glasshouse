@@ -11,6 +11,7 @@ export const DialogOverlay = React.forwardRef<
 	DialogOverlayProps
 >(({ className, onEscape, onKeyDown, ...props }, forwardedRef) => {
 	const overlayRef = React.useRef<HTMLDivElement>(null);
+	const restoreTimer = React.useRef<number | null>(null);
 	const previousFocus = React.useRef<HTMLElement | null>(
 		typeof document === "undefined"
 			? null
@@ -19,6 +20,10 @@ export const DialogOverlay = React.forwardRef<
 
 	React.useImperativeHandle(forwardedRef, () => overlayRef.current!);
 	React.useEffect(() => {
+		if (restoreTimer.current !== null) {
+			window.clearTimeout(restoreTimer.current);
+			restoreTimer.current = null;
+		}
 		const first = overlayRef.current?.querySelector<HTMLElement>(
 			'[autofocus], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
 		);
@@ -26,7 +31,10 @@ export const DialogOverlay = React.forwardRef<
 			first ?? overlayRef.current?.querySelector<HTMLElement>('[role="dialog"]')
 		)?.focus();
 		return () => {
-			window.setTimeout(() => previousFocus.current?.focus(), 0);
+			restoreTimer.current = window.setTimeout(() => {
+				previousFocus.current?.focus();
+				restoreTimer.current = null;
+			}, 0);
 		};
 	}, []);
 
