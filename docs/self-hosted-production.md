@@ -30,7 +30,7 @@ docker compose --project-directory . --env-file /secure/glasshouse.production.en
 
 The API fails before serving if `NODE_ENV` is not exactly `production`, the
 public origin is not HTTPS, required credentials are weak/placeholders, or
-`GEPA_WORKER_MODE=cli`/the development LLM override is enabled. Production
+`GEPA_WORKER_MODE=cli`/`GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION=true` is enabled. Production
 must use a provider-backed GEPA worker; the local authenticated CLI adapter is
 development-only. Keep provider credentials in the deployment secret store.
 

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { assertProductionConfiguration } from "../../src/lib/production-config";
 
 const validEnvironment = {
@@ -14,6 +16,36 @@ const validEnvironment = {
 describe("production configuration", () => {
 	it("accepts an explicitly production, HTTPS configuration", () => {
 		expect(() => assertProductionConfiguration(validEnvironment)).not.toThrow();
+	});
+
+	it("rejects the shipped production environment template", () => {
+		const template = readFileSync(
+			resolve(import.meta.dir, "../../../../infra/production.env.example"),
+			"utf8",
+		);
+		const environment = Object.fromEntries(
+			template
+				.split("\n")
+				.filter((line) => line && !line.startsWith("#"))
+				.map((line) => {
+					const separator = line.indexOf("=");
+					return [line.slice(0, separator), line.slice(separator + 1)];
+				}),
+		);
+
+		for (const name of [
+			"POSTGRES_PASSWORD",
+			"CLICKHOUSE_PASSWORD",
+			"VALKEY_PASSWORD",
+			"UI_PASSWORD",
+		] as const) {
+			expect(() =>
+				assertProductionConfiguration({
+					...validEnvironment,
+					[name]: environment[name],
+				}),
+			).toThrow(`${name} must be a non-placeholder production secret`);
+		}
 	});
 
 	for (const [name, value] of [
