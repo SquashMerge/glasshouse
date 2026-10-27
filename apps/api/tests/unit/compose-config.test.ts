@@ -56,7 +56,10 @@ function renderComposeConfig(
 	return JSON.parse(result.stdout) as {
 		services: Record<
 			string,
-			{ logging?: { driver?: string; options?: Record<string, string> } }
+			{
+				logging?: { driver?: string; options?: Record<string, string> };
+				environment?: Record<string, string>;
+			}
 		>;
 	};
 }
@@ -127,6 +130,50 @@ describe("Compose API database configuration", () => {
 		expect(apiEnvironment).toContain(
 			"POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in infra/.env}",
 		);
+	});
+
+	it("renders the production PostgreSQL URL with its configured password", () => {
+		const compose = readFileSync(
+			resolve(import.meta.dir, "../../../../infra/compose.production.yaml"),
+			"utf8",
+		);
+		const apiEnvironment = compose.slice(
+			compose.indexOf("  api:"),
+			compose.indexOf("  web:"),
+		);
+		const expectedExpression = [
+			"DATABASE_URL: postgres://",
+			"${POSTGRES_USER}:",
+			"${POSTGRES_PASSWORD}@postgres:5432/",
+			"${POSTGRES_DB:-glasshouse}",
+		].join("");
+
+		expect(apiEnvironment).toContain(expectedExpression);
+		expect(apiEnvironment).not.toContain(":***@");
+
+		const password = "production-compose-test-password";
+		const config = renderComposeConfig(
+			{
+				NODE_ENV: "production",
+				POSTGRES_USER: "production_compose_test",
+				POSTGRES_PASSWORD: password,
+				POSTGRES_DB: "production_compose_test",
+				CLICKHOUSE_USER: "production_compose_test",
+				CLICKHOUSE_PASSWORD: "production-compose-test-clickhouse-password",
+				VALKEY_PASSWORD: "production-compose-test-valkey-password",
+				UI_USERNAME: "production_compose_test",
+				UI_PASSWORD: "production-compose-test-ui-password",
+				GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "production_compose_test_owner",
+				GLASSHOUSE_PUBLIC_ORIGIN: "https://glasshouse.example.test",
+				GEPA_ALLOWED_MODELS: "openai/gpt-4o-mini",
+			},
+			"infra/compose.production.yaml",
+		);
+		if (config) {
+			expect(config.services.api?.environment?.DATABASE_URL).toBe(
+				`postgres://production_compose_test:${password}@postgres:5432/production_compose_test`,
+			);
+		}
 	});
 
 	it("passes runtime safety and observability controls into the API container", () => {
