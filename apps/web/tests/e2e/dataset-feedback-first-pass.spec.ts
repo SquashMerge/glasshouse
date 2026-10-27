@@ -568,7 +568,7 @@ test("runs a pinned Evaluation and retains its results after navigation", async 
 
 	const lifecycle = page.getByLabel("Evaluation Run lifecycle");
 	await expect(lifecycle).toContainText("completed", { timeout: 30_000 });
-	await expect(lifecycle).toContainText("1 of 1 selected");
+	await expect(lifecycle).toContainText("1 of 100 selected");
 	await expect(lifecycle).toContainText("1 evaluated");
 	await expect(lifecycle).toContainText("100.0% pass");
 	await expect(lifecycle).toContainText("e2e-deterministic-answer");
