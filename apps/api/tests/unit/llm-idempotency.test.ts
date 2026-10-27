@@ -61,6 +61,19 @@ test("passes the immutable OpenAI execution defaults and stable dispatch headers
 	});
 });
 
+test("returns bounded deterministic output from the fake evaluation provider", async () => {
+	await expect(
+		invokeConfiguredLlm(
+			{ question: "test" },
+			{ provider: "fake", model: "deterministic" },
+		),
+	).resolves.toEqual({
+		output: { value: "e2e-deterministic-answer" },
+		model: "deterministic",
+		cost_usd: 0,
+	});
+});
+
 test("passes the stable logical dispatch key to the development CLI", async () => {
 	process.env.GLASSHOUSE_DEV_LLM_COMMAND = JSON.stringify([
 		process.execPath,

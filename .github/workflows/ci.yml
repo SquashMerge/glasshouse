@@ -195,6 +195,7 @@ jobs:
         run: |
           cp infra/.env.example infra/.env
           sed -i 's/CHANGE_ME/glasshouse-ci-password/g' infra/.env
+          printf '\nGLASSHOUSE_EVAL_LLM_PROVIDER=fake\nOPENAI_MODEL=deterministic\nEVALUATION_ALLOWED_MODELS=fake/deterministic\n' >> infra/.env
 
       - name: Start application stack
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml up --build --detach --wait --wait-timeout 180

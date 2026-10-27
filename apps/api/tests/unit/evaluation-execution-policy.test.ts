@@ -33,4 +33,27 @@ describe("Evaluation execution policy", () => {
 			),
 		).toThrow("sample-size cap");
 	});
+
+	it("permits the deterministic fake provider only outside production", () => {
+		expect(
+			resolveEvaluationExecutionPolicy(
+				{ provider: "fake", model: "deterministic" },
+				1,
+				{
+					NODE_ENV: "test",
+					EVALUATION_ALLOWED_MODELS: "fake/deterministic",
+				},
+			),
+		).toMatchObject({ provider: "fake", model: "deterministic" });
+		expect(() =>
+			resolveEvaluationExecutionPolicy(
+				{ provider: "fake", model: "deterministic" },
+				1,
+				{
+					NODE_ENV: "production",
+					EVALUATION_ALLOWED_MODELS: "fake/deterministic",
+				},
+			),
+		).toThrow("disabled in production");
+	});
 });

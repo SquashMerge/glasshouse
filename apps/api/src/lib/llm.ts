@@ -172,6 +172,12 @@ export async function invokeConfiguredLlm(
 		{ role: "system", content: system },
 		{ role: "user", content: JSON.stringify(input) },
 	]);
+	if (provider === "fake")
+		return {
+			output: { value: "e2e-deterministic-answer" },
+			model,
+			cost_usd: 0,
+		};
 	if (provider === "codex_cli")
 		// The development CLI intentionally keeps its existing stdin contract. It
 		// receives the pinned model and dispatch key, but does not emulate OpenAI's

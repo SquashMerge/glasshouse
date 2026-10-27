@@ -6,7 +6,7 @@ export type EvaluationExecutionBounds = {
 };
 
 export type ResolvedEvaluationExecutionPolicy = {
-	provider: "openai" | "codex_cli";
+	provider: "openai" | "codex_cli" | "fake";
 	model: string;
 	bounds: EvaluationExecutionBounds;
 };
@@ -42,7 +42,7 @@ function allowedModels(environment: Environment): Set<string> {
 		models.length === 0 ||
 		models.some(
 			(value) =>
-				!/^(?:openai|codex_cli)\/[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
+				!/^(?:openai|codex_cli|fake)\/[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(
 					value,
 				),
 		)
@@ -66,9 +66,13 @@ export function resolveEvaluationExecutionPolicy(
 		typeof target.model === "string" && target.model.trim()
 			? target.model.trim()
 			: (environment.OPENAI_MODEL ?? "gpt-4o-mini");
-	if (provider !== "openai" && provider !== "codex_cli")
+	if (provider !== "openai" && provider !== "codex_cli" && provider !== "fake")
 		throw new EvaluationExecutionPolicyError(
 			"Evaluation provider/model is not approved",
+		);
+	if (provider === "fake" && environment.NODE_ENV === "production")
+		throw new EvaluationExecutionPolicyError(
+			"The fake Evaluation provider is disabled in production",
 		);
 	if (!allowedModels(environment).has(`${provider}/${model}`))
 		throw new EvaluationExecutionPolicyError(
