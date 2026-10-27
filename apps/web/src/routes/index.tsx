@@ -5,6 +5,7 @@ import { LuCopy, LuExternalLink } from "react-icons/lu";
 import { HealthBadge } from "../components/HealthBadge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
+import { PageHeader } from "../components/ui/page-header";
 import { Skeleton } from "../components/ui/skeleton";
 import { useProjectSelection } from "../components/ProjectProvider";
 import { copyText } from "../lib/clipboard";
@@ -42,15 +43,10 @@ export function DashboardPage() {
 
 	return (
 		<main className="space-y-8 py-10 sm:py-12">
-			<header>
-				<h1 className="text-4xl font-semibold tracking-tight">
-					Operations overview
-				</h1>
-				<p className="mt-2 text-muted-foreground">
-					See whether telemetry is flowing, investigate failures, and pick up
-					where your team left off.
-				</p>
-			</header>
+			<PageHeader
+				title="Operations overview"
+				description="See whether telemetry is flowing, investigate failures, and pick up where your team left off."
+			/>
 
 			<section
 				className="grid grid-cols-1 gap-6 md:grid-cols-3"

@@ -2,7 +2,12 @@ import * as React from "react";
 import { useNavigate, useLocation } from "@tanstack/react-router";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { LuActivity, LuListTree } from "react-icons/lu";
-import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+import {
+	Tabs,
+	TabsContent,
+	TabsList,
+	TabsTrigger,
+} from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
 import {
 	FilterableTable,
@@ -67,9 +72,14 @@ export function ObservabilityPage() {
 						Spans
 					</TabsTrigger>
 				</TabsList>
-			</Tabs>
 
-			{tab === "traces" ? <TracesTab /> : <SpansTab />}
+				<TabsContent value="traces">
+					{tab === "traces" ? <TracesTab /> : null}
+				</TabsContent>
+				<TabsContent value="spans">
+					{tab === "spans" ? <SpansTab /> : null}
+				</TabsContent>
+			</Tabs>
 		</div>
 	);
 }

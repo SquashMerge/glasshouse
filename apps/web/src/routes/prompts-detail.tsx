@@ -643,7 +643,7 @@ function OptimizationConfirmDialog({
 			Number(maxMetricCalls) <= MAX_OPTIMIZATION_METRIC_CALLS,
 	);
 	return (
-		<DialogOverlay>
+		<DialogOverlay onEscape={() => !pending && onClose()}>
 			<DialogContent
 				role="dialog"
 				aria-modal="true"
@@ -1376,7 +1376,10 @@ function DeletePromptDialog({
 	}, [isDeleting, onClose]);
 
 	return (
-		<DialogOverlay onMouseDown={onClose}>
+		<DialogOverlay
+			onEscape={() => !isDeleting && onClose()}
+			onMouseDown={onClose}
+		>
 			<DialogContent
 				ref={dialogRef}
 				role="dialog"

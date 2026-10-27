@@ -131,11 +131,8 @@ export function AddToDatasetDialog({
 			{open && (
 				<DialogOverlay
 					ref={dialogRef}
+					onEscape={() => !pending && close()}
 					onKeyDown={(event) => {
-						if (event.key === "Escape") {
-							close();
-							return;
-						}
 						if (event.key !== "Tab") return;
 						const focusable = Array.from(
 							dialogRef.current?.querySelectorAll<HTMLElement>(

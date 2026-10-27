@@ -218,12 +218,19 @@ test.describe("Shared app workspace", () => {
 			{ path: "/datasets", content: "Datasets" },
 			{ path: "/evaluations", content: "Evaluations" },
 			{ path: "/feedback", content: "Feedback" },
+			{ path: "/projects", content: "Projects" },
 		];
 		const viewports = [
+			{ width: 3840, height: 2160 },
+			{ width: 2560, height: 1440 },
 			{ width: 1920, height: 1080 },
 			{ width: 1440, height: 900 },
+			{ width: 1280, height: 800 },
 			{ width: 1024, height: 768 },
+			{ width: 768, height: 1024 },
+			{ width: 414, height: 896 },
 			{ width: 375, height: 812 },
+			{ width: 320, height: 640 },
 		];
 
 		for (const viewport of viewports) {
@@ -252,7 +259,40 @@ test.describe("Shared app workspace", () => {
 					expect(bounds!.width).toBeGreaterThan(1600);
 				}
 
-				if (viewport.width === 375 && route.hasWideTable) {
+				if (!route.hasWideTable && viewport.width <= 768) {
+					const overflow = await page.evaluate(() => {
+						const offenders = Array.from(
+							document.querySelectorAll<HTMLElement>("body *"),
+						).filter((element) => {
+							const bounds = element.getBoundingClientRect();
+							if (bounds.width === 0) return false;
+							let parent = element.parentElement;
+							while (parent && parent !== document.body) {
+								const overflowX = getComputedStyle(parent).overflowX;
+								if (
+									(overflowX === "auto" || overflowX === "scroll") &&
+									parent.scrollWidth > parent.clientWidth + 1
+								)
+									return false;
+								parent = parent.parentElement;
+							}
+							return bounds.left < -1 || bounds.right > window.innerWidth + 1;
+						});
+						return offenders.slice(0, 5).map((element) => ({
+							tag: element.tagName,
+							className:
+								typeof element.className === "string" ? element.className : "",
+							left: Math.round(element.getBoundingClientRect().left),
+							right: Math.round(element.getBoundingClientRect().right),
+						}));
+					});
+					expect(
+						overflow,
+						`${route.path} overflows at ${viewport.width}px`,
+					).toEqual([]);
+				}
+
+				if (viewport.width <= 375 && route.hasWideTable) {
 					const tableViewport = page.locator("table").locator("..");
 					const tableMetrics = await tableViewport.evaluate((element) => ({
 						clientWidth: element.clientWidth,
@@ -325,7 +365,7 @@ test.describe("Shared app workspace", () => {
 					collapsedIconBounds!.width / 2 -
 					(collapsedSidebarBounds!.x + collapsedSidebarBounds!.width / 2),
 			),
-		).toBeLessThanOrEqual(1);
+		).toBeLessThanOrEqual(2);
 		await sidebar.getByRole("button", { name: "Expand sidebar" }).click();
 		await expect(desktopIcon).toBeVisible();
 

@@ -204,7 +204,7 @@ function RecoveryCard({
 				</p>
 			) : null}
 			{open ? (
-				<DialogOverlay>
+				<DialogOverlay onEscape={() => !pending && onClose()}>
 					<DialogContent
 						className="max-w-md space-y-4"
 						role="dialog"

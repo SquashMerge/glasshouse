@@ -10,6 +10,7 @@ import {
 import { PageMessage } from "./prompts";
 import { FormLoadingSkeleton } from "../components/LoadingSkeletons";
 import { PromptComposer } from "./prompts-new";
+import { Button } from "../components/ui/button";
 
 export function EditPromptPage() {
 	const { slug } = useParams({ from: "/protected/prompts/$slug/edit" });
@@ -72,31 +73,27 @@ export function EditPromptPage() {
 				{confirmStop ? (
 					<span className="mt-4 block">
 						Stopping is final and prevents publication.{" "}
-						<button
-							type="button"
-							className="ml-2 rounded-md border border-destructive px-3 py-2 text-sm"
+						<Button
+							variant="destructive"
+							className="ml-2"
 							onClick={() => stopMutation.mutate()}
 							disabled={stopMutation.isPending}
 						>
 							{stopMutation.isPending ? "Stopping…" : "Confirm stop"}
-						</button>
-						<button
-							type="button"
-							className="ml-2 rounded-md border px-3 py-2 text-sm"
+						</Button>
+						<Button
+							variant="outline"
+							className="ml-2"
 							onClick={() => setConfirmStop(false)}
 							disabled={stopMutation.isPending}
 						>
 							Cancel
-						</button>
+						</Button>
 					</span>
 				) : (
-					<button
-						type="button"
-						className="mt-4 block rounded-md border px-3 py-2 text-sm"
-						onClick={() => setConfirmStop(true)}
-					>
+					<Button className="mt-4" onClick={() => setConfirmStop(true)}>
 						Stop optimization
-					</button>
+					</Button>
 				)}
 			</PageMessage>
 		);
