@@ -1,7 +1,8 @@
 # infra/compose.deps.yaml
 # Data services only (Postgres + ClickHouse + Valkey). Use this when running the
 # api/web locally via bun (fast HMR): `make deps-up` then `make dev-backend`
-# + `make dev-frontend` in separate terminals.
+# + `make dev-frontend` in separate terminals. Keep its logging limits aligned
+# with infra/compose.yaml so both development modes have bounded container logs.
 #
 # Don't run `make dev` (full stack) at the same time as `make deps-up` — the
 # ports collide.
@@ -13,6 +14,11 @@ services:
     image: postgres:16-alpine
     container_name: glasshouse-postgres
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in infra/.env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in infra/.env}
@@ -31,6 +37,11 @@ services:
     image: clickhouse/clickhouse-server:24-alpine
     container_name: glasshouse-clickhouse
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     platform: linux/amd64
     cap_add:
       - SYS_NICE
@@ -59,6 +70,11 @@ services:
     image: valkey/valkey:8-alpine
     container_name: glasshouse-valkey
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     command:
       - valkey-server
       - /usr/local/etc/valkey/valkey.conf

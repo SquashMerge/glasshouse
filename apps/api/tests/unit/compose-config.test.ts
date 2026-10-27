@@ -1,6 +1,83 @@
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+const composeRoot = resolve(import.meta.dir, "../../../..");
+
+function renderComposeConfig(
+	overrides: Record<string, string> = {},
+	composeFile = "infra/compose.yaml",
+) {
+	const environment = {
+		...process.env,
+		POSTGRES_USER: "compose-test",
+		POSTGRES_PASSWORD: "compose-test-password",
+		CLICKHOUSE_USER: "compose-test",
+		CLICKHOUSE_PASSWORD: "compose-test-password",
+		VALKEY_PASSWORD: "compose-test-password",
+		UI_USERNAME: "compose-test",
+		UI_PASSWORD: "compose-test-password",
+		GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: "compose-test",
+		GEPA_ALLOWED_MODELS: "openai/gpt-4o-mini",
+	};
+	delete environment.DOCKER_LOG_DRIVER;
+	delete environment.DOCKER_LOG_MAX_SIZE;
+	delete environment.DOCKER_LOG_MAX_FILE;
+	Object.assign(environment, overrides);
+
+	const result = spawnSync(
+		"docker",
+		[
+			"compose",
+			"--project-directory",
+			composeRoot,
+			"--env-file",
+			"/dev/null",
+			"-f",
+			composeFile,
+			"config",
+			"--format",
+			"json",
+		],
+		{
+			cwd: composeRoot,
+			encoding: "utf8",
+			env: environment,
+		},
+	);
+
+	if (result.error?.code === "ENOENT") {
+		return undefined;
+	}
+	if (result.status !== 0) {
+		throw new Error(`docker compose config failed: ${result.stderr}`);
+	}
+	return JSON.parse(result.stdout) as {
+		services: Record<
+			string,
+			{ logging?: { driver?: string; options?: Record<string, string> } }
+		>;
+	};
+}
+
+function expectSourceLogSettings(compose: string, services: string[]) {
+	for (const service of services) {
+		const header = `  ${service}:\n`;
+		const start = compose.indexOf(header);
+		expect(start).toBeGreaterThanOrEqual(0);
+		const bodyStart = start + header.length;
+		const body = compose.slice(bodyStart);
+		const nextService = /\n  [a-z][a-z0-9_-]*:\n/.exec(body);
+		const serviceBlock = compose.slice(
+			start,
+			nextService ? bodyStart + nextService.index : undefined,
+		);
+		expect(serviceBlock).toContain("driver: ${DOCKER_LOG_DRIVER:-local}");
+		expect(serviceBlock).toContain("max-size: ${DOCKER_LOG_MAX_SIZE:-10m}");
+		expect(serviceBlock).toContain("max-file: ${DOCKER_LOG_MAX_FILE:-3}");
+	}
+}
 
 describe("Compose API database configuration", () => {
 	it("provides a real migration URL and component variables without a placeholder password", () => {
@@ -72,6 +149,105 @@ describe("Compose API database configuration", () => {
 			["glasshouse_valkey_data", "astraea-deps_astraea_valkey_data"],
 		] as const) {
 			expect(dependencyVolumes).toContain(`${logical}:\n    name: ${physical}`);
+		}
+	});
+
+	it("renders bounded default Docker log rotation for every full-stack service", () => {
+		const config = renderComposeConfig();
+		if (!config) {
+			const compose = readFileSync(
+				resolve(composeRoot, "infra/compose.yaml"),
+				"utf8",
+			);
+			expectSourceLogSettings(compose, [
+				"postgres",
+				"clickhouse",
+				"valkey",
+				"api",
+				"web",
+			]);
+			return;
+		}
+
+		for (const service of ["postgres", "clickhouse", "valkey", "api", "web"]) {
+			expect(config.services[service]?.logging).toEqual({
+				driver: "local",
+				options: { "max-file": "3", "max-size": "10m" },
+			});
+		}
+	});
+
+	it("renders operator-selected driver and rotation settings", () => {
+		const config = renderComposeConfig({
+			DOCKER_LOG_DRIVER: "json-file",
+			DOCKER_LOG_MAX_SIZE: "25m",
+			DOCKER_LOG_MAX_FILE: "7",
+		});
+		if (!config) {
+			const compose = readFileSync(
+				resolve(composeRoot, "infra/compose.yaml"),
+				"utf8",
+			);
+			expectSourceLogSettings(compose, [
+				"postgres",
+				"clickhouse",
+				"valkey",
+				"api",
+				"web",
+			]);
+			return;
+		}
+
+		for (const service of ["postgres", "clickhouse", "valkey", "api", "web"]) {
+			expect(config.services[service]?.logging).toEqual({
+				driver: "json-file",
+				options: { "max-file": "7", "max-size": "25m" },
+			});
+		}
+	});
+
+	it("renders bounded default Docker log rotation for dependency services", () => {
+		const config = renderComposeConfig({}, "infra/compose.deps.yaml");
+		if (!config) {
+			const compose = readFileSync(
+				resolve(composeRoot, "infra/compose.deps.yaml"),
+				"utf8",
+			);
+			expectSourceLogSettings(compose, ["postgres", "clickhouse", "valkey"]);
+			return;
+		}
+
+		for (const service of ["postgres", "clickhouse", "valkey"]) {
+			expect(config.services[service]?.logging).toEqual({
+				driver: "local",
+				options: { "max-file": "3", "max-size": "10m" },
+			});
+		}
+	});
+
+	it("renders dependency-service operator-selected driver and rotation settings", () => {
+		const config = renderComposeConfig(
+			{
+				DOCKER_LOG_DRIVER: "json-file",
+				DOCKER_LOG_MAX_SIZE: "25m",
+				DOCKER_LOG_MAX_FILE: "7",
+			},
+			"infra/compose.deps.yaml",
+		);
+		if (!config) {
+			const compose = readFileSync(
+				resolve(composeRoot, "infra/compose.deps.yaml"),
+				"utf8",
+			);
+			expectSourceLogSettings(compose, ["postgres", "clickhouse", "valkey"]);
+			return;
+		}
+
+		for (const service of ["postgres", "clickhouse", "valkey"]) {
+			expect(config.services[service]?.logging).toEqual({
+				driver: "json-file",
+				options: { "max-file": "7", "max-size": "25m" },
+			});
 		}
 	});
 });

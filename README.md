@@ -8,6 +8,12 @@
 
 The Compose files use Glasshouse logical volume keys while keeping the established physical data-volume IDs for PostgreSQL, ClickHouse, and Valkey, so this branding change does not orphan existing stores.
 
+### Container log rotation
+
+Both local Compose modes use Docker's `local` logging driver with conservative per-service defaults of `10m` maximum file size and `3` files: the full stack (`infra/compose.yaml`) and the fast local API/frontend mode (`infra/compose.deps.yaml`, started with `make deps-up`). This bounds active local container logs to approximately 30 MiB per service, excluding driver metadata and filesystem overhead; it is not a retention guarantee. Override `DOCKER_LOG_DRIVER`, `DOCKER_LOG_MAX_SIZE`, and `DOCKER_LOG_MAX_FILE` in the untracked `infra/.env` without editing tracked Compose files. The values are interpolated into every service in both files, so `max-size` and `max-file` must be accepted by the selected driver. The base files support drivers such as `local` and `json-file`; they do not claim arbitrary external-driver option compatibility. For an external driver with different options, use a deployment-specific Compose override that replaces the service logging configuration and follow that driver's retention settings.
+
+External drivers generally send logs elsewhere and may ignore or reject these local rotation options; their backend controls retention and disk usage. Export or forward logs to the operator's logging system before local rotation removes older files. For a one-time full-stack capture, run `docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml logs --no-color > glasshouse-logs.txt` from the repository root; when using `make deps-up`, use `-f infra/compose.deps.yaml` instead. Protect and transfer the resulting file according to your organization’s log-handling policy. This change only configures Docker's logging metadata and does not add credentials, authorization headers, or application payloads to logs.
+
 ## Why it exists
 
 AI teams in 2026 are building agents that are mostly glue code. A typical production agent looks like this:
