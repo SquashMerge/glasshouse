@@ -5,6 +5,11 @@ services:
     image: postgres:16-alpine
     container_name: glasshouse-postgres
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
@@ -23,6 +28,11 @@ services:
     image: clickhouse/clickhouse-server:24-alpine
     container_name: glasshouse-clickhouse
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     platform: linux/amd64
     cap_add:
       - SYS_NICE
@@ -51,6 +61,11 @@ services:
     image: valkey/valkey:8-alpine
     container_name: glasshouse-valkey
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     command:
       - valkey-server
       - /usr/local/etc/valkey/valkey.conf
@@ -73,6 +88,11 @@ services:
       dockerfile: apps/api/Dockerfile
     container_name: glasshouse-api
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -130,6 +150,11 @@ services:
       dockerfile: apps/web/Dockerfile
     container_name: glasshouse-web
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       WEB_PORT: ${WEB_PORT:-5173}
