@@ -132,6 +132,10 @@ import {
 	handleRollbackLatestPromptVersion,
 } from "./routes/prompts.js";
 import {
+	getOrganizationUsageRoute,
+	handleOrganizationUsage,
+} from "./routes/organization-usage.js";
+import {
 	archiveProject,
 	createProject,
 	deleteProject,
@@ -455,6 +459,7 @@ register(listObservations, handleListObservations);
 register(streamObservationEvents, handleStreamObservationEvents);
 register(streamTraceDetailEvents, handleStreamTraceDetailEvents);
 
+register(getOrganizationUsageRoute, handleOrganizationUsage);
 register(getMe, handleGetMe);
 register(listProjects, handleListProjects);
 register(createProject, handleCreateProject);

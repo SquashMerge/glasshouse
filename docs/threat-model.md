@@ -58,6 +58,8 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 **Review focus:** IDOR through any route or alternate method; missing/ambiguous Project selectors; SQL predicates and composite references; cache/cursor/SSE leakage after switching Projects; archived/deleting Project behavior; stale or unscoped historical rows; and background actions that outlive the initiating request. Never infer tenant authority from UI visibility or a UUID's unguessability.
 
+**Organization usage aggregate exception:** `GET /v1/organization/usage` is intentionally available to every authenticated organization member, including Read-only actors, and exposes only Project identity/lifecycle metadata and aggregate retained-row counts. It must derive the organization from trusted authentication context, recheck active organization membership, enumerate only that organization's active/archived Projects, and filter both ClickHouse tables by the same organization and those Project IDs. It must not return payload columns or imply access to detail/query/export routes. This deliberately reveals organization-wide aggregate activity to every member; do not generalize the exception to other Project surfaces. Dependency health is a separate service-availability signal, not evidence of telemetry ingestion.
+
 ### B. Revocation races in requests, streams, and background work (high impact)
 
 **Attacker/event:** a valid actor's role, session, credential, or Project is revoked while a request, SSE stream, queued job, retry, or recovery is active.

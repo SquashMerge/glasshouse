@@ -6765,6 +6765,159 @@ components:
       required:
         - role
       type: object
+    OrganizationUsageDashboard:
+      additionalProperties: false
+      properties:
+        from:
+          format: date-time
+          type: string
+        projects:
+          items:
+            additionalProperties: false
+            properties:
+              id:
+                format: uuid
+                type: string
+              name:
+                type: string
+              observations:
+                minimum: 0
+                type: integer
+              observations_by_type:
+                additionalProperties: false
+                properties:
+                  event:
+                    minimum: 0
+                    type: integer
+                  generation:
+                    minimum: 0
+                    type: integer
+                  span:
+                    minimum: 0
+                    type: integer
+                  tool:
+                    minimum: 0
+                    type: integer
+                required:
+                  - span
+                  - event
+                  - generation
+                  - tool
+                type: object
+              slug:
+                type: string
+              status:
+                enum:
+                  - active
+                  - archived
+                type: string
+              traces:
+                minimum: 0
+                type: integer
+            required:
+              - id
+              - name
+              - slug
+              - status
+              - traces
+              - observations
+              - observations_by_type
+            type: object
+          type: array
+        range:
+          enum:
+            - 24h
+            - 7d
+            - 30d
+            - 90d
+          type: string
+        series:
+          items:
+            additionalProperties: false
+            properties:
+              bucket_start:
+                format: date-time
+                type: string
+              observations:
+                minimum: 0
+                type: integer
+              observations_by_type:
+                additionalProperties: false
+                properties:
+                  event:
+                    minimum: 0
+                    type: integer
+                  generation:
+                    minimum: 0
+                    type: integer
+                  span:
+                    minimum: 0
+                    type: integer
+                  tool:
+                    minimum: 0
+                    type: integer
+                required:
+                  - span
+                  - event
+                  - generation
+                  - tool
+                type: object
+              traces:
+                minimum: 0
+                type: integer
+            required:
+              - traces
+              - observations
+              - observations_by_type
+              - bucket_start
+            type: object
+          type: array
+        to:
+          format: date-time
+          type: string
+        totals:
+          additionalProperties: false
+          properties:
+            observations:
+              minimum: 0
+              type: integer
+            observations_by_type:
+              additionalProperties: false
+              properties:
+                event:
+                  minimum: 0
+                  type: integer
+                generation:
+                  minimum: 0
+                  type: integer
+                span:
+                  minimum: 0
+                  type: integer
+                tool:
+                  minimum: 0
+                  type: integer
+              required:
+                - span
+                - event
+                - generation
+                - tool
+              type: object
+            traces:
+              minimum: 0
+              type: integer
+          required:
+            - traces
+            - observations
+            - observations_by_type
+          type: object
+      required:
+        - range
+        - from
+        - to
+        - projects
+        - totals
+        - series
+      type: object
     Project:
       additionalProperties: false
       properties:
@@ -14497,6 +14650,58 @@ paths:
       summary: SSE stream of newly created observations
       tags:
         - traces
+  /v1/organization/usage:
+    get:
+      description: Returns row counts for retained traces and observations across active and archived Projects in the authenticated Organization. Counts use start_time in the selected UTC interval and include aggregate metadata only.
+      parameters:
+        - in: query
+          name: range
+          required: false
+          schema:
+            default: 30d
+            enum:
+              - 24h
+              - 7d
+              - 30d
+              - 90d
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationUsageDashboard'
+          description: Organization usage dashboard
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid query parameters
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Organization is not available
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: Get organization-wide persisted telemetry usage
+      tags:
+        - organization
   /v1/organizations/current/default-project:
     patch:
       requestBody:

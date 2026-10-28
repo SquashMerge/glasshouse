@@ -1,4 +1,5 @@
 import type { ClickHouseClient } from "@clickhouse/client";
+import { clickHouseDateTime } from "./clickhouse-datetime.js";
 import { ch } from "./clickhouse.js";
 import type { TraceCursor } from "./trace-cursor.js";
 
@@ -128,13 +129,6 @@ function normalizeClickHouseFlags<T extends ClickHouseBooleanFlags>(
 
 function defaultClient(): ClickHouseClient {
 	return ch();
-}
-
-function clickHouseDateTime(value: string): string {
-	const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)Z$/.exec(
-		value,
-	);
-	return match ? `${match[1]} ${match[2]}` : value;
 }
 
 function buildWhere(
