@@ -265,7 +265,8 @@ test.describe("Shared app workspace", () => {
 							document.querySelectorAll<HTMLElement>("body *"),
 						).filter((element) => {
 							const bounds = element.getBoundingClientRect();
-							if (bounds.width === 0) return false;
+							if (bounds.width === 0 || element.closest(".sr-only"))
+								return false;
 							let parent = element.parentElement;
 							while (parent && parent !== document.body) {
 								const overflowX = getComputedStyle(parent).overflowX;

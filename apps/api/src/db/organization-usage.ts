@@ -1,5 +1,5 @@
 import type { ClickHouseClient } from "@clickhouse/client";
-import { clickHouseDateTime } from "./traces-query.js";
+import { clickHouseDateTime } from "./clickhouse-datetime.js";
 
 export type OrganizationUsageRange = "24h" | "7d" | "30d" | "90d";
 export type UsageObservationType = "span" | "event" | "generation" | "tool";
