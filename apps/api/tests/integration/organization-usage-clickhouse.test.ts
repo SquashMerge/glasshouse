@@ -133,4 +133,43 @@ describe("organization usage ClickHouse integration", () => {
 			observations: 1,
 		});
 	});
+
+	it("buckets late-arriving rows by their historical start_time", async () => {
+		const lateProjectId = crypto.randomUUID();
+		const project = {
+			id: lateProjectId,
+			name: "Late arrival",
+			slug: "late-arrival",
+			status: "active" as const,
+		};
+		const input = {
+			organization_id: organizationId,
+			projects: [project],
+			range: "24h" as const,
+			now,
+		};
+		const beforeArrival = await getOrganizationUsage(client, input);
+		expect(beforeArrival.totals.traces).toBe(0);
+
+		await client.insert({
+			table: "traces",
+			format: "JSONEachRow",
+			values: [
+				{
+					organization_id: organizationId,
+					project_id: lateProjectId,
+					start_time: "2026-10-28 09:30:00.000",
+				},
+			],
+		});
+		const afterArrival = await getOrganizationUsage(client, input);
+
+		expect(afterArrival.totals.traces).toBe(1);
+		expect(afterArrival.series).toContainEqual(
+			expect.objectContaining({
+				bucket_start: "2026-10-28T09:00:00.000Z",
+				traces: 1,
+			}),
+		);
+	});
 });
