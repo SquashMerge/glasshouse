@@ -96,7 +96,7 @@ test.describe("Login flow", () => {
 		expect(stored.sp).toBeNull();
 		await page.reload();
 		await expect(
-			page.getByText("Operations overview", { exact: true }),
+			page.getByRole("heading", { name: "Organization overview" }),
 		).toBeVisible();
 	});
 
@@ -203,7 +203,7 @@ test.describe("Shared app workspace", () => {
 		await page.waitForURL((url) => url.pathname === "/", { timeout: 5000 });
 
 		const routes = [
-			{ path: "/", content: "Operations overview" },
+			{ path: "/", content: "Organization overview" },
 			{
 				path: "/observability?tab=traces",
 				content: "Traces",
