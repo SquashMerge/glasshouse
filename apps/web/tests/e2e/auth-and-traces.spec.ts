@@ -94,10 +94,52 @@ test.describe("Login flow", () => {
 		expect(stored.p).toBeNull();
 		expect(stored.su).toBeNull();
 		expect(stored.sp).toBeNull();
+		const usageResponse = page.waitForResponse((response) => {
+			const url = new URL(response.url());
+			return (
+				url.pathname === "/v1/organization/usage" &&
+				url.searchParams.get("range") === "30d"
+			);
+		});
 		await page.reload();
 		await expect(
 			page.getByRole("heading", { name: "Organization overview" }),
 		).toBeVisible();
+		const usage = await usageResponse;
+		expect(usage.status()).toBe(200);
+		const dashboard = await usage.json();
+		expect(Object.keys(dashboard).sort()).toEqual([
+			"from",
+			"projects",
+			"range",
+			"series",
+			"to",
+			"totals",
+		]);
+		expect(Object.keys(dashboard.totals).sort()).toEqual([
+			"observations",
+			"observations_by_type",
+			"traces",
+		]);
+		for (const bucket of dashboard.series) {
+			expect(Object.keys(bucket).sort()).toEqual([
+				"bucket_start",
+				"observations",
+				"observations_by_type",
+				"traces",
+			]);
+		}
+		for (const project of dashboard.projects) {
+			expect(Object.keys(project).sort()).toEqual([
+				"id",
+				"name",
+				"observations",
+				"observations_by_type",
+				"slug",
+				"status",
+				"traces",
+			]);
+		}
 	});
 
 	test("logout clears in-memory credentials and routes to /login", async ({
