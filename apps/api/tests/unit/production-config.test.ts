@@ -5,7 +5,9 @@ import { assertProductionConfiguration } from "../../src/lib/production-config";
 
 const validEnvironment = {
 	NODE_ENV: "production",
+	POSTGRES_USER: "glasshouse",
 	POSTGRES_PASSWORD: "postgres-production-secret-2026",
+	POSTGRES_DB: "glasshouse",
 	CLICKHOUSE_PASSWORD: "clickhouse-production-secret-2026",
 	VALKEY_PASSWORD: "valkey-production-secret-2026",
 	UI_PASSWORD: "ui-production-secret-2026",
@@ -58,6 +60,29 @@ describe("production configuration", () => {
 			"POSTGRES_PASSWORD must use only URL-unreserved ASCII characters",
 		);
 	});
+
+	for (const [name, value] of [
+		["POSTGRES_USER", "glasshouse?sslmode=disable"],
+		["POSTGRES_DB", "glasshouse?sslmode=disable"],
+		["POSTGRES_DB", " glasshouse "],
+	] as const) {
+		it(`rejects unsafe values for ${name}`, () => {
+			expect(() =>
+				assertProductionConfiguration({ ...validEnvironment, [name]: value }),
+			).toThrow(`${name} must use only URL-unreserved ASCII characters`);
+		});
+	}
+
+	for (const [name, value] of [
+		["POSTGRES_USER", `user${"x".repeat(60)}`],
+		["POSTGRES_DB", `db${"x".repeat(62)}`],
+	] as const) {
+		it(`rejects overlong PostgreSQL identifier in ${name}`, () => {
+			expect(() =>
+				assertProductionConfiguration({ ...validEnvironment, [name]: value }),
+			).toThrow(`${name} must be at most 63 ASCII characters`);
+		});
+	}
 
 	for (const [name, value] of [
 		["NODE_ENV", "development"],

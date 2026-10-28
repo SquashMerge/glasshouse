@@ -17,7 +17,7 @@ Do not put real credentials, local paths, auth-state locations, copied diagnosti
 - PostgreSQL stores transactional data; ClickHouse stores trace/OLAP data; Valkey is the Redis-compatible queue/cache service.
 - Production runs the PostgreSQL and ClickHouse migration runners concurrently before every API start; the API starts only after both succeed. PostgreSQL tracks applied migrations, while ClickHouse records checksum-verified changesets so later starts skip already-applied SQL. They remain separate schema systems and local host development invokes their runners explicitly.
 - Python is isolated to compute-heavy integrations such as the GEPA worker; keep credentials at the worker/deployment boundary.
-- Production uses `infra/compose.production.yaml` and `docs/self-hosted-production.md`, not the local `make dev` Compose path. It binds API/web to loopback, keeps data services private, validates production secrets/HTTPS/`NODE_ENV`, and rejects the development GEPA CLI mode.
+- Production uses `infra/compose.production.yaml` and `docs/self-hosted-production.md`, not the local `make dev` Compose path. It binds API/web to loopback, keeps data services private, validates production secrets/HTTPS/`NODE_ENV`, requires URL-unreserved PostgreSQL URL components with user/database names no longer than 63 ASCII characters, and rejects the development GEPA CLI mode.
 - The production ClickHouse service mounts `infra/clickhouse/backup.xml`; keep this file with the deployment so `File()` backup and restore remain restricted to the configured backup path.
 
 ## Prerequisites

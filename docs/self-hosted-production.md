@@ -27,10 +27,12 @@ support a specific proxy, certificate issuer, HTTP/2 policy, or firewall.
 ## Configuration and startup
 
 Copy `infra/production.env.example` into an operator-controlled secret location
-and replace every placeholder with independently generated secrets. Generate
-`POSTGRES_PASSWORD` using only URL-unreserved characters (for example,
-`openssl rand -hex 32`); it is embedded in `DATABASE_URL` and reserved URI
-characters would make PostgreSQL authentication fail. Start with:
+and replace every placeholder with independently generated secrets. Use only
+URL-unreserved ASCII characters in `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
+`POSTGRES_DB`, because Compose embeds them in `DATABASE_URL`; PostgreSQL user
+and database names must also be at most 63 ASCII characters. Generate
+`POSTGRES_PASSWORD` with an unreserved alphabet (for example, `openssl rand -hex 32`).
+Start with:
 
 ```sh
 docker compose --project-directory . --env-file /secure/glasshouse.production.env \
