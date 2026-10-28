@@ -27,7 +27,10 @@ support a specific proxy, certificate issuer, HTTP/2 policy, or firewall.
 ## Configuration and startup
 
 Copy `infra/production.env.example` into an operator-controlled secret location
-and replace every placeholder with independently generated secrets. Start with:
+and replace every placeholder with independently generated secrets. Generate
+`POSTGRES_PASSWORD` using only URL-unreserved characters (for example,
+`openssl rand -hex 32`); it is embedded in `DATABASE_URL` and reserved URI
+characters would make PostgreSQL authentication fail. Start with:
 
 ```sh
 docker compose --project-directory . --env-file /secure/glasshouse.production.env \

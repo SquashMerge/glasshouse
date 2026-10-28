@@ -36,6 +36,11 @@ export function assertProductionConfiguration(
 		"UI_PASSWORD",
 	])
 		requireStrongSecret(environment, name);
+	const postgresPassword = required(environment, "POSTGRES_PASSWORD");
+	if (!/^[A-Za-z0-9._~-]+$/.test(postgresPassword))
+		throw new Error(
+			"POSTGRES_PASSWORD must use only URL-unreserved ASCII characters because it is embedded in DATABASE_URL",
+		);
 	required(environment, "GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME");
 
 	const publicOrigin = required(environment, "GLASSHOUSE_PUBLIC_ORIGIN");

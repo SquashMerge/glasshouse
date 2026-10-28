@@ -48,6 +48,17 @@ describe("production configuration", () => {
 		}
 	});
 
+	it("rejects PostgreSQL passwords that cannot be embedded safely in DATABASE_URL", () => {
+		expect(() =>
+			assertProductionConfiguration({
+				...validEnvironment,
+				POSTGRES_PASSWORD: "postgres-production-secret/2026",
+			}),
+		).toThrow(
+			"POSTGRES_PASSWORD must use only URL-unreserved ASCII characters",
+		);
+	});
+
 	for (const [name, value] of [
 		["NODE_ENV", "development"],
 		["POSTGRES_PASSWORD", "CHANGE_ME"],
