@@ -52,9 +52,9 @@ export function HealthBadge() {
 	if (isLoading) {
 		return (
 			<div className="flex flex-wrap gap-2">
-				<Pill label="postgres" state="loading" />
-				<Pill label="clickhouse" state="loading" />
-				<Pill label="valkey" state="loading" />
+				<Pill label="Postgres" state="loading" />
+				<Pill label="ClickHouse" state="loading" />
+				<Pill label="Valkey" state="loading" />
 			</div>
 		);
 	}
@@ -62,18 +62,18 @@ export function HealthBadge() {
 	if (isError || !data) {
 		return (
 			<div className="flex flex-wrap gap-2">
-				<Pill label="postgres" state="unknown" />
-				<Pill label="clickhouse" state="unknown" />
-				<Pill label="valkey" state="unknown" />
+				<Pill label="Postgres" state="unknown" />
+				<Pill label="ClickHouse" state="unknown" />
+				<Pill label="Valkey" state="unknown" />
 			</div>
 		);
 	}
 
 	return (
 		<div className="flex flex-wrap gap-2">
-			<Pill label="postgres" state={data.checks.postgres} />
-			<Pill label="clickhouse" state={data.checks.clickhouse} />
-			<Pill label="valkey" state={data.checks.valkey} />
+			<Pill label="Postgres" state={data.checks.postgres} />
+			<Pill label="ClickHouse" state={data.checks.clickhouse} />
+			<Pill label="Valkey" state={data.checks.valkey} />
 		</div>
 	);
 }

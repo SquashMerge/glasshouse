@@ -1817,6 +1817,38 @@ export interface ProjectListResponse {
 	total: number;
 }
 
+export type OrganizationUsageRange = "24h" | "7d" | "30d" | "90d";
+export interface OrganizationUsageCounts {
+	traces: number;
+	observations: number;
+	observations_by_type: Record<
+		"span" | "event" | "generation" | "tool",
+		number
+	>;
+}
+export interface OrganizationUsageProject extends OrganizationUsageCounts {
+	id: string;
+	name: string;
+	slug: string;
+	status: "active" | "archived";
+}
+export interface OrganizationUsageDashboard {
+	range: OrganizationUsageRange;
+	from: string;
+	to: string;
+	projects: OrganizationUsageProject[];
+	totals: OrganizationUsageCounts;
+	series: Array<OrganizationUsageCounts & { bucket_start: string }>;
+}
+export async function getOrganizationUsage(
+	range: OrganizationUsageRange = "30d",
+): Promise<OrganizationUsageDashboard> {
+	return responseJson<OrganizationUsageDashboard>(
+		await authedFetch(`/v1/organization/usage${buildQs({ range })}`),
+		"getOrganizationUsage",
+	);
+}
+
 export async function listProjects(
 	includeArchived = false,
 ): Promise<ProjectListResponse> {
