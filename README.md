@@ -6,6 +6,8 @@
 
 **Local dev stack:** Postgres 16 + ClickHouse 24 + [Valkey 8](https://valkey.io) (open-source Redis fork) + Hono + React dashboard, behind `make dev`.
 
+For the separate self-hosted production path, use [`docs/self-hosted-production.md`](docs/self-hosted-production.md) and `infra/compose.production.yaml`. The other Compose files and `make dev` are development-only.
+
 The Compose files use Glasshouse logical volume keys while keeping the established physical data-volume IDs for PostgreSQL, ClickHouse, and Valkey, so this branding change does not orphan existing stores.
 
 ### Container log rotation
@@ -273,7 +275,7 @@ For local development, `GEPA_WORKER_MODE=cli` makes GEPA call a locally authenti
 
 `make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. The `{model}` placeholder is replaced only within argv elements; Glasshouse sends each prompt on standard input, never invokes a shell, and reads standard output as the answer. The command must be a JSON array, so another CLI can be used when it implements the same stdin/stdout contract.
 
-Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Glasshouse. This mode is development-only: it is rejected when `NODE_ENV=production` unless `GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION=true` is explicitly set. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 1800) and `GLASSHOUSE_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
+Codex's ChatGPT subscription OAuth remains in the local CLI credential store and is never read, copied, or persisted by Glasshouse. This mode is development-only and is rejected when `NODE_ENV=production`. Do not enable it in Docker or production deployments; use normal provider API credentials there. Optional limits are `GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS` (default 60, maximum 1800) and `GLASSHOUSE_DEV_LLM_MAX_OUTPUT_BYTES` (default and maximum 65536).
 
 ### Sending traces from your agent
 

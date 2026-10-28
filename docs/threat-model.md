@@ -102,7 +102,7 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 Provider credentials are configured by the operator, not the caller. The current OpenAI-compatible client sends the API key to the configured base URL; changing `OPENAI_API_BASE` therefore changes the credential recipient. Restrict that setting to an explicitly trusted HTTPS endpoint and do not let request or dataset content select it. Provider responses are untrusted input and must be bounded/validated before persistence or user display.
 
-The development CLI provider introduces a separate command-execution boundary. `GLASSHOUSE_DEV_LLM_COMMAND` is parsed as a JSON argv array and spawned by the API; the child receives the API process environment and prompt input. Keep the command and executable operator-controlled, never derive them from request/dataset content, and assume the child can read every inherited secret. This provider is blocked in production unless `GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION=true`; that override is risk-bearing, not a sandbox. If enabled, separately constrain the command, environment, filesystem, and network egress.
+The development CLI provider introduces a separate command-execution boundary. `GLASSHOUSE_DEV_LLM_COMMAND` is parsed as a JSON argv array and spawned by the API; the child receives the API process environment and prompt input. Keep the command and executable operator-controlled, never derive them from request/dataset content, and assume the child can read every inherited secret. This provider is blocked in production, and the production validator rejects `GLASSHOUSE_ALLOW_DEV_LLM_IN_PRODUCTION=true`; the setting remains a local-development-only compatibility control, not a sandbox. Separately constrain the command, environment, filesystem, and network egress in development.
 
 The optional GEPA worker receives a structured request over stdin and has bounded/validated output and filtered diagnostics, but the API spawns it with inherited environment variables. It is not an OS/container sandbox and may have access to the API process's provider credentials. Do not run untrusted worker code/configuration in production or claim isolation based only on the JSON protocol. See `apps/api/src/lib/gepa-worker.ts`, `worker/gepa_worker.py`, `apps/api/src/lib/llm.ts`, and `docs/02-roadmap.md`.
 
@@ -125,6 +125,18 @@ The optional GEPA worker receives a structured request over stdin and has bounde
 **Expected control:** server-side operation roles, immutable/versioned records, ETags/optimistic concurrency where applicable, approved governance policies and single-use previews, durable audit/lifecycle records, last-Admin safeguards, and bounded recovery are documented. Every newly created Project receives a system-created and system-approved baseline policy (30-day trace retention, 90-day dataset and feedback retention, and redaction mode `none`) without human review. This is an automatic provisioning default, not a human governance approval; subsequent policy versions still require Project Admin approval. Feedback and judge scores are evidence, not ground truth; normal workflow does not automatically promote them. The intentionally narrow GEPA system-prompt path has its own held-out validation, leakage, and source-version guards. See [roadmap](02-roadmap.md), [governance runbook](09-governance-runbook.md), and [dataset feedback design](06-dataset-feedback-future.md).
 
 **Review focus:** check direct API calls as well as UI flows; preserve approval/version semantics; ensure destructive actions are scoped, auditable, bounded, and replay-safe; inspect each data store's actual retention/deletion coverage. A documented retention run is not proof that every resource class is deleted.
+
+## Production deployment path
+
+The supported single-host production topology is `infra/compose.production.yaml`
+with an operator-managed HTTPS reverse proxy in front of loopback-bound API and
+web ports. PostgreSQL, ClickHouse, and Valkey have no host port bindings in
+that file. The API rejects non-production `NODE_ENV`, non-HTTPS public origins,
+weak required secrets, the development GEPA CLI mode, and the explicit
+development LLM override at startup. These are configuration controls, not a
+replacement for host firewalling, proxy hardening, secret management, or
+backup/restore testing. The local `make dev` Compose path remains development-
+only and is not a production security boundary.
 
 ## Important assumptions and non-guarantees
 

@@ -17,6 +17,8 @@ Do not put real credentials, local paths, auth-state locations, copied diagnosti
 - PostgreSQL stores transactional data; ClickHouse stores trace/OLAP data; Valkey is the Redis-compatible queue/cache service.
 - Production runs the PostgreSQL and ClickHouse migration runners concurrently before every API start; the API starts only after both succeed. PostgreSQL tracks applied migrations, while ClickHouse records checksum-verified changesets so later starts skip already-applied SQL. They remain separate schema systems and local host development invokes their runners explicitly.
 - Python is isolated to compute-heavy integrations such as the GEPA worker; keep credentials at the worker/deployment boundary.
+- Production uses `infra/compose.production.yaml` and `docs/self-hosted-production.md`, not the local `make dev` Compose path. It binds API/web to loopback, keeps data services private, validates production secrets/HTTPS/`NODE_ENV`, requires URL-unreserved PostgreSQL URL components with user/database names no longer than 63 ASCII characters, and rejects the development GEPA CLI mode.
+- The production ClickHouse service mounts `infra/clickhouse/backup.xml`; keep this file with the deployment so `File()` backup and restore remain restricted to the configured backup path.
 
 ## Prerequisites
 
@@ -159,7 +161,7 @@ uv pip install --python worker/.venv/bin/python -r worker/requirements.txt
 # Installs the GEPA worker dependency into the interpreter used by the local API.
 ```
 
-`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. Use the exact allowlisted model value in both GEPA model-role fields. Glasshouse replaces `{model}` only inside argv elements, sends the prompt on standard input, and never reads or persists Codex OAuth credentials. The API supplies a durable provider-dispatch key to each worker; the CLI receives a per-call sequence key only through `GLASSHOUSE_PROVIDER_DISPATCH_KEY`. The CLI adapter is rejected under `NODE_ENV=production` unless a deliberate emergency override is configured.
+`make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. Use the exact allowlisted model value in both GEPA model-role fields. Glasshouse replaces `{model}` only inside argv elements, sends the prompt on standard input, and never reads or persists Codex OAuth credentials. The API supplies a durable provider-dispatch key to each worker; the CLI receives a per-call sequence key only through `GLASSHOUSE_PROVIDER_DISPATCH_KEY`. The CLI adapter and development LLM override are rejected under `NODE_ENV=production`.
 
 For autonomous coding or review through Feature Factory, use the configured OpenCode profile.
 

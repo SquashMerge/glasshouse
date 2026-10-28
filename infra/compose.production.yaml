@@ -1,0 +1,123 @@
+name: glasshouse-production
+
+# Production topology. Put a TLS reverse proxy in front of the loopback-bound
+# web/API ports, or replace these bindings with an operator-managed edge.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-glasshouse}
+    volumes:
+      - glasshouse_prod_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-glasshouse}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    restart: unless-stopped
+    platform: linux/amd64
+    cap_add: [SYS_NICE]
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-glasshouse}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?CLICKHOUSE_USER is required}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD is required}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - glasshouse_prod_ch_data:/var/lib/clickhouse
+      - ./infra/clickhouse/backup.xml:/etc/clickhouse-server/config.d/glasshouse-backup.xml:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 30
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf", "--requirepass", "${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}"]
+    volumes:
+      - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+      - glasshouse_prod_valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-glasshouse}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-glasshouse}
+      UI_USERNAME: ${UI_USERNAME:?UI_USERNAME is required}
+      UI_PASSWORD: ${UI_PASSWORD:?UI_PASSWORD is required}
+      GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: ${GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME:?GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME is required}
+      GLASSHOUSE_PUBLIC_ORIGIN: ${GLASSHOUSE_PUBLIC_ORIGIN:?GLASSHOUSE_PUBLIC_ORIGIN is required}
+      GLASSHOUSE_AUTH_BOOTSTRAP_MODE: ${GLASSHOUSE_AUTH_BOOTSTRAP_MODE:-basic}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?CLICKHOUSE_USER is required}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD is required}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-glasshouse}
+      VALKEY_URL: redis://:${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}@valkey:6379
+      GEPA_ALLOWED_MODELS: ${GEPA_ALLOWED_MODELS:?GEPA_ALLOWED_MODELS is required}
+      GEPA_WORKER_MODE: ${GEPA_WORKER_MODE:-gepa}
+      GLASSHOUSE_EVAL_LLM_PROVIDER: ${GLASSHOUSE_EVAL_LLM_PROVIDER:-openai}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+    ports:
+      - "127.0.0.1:${API_PORT:-3000}:3000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://localhost:3000/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      WEB_PORT: 5173
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5173}:5173"
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:5173/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  glasshouse_prod_pg_data:
+  glasshouse_prod_ch_data:
+  glasshouse_prod_valkey_data:

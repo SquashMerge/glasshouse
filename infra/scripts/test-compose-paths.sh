@@ -3,9 +3,11 @@ set -euo pipefail
 
 python3 - <<'PY'
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 compose = Path("infra/compose.yaml").read_text()
 deps_compose = Path("infra/compose.deps.yaml").read_text()
+production_compose = Path("infra/compose.production.yaml").read_text()
 required = (
     "      - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro",
     "      context: .",
@@ -22,8 +24,18 @@ for value in required:
         raise SystemExit(f"expected root-project Compose path: {value}")
 if "      context: .." in compose or "      - ./valkey/" in compose:
     raise SystemExit("Compose paths must be relative to the repository project directory")
-if ":***@" in compose:
-    raise SystemExit("Compose DATABASE_URL must interpolate the configured PostgreSQL password")
+backup_mount = "      - ./infra/clickhouse/backup.xml:/etc/clickhouse-server/config.d/glasshouse-backup.xml:ro"
+if production_compose.count(backup_mount) != 1:
+    raise SystemExit("production Compose must mount the restricted ClickHouse backup configuration")
+backup_config = ET.parse("infra/clickhouse/backup.xml").getroot()
+for path, value in (
+    ("storage_configuration/disks/glasshouse_backups/path", "/var/lib/clickhouse/backup/"),
+    ("backups/allowed_disk", "glasshouse_backups"),
+    ("backups/allowed_path", "/var/lib/clickhouse/backup/"),
+):
+    node = backup_config.find(path)
+    if node is None or node.text != value:
+        raise SystemExit(f"ClickHouse backup config must set {path} to {value}")
 
 for name, content in (("infra/compose.yaml", compose), ("infra/compose.deps.yaml", deps_compose)):
     for port in (
@@ -34,4 +46,6 @@ for name, content in (("infra/compose.yaml", compose), ("infra/compose.deps.yaml
     ):
         if port not in content:
             raise SystemExit(f"expected loopback-only data-service port binding in {name}: {port}")
+if ":***@" in compose:
+    raise SystemExit("Compose DATABASE_URL must interpolate the configured PostgreSQL password")
 PY
