@@ -55,6 +55,7 @@ services:
       - "127.0.0.1:${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
     volumes:
       - glasshouse_ch_data:/var/lib/clickhouse
+      - ./infra/clickhouse/backup.xml:/etc/clickhouse-server/config.d/glasshouse-backup.xml:ro
     ulimits:
       nofile:
         soft: 262144

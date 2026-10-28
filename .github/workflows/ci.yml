@@ -39,6 +39,8 @@ jobs:
             command: bun run openapi:check && bun --filter @glasshouse/api codegen:ts
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
+          - check: backup-restore-safety
+            command: bash infra/scripts/test-backup-restore.sh
           - check: doctor-version
             command: bash infra/scripts/test-doctor-version.sh
     steps:
@@ -61,6 +63,106 @@ jobs:
 
       - name: Run ${{ matrix.check }}
         run: ${{ matrix.command }}
+
+  backup-restore-integration:
+    name: Backup/restore integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BACKUP_SOURCE_COMPOSE_FILE: .github/compose.backup-restore.yaml
+      BACKUP_SOURCE_ENV_FILE: ${{ github.workspace }}/.ci-backup-restore/source.env
+      BACKUP_SOURCE_COMPOSE_PROJECT: backup-restore-source-${{ github.run_id }}-${{ github.run_attempt }}
+      BACKUP_SOURCE_ID: ci-source
+      BACKUP_RESTORE_DESTINATION: ${{ github.workspace }}/.ci-backup-restore/artifacts
+      BACKUP_POSTGRES_SERVICE: postgres
+      BACKUP_CLICKHOUSE_SERVICE: clickhouse
+      RESTORE_TARGET_ID: ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
+      RESTORE_CONFIRMATION: RESTORE GLASSHOUSE TO ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
+      RESTORE_TARGET_LIVE: "false"
+      RESTORE_TARGET_DIRECTORY: ${{ github.workspace }}/.ci-backup-restore/target
+      RESTORE_TARGET_COMPOSE_FILE: ${{ github.workspace }}/.github/compose.backup-restore.yaml
+      RESTORE_TARGET_ENV_FILE: ${{ github.workspace }}/.ci-backup-restore/target.env
+      RESTORE_TARGET_COMPOSE_PROJECT: backup-restore-target-${{ github.run_id }}-${{ github.run_attempt }}
+      RESTORE_POSTGRES_SERVICE: postgres
+      RESTORE_CLICKHOUSE_SERVICE: clickhouse
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Prepare isolated source and target environments
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RESTORE_TARGET_DIRECTORY/infra/clickhouse"
+          cp "$GITHUB_WORKSPACE/infra/clickhouse/backup.xml" "$RESTORE_TARGET_DIRECTORY/infra/clickhouse/backup.xml"
+          chmod 0644 "$RESTORE_TARGET_DIRECTORY/infra/clickhouse/backup.xml"
+          python3 - <<'PY'
+          import os
+          import secrets
+          from pathlib import Path
+
+          paths = (
+              Path(os.environ["BACKUP_SOURCE_ENV_FILE"]),
+              Path(os.environ["RESTORE_TARGET_ENV_FILE"]),
+          )
+          for path in paths:
+              postgres_password = secrets.token_hex(24)
+              clickhouse_password = secrets.token_hex(24)
+              contents = "\n".join((
+                  "POSTGRES_USER=glasshouse_ci",
+                  f"POSTGRES_PASSWORD={postgres_password}",
+                  "POSTGRES_DB=glasshouse",
+                  "CLICKHOUSE_USER=glasshouse_ci",
+                  f"CLICKHOUSE_PASSWORD={clickhouse_password}",
+                  "CLICKHOUSE_DB=glasshouse",
+                  "",
+              ))
+              path.write_text(contents)
+              path.chmod(0o600)
+              print(f"::add-mask::{postgres_password}")
+              print(f"::add-mask::{clickhouse_password}")
+          PY
+      - name: Start isolated source databases
+        run: >-
+          docker compose --project-directory "$GITHUB_WORKSPACE"
+          --env-file "$BACKUP_SOURCE_ENV_FILE"
+          --project-name "$BACKUP_SOURCE_COMPOSE_PROJECT"
+          -f "$GITHUB_WORKSPACE/$BACKUP_SOURCE_COMPOSE_FILE"
+          up --detach --wait --wait-timeout 180 postgres clickhouse
+      - name: Start isolated empty restore target
+        run: >-
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY"
+          --env-file "$RESTORE_TARGET_ENV_FILE"
+          --project-name "$RESTORE_TARGET_COMPOSE_PROJECT"
+          -f "$RESTORE_TARGET_COMPOSE_FILE"
+          up --detach --wait --wait-timeout 180 postgres clickhouse
+      - name: Back up, restore, and verify representative rows
+        run: bash infra/scripts/test-backup-restore-integration.sh
+      - name: Dump restore-target ClickHouse diagnostics
+        if: failure()
+        run: |
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY" \
+            --env-file "$RESTORE_TARGET_ENV_FILE" \
+            --project-name "$RESTORE_TARGET_COMPOSE_PROJECT" \
+            -f "$RESTORE_TARGET_COMPOSE_FILE" ps --all || true
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY" \
+            --env-file "$RESTORE_TARGET_ENV_FILE" \
+            --project-name "$RESTORE_TARGET_COMPOSE_PROJECT" \
+            -f "$RESTORE_TARGET_COMPOSE_FILE" logs --no-color --tail=200 clickhouse || true
+      - name: Stop isolated database projects
+        if: always()
+        run: |
+          docker compose --project-directory "$GITHUB_WORKSPACE" \
+            --env-file "$BACKUP_SOURCE_ENV_FILE" \
+            --project-name "$BACKUP_SOURCE_COMPOSE_PROJECT" \
+            -f "$GITHUB_WORKSPACE/$BACKUP_SOURCE_COMPOSE_FILE" \
+            down --volumes --remove-orphans || true
+          docker compose --project-directory "$RESTORE_TARGET_DIRECTORY" \
+            --env-file "$RESTORE_TARGET_ENV_FILE" \
+            --project-name "$RESTORE_TARGET_COMPOSE_PROJECT" \
+            -f "$RESTORE_TARGET_COMPOSE_FILE" \
+            down --volumes --remove-orphans || true
+          rm -f "$BACKUP_SOURCE_ENV_FILE" "$RESTORE_TARGET_ENV_FILE"
+          rm -rf "$BACKUP_RESTORE_DESTINATION" "$RESTORE_TARGET_DIRECTORY"
 
   security:
     name: Security scan

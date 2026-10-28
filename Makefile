@@ -3,7 +3,7 @@ COMPOSE := docker compose --project-directory . --env-file infra/.env -f infra/c
 COMPOSE_DEPS := docker compose --project-directory . --env-file infra/.env -f infra/compose.deps.yaml
 
 
-.PHONY: help dev build down logs ps db-migrate devcontainer-db-migrate test-db-migrations ch-schema devcontainer-ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-api-integration test-web test-e2e test lint typecheck format install seed-traces seed-traces-reset
+.PHONY: help dev build down logs ps db-migrate devcontainer-db-migrate test-db-migrations ch-schema devcontainer-ch-schema valkey-ping codegen openapi-snapshot smoke doctor setup-tools normalize deps-up deps-down deps-logs dev-backend dev-frontend test-api test-api-integration test-web test-e2e test lint typecheck format install seed-traces seed-traces-reset backup backup-validate restore test-backup-restore test-backup-restore-integration
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -118,3 +118,18 @@ seed-traces: ## Seed OTLP traces (default: 100k mixed genai+openinference, last 
 
 seed-traces-reset: ## Wipe ClickHouse traces + observations, then seed (100k mixed)
 	bash infra/scripts/seed-traces.sh --reset
+
+backup: ## Create an atomic PostgreSQL + ClickHouse backup (BACKUP_DESTINATION=...)
+	bash infra/scripts/with-local-env.sh bash infra/scripts/backup.sh
+
+backup-validate: ## Validate a backup artifact (BACKUP_ARTIFACT=...)
+	bash infra/scripts/restore.sh --validate-only
+
+restore: ## Restore into an explicit isolated target (see docs/backup-restore.md)
+	bash infra/scripts/restore.sh
+
+test-backup-restore: ## Exercise artifact validation and unsafe-target refusal
+	bash infra/scripts/test-backup-restore.sh
+
+test-backup-restore-integration: ## Real PG + ClickHouse probe against an isolated target
+	bash infra/scripts/with-local-env.sh bash infra/scripts/test-backup-restore-integration.sh
