@@ -38,6 +38,11 @@ export function OtlpCredentialsPage() {
 	);
 	const [error, setError] = React.useState<string | null>(null);
 	const [revokeId, setRevokeId] = React.useState<string | null>(null);
+	const secretGeneration = React.useRef(0);
+	const forgetSecret = React.useCallback(() => {
+		secretGeneration.current += 1;
+		setShown(null);
+	}, []);
 	const query = useQuery({
 		queryKey: ["otlp-credentials", selectedProjectId],
 		queryFn: () => listOtlpCredentials(selectedProjectId!),
@@ -48,12 +53,21 @@ export function OtlpCredentialsPage() {
 			queryKey: ["otlp-credentials", projectId],
 		});
 	const create = useMutation({
-		mutationFn: createOtlpCredential,
-		onSuccess: (value, input) => {
+		mutationFn: async (input: Parameters<typeof createOtlpCredential>[0]) => {
+			const generation = secretGeneration.current;
+			const value = await createOtlpCredential(input);
+			if (
+				generation === secretGeneration.current &&
+				input.project_id === selectedProjectIdRef.current
+			)
+				setShown(value);
+			// Only metadata may enter the shared mutation cache.
+			return value.credential;
+		},
+		onSuccess: (_, input) => {
 			if (input.project_id === selectedProjectIdRef.current) {
 				setName("");
 				setError(null);
-				setShown(value);
 			}
 			void refresh(input.project_id);
 		},
@@ -63,11 +77,19 @@ export function OtlpCredentialsPage() {
 			),
 	});
 	const rotate = useMutation({
-		mutationFn: rotateOtlpCredential,
-		onSuccess: (value, input) => {
+		mutationFn: async (input: Parameters<typeof rotateOtlpCredential>[0]) => {
+			const generation = secretGeneration.current;
+			const value = await rotateOtlpCredential(input);
+			if (
+				generation === secretGeneration.current &&
+				input.project_id === selectedProjectIdRef.current
+			)
+				setShown(value);
+			return value.credential;
+		},
+		onSuccess: (_, input) => {
 			if (input.project_id === selectedProjectIdRef.current) {
 				setError(null);
-				setShown(value);
 			}
 			void refresh(input.project_id);
 		},
@@ -90,9 +112,14 @@ export function OtlpCredentialsPage() {
 	});
 
 	React.useEffect(() => {
-		setShown(null);
+		forgetSecret();
 		setError(null);
-	}, [selectedProjectId]);
+		setRevokeId(null);
+		return () => {
+			secretGeneration.current += 1;
+		};
+	}, [selectedProjectId, isAdmin, forgetSecret]);
+	const pending = create.isPending || rotate.isPending || revoke.isPending;
 	const visibleSecret =
 		selectedProjectId &&
 		shown?.credential.project_id.toLowerCase() ===
@@ -136,6 +163,8 @@ export function OtlpCredentialsPage() {
 								className="flex flex-col items-start gap-3 sm:flex-row sm:items-end"
 								onSubmit={(event) => {
 									event.preventDefault();
+									if (pending) return;
+									forgetSecret();
 									setError(null);
 									create.mutate({ project_id: selectedProjectId, name });
 								}}
@@ -151,10 +180,7 @@ export function OtlpCredentialsPage() {
 										placeholder="Production collector"
 									/>
 								</div>
-								<Button
-									type="submit"
-									disabled={create.isPending || !name.trim()}
-								>
+								<Button type="submit" disabled={pending || !name.trim()}>
 									{create.isPending ? "Creating…" : "Create credential"}
 								</Button>
 							</form>
@@ -189,7 +215,7 @@ export function OtlpCredentialsPage() {
 									<Button
 										type="button"
 										variant="outline"
-										onClick={() => setShown(null)}
+										onClick={forgetSecret}
 									>
 										Dismiss secret
 									</Button>
@@ -260,13 +286,15 @@ export function OtlpCredentialsPage() {
 												<Button
 													type="button"
 													variant="outline"
-													disabled={rotate.isPending}
-													onClick={() =>
+													disabled={rotate.isPending || revoke.isPending}
+													onClick={() => {
+														forgetSecret();
+														setError(null);
 														rotate.mutate({
 															project_id: selectedProjectId,
 															id: credential.id,
-														})
-													}
+														});
+													}}
 												>
 													Rotate
 												</Button>
@@ -281,12 +309,14 @@ export function OtlpCredentialsPage() {
 															type="button"
 															variant="destructive"
 															disabled={revoke.isPending}
-															onClick={() =>
+															onClick={() => {
+																forgetSecret();
+																setError(null);
 																revoke.mutate({
 																	project_id: selectedProjectId,
 																	id: credential.id,
-																})
-															}
+																});
+															}}
 														>
 															Confirm revoke
 														</Button>

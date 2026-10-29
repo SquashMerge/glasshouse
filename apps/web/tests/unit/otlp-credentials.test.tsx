@@ -58,8 +58,14 @@ function renderPage() {
 
 function expectSecretForgotten(client: QueryClient, secret: string) {
 	const retainedData = [
-		...client.getQueryCache().getAll().map((query) => query.state.data),
-		...client.getMutationCache().getAll().map((mutation) => mutation.state.data),
+		...client
+			.getQueryCache()
+			.getAll()
+			.map((query) => query.state.data),
+		...client
+			.getMutationCache()
+			.getAll()
+			.map((mutation) => mutation.state.data),
 	];
 	expect(
 		retainedData.some((data) => JSON.stringify(data)?.includes(secret)),
@@ -163,7 +169,9 @@ describe("OtlpCredentialsPage", () => {
 		const rotate = screen.getByRole("button", { name: "Rotate" });
 		await waitFor(() => expect(rotate).toBeEnabled());
 		fireEvent.click(rotate);
-		await waitFor(() => expect(api.rotateOtlpCredential).toHaveBeenCalledTimes(2));
+		await waitFor(() =>
+			expect(api.rotateOtlpCredential).toHaveBeenCalledTimes(2),
+		);
 
 		try {
 			await waitFor(() =>

@@ -192,7 +192,14 @@ function RecoveryCard({
 					</p>
 				</CardHeader>
 				<CardContent>
-					<Button type="button" variant="destructive" onClick={onOpen}>
+					<Button
+						type="button"
+						variant="destructive"
+						aria-disabled={pending}
+						onClick={() => {
+							if (!pending) onOpen();
+						}}
+					>
 						Recover Admin access
 					</Button>
 				</CardContent>
@@ -204,7 +211,7 @@ function RecoveryCard({
 				</p>
 			) : null}
 			{open ? (
-				<DialogOverlay onEscape={() => !pending && onClose()}>
+				<DialogOverlay onEscape={onClose}>
 					<DialogContent
 						className="max-w-md space-y-4"
 						role="dialog"
@@ -215,7 +222,7 @@ function RecoveryCard({
 							className="space-y-4"
 							onSubmit={(event) => {
 								event.preventDefault();
-								onRecover();
+								if (!pending) onRecover();
 							}}
 						>
 							<div>

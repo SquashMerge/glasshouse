@@ -80,6 +80,8 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 **Residual/deployment considerations:** Basic Auth remains an API/operator compatibility mechanism. SSO/MFA are not shipped. HTTPS, exact public-origin configuration, proxy header/body logging exclusions, secret storage/rotation, and edge rate limiting are deployment responsibilities. Do not put secrets in URLs, logs, issue text, screenshots, browser storage, or command output.
 
+The OTLP credential page keeps revealed secrets in component state, while shared query/mutation caches retain only credential metadata. Dismissal, replacement, and revocation clear the revealed secret; Project/authority changes and unmount invalidate pending reveals. This limits application retention, not access by someone controlling the browser or copies explicitly placed on the clipboard. Credential management requires current organization Admin authority, not creator identity. Bearer ingestion uses the creator Actor's current authority and enabled-account state, so an unrevoked credential marked Active can still be unusable. See [OTLP authentication](03-otel-ingest.md#authentication).
+
 ### D. Sensitive telemetry, prompts, datasets, and model-provider disclosure (high impact)
 
 **Attacker/event:** malicious or compromised instrumented agent, authorized user submitting sensitive examples, misconfigured redaction, or an external model provider receiving an evaluation/optimization request.

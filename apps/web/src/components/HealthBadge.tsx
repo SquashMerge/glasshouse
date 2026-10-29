@@ -13,8 +13,20 @@ async function fetchHealth(): Promise<HealthResponse> {
 	const res = await fetch("/health", {
 		headers: { accept: "application/json" },
 	});
-	if (!res.ok) throw new Error(`health responded ${res.status}`);
-	return (await res.json()) as HealthResponse;
+	if (!res.ok && res.status !== 503)
+		throw new Error(`health responded ${res.status}`);
+	const data = (await res.json()) as Partial<HealthResponse> | null;
+	if (
+		!data ||
+		(data.status !== "ok" && data.status !== "degraded") ||
+		!data.checks ||
+		!["postgres", "clickhouse", "valkey"].every((key) => {
+			const state = data.checks?.[key as keyof HealthResponse["checks"]];
+			return state === "up" || state === "down";
+		})
+	)
+		throw new Error("Invalid health response");
+	return data as HealthResponse;
 }
 
 function Pill({

@@ -3,6 +3,7 @@ import { test, expect, type APIResponse } from "@playwright/test";
 import type {
 	OrganizationUsageDashboard,
 	OrganizationUsageRange,
+	OtlpCredentialWithSecret,
 	Project,
 } from "../../src/lib/api";
 
@@ -18,7 +19,22 @@ async function json<T>(response: APIResponse, status = 200): Promise<T> {
 	return (await response.json()) as T;
 }
 
-test("API integration: real OTLP ingestion populates organization usage across ranges and archival", async ({
+// Native fetch keeps secret-bearing headers and responses out of Playwright's
+// request recording/call logs. Only statuses and non-secret aggregates are asserted.
+async function credentialRequest(path: string, options: RequestInit) {
+	try {
+		const response = await fetch(`${API_BASE}${path}`, {
+			...options,
+			redirect: "error",
+			signal: AbortSignal.timeout(10_000),
+		});
+		return { status: response.status, data: await response.json() };
+	} catch {
+		throw new Error("Credential integration request failed");
+	}
+}
+
+test("API integration: Bearer OTLP ingestion and revoke/no-write populate organization usage across ranges and archival", async ({
 	request,
 }) => {
 	const slug = `usage-api-${randomUUID()}`;
@@ -30,7 +46,23 @@ test("API integration: real OTLP ingestion populates organization usage across r
 		201,
 	);
 	let isArchived = false;
+	let credentialId: string | undefined;
+	let credentialRevoked = false;
 	try {
+		const created = await credentialRequest("/v1/admin/otlp-credentials", {
+			method: "POST",
+			headers: { ...headers, "content-type": "application/json" },
+			body: JSON.stringify({ project_id: project.id, name: "Usage API fixture" }),
+		});
+		expect(created.status, "credential creation status").toBe(201);
+		const { credential, secret } = created.data as OtlpCredentialWithSecret;
+		credentialId = credential.id;
+		expect(/^gh_ing_[A-Za-z0-9_-]{43}$/.test(secret)).toBe(true);
+		const ingestHeaders = {
+			authorization: `Bearer ${secret}`,
+			"x-glasshouse-project-id": project.id,
+			"content-type": "application/json",
+		};
 		const usage = async (range: OrganizationUsageRange) =>
 			json<OrganizationUsageDashboard>(
 				await request.get(`${API_BASE}/v1/organization/usage`, {
@@ -54,7 +86,10 @@ test("API integration: real OTLP ingestion populates organization usage across r
 		const rootId = randomBytes(8).toString("hex");
 		const traceId = randomBytes(16).toString("hex");
 		const payloadMarker = `private-usage-payload-${randomUUID()}`;
-		const span = (startMs: number, trace = randomBytes(16).toString("hex")) => ({
+		const span = (
+			startMs: number,
+			trace = randomBytes(16).toString("hex"),
+		) => ({
 			trace_id: trace,
 			span_id: randomBytes(8).toString("hex"),
 			name: payloadMarker,
@@ -64,9 +99,10 @@ test("API integration: real OTLP ingestion populates organization usage across r
 			status: { code: 1 },
 			attributes: [],
 		});
-		const ingested = await request.post(`${API_BASE}/v1/otel/v1/traces`, {
-			headers: { ...headers, "x-glasshouse-project-id": project.id },
-			data: {
+		const ingested = await credentialRequest("/v1/otel/v1/traces", {
+			method: "POST",
+			headers: ingestHeaders,
+			body: JSON.stringify({
 				resource_spans: [
 					{
 						resource: {
@@ -116,10 +152,31 @@ test("API integration: real OTLP ingestion populates organization usage across r
 						],
 					},
 				],
-			},
+			}),
 		});
-		expect(await json(ingested)).toEqual({ partial_success: {} });
+		expect(ingested.status, "Bearer ingestion status").toBe(200);
+		expect(
+			JSON.stringify(ingested.data) === '{"partial_success":{}}',
+			"Bearer ingestion acknowledgement",
+		).toBe(true);
 
+		const revoked = await request.post(
+			`${API_BASE}/v1/admin/otlp-credentials/${credentialId}/revoke`,
+			{ headers, params: { project_id: project.id } },
+		);
+		expect(revoked.status(), "credential revocation status").toBe(200);
+		credentialRevoked = true;
+		const denied = await credentialRequest("/v1/otel/v1/traces", {
+			method: "POST",
+			headers: ingestHeaders,
+			body: JSON.stringify({
+				resource_spans: [{ scope_spans: [{ spans: [span(recentMs)] }] }],
+			}),
+		});
+		expect(denied.status, "revoked Bearer ingestion status").toBe(401);
+
+		// Fresh trace/span IDs in the denied batch rule out deduplication as the
+		// reason the following per-Project counts contain only the accepted batch.
 		for (const range of ["24h", "7d", "30d", "90d"] as const) {
 			const dashboard = await usage(range);
 			const includesHistorical = range === "90d";
@@ -135,13 +192,15 @@ test("API integration: real OTLP ingestion populates organization usage across r
 				},
 			};
 			expect(dashboard.range).toBe(range);
-			expect(dashboard.projects.find((item) => item.id === project.id)).toEqual({
-				id: project.id,
-				name: project.name,
-				slug: project.slug,
-				status: "active",
-				...counts,
-			});
+			expect(dashboard.projects.find((item) => item.id === project.id)).toEqual(
+				{
+					id: project.id,
+					name: project.name,
+					slug: project.slug,
+					status: "active",
+					...counts,
+				},
+			);
 			for (const key of ["traces", "observations"] as const) {
 				expect(dashboard.totals[key]).toBe(
 					dashboard.projects.reduce((sum, item) => sum + item[key], 0),
@@ -184,7 +243,9 @@ test("API integration: real OTLP ingestion populates organization usage across r
 		isArchived = archived.status === "archived";
 		expect(archived.status).toBe("archived");
 		const afterArchive = await usage("30d");
-		expect(afterArchive.projects.find((item) => item.id === project.id)).toEqual({
+		expect(
+			afterArchive.projects.find((item) => item.id === project.id),
+		).toEqual({
 			id: project.id,
 			name: project.name,
 			slug: project.slug,
@@ -194,6 +255,13 @@ test("API integration: real OTLP ingestion populates organization usage across r
 			observations_by_type: { span: 2, event: 0, generation: 1, tool: 1 },
 		});
 	} finally {
+		if (credentialId && !credentialRevoked) {
+			const revoked = await request.post(
+				`${API_BASE}/v1/admin/otlp-credentials/${credentialId}/revoke`,
+				{ headers, params: { project_id: project.id } },
+			);
+			expect(revoked.status(), "credential fixture cleanup").toBe(200);
+		}
 		if (isArchived) {
 			const restored = await json<Project>(
 				await request.post(`${API_BASE}/v1/projects/${project.id}/restore`, {
@@ -202,10 +270,13 @@ test("API integration: real OTLP ingestion populates organization usage across r
 			);
 			expect(restored.status).toBe("active");
 		}
-		const deleted = await request.delete(`${API_BASE}/v1/projects/${project.id}`, {
-			headers,
-			data: { confirmation_name: project.name },
-		});
+		const deleted = await request.delete(
+			`${API_BASE}/v1/projects/${project.id}`,
+			{
+				headers,
+				data: { confirmation_name: project.name },
+			},
+		);
 		expect(deleted.status(), "usage fixture Project cleanup").toBe(204);
 	}
 });

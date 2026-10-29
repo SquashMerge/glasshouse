@@ -172,7 +172,10 @@ for (const action of [
 			await page.keyboard.press("Enter");
 			const dialog = page.getByRole("dialog", { name: action.title });
 			const confirmation = dialog.getByRole("textbox", { name: action.input });
-			const cancel = dialog.getByRole("button", { name: "Cancel", exact: true });
+			const cancel = dialog.getByRole("button", {
+				name: "Cancel",
+				exact: true,
+			});
 			const submit = dialog.getByRole("button", {
 				name: action.submit,
 				exact: true,
@@ -261,7 +264,12 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 					status: "active",
 					traces: count,
 					observations: count,
-					observations_by_type: { span: count, event: 0, generation: 0, tool: 0 },
+					observations_by_type: {
+						span: count,
+						event: 0,
+						generation: 0,
+						tool: 0,
+					},
 				},
 			],
 			totals: {
@@ -278,7 +286,12 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 						bucket_start: new Date(timestamp).toISOString(),
 						traces: value,
 						observations: value,
-						observations_by_type: { span: value, event: 0, generation: 0, tool: 0 },
+						observations_by_type: {
+							span: value,
+							event: 0,
+							generation: 0,
+							tool: 0,
+						},
 					};
 				},
 			),
@@ -334,7 +347,9 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 		await expect(freshness).toContainText(/\d/);
 	});
 
-	test("provides keyboard refresh without navigating away", async ({ page }) => {
+	test("provides keyboard refresh without navigating away", async ({
+		page,
+	}) => {
 		let count = 4;
 		await page.route("**/v1/organization/usage?*", (route) =>
 			route.fulfill({ json: usageSnapshot("30d", count) }),
@@ -345,7 +360,9 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 		const refresh = page.getByRole("button", { name: /refresh/i });
 		await expect(refresh).toBeEnabled();
 		for (let step = 0; step < 60; step += 1) {
-			if (await refresh.evaluate((element) => element === document.activeElement))
+			if (
+				await refresh.evaluate((element) => element === document.activeElement)
+			)
 				break;
 			await page.keyboard.press("Tab");
 		}

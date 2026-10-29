@@ -116,6 +116,35 @@ export function DashboardPage() {
 					</Select>
 				</label>
 			</header>
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div className="space-y-1 text-sm text-muted-foreground">
+					{data && (
+						<p>
+							Data through{" "}
+							<time dateTime={data.to}>
+								{new Date(data.to)
+									.toISOString()
+									.replace("T", " ")
+									.replace("Z", " UTC")}
+							</time>
+						</p>
+					)}
+					<p className="text-xs">
+						Query range end, not an ingestion watermark or last update time.
+					</p>
+				</div>
+				<Button
+					type="button"
+					variant="outline"
+					aria-disabled={usage.isFetching}
+					aria-busy={usage.isFetching}
+					onClick={() => {
+						if (!usage.isFetching) void usage.refetch();
+					}}
+				>
+					Refresh usage
+				</Button>
+			</div>
 			<section aria-label="Service health">
 				<Card>
 					<CardContent className="p-5 pt-5">

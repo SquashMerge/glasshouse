@@ -20,8 +20,8 @@ describe("dependency health", () => {
 				vi.fn(async () =>
 					Response.json(
 						{
-						status: health,
-						checks: { postgres: "up", clickhouse, valkey: "up" },
+							status: health,
+							checks: { postgres: "up", clickhouse, valkey: "up" },
 						},
 						{ status },
 					),
@@ -39,11 +39,15 @@ describe("dependency health", () => {
 				</QueryClientProvider>,
 			);
 
-			expect(await screen.findByText(`ClickHouse: ${clickhouse}`)).toBeVisible();
+			expect(
+				await screen.findByText(`ClickHouse: ${clickhouse}`),
+			).toBeVisible();
 			expect(screen.getByText("Postgres: up")).toBeVisible();
 			expect(screen.getByText("Valkey: up")).toBeVisible();
 			expect(
-				screen.queryByText(`ClickHouse: ${clickhouse === "up" ? "down" : "up"}`),
+				screen.queryByText(
+					`ClickHouse: ${clickhouse === "up" ? "down" : "up"}`,
+				),
 			).not.toBeInTheDocument();
 		},
 	);

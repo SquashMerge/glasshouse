@@ -222,6 +222,7 @@ export function ProjectsPage() {
 					defaultMutation.mutate(project.id);
 				}}
 				onDelete={(project) => {
+					if (deleteMutation.isPending) return;
 					setDeleting(project);
 					setConfirmationName("");
 					setOperationError(null);
@@ -288,10 +289,8 @@ export function ProjectsPage() {
 			{deleting && (
 				<DialogOverlay
 					onEscape={() => {
-						if (!deleteMutation.isPending) {
-							setDeleting(null);
-							setConfirmationName("");
-						}
+						setDeleting(null);
+						setConfirmationName("");
 					}}
 				>
 					<DialogContent
@@ -304,6 +303,7 @@ export function ProjectsPage() {
 							className="space-y-4"
 							onSubmit={(event) => {
 								event.preventDefault();
+								if (deleteMutation.isPending) return;
 								setOperationError(null);
 								deleteMutation.mutate({
 									id: deleting.id,

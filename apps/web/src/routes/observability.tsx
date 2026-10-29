@@ -42,32 +42,54 @@ import {
 } from "../lib/observability-search";
 type Tab = "traces" | "spans";
 
+declare module "@tanstack/react-router" {
+	interface HistoryState {
+		observabilityTabFocus?: Tab;
+	}
+}
+
 const VALID_TABS = new Set<Tab>(["traces", "spans"]);
 
 export function ObservabilityPage() {
 	const navigate = useNavigate();
 	const location = useLocation();
+	const tabListRef = React.useRef<HTMLDivElement>(null);
 	const searchParams = new URLSearchParams(location.searchStr);
 	const rawTab = searchParams.get("tab");
 	const tab: Tab = VALID_TABS.has(rawTab as Tab) ? (rawTab as Tab) : "traces";
+	const focusSelectedTab = location.state.observabilityTabFocus === tab;
 
 	function setTab(next: Tab) {
 		const nextSearch = Object.fromEntries(searchParams.entries());
-		navigate({
+		const preserveFocus = tabListRef.current?.contains(document.activeElement);
+		return navigate({
 			to: "/observability",
 			search: { ...nextSearch, tab: next },
+			// AuthGate can remount the page while rechecking a URL change.
+			state: {
+				observabilityTabFocus: preserveFocus ? next : undefined,
+			},
+			resetScroll: false,
 		});
 	}
 
 	return (
 		<div className="space-y-4">
 			<Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-				<TabsList>
-					<TabsTrigger value="traces" className="gap-1.5">
+				<TabsList ref={tabListRef} aria-label="Observability views">
+					<TabsTrigger
+						value="traces"
+						className="gap-1.5"
+						autoFocus={focusSelectedTab && tab === "traces"}
+					>
 						<LuListTree className="h-3.5 w-3.5" />
 						Traces
 					</TabsTrigger>
-					<TabsTrigger value="spans" className="gap-1.5">
+					<TabsTrigger
+						value="spans"
+						className="gap-1.5"
+						autoFocus={focusSelectedTab && tab === "spans"}
+					>
 						<LuActivity className="h-3.5 w-3.5" />
 						Spans
 					</TabsTrigger>

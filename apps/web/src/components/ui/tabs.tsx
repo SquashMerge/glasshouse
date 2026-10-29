@@ -3,7 +3,7 @@ import { cn } from "../../lib/utils";
 
 interface TabsContextValue {
 	value: string;
-	setValue: (v: string) => void;
+	setValue: (v: string) => void | Promise<void>;
 	id: string;
 }
 const TabsContext = React.createContext<TabsContextValue>({
@@ -19,7 +19,7 @@ function Tabs({
 	className,
 }: {
 	value: string;
-	onValueChange: (v: string) => void;
+	onValueChange: (v: string) => void | Promise<void>;
 	children: React.ReactNode;
 	className?: string;
 }) {
@@ -63,7 +63,18 @@ const TabsTrigger = React.forwardRef<
 			aria-controls={`${ctx.id}-panel-${value}`}
 			tabIndex={active ? 0 : -1}
 			onClick={(event) => {
-				ctx.setValue(value);
+				const trigger = event.currentTarget;
+				const hadFocus = document.activeElement === trigger;
+				void Promise.resolve(ctx.setValue(value)).then(() => {
+					// URL-backed selection can reset focus after the route commits.
+					if (
+						hadFocus &&
+						trigger.isConnected &&
+						(document.activeElement === document.body ||
+							document.activeElement === trigger)
+					)
+						trigger.focus();
+				});
 				onClick?.(event);
 			}}
 			onKeyDown={(event) => {
@@ -99,7 +110,7 @@ const TabsTrigger = React.forwardRef<
 				next.click();
 			}}
 			className={cn(
-				"inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all",
+				"inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
 				active
 					? "bg-background text-foreground shadow"
 					: "text-muted-foreground hover:text-foreground",
