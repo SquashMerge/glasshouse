@@ -94,6 +94,22 @@ describe("production Compose API environment contract", () => {
 		);
 	});
 
+	it("preserves the API's default GEPA active-job caps", () => {
+		const environment = renderApiEnvironment();
+		expect(environment.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT).toBe("3");
+		expect(environment.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER).toBe("1");
+	});
+
+	it("forwards configured GEPA active-job cap overrides", () => {
+		const overrides = {
+			GEPA_MAX_ACTIVE_JOBS_PER_PROJECT: "5",
+			GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER: "2",
+		};
+		const environment = renderApiEnvironment(overrides);
+		for (const [key, value] of Object.entries(overrides))
+			expect(environment[key]).toBe(value);
+	});
+
 	it("forwards configured controls and enforces the rendered model and budgets", () => {
 		const overrides = {
 			GLASSHOUSE_REDACT_INPUT: "true",

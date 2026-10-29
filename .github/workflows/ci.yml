@@ -325,7 +325,7 @@ jobs:
 
       - name: Verify project mutation SQL against PostgreSQL
         run: |
-          bash infra/scripts/with-local-env.sh bash -c '
+          bash infra/scripts/with-local-env.sh bash -euo pipefail -c '
             export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-glasshouse}"
             bun --cwd apps/api test tests/integration/project-mutation-sql.test.ts
             bun --cwd apps/api test tests/integration/authorization-revocation-serialization.test.ts --test-name-pattern "concurrent GEPA starts cannot exceed the project admission cap across requesters"
