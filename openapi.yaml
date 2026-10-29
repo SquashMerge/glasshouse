@@ -8358,6 +8358,646 @@ paths:
       summary: Revoke an unused local enrollment code
       tags:
         - administration
+  /v1/admin/otlp-credentials:
+    get:
+      parameters:
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  items:
+                    items:
+                      properties:
+                        created_at:
+                          format: date-time
+                          type: string
+                        created_by_actor_id:
+                          format: uuid
+                          type: string
+                        id:
+                          format: uuid
+                          type: string
+                        last_used_at:
+                          format: date-time
+                          type:
+                            - string
+                            - 'null'
+                        name:
+                          type: string
+                        project_id:
+                          format: uuid
+                          type: string
+                        revoked_at:
+                          format: date-time
+                          type:
+                            - string
+                            - 'null'
+                        rotated_at:
+                          format: date-time
+                          type:
+                            - string
+                            - 'null'
+                        secret_prefix:
+                          type: string
+                      required:
+                        - id
+                        - project_id
+                        - name
+                        - secret_prefix
+                        - created_by_actor_id
+                        - created_at
+                        - rotated_at
+                        - revoked_at
+                        - last_used_at
+                      type: object
+                    type: array
+                required:
+                  - items
+                type: object
+          description: Project credentials
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Organization Admin required
+        '404':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Project or credential is not available
+        '500':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Credential operation failed
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: List OTLP ingestion credentials for a Project
+      tags:
+        - otlp-credentials
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                name:
+                  maxLength: 100
+                  minLength: 1
+                  type: string
+                project_id:
+                  format: uuid
+                  type: string
+              required:
+                - project_id
+                - name
+              type: object
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                properties:
+                  credential:
+                    properties:
+                      created_at:
+                        format: date-time
+                        type: string
+                      created_by_actor_id:
+                        format: uuid
+                        type: string
+                      id:
+                        format: uuid
+                        type: string
+                      last_used_at:
+                        format: date-time
+                        type:
+                          - string
+                          - 'null'
+                      name:
+                        type: string
+                      project_id:
+                        format: uuid
+                        type: string
+                      revoked_at:
+                        format: date-time
+                        type:
+                          - string
+                          - 'null'
+                      rotated_at:
+                        format: date-time
+                        type:
+                          - string
+                          - 'null'
+                      secret_prefix:
+                        type: string
+                    required:
+                      - id
+                      - project_id
+                      - name
+                      - secret_prefix
+                      - created_by_actor_id
+                      - created_at
+                      - rotated_at
+                      - revoked_at
+                      - last_used_at
+                    type: object
+                  secret:
+                    pattern: ^gh_ing_[A-Za-z0-9_-]{43}$
+                    type: string
+                required:
+                  - credential
+                  - secret
+                type: object
+          description: Credential secret, returned once
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Organization Admin required
+        '404':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Project or credential is not available
+        '500':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Credential operation failed
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+      summary: Create a Project-bound OTLP ingestion credential
+      tags:
+        - otlp-credentials
+  /v1/admin/otlp-credentials/{id}/revoke:
+    post:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  created_at:
+                    format: date-time
+                    type: string
+                  created_by_actor_id:
+                    format: uuid
+                    type: string
+                  id:
+                    format: uuid
+                    type: string
+                  last_used_at:
+                    format: date-time
+                    type:
+                      - string
+                      - 'null'
+                  name:
+                    type: string
+                  project_id:
+                    format: uuid
+                    type: string
+                  revoked_at:
+                    format: date-time
+                    type:
+                      - string
+                      - 'null'
+                  rotated_at:
+                    format: date-time
+                    type:
+                      - string
+                      - 'null'
+                  secret_prefix:
+                    type: string
+                required:
+                  - id
+                  - project_id
+                  - name
+                  - secret_prefix
+                  - created_by_actor_id
+                  - created_at
+                  - rotated_at
+                  - revoked_at
+                  - last_used_at
+                type: object
+          description: Credential metadata
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Organization Admin required
+        '404':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Project or credential is not available
+        '500':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Credential operation failed
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+      summary: Revoke a Project-bound OTLP credential
+      tags:
+        - otlp-credentials
+  /v1/admin/otlp-credentials/{id}/rotate:
+    post:
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  credential:
+                    properties:
+                      created_at:
+                        format: date-time
+                        type: string
+                      created_by_actor_id:
+                        format: uuid
+                        type: string
+                      id:
+                        format: uuid
+                        type: string
+                      last_used_at:
+                        format: date-time
+                        type:
+                          - string
+                          - 'null'
+                      name:
+                        type: string
+                      project_id:
+                        format: uuid
+                        type: string
+                      revoked_at:
+                        format: date-time
+                        type:
+                          - string
+                          - 'null'
+                      rotated_at:
+                        format: date-time
+                        type:
+                          - string
+                          - 'null'
+                      secret_prefix:
+                        type: string
+                    required:
+                      - id
+                      - project_id
+                      - name
+                      - secret_prefix
+                      - created_by_actor_id
+                      - created_at
+                      - rotated_at
+                      - revoked_at
+                      - last_used_at
+                    type: object
+                  secret:
+                    pattern: ^gh_ing_[A-Za-z0-9_-]{43}$
+                    type: string
+                required:
+                  - credential
+                  - secret
+                type: object
+          description: Rotated credential; secret shown once
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Invalid request
+        '403':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Organization Admin required
+        '404':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Project or credential is not available
+        '500':
+          content:
+            application/json:
+              schema:
+                properties:
+                  code:
+                    enum:
+                      - BAD_REQUEST
+                      - UNAUTHORIZED
+                      - FORBIDDEN
+                      - NOT_FOUND
+                      - CONFLICT
+                      - INTERNAL
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - code
+                  - message
+                type: object
+          description: Credential operation failed
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+      summary: Rotate a Project-bound OTLP credential
+      tags:
+        - otlp-credentials
   /v1/admin/recovery:
     post:
       requestBody:

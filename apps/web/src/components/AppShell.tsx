@@ -106,7 +106,10 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 
 	const width = collapsed ? "w-14" : "w-14 sm:w-56";
 	const settingsActive =
-		isActive("/governance") || isActive("/access") || isActive("/projects");
+		isActive("/governance") ||
+		isActive("/access") ||
+		isActive("/projects") ||
+		isActive("/ingestion-credentials");
 
 	return (
 		<div className="flex bg-background text-foreground">
@@ -333,6 +336,15 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 									label="Access"
 									icon={<LuUsers className="h-4 w-4" />}
 									active={isActive("/access")}
+									collapsed={collapsed}
+								/>
+							)}
+							{organizationRole === "admin" && (
+								<SidebarLink
+									to="/ingestion-credentials"
+									label="Ingestion credentials"
+									icon={<LuKeyRound className="h-4 w-4" />}
+									active={isActive("/ingestion-credentials")}
 									collapsed={collapsed}
 								/>
 							)}
@@ -575,7 +587,8 @@ function SidebarLink({
 		| "/feedback"
 		| "/governance"
 		| "/access"
-		| "/projects";
+		| "/projects"
+		| "/ingestion-credentials";
 	label: string;
 	icon: React.ReactNode;
 	active: boolean;

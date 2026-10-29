@@ -1,4 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { authenticateOtlpCredential } from "../db/otlp-credentials.js";
 import {
 	BASIC_AUTH_PROVIDER_NAMESPACE,
 	deterministicActorId,
@@ -28,6 +29,11 @@ export type TrustedTenantContext = {
 	actorId: string;
 	organizationId: string;
 	sessionId?: string;
+	ingestCredential?: {
+		id: string;
+		projectId: string;
+		digest: string;
+	};
 };
 
 export type BasicCredential = {
@@ -325,16 +331,46 @@ export function authenticationMiddleware(
 		// Basic or let a supplied header suppress a cookie's CSRF requirement.
 		if (token !== undefined) principal = await store.authenticate(token);
 		else {
-			const credential = verifyBasicHeader(
+			const basicCredential = verifyBasicHeader(
 				c.req.header("authorization"),
 				credentials,
 			);
-			if (credential && (await basicIdentityAvailable(pool(), credential)))
+			if (
+				basicCredential &&
+				(await basicIdentityAvailable(pool(), basicCredential))
+			)
 				principal = {
-					actor: credential.username,
-					actorId: credential.actorId,
-					organizationId: credential.organizationId,
+					actor: basicCredential.username,
+					actorId: basicCredential.actorId,
+					organizationId: basicCredential.organizationId,
 				};
+			else if (c.req.method === "POST" && c.req.path === "/v1/otel/v1/traces") {
+				const header = c.req.header("authorization");
+				const match =
+					header && header.length <= 256
+						? /^Bearer (gh_ing_[A-Za-z0-9_-]{43})$/.exec(header)
+						: null;
+				if (match) {
+					const ingestCredential = await authenticateOtlpCredential(
+						pool(),
+						match[1]!,
+					);
+					if (ingestCredential) {
+						principal = {
+							actor: ingestCredential.actorId,
+							actorId: ingestCredential.actorId,
+							organizationId: ingestCredential.organizationId,
+							ingestCredential: {
+								id: ingestCredential.id,
+								projectId: ingestCredential.projectId,
+								digest: createHash("sha256")
+									.update(match[1]!, "utf8")
+									.digest("hex"),
+							},
+						};
+					}
+				}
+			}
 		}
 		if (!principal) {
 			c.header("WWW-Authenticate", 'Basic realm="glasshouse", charset="UTF-8"');

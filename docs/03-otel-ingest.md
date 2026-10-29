@@ -16,7 +16,22 @@ export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 
 ## Authentication
 
-The endpoint requires HTTP Basic Auth using the same `UI_USERNAME` / `UI_PASSWORD` that protect the rest of the API. Encode them into `OTEL_EXPORTER_OTLP_HEADERS`:
+OTLP trace ingestion accepts either the existing HTTP Basic Auth credentials or a dedicated Project-scoped bearer credential. Basic Auth remains suitable for existing integrations; a dedicated credential is safer for unattended agents because it cannot sign into the dashboard or read telemetry.
+
+An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/otel/v1/traces`.
+
+For a dedicated credential, put the literal secret in a protected environment variable and use it as a bearer token:
+
+```sh
+export GLASSHOUSE_OTLP_INGEST_TOKEN="gh_ing_<secret-from-admin-ui>"
+export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer $GLASSHOUSE_OTLP_INGEST_TOKEN,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
+```
+
+The server derives organization and Project scope from the credential record. The `x-glasshouse-project-id` header must exactly match the credential's Project; a missing or different Project is rejected. The secret is a bearer credential: do not put it in source control, client-side browser code, logs, or telemetry attributes. It is returned only once at creation or rotation and stored server-side as a SHA-256 digest. Hosted deployments must send it over HTTPS.
+
+The endpoint also accepts HTTP Basic Auth using the same `UI_USERNAME` / `UI_PASSWORD` that protect the rest of the API. Encode them into `OTEL_EXPORTER_OTLP_HEADERS`:
 
 ```sh
 # macOS / Linux
@@ -25,7 +40,7 @@ export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
-The credentials are the same ones you'd use to log in at `http://localhost:5173/login`.
+The Basic credentials are the same ones you'd use to log in at `http://localhost:5173/login`. Basic Auth retains its existing project authorization behavior; an ingestion credential is deliberately limited to trace POSTs.
 
 ## Organization and project routing
 
