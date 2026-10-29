@@ -1,5 +1,8 @@
-import * as React from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+	QueryClient,
+	QueryClientProvider,
+	useQuery,
+} from "@tanstack/react-query";
 import {
 	act,
 	cleanup,
@@ -8,20 +11,24 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import * as React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+
 const navigate = vi.hoisted(() => vi.fn());
 const location = { pathname: "/access/otlp-credentials", searchStr: "" };
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigate,
 	useLocation: () => location,
 }));
+
 import { AuthGate } from "../../src/components/AuthGate";
 import {
 	ProjectProvider,
 	useProjectSelection,
 } from "../../src/components/ProjectProvider";
-import { NewPromptPage } from "../../src/routes/prompts-new";
 import { clearAuthSession, getAuthSession } from "../../src/lib/auth";
+import { NewPromptPage } from "../../src/routes/prompts-new";
+
 const showModalDescriptor = Object.getOwnPropertyDescriptor(
 	HTMLDialogElement.prototype,
 	"showModal",
@@ -208,6 +215,26 @@ function WorkspaceAuthority() {
 			</output>
 			<output aria-label="Admin recovery">{String(canRecoverAdmin)}</output>
 		</>
+	);
+}
+
+function PrivateUsage() {
+	const { data } = useQuery({
+		queryKey: ["organization-usage", "last-30-days"],
+		queryFn: async () => {
+			const response = await fetch("/v1/organization/usage");
+			if (!response.ok) throw new Error("Usage unavailable");
+			return (await response.json()) as { label: string };
+		},
+	});
+	return <output aria-label="Private usage">{data?.label ?? "pending"}</output>;
+}
+
+function CurrentSessionIdentity() {
+	return (
+		<output aria-label="Session username">
+			{getAuthSession()?.username ?? "none"}
+		</output>
 	);
 }
 
@@ -795,6 +822,420 @@ it("a failed focus check keeps protected children hidden while retrying", async 
 	).not.toBeInTheDocument();
 	await act(async () => finishRetry(Response.json(session)));
 	expect(screen.getByText("test-only protected content")).toBeInTheDocument();
+});
+
+it("removes prior identity query data when Retry validates a different session", async () => {
+	const projectA = "11111111-1111-4111-8111-111111111111";
+	const actorA = {
+		actor_id: session.actor_id,
+		organization_id: session.organization_id,
+		organization_role: "admin",
+		can_recover_admin: true,
+		default_project_id: projectA,
+		projects: [{ id: projectA, name: "Identity A private project" }],
+	};
+	const sessionB = {
+		...session,
+		actor_id: "actor-b",
+		organization_id: "organization-b",
+		username: "identity-b",
+	};
+	let finishFocusSession!: (response: Response) => void;
+	let finishRetryActor!: (response: Response) => void;
+	let finishRetryUsage!: (response: Response) => void;
+	let sessionCalls = 0;
+	let actorCalls = 0;
+	let usageCalls = 0;
+	const fetchMock = vi.fn((url: string) => {
+		if (url === "/v1/auth/session") {
+			sessionCalls += 1;
+			if (sessionCalls === 1) return Promise.resolve(Response.json(session));
+			if (sessionCalls === 2)
+				return new Promise<Response>((resolve) => {
+					finishFocusSession = resolve;
+				});
+			return Promise.resolve(Response.json(sessionB));
+		}
+		if (url === "/v1/me") {
+			actorCalls += 1;
+			if (actorCalls <= 2) return Promise.resolve(Response.json(actorA));
+			return new Promise<Response>((resolve) => {
+				finishRetryActor = resolve;
+			});
+		}
+		if (url === "/v1/organization/usage") {
+			usageCalls += 1;
+			if (usageCalls <= 2)
+				return Promise.resolve(
+					Response.json({ label: "Identity A private usage" }),
+				);
+			return new Promise<Response>((resolve) => {
+				finishRetryUsage = resolve;
+			});
+		}
+		throw new Error(`Unexpected test request: ${url}`);
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	const client = new QueryClient({
+		defaultOptions: {
+			queries: { retry: false, refetchOnWindowFocus: false },
+		},
+	});
+	render(
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<ProjectProvider>
+					<CurrentSessionIdentity />
+					<WorkspaceAuthority />
+					<PrivateUsage />
+				</ProjectProvider>
+			</AuthGate>
+		</QueryClientProvider>,
+	);
+	await waitFor(() =>
+		expect(screen.getByLabelText("Organization role")).toHaveTextContent(
+			"admin",
+		),
+	);
+	await waitFor(() =>
+		expect(screen.getByLabelText("Private usage")).toHaveTextContent(
+			"Identity A private usage",
+		),
+	);
+
+	fireEvent.focus(window);
+	await waitFor(() => {
+		expect(actorCalls).toBe(2);
+		expect(usageCalls).toBe(2);
+	});
+	await waitFor(() => expect(client.getQueryData(["me"])).toEqual(actorA));
+	await waitFor(() =>
+		expect(client.getQueryData(["organization-usage", "last-30-days"])).toEqual(
+			{ label: "Identity A private usage" },
+		),
+	);
+	await act(async () => finishFocusSession(Response.json({}, { status: 503 })));
+	expect(await screen.findByRole("alert")).toHaveTextContent(
+		"Session could not be checked.",
+	);
+
+	fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+	await waitFor(() => {
+		expect(sessionCalls).toBe(3);
+		expect(actorCalls).toBe(3);
+		expect(usageCalls).toBe(3);
+	});
+	await waitFor(() =>
+		expect(screen.getByLabelText("Session username")).toHaveTextContent(
+			"identity-b",
+		),
+	);
+	expect(screen.getByLabelText("Organization role")).toHaveTextContent("none");
+	expect(screen.getByLabelText("Workspace projects")).toBeEmptyDOMElement();
+	expect(screen.getByLabelText("Private usage")).toHaveTextContent("pending");
+	expect(
+		screen.queryByText("Identity A private project"),
+	).not.toBeInTheDocument();
+	expect(
+		screen.queryByText("Identity A private usage"),
+	).not.toBeInTheDocument();
+	expect(client.getQueryData(["me"])).toBeUndefined();
+	expect(
+		client.getQueryData(["organization-usage", "last-30-days"]),
+	).toBeUndefined();
+
+	await act(async () => {
+		finishRetryActor(
+			Response.json({
+				...actorA,
+				actor_id: sessionB.actor_id,
+				organization_id: sessionB.organization_id,
+				organization_role: "user",
+				projects: [],
+			}),
+		);
+		finishRetryUsage(Response.json({ label: "Identity B usage" }));
+	});
+});
+
+it("a remounted gate removes cached workspace data before revealing a new identity", async () => {
+	const projectA = "11111111-1111-4111-8111-111111111111";
+	const actorA = {
+		actor_id: session.actor_id,
+		organization_id: session.organization_id,
+		organization_role: "admin",
+		can_recover_admin: true,
+		default_project_id: projectA,
+		projects: [{ id: projectA, name: "Identity A private project" }],
+	};
+	const sessionB = {
+		...session,
+		actor_id: "actor-b",
+		organization_id: "organization-b",
+		username: "identity-b",
+	};
+	const finishActorB: ((response: Response) => void)[] = [];
+	const finishUsageB: ((response: Response) => void)[] = [];
+	let sessionCalls = 0;
+	let actorCalls = 0;
+	let usageCalls = 0;
+	const fetchMock = vi.fn((url: string) => {
+		if (url === "/v1/auth/session") {
+			sessionCalls += 1;
+			return Promise.resolve(
+				Response.json(sessionCalls === 1 ? session : sessionB),
+			);
+		}
+		if (url === "/v1/me") {
+			actorCalls += 1;
+			if (actorCalls === 1) return Promise.resolve(Response.json(actorA));
+			return new Promise<Response>((resolve) => finishActorB.push(resolve));
+		}
+		if (url === "/v1/organization/usage") {
+			usageCalls += 1;
+			if (usageCalls === 1)
+				return Promise.resolve(
+					Response.json({ label: "Identity A private usage" }),
+				);
+			return new Promise<Response>((resolve) => finishUsageB.push(resolve));
+		}
+		throw new Error(`Unexpected test request: ${url}`);
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	const client = new QueryClient({
+		defaultOptions: {
+			queries: { retry: false, refetchOnWindowFocus: false },
+		},
+	});
+	const oldGate = render(
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<ProjectProvider>
+					<CurrentSessionIdentity />
+					<WorkspaceAuthority />
+					<PrivateUsage />
+				</ProjectProvider>
+			</AuthGate>
+		</QueryClientProvider>,
+	);
+	await waitFor(() =>
+		expect(screen.getByLabelText("Organization role")).toHaveTextContent(
+			"admin",
+		),
+	);
+	await waitFor(() =>
+		expect(screen.getByLabelText("Private usage")).toHaveTextContent(
+			"Identity A private usage",
+		),
+	);
+	oldGate.unmount();
+
+	location.pathname = "/login";
+	render(
+		<QueryClientProvider client={client}>
+			<div>Login screen</div>
+		</QueryClientProvider>,
+	);
+	location.pathname = "/access/otlp-credentials";
+	render(
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<ProjectProvider>
+					<CurrentSessionIdentity />
+					<WorkspaceAuthority />
+					<PrivateUsage />
+				</ProjectProvider>
+			</AuthGate>
+		</QueryClientProvider>,
+	);
+	await waitFor(() => {
+		expect(sessionCalls).toBe(2);
+		expect(actorCalls).toBe(2);
+		expect(usageCalls).toBe(2);
+	});
+	await waitFor(() =>
+		expect(screen.getByLabelText("Session username")).toHaveTextContent(
+			"identity-b",
+		),
+	);
+	expect(screen.getByLabelText("Organization role")).toHaveTextContent("none");
+	expect(screen.getByLabelText("Workspace projects")).toBeEmptyDOMElement();
+	expect(screen.getByLabelText("Private usage")).toHaveTextContent("pending");
+	expect(
+		screen.queryByText("Identity A private project"),
+	).not.toBeInTheDocument();
+	expect(
+		screen.queryByText("Identity A private usage"),
+	).not.toBeInTheDocument();
+	expect(client.getQueryData(["me"])).toBeUndefined();
+	expect(
+		client.getQueryData(["organization-usage", "last-30-days"]),
+	).toBeUndefined();
+
+	await act(async () => {
+		for (const finish of finishActorB) {
+			finish(
+				Response.json({
+					...actorA,
+					actor_id: sessionB.actor_id,
+					organization_id: sessionB.organization_id,
+					organization_role: "user",
+					projects: [],
+				}),
+			);
+		}
+		for (const finish of finishUsageB)
+			finish(Response.json({ label: "Identity B usage" }));
+	});
+});
+
+it("a superseded focus failure still refreshes workspace queries before a new identity is revealed", async () => {
+	const projectA = "11111111-1111-4111-8111-111111111111";
+	const actorA = {
+		actor_id: session.actor_id,
+		organization_id: session.organization_id,
+		organization_role: "admin",
+		can_recover_admin: true,
+		default_project_id: projectA,
+		projects: [{ id: projectA, name: "Identity A private project" }],
+	};
+	const sessionB = {
+		...session,
+		actor_id: "actor-b",
+		organization_id: "organization-b",
+		username: "identity-b",
+	};
+	let finishFocusSession!: (response: Response) => void;
+	const finishActorB: ((response: Response) => void)[] = [];
+	const finishUsageB: ((response: Response) => void)[] = [];
+	let sessionCalls = 0;
+	let actorCalls = 0;
+	let usageCalls = 0;
+	const fetchMock = vi.fn((url: string) => {
+		if (url === "/v1/auth/session") {
+			sessionCalls += 1;
+			if (sessionCalls === 1) return Promise.resolve(Response.json(session));
+			if (sessionCalls === 2)
+				return new Promise<Response>((resolve) => {
+					finishFocusSession = resolve;
+				});
+			return Promise.resolve(Response.json(sessionB));
+		}
+		if (url === "/v1/me") {
+			actorCalls += 1;
+			if (actorCalls <= 2) return Promise.resolve(Response.json(actorA));
+			return new Promise<Response>((resolve) => {
+				finishActorB.push(resolve);
+			});
+		}
+		if (url === "/v1/organization/usage") {
+			usageCalls += 1;
+			if (usageCalls <= 2)
+				return Promise.resolve(
+					Response.json({ label: "Identity A private usage" }),
+				);
+			return new Promise<Response>((resolve) => {
+				finishUsageB.push(resolve);
+			});
+		}
+		throw new Error(`Unexpected test request: ${url}`);
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	const client = new QueryClient({
+		defaultOptions: {
+			queries: { retry: false, refetchOnWindowFocus: false },
+		},
+	});
+	const view = render(
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<ProjectProvider>
+					<CurrentSessionIdentity />
+					<WorkspaceAuthority />
+					<PrivateUsage />
+				</ProjectProvider>
+			</AuthGate>
+		</QueryClientProvider>,
+	);
+	await waitFor(() =>
+		expect(screen.getByLabelText("Organization role")).toHaveTextContent(
+			"admin",
+		),
+	);
+	await waitFor(() =>
+		expect(screen.getByLabelText("Private usage")).toHaveTextContent(
+			"Identity A private usage",
+		),
+	);
+
+	fireEvent.focus(window);
+	await waitFor(() => {
+		expect(actorCalls).toBe(2);
+		expect(usageCalls).toBe(2);
+	});
+	await waitFor(() => expect(client.getQueryData(["me"])).toEqual(actorA));
+
+	view.unmount();
+	location.pathname = "/login";
+	render(
+		<QueryClientProvider client={client}>
+			<div>Login screen</div>
+		</QueryClientProvider>,
+	);
+	expect(await screen.findByText("Login screen")).toBeInTheDocument();
+	await act(async () => finishFocusSession(Response.json({}, { status: 503 })));
+
+	location.pathname = "/access/otlp-credentials";
+	render(
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<ProjectProvider>
+					<CurrentSessionIdentity />
+					<WorkspaceAuthority />
+					<PrivateUsage />
+				</ProjectProvider>
+			</AuthGate>
+		</QueryClientProvider>,
+	);
+	await waitFor(() => {
+		expect(sessionCalls).toBe(3);
+		expect(actorCalls).toBeGreaterThanOrEqual(3);
+		expect(usageCalls).toBeGreaterThanOrEqual(3);
+	});
+	await waitFor(() =>
+		expect(screen.getByLabelText("Session username")).toHaveTextContent(
+			"identity-b",
+		),
+	);
+	expect(screen.getByLabelText("Organization role")).toHaveTextContent("none");
+	expect(screen.getByLabelText("Workspace projects")).toBeEmptyDOMElement();
+	expect(screen.getByLabelText("Private usage")).toHaveTextContent("pending");
+	expect(
+		screen.queryByText("Identity A private project"),
+	).not.toBeInTheDocument();
+	expect(
+		screen.queryByText("Identity A private usage"),
+	).not.toBeInTheDocument();
+	expect(client.getQueryData(["me"])).toBeUndefined();
+	expect(
+		client.getQueryData(["organization-usage", "last-30-days"]),
+	).toBeUndefined();
+
+	await act(async () => {
+		for (const finish of finishActorB) {
+			finish(
+				Response.json({
+					...actorA,
+					actor_id: sessionB.actor_id,
+					organization_id: sessionB.organization_id,
+					organization_role: "user",
+					projects: [],
+				}),
+			);
+		}
+		for (const finish of finishUsageB)
+			finish(Response.json({ label: "Identity B usage" }));
+	});
 });
 
 it("entering a protected route from a public auth route waits for a valid session", async () => {

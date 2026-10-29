@@ -1,6 +1,6 @@
-import * as React from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import * as React from "react";
 import {
 	expireAuthSession,
 	getAuthSession,
@@ -10,6 +10,9 @@ import {
 } from "../lib/auth";
 import { clearWorkspaceSession } from "./ProjectProvider";
 import { Button } from "./ui/button";
+
+const refreshRequiredClients = new WeakSet<object>();
+const lastKnownIdentities = new WeakMap<object, string>();
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
 	const navigate = useNavigate();
@@ -55,11 +58,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 		const checkSession = (refresh = false) => {
 			const current = ++check;
 			const isCurrent = () => active && current === check;
+			const refreshWorkspace =
+				refresh || refreshRequiredClients.has(queryClient);
+			if (refreshWorkspace) refreshRequiredClients.add(queryClient);
 			setError(false);
 			setRevalidating(true);
 			if (!getAuthSession()) setReady(false);
 			const sessionCheck = (
-				refresh ? refreshAuthSession() : readAuthSession()
+				refreshWorkspace ? refreshAuthSession() : readAuthSession()
 			).then(async (session) => {
 				if (!isCurrent()) return;
 				clearTimeout(expiry.current);
@@ -81,19 +87,33 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 					if (remaining <= 0) return expireAuthSession();
 					expiry.current = setTimeout(expireAuthSession, remaining);
 				}
-				setIdentity(
-					JSON.stringify([
-						session.actor_id,
-						session.organization_id,
-						session.authentication,
-						session.username,
-					]),
-				);
+				const nextIdentity = JSON.stringify([
+					session.actor_id,
+					session.organization_id,
+					session.authentication,
+					session.username,
+				]);
+				const previousIdentity = lastKnownIdentities.get(queryClient);
+				if (
+					previousIdentity &&
+					previousIdentity !== nextIdentity &&
+					!refreshWorkspace
+				) {
+					refreshRequiredClients.add(queryClient);
+					queryClient.removeQueries({
+						predicate: (query) => query.getObserversCount() === 0,
+					});
+					queryClient.getMutationCache().clear();
+					await queryClient.resetQueries();
+				}
+				if (!isCurrent()) return;
+				lastKnownIdentities.set(queryClient, nextIdentity);
+				setIdentity(nextIdentity);
 				setReady(true);
 				return true;
 			});
 			let queryRefresh = Promise.resolve();
-			if (refresh) {
+			if (refreshWorkspace) {
 				// Reset mounted observers in place; clearing them can leave stale authority visible.
 				queryClient.removeQueries({
 					predicate: (query) => query.getObserversCount() === 0,
@@ -103,10 +123,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 			}
 			void Promise.all([sessionCheck, queryRefresh])
 				.then(([valid]) => {
-					if (isCurrent() && valid) setRevalidating(false);
+					if (isCurrent() && valid) {
+						refreshRequiredClients.delete(queryClient);
+						setRevalidating(false);
+					}
 				})
 				.catch(() => {
 					if (isCurrent()) {
+						refreshRequiredClients.add(queryClient);
 						setReady(false);
 						setError(true);
 					}
