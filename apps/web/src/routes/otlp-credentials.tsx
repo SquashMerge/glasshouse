@@ -38,6 +38,7 @@ export function OtlpCredentialsPage() {
 	);
 	const [error, setError] = React.useState<string | null>(null);
 	const [revokeId, setRevokeId] = React.useState<string | null>(null);
+	// Capture this generation at submission, before offline mutations can pause.
 	const secretGeneration = React.useRef(0);
 	const forgetSecret = React.useCallback(() => {
 		secretGeneration.current += 1;
@@ -53,8 +54,13 @@ export function OtlpCredentialsPage() {
 			queryKey: ["otlp-credentials", projectId],
 		});
 	const create = useMutation({
-		mutationFn: async (input: Parameters<typeof createOtlpCredential>[0]) => {
-			const generation = secretGeneration.current;
+		mutationFn: async ({
+			input,
+			generation,
+		}: {
+			input: Parameters<typeof createOtlpCredential>[0];
+			generation: number;
+		}) => {
 			const value = await createOtlpCredential(input);
 			if (
 				generation === secretGeneration.current &&
@@ -64,7 +70,7 @@ export function OtlpCredentialsPage() {
 			// Only metadata may enter the shared mutation cache.
 			return value.credential;
 		},
-		onSuccess: (_, input) => {
+		onSuccess: (_, { input }) => {
 			if (input.project_id === selectedProjectIdRef.current) {
 				setName("");
 				setError(null);
@@ -77,8 +83,13 @@ export function OtlpCredentialsPage() {
 			),
 	});
 	const rotate = useMutation({
-		mutationFn: async (input: Parameters<typeof rotateOtlpCredential>[0]) => {
-			const generation = secretGeneration.current;
+		mutationFn: async ({
+			input,
+			generation,
+		}: {
+			input: Parameters<typeof rotateOtlpCredential>[0];
+			generation: number;
+		}) => {
 			const value = await rotateOtlpCredential(input);
 			if (
 				generation === secretGeneration.current &&
@@ -87,7 +98,7 @@ export function OtlpCredentialsPage() {
 				setShown(value);
 			return value.credential;
 		},
-		onSuccess: (_, input) => {
+		onSuccess: (_, { input }) => {
 			if (input.project_id === selectedProjectIdRef.current) {
 				setError(null);
 			}
@@ -166,7 +177,10 @@ export function OtlpCredentialsPage() {
 									if (pending) return;
 									forgetSecret();
 									setError(null);
-									create.mutate({ project_id: selectedProjectId, name });
+									create.mutate({
+										input: { project_id: selectedProjectId, name },
+										generation: secretGeneration.current,
+									});
 								}}
 							>
 								<div className="w-full max-w-sm space-y-2">
@@ -291,8 +305,11 @@ export function OtlpCredentialsPage() {
 														forgetSecret();
 														setError(null);
 														rotate.mutate({
-															project_id: selectedProjectId,
-															id: credential.id,
+															input: {
+																project_id: selectedProjectId,
+																id: credential.id,
+															},
+															generation: secretGeneration.current,
 														});
 													}}
 												>

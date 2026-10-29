@@ -58,6 +58,20 @@ export function ObservabilityPage() {
 	const rawTab = searchParams.get("tab");
 	const tab: Tab = VALID_TABS.has(rawTab as Tab) ? (rawTab as Tab) : "traces";
 	const focusSelectedTab = location.state.observabilityTabFocus === tab;
+	React.useEffect(() => {
+		if (!focusSelectedTab) return;
+		// Let AuthGate's URL-change remount finish before consuming the handoff.
+		const timer = window.setTimeout(() => {
+			void navigate({
+				to: "/observability",
+				search: Object.fromEntries(new URLSearchParams(location.searchStr)),
+				state: (state) => ({ ...state, observabilityTabFocus: undefined }),
+				replace: true,
+				resetScroll: false,
+			});
+		}, 0);
+		return () => window.clearTimeout(timer);
+	}, [focusSelectedTab, location.searchStr, navigate]);
 
 	function setTab(next: Tab) {
 		const nextSearch = Object.fromEntries(searchParams.entries());

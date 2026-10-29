@@ -287,7 +287,9 @@ for (const moveFocus of [false, true]) {
 			const userTarget = page.getByRole("textbox", { name: "Project slug" });
 			await opener.focus();
 			await page.keyboard.press("Enter");
-			const dialog = page.getByRole("dialog", { name: "Delete Audit project?" });
+			const dialog = page.getByRole("dialog", {
+				name: "Delete Audit project?",
+			});
 			await dialog
 				.getByRole("textbox", { name: "Project deletion confirmation" })
 				.fill(project.name);
