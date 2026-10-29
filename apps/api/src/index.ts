@@ -307,7 +307,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				throw new TenantScopeError(
 					"Project is not available to this organization",
 				);
-			return resolvedDependencies.handleOtlpIngest(
+			return await resolvedDependencies.handleOtlpIngest(
 				c.req.raw,
 				scope,
 				scope.projectId,

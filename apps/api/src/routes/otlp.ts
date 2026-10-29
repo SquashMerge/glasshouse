@@ -43,7 +43,11 @@ export const otlpIngestRoute = createRoute({
 		"Accepts an ExportTraceServiceRequest (OTLP 1.4.x HTTP/JSON), validates with Zod, " +
 		"normalizes each span (gen_ai.* first, OpenInference fallback), and batch-inserts " +
 		"to ClickHouse `traces` and `observations`. Returns an empty ExportTraceServiceResponse on success.",
-	security: [{ basicAuth: [] }],
+	security: [
+		{ sessionCookie: [], csrfHeader: [] },
+		{ basicAuth: [] },
+		{ bearerAuth: [] },
+	],
 	request: {
 		headers: z.object({
 			"x-glasshouse-project-id": z.string().uuid().openapi({

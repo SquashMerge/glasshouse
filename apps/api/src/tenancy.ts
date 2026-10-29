@@ -67,7 +67,7 @@ export async function resolveAuthorizedProjectScope(
 		throw new TenantScopeError("Project is not available");
 	return {
 		...tenant,
-		projectId,
+		projectId: projectId.toLowerCase(),
 		projectRole: row.effective_role,
 		enforcement: row.enforcement,
 		projectStatus: row.project_status,

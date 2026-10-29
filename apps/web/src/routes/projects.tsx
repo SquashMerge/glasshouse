@@ -36,6 +36,16 @@ export function ProjectsPage() {
 	);
 	const [deleting, setDeleting] = React.useState<Project | null>(null);
 	const [confirmationName, setConfirmationName] = React.useState("");
+	const nameInputRef = React.useRef<HTMLInputElement>(null);
+	const deleteDialogRef = React.useRef<HTMLDivElement>(null);
+	const deleteOpenerRef = React.useRef<HTMLElement | null>(null);
+	const deletedOpenerRef = React.useRef<HTMLElement | null>(null);
+	React.useLayoutEffect(() => {
+		const opener = deletedOpenerRef.current;
+		if (!opener || opener.isConnected) return;
+		if (document.activeElement === document.body) nameInputRef.current?.focus();
+		deletedOpenerRef.current = null;
+	}, [projectsQuery.data]);
 	const isOwner = organizationRole === "admin";
 	const canManage = (project: Project) => project.can_manage;
 
@@ -107,6 +117,7 @@ export function ProjectsPage() {
 	const deleteMutation = useMutation({
 		mutationFn: deleteProject,
 		onSuccess: (_, input) => {
+			deletedOpenerRef.current = deleteOpenerRef.current;
 			queryClient.removeQueries({
 				predicate: (query) => JSON.stringify(query.queryKey).includes(input.id),
 			});
@@ -121,6 +132,9 @@ export function ProjectsPage() {
 		},
 		onError: failed,
 	});
+	React.useLayoutEffect(() => {
+		if (deleteMutation.isPending) deleteDialogRef.current?.focus();
+	}, [deleteMutation.isPending]);
 
 	if (projectsQuery.isLoading && !projectsQuery.data)
 		return <ListLoadingSkeleton testId="projects-list-skeleton" />;
@@ -164,6 +178,7 @@ export function ProjectsPage() {
 					<label className="grid gap-1 text-sm">
 						Project name
 						<Input
+							ref={nameInputRef}
 							aria-label="Project name"
 							required
 							value={name}
@@ -222,6 +237,8 @@ export function ProjectsPage() {
 					defaultMutation.mutate(project.id);
 				}}
 				onDelete={(project) => {
+					if (deleteMutation.isPending) return;
+					deleteOpenerRef.current = document.activeElement as HTMLElement;
 					setDeleting(project);
 					setConfirmationName("");
 					setOperationError(null);
@@ -288,13 +305,12 @@ export function ProjectsPage() {
 			{deleting && (
 				<DialogOverlay
 					onEscape={() => {
-						if (!deleteMutation.isPending) {
-							setDeleting(null);
-							setConfirmationName("");
-						}
+						setDeleting(null);
+						setConfirmationName("");
 					}}
 				>
 					<DialogContent
+						ref={deleteDialogRef}
 						className="max-w-md space-y-4"
 						role="dialog"
 						aria-modal="true"
@@ -304,6 +320,7 @@ export function ProjectsPage() {
 							className="space-y-4"
 							onSubmit={(event) => {
 								event.preventDefault();
+								if (deleteMutation.isPending) return;
 								setOperationError(null);
 								deleteMutation.mutate({
 									id: deleting.id,

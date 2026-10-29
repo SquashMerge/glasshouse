@@ -181,6 +181,11 @@ function RecoveryCard({
 	onConfirmationChange: (value: string) => void;
 	onRecover: () => void;
 }) {
+	const dialogRef = React.useRef<HTMLDivElement>(null);
+	React.useLayoutEffect(() => {
+		if (pending) dialogRef.current?.focus();
+	}, [pending]);
+
 	return (
 		<>
 			<Card className="border-destructive/40">
@@ -192,7 +197,14 @@ function RecoveryCard({
 					</p>
 				</CardHeader>
 				<CardContent>
-					<Button type="button" variant="destructive" onClick={onOpen}>
+					<Button
+						type="button"
+						variant="destructive"
+						aria-disabled={pending}
+						onClick={() => {
+							if (!pending) onOpen();
+						}}
+					>
 						Recover Admin access
 					</Button>
 				</CardContent>
@@ -204,8 +216,9 @@ function RecoveryCard({
 				</p>
 			) : null}
 			{open ? (
-				<DialogOverlay onEscape={() => !pending && onClose()}>
+				<DialogOverlay onEscape={onClose}>
 					<DialogContent
+						ref={dialogRef}
 						className="max-w-md space-y-4"
 						role="dialog"
 						aria-modal="true"
@@ -215,7 +228,7 @@ function RecoveryCard({
 							className="space-y-4"
 							onSubmit={(event) => {
 								event.preventDefault();
-								onRecover();
+								if (!pending) onRecover();
 							}}
 						>
 							<div>

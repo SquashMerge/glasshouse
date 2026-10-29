@@ -7786,6 +7786,10 @@ components:
     basicAuth:
       scheme: basic
       type: http
+    bearerAuth:
+      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/otel/v1/traces.
+      scheme: bearer
+      type: http
     csrfHeader:
       in: header
       name: x-glasshouse-csrf
@@ -15447,6 +15451,7 @@ paths:
         - csrfHeader: []
           sessionCookie: []
         - basicAuth: []
+        - bearerAuth: []
       summary: OTLP HTTP/JSON trace ingest
       tags:
         - otlp

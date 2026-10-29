@@ -41,6 +41,28 @@ test("uses the centralized database policy decision for strict project access", 
 	expect(scope.enforcement).toBe("strict");
 });
 
+test("returns UUID Project scope in canonical lowercase", async () => {
+	const canonicalProjectId = "abcdef12-abcd-4ef0-8abc-abcdefabcdef";
+	const scope = await resolveAuthorizedProjectScope(
+		{
+			query: async () => ({
+				rows: [
+					{
+						effective_role: "user",
+						enforcement: "strict",
+						project_status: "active",
+						allowed: true,
+					},
+				],
+			}),
+		} as never,
+		tenant,
+		canonicalProjectId.toUpperCase(),
+	);
+
+	expect(scope.projectId).toBe(canonicalProjectId);
+});
+
 test("rejects a strict Read-only write before persistence", async () => {
 	await expect(
 		assertTenantProjectAccess(

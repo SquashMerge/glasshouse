@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+	onlineManager,
+	QueryClient,
+	QueryClientProvider,
+} from "@tanstack/react-query";
 import {
 	cleanup,
 	fireEvent,
@@ -48,16 +52,33 @@ function renderPage() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
-	return render(
+	const view = render(
 		<QueryClientProvider client={client}>
 			<OtlpCredentialsPage />
 		</QueryClientProvider>,
 	);
+	return { ...view, client };
+}
+
+function expectSecretForgotten(client: QueryClient, secret: string) {
+	const retainedData = [
+		...client
+			.getQueryCache()
+			.getAll()
+			.map((query) => query.state.data),
+		...client
+			.getMutationCache()
+			.getAll()
+			.map((mutation) => mutation.state.data),
+	];
+	expect(
+		retainedData.some((data) => JSON.stringify(data)?.includes(secret)),
+	).toBe(false);
 }
 
 describe("OtlpCredentialsPage", () => {
 	beforeEach(() => {
-		vi.clearAllMocks();
+		vi.resetAllMocks();
 		selection.projectId = "11111111-1111-4111-8111-111111111111";
 		selection.role = "admin";
 		api.listOtlpCredentials.mockResolvedValue({ items: [credential] });
@@ -71,7 +92,10 @@ describe("OtlpCredentialsPage", () => {
 			revoked_at: "2026-10-02T00:00:00.000Z",
 		});
 	});
-	afterEach(cleanup);
+	afterEach(() => {
+		cleanup();
+		onlineManager.setOnline(true);
+	});
 
 	it("creates a credential for the selected Project and reveals the secret only in the one-time panel", async () => {
 		renderPage();
@@ -119,6 +143,85 @@ describe("OtlpCredentialsPage", () => {
 		);
 	});
 
+	it("forgets a dismissed create secret in the shared client cache", async () => {
+		const { client } = renderPage();
+		fireEvent.change(screen.getByLabelText("Credential name"), {
+			target: { value: "Production collector" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Create credential" }));
+		await screen.findByText(SECRET);
+		fireEvent.click(screen.getByRole("button", { name: "Dismiss secret" }));
+
+		expect(screen.queryByText(SECRET)).not.toBeInTheDocument();
+		await waitFor(() => expectSecretForgotten(client, SECRET));
+	});
+
+	it("hides the previous secret while rotation is pending", async () => {
+		const nextSecret = `gh_ing_${"b".repeat(43)}`;
+		let finishRotation!: (value: {
+			credential: typeof credential;
+			secret: string;
+		}) => void;
+		api.rotateOtlpCredential
+			.mockResolvedValueOnce({ credential, secret: SECRET })
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finishRotation = resolve;
+					}),
+			);
+		renderPage();
+		fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+		await screen.findByText(SECRET);
+		const rotate = screen.getByRole("button", { name: "Rotate" });
+		await waitFor(() => expect(rotate).toBeEnabled());
+		fireEvent.click(rotate);
+		await waitFor(() =>
+			expect(api.rotateOtlpCredential).toHaveBeenCalledTimes(2),
+		);
+
+		try {
+			await waitFor(() =>
+				expect(screen.queryByText(SECRET)).not.toBeInTheDocument(),
+			);
+		} finally {
+			finishRotation({ credential, secret: nextSecret });
+		}
+		expect(await screen.findByText(nextSecret)).toBeVisible();
+	});
+
+	it("forgets the previous rotation secret after a replacement is revealed", async () => {
+		const nextSecret = `gh_ing_${"b".repeat(43)}`;
+		api.rotateOtlpCredential
+			.mockResolvedValueOnce({ credential, secret: SECRET })
+			.mockResolvedValueOnce({ credential, secret: nextSecret });
+		const { client } = renderPage();
+		fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+		await screen.findByText(SECRET);
+		const rotate = screen.getByRole("button", { name: "Rotate" });
+		await waitFor(() => expect(rotate).toBeEnabled());
+		fireEvent.click(rotate);
+		expect(await screen.findByText(nextSecret)).toBeVisible();
+		expect(screen.queryByText(SECRET)).not.toBeInTheDocument();
+		await waitFor(() => expectSecretForgotten(client, SECRET));
+	});
+
+	it("removes the revealed secret and cached copies when its credential is revoked", async () => {
+		const { client } = renderPage();
+		fireEvent.click(await screen.findByRole("button", { name: "Rotate" }));
+		await screen.findByText(SECRET);
+		api.listOtlpCredentials.mockResolvedValue({
+			items: [{ ...credential, revoked_at: "2026-10-02T00:00:00.000Z" }],
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+		fireEvent.click(screen.getByRole("button", { name: "Confirm revoke" }));
+		await screen.findByText("Revoked");
+
+		expect(screen.queryByText(SECRET)).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy secret" })).toBeNull();
+		await waitFor(() => expectSecretForgotten(client, SECRET));
+	});
+
 	it("does not render a one-time secret after the selected Project changes", async () => {
 		const client = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
@@ -154,6 +257,54 @@ describe("OtlpCredentialsPage", () => {
 		expect(
 			screen.queryByTestId("created-credential-secret"),
 		).not.toBeInTheDocument();
+	});
+
+	it("does not reveal a rotation paused offline after switching Projects A→B→A", async () => {
+		const { client, rerender } = renderPage();
+		const rotate = await screen.findByRole("button", { name: "Rotate" });
+		api.listOtlpCredentials.mockImplementation(async (projectId: string) => ({
+			items: projectId === credential.project_id ? [credential] : [],
+		}));
+		onlineManager.setOnline(false);
+		fireEvent.click(rotate);
+		await waitFor(() =>
+			expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true),
+		);
+		expect(api.rotateOtlpCredential).not.toHaveBeenCalled();
+
+		for (const projectId of [
+			"66666666-6666-4666-8666-666666666666",
+			credential.project_id,
+		]) {
+			selection.projectId = projectId;
+			rerender(
+				<QueryClientProvider client={client}>
+					<OtlpCredentialsPage />
+				</QueryClientProvider>,
+			);
+		}
+		expect(api.rotateOtlpCredential).not.toHaveBeenCalled();
+
+		onlineManager.setOnline(true);
+		await waitFor(() =>
+			expect(client.getMutationCache().getAll()[0]?.state.status).toBe(
+				"success",
+			),
+		);
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled(),
+		);
+		expect(api.rotateOtlpCredential).toHaveBeenCalledTimes(1);
+		expect(api.rotateOtlpCredential.mock.calls[0]?.[0]).toEqual({
+			project_id: credential.project_id,
+			id: credential.id,
+		});
+		expectSecretForgotten(client, SECRET);
+		expect(document.body.textContent?.includes(SECRET)).toBe(false);
+		expect(
+			screen.queryByTestId("created-credential-secret"),
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy secret" })).toBeNull();
 	});
 
 	it("does not render management controls for non-Admins", () => {

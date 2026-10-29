@@ -20,6 +20,10 @@ OTLP trace ingestion accepts either the existing HTTP Basic Auth credentials or 
 
 An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/otel/v1/traces`.
 
+Rotation and revocation require current organization Admin authority; they are not restricted to the credential's creator. Any current Admin in that organization can rotate an active credential for an active Project or revoke a credential for an active or archived Project. `created_by_actor_id` records the creator and supplies the actor used to authorize bearer ingestion; it is not a creator-only management permission.
+
+Bearer ingestion is authorized as that creator Actor using its current authority and enabled-account state. If the creator loses the role/identity state that permits ingestion or is disabled, ingestion stops even if the credential still appears **Active** (not revoked) in the management list. Rotation does not change the creator Actor or restore its authority; another current organization Admin can manage the credential or create a replacement under an authorized Actor.
+
 For a dedicated credential, put the literal secret in a protected environment variable and use it as a bearer token:
 
 ```sh
@@ -174,6 +178,8 @@ Trace and Observation list `limit` defaults to 50, accepts zero, and clamps a la
 ## Organization usage dashboard
 
 The authenticated organization homepage reports persisted telemetry across all active and archived Projects. `GET /v1/organization/usage?range=24h|7d|30d|90d` returns organization and per-Project counts plus a UTC time series. The range is a rolling interval ending at the response's `to` timestamp; `from` is inclusive and `to` is exclusive. The 24-hour range uses hourly buckets; longer ranges use daily UTC buckets. Empty buckets and Projects with no rows are included as zero.
+
+The dashboard displays that returned `to` value in UTC as **Data through** and provides a keyboard-accessible **Refresh usage** button to refetch the selected range without navigating. The timestamp is the query's exclusive range end, not an ingestion watermark or the time telemetry was last updated.
 
 Trace counts are rows in the retained `traces` table. Observation counts are rows in `observations`, broken out by `span`, `event`, `generation`, and `tool`. Records are attributed by `start_time`; these are storage-row counts, not unique logical telemetry counts, and therefore reflect ClickHouse's bounded insert-deduplication behavior described above. The dashboard selects only organization/project identifiers, start times, record type, and counts; it never returns trace or Observation payload content. Every request derives organization scope from the authenticated member and queries only that organization's eligible Projects. The dashboard is visibility-only: it does not change quotas, retention, ingestion, or Project-level access. Detailed traces and failures remain in Observability.
 

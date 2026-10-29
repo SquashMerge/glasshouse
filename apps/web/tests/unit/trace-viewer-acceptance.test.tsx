@@ -1,9 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ObservationDetailPanel } from "../../src/components/ObservationDetailPanel";
 import { TraceHeader } from "../../src/components/TraceHeader";
 import { TraceWorkspace } from "../../src/components/TraceWorkspace";
 import type { CanonicalObservation } from "../../src/lib/trace-model";
+import { DialogContent, DialogOverlay } from "../../src/components/ui/dialog";
 
 const TRACE_ID = "a".repeat(32);
 
@@ -24,6 +26,44 @@ function observation(
 }
 
 describe("trace viewer acceptance", () => {
+	it("keeps the observation inspector open when a nested dialog handles Escape", () => {
+		const onClose = vi.fn();
+		function Example() {
+			const [dialogOpen, setDialogOpen] = useState(false);
+			return (
+				<ObservationDetailPanel
+					traceId={TRACE_ID}
+					observation={observation()}
+					onClose={onClose}
+					actions={
+						<>
+							<button type="button" onClick={() => setDialogOpen(true)}>
+								Open nested dialog
+							</button>
+							{dialogOpen && (
+								<DialogOverlay onEscape={() => setDialogOpen(false)}>
+									<DialogContent role="dialog" aria-label="Nested dialog">
+										<button type="button">Dialog action</button>
+									</DialogContent>
+								</DialogOverlay>
+							)}
+						</>
+					}
+				/>
+			);
+		}
+		render(<Example />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Open nested dialog" }));
+		fireEvent.keyDown(screen.getByRole("button", { name: "Dialog action" }), {
+			key: "Escape",
+		});
+
+		expect(screen.queryByRole("dialog", { name: "Nested dialog" })).toBeNull();
+		expect(screen.getByTestId("observation-detail")).toBeInTheDocument();
+		expect(onClose).not.toHaveBeenCalled();
+	});
+
 	it("AC3: exposes the root service in the trace header", () => {
 		render(
 			<TraceHeader

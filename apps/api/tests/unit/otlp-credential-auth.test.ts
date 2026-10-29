@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Hono } from "hono";
 import { createHash, randomBytes } from "node:crypto";
 import { authenticationMiddleware } from "../../src/middleware/auth.js";
+import { openapiApp } from "../../src/openapi.js";
 import { trustedTenant } from "../../src/tenancy.js";
 
 const secret = `gh_ing_${"b".repeat(43)}`;
@@ -91,4 +92,33 @@ test("bearer ingestion credentials authenticate only the OTLP trace POST and nev
 	expect(wrongMethod.status).toBe(401);
 	expect(dashboard.status).toBe(401);
 	expect(credentialLookup).toHaveLength(1);
+});
+
+test("accepts case-insensitive HTTP Bearer authentication schemes", async () => {
+	credentialLookup.length = 0;
+	const response = await app().request("/v1/otel/v1/traces", {
+		method: "POST",
+		headers: { authorization: `bearer ${secret}` },
+	});
+
+	expect(response.status).toBe(200);
+});
+
+test("documents the credential auth choices on the OTLP trace operation", () => {
+	const document = openapiApp.getOpenAPI31Document({
+		openapi: "3.1.0",
+		info: { title: "OTLP auth contract", version: "test" },
+	});
+
+	expect(document.components?.securitySchemes?.bearerAuth).toEqual({
+		type: "http",
+		scheme: "bearer",
+		description:
+			"Project-scoped OTLP ingest credential, accepted only for POST /v1/otel/v1/traces.",
+	});
+	expect(document.paths?.["/v1/otel/v1/traces"]?.post?.security).toEqual([
+		{ sessionCookie: [], csrfHeader: [] },
+		{ basicAuth: [] },
+		{ bearerAuth: [] },
+	]);
 });

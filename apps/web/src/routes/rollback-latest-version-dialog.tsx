@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { Button } from "../components/ui/button";
 import { DialogContent, DialogOverlay } from "../components/ui/dialog";
 
@@ -12,12 +13,18 @@ export function RollbackLatestVersionDialog({
 	onClose: () => void;
 	onConfirm: () => void;
 }) {
+	const contentRef = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		if (pending) contentRef.current?.focus();
+	}, [pending]);
+
 	return (
 		<DialogOverlay
 			onEscape={() => !pending && onClose()}
 			onMouseDown={() => !pending && onClose()}
 		>
 			<DialogContent
+				ref={contentRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="rollback-latest-version-title"

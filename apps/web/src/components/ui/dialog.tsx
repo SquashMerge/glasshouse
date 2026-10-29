@@ -49,10 +49,9 @@ export const DialogOverlay = React.forwardRef<
 				onKeyDown?.(event);
 				if (event.defaultPrevented) return;
 				if (event.key === "Escape") {
-					if (onEscape) {
-						event.preventDefault();
-						onEscape();
-					}
+					event.preventDefault();
+					event.stopPropagation();
+					onEscape?.();
 					return;
 				}
 				if (event.key !== "Tab") return;
@@ -78,6 +77,7 @@ export const DialogOverlay = React.forwardRef<
 				if (
 					event.shiftKey &&
 					(document.activeElement === first ||
+						document.activeElement === dialog ||
 						!dialog?.contains(document.activeElement))
 				) {
 					event.preventDefault();
@@ -85,6 +85,7 @@ export const DialogOverlay = React.forwardRef<
 				} else if (
 					!event.shiftKey &&
 					(document.activeElement === last ||
+						document.activeElement === dialog ||
 						!dialog?.contains(document.activeElement))
 				) {
 					event.preventDefault();
