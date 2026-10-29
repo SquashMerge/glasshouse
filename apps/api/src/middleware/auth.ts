@@ -348,12 +348,13 @@ export function authenticationMiddleware(
 				const header = c.req.header("authorization");
 				const match =
 					header && header.length <= 256
-						? /^Bearer (gh_ing_[A-Za-z0-9_-]{43})$/.exec(header)
+						? /^bearer ([^\s]+)$/i.exec(header)
 						: null;
-				if (match) {
+				const token = match?.[1];
+				if (token && /^gh_ing_[A-Za-z0-9_-]{43}$/.test(token)) {
 					const ingestCredential = await authenticateOtlpCredential(
 						pool(),
-						match[1]!,
+						token,
 					);
 					if (ingestCredential) {
 						principal = {
@@ -364,7 +365,7 @@ export function authenticationMiddleware(
 								id: ingestCredential.id,
 								projectId: ingestCredential.projectId,
 								digest: createHash("sha256")
-									.update(match[1]!, "utf8")
+									.update(token, "utf8")
 									.digest("hex"),
 							},
 						};

@@ -47,6 +47,47 @@ describe("Dialog shell", () => {
 		expect(onClose).not.toHaveBeenCalled();
 	});
 
+	it("keeps focus inside the rollback dialog after submission disables its actions", () => {
+		function Example() {
+			const [pending, setPending] = useState(false);
+			const [error, setError] = useState<string | null>(null);
+			return (
+				<>
+					<RollbackLatestVersionDialog
+						pending={pending}
+						error={error}
+						onClose={() => {}}
+						onConfirm={() => setPending(true)}
+					/>
+					<button
+						type="button"
+						onClick={() => {
+							setPending(false);
+							setError("Rollback failed");
+						}}
+					>
+						Fail request
+					</button>
+				</>
+			);
+		}
+
+		render(<Example />);
+		const confirm = screen.getByRole("button", { name: "Rollback version" });
+		confirm.focus();
+		fireEvent.click(confirm);
+
+		const dialog = screen.getByRole("dialog", {
+			name: "Rollback latest version",
+		});
+		expect(dialog).toHaveFocus();
+		fireEvent.keyDown(dialog, { key: "Tab" });
+		expect(dialog).toHaveFocus();
+		fireEvent.click(screen.getByRole("button", { name: "Fail request" }));
+		expect(screen.getByRole("alert")).toHaveTextContent("Rollback failed");
+		expect(dialog).toHaveFocus();
+	});
+
 	it("keeps initial dialog focus under React StrictMode effect replay", async () => {
 		function Example() {
 			const [open, setOpen] = useState(false);
