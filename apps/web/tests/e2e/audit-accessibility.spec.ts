@@ -121,6 +121,31 @@ test.describe("Observability tabs in the real browser", () => {
 		await page.keyboard.press("Shift+Tab");
 		await expect(spans).toBeFocused();
 	});
+
+	test("does not replay tab autofocus when returning to a history entry", async ({
+		page,
+	}) => {
+		const spans = page.getByRole("tab", { name: "Spans", exact: true });
+		await page.getByRole("tab", { name: "Traces", exact: true }).focus();
+		await page.keyboard.press("ArrowRight");
+		await expect(spans).toBeFocused();
+		await expect(page).toHaveURL(/tab=spans/);
+		const spansUrl = page.url();
+
+		await page.getByRole("link", { name: "Projects", exact: true }).click();
+		await expect(
+			page.getByRole("heading", { name: "Projects", exact: true }),
+		).toBeVisible();
+		await page
+			.getByRole("textbox", { name: "Project name", exact: true })
+			.focus();
+		await page.goBack();
+
+		await expect(page).toHaveURL(spansUrl);
+		await expect(page.getByRole("tabpanel", { name: "Spans" })).toBeVisible();
+		await expect(spans).toHaveAttribute("aria-selected", "true");
+		await expect(spans).not.toBeFocused();
+	});
 });
 
 for (const action of [
@@ -218,6 +243,84 @@ for (const action of [
 			expect(mutations).toBe(1);
 		});
 	}
+}
+
+for (const moveFocus of [false, true]) {
+	test(`Project deletion completion ${moveFocus ? "preserves user-moved focus" : "focuses the Project name fallback"} when the opener disappears after Escape`, async ({
+		page,
+	}) => {
+		await mockWorkspace(page);
+		let releaseDeletion!: () => void;
+		const pendingDeletion = new Promise<void>((resolve) => {
+			releaseDeletion = resolve;
+		});
+		let releaseList!: () => void;
+		const pendingList = new Promise<void>((resolve) => {
+			releaseList = resolve;
+		});
+		let deleted = false;
+		let mutations = 0;
+		await page.route("**/v1/projects?*", async (route) => {
+			if (deleted) await pendingList;
+			await route.fulfill({
+				json: {
+					items: deleted ? [defaultProject] : [defaultProject, project],
+					total: deleted ? 1 : 2,
+				},
+			});
+		});
+		await page.route(`**/v1/projects/${PROJECT_ID}`, async (route) => {
+			if (route.request().method() !== "DELETE") return route.fallback();
+			mutations += 1;
+			await pendingDeletion;
+			deleted = true;
+			await route.fulfill({ status: 204 });
+		});
+
+		try {
+			await page.goto("/projects");
+			const opener = page.getByRole("button", { name: "Delete Audit project" });
+			const fallback = page.getByRole("textbox", {
+				name: "Project name",
+				exact: true,
+			});
+			const userTarget = page.getByRole("textbox", { name: "Project slug" });
+			await opener.focus();
+			await page.keyboard.press("Enter");
+			const dialog = page.getByRole("dialog", { name: "Delete Audit project?" });
+			await dialog
+				.getByRole("textbox", { name: "Project deletion confirmation" })
+				.fill(project.name);
+			const submit = dialog.getByRole("button", {
+				name: "Delete project",
+				exact: true,
+			});
+			await submit.click();
+			await expect.poll(() => mutations).toBe(1);
+			await expect(submit).toBeDisabled();
+			await page.keyboard.press("Escape");
+			await expect(dialog).toHaveCount(0);
+			await expect(opener).toBeFocused();
+			if (moveFocus) await userTarget.focus();
+
+			const response = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === `/v1/projects/${PROJECT_ID}` &&
+					response.request().method() === "DELETE",
+			);
+			releaseDeletion();
+			expect((await response).status()).toBe(204);
+			await expect(moveFocus ? userTarget : opener).toBeFocused();
+			releaseList();
+
+			await expect(opener).toHaveCount(0);
+			await expect(moveFocus ? userTarget : fallback).toBeFocused();
+			expect(mutations).toBe(1);
+		} finally {
+			releaseDeletion();
+			releaseList();
+		}
+	});
 }
 
 test.describe("usage dashboard freshness and keyboard access", () => {

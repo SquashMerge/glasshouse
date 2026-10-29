@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+	onlineManager,
+	QueryClient,
+	QueryClientProvider,
+} from "@tanstack/react-query";
 import {
 	cleanup,
 	fireEvent,
@@ -88,7 +92,10 @@ describe("OtlpCredentialsPage", () => {
 			revoked_at: "2026-10-02T00:00:00.000Z",
 		});
 	});
-	afterEach(cleanup);
+	afterEach(() => {
+		cleanup();
+		onlineManager.setOnline(true);
+	});
 
 	it("creates a credential for the selected Project and reveals the secret only in the one-time panel", async () => {
 		renderPage();
@@ -250,6 +257,54 @@ describe("OtlpCredentialsPage", () => {
 		expect(
 			screen.queryByTestId("created-credential-secret"),
 		).not.toBeInTheDocument();
+	});
+
+	it("does not reveal a rotation paused offline after switching Projects A→B→A", async () => {
+		const { client, rerender } = renderPage();
+		const rotate = await screen.findByRole("button", { name: "Rotate" });
+		api.listOtlpCredentials.mockImplementation(async (projectId: string) => ({
+			items: projectId === credential.project_id ? [credential] : [],
+		}));
+		onlineManager.setOnline(false);
+		fireEvent.click(rotate);
+		await waitFor(() =>
+			expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true),
+		);
+		expect(api.rotateOtlpCredential).not.toHaveBeenCalled();
+
+		for (const projectId of [
+			"66666666-6666-4666-8666-666666666666",
+			credential.project_id,
+		]) {
+			selection.projectId = projectId;
+			rerender(
+				<QueryClientProvider client={client}>
+					<OtlpCredentialsPage />
+				</QueryClientProvider>,
+			);
+		}
+		expect(api.rotateOtlpCredential).not.toHaveBeenCalled();
+
+		onlineManager.setOnline(true);
+		await waitFor(() =>
+			expect(client.getMutationCache().getAll()[0]?.state.status).toBe(
+				"success",
+			),
+		);
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled(),
+		);
+		expect(api.rotateOtlpCredential).toHaveBeenCalledTimes(1);
+		expect(api.rotateOtlpCredential.mock.calls[0]?.[0]).toEqual({
+			project_id: credential.project_id,
+			id: credential.id,
+		});
+		expectSecretForgotten(client, SECRET);
+		expect(document.body.textContent?.includes(SECRET)).toBe(false);
+		expect(
+			screen.queryByTestId("created-credential-secret"),
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Copy secret" })).toBeNull();
 	});
 
 	it("does not render management controls for non-Admins", () => {
