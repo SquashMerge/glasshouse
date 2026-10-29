@@ -17,6 +17,15 @@ class DockerBuildContextTests(unittest.TestCase):
             self.assertFalse(dockerfile.with_name("Dockerfile.dockerignore").exists())
             self.assertIn("COPY . .", dockerfile.read_text())
 
+    def test_app_dockerfiles_copy_workspace_dependencies_from_deps(self):
+        for app in ("api", "web"):
+            with self.subTest(app=app):
+                dockerfile = ROOT / "apps" / app / "Dockerfile"
+                self.assertIn(
+                    f"COPY --from=deps /app/apps/{app}/node_modules ./apps/{app}/node_modules",
+                    dockerfile.read_text().splitlines(),
+                )
+
     @unittest.skipUnless(
         os.environ.get("GLASSHOUSE_TEST_DOCKER_CONTEXT") == "1",
         "set GLASSHOUSE_TEST_DOCKER_CONTEXT=1 for the Docker/BuildKit context check",
