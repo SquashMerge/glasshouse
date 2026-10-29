@@ -869,14 +869,12 @@ test("credential authorization fences rotation and revocation after initial bear
 
 	const beforeRevoke = await authenticateOtlpCredential(pool, rotated.secret);
 	if (!beforeRevoke) throw new Error("Rotated credential did not authenticate");
-	await revokeOtlpCredential(pool, {
-		organization_id: f.id,
-		project_id: f.projectId,
-		id: created.credential.id,
-	});
 	const revokeClient = await pool.connect();
+	let revokeTransactionOpen = false;
+	let revoked: Awaited<ReturnType<typeof revokeOtlpCredential>>;
 	try {
 		await revokeClient.query("BEGIN");
+		revokeTransactionOpen = true;
 		expect(
 			await lockActiveOtlpCredential(revokeClient, {
 				...beforeRevoke,
@@ -884,11 +882,26 @@ test("credential authorization fences rotation and revocation after initial bear
 					.update(rotated.secret, "utf8")
 					.digest("hex"),
 			}),
-		).toBe(false);
-		await revokeClient.query("ROLLBACK");
+		).toBe(true);
+		const revocation = revokeOtlpCredential(pool, {
+			organization_id: f.id,
+			project_id: f.projectId,
+			id: created.credential.id,
+		});
+		await waitForLock(
+			"UPDATE project_otlp_credentials SET revoked_at = COALESCE%",
+		);
+		await revokeClient.query("COMMIT");
+		revokeTransactionOpen = false;
+		revoked = await revocation;
+	} catch (cause) {
+		if (revokeTransactionOpen) await revokeClient.query("ROLLBACK");
+		throw cause;
 	} finally {
 		revokeClient.release();
 	}
+	expect(revoked.revoked_at).not.toBeNull();
+	expect(await authenticateOtlpCredential(pool, rotated.secret)).toBeNull();
 });
 
 test("project-scoped OTLP bearers reject missing and mismatched Project selectors before writer effects", async () => {
