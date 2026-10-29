@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { test, expect, type Page } from "@playwright/test";
+import { hasNoSecretStorage } from "./secret-storage";
 
 // Auth journeys intentionally produce no secret-bearing trace, screenshot,
 // video, HAR, storage-state or attachment artifacts, even on failure.
@@ -32,12 +33,7 @@ async function logout(page: Page) {
 	await page.waitForURL((url) => url.pathname === "/login");
 }
 async function noSecretStorage(page: Page) {
-	const safe = await page.evaluate(() => {
-		const keys = Object.keys(localStorage).concat(Object.keys(sessionStorage));
-		return !keys.some((key) =>
-			/auth|password|token|enrollment|secret/i.test(key),
-		);
-	});
+	const safe = await page.evaluate(hasNoSecretStorage);
 	expect(safe).toBe(true);
 }
 async function noHorizontalOverflow(page: Page) {
