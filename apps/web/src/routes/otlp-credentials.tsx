@@ -93,6 +93,12 @@ export function OtlpCredentialsPage() {
 		setShown(null);
 		setError(null);
 	}, [selectedProjectId]);
+	const visibleSecret =
+		selectedProjectId &&
+		shown?.credential.project_id.toLowerCase() ===
+			selectedProjectId.toLowerCase()
+			? shown
+			: null;
 
 	if (!isAdmin)
 		return (
@@ -154,7 +160,7 @@ export function OtlpCredentialsPage() {
 							</form>
 						</CardContent>
 					</Card>
-					{shown && (
+					{visibleSecret && (
 						<Card className="border-primary/40" role="status">
 							<CardHeader>
 								<CardTitle>Copy this secret now</CardTitle>
@@ -168,14 +174,14 @@ export function OtlpCredentialsPage() {
 									className="block break-all rounded-md bg-muted p-3 text-sm"
 									data-testid="created-credential-secret"
 								>
-									{shown.secret}
+									{visibleSecret.secret}
 								</code>
 								<div className="flex flex-wrap gap-2">
 									<Button
 										type="button"
 										variant="secondary"
 										onClick={() =>
-											void navigator.clipboard?.writeText(shown.secret)
+											void navigator.clipboard?.writeText(visibleSecret.secret)
 										}
 									>
 										Copy secret

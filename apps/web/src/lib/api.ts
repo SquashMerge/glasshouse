@@ -2757,7 +2757,6 @@ export async function seedRandomTrace(): Promise<{
 
 export interface OtlpCredential {
 	id: string;
-	organization_id: string;
 	project_id: string;
 	name: string;
 	secret_prefix: string;

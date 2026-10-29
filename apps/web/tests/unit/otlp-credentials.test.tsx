@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	cleanup,
@@ -33,7 +34,6 @@ import { OtlpCredentialsPage } from "../../src/routes/otlp-credentials";
 const SECRET = `gh_ing_${"a".repeat(43)}`;
 const credential = {
 	id: "33333333-3333-4333-8333-333333333333",
-	organization_id: "44444444-4444-4444-8444-444444444444",
 	project_id: selection.projectId,
 	name: "Production collector",
 	secret_prefix: "gh_ing_abcdefgh",
@@ -117,6 +117,43 @@ describe("OtlpCredentialsPage", () => {
 				id: credential.id,
 			}),
 		);
+	});
+
+	it("does not render a one-time secret after the selected Project changes", async () => {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		let secretVisibleAtProjectBCommit = false;
+		function CommitProbe() {
+			const root = React.useRef<HTMLDivElement>(null);
+			React.useLayoutEffect(() => {
+				if (selection.projectId === "66666666-6666-4666-8666-666666666666")
+					secretVisibleAtProjectBCommit =
+						root.current?.textContent?.includes(SECRET) ?? false;
+			});
+			return (
+				<div ref={root}>
+					<QueryClientProvider client={client}>
+						<OtlpCredentialsPage />
+					</QueryClientProvider>
+				</div>
+			);
+		}
+		const view = render(<CommitProbe />);
+		fireEvent.change(screen.getByLabelText("Credential name"), {
+			target: { value: "Production collector" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Create credential" }));
+		expect(
+			await screen.findByTestId("created-credential-secret"),
+		).toHaveTextContent(SECRET);
+
+		selection.projectId = "66666666-6666-4666-8666-666666666666";
+		view.rerender(<CommitProbe />);
+		expect(secretVisibleAtProjectBCommit).toBe(false);
+		expect(
+			screen.queryByTestId("created-credential-secret"),
+		).not.toBeInTheDocument();
 	});
 
 	it("does not render management controls for non-Admins", () => {
