@@ -282,7 +282,7 @@ export interface EvaluationDefinitionVersion {
 	published_by: string;
 	published_draft_revision: number;
 	created_at: string;
-	definition_contract: "v1" | "legacy_untyped";
+	definition_contract: "v1" | "legacy_untyped" | "legacy_incompatible";
 	dataset_version_id: string;
 	sampling: EvaluationDefinition["sampling"] | null;
 	evaluator: Record<string, unknown>;
@@ -446,6 +446,7 @@ export interface EvaluationGateApproval {
 	evaluation_id: string;
 	definition_version_id: string;
 	definition_version: number;
+	definition_contract: "v1" | "legacy_incompatible";
 	dataset_version_id: string;
 	definition_content_hash: string;
 	dataset_content_hash: string;

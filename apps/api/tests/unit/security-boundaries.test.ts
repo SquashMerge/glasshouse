@@ -150,6 +150,28 @@ test("all password-setting HTTP contracts enforce the new policy while login acc
 	}
 });
 
+test("production auth validation maps invalid password policy to 401", async () => {
+	const { createApiApp } = await import("../../src/index");
+	const app = createApiApp({
+		authenticate: () => async (_c, next) => next(),
+	});
+	const response = await app.request("http://localhost/v1/auth/setup", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			username: "Admin",
+			token: "a".repeat(43),
+			password: "short",
+		}),
+	});
+
+	expect(response.status).toBe(401);
+	expect(await response.json()).toMatchObject({
+		code: "UNAUTHORIZED",
+		message: "Authentication required",
+	});
+});
+
 test("Basic browser mutations reject cross-origin and fetch metadata but allow same-origin and non-browser clients", async () => {
 	delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
 	process.env.UI_USERNAME = "test";

@@ -4322,6 +4322,174 @@ components:
               type: string
             definition_contract:
               enum:
+                - legacy_incompatible
+              type: string
+            evaluation_id:
+              format: uuid
+              type: string
+            evaluator:
+              additionalProperties: false
+              properties:
+                expected_output_path:
+                  default: $.expected_output
+                  maxLength: 128
+                  pattern: ^\$\.[A-Za-z0-9_.-]+$
+                  type: string
+                kind:
+                  enum:
+                    - exact_match
+                    - contains
+                  type: string
+                output_path:
+                  default: $.output
+                  maxLength: 128
+                  pattern: ^\$\.[A-Za-z0-9_.-]+$
+                  type: string
+                version:
+                  enum:
+                    - v1
+                  type: string
+              required:
+                - kind
+                - version
+              type: object
+            execution_defaults:
+              additionalProperties: false
+              properties:
+                max_tokens:
+                  default: null
+                  maximum: 32768
+                  minimum: 1
+                  type:
+                    - integer
+                    - 'null'
+                temperature:
+                  default: 0
+                  maximum: 2
+                  minimum: 0
+                  type: number
+              type: object
+            id:
+              format: uuid
+              type: string
+            limits:
+              additionalProperties: false
+              properties:
+                max_cost_usd:
+                  exclusiveMinimum: 0
+                  maximum: 10000
+                  type: number
+                max_duration_seconds:
+                  maximum: 86400
+                  minimum: 1
+                  type: integer
+              required:
+                - max_cost_usd
+                - max_duration_seconds
+              type: object
+            project_id:
+              format: uuid
+              type: string
+            published_by:
+              format: uuid
+              type: string
+            published_draft_revision:
+              exclusiveMinimum: 0
+              type: integer
+            sampling:
+              additionalProperties: false
+              properties:
+                sample_size:
+                  maximum: 10000
+                  minimum: 1
+                  type: integer
+                seed:
+                  maximum: 2147483647
+                  minimum: 0
+                  type: integer
+                strategy:
+                  enum:
+                    - first_n
+                  type: string
+              required:
+                - strategy
+                - sample_size
+                - seed
+              type: object
+            target:
+              additionalProperties: false
+              properties:
+                kind:
+                  enum:
+                    - configured_llm
+                  type: string
+                model:
+                  default: null
+                  maxLength: 200
+                  minLength: 1
+                  type:
+                    - string
+                    - 'null'
+                provider:
+                  enum:
+                    - openai
+                    - codex_cli
+                    - fake
+                  type: string
+                system_prompt:
+                  default: null
+                  maxLength: 16000
+                  type:
+                    - string
+                    - 'null'
+              required:
+                - kind
+              type: object
+            thresholds:
+              additionalProperties: false
+              properties:
+                minimum_pass_rate:
+                  default: null
+                  maximum: 1
+                  minimum: 0
+                  type:
+                    - number
+                    - 'null'
+              type: object
+            version:
+              exclusiveMinimum: 0
+              type: integer
+          required:
+            - dataset_version_id
+            - sampling
+            - target
+            - execution_defaults
+            - limits
+            - thresholds
+            - id
+            - evaluation_id
+            - project_id
+            - version
+            - content_hash
+            - published_by
+            - published_draft_revision
+            - created_at
+            - definition_contract
+            - evaluator
+          type: object
+        - additionalProperties: false
+          properties:
+            content_hash:
+              pattern: ^[a-f0-9]{64}$
+              type: string
+            created_at:
+              format: date-time
+              type: string
+            dataset_version_id:
+              format: uuid
+              type: string
+            definition_contract:
+              enum:
                 - legacy_untyped
               type: string
             evaluation_id:
@@ -4604,6 +4772,11 @@ components:
         definition_content_hash:
           pattern: ^[a-f0-9]{64}$
           type: string
+        definition_contract:
+          enum:
+            - v1
+            - legacy_incompatible
+          type: string
         definition_version:
           exclusiveMinimum: 0
           type: integer
@@ -4667,6 +4840,7 @@ components:
         - evaluation_id
         - definition_version_id
         - definition_version
+        - definition_contract
         - dataset_version_id
         - definition_content_hash
         - dataset_content_hash
