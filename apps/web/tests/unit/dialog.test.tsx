@@ -86,6 +86,10 @@ describe("Dialog shell", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Fail request" }));
 		expect(screen.getByRole("alert")).toHaveTextContent("Rollback failed");
 		expect(dialog).toHaveFocus();
+		fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+		expect(
+			screen.getByRole("button", { name: "Rollback version" }),
+		).toHaveFocus();
 	});
 
 	it("keeps initial dialog focus under React StrictMode effect replay", async () => {
