@@ -52,7 +52,10 @@ test("API integration: Bearer OTLP ingestion and revoke/no-write populate organi
 		const created = await credentialRequest("/v1/admin/otlp-credentials", {
 			method: "POST",
 			headers: { ...headers, "content-type": "application/json" },
-			body: JSON.stringify({ project_id: project.id, name: "Usage API fixture" }),
+			body: JSON.stringify({
+				project_id: project.id,
+				name: "Usage API fixture",
+			}),
 		});
 		expect(created.status, "credential creation status").toBe(201);
 		const { credential, secret } = created.data as OtlpCredentialWithSecret;
