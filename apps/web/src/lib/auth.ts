@@ -59,6 +59,12 @@ export function getAuthSession(): AuthSession | null {
 export function sessionNeedsSignIn(): boolean {
 	return expired;
 }
+export function refreshAuthSession(): Promise<AuthSession | null> {
+	// Preserve the cached identity while fencing every older in-flight response.
+	generation++;
+	loading = null;
+	return readAuthSession();
+}
 export async function readAuthSession(): Promise<AuthSession | null> {
 	removeLegacyCredentials();
 	if (loading) return loading;

@@ -50,6 +50,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 	const [selectedProjectId, setSelectedProjectId] = React.useState<
 		string | null
 	>(null);
+	const [lastSelectedProject, setLastSelectedProject] =
+		React.useState<Project | null>(null);
 
 	React.useEffect(() => {
 		if (!projectsQuery.data) return;
@@ -69,19 +71,36 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 		if (!selected) {
 			window.localStorage.removeItem(key);
 			setSelectedProjectId(null);
+			setLastSelectedProject(null);
 			return;
 		}
 
+		const selectedProject = projects.find((project) => project.id === selected);
 		window.localStorage.setItem(key, selected);
 		setSelectedProjectId(selected);
+		setLastSelectedProject(selectedProject ?? null);
 	}, [projectsQuery.data]);
 
 	const projects =
 		projectsQuery.data?.projects.filter((project) =>
 			UUID_PATTERN.test(project.id),
 		) ?? [];
+	const retainedProject = React.useMemo(
+		() =>
+			lastSelectedProject
+				? {
+						...lastSelectedProject,
+						project_role: "read_only" as const,
+						can_manage: false,
+						can_govern: false,
+						is_default: false,
+					}
+				: null,
+		[lastSelectedProject],
+	);
 	const selectedProject =
-		projects.find((project) => project.id === selectedProjectId) ?? null;
+		projects.find((project) => project.id === selectedProjectId) ??
+		(!projectsQuery.data ? retainedProject : null);
 
 	const selectProject = React.useCallback(
 		(projectId: string) => {
@@ -102,6 +121,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 				project.id,
 			);
 			setSelectedProjectId(project.id);
+			setLastSelectedProject(project);
 		},
 		[projects, projectsQuery.data, queryClient, selectedProjectId],
 	);
