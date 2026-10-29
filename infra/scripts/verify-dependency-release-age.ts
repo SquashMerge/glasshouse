@@ -16,7 +16,7 @@ const TEMPORARY_SECURITY_RELEASE_AGE_EXCEPTIONS = new Map([
 	["brace-expansion@5.0.9", new Date("2026-08-06T10:00:32.762Z")],
 	["nanoid@3.3.18", new Date("2026-08-14T16:41:05.696Z")],
 ]);
-const packageName = String.raw`(?:@[^/]+/[^@]+|[^@]+)`;
+const packageName = String.raw`(?:@[A-Za-z0-9._~-]+/)?[A-Za-z0-9._~-]+`;
 const version = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`;
 const directDescriptor = new RegExp(
 	`^(?<name>${packageName})@(?<version>${version})$`,
@@ -24,39 +24,83 @@ const directDescriptor = new RegExp(
 const aliasDescriptor = new RegExp(
 	`^(?:${packageName})@npm:(?<name>${packageName})@(?<version>${version})$`,
 );
+const workspaceDescriptor = new RegExp(
+	`^(?<name>${packageName})@workspace:(?<path>.+)$`,
+);
 
-export function parseAddedPackageVersions(diff: string): PackageVersion[] {
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parsePackageVersions(lockfile: string): Map<string, PackageVersion> {
+	let parsed: unknown;
+	try {
+		parsed = Bun.JSONC.parse(lockfile);
+	} catch {
+		throw new Error("Invalid Bun JSONC lockfile");
+	}
+	if (
+		!isRecord(parsed) ||
+		parsed.lockfileVersion !== 1 ||
+		(parsed.configVersion !== undefined && parsed.configVersion !== 1) ||
+		!isRecord(parsed.workspaces) ||
+		!isRecord(parsed.packages)
+	)
+		throw new Error("Unsupported Bun lockfile structure or version");
+	const workspaces = parsed.workspaces;
 	const packages = new Map<string, PackageVersion>();
 
-	for (const line of diff.split("\n")) {
-		const match = /^\+\s*"[^"]+":\s*\["([^"]+)"/.exec(line);
-		if (!match) {
+	for (const record of Object.values(parsed.packages)) {
+		if (!Array.isArray(record) || typeof record[0] !== "string")
+			throw new Error("Unsupported Bun package record");
+		const descriptor = record[0];
+		const workspace = workspaceDescriptor.exec(descriptor);
+		if (workspace?.groups) {
+			const definition = Object.hasOwn(workspaces, workspace.groups.path)
+				? workspaces[workspace.groups.path]
+				: undefined;
+			if (
+				record.length !== 1 ||
+				!isRecord(definition) ||
+				definition.name !== workspace.groups.name
+			)
+				throw new Error("Unsupported Bun workspace record");
 			continue;
 		}
 
-		const descriptor = match[1];
-		if (descriptor.includes("@workspace:")) {
-			continue;
-		}
-
-		const parsed =
+		const identity =
 			aliasDescriptor.exec(descriptor) ?? directDescriptor.exec(descriptor);
-		const name = parsed?.groups?.name;
-		const version = parsed?.groups?.version;
-		if (!name || !version) {
-			throw new Error(
-				`Unsupported non-registry lockfile descriptor: ${descriptor}`,
-			);
-		}
+		const name = identity?.groups?.name;
+		const version = identity?.groups?.version;
+		if (!name || !version)
+			throw new Error("Unsupported non-registry lockfile descriptor");
+		// Only the repository's default npm-registry tuple is supported. A custom
+		// source must not borrow npm release metadata to pass this check.
+		if (
+			record.length !== 4 ||
+			record[1] !== "" ||
+			!isRecord(record[2]) ||
+			typeof record[3] !== "string" ||
+			!/^sha(?:1|256|384|512)-[A-Za-z0-9+/=]+$/.test(record[3])
+		)
+			throw new Error("Unsupported Bun registry package record");
 
 		packages.set(`${name}@${version}`, { name, version });
 	}
 
-	return [...packages.values()].sort((left, right) =>
-		`${left.name}@${left.version}`.localeCompare(
-			`${right.name}@${right.version}`,
-		),
-	);
+	return packages;
+}
+
+export function newlyLockedPackageVersions(
+	baseLockfile: string,
+	targetLockfile: string,
+): PackageVersion[] {
+	const base = parsePackageVersions(baseLockfile);
+	const target = parsePackageVersions(targetLockfile);
+	return [...target.entries()]
+		.filter(([identity]) => !base.has(identity))
+		.sort(([left], [right]) => left.localeCompare(right))
+		.map(([, pkg]) => pkg);
 }
 
 export async function assertReleaseAges(
@@ -117,31 +161,30 @@ async function fetchPublishTime(pkg: PackageVersion): Promise<Date> {
 	return new Date(timestamp);
 }
 
-function gitDiff(baseSha: string, targetSha: string): string {
-	const mergeBase = Bun.spawnSync(["git", "merge-base", baseSha, targetSha]);
-	if (mergeBase.exitCode !== 0) {
-		throw new Error(`BASE_SHA ${baseSha} has no merge base with ${targetSha}`);
-	}
-
-	const commonBase = new TextDecoder().decode(mergeBase.stdout).trim();
-	if (!commonBase) {
-		throw new Error(`BASE_SHA ${baseSha} has no merge base with ${targetSha}`);
-	}
-
-	const result = Bun.spawnSync([
-		"git",
-		"diff",
-		"--unified=0",
-		commonBase,
-		targetSha,
-		"--",
-		"bun.lock",
-	]);
-	if (result.exitCode !== 0) {
-		throw new Error(new TextDecoder().decode(result.stderr));
-	}
-
+function gitOutput(args: string[]): string {
+	const result = Bun.spawnSync(["git", ...args]);
+	if (result.exitCode !== 0)
+		throw new Error("Cannot read the requested Git revisions and Bun lockfiles");
 	return new TextDecoder().decode(result.stdout);
+}
+
+function gitLockfiles(baseRef: string, targetRef: string) {
+	const resolve = (ref: string) =>
+		gitOutput([
+			"rev-parse",
+			"--verify",
+			"--end-of-options",
+			`${ref}^{commit}`,
+		]).trim();
+	const baseSha = resolve(baseRef);
+	const targetSha = resolve(targetRef);
+	const commonBase = gitOutput(["merge-base", baseSha, targetSha]).trim();
+	if (!commonBase) throw new Error("Git revisions have no common merge base");
+	// Read untrusted PR data as blobs; never check it out, import it, or install it.
+	return {
+		base: gitOutput(["show", `${commonBase}:bun.lock`]),
+		target: gitOutput(["show", `${targetSha}:bun.lock`]),
+	};
 }
 
 async function main(): Promise<void> {
@@ -153,7 +196,8 @@ async function main(): Promise<void> {
 		);
 	}
 
-	const packages = parseAddedPackageVersions(gitDiff(baseSha, targetSha));
+	const lockfiles = gitLockfiles(baseSha, targetSha);
+	const packages = newlyLockedPackageVersions(lockfiles.base, lockfiles.target);
 	await assertReleaseAges(
 		packages,
 		MINIMUM_RELEASE_AGE_DAYS,

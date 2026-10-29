@@ -65,6 +65,18 @@ describe("local authentication pages", () => {
 		expect(screen.queryByLabelText("Setup secret")).not.toBeInTheDocument();
 		expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
 	});
+	it("enrollment rejects short Unicode passwords before submitting", async () => {
+		mount(<FirstPasswordForm setup={false} onComplete={vi.fn()} />);
+		for (const label of ["New password", "Confirm password"])
+			fireEvent.change(screen.getByLabelText(label), {
+				target: { value: "😀".repeat(11) },
+			});
+		fireEvent.submit(
+			screen.getByRole("button", { name: "Set password" }).closest("form")!,
+		);
+		expect(await screen.findByRole("alert")).toHaveTextContent("at least 12");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
 	it("setup sends only operator secret, username and password, then clears sensitive fields", async () => {
 		fetchMock.mockResolvedValue(json({ ok: true }));
 		const completed = vi.fn();

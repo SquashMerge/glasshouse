@@ -41,17 +41,14 @@ effective_env_value() {
 }
 
 cd "$(dirname "$0")/../.."
+# shellcheck source=infra/scripts/normalize-env.sh
+. ./infra/scripts/normalize-env.sh
 
 step "infra/.env must exist"
 [ -f infra/.env ] || fail "infra/.env not found. Run: cp infra/.env.example infra/.env"
 ok "infra/.env exists"
 
-# Self-normalize CRLF (Windows checkouts) so subsequent steps can source it.
-if grep -q $'\r' infra/.env; then
-  step "Stripping CRLF from infra/.env (Windows checkout detected)"
-  tr -d '\r' < infra/.env > infra/.env.tmp && mv infra/.env.tmp infra/.env
-  ok "infra/.env normalized to LF"
-fi
+normalize_env_file infra/.env
 
 step ".env must not contain CHANGE_ME placeholders"
 if grep -q '^[^#]*CHANGE_ME' infra/.env; then

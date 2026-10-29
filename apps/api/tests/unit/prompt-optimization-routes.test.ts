@@ -8,12 +8,12 @@ import {
 } from "../../src/middleware/auth";
 import {
 	createOptimizationHandlers,
-	getOptimization,
 	getLatestOptimization,
+	getOptimization,
 	listOptimizationActivities,
+	type OptimizationDependencies,
 	optimizationEvents,
 	startOptimization,
-	type OptimizationDependencies,
 } from "../../src/routes/prompt-optimizations";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -337,6 +337,66 @@ describe("prompt optimization status routes", () => {
 		});
 	});
 
+	it("returns a safe 429 when active GEPA capacity is exhausted", async () => {
+		const create = mock(async () => {
+			throw new PromptRepositoryError(
+				"TOO_MANY_REQUESTS",
+				"Active optimization job limit reached",
+			);
+		});
+		const handlers = createOptimizationHandlers({
+			pool: () => ({}) as never,
+			create,
+		} as unknown as OptimizationDependencies);
+		const api = new OpenAPIHono();
+		api.use("*", async (c, next) => {
+			c.set(TRUSTED_ACTOR_CONTEXT_KEY, "test-user");
+			c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+				actor: "test-user",
+				actorId: "33333333-3333-4333-8333-333333333333",
+				organizationId: "44444444-4444-4444-8444-444444444444",
+			});
+			await next();
+		});
+		api.openapi(startOptimization, handlers.handleStart);
+		const oldAllowedModels = process.env.GEPA_ALLOWED_MODELS;
+		process.env.GEPA_ALLOWED_MODELS = "local-model";
+		try {
+			const response = await api.request("/v1/prompt-optimizations", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					project_id: PROJECT,
+					slug: "daily-summary",
+					source_version: 1,
+					target: "system",
+					evaluator: { type: "default_adapter" },
+					dataset: {
+						version: 1,
+						rubric: "Preserve concise summaries.",
+						training_examples: [{ input: "training", answer: "answer" }],
+						validation_examples: [{ input: "held out", answer: "answer" }],
+					},
+					model_config: {
+						task_lm: "local-model",
+						reflection_lm: "local-model",
+					},
+					budget: { max_metric_calls: 2 },
+				}),
+			});
+			expect(response.status).toBe(429);
+			expect(await response.json()).toEqual({
+				code: "TOO_MANY_REQUESTS",
+				message: "Active optimization job limit reached",
+			});
+			expect(create).toHaveBeenCalledTimes(1);
+		} finally {
+			if (oldAllowedModels === undefined)
+				delete process.env.GEPA_ALLOWED_MODELS;
+			else process.env.GEPA_ALLOWED_MODELS = oldAllowedModels;
+		}
+	});
+
 	it("documents a required optimization request body", () => {
 		const api = new OpenAPIHono();
 		api.openapi(startOptimization, async (c) => c.json({}, 202));
@@ -348,6 +408,12 @@ describe("prompt optimization status routes", () => {
 		expect(
 			document.paths?.["/v1/prompt-optimizations"]?.post?.requestBody?.required,
 		).toBe(true);
+		expect(
+			document.paths?.["/v1/prompt-optimizations"]?.post?.responses,
+		).toHaveProperty("429");
+		expect(
+			document.paths?.["/v1/prompt-optimizations/{id}"]?.get?.responses,
+		).not.toHaveProperty("429");
 	});
 
 	it("hides legacy candidates that copy protected example material", async () => {

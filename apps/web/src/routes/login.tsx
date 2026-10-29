@@ -13,6 +13,7 @@ import { Button } from "../components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import {
 	clearAuthSession,
+	invalidateOtherAuthTabs,
 	readAuthSession,
 	sessionNeedsSignIn,
 } from "../lib/auth";
@@ -63,6 +64,7 @@ export function LoginPage() {
 				clearWorkspaceSession(queryClient);
 				clearAuthSession();
 				if (!(await readAuthSession())) throw new Error("Session unavailable");
+				invalidateOtherAuthTabs();
 				const redirect = new URLSearchParams(location.searchStr).get(
 					"redirect",
 				);

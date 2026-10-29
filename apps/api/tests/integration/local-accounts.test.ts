@@ -15,6 +15,7 @@ const envKeys = [
 	"GLASSHOUSE_AUTH_BOOTSTRAP_MODE",
 	"GLASSHOUSE_PUBLIC_ORIGIN",
 	"GLASSHOUSE_BASIC_AUTH_CREDENTIALS",
+	"GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME",
 	"UI_USERNAME",
 	"UI_PASSWORD",
 ] as const;
@@ -43,6 +44,7 @@ beforeAll(async () => {
 	process.env.GLASSHOUSE_AUTH_BOOTSTRAP_MODE = "local";
 	process.env.GLASSHOUSE_PUBLIC_ORIGIN = "https://glasshouse.example";
 	delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+	delete process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME;
 	delete process.env.UI_USERNAME;
 	delete process.env.UI_PASSWORD;
 	({ createApiApp } = await import("../../src/index"));

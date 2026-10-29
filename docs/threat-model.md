@@ -116,9 +116,9 @@ The optional GEPA worker receives a structured request over stdin and has bounde
 
 **Goal:** execute code in CI/deployment, inject a backdoor, steal secrets, or replace the running application.
 
-**Current measures:** lockfile-based installs, pinned GitHub Actions by commit, a dependency-release-age verifier that checks PR lockfile changes from a trusted-base workflow without executing PR code, a Trivy filesystem vulnerability/secret scan, and workflow permissions that are read-only where declared. The repository notes that the dependency-age workflow is advisory rather than an enforced required check on GitHub Free; verify the exact PR checks and branch rules rather than assuming it gates merge.
+**Current measures:** lockfile-based installs (including hash-verified Python worker installs in app images and devcontainer setup), pinned GitHub Actions by commit, a dependency-release-age verifier that structurally parses merge-base/target Bun JSONC lockfile blobs from a trusted-base workflow without executing PR code, a Trivy filesystem vulnerability/secret scan, and workflow permissions that are read-only where declared. The verifier compares npm package identities/versions independent of formatting and rejects unsupported lockfile structures/sources. The root `.dockerignore` excludes local environment/credential files, backups/dumps, Git/tool state, dependencies, virtual environments, and generated artifacts from both app build contexts while retaining required sources and migration inputs. These filters govern new builds, not existing registry images, and cannot identify arbitrarily named secret files. The repository notes that the dependency-age workflow is advisory rather than an enforced required check on GitHub Free; verify the exact PR checks and branch rules rather than assuming it gates merge.
 
-**Residual:** a compromised maintainer account, dependency, CI action, host, secret store, or Docker daemon can exceed application-level controls. Review workflow trigger/permissions changes, action pinning, package updates, provenance, and deployment runner authority. The development Compose file is not a production security boundary; inspect the actual deployment override, ports, proxy, TLS, secret mounts, network, backup, and restore process for each deployment.
+**Residual:** a compromised maintainer account, dependency, CI action, host, secret store, or Docker daemon can exceed application-level controls. Base/database image tags remain mutable; final-image scanning/signing/provenance verification is not configured here. These are assurance gaps, not proof of an exploitable vulnerability. Review workflow trigger/permissions changes, action pinning, package updates, provenance, and deployment runner authority. The development Compose file is not a production security boundary; inspect the actual deployment override, ports, proxy, TLS, secret mounts, network, backup, and restore process for each deployment.
 
 ### H. Destructive actions and evidence integrity (high impact)
 
@@ -141,6 +141,18 @@ development LLM override at startup. These are configuration controls, not a
 replacement for host firewalling, proxy hardening, secret management, or
 backup/restore testing. The local `make dev` Compose path remains development-
 only and is not a production security boundary.
+
+Production Compose explicitly maps the required Valkey password, deployment
+redaction floor, and Evaluation model/budget envelope into the API environment;
+an interpolation `--env-file` alone does not inject service environment variables.
+The local environment-normalization helper writes a private same-directory
+temporary file, preserves owner restrictions while removing group/world access,
+atomically replaces the original, rejects symlinks, and cleans up on errors and
+catchable termination signals. Trace reset sends ClickHouse client credentials
+over stdin into a private container configuration file, removes it on normal/error
+unwinding, and suppresses raw client diagnostics. Host/container administrators
+can still inspect secrets, and forced termination or loss of container access can
+prevent cleanup; these are operational secret-handling controls, not sandboxing.
 
 ## Important assumptions and non-guarantees
 

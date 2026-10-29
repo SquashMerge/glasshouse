@@ -12,6 +12,23 @@ let loading: Promise<AuthSession | null> | null = null;
 let generation = 0;
 let expired = false;
 const AUTH_INVALID_EVENT = "glasshouse:auth-invalid";
+const AUTH_INVALID_STORAGE_KEY = "glasshouse.auth.invalidate";
+
+export function invalidateOtherAuthTabs(): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.localStorage.setItem(AUTH_INVALID_STORAGE_KEY, crypto.randomUUID());
+	} catch {
+		// AuthGate also revalidates on focus when storage is unavailable.
+	}
+}
+
+if (typeof window !== "undefined") {
+	window.addEventListener("storage", (event) => {
+		if (event.key === AUTH_INVALID_STORAGE_KEY && event.newValue)
+			expireAuthSession(false);
+	});
+}
 
 function removeLegacyCredentials(): void {
 	if (typeof window === "undefined") return;
@@ -75,9 +92,10 @@ export function onAuthInvalid(handler: () => void): () => void {
 	window.addEventListener(AUTH_INVALID_EVENT, handler);
 	return () => window.removeEventListener(AUTH_INVALID_EVENT, handler);
 }
-export function expireAuthSession() {
+export function expireAuthSession(broadcast = true) {
 	clearAuthSession();
 	expired = true;
+	if (broadcast) invalidateOtherAuthTabs();
 	if (typeof window !== "undefined")
 		window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT));
 }
@@ -113,5 +131,5 @@ export async function logoutSession(): Promise<void> {
 	const response = await authedFetch("/v1/auth/logout", { method: "POST" });
 	if (!response.ok && response.status !== 401)
 		throw new Error("Logout could not be completed. Please retry.");
-	clearAuthSession();
+	expireAuthSession();
 }

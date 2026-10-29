@@ -91,7 +91,7 @@ export type OtlpIngestDependencies = {
 	approvedRedaction: typeof approvedRedaction;
 	withActiveAuthorizedProjectLock: <T>(
 		tenant: OtlpIngestTenantScope,
-		callback: () => Promise<T>,
+		callback: (client: Parameters<typeof approvedRedaction>[0]) => Promise<T>,
 	) => Promise<T>;
 };
 
@@ -190,12 +190,12 @@ export function createOtlpIngestHandler(
 		try {
 			await resolvedDependencies.withActiveAuthorizedProjectLock(
 				tenant,
-				async () => {
+				async (client) => {
 					// Resolve while holding the project lock so an approval cannot race an
 					// in-flight ingest. Strip configured keys before normalization derives
 					// identity fields such as trace.user_id.
 					const policy = await resolvedDependencies.approvedRedaction(
-						pgPool(),
+						client,
 						tenant.organizationId,
 						tenant.projectId,
 					);
@@ -265,14 +265,14 @@ export function createOtlpIngestHandler(
 							}
 						}
 					}
-					const client = resolvedDependencies.defaultClient();
+					const writer = resolvedDependencies.defaultClient();
 					await resolvedDependencies.insertTraces(
-						client,
+						writer,
 						[...traces.values()].map(({ trace }) => trace),
 						deduplicationTokens.traces,
 					);
 					await resolvedDependencies.insertObservations(
-						client,
+						writer,
 						observations,
 						deduplicationTokens.observations,
 					);

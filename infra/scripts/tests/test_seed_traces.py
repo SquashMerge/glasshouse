@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 import importlib.util
+import io
 import json
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import xml.etree.ElementTree as ET
 
 
 MODULE_PATH = Path(__file__).parents[1] / "seed_traces.py"
@@ -85,6 +90,88 @@ class SeedTraceProjectRoutingTests(unittest.TestCase):
 
         self.assertEqual(project_id, configured_project_id)
         urlopen.assert_not_called()
+
+
+class SeedTraceResetTests(unittest.TestCase):
+    password = "synthetic-reset-secret<&>42"
+    config = "/tmp/glasshouse-clickhouse-client.A1b2C3"
+
+    def args(self):
+        return SimpleNamespace(
+            clickhouse_container="synthetic-clickhouse",
+            clickhouse_user="synthetic-user<&>", clickhouse_password=self.password,
+            clickhouse_db="synthetic_database",
+        )
+
+    def fake_runner(self, calls, fail_at=None, raises=False):
+        def run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            self.assertTrue(all(self.password not in argument for argument in argv))
+            self.assertTrue(kwargs.get("capture_output"))
+            step = len(calls)
+            if raises and step == fail_at:
+                raise OSError("synthetic subprocess failure")
+            stdout = self.config + "\n" if step == 1 else ""
+            return subprocess.CompletedProcess(
+                argv, 1 if step == fail_at else 0, stdout=stdout, stderr=self.password,
+            )
+        return run
+
+    def test_reset_passes_escaped_credentials_only_on_stdin_and_cleans_the_config(self):
+        calls = []
+        with patch.object(seed_traces.subprocess, "run", self.fake_runner(calls)), redirect_stdout(io.StringIO()):
+            seed_traces.reset_clickhouse_tables(self.args())
+        self.assertEqual(len(calls), 5)
+        self.assertIn("umask 077; mktemp", " ".join(calls[0][0]))
+        written = ET.fromstring(calls[1][1]["input"])
+        self.assertEqual(written.findtext("user"), self.args().clickhouse_user)
+        self.assertEqual(written.findtext("password"), self.password)
+        self.assertIn('chmod 600 "$1"', calls[1][0][6])
+        for index, table in ((2, "traces"), (3, "observations")):
+            argv = calls[index][0]
+            self.assertIn(f"--config-file={self.config}", argv)
+            self.assertIn("--database=synthetic_database", argv)
+            self.assertIn(f"TRUNCATE TABLE {table}", argv)
+            self.assertFalse(any(argument.startswith("--password") for argument in argv))
+        self.assertIn('rm -f -- "$1"', calls[-1][0])
+        self.assertEqual(calls[-1][0][-1], self.config)
+
+    def test_configuration_is_removed_after_write_query_or_subprocess_failures(self):
+        for fail_at, raises in ((2, False), (3, False), (4, False), (3, True)):
+            with self.subTest(fail_at=fail_at, raises=raises):
+                calls = []
+                with patch.object(seed_traces.subprocess, "run", self.fake_runner(calls, fail_at, raises)), redirect_stdout(io.StringIO()):
+                    with self.assertRaises((RuntimeError, OSError)):
+                        seed_traces.reset_clickhouse_tables(self.args())
+                self.assertIn('rm -f -- "$1"', calls[-1][0])
+                self.assertEqual(calls[-1][0][-1], self.config)
+
+    def test_main_does_not_print_secret_bearing_client_diagnostics(self):
+        args = self.args()
+        args.seed = 1
+        args.password = "synthetic-basic-password"
+        args.username = "synthetic-owner"
+        args.url = "http://synthetic.invalid"
+        args.project_id = "11111111-1111-4111-8111-111111111111"
+        args.count = 1
+        args.reset = True
+        output = io.StringIO()
+        calls = []
+        with patch.object(seed_traces, "parse_args", return_value=args), patch.object(
+            seed_traces.subprocess, "run", self.fake_runner(calls, fail_at=3)
+        ), redirect_stdout(output), redirect_stderr(output):
+            result = seed_traces.main()
+        self.assertEqual(result, 1)
+        self.assertNotIn(self.password, output.getvalue())
+        self.assertIn("client diagnostics suppressed", output.getvalue())
+
+    def test_rejects_untrusted_temporary_paths_without_using_them(self):
+        with patch.object(seed_traces.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 0, stdout="/tmp/unexpected;command\n", stderr=""
+        )) as run:
+            with self.assertRaises(RuntimeError):
+                seed_traces.reset_clickhouse_tables(self.args())
+        self.assertEqual(run.call_count, 1)
 
 
 class SeedTracePromptProvenanceTests(unittest.TestCase):

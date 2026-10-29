@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
 	TRUSTED_TENANT_CONTEXT_KEY,
 	type TrustedTenantContext,
@@ -116,7 +116,7 @@ export async function assertOrganizationAccess(
 export async function withActiveAuthorizedProjectLock<T>(
 	db: Transactional,
 	tenant: ActiveAuthorizedProjectScope,
-	callback: () => Promise<T>,
+	callback: (client: PoolClient) => Promise<T>,
 	operation: ProjectOperation = "product_write",
 	lockTimeoutMs?: number,
 ): Promise<T> {
@@ -154,7 +154,7 @@ export async function withActiveAuthorizedProjectLock<T>(
 			)
 				throw new TenantScopeError("Credential is not available");
 			callbackStarted = true;
-			const value = await callback();
+			const value = await callback(client);
 			await client.query("COMMIT");
 			transactionOpen = false;
 			return value;
@@ -193,7 +193,7 @@ export type InternalEvaluationProjectScope = Pick<
 export async function withActiveInternalEvaluationProjectLock<T>(
 	db: Transactional,
 	tenant: InternalEvaluationProjectScope,
-	callback: () => Promise<T>,
+	callback: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
 	const client = await db.connect();
 	let transactionOpen = false;
@@ -206,7 +206,7 @@ export async function withActiveInternalEvaluationProjectLock<T>(
 		);
 		if (!authorized.rows[0])
 			throw new TenantScopeError("Project is not available");
-		const value = await callback();
+		const value = await callback(client);
 		await client.query("COMMIT");
 		transactionOpen = false;
 		return value;

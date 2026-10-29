@@ -2351,6 +2351,7 @@ describe("dataset repository", () => {
 
 	it("exports only a complete redacted project-scoped representation with provenance", async () => {
 		const queries: string[] = [];
+		let fetched = false;
 		const result = await exportDataset(
 			{
 				connect: async () => ({
@@ -2371,25 +2372,29 @@ describe("dataset repository", () => {
 									},
 								],
 							};
-						if (sql.includes("FROM dataset_version_items"))
+						if (sql.startsWith("FETCH") && !fetched) {
+							fetched = true;
 							return {
 								rows: [
 									{
-										item_key: "case-1",
-										input: { question: "do not disclose" },
-										expected_output: { answer: "do not disclose" },
-										metadata: { source: "manual" },
-										external_id: "origin-1",
-										source_trace_id: "trace-1",
-										source_observation_id: null,
-										feedback_score_id: null,
-										capture_context: { redaction_applied: true },
-										curated_by: authorization.actor_id,
-										reviewed_by: null,
-										reviewed_at: null,
+										export_item: {
+											item_key: "case-1",
+											input: { question: "do not disclose" },
+											expected_output: { answer: "do not disclose" },
+											metadata: { source: "manual" },
+											external_id: "origin-1",
+											source_trace_id: "trace-1",
+											source_observation_id: null,
+											feedback_score_id: null,
+											capture_context: { redaction_applied: true },
+											curated_by: authorization.actor_id,
+											reviewed_by: null,
+											reviewed_at: null,
+										},
 									},
 								],
 							};
+						}
 						if (sql.includes("governance_policy_versions"))
 							return { rows: [{ redaction: { mode: "all_text", keys: [] } }] };
 						return { rows: [] };

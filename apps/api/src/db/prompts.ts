@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-	lockActiveAuthorizedProject,
-	type ProjectAuthorization,
-} from "./project-authorization.js";
-import {
 	hasAtMostLines,
 	MAX_DIFF_INPUT_CHARS,
 	MAX_DIFF_INPUT_LINES,
@@ -14,6 +10,10 @@ import {
 	renderPromptTemplateWithWarnings,
 	validatePromptTemplate,
 } from "../lib/prompt-templates.js";
+import {
+	lockActiveAuthorizedProject,
+	type ProjectAuthorization,
+} from "./project-authorization.js";
 
 export type JsonValue =
 	| null
@@ -57,10 +57,11 @@ export type PromptRepositoryErrorCode =
 	| "BAD_REQUEST"
 	| "NOT_FOUND"
 	| "CONFLICT"
+	| "TOO_MANY_REQUESTS"
 	| "INTERNAL";
 
 export class PromptRepositoryError extends Error {
-	readonly status: 400 | 404 | 409 | 500;
+	readonly status: 400 | 404 | 409 | 429 | 500;
 
 	constructor(
 		readonly code: PromptRepositoryErrorCode,
@@ -76,7 +77,9 @@ export class PromptRepositoryError extends Error {
 					? 404
 					: code === "CONFLICT"
 						? 409
-						: 500;
+						: code === "TOO_MANY_REQUESTS"
+							? 429
+							: 500;
 	}
 }
 

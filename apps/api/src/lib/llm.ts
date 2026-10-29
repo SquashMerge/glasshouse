@@ -1,3 +1,5 @@
+import { killOwnedProcessGroup } from "./owned-process.js";
+
 export type LlmResponse = {
 	output: Record<string, unknown>;
 	model: string;
@@ -27,6 +29,7 @@ export function isUncertainLlmFailure(cause: unknown): boolean {
 
 const MAX_DEV_OUTPUT_BYTES = 64 * 1024;
 const MAX_PROVIDER_OUTPUT_BYTES = 64 * 1024;
+const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 const DEFAULT_DEV_TIMEOUT_MS = 60_000;
 const MAX_DEV_TIMEOUT_MS = 1_800_000;
 
@@ -55,21 +58,32 @@ function configuredDevCommand(model: string): string[] {
 async function readLimited(
 	stream: ReadableStream<Uint8Array> | null,
 	limit: number,
+	signal?: AbortSignal,
+	errorMessage = "development CLI stream exceeded size limit",
 ): Promise<string> {
 	if (!stream) return "";
 	const reader = stream.getReader();
 	const chunks: Uint8Array[] = [];
 	let total = 0;
+	const abort = () => {
+		void reader.cancel().catch(() => {});
+	};
+	signal?.addEventListener("abort", abort, { once: true });
 	try {
 		while (true) {
+			signal?.throwIfAborted();
 			const { done, value } = await reader.read();
+			signal?.throwIfAborted();
 			if (done) break;
-			if (total + value.byteLength > limit)
-				throw new Error("development CLI stream exceeded size limit");
+			if (total + value.byteLength > limit) throw new Error(errorMessage);
 			chunks.push(value);
 			total += value.byteLength;
 		}
+	} catch (cause) {
+		await reader.cancel().catch(() => {});
+		throw cause;
 	} finally {
+		signal?.removeEventListener("abort", abort);
 		reader.releaseLock();
 	}
 	const output = new Uint8Array(total);
@@ -79,18 +93,6 @@ async function readLimited(
 		offset += chunk.byteLength;
 	}
 	return new TextDecoder().decode(output);
-}
-
-function killProcessGroup(pid: number): void {
-	try {
-		process.kill(-pid, "SIGKILL");
-	} catch {
-		try {
-			process.kill(pid, "SIGKILL");
-		} catch {
-			// The process exited before cleanup.
-		}
-	}
 }
 
 async function invokeDevelopmentCli(
@@ -126,16 +128,22 @@ async function invokeDevelopmentCli(
 			},
 		},
 	);
-	const abort = () => killProcessGroup(child.pid);
+	let stopped = false;
+	const abort = () => {
+		stopped = true;
+		killOwnedProcessGroup(child.pid);
+	};
 	if (signal?.aborted) abort();
 	else signal?.addEventListener("abort", abort, { once: true });
 	const timeout = setTimeout(abort, timeoutMs);
+	const completion = [
+		readLimited(child.stdout, MAX_DEV_OUTPUT_BYTES),
+		readLimited(child.stderr, 8 * 1024),
+		child.exited,
+	] as const;
 	try {
-		const [stdout, stderr, exitCode] = await Promise.all([
-			readLimited(child.stdout, MAX_DEV_OUTPUT_BYTES),
-			readLimited(child.stderr, 8 * 1024),
-			child.exited,
-		]);
+		const [stdout, stderr, exitCode] = await Promise.all(completion);
+		if (stopped) throw new Error("development CLI was terminated");
 		if (exitCode !== 0)
 			throw new Error(
 				`development CLI exited with status ${exitCode}${stderr.trim() ? `: ${stderr.trim().slice(0, 512)}` : ""}`,
@@ -145,6 +153,8 @@ async function invokeDevelopmentCli(
 			throw new Error("development CLI output exceeded size limit");
 		return stdout.trim();
 	} finally {
+		killOwnedProcessGroup(child.pid);
+		await Promise.allSettled(completion);
 		clearTimeout(timeout);
 		signal?.removeEventListener("abort", abort);
 	}
@@ -250,7 +260,8 @@ export async function invokeConfiguredLlm(
 			cause,
 		);
 	}
-	if (!response.ok)
+	if (!response.ok) {
+		await response.body?.cancel().catch(() => {});
 		throw new LlmProviderError(
 			`LLM request failed with status ${response.status}`,
 			response.status === 429 || response.status >= 500
@@ -259,6 +270,7 @@ export async function invokeConfiguredLlm(
 			undefined,
 			response.status !== 429 && response.status < 500,
 		);
+	}
 	let payload: {
 		choices?: Array<{ message?: { content?: unknown } }>;
 		model?: string;
@@ -266,7 +278,32 @@ export async function invokeConfiguredLlm(
 		cost_usd?: unknown;
 	};
 	try {
-		payload = (await response.json()) as typeof payload;
+		payload = JSON.parse(
+			await readLimited(
+				response.body,
+				MAX_PROVIDER_RESPONSE_BYTES,
+				signal,
+				"LLM response exceeded the response size limit",
+			),
+		) as typeof payload;
+		if (
+			!payload ||
+			typeof payload !== "object" ||
+			Array.isArray(payload) ||
+			(payload.model !== undefined &&
+				(typeof payload.model !== "string" ||
+					!payload.model ||
+					Buffer.byteLength(payload.model) > 200)) ||
+			(payload.usage !== undefined &&
+				(!payload.usage ||
+					typeof payload.usage !== "object" ||
+					[payload.usage.prompt_tokens, payload.usage.completion_tokens].some(
+						(value) =>
+							value !== undefined &&
+							(!Number.isSafeInteger(value) || value < 0),
+					)))
+		)
+			throw new Error("Invalid LLM response metadata");
 	} catch (cause) {
 		throw new LlmProviderError(
 			"LLM response could not be decoded",

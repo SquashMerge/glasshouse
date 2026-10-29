@@ -13,6 +13,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 	const [error, setError] = React.useState(false);
 	const [attempt, setAttempt] = React.useState(0);
 	React.useEffect(() => {
+		const revalidate = () => {
+			setReady(false);
+			queryClient.clear();
+			setAttempt((value) => value + 1);
+		};
+		window.addEventListener("focus", revalidate);
+		return () => window.removeEventListener("focus", revalidate);
+	}, [queryClient]);
+	React.useEffect(() => {
 		setError(false);
 		// The protected layout route is pathless and can remain mounted while
 		// navigating to a public auth route. Do not redirect it to itself.

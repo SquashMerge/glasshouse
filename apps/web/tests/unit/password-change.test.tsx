@@ -112,4 +112,19 @@ describe("self-service password change", () => {
 		);
 		expect(api.changeOwnPassword).not.toHaveBeenCalled();
 	});
+	it("rejects short new passwords without restricting legacy current passwords", async () => {
+		render(<PasswordChangePage />);
+		fireEvent.change(screen.getByLabelText("Current password"), {
+			target: { value: "x" },
+		});
+		for (const label of ["New password", "Confirm new password"])
+			fireEvent.change(screen.getByLabelText(label), {
+				target: { value: "😀".repeat(11) },
+			});
+		fireEvent.submit(
+			screen.getByRole("button", { name: "Change password" }).closest("form")!,
+		);
+		expect(await screen.findByRole("alert")).toHaveTextContent("at least 12");
+		expect(api.changeOwnPassword).not.toHaveBeenCalled();
+	});
 });

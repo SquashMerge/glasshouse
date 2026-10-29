@@ -9073,6 +9073,7 @@ paths:
               additionalProperties: false
               properties:
                 password:
+                  description: Password must contain at least 12 Unicode characters and at most 1024 UTF-8 bytes
                   maxLength: 1024
                   minLength: 1
                   type: string
@@ -9223,6 +9224,7 @@ paths:
                   type: string
                   writeOnly: true
                 new_password:
+                  description: Password must contain at least 12 Unicode characters and at most 1024 UTF-8 bytes
                   maxLength: 1024
                   minLength: 1
                   type: string
@@ -9355,6 +9357,7 @@ paths:
               additionalProperties: false
               properties:
                 password:
+                  description: Password must contain at least 12 Unicode characters and at most 1024 UTF-8 bytes
                   maxLength: 1024
                   minLength: 1
                   type: string
@@ -16369,6 +16372,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Conflict
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Active optimization job limit reached
         '500':
           content:
             application/json:

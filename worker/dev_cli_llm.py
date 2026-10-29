@@ -47,6 +47,12 @@ def run_dev_cli(prompt, model, provider_dispatch_key=None):
         raise DevCliLlmError("development CLI requires a prompt and model")
     timeout = _positive_integer("GLASSHOUSE_DEV_LLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
     max_output_bytes = _positive_integer("GLASSHOUSE_DEV_LLM_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES)
+    # The API owns this session and kills it on cancellation, including abrupt
+    # worker death. Do not detach CLI descendants from that cleanup boundary.
+    worker_owned_group = (
+        os.environ.get("GLASSHOUSE_GEPA_OWNED_PROCESS_GROUP") == "1"
+        and os.getpgrp() == os.getpid()
+    )
     try:
         environment = os.environ.copy()
         if provider_dispatch_key is not None:
@@ -56,7 +62,7 @@ def run_dev_cli(prompt, model, provider_dispatch_key=None):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            start_new_session=not worker_owned_group,
             env=environment,
         )
     except OSError as error:
@@ -67,7 +73,7 @@ def run_dev_cli(prompt, model, provider_dispatch_key=None):
 
     def stop_process_group():
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(os.getpgrp() if worker_owned_group else process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
 

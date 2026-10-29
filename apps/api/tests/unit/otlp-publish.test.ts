@@ -20,8 +20,8 @@ const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
 const withActiveAuthorizedProjectLock = async <T>(
 	_tenant: unknown,
-	callback: () => Promise<T>,
-) => callback();
+	callback: (client: never) => Promise<T>,
+) => callback({} as never);
 const rawHandleOtlpIngest = createOtlpIngestHandler({
 	defaultClient,
 	insertObservations,
@@ -83,6 +83,43 @@ function validOtlp(
 }
 
 describe("OTLP ingest publishes events", () => {
+	it("uses the checked-out authorization client for the redaction read", async () => {
+		const transaction = { query: async () => ({ rows: [] }) };
+		let usedTransaction = false;
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+				callback(transaction as never),
+			approvedRedaction: async (client) => {
+				usedTransaction = client === transaction;
+				return null;
+			},
+		});
+		expect(
+			(
+				await handler(
+					new Request("http://x/v1/otel/v1/traces", {
+						method: "POST",
+						body: JSON.stringify(
+							validOtlp([
+								{
+									trace_id: HEX32_A,
+									span_id: HEX16_A,
+									name: "client-test",
+									start_time_unix_nano: String(NOW_NS),
+								},
+							]),
+						),
+					}),
+					TENANT,
+				)
+			).status,
+		).toBe(200);
+		expect(usedTransaction).toBe(true);
+	});
 	it("redacts before bounding the rows persisted and published from a large OTLP span", async () => {
 		const secret = "secret-that-must-not-survive";
 		const handler = createOtlpIngestHandler({

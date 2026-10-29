@@ -1,6 +1,7 @@
 import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "./common.js";
 import { ProjectIdQuery } from "./prompts.js";
+import { validEvaluationPath } from "../lib/evaluator.js";
 
 const UUID_SHAPED_EVALUATION_IDENTIFIER =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -26,7 +27,11 @@ const Slug = EvaluationIdentifier.refine(
 const JsonPath = z
 	.string()
 	.regex(/^\$\.[A-Za-z0-9_.-]+$/)
-	.max(128);
+	.max(128)
+	.refine(
+		validEvaluationPath,
+		"Path must use own JSON properties and exclude prototype-related segments",
+	);
 export const EvaluationEvaluator = z
 	.object({
 		kind: z.enum(["exact_match", "contains"]),

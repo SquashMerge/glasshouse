@@ -617,19 +617,11 @@ describe("prompt optimization repository", () => {
 		expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
 	});
 
-	it("reuses the active start row without recording a second queued event", async () => {
+	it("reuses an idempotent active job even when the project cap is reached", async () => {
 		const pool = new MockPool([
 			{ rows: [] },
 			{ rows: [{ id: PROJECT }] },
-			{
-				rows: [
-					{
-						prompt_id: PROMPT,
-						messages: [{ role: "system", content: "Source" }],
-					},
-				],
-			},
-			{ rows: [{ ...job({ created: false }), created: false }] },
+			{ rows: [{ ...job(), created: false }] },
 			{ rows: [] },
 		]);
 
@@ -647,11 +639,83 @@ describe("prompt optimization repository", () => {
 		});
 
 		expect(result.id).toBe(JOB);
-		expect(pool.client.calls).toHaveLength(5);
+		expect(pool.client.calls).toHaveLength(4);
 		expect(pool.client.calls[1]?.text).toContain("FROM projects");
 		expect(pool.client.calls[1]?.text).toContain("p.status = ANY($3::text[])");
 		expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
-		expect(pool.client.calls[3]?.text).toContain("ON CONFLICT");
+		expect(pool.client.calls[2]?.text).toContain("prompt_slug=$2");
+		expect(pool.client.calls[3]?.text).toBe("COMMIT");
+	});
+
+	it("rejects when either Project or requester active-job capacity is exhausted", async () => {
+		const oldProjectLimit = process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT;
+		const oldRequesterLimit = process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER;
+		try {
+			for (const [index, scenario] of [
+				{
+					project_limit: 3,
+					requester_limit: 2,
+					project_count: 3,
+					requester_count: 1,
+				},
+				{
+					project_limit: 3,
+					requester_limit: 1,
+					project_count: 2,
+					requester_count: 1,
+				},
+			].entries()) {
+				process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT = String(
+					scenario.project_limit,
+				);
+				process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER = String(
+					scenario.requester_limit,
+				);
+				const pool = new MockPool([
+					{ rows: [] },
+					{ rows: [{ id: PROJECT }] },
+					{ rows: [] },
+					{
+						rows: [
+							{
+								project_count: scenario.project_count,
+								requester_count: scenario.requester_count,
+							},
+						],
+					},
+					{ rows: [] },
+				]);
+				await expect(
+					createOptimizationJob(transactionPool(pool), {
+						project_id: PROJECT,
+						slug: `another-agent-${index}`,
+						source_version: 1,
+						target: "system",
+						evaluator: { type: "default_adapter" },
+						dataset: optimizationDataset(),
+						model_config: { task_lm: "task", reflection_lm: "reflection" },
+						budget: { max_metric_calls: 20 },
+						actor: "admin",
+						authorization,
+					}),
+				).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", status: 429 });
+				expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
+				expect(pool.client.calls[3]?.text).toContain("requested_by=$2");
+				expect(pool.client.calls[4]?.text).toBe("ROLLBACK");
+				expect(
+					pool.client.calls.some(({ text }) =>
+						text.startsWith("INSERT INTO prompt_optimization_jobs"),
+					),
+				).toBe(false);
+			}
+		} finally {
+			if (oldProjectLimit === undefined)
+				delete process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT;
+			else process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT = oldProjectLimit;
+			if (oldRequesterLimit === undefined)
+				delete process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER;
+			else process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER = oldRequesterLimit;
+		}
 	});
 
 	it("persists insufficient held-out evidence as a safe review-required draft", async () => {

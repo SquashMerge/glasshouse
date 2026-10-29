@@ -12,6 +12,11 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import {
+	PASSWORD_REQUIREMENTS,
+	validNewPassword,
+} from "../lib/password-policy";
+import { expireAuthSession } from "../lib/auth";
 
 export function PasswordChangePage() {
 	const [currentPassword, setCurrentPassword] = React.useState("");
@@ -32,6 +37,10 @@ export function PasswordChangePage() {
 			setError("New passwords do not match.");
 			return;
 		}
+		if (!validNewPassword(newPassword)) {
+			setError(PASSWORD_REQUIREMENTS);
+			return;
+		}
 
 		setSubmitting(true);
 		setError(null);
@@ -40,6 +49,7 @@ export function PasswordChangePage() {
 			setCurrentPassword("");
 			setNewPassword("");
 			setConfirmation("");
+			expireAuthSession();
 			window.location.assign("/login?passwordChanged=1");
 		} catch (cause) {
 			if (cause instanceof ApiError && cause.status === 422) {
@@ -96,7 +106,11 @@ export function PasswordChangePage() {
 							required
 							disabled={submitting}
 							maxLength={1024}
+							aria-describedby="password-help"
 						/>
+						<p id="password-help" className="text-xs text-muted-foreground">
+							{PASSWORD_REQUIREMENTS}
+						</p>
 					</div>
 					<div className="space-y-2">
 						<Label htmlFor="confirm-password">Confirm new password</Label>

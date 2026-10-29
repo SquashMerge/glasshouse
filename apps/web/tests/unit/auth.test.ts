@@ -226,4 +226,33 @@ describe("opaque browser sessions", () => {
 		expect(await Promise.all([first, second])).toEqual([session, session]);
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
+	it("another tab's logout invalidation clears memory and notifies the protected workspace", async () => {
+		fetchMock.mockResolvedValueOnce(json(session));
+		await readAuthSession();
+		const handler = vi.fn();
+		const off = onAuthInvalid(handler);
+		window.dispatchEvent(
+			new StorageEvent("storage", {
+				key: "glasshouse.auth.invalidate",
+				newValue: "test-tab-logout",
+			}),
+		);
+		expect(getAuthSession()).toBeNull();
+		expect(handler).toHaveBeenCalledOnce();
+		off();
+	});
+	it("successful logout signals other tabs without persisting credentials or session values", async () => {
+		fetchMock.mockResolvedValueOnce(json(session));
+		await readAuthSession();
+		const setItem = vi.spyOn(Storage.prototype, "setItem");
+		fetchMock.mockResolvedValueOnce(json({ ok: true }));
+		await logoutSession();
+		expect(setItem).toHaveBeenCalledWith(
+			"glasshouse.auth.invalidate",
+			expect.any(String),
+		);
+		expect(JSON.stringify(setItem.mock.calls)).not.toContain(
+			session.csrf_token,
+		);
+	});
 });

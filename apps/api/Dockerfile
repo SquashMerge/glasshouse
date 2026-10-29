@@ -16,7 +16,7 @@ RUN bun --filter "@glasshouse/api" build
 
 FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app
-RUN apk add --no-cache libpq python3 py3-pip wget && python3 -m venv /opt/gepa
+RUN apk add --no-cache libpq python3 py3-pip util-linux wget && python3 -m venv /opt/gepa
 COPY --from=build /app /app
 RUN /opt/gepa/bin/pip install --no-cache-dir --require-hashes -r /app/worker/requirements.lock && /opt/gepa/bin/python /app/worker/gepa_worker.py --smoke
 ENV NODE_ENV=production
