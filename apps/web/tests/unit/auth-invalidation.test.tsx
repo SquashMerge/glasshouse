@@ -59,6 +59,7 @@ afterEach(() => {
 	}
 	navigate.mockReset();
 	location.pathname = "/access/otlp-credentials";
+	location.searchStr = "";
 });
 const session = {
 	actor_id: "actor",
@@ -114,6 +115,33 @@ function expectDraftHidden(input: HTMLElement) {
 	modal?.dispatchEvent(cancel);
 	expect(cancel.defaultPrevented).toBe(true);
 }
+
+it("does not revalidate when only the route search parameters change", async () => {
+	const fetchMock = vi.fn().mockResolvedValue(Response.json(session));
+	vi.stubGlobal("fetch", fetchMock);
+	const client = new QueryClient();
+	const view = render(
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<SessionDraft />
+			</AuthGate>
+		</QueryClientProvider>,
+	);
+	const input = await screen.findByRole("textbox", { name: "Unsaved draft" });
+	await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+	location.searchStr = "?tab=spans";
+	view.rerender(
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<SessionDraft />
+			</AuthGate>
+		</QueryClientProvider>,
+	);
+
+	expect(input).toBeVisible();
+	expect(fetchMock).toHaveBeenCalledTimes(1);
+});
 
 it("overlapping focus checks request a fresh session and fence an older principal response", async () => {
 	let finishOldSession!: (response: Response) => void;

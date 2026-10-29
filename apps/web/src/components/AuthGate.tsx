@@ -146,7 +146,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 			off();
 			window.removeEventListener("focus", revalidate);
 		};
-	}, [attempt, location.pathname, location.searchStr, navigate, queryClient]);
+	}, [attempt, location.pathname, navigate, queryClient]);
 	if (error)
 		return (
 			<div
