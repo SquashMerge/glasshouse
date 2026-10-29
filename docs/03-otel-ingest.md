@@ -20,6 +20,8 @@ OTLP trace ingestion accepts either the existing HTTP Basic Auth credentials or 
 
 An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/otel/v1/traces`.
 
+Rotation and revocation require current organization Admin authority; they are not restricted to the credential's creator. Any current Admin in that organization can rotate an active credential for an active Project or revoke a credential for an active or archived Project. `created_by_actor_id` records the creator and supplies the actor used to authorize bearer ingestion; it is not a creator-only management permission.
+
 For a dedicated credential, put the literal secret in a protected environment variable and use it as a bearer token:
 
 ```sh
