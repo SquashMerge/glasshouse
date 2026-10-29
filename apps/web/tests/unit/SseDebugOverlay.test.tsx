@@ -103,7 +103,14 @@ describe("SseDebugOverlay (dev only)", () => {
 			.fn()
 			.mockResolvedValue(new Response(JSON.stringify({ partial_success: {} })));
 		vi.stubGlobal("fetch", fetchMock);
-		render(<SseDebugOverlay sse={makeSse()} label="traces" devMode={true} />);
+		render(
+			<SseDebugOverlay
+				sse={makeSse()}
+				label="traces"
+				projectId="33333333-3333-4333-8333-333333333333"
+				devMode={true}
+			/>,
+		);
 
 		fireEvent.click(screen.getByTestId("sse-debug-seed"));
 
@@ -113,6 +120,9 @@ describe("SseDebugOverlay (dev only)", () => {
 		const spans = payload.resource_spans[0].scope_spans[0].spans;
 		expect(url).toBe("/v1/otel/v1/traces");
 		expect(init.method).toBe("POST");
+		expect(new Headers(init.headers).get("x-glasshouse-project-id")).toBe(
+			"33333333-3333-4333-8333-333333333333",
+		);
 		expect(spans.length).toBeGreaterThanOrEqual(1);
 		expect(spans.length).toBeLessThanOrEqual(10);
 		expect(

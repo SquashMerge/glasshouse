@@ -2694,7 +2694,7 @@ export async function listObservations(
 	};
 }
 
-export async function seedRandomTrace(): Promise<{
+export async function seedRandomTrace(projectId: string): Promise<{
 	traceId: string;
 	spanCount: number;
 }> {
@@ -2740,7 +2740,10 @@ export async function seedRandomTrace(): Promise<{
 
 	const res = await authedFetch("/v1/otel/v1/traces", {
 		method: "POST",
-		headers: { "content-type": "application/json" },
+		headers: {
+			"content-type": "application/json",
+			"x-glasshouse-project-id": projectId,
+		},
 		body: JSON.stringify({
 			resource_spans: [
 				{

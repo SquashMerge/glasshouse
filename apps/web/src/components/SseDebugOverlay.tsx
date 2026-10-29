@@ -35,6 +35,8 @@ export interface SseDebugOverlayProps {
 	sse: UseEventSourceResult;
 	/** Identifier for the SSE pipe (e.g. "traces" or "trace/<id>"). Shown in header. */
 	label: string;
+	/** Project whose selected trace stream is being inspected. */
+	projectId?: string | null;
 	/**
 	 * Override the dev-mode gate. Defaults to `import.meta.env.DEV` (Vite
 	 * build-time replacement). Tests pass `devMode={true|false}` directly.
@@ -54,6 +56,7 @@ function formatRelative(ms: number): string {
 export function SseDebugOverlay({
 	sse,
 	label,
+	projectId,
 	devMode,
 }: SseDebugOverlayProps): React.ReactElement | null {
 	// Bail in production — Vite's `import.meta.env.DEV` is statically replaced
@@ -100,9 +103,10 @@ export function SseDebugOverlay({
 	const lastEventDelta = lastEventAt === null ? null : Date.now() - lastEventAt;
 
 	const handleSeedTrace = async (): Promise<void> => {
+		if (!projectId) return;
 		setSeedState("pending");
 		try {
-			await seedRandomTrace();
+			await seedRandomTrace(projectId);
 			setSeedState("idle");
 		} catch {
 			setSeedState("error");
@@ -150,7 +154,7 @@ export function SseDebugOverlay({
 								: "Seed random trace"
 						}
 						data-testid="sse-debug-seed"
-						disabled={seedState === "pending"}
+						disabled={seedState === "pending" || !projectId}
 						onClick={() => void handleSeedTrace()}
 						className={cn(
 							"rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
