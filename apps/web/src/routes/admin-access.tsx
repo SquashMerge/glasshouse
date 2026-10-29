@@ -181,6 +181,11 @@ function RecoveryCard({
 	onConfirmationChange: (value: string) => void;
 	onRecover: () => void;
 }) {
+	const dialogRef = React.useRef<HTMLDivElement>(null);
+	React.useLayoutEffect(() => {
+		if (pending) dialogRef.current?.focus();
+	}, [pending]);
+
 	return (
 		<>
 			<Card className="border-destructive/40">
@@ -213,6 +218,7 @@ function RecoveryCard({
 			{open ? (
 				<DialogOverlay onEscape={onClose}>
 					<DialogContent
+						ref={dialogRef}
 						className="max-w-md space-y-4"
 						role="dialog"
 						aria-modal="true"
