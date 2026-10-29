@@ -34,6 +34,13 @@ import {
 	PUBLIC_API_ROUTES,
 	durableActorId,
 } from "../../src/middleware/auth";
+import {
+	authenticateOtlpCredential,
+	createOtlpCredential,
+	lockActiveOtlpCredential,
+	revokeOtlpCredential,
+	rotateOtlpCredential,
+} from "../../src/db/otlp-credentials";
 import { openapiApp } from "../../src/openapi";
 import { lockActiveAuthorizedProject } from "../../src/db/project-authorization";
 
@@ -814,6 +821,129 @@ test("raw OTLP accepts the trusted local principal and denies tenant, CSRF and c
 		[f.principal.actorId],
 	);
 	expect((await request(headers)).status).toBe(404);
+	expect(writes).toBe(1);
+});
+
+test("credential authorization fences rotation and revocation after initial bearer lookup", async () => {
+	const f = await fixture();
+	const created = await createOtlpCredential(pool, {
+		organization_id: f.id,
+		project_id: f.projectId,
+		name: "race-test collector",
+		created_by_actor_id: f.principal.actorId,
+	});
+	const authenticated = await authenticateOtlpCredential(pool, created.secret);
+	if (!authenticated)
+		throw new Error("Created credential did not authenticate");
+
+	const ingestClient = await pool.connect();
+	let transactionOpen = false;
+	let rotated: Awaited<ReturnType<typeof rotateOtlpCredential>>;
+	try {
+		await ingestClient.query("BEGIN");
+		transactionOpen = true;
+		expect(
+			await lockActiveOtlpCredential(ingestClient, {
+				...authenticated,
+				digest: createHash("sha256")
+					.update(created.secret, "utf8")
+					.digest("hex"),
+			}),
+		).toBe(true);
+		const rotation = rotateOtlpCredential(pool, {
+			organization_id: f.id,
+			project_id: f.projectId,
+			id: created.credential.id,
+		});
+		await waitForLock("UPDATE project_otlp_credentials SET secret_digest%");
+		await ingestClient.query("COMMIT");
+		transactionOpen = false;
+		rotated = await rotation;
+	} catch (cause) {
+		if (transactionOpen) await ingestClient.query("ROLLBACK");
+		throw cause;
+	} finally {
+		ingestClient.release();
+	}
+	expect(await authenticateOtlpCredential(pool, created.secret)).toBeNull();
+
+	const beforeRevoke = await authenticateOtlpCredential(pool, rotated.secret);
+	if (!beforeRevoke) throw new Error("Rotated credential did not authenticate");
+	const revokeClient = await pool.connect();
+	let revokeTransactionOpen = false;
+	let revoked: Awaited<ReturnType<typeof revokeOtlpCredential>>;
+	try {
+		await revokeClient.query("BEGIN");
+		revokeTransactionOpen = true;
+		expect(
+			await lockActiveOtlpCredential(revokeClient, {
+				...beforeRevoke,
+				digest: createHash("sha256")
+					.update(rotated.secret, "utf8")
+					.digest("hex"),
+			}),
+		).toBe(true);
+		const revocation = revokeOtlpCredential(pool, {
+			organization_id: f.id,
+			project_id: f.projectId,
+			id: created.credential.id,
+		});
+		await waitForLock(
+			"UPDATE project_otlp_credentials SET revoked_at = COALESCE%",
+		);
+		await revokeClient.query("COMMIT");
+		revokeTransactionOpen = false;
+		revoked = await revocation;
+	} catch (cause) {
+		if (revokeTransactionOpen) await revokeClient.query("ROLLBACK");
+		throw cause;
+	} finally {
+		revokeClient.release();
+	}
+	expect(revoked.revoked_at).not.toBeNull();
+	expect(await authenticateOtlpCredential(pool, rotated.secret)).toBeNull();
+});
+
+test("project-scoped OTLP bearers reject missing and mismatched Project selectors before writer effects", async () => {
+	const f = await fixture();
+	const created = await createOtlpCredential(pool, {
+		organization_id: f.id,
+		project_id: f.projectId,
+		name: "integration collector",
+		created_by_actor_id: f.principal.actorId,
+	});
+	let writes = 0;
+	const api = createApiApp({
+		pgPool: () => pool,
+		authenticationPool: () => fencePool,
+		handleOtlpIngest: async (_request, tenant) => {
+			writes += 1;
+			expect(tenant).toMatchObject({
+				organizationId: f.id,
+				projectId: f.projectId,
+				ingestCredential: {
+					id: created.credential.id,
+					projectId: f.projectId,
+				},
+			});
+			return new Response("{}", {
+				headers: { "content-type": "application/json" },
+			});
+		},
+	});
+	const request = (projectId?: string) =>
+		api.request("/v1/otel/v1/traces", {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${created.secret}`,
+				...(projectId ? { "x-glasshouse-project-id": projectId } : {}),
+			},
+			body: JSON.stringify({ resource_spans: [] }),
+		});
+
+	expect((await request(f.projectId)).status).toBe(200);
+	expect((await request()).status).toBe(404);
+	expect((await request(randomUUID())).status).toBe(404);
 	expect(writes).toBe(1);
 });
 

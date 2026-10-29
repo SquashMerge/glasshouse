@@ -511,6 +511,7 @@ function useTracesData() {
 	);
 
 	return {
+		projectId: selectedProjectId,
 		merged,
 		total,
 		isLoading: query.isLoading,
@@ -655,7 +656,11 @@ export function TracesTab() {
 					});
 				}}
 			/>
-			<SseDebugOverlay sse={data.sse} label="traces" />
+			<SseDebugOverlay
+				sse={data.sse}
+				label="traces"
+				projectId={data.projectId}
+			/>
 		</>
 	);
 }
@@ -966,6 +971,7 @@ function useSpansData() {
 	);
 
 	return {
+		projectId: selectedProjectId,
 		merged,
 		total,
 		isLoading: query.isLoading,
@@ -1055,7 +1061,11 @@ export function SpansTab() {
 					});
 				}}
 			/>
-			<SseDebugOverlay sse={data.sse} label="spans" />
+			<SseDebugOverlay
+				sse={data.sse}
+				label="spans"
+				projectId={data.projectId}
+			/>
 		</>
 	);
 }

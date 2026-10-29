@@ -207,17 +207,18 @@ describe("AppShell project selector", () => {
 		const settingsLinks = within(settings).getAllByRole("link");
 		expect(
 			settingsLinks.map((link) => link.getAttribute("aria-label")),
-		).toEqual(["Governance", "Access", "Projects"]);
+		).toEqual(["Governance", "Access", "Ingestion credentials", "Projects"]);
 		expect(settingsLinks.map((link) => link.getAttribute("href"))).toEqual([
 			"/governance",
 			"/access",
+			"/ingestion-credentials",
 			"/projects",
 		]);
 		expect(settingsLinks[0]).toHaveAttribute("aria-current", "page");
 		const icons = settingsLinks.map(
 			(link) => link.querySelector("svg")?.innerHTML,
 		);
-		expect(new Set(icons).size).toBe(3);
+		expect(new Set(icons).size).toBe(4);
 	});
 
 	it("keeps Access hidden inside Settings without Admin or recovery access", () => {

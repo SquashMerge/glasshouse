@@ -76,7 +76,7 @@ export const otlpIngestRoute = createRoute({
 
 export type OtlpIngestTenantScope = Pick<
 	TenantScope,
-	"actorId" | "organizationId" | "projectId"
+	"actorId" | "organizationId" | "projectId" | "ingestCredential"
 >;
 
 export type OtlpIngestDependencies = {

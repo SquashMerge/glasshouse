@@ -170,8 +170,18 @@ import {
 	setAdminActorRole,
 } from "./routes/admin-access.js";
 import {
-	listBenchmarkSuites,
+	createOtlpCredential,
+	handleCreateOtlpCredential,
+	handleListOtlpCredentials,
+	handleRevokeOtlpCredential,
+	handleRotateOtlpCredential,
+	listOtlpCredentials,
+	revokeOtlpCredential,
+	rotateOtlpCredential,
+} from "./routes/otlp-credentials.js";
+import {
 	createBenchmarkSuiteRoute,
+	listBenchmarkSuites,
 	listBenchmarkRunsRoute,
 	createBenchmarkRunRoute,
 	handleListBenchmarkSuites,
@@ -475,6 +485,10 @@ register(listAdminActors, handleListAdminActors);
 register(setAdminActorRole, handleSetAdminActorRole);
 register(listAdminAuditEvents, handleListAdminAuditEvents);
 register(recoverAdmin, handleRecoverAdmin);
+register(listOtlpCredentials, handleListOtlpCredentials);
+register(createOtlpCredential, handleCreateOtlpCredential);
+register(rotateOtlpCredential, handleRotateOtlpCredential);
+register(revokeOtlpCredential, handleRevokeOtlpCredential);
 register(listPrompts, handleListPrompts);
 register(createPrompt, handleCreatePrompt);
 register(previewPrompt, handlePreviewPrompt);

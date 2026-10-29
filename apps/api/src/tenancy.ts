@@ -9,6 +9,7 @@ import type {
 	EffectiveProjectRole,
 	ProjectOperation,
 } from "./authorization-policy.js";
+import { lockActiveOtlpCredential } from "./db/otlp-credentials.js";
 import { lockActiveAuthorizedProject } from "./db/project-authorization.js";
 import { lockSessionPrincipal } from "./db/local-sessions.js";
 
@@ -24,7 +25,7 @@ const AUTHORIZATION_LOCK_ATTEMPTS = 2;
 
 export type ActiveAuthorizedProjectScope = Pick<
 	TrustedTenantContext,
-	"actorId" | "organizationId" | "sessionId"
+	"actorId" | "organizationId" | "sessionId" | "ingestCredential"
 > & {
 	projectId: string;
 };
@@ -141,6 +142,17 @@ export async function withActiveAuthorizedProjectLock<T>(
 				}))
 			)
 				throw new TenantScopeError("Project is not available");
+			if (
+				tenant.ingestCredential &&
+				!(await lockActiveOtlpCredential(client, {
+					id: tenant.ingestCredential.id,
+					organizationId: tenant.organizationId,
+					projectId: tenant.ingestCredential.projectId,
+					actorId: tenant.actorId,
+					digest: tenant.ingestCredential.digest,
+				}))
+			)
+				throw new TenantScopeError("Credential is not available");
 			callbackStarted = true;
 			const value = await callback();
 			await client.query("COMMIT");

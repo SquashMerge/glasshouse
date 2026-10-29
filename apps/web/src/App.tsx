@@ -26,6 +26,7 @@ import { ProjectsPage } from "./routes/projects";
 import { GovernancePage } from "./routes/governance";
 import { AdminAccessPage } from "./routes/admin-access";
 import { PasswordChangePage } from "./routes/password-change";
+import { OtlpCredentialsPage } from "./routes/otlp-credentials";
 import { AuthGate } from "./components/AuthGate";
 import { AppShell } from "./components/AppShell";
 import { ProjectProvider } from "./components/ProjectProvider";
@@ -155,6 +156,11 @@ const passwordChangeRoute = createRoute({
 	path: "/account/password",
 	component: PasswordChangePage,
 });
+const otlpCredentialsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/ingestion-credentials",
+	component: OtlpCredentialsPage,
+});
 
 const router = createRouter({
 	routeTree: rootRoute.addChildren([
@@ -179,6 +185,7 @@ const router = createRouter({
 			governanceRoute,
 			adminAccessRoute,
 			passwordChangeRoute,
+			otlpCredentialsRoute,
 		]),
 	]),
 	defaultPreload: false,

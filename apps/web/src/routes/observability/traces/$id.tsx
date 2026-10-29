@@ -540,7 +540,11 @@ function TraceDetailPageContent({
 					</aside>
 				)}
 			</div>
-			<SseDebugOverlay sse={stream} label={`trace/${id.slice(0, 8)}…`} />
+			<SseDebugOverlay
+				sse={stream}
+				label={`trace/${id.slice(0, 8)}…`}
+				projectId={projectId}
+			/>
 		</div>
 	);
 }

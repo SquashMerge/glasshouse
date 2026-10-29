@@ -287,6 +287,11 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 			const header = c.req.header("x-glasshouse-project-id");
 			if (!header || !isUuid(header))
 				throw new TenantScopeError("Project target is required");
+			if (
+				tenant.ingestCredential &&
+				tenant.ingestCredential.projectId.toLowerCase() !== header.toLowerCase()
+			)
+				throw new TenantScopeError("Project is not available");
 			const requestedProjectId = header;
 			const resourceProjects = await resourceProjectIds(c.req.raw);
 			const scope = await resolvedDependencies.resolveTenantProject(

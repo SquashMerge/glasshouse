@@ -2694,7 +2694,7 @@ export async function listObservations(
 	};
 }
 
-export async function seedRandomTrace(): Promise<{
+export async function seedRandomTrace(projectId: string): Promise<{
 	traceId: string;
 	spanCount: number;
 }> {
@@ -2740,7 +2740,10 @@ export async function seedRandomTrace(): Promise<{
 
 	const res = await authedFetch("/v1/otel/v1/traces", {
 		method: "POST",
-		headers: { "content-type": "application/json" },
+		headers: {
+			"content-type": "application/json",
+			"x-glasshouse-project-id": projectId,
+		},
 		body: JSON.stringify({
 			resource_spans: [
 				{
@@ -2753,4 +2756,69 @@ export async function seedRandomTrace(): Promise<{
 	if (!res.ok) throw new Error(`seedRandomTrace ${res.status}`);
 
 	return { traceId, spanCount };
+}
+
+export interface OtlpCredential {
+	id: string;
+	project_id: string;
+	name: string;
+	secret_prefix: string;
+	created_by_actor_id: string;
+	created_at: string;
+	rotated_at: string | null;
+	revoked_at: string | null;
+	last_used_at: string | null;
+}
+
+export interface OtlpCredentialWithSecret {
+	credential: OtlpCredential;
+	secret: string;
+}
+
+export async function listOtlpCredentials(
+	projectId: string,
+): Promise<{ items: OtlpCredential[] }> {
+	const query = new URLSearchParams({ project_id: projectId });
+	return responseJson(
+		await authedFetch(`/v1/admin/otlp-credentials?${query}`),
+		"List OTLP credentials",
+	);
+}
+
+export async function createOtlpCredential(input: {
+	project_id: string;
+	name: string;
+}): Promise<OtlpCredentialWithSecret> {
+	return responseJson(
+		await authedFetch("/v1/admin/otlp-credentials", jsonRequest(input)),
+		"Create OTLP credential",
+	);
+}
+
+export async function rotateOtlpCredential(input: {
+	project_id: string;
+	id: string;
+}): Promise<OtlpCredentialWithSecret> {
+	const query = new URLSearchParams({ project_id: input.project_id });
+	return responseJson(
+		await authedFetch(
+			`/v1/admin/otlp-credentials/${encodeURIComponent(input.id)}/rotate?${query}`,
+			{ method: "POST" },
+		),
+		"Rotate OTLP credential",
+	);
+}
+
+export async function revokeOtlpCredential(input: {
+	project_id: string;
+	id: string;
+}): Promise<OtlpCredential> {
+	const query = new URLSearchParams({ project_id: input.project_id });
+	return responseJson(
+		await authedFetch(
+			`/v1/admin/otlp-credentials/${encodeURIComponent(input.id)}/revoke?${query}`,
+			{ method: "POST" },
+		),
+		"Revoke OTLP credential",
+	);
 }
