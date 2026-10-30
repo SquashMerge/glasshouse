@@ -9,7 +9,7 @@ type Service = { image: string; volumes?: string[] };
 type Compose = { services: Record<string, Service> };
 const images = {
 	postgres: "postgres:18.6-alpine",
-	clickhouse: "clickhouse/clickhouse-server:26.10.3.7-alpine",
+	clickhouse: "clickhouse/clickhouse-server:26.10.2.103-alpine",
 	valkey: "valkey/valkey:9.1.3-alpine",
 };
 

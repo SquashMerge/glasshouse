@@ -255,7 +255,7 @@ API LAYER (Python, FastAPI + Uvicorn):
 
 STORAGE:
   PostgreSQL 18.6                (relational, prompts, agents, experiments, scores)
-  ClickHouse 26.10.3.7           (traces, observations, partitioned by month)
+  ClickHouse 26.10.2.103         (traces, observations, partitioned by month)
                                  Skipping indexes + bloom filters + tokenbf_v1 full-text
                                  Targets: <50ms filtered, <100ms full-text
   Valkey 9.1.3                  (pub/sub for SSE; future queue/cache/rate-limit)

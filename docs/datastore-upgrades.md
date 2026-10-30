@@ -7,7 +7,7 @@ Checked on **2026-10-30**; these are release pins, not floating major tags.
 | Store | Previous deployment tag | Selected image | Selection |
 |---|---|---|---|
 | PostgreSQL | `postgres:16-alpine` | `postgres:18.6-alpine` | Latest supported stable major and minor; 19 is still RC. |
-| ClickHouse | `clickhouse/clickhouse-server:24-alpine` | `clickhouse/clickhouse-server:26.10.3.7-alpine` | Latest official stable package channel, including the October security fix. |
+| ClickHouse | `clickhouse/clickhouse-server:24-alpine` | `clickhouse/clickhouse-server:26.10.2.103-alpine` | Latest official GitHub stable release, published 2026-10-24. |
 | Valkey | `valkey/valkey:8-alpine` | `valkey/valkey:9.1.3-alpine` | Latest stable release, including the October Pub/Sub security fix; 9.2 is RC. |
 
 The old tags floated: record the **actual** source server versions and image
@@ -22,12 +22,16 @@ Authoritative references:
   [18 migration notes](https://www.postgresql.org/docs/18/release-18.html#RELEASE-18-MIGRATION),
   [18.6 notes](https://www.postgresql.org/docs/18/release-18-6.html), and
   [official image layout](https://github.com/docker-library/postgres/blob/master/18/alpine3.23/Dockerfile).
-- [ClickHouse package channel](https://packages.clickhouse.com/),
+- [ClickHouse stable release v26.10.2.103-stable](https://github.com/ClickHouse/ClickHouse/releases/tag/v26.10.2.103-stable),
+  [Docker image tag 26.10.2.103-alpine](https://hub.docker.com/layers/clickhouse/clickhouse-server/26.10.2.103-alpine/images),
   [upgrade guidance](https://clickhouse.com/docs/operations/update),
   [2025 changelog](https://clickhouse.com/docs/resources/changelogs/oss/2025.md), and
   [2026 changelog](https://clickhouse.com/docs/resources/changelogs/oss/2026.md).
-  The package channel and published image include 26.10.3.7 even though the
-  GitHub releases API still lists 26.10.2.103 as its newest stable release.
+  On 2026-10-30, the official GitHub releases API reported
+  `v26.10.2.103-stable` (published 2026-10-24) as the latest release, and Docker
+  Hub listed `26.10.2.103-alpine` for amd64 and arm64. The selected image matches
+  that official stable release; a published Docker tag alone does not establish
+  official stable-release status.
 - [Valkey releases](https://valkey.io/download/releases/),
   [9.1.3 images](https://valkey.io/download/releases/v9-1-3/), and
   [release notes](https://github.com/valkey-io/valkey/releases/tag/9.1.3).
@@ -86,7 +90,7 @@ downgrade. The backup backend remains `File()`, with restricted path/disk
 configuration mounted in every application topology including the devcontainer.
 Custom least-privilege backup accounts must have appropriate BACKUP/RESTORE and
 file/disk access grants. Preserve these restrictions rather than opening an
-arbitrary filesystem path. The selected stable package fixes CVE-2026-116366.
+arbitrary filesystem path.
 
 ### Valkey 8 → 9.1
 

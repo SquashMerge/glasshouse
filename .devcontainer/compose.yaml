@@ -40,7 +40,7 @@ services:
       retries: 12
 
   clickhouse:
-    image: clickhouse/clickhouse-server:26.10.3.7-alpine
+    image: clickhouse/clickhouse-server:26.10.2.103-alpine
     platform: linux/amd64
     env_file:
       - ../infra/.env

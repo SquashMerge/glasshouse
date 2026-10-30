@@ -53,7 +53,7 @@ test("the application ClickHouse HTTP client supports typed parameters and JSONE
 	expect(row.scope).toBe("datastore-connectivity");
 	expect(row.value).toBe("round-trip");
 	expect(Number(row.timestamp)).toBe(Date.UTC(2026, 9, 30));
-	if (verifyVersions) expect(row.version).toBe("26.10.3.7");
+	if (verifyVersions) expect(row.version).toBe("26.10.2.103");
 });
 
 test("the application ioredis client authenticates and delivers Valkey pub/sub", async () => {

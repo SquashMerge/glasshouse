@@ -122,7 +122,7 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 ## Storage roles
 
 - **PostgreSQL 18.6** — relational: agents, prompts, datasets, experiments, scores, projects.
-- **ClickHouse 26.10.3.7** — OLAP: `traces`, `observations`. Partitioned by month; skip + bloom + tokenbf_v1 indexes.
+- **ClickHouse 26.10.2.103** — OLAP: `traces`, `observations`. Partitioned by month; skip + bloom + tokenbf_v1 indexes.
 - **Valkey 9.1.3** — event bus pub/sub fan-out (wire-compatible Redis). Future: BullMQ queues, rate-limit.
 
 ## Ingest

@@ -84,7 +84,7 @@ Use `/health` or `/v1/health` for a public liveness check. The Compose health
 checks also gate API startup on all three data services. Do not use health
 success as evidence that backups exist or that an upgrade is recoverable.
 
-The data services are pinned to PostgreSQL 18.6, ClickHouse 26.10.3.7 and
+The data services are pinned to PostgreSQL 18.6, ClickHouse 26.10.2.103 and
 Valkey 9.1.3. For the PG16/CH24 migration, follow the explicit
 [datastore upgrade and rollback runbook](datastore-upgrades.md): quiesce writes,
 back up the old deployment and restore into separately provisioned empty stores.

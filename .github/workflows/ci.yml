@@ -218,7 +218,7 @@ jobs:
           --health-timeout 3s
           --health-retries 30
       clickhouse:
-        image: clickhouse/clickhouse-server:26.10.3.7-alpine
+        image: clickhouse/clickhouse-server:26.10.2.103-alpine
         env:
           CLICKHOUSE_DB: glasshouse
           CLICKHOUSE_USER: glasshouse
