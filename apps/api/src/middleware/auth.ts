@@ -381,10 +381,10 @@ export function authenticationMiddleware(
 			);
 		}
 		if (
-			token !== undefined &&
 			!["GET", "HEAD", "OPTIONS"].includes(c.req.method) &&
 			(!trustedRequestOrigin(c) ||
-				!validSessionCsrf(token, c.req.header(CSRF_HEADER)))
+				(token !== undefined &&
+					!validSessionCsrf(token, c.req.header(CSRF_HEADER))))
 		)
 			return c.json(
 				{ code: "FORBIDDEN", message: "Request origin verification failed" },

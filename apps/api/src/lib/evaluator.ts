@@ -20,13 +20,29 @@ function stable(value: unknown): string {
 	return JSON.stringify(value);
 }
 
+export function validEvaluationPath(path: string): boolean {
+	return (
+		path.length <= 128 &&
+		/^\$\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(path) &&
+		!path
+			.slice(2)
+			.split(".")
+			.some((key) => ["__proto__", "constructor", "prototype"].includes(key))
+	);
+}
+
 function atPath(value: unknown, path: string): unknown {
-	if (!/^\$\.[A-Za-z0-9_.-]+$/.test(path)) return undefined;
+	if (!validEvaluationPath(path)) return undefined;
 	return path
 		.slice(2)
 		.split(".")
 		.reduce<unknown>((current, key) => {
-			if (!current || typeof current !== "object" || Array.isArray(current))
+			if (
+				!current ||
+				typeof current !== "object" ||
+				Array.isArray(current) ||
+				!Object.hasOwn(current, key)
+			)
 				return undefined;
 			return (current as Record<string, unknown>)[key];
 		}, value);

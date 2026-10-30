@@ -250,6 +250,71 @@ describe("EvaluationsPage project-scoped datasets", () => {
 		});
 	});
 
+	it("keeps Run disabled for a preserved legacy-incompatible Definition Version", async () => {
+		const legacyVersion = {
+			...definitionVersionOne,
+			definition_contract: "legacy_incompatible" as const,
+		};
+		listEvaluations.mockResolvedValue({ items: [evaluationOne], total: 1 });
+		listEvaluationVersions.mockResolvedValue({ items: [legacyVersion] });
+		getEvaluationVersion.mockResolvedValue(legacyVersion);
+
+		renderPage();
+		await screen.findByRole("option", {
+			name: "Project One evaluation (project-one-evaluation)",
+		});
+		fireEvent.change(screen.getByLabelText("Evaluation"), {
+			target: { value: evaluationOne.slug },
+		});
+		await screen.findByRole("option", {
+			name: "Version 1 (legacy_incompatible)",
+		});
+		fireEvent.change(screen.getByLabelText("Immutable Definition Version"), {
+			target: { value: "1" },
+		});
+		await screen.findByText("Pinned Definition Version 1");
+
+		await waitFor(() => expect(runButton()).toBeDisabled());
+	});
+
+	it("keeps Run gate disabled for an active legacy-incompatible approval", async () => {
+		selection.projectRole = "admin";
+		listEvaluationGateApprovals.mockResolvedValue({
+			items: [
+				{
+					id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+					project_id: PROJECT_ONE,
+					definition_version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+					definition_version: 1,
+					definition_contract: "legacy_incompatible",
+					dataset_version_id: DATASET_VERSION_ONE,
+					definition_content_hash: "c".repeat(64),
+					dataset_content_hash: "d".repeat(64),
+					gate_context: "ci",
+					minimum_pass_rate: 0.9,
+					reason: "Historical approval",
+					approved_by_actor_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+					approved_at: "2026-08-29T00:00:00.000Z",
+					revoked_at: null,
+					revoked_by_actor_id: null,
+					revocation_reason: null,
+					superseded_by: null,
+					status: "active",
+					created_at: "2026-08-29T00:00:00.000Z",
+				},
+			],
+			total: 1,
+		});
+
+		renderPage();
+		const runGateButton = await screen.findByRole("button", {
+			name: "Run gate",
+		});
+		expect(runGateButton).toBeDisabled();
+		fireEvent.click(runGateButton);
+		expect(startEvaluationGate).not.toHaveBeenCalled();
+	});
+
 	it("clears an invalid Definition Version after switching projects", async () => {
 		listEvaluations.mockResolvedValue({ items: [evaluationOne], total: 1 });
 		listEvaluationVersions.mockResolvedValue({ items: [definitionVersionOne] });
@@ -421,6 +486,7 @@ describe("EvaluationsPage project-scoped datasets", () => {
 					status: "active",
 					gate_context: "ci",
 					definition_version: 1,
+					definition_contract: "v1",
 					definition_version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 					dataset_version_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
 					minimum_pass_rate: 0.9,

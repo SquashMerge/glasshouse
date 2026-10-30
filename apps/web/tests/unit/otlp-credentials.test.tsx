@@ -120,6 +120,27 @@ describe("OtlpCredentialsPage", () => {
 			screen.queryByTestId("created-credential-secret"),
 		).not.toBeInTheDocument();
 	});
+	it("a logout signal from another tab forgets a revealed credential", async () => {
+		const { client } = renderPage();
+		fireEvent.change(screen.getByLabelText("Credential name"), {
+			target: { value: "Production collector" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Create credential" }));
+		expect(
+			await screen.findByTestId("created-credential-secret"),
+		).toHaveTextContent(SECRET);
+		fireEvent(
+			window,
+			new StorageEvent("storage", {
+				key: "glasshouse.auth.invalidate",
+				newValue: "other-tab-logout",
+			}),
+		);
+		expect(
+			screen.queryByTestId("created-credential-secret"),
+		).not.toBeInTheDocument();
+		expectSecretForgotten(client, SECRET);
+	});
 
 	it("rotates and confirms revocation for the selected Project", async () => {
 		renderPage();

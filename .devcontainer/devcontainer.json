@@ -22,7 +22,7 @@
     "VALKEY_PORT": "6379",
     "GEPA_PYTHON": "${containerWorkspaceFolder}/.venv-gepa/bin/python"
   },
-  "postCreateCommand": "bun install --frozen-lockfile && python3 -m venv .venv-gepa && .venv-gepa/bin/pip install --no-cache-dir -r worker/requirements.txt",
+  "postCreateCommand": "bun install --frozen-lockfile && python3 -m venv .venv-gepa && .venv-gepa/bin/pip install --no-cache-dir --require-hashes -r worker/requirements.lock",
   "customizations": {
     "vscode": {
       "extensions": [

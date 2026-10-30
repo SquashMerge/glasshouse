@@ -63,6 +63,19 @@ async function mockWorkspace(page: Page, recovery = false) {
 			return route.fulfill({
 				json: { items: [defaultProject, project], total: 2 },
 			});
+		if (
+			[
+				"/v1/datasets",
+				"/v1/experiments",
+				"/v1/evaluations",
+				"/v1/evaluation-runs",
+				"/v1/evaluation-gates/approvals",
+				"/v1/evaluation-gates/runs",
+			].includes(path)
+		)
+			return route.fulfill({ json: { items: [], total: 0 } });
+		if (path === "/v1/evaluations/compatibility")
+			return route.fulfill({ json: { items: [] } });
 		if (path === "/v1/admin/actors" || path === "/v1/admin/local-accounts")
 			return route.fulfill({ json: { items: [] } });
 		if (path === "/v1/traces" || path === "/v1/observations")
@@ -439,7 +452,117 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 
 	test("keeps dashboard content scrolling independent and matches the evaluations heading", async ({
 		page,
-	}) => {
+	}, testInfo) => {
+		const navigationEvents: Array<{
+			type: "navigation" | "response";
+			url: string;
+			method?: string;
+			status?: number;
+		}> = [];
+		page.on("response", (response) => {
+			const url = new URL(response.url());
+			if (url.pathname.startsWith("/v1/")) {
+				navigationEvents.push({
+					type: "response",
+					url: `${url.origin}${url.pathname}`,
+					method: response.request().method(),
+					status: response.status(),
+				});
+			}
+		});
+		page.on("framenavigated", (frame) => {
+			if (frame === page.mainFrame()) {
+				const url = new URL(frame.url());
+				navigationEvents.push({
+					type: "navigation",
+					url: `${url.origin}${url.pathname}`,
+				});
+			}
+		});
+		async function captureLayout(
+			headingName: "Organization overview" | "Evaluations",
+			phase: string,
+		) {
+			return {
+				phase,
+				...(await page.evaluate((headingName) => {
+					function describe(target: Element | null) {
+						if (!target) return null;
+						const rect = target.getBoundingClientRect();
+						const style = getComputedStyle(target);
+						return {
+							tag: target.tagName,
+							rect: {
+								top: rect.top,
+								left: rect.left,
+								width: rect.width,
+								height: rect.height,
+							},
+							scrollTop: target.scrollTop,
+							scrollLeft: target.scrollLeft,
+							scrollHeight: target.scrollHeight,
+							scrollWidth: target.scrollWidth,
+							clientHeight: target.clientHeight,
+							clientWidth: target.clientWidth,
+							display: style.display,
+							visibility: style.visibility,
+							overflowY: style.overflowY,
+							overflowAnchor: style.overflowAnchor,
+							paddingTop: style.paddingTop,
+							hidden: target.hasAttribute("hidden"),
+							ariaHidden: target.getAttribute("aria-hidden"),
+							inert: target.hasAttribute("inert"),
+						};
+					}
+					const element = Array.from(
+						document.querySelectorAll(
+							'h1, h2, h3, h4, h5, h6, [role="heading"]',
+						),
+					).find((target) => target.textContent?.trim() === headingName);
+					const main =
+						element?.closest("main") ?? document.querySelector("main");
+					const ancestors = [];
+					for (
+						let parent: Element | null =
+							element?.parentElement ?? main ?? document.body;
+						parent;
+						parent = parent.parentElement
+					) {
+						ancestors.push(describe(parent));
+					}
+					const revalidationDialog = document.querySelector<HTMLDialogElement>(
+						'dialog[aria-label="Checking session"]',
+					);
+					return {
+						time: performance.now(),
+						// Query strings and fragments can contain auth material.
+						url: `${location.origin}${location.pathname}`,
+						targetHeading: headingName,
+						headingTop: element?.getBoundingClientRect().top ?? null,
+						heading: describe(element ?? null),
+						main: describe(main),
+						wrapper: describe(main?.firstElementChild ?? null),
+						ancestors,
+						window: {
+							scrollX: window.scrollX,
+							scrollY: window.scrollY,
+							innerHeight: window.innerHeight,
+							innerWidth: window.innerWidth,
+						},
+						scrollingElement: describe(document.scrollingElement),
+						documentElement: describe(document.documentElement),
+						body: describe(document.body),
+						activeElementTag: document.activeElement?.tagName,
+						activeElementInMain: main?.contains(document.activeElement),
+						revalidationDialog: {
+							element: describe(revalidationDialog),
+							open: revalidationDialog?.open ?? false,
+							modal: revalidationDialog?.matches(":modal") ?? false,
+						},
+					};
+				}, headingName)),
+			};
+		}
 		await page.setViewportSize({ width: 1280, height: 720 });
 		await page.route("**/v1/organization/usage?*", (route) =>
 			route.fulfill({ json: usageSnapshot("30d", 4) }),
@@ -449,9 +572,13 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 			name: "Organization overview",
 		});
 		await expect(dashboardHeading).toBeVisible();
-		const dashboardTop = await dashboardHeading.evaluate(
-			(element) => element.getBoundingClientRect().top,
+		const dashboardLayout = await captureLayout(
+			"Organization overview",
+			"dashboard-initial",
 		);
+		const dashboardTop = dashboardLayout.headingTop;
+		expect(dashboardTop).not.toBeNull();
+		const layouts = [dashboardLayout];
 		const content = page.getByRole("main").first();
 		await expect(content).toHaveCSS("overflow-y", "auto");
 		const scrollMetrics = await content.evaluate((element) => ({
@@ -482,19 +609,58 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 		await content.evaluate((element) => {
 			element.scrollTop = 0;
 		});
-		await sidebar.getByRole("link", { name: "Evaluations" }).click();
+		layouts.push(
+			await captureLayout(
+				"Organization overview",
+				"dashboard-before-navigation",
+			),
+		);
 		const evaluationsHeading = page.getByRole("heading", {
 			name: "Evaluations",
 			exact: true,
 		});
-		await expect(evaluationsHeading).toBeVisible();
-		await expect
-			.poll(() =>
-				evaluationsHeading.evaluate(
-					(element) => element.getBoundingClientRect().top,
-				),
-			)
-			.toBe(dashboardTop);
+		let navigationChecksPassed = false;
+		try {
+			await sidebar.getByRole("link", { name: "Evaluations" }).click();
+			await expect(evaluationsHeading).toBeVisible();
+			await expect
+				.poll(async () => {
+					const layout = await captureLayout("Evaluations", "evaluations-poll");
+					layouts.push(layout);
+					return layout.headingTop;
+				})
+				.toBe(dashboardTop);
+			navigationChecksPassed = true;
+		} finally {
+			if (!navigationChecksPassed) {
+				try {
+					layouts.push(await captureLayout("Evaluations", "evaluations-final"));
+				} catch {
+					console.log(
+						"[heading-scroll-layout]",
+						JSON.stringify({
+							retry: testInfo.retry,
+							phase: "evaluations-final",
+							snapshotUnavailable: true,
+						}),
+					);
+				}
+				for (const layout of layouts) {
+					console.log(
+						"[heading-scroll-layout]",
+						JSON.stringify({
+							retry: testInfo.retry,
+							expectedHeadingTop: dashboardTop,
+							...layout,
+						}),
+					);
+				}
+				console.log(
+					"[evaluations-navigation-events]",
+					JSON.stringify({ retry: testInfo.retry, events: navigationEvents }),
+				);
+			}
+		}
 	});
 
 	test("keeps the telemetry caption accessible without overlapping the visual chart", async ({

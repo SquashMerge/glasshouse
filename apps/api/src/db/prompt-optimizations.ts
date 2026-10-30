@@ -8,21 +8,21 @@ import {
 	type OptimizationPromotionStatus,
 	type StoredOptimizationDataset,
 } from "../lib/optimization-dataset.js";
-import type { JsonObject, PromptMessage, PromptRole } from "./prompts.js";
-import { PromptRepositoryError } from "./prompts.js";
+import {
+	claimExecutionAdmission,
+	createExecutionAdmission,
+	type ExecutionAdmission,
+	type ExecutionAdmissionClaim,
+	type ExecutionAdmissionEffect,
+	executionAdmissionIsActive,
+	executionOperationKey,
+} from "./execution-admissions.js";
 import {
 	lockActiveAuthorizedProject,
 	type ProjectAuthorization,
 } from "./project-authorization.js";
-import {
-	createExecutionAdmission,
-	claimExecutionAdmission,
-	executionOperationKey,
-	executionAdmissionIsActive,
-	type ExecutionAdmissionClaim,
-	type ExecutionAdmissionEffect,
-	type ExecutionAdmission,
-} from "./execution-admissions.js";
+import type { JsonObject, PromptMessage, PromptRole } from "./prompts.js";
+import { PromptRepositoryError } from "./prompts.js";
 
 export type OptimizationStatus =
 	| "queued"
@@ -80,7 +80,12 @@ export type OptimizationEvent = {
 type Row = Record<string, unknown>;
 
 function fail(
-	code: "BAD_REQUEST" | "NOT_FOUND" | "CONFLICT" | "INTERNAL",
+	code:
+		| "BAD_REQUEST"
+		| "NOT_FOUND"
+		| "CONFLICT"
+		| "TOO_MANY_REQUESTS"
+		| "INTERNAL",
 	message: string,
 ): PromptRepositoryError {
 	return new PromptRepositoryError(code, message);
@@ -477,6 +482,20 @@ function resultEventDetail(input: {
 	};
 }
 
+function optimizationAdmissionLimits(): { project: number; requester: number } {
+	const read = (name: string, fallback: number) => {
+		const raw = process.env[name];
+		if (raw === undefined || raw === "") return fallback;
+		if (!/^[1-9]\d*$/.test(raw) || Number(raw) > 1000)
+			throw fail("INTERNAL", `Invalid ${name} configuration`);
+		return Number(raw);
+	};
+	return {
+		project: read("GEPA_MAX_ACTIVE_JOBS_PER_PROJECT", 3),
+		requester: read("GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER", 1),
+	};
+}
+
 export async function createOptimizationJob(
 	pool: Pick<Pool, "connect">,
 	input: {
@@ -497,6 +516,7 @@ export async function createOptimizationJob(
 	if (!input.dataset.validation_examples.length)
 		throw fail("BAD_REQUEST", "validation examples must not be empty");
 	const datasetHash = hashOptimizationDataset(input.dataset);
+	const limits = optimizationAdmissionLimits();
 	return tx(pool, async (client) => {
 		if (
 			!(await lockActiveAuthorizedProject(
@@ -506,6 +526,37 @@ export async function createOptimizationJob(
 			))
 		)
 			throw fail("NOT_FOUND", "Project is not available");
+		const existing = (
+			await rows(
+				client,
+				"SELECT * FROM prompt_optimization_jobs WHERE project_id=$1 AND prompt_slug=$2 AND source_version=$3 AND target_role=$4 AND status IN ('queued','preparing','optimizing','evaluating') LIMIT 1",
+				[input.project_id, input.slug, input.source_version, input.target],
+			)
+		)[0];
+		if (existing) return mapJob(existing);
+		// Take the requester fence after authorization/Project locks; admission
+		// never acquires another Project while holding this cross-Project lock.
+		await client.query(
+			"SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+			[`gepa-requester:${input.authorization.actor_id}`],
+		);
+		const counts = (
+			await rows(
+				client,
+				`SELECT count(*) FILTER (WHERE job.project_id=$1)::int AS project_count,
+					count(*) FILTER (WHERE trusted_actor_subject_matches(project.organization_id, job.requested_by, $2))::int AS requester_count
+				FROM prompt_optimization_jobs AS job
+				JOIN projects AS project ON project.id = job.project_id
+				WHERE job.status IN ('queued','preparing','optimizing','evaluating')
+					AND (job.project_id=$1 OR trusted_actor_subject_matches(project.organization_id, job.requested_by, $2))`,
+				[input.project_id, input.authorization.actor_id],
+			)
+		)[0];
+		if (
+			Number(counts?.project_count ?? 0) >= limits.project ||
+			Number(counts?.requester_count ?? 0) >= limits.requester
+		)
+			throw fail("TOO_MANY_REQUESTS", "Active optimization job limit reached");
 		const source = (
 			await rows(
 				client,

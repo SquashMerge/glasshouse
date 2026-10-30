@@ -45,6 +45,19 @@ public origin is not HTTPS, required credentials are weak/placeholders, or
 must use a provider-backed GEPA worker; the local authenticated CLI adapter is
 development-only. Keep provider credentials in the deployment secret store.
 
+The API also bounds concurrently active GEPA jobs independently of each job's
+metric-call budget. `GEPA_MAX_ACTIVE_JOBS_PER_PROJECT` defaults to `3` and
+`GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER` defaults to `1`; set either explicitly in
+the protected production environment file to override it. Both accept integers
+from `1` through `1000`. A start request above either active-job limit receives
+HTTP `429`; queued, preparing, optimizing, and evaluating jobs count toward the
+limit. The requester limit counts the same durable Actor across all Projects,
+including equivalent Basic username spellings, with concurrent admissions
+serialized transactionally. Stored requester provenance retains its original
+spelling. Replaying an already-active job returns that job even when either
+limit is reached. See
+`infra/production.env.example` for the variable names.
+
 Every API start applies PostgreSQL and ClickHouse migrations before accepting
 traffic. A failed migration keeps the API unavailable. Review the migration
 output and application health before allowing the proxy to send traffic.

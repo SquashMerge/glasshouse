@@ -25,6 +25,15 @@ def optimization_dataset(training_examples=None, validation_examples=None):
     }
 
 
+def process_running(pid):
+    try:
+        # A container PID 1 may not reap terminated orphans. A zombie is dead,
+        # not a live CLI descendant capable of making another provider call.
+        return Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
 class DevCliLlmTests(unittest.TestCase):
     def fake_cli(self, directory):
         script = Path(directory) / "fake_cli.py"
@@ -76,10 +85,10 @@ class DevCliLlmTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started_at, 3)
             pid = int(child_pid.read_text())
             for _ in range(20):
-                if not Path(f"/proc/{pid}").exists():
+                if not process_running(pid):
                     break
                 time.sleep(0.05)
-            self.assertFalse(Path(f"/proc/{pid}").exists())
+            self.assertFalse(process_running(pid))
 
     def test_timeout_kills_child_when_cli_parent_exits_first(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -96,10 +105,10 @@ class DevCliLlmTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started_at, 3)
             pid = int(child_pid.read_text())
             for _ in range(20):
-                if not Path(f"/proc/{pid}").exists():
+                if not process_running(pid):
                     break
                 time.sleep(0.05)
-            self.assertFalse(Path(f"/proc/{pid}").exists())
+            self.assertFalse(process_running(pid))
 
     def test_nonzero_exit_is_sanitized(self):
         with tempfile.TemporaryDirectory() as directory:

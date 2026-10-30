@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useProjectSelection } from "../components/ProjectProvider";
@@ -6,6 +6,7 @@ import {
 	getActivePromptOptimization,
 	getPrompt,
 	stopPromptOptimization,
+	type Prompt,
 } from "../lib/api";
 import { PageMessage } from "./prompts";
 import { FormLoadingSkeleton } from "../components/LoadingSkeletons";
@@ -19,6 +20,12 @@ export function EditPromptPage() {
 	const { selectedProjectId, selectedProject } = useProjectSelection();
 	const fromVersion = queryVersion(location.searchStr, "from");
 	const [confirmStop, setConfirmStop] = useState(false);
+	const contextKey = JSON.stringify([selectedProjectId, slug, fromVersion]);
+	const [loadedSource, setLoadedSource] = useState<{
+		contextKey: string;
+		current: Prompt;
+		selected: Prompt;
+	} | null>(null);
 
 	const currentQuery = useQuery({
 		queryKey: ["prompt", selectedProjectId, slug, "current"],
@@ -52,6 +59,25 @@ export function EditPromptPage() {
 		onSuccess: () => void activeOptimizationQuery.refetch(),
 	});
 
+	const selectedData = fromVersion ? selectedQuery.data : currentQuery.data;
+	useEffect(() => {
+		// Keep this editor's source snapshot while session focus resets queries.
+		setLoadedSource((previous) => {
+			if (currentQuery.data && selectedData) {
+				return {
+					contextKey,
+					current: currentQuery.data,
+					selected: selectedData,
+				};
+			}
+			return previous?.contextKey === contextKey ? previous : null;
+		});
+	}, [contextKey, currentQuery.data, selectedData]);
+	const retainedSource =
+		loadedSource?.contextKey === contextKey ? loadedSource : null;
+	const current = currentQuery.data ?? retainedSource?.current;
+	const selected = selectedData ?? retainedSource?.selected;
+
 	if (!selectedProjectId || !selectedProject) {
 		return (
 			<PageMessage title="New prompt version">
@@ -61,8 +87,8 @@ export function EditPromptPage() {
 	}
 
 	if (
-		(currentQuery.isLoading && !currentQuery.data) ||
-		(fromVersion && selectedQuery.isLoading && !selectedQuery.data)
+		(currentQuery.isLoading && !current) ||
+		(fromVersion && selectedQuery.isLoading && !selected)
 	) {
 		return <FormLoadingSkeleton testId="prompt-edit-skeleton" />;
 	}
@@ -100,7 +126,7 @@ export function EditPromptPage() {
 	}
 
 	const error = currentQuery.error ?? selectedQuery.error;
-	if (error || !currentQuery.data || (fromVersion && !selectedQuery.data)) {
+	if (error || !current || !selected) {
 		return (
 			<PageMessage title="New prompt version">
 				{error instanceof Error ? error.message : "Prompt could not be loaded."}
@@ -108,12 +134,12 @@ export function EditPromptPage() {
 		);
 	}
 
-	const selected = fromVersion ? selectedQuery.data! : currentQuery.data;
 	return (
 		<PromptComposer
+			key={`${contextKey}:${selected.version}`}
 			projectId={selectedProjectId}
 			existing={selected}
-			current={currentQuery.data}
+			current={current}
 			onSaved={(prompt) => {
 				navigate({
 					to: "/prompts/$slug",

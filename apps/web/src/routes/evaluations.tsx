@@ -2090,6 +2090,12 @@ function EvaluationGatePanel({
 		}
 	};
 	const start = async (approval: (typeof activeApprovals)[number]) => {
+		if (approval.definition_contract !== "v1") {
+			setMessage(
+				"This Definition Version is retained for inspection but cannot be run under the current evaluator safety policy.",
+			);
+			return;
+		}
 		setPending(true);
 		setMessage(null);
 		const idempotencyKey =
@@ -2199,7 +2205,9 @@ function EvaluationGatePanel({
 								{canAdmin && approval.status === "active" && (
 									<span className="flex gap-2">
 										<Button
-											disabled={pending}
+											disabled={
+												pending || approval.definition_contract !== "v1"
+											}
 											size="sm"
 											onClick={() => void start(approval)}
 										>
@@ -2217,7 +2225,8 @@ function EvaluationGatePanel({
 								)}
 							</div>
 							<p>
-								Definition v{approval.definition_version} · minimum pass rate{" "}
+								Definition v{approval.definition_version} (
+								{approval.definition_contract}) · minimum pass rate{" "}
 								{approval.minimum_pass_rate}
 							</p>
 							<p className="break-all text-muted-foreground">

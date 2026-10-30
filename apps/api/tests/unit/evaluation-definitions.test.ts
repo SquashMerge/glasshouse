@@ -8,7 +8,10 @@ import {
 	transitionEvaluationLifecycle,
 	updateEvaluationDraft,
 } from "../../src/db/evaluations";
-import { EvaluationDefinitionInput } from "../../src/schemas/evaluations";
+import {
+	EvaluationDefinitionInput,
+	EvaluationDefinitionVersion,
+} from "../../src/schemas/evaluations";
 
 const definition = {
 	dataset_version_id: "11111111-1111-4111-8111-111111111111",
@@ -211,6 +214,70 @@ describe("Evaluation definitions", () => {
 		expect(result).not.toHaveProperty("revision");
 		expect(result).not.toHaveProperty("updated_at");
 		expect(result).toHaveProperty("definition_contract", "v1");
+	});
+	it("serializes v1 snapshots with newly unsafe paths as non-executable legacy definitions", async () => {
+		const legacy = {
+			id: "22222222-2222-4222-8222-222222222222",
+			evaluation_id: "33333333-3333-4333-8333-333333333333",
+			project_id: "44444444-4444-4444-8444-444444444444",
+			version: 1,
+			dataset_version_id: definition.dataset_version_id,
+			evaluator: {
+				...definition.evaluator,
+				expected_output_path: "$.constructor",
+			},
+			target: definition.target,
+			execution_defaults: definition.execution_defaults,
+			thresholds: definition.thresholds,
+			sampling: definition.sampling,
+			limits: definition.limits,
+			content_hash: "b".repeat(64),
+			published_by: "66666666-6666-4666-8666-666666666666",
+			published_draft_revision: 1,
+			created_at: new Date("2026-01-01T00:00:00.000Z"),
+		};
+		expect(
+			EvaluationDefinitionInput.safeParse({
+				dataset_version_id: legacy.dataset_version_id,
+				sampling: legacy.sampling,
+				evaluator: legacy.evaluator,
+				target: legacy.target,
+				execution_defaults: legacy.execution_defaults,
+				limits: legacy.limits,
+				thresholds: legacy.thresholds,
+			}).success,
+		).toBe(false);
+		const result = await getEvaluationVersion(
+			{
+				connect: async () => ({
+					query: async (sql: string) => {
+						if (sql.includes("FROM local_credentials")) return { rows: [] };
+						if (sql.startsWith("SELECT authorization_allows_project"))
+							return { rows: [{ allowed: true }] };
+						if (sql.startsWith("SELECT p.id FROM projects"))
+							return { rows: [{ id: legacy.project_id }] };
+						return { rows: [legacy] };
+					},
+					release() {},
+				}),
+			} as never,
+			{
+				project_id: legacy.project_id,
+				slug: "legacy-evaluation",
+				version: 1,
+				authorization: {
+					organization_id: "55555555-5555-4555-8555-555555555555",
+					actor_id: "77777777-7777-4777-8777-777777777777",
+					operation: "product_read",
+				},
+			},
+		);
+		expect(result).toMatchObject({
+			definition_contract: "legacy_incompatible",
+			evaluator: legacy.evaluator,
+			content_hash: legacy.content_hash,
+		});
+		expect(EvaluationDefinitionVersion.safeParse(result).success).toBe(true);
 	});
 	it("serializes pre-contract versions as their exact immutable legacy snapshot", async () => {
 		const legacy = {

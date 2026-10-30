@@ -1,13 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { rectifyConfusion } from "unicode-confusables";
-import { createRoute, z, type RouteHandler } from "@hono/zod-openapi";
+import { createRoute, type RouteHandler, z } from "@hono/zod-openapi";
 import { streamSSE } from "hono/streaming";
+import { rectifyConfusion } from "unicode-confusables";
+import {
+	cancelExecutionAdmission,
+	completeExecutionAdmission,
+	providerDispatchKey,
+} from "../db/execution-admissions.js";
 import { pgPool } from "../db/postgres.js";
+import { projectAuthorization } from "../db/project-authorization.js";
 import {
 	admitOptimizationExecution,
 	cancelOptimizationExecution,
-	claimOptimizationJob,
 	claimOptimizationExecution,
+	claimOptimizationJob,
 	completeOptimizationResult,
 	createOptimizationJob,
 	failUnknownOptimizationProviderDispatch,
@@ -17,8 +23,8 @@ import {
 	listActiveOptimizationActivities,
 	listOptimizationEvents,
 	type OptimizationJob,
-	optimizationSourceMessages,
 	optimizationExecutionAdmissionIsActive,
+	optimizationSourceMessages,
 	promoteOptimizationDraft,
 	publishOptimizationResult,
 	recordOptimizationMetricCalls,
@@ -26,19 +32,15 @@ import {
 	stopOptimizationJob,
 	transitionOptimizationJob,
 } from "../db/prompt-optimizations.js";
+import { type JsonObject, PromptRepositoryError } from "../db/prompts.js";
 import {
-	cancelExecutionAdmission,
-	completeExecutionAdmission,
-	providerDispatchKey,
-} from "../db/execution-admissions.js";
-import { PromptRepositoryError, type JsonObject } from "../db/prompts.js";
+	authorizedSseFrame,
+	createAuthorizedSseDelivery,
+} from "../lib/authorized-sse.js";
 import {
-	automaticPromotionReason,
-	hasOverlappingOptimizationInputs,
-	type OptimizationDataset,
-	type OptimizationEvidence,
-	type OptimizationLeakage,
-} from "../lib/optimization-dataset.js";
+	executionAdmissionTimeoutMs,
+	invokeWithExecutionAdmission,
+} from "../lib/execution-admission.js";
 import {
 	GepaConfigurationError,
 	MAX_GEPA_METRIC_CALLS,
@@ -50,19 +52,18 @@ import {
 	MAX_OPTIMIZATION_CANDIDATE_BYTES,
 	runGepaWorker,
 } from "../lib/gepa-worker.js";
-import { logger, type LogFields } from "../lib/logger.js";
+import { type LogFields, logger } from "../lib/logger.js";
 import {
-	authorizedSseFrame,
-	createAuthorizedSseDelivery,
-} from "../lib/authorized-sse.js";
-import {
-	executionAdmissionTimeoutMs,
-	invokeWithExecutionAdmission,
-} from "../lib/execution-admission.js";
+	automaticPromotionReason,
+	hasOverlappingOptimizationInputs,
+	type OptimizationDataset,
+	type OptimizationEvidence,
+	type OptimizationLeakage,
+} from "../lib/optimization-dataset.js";
 import { validatePromptTemplate } from "../lib/prompt-templates.js";
 import { hasMatchingMustacheTokenSignature } from "../lib/prompt-tokens.js";
 import { TRUSTED_ACTOR_CONTEXT_KEY } from "../middleware/auth.js";
-import { projectAuthorization } from "../db/project-authorization.js";
+import { ErrorEnvelope } from "../schemas/common.js";
 import {
 	ProjectIdQuery,
 	PromptErrorResponses,
@@ -283,6 +284,10 @@ export const startOptimization = createRoute({
 			content: { "application/json": { schema: PublicJob } },
 		},
 		...PromptErrorResponses,
+		429: {
+			description: "Active optimization job limit reached",
+			content: { "application/json": { schema: ErrorEnvelope } },
+		},
 	},
 });
 
@@ -390,7 +395,7 @@ export const optimizationEvents = createRoute({
 });
 
 function error(
-	c: { json: (body: unknown, status: 400 | 404 | 409 | 500) => Response },
+	c: { json: (body: unknown, status: 400 | 404 | 409 | 429 | 500) => Response },
 	cause: unknown,
 	fields: LogFields = {},
 ): Response {

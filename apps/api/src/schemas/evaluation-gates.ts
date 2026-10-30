@@ -38,6 +38,7 @@ export const EvaluationGateApproval = z
 		evaluation_id: z.string().uuid(),
 		definition_version_id: z.string().uuid(),
 		definition_version: z.number().int().positive(),
+		definition_contract: z.enum(["v1", "legacy_incompatible"]),
 		dataset_version_id: z.string().uuid(),
 		definition_content_hash: Fingerprint,
 		dataset_content_hash: Fingerprint,

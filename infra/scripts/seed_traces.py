@@ -26,14 +26,18 @@ import hashlib
 import json
 import os
 import random
+import re
 import secrets
 import string
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
+from xml.sax.saxutils import escape
 
 
 # ---------- realistic fixture pools ----------
@@ -403,6 +407,53 @@ def post_otlp(
         return -1, str(e.reason)
 
 
+@contextmanager
+def clickhouse_client_config(container: str, user: str, password: str):
+    command = ["docker", "exec", "-i", container]
+    created = subprocess.run(
+        command + ["sh", "-ec", "umask 077; mktemp /tmp/glasshouse-clickhouse-client.XXXXXX"],
+        capture_output=True, text=True,
+    )
+    path = created.stdout.strip()
+    if created.returncode != 0 or not re.fullmatch(r"/tmp/glasshouse-clickhouse-client\.[A-Za-z0-9]+", path):
+        raise RuntimeError("Could not create private ClickHouse client configuration")
+    try:
+        configuration = (
+            f"<clickhouse><user>{escape(user)}</user>"
+            f"<password>{escape(password)}</password></clickhouse>\n"
+        )
+        written = subprocess.run(
+            command + ["sh", "-ec", 'cat > "$1"; chmod 600 "$1"', "sh", path],
+            input=configuration, capture_output=True, text=True,
+        )
+        if written.returncode != 0:
+            raise RuntimeError("Could not write private ClickHouse client configuration")
+        yield path
+    finally:
+        removed = subprocess.run(
+            command + ["sh", "-ec", 'rm -f -- "$1"', "sh", path],
+            capture_output=True, text=True,
+        )
+        if removed.returncode != 0:
+            raise RuntimeError("Could not remove private ClickHouse client configuration")
+
+
+def reset_clickhouse_tables(args: argparse.Namespace) -> None:
+    with clickhouse_client_config(
+        args.clickhouse_container, args.clickhouse_user, args.clickhouse_password
+    ) as config:
+        for table in ("traces", "observations"):
+            result = subprocess.run(
+                ["docker", "exec", "-i", args.clickhouse_container, "clickhouse-client",
+                 f"--config-file={config}", f"--database={args.clickhouse_db}",
+                 "--query", f"TRUNCATE TABLE {table}"],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Could not truncate ClickHouse {table}")
+            print(f"  ✓ truncated {table}")
+
+
 # ---------- main ----------
 
 def parse_args() -> argparse.Namespace:
@@ -455,23 +506,12 @@ def main() -> int:
         if not args.clickhouse_password:
             print("error: --reset requires --clickhouse-password / CLICKHOUSE_PASSWORD", file=sys.stderr)
             return 2
-        import subprocess
-        print(f"Resetting ClickHouse tables in '{args.clickhouse_db}' (container={args.clickhouse_container})…")
-        for table in ("traces", "observations"):
-            cmd = [
-                "docker", "exec", "-i", args.clickhouse_container,
-                "clickhouse-client",
-                f"--database={args.clickhouse_db}",
-                f"--user={args.clickhouse_user}",
-                f"--password={args.clickhouse_password}",
-                "--multiquery",
-                "--query", f"TRUNCATE TABLE {table}",
-            ]
-            r = subprocess.run(cmd, capture_output=True, text=True)
-            if r.returncode != 0:
-                print(f"  ! truncate {table} failed: {r.stderr.strip()}", file=sys.stderr)
-                return 1
-            print(f"  ✓ truncated {table}")
+        print("Resetting ClickHouse trace tables…")
+        try:
+            reset_clickhouse_tables(args)
+        except (OSError, RuntimeError):
+            print("error: ClickHouse trace reset failed; client diagnostics suppressed", file=sys.stderr)
+            return 1
 
     now_ns = int(time.time() * 1_000_000_000)
     window_ns = args.days * 24 * 3600 * 1_000_000_000

@@ -384,6 +384,30 @@ describe("Evaluation Run admission", () => {
 		).toBe(false);
 	});
 
+	it("rejects a legacy published path that no longer meets the evaluator policy", async () => {
+		const db = transactionPool({
+			definition: {
+				...definitionRow,
+				evaluator: {
+					...definitionRow.evaluator,
+					expected_output_path: "$.constructor",
+				},
+			},
+		});
+
+		await expect(
+			admitEvaluationRun(db as never, admissionInput()),
+		).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		expect(
+			db.calls.some((call) =>
+				call.text.startsWith("INSERT INTO evaluation_runs"),
+			),
+		).toBe(false);
+		expect(
+			db.calls.some((call) => call.text.startsWith("INSERT INTO experiments")),
+		).toBe(false);
+	});
+
 	it("rejects an oversized Dataset Version before materializing its items", async () => {
 		const previous = process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN;
 		process.env.EVALUATION_MAX_REQUESTED_SAMPLE_SIZE_PER_RUN = "1";

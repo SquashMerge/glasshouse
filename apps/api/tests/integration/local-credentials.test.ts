@@ -661,6 +661,10 @@ test("invalid, expired, malformed and cross-organization bootstrap attempts leav
 	await rejectedWithoutChanges(id, () =>
 		store.bootstrap({ ...valid, password: "" }),
 	);
+	for (const weak of ["x", "😀".repeat(11), "é".repeat(513)])
+		await rejectedWithoutChanges(id, () =>
+			store.bootstrap({ ...valid, password: weak }),
+		);
 	await rejectedWithoutChanges(id, () =>
 		store.bootstrap({
 			...valid,
@@ -1117,6 +1121,10 @@ test("Admin-created and email invitation enrollment is single-use, revocable, te
 			email: "invite@example.invalid",
 		}),
 	]);
+	for (const weak of ["x", "😀".repeat(11), "é".repeat(513)])
+		await rejectedWithoutChanges(fixture.id, () =>
+			fixture.store.enroll(accounts[0]!.token, weak),
+		);
 	const records = await pool.query(
 		"SELECT kind, email, expires_at = created_at + interval '7 days' AS bounded, token_digest IS NOT NULL AS digest FROM local_account_enrollments WHERE organization_id = $1 ORDER BY kind",
 		[fixture.id],

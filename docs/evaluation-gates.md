@@ -12,6 +12,8 @@ An Admin creates an approval with:
 
 The server resolves and stores the Definition Version's immutable content hash, its exact Dataset Version UUID and content hash, and the typed `minimum_pass_rate`. A version without a complete v1 contract, an explicitly configured provider/model, or a pinned minimum pass rate cannot be approved. Gate approval never resolves missing target fields from runtime environment defaults. Approval records are immutable except for one-way revocation and supersession. A superseding approval must bind the same Definition Version and context; the prior approval is marked `superseded` in the same transaction.
 
+Approval responses include `definition_contract`: `v1` for an evaluator supported by the current safety policy, or `legacy_incompatible` for a historical evaluator that no longer satisfies it. This classification is independent of approval status: an approval can remain `active` for inspection and revocation while its Definition Version is no longer executable. The UI disables Run gate for incompatible approvals, and server-side admission rejects new work from them. Publish a safe replacement Definition Version and approve that version; historical contents and hashes remain unchanged. Idempotent replay of an already admitted Run still returns its durable record.
+
 Approval and invocation writes require the project-scoped Admin-only `release_gate_manage` operation. Read-only inspection is project-scoped `product_read`. A User, Read-only actor, cross-project caller, archived project, or revoked authorization cannot approve, revoke, or invoke a gate.
 
 ## API contract

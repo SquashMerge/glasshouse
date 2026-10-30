@@ -78,9 +78,13 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 **Expected control:** local password hashes use Argon2id; sessions are random opaque 32-byte values stored as digests with an eight-hour absolute lifetime, revocation, `HttpOnly`/`SameSite=Strict` cookies, `Secure` in production, Origin/Fetch-Metadata checks, and CSRF tokens for unsafe cookie requests. Login errors are non-enumerating and verification is rate/concurrency bounded. Admin-issued enrollment/reset codes are high-entropy, single-use, expiring, stored by digest, and not returned in list/audit responses. The first-Admin setup token is supplied by the operator: provisioning validates canonical encoding and stores only its digest, but does not measure entropy. Operators must provision it as a 32-byte CSPRNG token encoded as unpadded base64url, as specified in the [credential runbook](local-credentials-runbook.md). Cookie presence takes precedence over Basic; an invalid cookie must not fall back to Basic. Break-glass is operator-configured and audited. See [session runbook](local-sessions-runbook.md), [credential runbook](local-credentials-runbook.md), and [account management](local-account-management.md).
 
+All local password operations, including login and current-password verification, require at least 12 Unicode code points and at most 1024 UTF-8 bytes. Shorter stored passwords are intentionally unsupported; the same validator gates hashing and verification.
+
 **Residual/deployment considerations:** Basic Auth remains an API/operator compatibility mechanism. SSO/MFA are not shipped. HTTPS, exact public-origin configuration, proxy header/body logging exclusions, secret storage/rotation, and edge rate limiting are deployment responsibilities. Do not put secrets in URLs, logs, issue text, screenshots, browser storage, or command output.
 
 The OTLP credential page keeps revealed secrets in component state, while shared query/mutation caches retain only credential metadata. Dismissal, replacement, and revocation clear the revealed secret; Project/authority changes and unmount invalidate pending reveals. Reveal eligibility is captured at submission, before an offline mutation can pause, so returning to the original Project cannot reauthorize its stale reveal on reconnect. This limits application retention, not access by someone controlling the browser or copies explicitly placed on the clipboard. Credential management requires current organization Admin authority, not creator identity. Bearer ingestion uses the creator Actor's current authority and enabled-account state, so an unrevoked credential marked Active can still be unusable. See [OTLP authentication](03-otel-ingest.md#authentication).
+
+On protected-page focus, the browser starts a fresh session request and fences older in-flight session responses, including when cross-tab storage invalidation is unavailable. It resets mounted query observers and refetches active queries, including `/v1/me`, so cached query results and prior role/capability flags are absent during refresh. To keep components whose routes remain mounted from losing local form state, the provider retains only the last selected Project as a non-authoritative read-only shell, with management/governance capabilities disabled; if `/v1/me` fails, organization authority remains unavailable and project capability remains least-privileged. The NewPromptPage composer has regression coverage. EditPromptPage retains a source snapshot scoped to its Project, prompt slug, and source version during a same-context query reset so the composer stays mounted; a changed Project, slug, or source version remounts the composer and discards its local draft. An error or authority failure still removes the editor rather than retaining private content. The complete protected subtree is immediately visually/accessibility-hidden and inert behind an opaque full-viewport modal in the browser's top layer, covering and inactivating portaled UI as well. Only the newest check may reveal content once its session request and active-query refresh both finish. Same-identity drafts reappear unchanged only in components that stayed mounted; a changed Actor, Organization, authentication kind, or username remounts the protected subtree while hidden to discard private drafts. The cached session expiry remains enforced during pending checks; invalid sessions clear workspace state and unavailable checks unmount protected content. Focus and storage events are browser freshness controls, not continuous revocation or a substitute for server-side authorization.
 
 ### D. Sensitive telemetry, prompts, datasets, and model-provider disclosure (high impact)
 
@@ -100,6 +104,8 @@ The OTLP credential page keeps revealed secrets in component state, while shared
 
 **Expected control:** API body-size and route-level structural bounds, bounded model-call/sample/concurrency budgets, worker output/diagnostic limits, bounded SSE frames/bytes/timeouts, and idempotent/recovery rules reduce selected paths. Login verification also has bounded admission. These limits do not by themselves prove system-wide rate limiting or capacity safety.
 
+GEPA job creation enforces separate active-job caps per Project and per durable requester Actor across all Projects. A transaction-scoped, requester-namespaced advisory lock keyed by the trusted authorization Actor UUID follows authorization/Project locks and precedes counting/insertion; admission acquires no further Project locks while holding it. Counts join each job to its Project's Organization and resolve stored `requested_by` provenance with `trusted_actor_subject_matches`, so equivalent Basic username spellings share capacity while their original provenance remains intact. Active-job replay precedes capacity checks. This bounds job admission, not provider-side resource consumption after dispatch.
+
 **Residual:** operators must configure ingress/network rate limits, capacity, monitoring, quotas, disk limits, and backups. Health and other documented public operations can still be availability targets. Test worst-case bounded paths and cancellation/recovery when changing these controls.
 
 ### F. Provider configuration and worker execution boundary (high impact)
@@ -116,9 +122,9 @@ The optional GEPA worker receives a structured request over stdin and has bounde
 
 **Goal:** execute code in CI/deployment, inject a backdoor, steal secrets, or replace the running application.
 
-**Current measures:** lockfile-based installs, pinned GitHub Actions by commit, a dependency-release-age verifier that checks PR lockfile changes from a trusted-base workflow without executing PR code, a Trivy filesystem vulnerability/secret scan, and workflow permissions that are read-only where declared. The repository notes that the dependency-age workflow is advisory rather than an enforced required check on GitHub Free; verify the exact PR checks and branch rules rather than assuming it gates merge.
+**Current measures:** lockfile-based installs (including hash-verified Python worker installs in app images and devcontainer setup), pinned GitHub Actions by commit, a dependency-release-age verifier that structurally parses merge-base/target Bun JSONC lockfile blobs from a trusted-base workflow without executing PR code, a Trivy filesystem vulnerability/secret scan, and workflow permissions that are read-only where declared. The verifier compares npm package identities/versions independent of formatting and rejects unsupported lockfile structures/sources. The root `.dockerignore` excludes local environment/credential files, backups/dumps, Git/tool state, dependencies, virtual environments, and generated artifacts from both app build contexts while retaining required sources and migration inputs. These filters govern new builds, not existing registry images, and cannot identify arbitrarily named secret files. The repository notes that the dependency-age workflow is advisory rather than an enforced required check on GitHub Free; verify the exact PR checks and branch rules rather than assuming it gates merge.
 
-**Residual:** a compromised maintainer account, dependency, CI action, host, secret store, or Docker daemon can exceed application-level controls. Review workflow trigger/permissions changes, action pinning, package updates, provenance, and deployment runner authority. The development Compose file is not a production security boundary; inspect the actual deployment override, ports, proxy, TLS, secret mounts, network, backup, and restore process for each deployment.
+**Residual:** a compromised maintainer account, dependency, CI action, host, secret store, or Docker daemon can exceed application-level controls. Base/database image tags remain mutable; final-image scanning/signing/provenance verification is not configured here. These are assurance gaps, not proof of an exploitable vulnerability. Review workflow trigger/permissions changes, action pinning, package updates, provenance, and deployment runner authority. The development Compose file is not a production security boundary; inspect the actual deployment override, ports, proxy, TLS, secret mounts, network, backup, and restore process for each deployment.
 
 ### H. Destructive actions and evidence integrity (high impact)
 
@@ -141,6 +147,18 @@ development LLM override at startup. These are configuration controls, not a
 replacement for host firewalling, proxy hardening, secret management, or
 backup/restore testing. The local `make dev` Compose path remains development-
 only and is not a production security boundary.
+
+Production Compose explicitly maps the required Valkey password, deployment
+redaction floor, and Evaluation model/budget envelope into the API environment;
+an interpolation `--env-file` alone does not inject service environment variables.
+The local environment-normalization helper writes a private same-directory
+temporary file, preserves owner restrictions while removing group/world access,
+atomically replaces the original, rejects symlinks, and cleans up on errors and
+catchable termination signals. Trace reset sends ClickHouse client credentials
+over stdin into a private container configuration file, removes it on normal/error
+unwinding, and suppresses raw client diagnostics. Host/container administrators
+can still inspect secrets, and forced termination or loss of container access can
+prevent cleanup; these are operational secret-handling controls, not sandboxing.
 
 ## Important assumptions and non-guarantees
 

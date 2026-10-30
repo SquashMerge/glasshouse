@@ -12,6 +12,7 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { expireAuthSession } from "../lib/auth";
 import { getNewPasswordValidationError } from "../lib/password-policy";
 
 export function PasswordChangePage() {
@@ -46,6 +47,7 @@ export function PasswordChangePage() {
 			setCurrentPassword("");
 			setNewPassword("");
 			setConfirmation("");
+			expireAuthSession();
 			window.location.assign("/login?passwordChanged=1");
 		} catch (cause) {
 			if (cause instanceof ApiError && cause.status === 422) {

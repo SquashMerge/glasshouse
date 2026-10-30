@@ -5,6 +5,8 @@ export const LOCAL_PASSWORD_POLICY = Object.freeze({
 	timeCost: 3,
 });
 const supportedPasswordPolicyVersions = new Set([1]);
+export const LOCAL_PASSWORD_REQUIREMENTS =
+	"Password must contain at least 12 Unicode code points and at most 1024 UTF-8 bytes";
 
 export type PasswordHash = {
 	password_hash: string;
@@ -23,7 +25,8 @@ export function validLocalPassword(password: unknown): password is string {
 export async function hashLocalPassword(
 	password: string,
 ): Promise<PasswordHash> {
-	if (!validLocalPassword(password)) throw new Error("Invalid local password");
+	if (!validLocalPassword(password))
+		throw new Error(LOCAL_PASSWORD_REQUIREMENTS);
 	return {
 		password_hash: await Bun.password.hash(password, LOCAL_PASSWORD_POLICY),
 		password_algorithm: LOCAL_PASSWORD_POLICY.algorithm,

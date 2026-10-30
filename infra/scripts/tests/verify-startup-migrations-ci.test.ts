@@ -7,6 +7,25 @@ const workflow = readFileSync(
 );
 
 describe("startup migration CI contract", () => {
+	it("runs the nested project mutation checks with strict Bash failure handling", () => {
+		expect(workflow).toContain(
+			"bash infra/scripts/with-local-env.sh bash -euo pipefail -c '",
+		);
+	});
+
+	it("stops a strict nested Bash script when an earlier command fails", () => {
+		const nonStrict = Bun.spawnSync(["bash", "-c", "false; true"]);
+		const strict = Bun.spawnSync([
+			"bash",
+			"-euo",
+			"pipefail",
+			"-c",
+			"false; true",
+		]);
+		expect(nonStrict.exitCode).toBe(0);
+		expect(strict.exitCode).toBe(1);
+	});
+
 	it("keeps the local-onboarding bootstrap owner aligned with its Basic username", () => {
 		const onboardingEnv =
 			workflow.split("\n  local-onboarding:\n")[1]?.split("\n    steps:\n")[0] ??

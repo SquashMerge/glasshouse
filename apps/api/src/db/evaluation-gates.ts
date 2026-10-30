@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { EvaluationDefinitionInput } from "../schemas/evaluations.js";
+import {
+	EvaluationEvaluator,
+	EvaluationDefinitionInput,
+} from "../schemas/evaluations.js";
 import {
 	admitEvaluationRun,
 	EvaluationRunRepositoryError,
@@ -30,6 +33,7 @@ export type EvaluationGateApproval = {
 	evaluation_id: string;
 	definition_version_id: string;
 	definition_version: number;
+	definition_contract: "v1" | "legacy_incompatible";
 	dataset_version_id: string;
 	definition_content_hash: string;
 	dataset_content_hash: string;
@@ -177,6 +181,19 @@ function safeReason(reason: string): string {
 function reasonDigest(reason: string): string {
 	return createHash("sha256").update(reason).digest("hex");
 }
+function approvalDefinitionContract(
+	row: Row,
+): EvaluationGateApproval["definition_contract"] {
+	try {
+		const raw = row.definition_evaluator;
+		const evaluator = typeof raw === "string" ? JSON.parse(raw) : raw;
+		return EvaluationEvaluator.safeParse(evaluator).success
+			? "v1"
+			: "legacy_incompatible";
+	} catch {
+		return "legacy_incompatible";
+	}
+}
 function approval(row: Row): EvaluationGateApproval {
 	const revokedAt =
 		row.revoked_at == null ? null : timestamp(row, "revoked_at");
@@ -188,6 +205,7 @@ function approval(row: Row): EvaluationGateApproval {
 		evaluation_id: text(row, "evaluation_id"),
 		definition_version_id: text(row, "definition_version_id"),
 		definition_version: numeric(row, "definition_version"),
+		definition_contract: approvalDefinitionContract(row),
 		dataset_version_id: text(row, "dataset_version_id"),
 		definition_content_hash: text(row, "definition_content_hash"),
 		dataset_content_hash: text(row, "dataset_content_hash"),
@@ -285,7 +303,8 @@ async function authorize(
 }
 
 const approvalLookup = `
-SELECT approval.*, definition.version AS definition_version
+SELECT approval.*, definition.version AS definition_version,
+       definition.evaluator AS definition_evaluator
 FROM evaluation_gate_approvals approval
 JOIN evaluation_definition_versions definition
   ON definition.id = approval.definition_version_id
@@ -445,7 +464,11 @@ export async function createEvaluationGateApproval(
 					reasonDigest(reason),
 				],
 			);
-			return approval({ ...insertedRow, definition_version: row.version });
+			return approval({
+				...insertedRow,
+				definition_version: row.version,
+				definition_evaluator: row.evaluator,
+			});
 		});
 	} catch (cause) {
 		throw normalize(cause);
@@ -501,7 +524,8 @@ export async function listEvaluationGateApprovals(
 				"product_read",
 			);
 			const result = await client.query(
-				`SELECT approval.*, definition.version AS definition_version
+				`SELECT approval.*, definition.version AS definition_version,
+				        definition.evaluator AS definition_evaluator
 				 FROM evaluation_gate_approvals approval
 				 JOIN evaluation_definition_versions definition ON definition.id=approval.definition_version_id
 				  AND definition.project_id=approval.project_id

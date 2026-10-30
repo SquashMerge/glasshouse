@@ -8,7 +8,6 @@ import {
 	getOrCreateDatasetDraft,
 	lockDatasetSlugForCreate,
 } from "../../src/db/datasets";
-import { deleteSafeDatasetRetentionBatch } from "../../src/db/governance";
 import {
 	cancelExecutionAdmission,
 	claimExecutionAdmission,
@@ -25,6 +24,7 @@ import {
 	reserveExperimentTaskCost,
 	updateExperiment,
 } from "../../src/db/experiments";
+import { deleteSafeDatasetRetentionBatch } from "../../src/db/governance";
 import {
 	lockActiveAuthorizedOrganizationProject,
 	lockActiveAuthorizedProject,
@@ -36,10 +36,13 @@ import {
 	admitOptimizationExecution,
 	claimOptimizationExecution,
 	claimOptimizationJob,
+	createOptimizationJob,
 	type OptimizationJob,
 	optimizationExecutionAdmissionIsActive,
 	transitionOptimizationJob,
 } from "../../src/db/prompt-optimizations";
+import { createPrompt } from "../../src/db/prompts";
+import type { TraceRow } from "../../src/db/traces-query";
 import { createAuthorizedSseDelivery } from "../../src/lib/authorized-sse";
 import { publishSync, subscribe } from "../../src/lib/event-bus";
 import {
@@ -62,7 +65,6 @@ import {
 	createTraceEventHandlers,
 	streamTraceEvents,
 } from "../../src/routes/trace-events";
-import type { TraceRow } from "../../src/db/traces-query";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -2479,6 +2481,117 @@ test.skipIf(!databaseUrl)(
 			} finally {
 				cleanup.release();
 			}
+			await pool.end();
+		}
+	},
+);
+
+test.skipIf(!databaseUrl)(
+	"concurrent GEPA starts cannot exceed the project admission cap across requesters",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 6 });
+		const fixture = await seedExecutionExperiment(pool);
+		const oldProjectLimit = process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT;
+		const oldRequesterLimit = process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER;
+		process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT = "1";
+		process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER = "2";
+		const writeAuthorization = {
+			organization_id: fixture.organizationId,
+			actor_id: fixture.actorId,
+			operation: "product_write" as const,
+		};
+		const dataset = {
+			version: 1 as const,
+			rubric: "Return the expected answer.",
+			training_examples: [{ input: "training", answer: "label" }],
+			validation_examples: [{ input: "held out", answer: "label" }],
+		};
+		let promptSlugs: string[] = [];
+		try {
+			const prompts = await Promise.all(
+				["Capacity one", "Capacity two"].map((name) =>
+					createPrompt(pool, {
+						project_id: fixture.projectId,
+						name,
+						messages: [{ role: "system", content: "Summarize {{topic}}." }],
+						actor: fixture.actorId,
+						authorization: writeAuthorization,
+					}),
+				),
+			);
+			promptSlugs = prompts.map(({ id }) => id);
+			const outcomes = await Promise.allSettled(
+				prompts.map((prompt, index) => {
+					const actorId =
+						index === 0 ? fixture.actorId : fixture.additionalManagerActorId;
+					return createOptimizationJob(pool, {
+						project_id: fixture.projectId,
+						slug: prompt.id,
+						source_version: prompt.version,
+						target: "system",
+						evaluator: { type: "default_adapter" },
+						dataset,
+						model_config: { task_lm: "task", reflection_lm: "reflection" },
+						budget: { max_metric_calls: 2 },
+						actor: actorId,
+						authorization: {
+							organization_id: fixture.organizationId,
+							actor_id: actorId,
+							operation: "execute",
+						},
+					});
+				}),
+			);
+			expect(
+				outcomes.filter(({ status }) => status === "fulfilled"),
+			).toHaveLength(1);
+			const rejected = outcomes.find(({ status }) => status === "rejected");
+			expect(rejected?.status).toBe("rejected");
+			if (rejected?.status === "rejected")
+				expect(rejected.reason).toMatchObject({
+					code: "TOO_MANY_REQUESTS",
+					status: 429,
+				});
+			const active = await pool.query<{ count: number }>(
+				"SELECT count(*)::int AS count FROM prompt_optimization_jobs WHERE project_id = $1 AND status IN ('queued','preparing','optimizing','evaluating')",
+				[fixture.projectId],
+			);
+			expect(active.rows[0]?.count).toBe(1);
+		} finally {
+			if (oldProjectLimit === undefined)
+				delete process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT;
+			else process.env.GEPA_MAX_ACTIVE_JOBS_PER_PROJECT = oldProjectLimit;
+			if (oldRequesterLimit === undefined)
+				delete process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER;
+			else process.env.GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER = oldRequesterLimit;
+			const cleanup = await pool.connect();
+			try {
+				await cleanup.query("BEGIN");
+				await cleanup.query(
+					"SELECT set_config('glasshouse.project_deletion_id', $1, true)",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM prompt_optimization_events WHERE job_id IN (SELECT id FROM prompt_optimization_jobs WHERE project_id = $1)",
+					[fixture.projectId],
+				);
+				await cleanup.query(
+					"DELETE FROM prompt_optimization_jobs WHERE project_id = $1",
+					[fixture.projectId],
+				);
+				if (promptSlugs.length)
+					await cleanup.query(
+						"DELETE FROM prompts WHERE project_id = $1 AND slug = ANY($2::text[])",
+						[fixture.projectId, promptSlugs],
+					);
+				await cleanup.query("COMMIT");
+			} catch (cause) {
+				await cleanup.query("ROLLBACK").catch(() => {});
+				throw cause;
+			} finally {
+				cleanup.release();
+			}
+			await fixture.cleanup();
 			await pool.end();
 		}
 	},

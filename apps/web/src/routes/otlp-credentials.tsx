@@ -13,6 +13,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { PageHeader } from "../components/ui/page-header";
 import { useProjectSelection } from "../components/ProjectProvider";
+import { onAuthInvalid } from "../lib/auth";
 import {
 	createOtlpCredential,
 	listOtlpCredentials,
@@ -44,6 +45,7 @@ export function OtlpCredentialsPage() {
 		secretGeneration.current += 1;
 		setShown(null);
 	}, []);
+	React.useEffect(() => onAuthInvalid(forgetSecret), [forgetSecret]);
 	const query = useQuery({
 		queryKey: ["otlp-credentials", selectedProjectId],
 		queryFn: () => listOtlpCredentials(selectedProjectId!),

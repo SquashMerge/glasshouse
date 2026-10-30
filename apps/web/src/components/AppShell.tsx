@@ -92,7 +92,6 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 			await logoutSession();
 			clearSession();
 			setSession(null);
-			window.location.href = "/login";
 		} catch {
 			setLogoutError(true);
 		} finally {

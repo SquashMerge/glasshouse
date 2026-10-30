@@ -1,45 +1,46 @@
-import * as React from "react";
-import { useNavigate, useLocation } from "@tanstack/react-router";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import * as React from "react";
 import { LuActivity, LuListTree } from "react-icons/lu";
+import {
+	type ColumnDef,
+	FilterableTable,
+	type FilterFieldDef,
+} from "../components/FilterableTable";
+import { useProjectSelection } from "../components/ProjectProvider";
+import { SseDebugOverlay } from "../components/SseDebugOverlay";
+import { StreamToggle } from "../components/StreamToggle";
+import {
+	defaultRange,
+	type TimeRange,
+	toApiParams,
+} from "../components/TimeRangePicker";
+import { Badge } from "../components/ui/badge";
 import {
 	Tabs,
 	TabsContent,
 	TabsList,
 	TabsTrigger,
 } from "../components/ui/tabs";
-import { Badge } from "../components/ui/badge";
-import {
-	FilterableTable,
-	type ColumnDef,
-	type FilterFieldDef,
-} from "../components/FilterableTable";
-import { StreamToggle } from "../components/StreamToggle";
-import { SseDebugOverlay } from "../components/SseDebugOverlay";
+import { useEventSource } from "../hooks/useEventSource";
 import {
 	ApiError,
-	listTraces,
-	listObservations,
-	type ListTracesParams,
 	type ListObservationsParams,
-	type TraceRow,
-	type ObservationRow,
+	type ListTracesParams,
+	listObservations,
+	listTraces,
 	normalizeObservationMetadata,
 	type ObservationMetadata,
 	type ObservationMetadataInput,
+	type ObservationRow,
+	type TraceRow,
 } from "../lib/api";
-import {
-	defaultRange,
-	toApiParams,
-	type TimeRange,
-} from "../components/TimeRangePicker";
-import { useEventSource } from "../hooks/useEventSource";
-import { useProjectSelection } from "../components/ProjectProvider";
 import { copyText } from "../lib/clipboard";
 import {
 	parseObservabilitySearch,
 	serializeObservabilitySearch,
 } from "../lib/observability-search";
+
 type Tab = "traces" | "spans";
 
 declare module "@tanstack/react-router" {
@@ -60,7 +61,7 @@ export function ObservabilityPage() {
 	const focusSelectedTab = location.state.observabilityTabFocus === tab;
 	React.useEffect(() => {
 		if (!focusSelectedTab) return;
-		// Let AuthGate's URL-change remount finish before consuming the handoff.
+		// Let the router's URL-state update finish before consuming the handoff.
 		const timer = window.setTimeout(() => {
 			void navigate({
 				to: "/observability",
@@ -79,7 +80,7 @@ export function ObservabilityPage() {
 		return navigate({
 			to: "/observability",
 			search: { ...nextSearch, tab: next },
-			// AuthGate can remount the page while rechecking a URL change.
+			// Preserve focus when the selected tab changes in the URL.
 			state: {
 				observabilityTabFocus: preserveFocus ? next : undefined,
 			},

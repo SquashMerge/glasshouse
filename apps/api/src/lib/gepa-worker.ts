@@ -1,5 +1,6 @@
 import type { OptimizationDataset } from "./optimization-dataset.js";
 import { logger } from "./logger.js";
+import { killOwnedProcessGroup } from "./owned-process.js";
 
 export type GepaWorkerInput = {
 	target: "system";
@@ -80,38 +81,52 @@ export function diagnosticSummary(
 }
 
 export const runGepaWorker: GepaWorker = async (input, signal, onProgress) => {
+	signal.throwIfAborted();
 	const payload = JSON.stringify(input);
+	const command = [process.env.GEPA_PYTHON ?? "python3", workerPath()];
 	const child = Bun.spawn(
-		[process.env.GEPA_PYTHON ?? "python3", workerPath()],
+		process.platform === "linux" ? ["setsid", ...command] : command,
 		{
 			stdin: new Response(`${payload}\n`).body,
 			stdout: "pipe",
 			stderr: "pipe",
-			signal,
 			env: {
 				...process.env,
 				GEPA_WORKER_MODE: process.env.GEPA_WORKER_MODE ?? "gepa",
+				GLASSHOUSE_GEPA_OWNED_PROCESS_GROUP:
+					process.platform === "linux" ? "1" : "0",
 			},
 		},
 	);
-	const [stdout, stderr, exitCode] = await Promise.all([
+	const abort = () => killOwnedProcessGroup(child.pid);
+	signal.addEventListener("abort", abort, { once: true });
+	if (signal.aborted) abort();
+	const completion = [
 		readWorkerOutput(child.stdout),
 		readWorkerDiagnostics(child.stderr, onProgress),
 		child.exited,
-	]);
-	if (exitCode !== 0) {
-		const diagnostic = stderr.trim();
-		logger.error(
-			"optimization.worker_failed",
-			new Error(`GEPA worker exited with code ${exitCode}`),
-			{
-				exit_code: exitCode,
-				...diagnosticSummary(diagnostic),
-			},
-		);
-		throw new Error("GEPA worker failed");
+	] as const;
+	try {
+		const [stdout, stderr, exitCode] = await Promise.all(completion);
+		signal.throwIfAborted();
+		if (exitCode !== 0) {
+			const diagnostic = stderr.trim();
+			logger.error(
+				"optimization.worker_failed",
+				new Error(`GEPA worker exited with code ${exitCode}`),
+				{
+					exit_code: exitCode,
+					...diagnosticSummary(diagnostic),
+				},
+			);
+			throw new Error("GEPA worker failed");
+		}
+		return parseWorkerResult(stdout, input.budget.max_metric_calls);
+	} finally {
+		killOwnedProcessGroup(child.pid);
+		await Promise.allSettled(completion);
+		signal.removeEventListener("abort", abort);
 	}
-	return parseWorkerResult(stdout, input.budget.max_metric_calls);
 };
 
 export function parseWorkerResult(
@@ -213,9 +228,14 @@ export async function readWorkerDiagnostics(
 			const lines = pending.split("\n");
 			pending = lines.pop() ?? "";
 			for (const line of lines) await processLine(line);
+			if (Buffer.byteLength(pending) > MAX_WORKER_DIAGNOSTIC_BYTES)
+				throw new Error("GEPA worker output exceeded size limit");
 		}
 		pending += decoder.decode();
 		if (pending) await processLine(pending);
+	} catch (cause) {
+		await reader.cancel().catch(() => {});
+		throw cause;
 	} finally {
 		reader.releaseLock();
 	}

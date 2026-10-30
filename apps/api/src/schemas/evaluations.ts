@@ -1,6 +1,7 @@
 import { z } from "@hono/zod-openapi";
 import { ErrorEnvelope } from "./common.js";
 import { ProjectIdQuery } from "./prompts.js";
+import { validEvaluationPath } from "../lib/evaluator.js";
 
 const UUID_SHAPED_EVALUATION_IDENTIFIER =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -23,10 +24,14 @@ const Slug = EvaluationIdentifier.refine(
 			"Canonical Evaluation slug. UUID-shaped values and the reserved `compatibility` value are rejected when creating an Evaluation.",
 		example: "support-quality-gate",
 	});
-const JsonPath = z
+const StoredJsonPath = z
 	.string()
 	.regex(/^\$\.[A-Za-z0-9_.-]+$/)
 	.max(128);
+const JsonPath = StoredJsonPath.refine(
+	validEvaluationPath,
+	"Path must use own JSON properties and exclude prototype-related segments",
+);
 export const EvaluationEvaluator = z
 	.object({
 		kind: z.enum(["exact_match", "contains"]),
@@ -139,12 +144,29 @@ const EvaluationDefinitionVersionFields = {
 	published_draft_revision: z.number().int().positive(),
 	created_at: z.string().datetime(),
 };
+const LegacyIncompatibleEvaluator = z
+	.object({
+		kind: z.enum(["exact_match", "contains"]),
+		version: z.literal("v1"),
+		expected_output_path: StoredJsonPath.default("$.expected_output"),
+		output_path: StoredJsonPath.default("$.output"),
+	})
+	.strict();
+const LegacyIncompatibleEvaluationDefinitionVersion =
+	EvaluationDefinitionInput.omit({ evaluator: true })
+		.extend({
+			...EvaluationDefinitionVersionFields,
+			definition_contract: z.literal("legacy_incompatible"),
+			evaluator: LegacyIncompatibleEvaluator,
+		})
+		.strict();
 export const EvaluationDefinitionVersion = z
 	.discriminatedUnion("definition_contract", [
 		EvaluationDefinitionInput.extend({
 			...EvaluationDefinitionVersionFields,
 			definition_contract: z.literal("v1"),
 		}).strict(),
+		LegacyIncompatibleEvaluationDefinitionVersion,
 		z
 			.object({
 				...EvaluationDefinitionVersionFields,

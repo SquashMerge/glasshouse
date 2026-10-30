@@ -31,6 +31,8 @@ jobs:
             command: bun run test
           - check: supply-chain
             command: bun run test:supply-chain
+          - check: infra-security
+            command: GLASSHOUSE_TEST_DOCKER_CONTEXT=1 bun run test:infra-security
           - check: worker-test
             command: python3 -m pip install --user --disable-pip-version-check --require-hashes -r worker/requirements.lock && python3 -m unittest worker.test_dev_cli_llm
           - check: build
@@ -323,9 +325,11 @@ jobs:
 
       - name: Verify project mutation SQL against PostgreSQL
         run: |
-          bash infra/scripts/with-local-env.sh bash -c '
+          bash infra/scripts/with-local-env.sh bash -euo pipefail -c '
             export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-glasshouse}"
             bun --cwd apps/api test tests/integration/project-mutation-sql.test.ts
+            bun --cwd apps/api test tests/integration/authorization-revocation-serialization.test.ts --test-name-pattern "concurrent GEPA starts cannot exceed the project admission cap across requesters"
+            bun --cwd apps/api test tests/integration/optimization-requester-capacity.test.ts
           '
 
       - name: Verify idempotent ClickHouse migrations

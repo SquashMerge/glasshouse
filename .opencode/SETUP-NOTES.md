@@ -1,6 +1,6 @@
 # Glasshouse — developer and coding-agent setup
 
-**Last refreshed:** 2026-10-04
+**Last refreshed:** 2026-10-30
 
 This is the concise operational guide for a clean Glasshouse checkout. Treat the checked-in files as the source of truth when this guide and the implementation diverge:
 
@@ -20,6 +20,8 @@ Do not put real credentials, local paths, auth-state locations, copied diagnosti
 - Python is isolated to compute-heavy integrations such as the GEPA worker; keep credentials at the worker/deployment boundary.
 - Production uses `infra/compose.production.yaml` and `docs/self-hosted-production.md`, not the local `make dev` Compose path. It binds API/web to loopback, keeps data services private, validates production secrets/HTTPS/`NODE_ENV`, requires URL-unreserved PostgreSQL URL components with user/database names no longer than 63 ASCII characters, and rejects the development GEPA CLI mode.
 - The production ClickHouse service mounts `infra/clickhouse/backup.xml`; keep this file with the deployment so `File()` backup and restore remain restricted to the configured backup path.
+- App Docker builds share the root `.dockerignore`, which excludes local secrets/environment files, backups/dumps, checkout metadata, dependencies, virtual environments, and generated artifacts. SQL build inputs are retained only under `infra/db/` and `infra/scripts/`; keep new required build inputs covered by the build-context regression.
+- Production Compose explicitly forwards `VALKEY_PASSWORD`, deployment redaction controls, and the Evaluation model/budget envelope. `--env-file` supplies interpolation values; it does not automatically inject them into the API. See `infra/production.env.example` and `docs/self-hosted-production.md` for defaults and bounds.
 
 ## Prerequisites
 
@@ -41,6 +43,8 @@ bun install --frozen-lockfile
 ## Bootstrap configuration
 
 Copy the template before starting any Compose target. `make doctor` checks the required environment values and rejects placeholder values, so replace every required `CHANGE_ME` value rather than committing an edited file. `make dev` remains the final Compose-level readiness check.
+
+`make doctor` and `with-local-env.sh` normalize CRLF environment files through a private, same-directory temporary file and atomic rename. The replacement keeps only the original owner's read/write permissions, removes group/world access, and rejects symlink environment files. The temporary file is cleaned on failure and catchable termination signals.
 
 ```sh
 cp infra/.env.example infra/.env
@@ -127,6 +131,7 @@ bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run ch:migrate'
 - Migration `0099_usable_local_admin_guard.sql` makes final-Admin role removal and break-glass recovery share `organization_actor_is_usable_admin`: local Admins require enabled credentials with a password hash; legacy/non-local identities retain their existing behavior. Pending/revoked-passwordless and disabled local Admin records/roles remain intact without blocking operator recovery. Setup remains permanently closed.
 - Migration `0100_usable_local_admin_identity_unlink_guard.sql` applies the same credential-aware usable-Admin semantics to the identity-unlink guard while excluding the removed identity and retaining the organization advisory fence. Pending, revoked, expired-passwordless, and disabled local Admins cannot replace an unlinked Basic Admin; an enrolled enabled local Admin can. The 0100 SQL assertions also reject an enabled password-bearing non-Admin and verify that unlinking preserves role/account records.
 - Local credential verification: run `bun test --cwd apps/api tests/integration/local-credentials.test.ts` with a real container-network `DATABASE_URL` and database-creation privileges. It creates/drops isolated fresh/0097/0098/0099-upgrade databases, tests usable-Admin role and identity-unlink guards and the real recovery handler, and proves concurrent setup with observed PostgreSQL waiters. `make test-db-migrations` also invokes it and the 0100 SQL assertions; that full harness needs Docker inside the execution environment. If unavailable, report that gate unverified and use the focused suite on devcontainer PostgreSQL, never host-service fallback. `bun run --cwd apps/api auth:calibrate-passwords` measures the versioned Bun Argon2id policy without printing secrets/hashes.
+- Every local password operation uses the same minimum of 12 Unicode code points and maximum of 1024 UTF-8 bytes, including login and current-password verification. Shorter stored passwords are unsupported; recover those accounts through the existing Admin reset/enrollment flow rather than weakening verification.
 - Migration `0101_local_sessions.sql` adds fixed eight-hour revocable local sessions, one-way digests, credential-version revocation, bounded login admission and content-free audits. Configure `GLASSHOUSE_PUBLIC_ORIGIN` to the exact HTTPS browser origin behind a proxy; `NODE_ENV=production` makes the HttpOnly `/v1`, SameSite Strict cookie Secure. Cookie mutations require `x-glasshouse-csrf` from `/v1/auth/session`; a presented cookie always wins over Basic. Only method-exact health, setup, login and invitation acceptance are public; root documentation now requires authentication. Browser sign-in now uses a separate local account, in-memory CSRF, cookie restoration and server-side logout; setup/account UX follows in #190. See `docs/local-sessions-runbook.md` for the full route and worker/recovery inventory. Local credential fences precede authorization rows; request fences use a separate bounded connection pool, SSE rechecks every frame, and background jobs retain current durable Actor authority rather than browser-session claims.
 - Session verification: `bash infra/scripts/with-local-env.sh bun test --cwd apps/api tests/integration/local-sessions.test.ts` uses private service URLs and isolated fresh/populated-0100 databases. It observes PostgreSQL auth-vs-disable/revoke waiters and tests storage guards, cookie/CSRF, workspace boot, OTLP, SSE and every protected OpenAPI operation. The Docker migration harness also runs it. Regenerate `openapi.yaml` with `bun run openapi:snapshot` and check it after typed route/security changes.
 - Migration `0102_local_actor_execution_scope.sql` retains the Experiment/Evaluation Run requester tenant triggers while admitting eligible local human actors; internal evaluation worker identities remain excluded as human requesters. The session suite exercises real local Run admission, tasks and recovery before/after disablement.
@@ -159,9 +164,11 @@ Create that local worker environment before starting the API:
 
 ```sh
 uv venv worker/.venv
-uv pip install --python worker/.venv/bin/python -r worker/requirements.txt
-# Installs the GEPA worker dependency into the interpreter used by the local API.
+uv pip install --python worker/.venv/bin/python --require-hashes -r worker/requirements.lock
+# Installs the committed hash-verified worker dependency graph into the local API interpreter.
 ```
+
+The devcontainer's post-create setup uses the same committed lock with `.venv-gepa/bin/pip install --no-cache-dir --require-hashes -r worker/requirements.lock`.
 
 `make dev-backend` sources `infra/.env` from the repository root, so `$PWD` expands to the checkout path and gives the worker a canonical interpreter path. Use the exact allowlisted model value in both GEPA model-role fields. Glasshouse replaces `{model}` only inside argv elements, sends the prompt on standard input, and never reads or persists Codex OAuth credentials. The API supplies a durable provider-dispatch key to each worker; the CLI receives a per-call sequence key only through `GLASSHOUSE_PROVIDER_DISPATCH_KEY`. The CLI adapter and development LLM override are rejected under `NODE_ENV=production`.
 
@@ -189,6 +196,16 @@ make test-e2e
 ```
 
 For Bun changes, begin from a clean worktree and run `bun install --frozen-lockfile` before relying on test results. Report unavailable Docker, provider, or browser checks as unverified rather than assuming they passed.
+
+Web pages use TanStack Router's `lazyRouteComponent` with named exports in `apps/web/src/App.tsx`; keep route paths and the protected AuthGate/ProjectProvider layout eager. `bun run --cwd apps/web build` explicitly selects `NODE_ENV=production` for Vite so a development environment cannot bundle React's development runtime. The web suite includes a production-build regression that exercises an inherited development mode, checks lazy page entries in Vite's manifest, and enforces a 500,000-byte budget for every emitted minified JavaScript chunk.
+
+Infrastructure/security regressions use `bun run test:supply-chain` and `bun run test:infra-security`. The latter parses the checked-in production API environment mapping with the installed `js-yaml`, interpolates its supported expressions using isolated synthetic values, and checks startup validation and Evaluation policy without a Docker CLI or daemon. It also requires Python 3 for environment-normalization and trace-reset regressions. The separate full Compose render smoke uses `config --quiet` on an operator/CI host with Docker Compose; see `docs/self-hosted-production.md`. Set `GLASSHOUSE_TEST_DOCKER_CONTEXT=1` to include the Docker/BuildKit synthetic context export; CI enables it. Without that flag, the Docker context export is explicitly skipped. It checks context filtering, not previously published images or full application-image builds. Run the regression suites only inside the repository's isolated devcontainer when using OpenCode; unavailable Docker-dependent smoke checks remain unverified.
+
+GEPA capacity verification uses `bash infra/scripts/with-local-env.sh bun --cwd apps/api test tests/integration/optimization-requester-capacity.test.ts` against isolated PostgreSQL with database-creation privileges. It migrates and drops its own database, races equivalent Basic username spellings across two Projects, checks replay and terminal capacity release, and observes a real advisory-lock waiter on the trusted Actor UUID key through `pg_stat_activity`/`pg_locks`. The E2E CI job runs this suite beside the existing cross-requester Project-cap regression. `GEPA_MAX_ACTIVE_JOBS_PER_PROJECT` and `GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER` default to 3/1 (range 1–1000); requester capacity follows durable Actor identity while stored provenance retains its spelling.
+
+The dependency-age verifier structurally parses the merge-base and target `bun.lock` blobs as JSONC and compares npm package name/version identities. Unsupported lockfile versions, package tuples, non-registry sources, or unbound workspace records fail closed. The trusted-base workflow does not check out, install, or execute PR code to inspect its lockfile; unit tests use synthetic publish timestamps without registry access.
+
+Trace seeding with `--reset` sends an escaped ClickHouse client configuration over subprocess stdin into a private container temporary file and removes it after success or failure. Child-process argv contains the config path rather than the password, and raw reset-client diagnostics are suppressed. Supply credentials through the environment rather than command-line password flags.
 
 E2E browser helpers require `E2E_LOCAL_USERNAME` / `E2E_LOCAL_PASSWORD` for a separately provisioned local account; `UI_USERNAME` / `UI_PASSWORD` remain direct API Basic fixtures in the main E2E job. Hosted CI starts in local-bootstrap mode, uses a masked random operator token and independent random test password through the real operator/bootstrap setup path, then explicitly restores Basic bootstrap access. The separate `local-onboarding` job retains local-only bootstrap, provisions a restricted setup file, and uses an independently generated/masked local `UI_PASSWORD` for its browser journey before verifying setup closure after restart. Both jobs use one browser worker, disable failure-page snapshots and auth recordings, and avoid secret-bearing input call logs. Set the exact browser origin (`http://localhost:5173` in CI). Never import the Basic password into local credentials or record E2E auth requests/cookies in traces, screenshots or video. `docs/local-sessions-runbook.md` describes the setup/replay and dual-auth regression checks.
 

@@ -2354,7 +2354,9 @@ type DatasetExportItem = {
 };
 
 function csvField(value: unknown): string {
-	const text = typeof value === "string" ? value : JSON.stringify(value);
+	let text = typeof value === "string" ? value : JSON.stringify(value);
+	if (typeof value === "string" && /^[\s\p{Cc}\p{Cf}]*[=+\-@]/u.test(value))
+		text = `'${text}`;
 	return `"${text.replaceAll('"', '""')}"`;
 }
 
@@ -2388,35 +2390,20 @@ function redactedExportItem(
 	};
 }
 
-function encodeDatasetExport(
-	items: DatasetExportItem[],
-	format: "csv" | "jsonl",
-): string {
-	if (format === "jsonl")
-		return items.map((item) => JSON.stringify(item)).join("\n") + "\n";
-	const fields = [
-		"item_key",
-		"input",
-		"expected_output",
-		"metadata",
-		"external_id",
-		"source_trace_id",
-		"source_observation_id",
-		"feedback_score_id",
-		"capture_context",
-		"curated_by",
-		"reviewed_by",
-		"reviewed_at",
-	] as const;
-	return (
-		[
-			fields.join(","),
-			...items.map((item) =>
-				fields.map((field) => csvField(item[field])).join(","),
-			),
-		].join("\n") + "\n"
-	);
-}
+const exportFields = [
+	"item_key",
+	"input",
+	"expected_output",
+	"metadata",
+	"external_id",
+	"source_trace_id",
+	"source_observation_id",
+	"feedback_score_id",
+	"capture_context",
+	"curated_by",
+	"reviewed_by",
+	"reviewed_at",
+] as const;
 
 export async function exportDataset(
 	db: Transactional,
@@ -2468,27 +2455,20 @@ export async function exportDataset(
 					? "Dataset draft not found"
 					: "Dataset version not found",
 			);
-		const items = await client.query(
+		const selection =
 			input.representation === "version"
 				? "SELECT item_key, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, curated_by, reviewed_by, reviewed_at FROM dataset_version_items WHERE project_id = $1 AND dataset_version_id = $2 ORDER BY position, item_key"
-				: "SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, created_by, updated_by, created_by AS curated_by, reviewed_by, reviewed_at FROM dataset_draft_items WHERE project_id = $1 AND draft_id = $2 ORDER BY position, item_key",
-			[input.project_id, text(sourceRow, "source_id")],
+				: "SELECT id, item_key, position, validation_version, state, input, expected_output, metadata, external_id, source_trace_id, source_observation_id, feedback_score_id, capture_context, created_by, updated_by, created_by AS curated_by, reviewed_by, reviewed_at FROM dataset_draft_items WHERE project_id = $1 AND draft_id = $2 ORDER BY position, item_key";
+		// One row at a time, including a count sentinel. Suppress oversized legacy
+		// payloads in PostgreSQL before the driver materializes their JSON.
+		await client.query(
+			`DECLARE dataset_export NO SCROLL CURSOR FOR SELECT CASE WHEN octet_length(row_to_json(export_row)::text) <= $3 THEN row_to_json(export_row) ELSE NULL END AS export_item FROM (${selection} LIMIT ${DATASET_EXPORT_MAX_ITEMS + 1}) export_row`,
+			[
+				input.project_id,
+				text(sourceRow, "source_id"),
+				DATASET_EXPORT_MAX_BYTES * 2,
+			],
 		);
-		if (input.representation === "draft") {
-			const validationErrors = validatePersistedDraftItems(
-				items.rows as Row[],
-				true,
-			);
-			if (validationErrors.length)
-				throw persistedValidationFailure(validationErrors);
-		}
-		if (items.rows.length > DATASET_EXPORT_MAX_ITEMS)
-			throw new DatasetRepositoryError(
-				"BAD_REQUEST",
-				`Dataset export exceeds the ${DATASET_EXPORT_MAX_ITEMS}-item limit`,
-				undefined,
-				{ max_items: DATASET_EXPORT_MAX_ITEMS, item_count: items.rows.length },
-			);
 		const policy = await approvedRedaction(
 			client as Pick<Pool, "query">,
 			input.authorization.organization_id,
@@ -2497,18 +2477,50 @@ export async function exportDataset(
 		const redaction = policyRedactionOptions(
 			policy ?? { mode: "none", keys: [] },
 		);
-		const body = encodeDatasetExport(
-			items.rows.map((row) => redactedExportItem(row as Row, redaction)),
-			input.format,
-		);
-		const byteLength = new TextEncoder().encode(body).byteLength;
-		if (byteLength > DATASET_EXPORT_MAX_BYTES)
-			throw new DatasetRepositoryError(
-				"BAD_REQUEST",
-				`Dataset export exceeds the ${DATASET_EXPORT_MAX_BYTES}-byte limit`,
-				undefined,
-				{ max_bytes: DATASET_EXPORT_MAX_BYTES, byte_length: byteLength },
+		const lines = input.format === "csv" ? [exportFields.join(",") + "\n"] : [];
+		let byteLength = Buffer.byteLength(lines[0] ?? "");
+		let itemCount = 0;
+		while (true) {
+			const next = await client.query<{ export_item: Row | null }>(
+				"FETCH FORWARD 1 FROM dataset_export",
 			);
+			if (!next.rows.length) break;
+			itemCount++;
+			if (itemCount > DATASET_EXPORT_MAX_ITEMS)
+				throw new DatasetRepositoryError(
+					"BAD_REQUEST",
+					`Dataset export exceeds the ${DATASET_EXPORT_MAX_ITEMS}-item limit`,
+					undefined,
+					{ max_items: DATASET_EXPORT_MAX_ITEMS, item_count: itemCount },
+				);
+			const row = next.rows[0]!.export_item;
+			if (!row)
+				throw new DatasetRepositoryError(
+					"BAD_REQUEST",
+					`Dataset export exceeds the ${DATASET_EXPORT_MAX_BYTES}-byte limit`,
+				);
+			if (input.representation === "draft") {
+				const errors = validatePersistedDraftItems([row], true);
+				if (errors.length) throw persistedValidationFailure(errors);
+			}
+			const item = redactedExportItem(row, redaction);
+			const line =
+				(input.format === "jsonl"
+					? JSON.stringify(item)
+					: exportFields.map((field) => csvField(item[field])).join(",")) +
+				"\n";
+			byteLength += Buffer.byteLength(line);
+			if (byteLength > DATASET_EXPORT_MAX_BYTES)
+				throw new DatasetRepositoryError(
+					"BAD_REQUEST",
+					`Dataset export exceeds the ${DATASET_EXPORT_MAX_BYTES}-byte limit`,
+					undefined,
+					{ max_bytes: DATASET_EXPORT_MAX_BYTES, byte_length: byteLength },
+				);
+			lines.push(line);
+		}
+		await client.query("CLOSE dataset_export");
+		const body = lines.join("") || "\n";
 		await lockProjectAuditProvenance(client, input.project_id);
 		await client.query(
 			"INSERT INTO dataset_lifecycle_audit_events (organization_id, project_id, dataset_id, slug, actor_id, event_type, item_count) VALUES ($1, $2, $3, $4, $5, 'exported', $6)",
@@ -2518,7 +2530,7 @@ export async function exportDataset(
 				text(sourceRow, "dataset_id"),
 				text(sourceRow, "slug"),
 				input.authorization.actor_id,
-				items.rows.length,
+				itemCount,
 			],
 		);
 		await client.query("COMMIT");
