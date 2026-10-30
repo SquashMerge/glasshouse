@@ -6,6 +6,7 @@ import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Select } from "../components/ui/select";
+import { PageHeader } from "../components/ui/page-header";
 import { Skeleton } from "../components/ui/skeleton";
 import { copyText } from "../lib/clipboard";
 import {
@@ -86,18 +87,18 @@ export function DashboardPage() {
 	}
 
 	return (
-		<main className="space-y-8 py-10 sm:py-12">
-			<header className="flex flex-wrap items-end justify-between gap-5">
-				<div className="space-y-1">
-					<h1 className="text-[32px] leading-10 font-semibold tracking-tight">
-						Organization overview
-					</h1>
-					<p className="max-w-3xl text-sm text-muted-foreground">
-						Usage across every active and archived Project in your organization.
-						Counts are retained rows grouped by record start time; this view
-						does not grant access to telemetry details.
-					</p>
-				</div>
+		<div className="space-y-6">
+			<div className="flex flex-wrap items-end justify-between gap-5">
+				<PageHeader
+					title="Organization overview"
+					description={
+						<span className="block max-w-3xl">
+							Usage across every active and archived Project in your
+							organization. Counts are retained rows grouped by record start
+							time; this view does not grant access to telemetry details.
+						</span>
+					}
+				/>
 				<label className="block space-y-2 text-sm" htmlFor="usage-time-range">
 					<span className="font-medium">Time range (UTC)</span>
 					<Select
@@ -115,7 +116,7 @@ export function DashboardPage() {
 						))}
 					</Select>
 				</label>
-			</header>
+			</div>
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="space-y-1 text-sm text-muted-foreground">
 					{data && (
@@ -248,25 +249,27 @@ export function DashboardPage() {
 									</p>
 								</div>
 								<UsageBars series={data.series} />
-								<table className="sr-only">
-									<caption>Telemetry activity by UTC time bucket</caption>
-									<thead>
-										<tr>
-											<th scope="col">Bucket start (UTC)</th>
-											<th scope="col">Traces</th>
-											<th scope="col">Observations</th>
-										</tr>
-									</thead>
-									<tbody>
-										{data.series.map((bucket) => (
-											<tr key={bucket.bucket_start}>
-												<th scope="row">{bucket.bucket_start}</th>
-												<td>{formatCount(bucket.traces)}</td>
-												<td>{formatCount(bucket.observations)}</td>
+								<div className="sr-only">
+									<table>
+										<caption>Telemetry activity by UTC time bucket</caption>
+										<thead>
+											<tr>
+												<th scope="col">Bucket start (UTC)</th>
+												<th scope="col">Traces</th>
+												<th scope="col">Observations</th>
 											</tr>
-										))}
-									</tbody>
-								</table>
+										</thead>
+										<tbody>
+											{data.series.map((bucket) => (
+												<tr key={bucket.bucket_start}>
+													<th scope="row">{bucket.bucket_start}</th>
+													<td>{formatCount(bucket.traces)}</td>
+													<td>{formatCount(bucket.observations)}</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
 								<div
 									className="flex flex-wrap gap-4 text-xs text-muted-foreground"
 									aria-label="Chart legend"
@@ -441,6 +444,6 @@ export function DashboardPage() {
 					</>
 				)
 			)}
-		</main>
+		</div>
 	);
 }

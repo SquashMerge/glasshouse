@@ -9247,9 +9247,8 @@ paths:
               additionalProperties: false
               properties:
                 password:
-                  description: Password must contain at least 12 Unicode characters and at most 1024 UTF-8 bytes
-                  maxLength: 1024
-                  minLength: 1
+                  description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                  minLength: 12
                   type: string
                   writeOnly: true
                 token:
@@ -9294,7 +9293,7 @@ paths:
         - auth
   /v1/auth/login:
     post:
-      description: Verify a deployment-scoped local username/password and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.
+      description: Verify a deployment-scoped local username/password meeting the 12-Unicode-code-point minimum and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.
       requestBody:
         content:
           application/json:
@@ -9303,8 +9302,8 @@ paths:
                 - additionalProperties: false
                   properties:
                     password:
-                      maxLength: 1024
-                      minLength: 1
+                      description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                      minLength: 12
                       type: string
                       writeOnly: true
                     username:
@@ -9393,14 +9392,13 @@ paths:
               additionalProperties: false
               properties:
                 current_password:
-                  maxLength: 1024
-                  minLength: 1
+                  description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                  minLength: 12
                   type: string
                   writeOnly: true
                 new_password:
-                  description: Password must contain at least 12 Unicode characters and at most 1024 UTF-8 bytes
-                  maxLength: 1024
-                  minLength: 1
+                  description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                  minLength: 12
                   type: string
                   writeOnly: true
               required:
@@ -9531,9 +9529,8 @@ paths:
               additionalProperties: false
               properties:
                 password:
-                  description: Password must contain at least 12 Unicode characters and at most 1024 UTF-8 bytes
-                  maxLength: 1024
-                  minLength: 1
+                  description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                  minLength: 12
                   type: string
                   writeOnly: true
                 token:

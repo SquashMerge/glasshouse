@@ -74,7 +74,7 @@ test("evaluation paths reject prototype segments and never compare inherited val
 		).toBe(1);
 });
 
-test("new local passwords require 12 Unicode code points and at most 1024 UTF-8 bytes", () => {
+test("local passwords require 12 Unicode code points and at most 1024 UTF-8 bytes", () => {
 	for (const value of [
 		"x",
 		"x".repeat(11),
@@ -92,24 +92,22 @@ test("new local passwords require 12 Unicode code points and at most 1024 UTF-8 
 		expect(validLocalPassword(value)).toBe(true);
 });
 
-test("legacy short passwords remain verifiable", async () => {
+test("stored short passwords are rejected even with a matching Argon2id hash", async () => {
 	const password_hash = await Bun.password.hash("x", {
 		algorithm: "argon2id",
 		memoryCost: 8192,
 		timeCost: 1,
 	});
 	expect(
-		(
-			await verifyLocalPassword("x", {
-				password_hash,
-				password_algorithm: "argon2id",
-				password_version: 1,
-			})
-		).verified,
-	).toBe(true);
+		await verifyLocalPassword("x", {
+			password_hash,
+			password_algorithm: "argon2id",
+			password_version: 1,
+		}),
+	).toEqual({ verified: false, rehash: false });
 });
 
-test("all password-setting HTTP contracts enforce the new policy while login accepts legacy passwords", async () => {
+test("all local password HTTP contracts enforce the same policy", async () => {
 	for (const route of [
 		setupRoute,
 		acceptInvitationRoute,
@@ -135,7 +133,10 @@ test("all password-setting HTTP contracts enforce the new policy while login acc
 					: route === acceptInvitationRoute
 						? { token: "a".repeat(43), password: value }
 						: route === changePasswordRoute
-							? { current_password: "x", new_password: value }
+							? {
+									current_password: "valid-current-password",
+									new_password: value,
+								}
 							: { username: "Admin", password: value };
 			const result = await app.request(route.path, {
 				method: "POST",
@@ -143,8 +144,7 @@ test("all password-setting HTTP contracts enforce the new policy while login acc
 				body: JSON.stringify(payload),
 			});
 			const accepted =
-				Buffer.byteLength(value) <= 1024 &&
-				(route === loginRoute || Array.from(value).length >= 12);
+				Buffer.byteLength(value) <= 1024 && Array.from(value).length >= 12;
 			expect(result.status).toBe(accepted ? 200 : 400);
 		}
 	}

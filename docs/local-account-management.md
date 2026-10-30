@@ -16,6 +16,7 @@ The browser uses local usernames and the existing [opaque server session](local-
 - Sessions expire after eight hours. Expired/invalid/revoked sessions return to login; network/server failures offer retry. Logout revokes remotely before clearing workspace data; failed logout offers retry.
 - Invalid credentials, disabled/passwordless accounts and limiter denials share a non-enumerating server error. The browser explains these possibilities without identifying which applies. Wait 15 minutes after repeated failures. No public account-existence or status lookup is available.
 - An Admin privately hands the account holder their username and code. Visit `/enroll`, enter the code and confirm a first password. Codes last seven days and are single-use. The UI clears code/password fields after submission. Invalid/expired/revoked/consumed/disabled cases share recovery guidance: ask the Admin for a fresh code. Never put codes in URLs.
+- All local passwords—including sign-in and current-password checks—must contain at least 12 Unicode code points and no more than 1024 UTF-8 bytes. Use a long, unique passphrase and do not reuse passwords.
 - Recovery is Admin-initiated re-enrollment. If no usable Admin remains, use the configured Basic owner's [existing break-glass API](08-project-workspace-authorization-runbook.md#admin-access-and-break-glass-recovery) with its confirmation, audit and cooldown. Never reopen setup. Basic is not a browser login option.
 
 ## Admin controls

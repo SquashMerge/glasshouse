@@ -120,6 +120,29 @@ describe("local authentication pages", () => {
 		await waitFor(() => expect(error).toHaveFocus());
 		expect(screen.getByLabelText("Enrollment code")).toHaveValue("");
 	});
+	it("shows clear password guidance and blocks a password that is too short", async () => {
+		fetchMock.mockResolvedValue(json({ ok: true }));
+		mount(<FirstPasswordForm setup={false} onComplete={vi.fn()} />);
+		expect(
+			screen.getByText(
+				"Use at least 12 characters. Longer, unique passphrases are easier to remember. Don’t reuse a password from another site.",
+			),
+		).toBeVisible();
+		fireEvent.change(screen.getByLabelText("Enrollment code"), {
+			target: { value: "test-code".padEnd(43, "x") },
+		});
+		for (const name of ["New password", "Confirm password"])
+			fireEvent.change(screen.getByLabelText(name), {
+				target: { value: "short" },
+			});
+		fireEvent.submit(
+			screen.getByRole("button", { name: "Set password" }).closest("form")!,
+		);
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			/Use at least 12 characters/,
+		);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
 	it("login sends local credentials once, obtains safe session context and stores nothing", async () => {
 		fetchMock.mockImplementation(async (url: string) =>
 			url.endsWith("setup")
@@ -136,6 +159,10 @@ describe("local authentication pages", () => {
 					: json({ ok: true }),
 		);
 		mount(<LoginPage />);
+		expect(screen.getByLabelText("Password")).toHaveAttribute(
+			"minLength",
+			"12",
+		);
 		fireEvent.change(screen.getByLabelText("Username"), {
 			target: { value: "test.admin" },
 		});

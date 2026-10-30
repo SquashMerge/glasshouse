@@ -96,8 +96,9 @@ export function LoginPage() {
 				<CardHeader>
 					<h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
 					<CardDescription>
-						Use your local Glasshouse username and password. Sessions expire
-						after eight hours; sign in again if your session has expired.
+						Use your local Glasshouse username and password. Passwords require
+						at least 12 characters. Sessions expire after eight hours; sign in
+						again if your session has expired.
 					</CardDescription>
 				</CardHeader>
 				<CardContent>
@@ -142,6 +143,7 @@ export function LoginPage() {
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
 								required
+								minLength={12}
 								disabled={submitting}
 								maxLength={1024}
 							/>

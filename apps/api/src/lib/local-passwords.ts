@@ -5,10 +5,8 @@ export const LOCAL_PASSWORD_POLICY = Object.freeze({
 	timeCost: 3,
 });
 const supportedPasswordPolicyVersions = new Set([1]);
-export const LOCAL_PASSWORD_MIN_CHARACTERS = 12;
-export const LOCAL_PASSWORD_MAX_BYTES = 1024;
 export const LOCAL_PASSWORD_REQUIREMENTS =
-	"Password must contain at least 12 Unicode characters and at most 1024 UTF-8 bytes";
+	"Password must contain at least 12 Unicode code points and at most 1024 UTF-8 bytes";
 
 export type PasswordHash = {
 	password_hash: string;
@@ -18,16 +16,9 @@ export type PasswordHash = {
 
 export function validLocalPassword(password: unknown): password is string {
 	return (
-		validLocalPasswordInput(password) &&
-		Array.from(password).length >= LOCAL_PASSWORD_MIN_CHARACTERS
-	);
-}
-
-export function validLocalPasswordInput(password: unknown): password is string {
-	return (
 		typeof password === "string" &&
-		Buffer.byteLength(password) > 0 &&
-		Buffer.byteLength(password) <= LOCAL_PASSWORD_MAX_BYTES
+		Array.from(password).length >= 12 &&
+		Buffer.byteLength(password) <= 1024
 	);
 }
 
@@ -48,7 +39,7 @@ export async function verifyLocalPassword(
 	stored: PasswordHash,
 ): Promise<{ verified: boolean; rehash: boolean }> {
 	if (
-		!validLocalPasswordInput(password) ||
+		!validLocalPassword(password) ||
 		stored.password_algorithm !== "argon2id" ||
 		!supportedPasswordPolicyVersions.has(stored.password_version)
 	)
@@ -78,7 +69,6 @@ export async function verifyLocalPassword(
 			verified,
 			rehash:
 				verified &&
-				validLocalPassword(password) &&
 				Number(memory) <= LOCAL_PASSWORD_POLICY.memoryCost &&
 				Number(time) <= LOCAL_PASSWORD_POLICY.timeCost &&
 				(stored.password_version !== LOCAL_PASSWORD_POLICY.version ||

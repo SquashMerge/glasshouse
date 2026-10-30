@@ -12,11 +12,8 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import {
-	PASSWORD_REQUIREMENTS,
-	validNewPassword,
-} from "../lib/password-policy";
 import { expireAuthSession } from "../lib/auth";
+import { getNewPasswordValidationError } from "../lib/password-policy";
 
 export function PasswordChangePage() {
 	const [currentPassword, setCurrentPassword] = React.useState("");
@@ -37,8 +34,9 @@ export function PasswordChangePage() {
 			setError("New passwords do not match.");
 			return;
 		}
-		if (!validNewPassword(newPassword)) {
-			setError(PASSWORD_REQUIREMENTS);
+		const passwordError = getNewPasswordValidationError(newPassword);
+		if (passwordError) {
+			setError(passwordError);
 			return;
 		}
 
@@ -74,8 +72,9 @@ export function PasswordChangePage() {
 					Change password
 				</h1>
 				<CardDescription>
-					Enter your current password and choose a new one. You will be signed
-					out on this and other sessions after the change.
+					Enter your current password (at least 12 characters) and choose a new
+					one. You will be signed out on this and other sessions after the
+					change.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -90,6 +89,7 @@ export function PasswordChangePage() {
 							value={currentPassword}
 							onChange={(event) => setCurrentPassword(event.target.value)}
 							required
+							minLength={12}
 							disabled={submitting}
 							maxLength={1024}
 						/>
@@ -106,10 +106,11 @@ export function PasswordChangePage() {
 							required
 							disabled={submitting}
 							maxLength={1024}
-							aria-describedby="password-help"
+							aria-describedby="new-password-help"
 						/>
-						<p id="password-help" className="text-xs text-muted-foreground">
-							{PASSWORD_REQUIREMENTS}
+						<p id="new-password-help" className="text-xs text-muted-foreground">
+							Use at least 12 characters. Longer, unique passphrases are easier
+							to remember. Don’t reuse a password from another site.
 						</p>
 					</div>
 					<div className="space-y-2">

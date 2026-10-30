@@ -16,8 +16,6 @@ import {
 import {
 	hashLocalPassword,
 	validLocalPassword,
-	validLocalPasswordInput,
-	LOCAL_PASSWORD_REQUIREMENTS,
 	verifyLocalPassword,
 	type PasswordHash,
 } from "../lib/local-passwords.js";
@@ -33,13 +31,16 @@ import { trustedTenant } from "../tenancy.js";
 const tag = "auth";
 const password = z
 	.string()
-	.min(1)
-	.max(1024)
-	.refine(validLocalPasswordInput)
-	.openapi({ writeOnly: true });
-const newPassword = password
-	.refine(validLocalPassword, LOCAL_PASSWORD_REQUIREMENTS)
-	.openapi({ writeOnly: true, description: LOCAL_PASSWORD_REQUIREMENTS });
+	.refine(validLocalPassword, {
+		message:
+			"Use at least 12 Unicode code points and no more than 1024 UTF-8 bytes.",
+	})
+	.openapi({
+		writeOnly: true,
+		minLength: 12,
+		description:
+			"At least 12 Unicode code points and no more than 1024 UTF-8 bytes.",
+	});
 const secret = z.string().length(43).openapi({ writeOnly: true });
 const ok = z.object({ ok: z.literal(true) });
 const responses = {
@@ -62,7 +63,7 @@ export const loginRoute = createRoute({
 	tags: [tag],
 	summary: "Sign in to Glasshouse",
 	description:
-		"Verify a deployment-scoped local username/password and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.",
+		"Verify a deployment-scoped local username/password meeting the 12-Unicode-code-point minimum and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.",
 	security: [],
 	request: {
 		body: {
@@ -126,7 +127,7 @@ export const changePasswordRoute = createRoute({
 			content: {
 				"application/json": {
 					schema: z
-						.object({ current_password: password, new_password: newPassword })
+						.object({ current_password: password, new_password: password })
 						.strict(),
 				},
 			},
@@ -173,7 +174,7 @@ export const setupRoute = createRoute({
 					schema: z
 						.object({
 							username: z.string().min(3).max(64),
-							password: newPassword,
+							password: password,
 							token: secret,
 						})
 						.strict(),
@@ -194,7 +195,7 @@ export const acceptInvitationRoute = createRoute({
 			required: true,
 			content: {
 				"application/json": {
-					schema: z.object({ token: secret, password: newPassword }).strict(),
+					schema: z.object({ token: secret, password }).strict(),
 				},
 			},
 		},

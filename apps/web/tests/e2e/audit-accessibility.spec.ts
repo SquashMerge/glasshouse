@@ -437,6 +437,84 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 		await expect(populatedBucket.getByRole("cell")).toHaveText(["7", "7"]);
 	});
 
+	test("keeps dashboard content scrolling independent and matches the evaluations heading", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1280, height: 720 });
+		await page.route("**/v1/organization/usage?*", (route) =>
+			route.fulfill({ json: usageSnapshot("30d", 4) }),
+		);
+		await page.goto("/");
+		const dashboardHeading = page.getByRole("heading", {
+			name: "Organization overview",
+		});
+		await expect(dashboardHeading).toBeVisible();
+		const dashboardTop = await dashboardHeading.evaluate(
+			(element) => element.getBoundingClientRect().top,
+		);
+		const content = page.getByRole("main").first();
+		await expect(content).toHaveCSS("overflow-y", "auto");
+		const scrollMetrics = await content.evaluate((element) => ({
+			clientHeight: element.clientHeight,
+			scrollHeight: element.scrollHeight,
+		}));
+		expect(scrollMetrics.scrollHeight).toBeGreaterThan(
+			scrollMetrics.clientHeight,
+		);
+		const sidebar = page.getByLabel("Primary");
+		const sidebarTop = await sidebar.evaluate(
+			(element) => element.getBoundingClientRect().top,
+		);
+		await content.evaluate((element) => {
+			element.scrollTop = element.scrollHeight;
+		});
+		expect(
+			await content.evaluate((element) => element.scrollTop),
+		).toBeGreaterThan(0);
+		expect(
+			await sidebar.evaluate((element) => element.getBoundingClientRect().top),
+		).toBe(sidebarTop);
+		expect(await page.evaluate(() => window.scrollY)).toBe(0);
+		expect(
+			await page.evaluate(() => document.body.scrollHeight),
+		).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight));
+
+		await content.evaluate((element) => {
+			element.scrollTop = 0;
+		});
+		await sidebar.getByRole("link", { name: "Evaluations" }).click();
+		const evaluationsHeading = page.getByRole("heading", {
+			name: "Evaluations",
+			exact: true,
+		});
+		await expect(evaluationsHeading).toBeVisible();
+		await expect
+			.poll(() =>
+				evaluationsHeading.evaluate(
+					(element) => element.getBoundingClientRect().top,
+				),
+			)
+			.toBe(dashboardTop);
+	});
+
+	test("keeps the telemetry caption accessible without overlapping the visual chart", async ({
+		page,
+	}) => {
+		await page.route("**/v1/organization/usage?*", (route) =>
+			route.fulfill({ json: usageSnapshot("30d", 4) }),
+		);
+		await page.goto("/");
+		const activity = page.getByRole("table", {
+			name: "Telemetry activity by UTC time bucket",
+		});
+		await expect(activity).toBeAttached();
+		const hiddenWrapper = activity.locator("xpath=..");
+		const bounds = await hiddenWrapper.boundingBox();
+		expect(bounds?.width).toBeLessThanOrEqual(1);
+		expect(bounds?.height).toBeLessThanOrEqual(1);
+		await expect(hiddenWrapper).toHaveCSS("overflow", "hidden");
+	});
+
 	test("communicates snapshot freshness", async ({ page }) => {
 		await page.route("**/v1/organization/usage?*", (route) =>
 			route.fulfill({ json: usageSnapshot("30d", 4) }),

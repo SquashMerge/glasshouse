@@ -37,6 +37,29 @@ describe("self-service password change", () => {
 	});
 	afterEach(cleanup);
 
+	it("shows password guidance and blocks a new password that is too short", async () => {
+		render(<PasswordChangePage />);
+		expect(
+			screen.getByText(
+				"Use at least 12 characters. Longer, unique passphrases are easier to remember. Don’t reuse a password from another site.",
+			),
+		).toBeVisible();
+		fireEvent.change(screen.getByLabelText("Current password"), {
+			target: { value: "current-test-password" },
+		});
+		fireEvent.change(screen.getByLabelText("New password"), {
+			target: { value: "short" },
+		});
+		fireEvent.change(screen.getByLabelText("Confirm new password"), {
+			target: { value: "short" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			/Use at least 12 characters/,
+		);
+		expect(api.changeOwnPassword).not.toHaveBeenCalled();
+	});
+
 	it("explains an incorrect current password without discarding the session", async () => {
 		api.changeOwnPassword.mockRejectedValueOnce(
 			new ApiError(
@@ -112,10 +135,10 @@ describe("self-service password change", () => {
 		);
 		expect(api.changeOwnPassword).not.toHaveBeenCalled();
 	});
-	it("rejects short new passwords without restricting legacy current passwords", async () => {
+	it("rejects short Unicode new passwords before submitting", async () => {
 		render(<PasswordChangePage />);
 		fireEvent.change(screen.getByLabelText("Current password"), {
-			target: { value: "x" },
+			target: { value: "current-test-password" },
 		});
 		for (const label of ["New password", "Confirm new password"])
 			fireEvent.change(screen.getByLabelText(label), {
