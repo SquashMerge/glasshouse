@@ -92,14 +92,7 @@ services:
       timeout: 3s
       retries: 10
 
-# Preserve existing physical stores while the logical service names are Glasshouse.
 volumes:
   glasshouse_pg_data:
-    name: astraea-deps_astraea_pg_data
-    driver: local
   glasshouse_ch_data:
-    name: astraea-deps_astraea_ch_data
-    driver: local
   glasshouse_valkey_data:
-    name: astraea-deps_astraea_valkey_data
-    driver: local

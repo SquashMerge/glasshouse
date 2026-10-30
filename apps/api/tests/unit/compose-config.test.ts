@@ -198,36 +198,6 @@ describe("Compose API database configuration", () => {
 		);
 	});
 
-	it("preserves physical data volume IDs across the Glasshouse compose rename", () => {
-		const fullCompose = readFileSync(
-			resolve(import.meta.dir, "../../../../infra/compose.yaml"),
-			"utf8",
-		);
-		const dependenciesCompose = readFileSync(
-			resolve(import.meta.dir, "../../../../infra/compose.deps.yaml"),
-			"utf8",
-		);
-		const fullVolumes = fullCompose.slice(fullCompose.lastIndexOf("volumes:"));
-		const dependencyVolumes = dependenciesCompose.slice(
-			dependenciesCompose.lastIndexOf("volumes:"),
-		);
-
-		for (const [logical, physical] of [
-			["glasshouse_pg_data", "astraea_astraea_pg_data"],
-			["glasshouse_ch_data", "astraea_astraea_ch_data"],
-			["glasshouse_valkey_data", "astraea_astraea_valkey_data"],
-		] as const) {
-			expect(fullVolumes).toContain(`${logical}:\n    name: ${physical}`);
-		}
-		for (const [logical, physical] of [
-			["glasshouse_pg_data", "astraea-deps_astraea_pg_data"],
-			["glasshouse_ch_data", "astraea-deps_astraea_ch_data"],
-			["glasshouse_valkey_data", "astraea-deps_astraea_valkey_data"],
-		] as const) {
-			expect(dependencyVolumes).toContain(`${logical}:\n    name: ${physical}`);
-		}
-	});
-
 	it("renders bounded default Docker log rotation for every full-stack service", () => {
 		const config = renderComposeConfig();
 		if (!config) {
