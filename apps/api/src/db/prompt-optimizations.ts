@@ -538,13 +538,18 @@ export async function createOptimizationJob(
 		// never acquires another Project while holding this cross-Project lock.
 		await client.query(
 			"SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-			[`gepa-requester:${input.actor}`],
+			[`gepa-requester:${input.authorization.actor_id}`],
 		);
 		const counts = (
 			await rows(
 				client,
-				"SELECT count(*) FILTER (WHERE project_id=$1)::int AS project_count, count(*) FILTER (WHERE requested_by=$2)::int AS requester_count FROM prompt_optimization_jobs WHERE status IN ('queued','preparing','optimizing','evaluating') AND (project_id=$1 OR requested_by=$2)",
-				[input.project_id, input.actor],
+				`SELECT count(*) FILTER (WHERE job.project_id=$1)::int AS project_count,
+					count(*) FILTER (WHERE trusted_actor_subject_matches(project.organization_id, job.requested_by, $2))::int AS requester_count
+				FROM prompt_optimization_jobs AS job
+				JOIN projects AS project ON project.id = job.project_id
+				WHERE job.status IN ('queued','preparing','optimizing','evaluating')
+					AND (job.project_id=$1 OR trusted_actor_subject_matches(project.organization_id, job.requested_by, $2))`,
+				[input.project_id, input.authorization.actor_id],
 			)
 		)[0];
 		if (

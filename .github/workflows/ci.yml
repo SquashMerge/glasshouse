@@ -329,6 +329,7 @@ jobs:
             export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-glasshouse}"
             bun --cwd apps/api test tests/integration/project-mutation-sql.test.ts
             bun --cwd apps/api test tests/integration/authorization-revocation-serialization.test.ts --test-name-pattern "concurrent GEPA starts cannot exceed the project admission cap across requesters"
+            bun --cwd apps/api test tests/integration/optimization-requester-capacity.test.ts
           '
 
       - name: Verify idempotent ClickHouse migrations

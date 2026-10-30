@@ -1,6 +1,6 @@
 # Glasshouse — developer and coding-agent setup
 
-**Last refreshed:** 2026-10-29
+**Last refreshed:** 2026-10-30
 
 This is the concise operational guide for a clean Glasshouse checkout. Treat the checked-in files as the source of truth when this guide and the implementation diverge:
 
@@ -200,6 +200,8 @@ For Bun changes, begin from a clean worktree and run `bun install --frozen-lockf
 Web pages use TanStack Router's `lazyRouteComponent` with named exports in `apps/web/src/App.tsx`; keep route paths and the protected AuthGate/ProjectProvider layout eager. `bun run --cwd apps/web build` explicitly selects `NODE_ENV=production` for Vite so a development environment cannot bundle React's development runtime. The web suite includes a production-build regression that exercises an inherited development mode, checks lazy page entries in Vite's manifest, and enforces a 500,000-byte budget for every emitted minified JavaScript chunk.
 
 Infrastructure/security regressions use `bun run test:supply-chain` and `bun run test:infra-security`. The latter parses the checked-in production API environment mapping with the installed `js-yaml`, interpolates its supported expressions using isolated synthetic values, and checks startup validation and Evaluation policy without a Docker CLI or daemon. It also requires Python 3 for environment-normalization and trace-reset regressions. The separate full Compose render smoke uses `config --quiet` on an operator/CI host with Docker Compose; see `docs/self-hosted-production.md`. Set `GLASSHOUSE_TEST_DOCKER_CONTEXT=1` to include the Docker/BuildKit synthetic context export; CI enables it. Without that flag, the Docker context export is explicitly skipped. It checks context filtering, not previously published images or full application-image builds. Run the regression suites only inside the repository's isolated devcontainer when using OpenCode; unavailable Docker-dependent smoke checks remain unverified.
+
+GEPA capacity verification uses `bash infra/scripts/with-local-env.sh bun --cwd apps/api test tests/integration/optimization-requester-capacity.test.ts` against isolated PostgreSQL with database-creation privileges. It migrates and drops its own database, races equivalent Basic username spellings across two Projects, checks replay and terminal capacity release, and observes a real advisory-lock waiter on the trusted Actor UUID key through `pg_stat_activity`/`pg_locks`. The E2E CI job runs this suite beside the existing cross-requester Project-cap regression. `GEPA_MAX_ACTIVE_JOBS_PER_PROJECT` and `GEPA_MAX_ACTIVE_JOBS_PER_REQUESTER` default to 3/1 (range 1–1000); requester capacity follows durable Actor identity while stored provenance retains its spelling.
 
 The dependency-age verifier structurally parses the merge-base and target `bun.lock` blobs as JSONC and compares npm package name/version identities. Unsupported lockfile versions, package tuples, non-registry sources, or unbound workspace records fail closed. The trusted-base workflow does not check out, install, or execute PR code to inspect its lockfile; unit tests use synthetic publish timestamps without registry access.
 

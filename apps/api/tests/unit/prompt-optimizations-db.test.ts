@@ -703,15 +703,21 @@ describe("prompt optimization repository", () => {
 				expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
 				expect(pool.client.calls[3]).toEqual({
 					text: "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-					values: ["gepa-requester:admin"],
+					values: [`gepa-requester:${authorization.actor_id}`],
 				});
 				expect(pool.client.calls[4]?.text).toContain(
-					"FILTER (WHERE project_id=$1)",
+					"FILTER (WHERE job.project_id=$1)",
 				);
 				expect(pool.client.calls[4]?.text).toContain(
-					"FILTER (WHERE requested_by=$2)",
+					"trusted_actor_subject_matches(project.organization_id, job.requested_by, $2)",
 				);
-				expect(pool.client.calls[4]?.values).toEqual([PROJECT, "admin"]);
+				expect(pool.client.calls[4]?.text).toContain(
+					"JOIN projects AS project ON project.id = job.project_id",
+				);
+				expect(pool.client.calls[4]?.values).toEqual([
+					PROJECT,
+					authorization.actor_id,
+				]);
 				expect(pool.client.calls[5]?.text).toBe("ROLLBACK");
 				expect(
 					pool.client.calls.some(({ text }) =>

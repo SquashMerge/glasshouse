@@ -51,9 +51,11 @@ metric-call budget. `GEPA_MAX_ACTIVE_JOBS_PER_PROJECT` defaults to `3` and
 the protected production environment file to override it. Both accept integers
 from `1` through `1000`. A start request above either active-job limit receives
 HTTP `429`; queued, preparing, optimizing, and evaluating jobs count toward the
-limit. The requester limit counts the same stored requester identity across all
-Projects, with concurrent admissions serialized transactionally. Replaying an
-already-active job returns that job even when either limit is reached. See
+limit. The requester limit counts the same durable Actor across all Projects,
+including equivalent Basic username spellings, with concurrent admissions
+serialized transactionally. Stored requester provenance retains its original
+spelling. Replaying an already-active job returns that job even when either
+limit is reached. See
 `infra/production.env.example` for the variable names.
 
 Every API start applies PostgreSQL and ClickHouse migrations before accepting
