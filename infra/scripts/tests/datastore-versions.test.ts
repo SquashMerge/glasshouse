@@ -39,40 +39,25 @@ for (const path of [
 	});
 }
 
-test("CI uses the production versions and retains an explicit historical restore fixture", () => {
+test("CI restores current-version backups and checks production client connectivity", () => {
 	const ci = read(".github/workflows/ci.yml");
 	expect(ci).toContain(`image: ${images.postgres}`);
 	expect(ci).toContain(`image: ${images.clickhouse}`);
 	expect(read("infra/scripts/test-db-migrations.sh")).toContain(
 		images.postgres,
 	);
-	expect(ci).toContain(".github/compose.backup-restore-legacy.yaml");
+	const { jobs } = load(ci) as {
+		jobs: Record<string, { strategy?: unknown; env: Record<string, string> }>;
+	};
+	const backup = jobs["backup-restore-integration"];
+	expect(backup.strategy).toBeUndefined();
+	expect(backup.env.BACKUP_SOURCE_COMPOSE_FILE).toBe(
+		".github/compose.backup-restore.yaml",
+	);
+	expect(backup.env.RESTORE_TARGET_COMPOSE_FILE).toBe(
+		"${{ github.workspace }}/.github/compose.backup-restore.yaml",
+	);
+	expect(backup.env.BACKUP_RESTORE_APPLICATION_FIXTURE).toBe("1");
 	expect(ci).toContain("tests/integration/datastore-connectivity.test.ts");
-	expect(ci).toContain(
-		"Verify PostgreSQL 18 refuses an unmigrated root-level store",
-	);
-	expect(ci).toContain('BACKUP_RESTORE_APPLICATION_FIXTURE: "1"');
-	const legacy = load(
-		read(".github/compose.backup-restore-legacy.yaml"),
-	) as Compose;
-	expect(legacy.services.postgres.image).toBe("postgres:16.15-alpine");
-	expect(legacy.services.clickhouse.image).toBe(
-		"clickhouse/clickhouse-server:24.8.14.39-alpine",
-	);
-	expect(legacy.services.postgres.volumes).toContain(
-		"postgres-data:/var/lib/postgresql/data",
-	);
-});
-
-test("existing PostgreSQL physical volume identities are preserved for fail-closed upgrades", () => {
-	expect(read("infra/compose.yaml")).toContain("name: astraea_astraea_pg_data");
-	expect(read("infra/compose.deps.yaml")).toContain(
-		"name: astraea-deps_astraea_pg_data",
-	);
-	expect(read("infra/compose.production.yaml")).toContain(
-		"glasshouse_prod_pg_data:/var/lib/postgresql",
-	);
-	expect(read(".devcontainer/compose.yaml")).toContain(
-		"postgres-data:/var/lib/postgresql",
-	);
+	expect(ci).toContain("GLASSHOUSE_VERIFY_DATASTORE_VERSIONS=1");
 });

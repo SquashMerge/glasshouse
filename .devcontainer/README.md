@@ -2,7 +2,7 @@
 
 This Compose-based devcontainer gives each OpenCode workspace its own PostgreSQL 18.6, ClickHouse 26.10.2.103, and Valkey 9.1.3 network. Data-service ports are intentionally **not** published to the host, so concurrent branches do not collide.
 
-Before rebuilding an existing PG16 workspace, follow [the datastore upgrade runbook](../docs/datastore-upgrades.md). PG18 mounts `/var/lib/postgresql` and refuses an unmigrated old store; preserve its volume and migrate into a separately provisioned workspace. Never delete volumes to make startup pass. ClickHouse mounts the same restricted backup configuration as production.
+PostgreSQL 18 mounts `/var/lib/postgresql`. ClickHouse mounts the same restricted backup configuration as production. See [supported datastores](../docs/datastore-upgrades.md) for current-version recovery and verification; legacy migration and cross-version restore are unsupported. Never delete existing volumes to make startup or verification pass.
 
 ## OpenCode
 

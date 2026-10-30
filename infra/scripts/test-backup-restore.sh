@@ -7,7 +7,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/artifact"
-printf '%s\n' '{"format":"glasshouse-backup-v1","source_id":"source","stores":["postgresql","clickhouse"],"complete":true}' > "$tmp/artifact/manifest.json"
+printf '%s\n' '{"format":"glasshouse-backup-v1","backup_id":"current-version-fixture","source_id":"source","created_at":"2026-10-30T00:00:00Z","postgres_server_version":"18.6","clickhouse_server_version":"26.10.2.103","stores":["postgresql","clickhouse"],"files":["postgres.dump","clickhouse.zip","SHA256SUMS"],"complete":true}' > "$tmp/artifact/manifest.json"
 printf x > "$tmp/artifact/postgres.dump"
 python3 - "$tmp/artifact/clickhouse.zip" <<'PY'
 import pathlib

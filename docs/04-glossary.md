@@ -124,6 +124,7 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 - **PostgreSQL 18.6** — relational: agents, prompts, datasets, experiments, scores, projects.
 - **ClickHouse 26.10.2.103** — OLAP: `traces`, `observations`. Partitioned by month; skip + bloom + tokenbf_v1 indexes.
 - **Valkey 9.1.3** — event bus pub/sub fan-out (wire-compatible Redis). Future: BullMQ queues, rate-limit.
+- **Current-version restore** — recovery of a PostgreSQL/ClickHouse backup into empty isolated stores using the same supported service images and database names. Legacy datastore migration and cross-version restore are unsupported. See `docs/backup-restore.md`.
 
 ## Ingest
 

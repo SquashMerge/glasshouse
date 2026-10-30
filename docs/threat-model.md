@@ -162,13 +162,14 @@ prevent cleanup; these are operational secret-handling controls, not sandboxing.
 
 ## Important assumptions and non-guarantees
 
-Datastore major-version migration uses a quiesced source backup and a separate
-empty target with inspected non-overlapping mounts; source volumes are retained
-for rollback. PostgreSQL restore is fail-fast and single-transaction, but there
-is no atomic restore across PostgreSQL and ClickHouse. A partial restore needs
-another empty target. CI's historical logical-restore fixture does not prove
-arbitrary custom-schema compatibility or an in-place volume upgrade. See
-[datastore upgrades](datastore-upgrades.md) and [backup/restore](backup-restore.md).
+Current-version backup/restore uses a separate empty target with inspected
+non-overlapping mounts. PostgreSQL restore is fail-fast and single-transaction,
+but there is no atomic restore across PostgreSQL and ClickHouse. A partial
+restore needs another empty target. Legacy datastore migration and cross-version
+restore are unsupported. Artifact validation checks integrity, not version or
+custom-schema compatibility; current-version CI does not replace an installation's
+recovery drill. See [supported datastores](datastore-upgrades.md) and
+[backup/restore](backup-restore.md).
 
 - This is a self-hosted application; operators control TLS termination, firewall/network reachability, runtime secrets, database access, backup/restore, and host security. Do not assume the repository's development Compose defaults are safe production settings.
 - Control descriptions above are implementation claims at the stated baseline, not independent audit results. Verify changed or security-critical paths against code, migrations, configuration, and tests on the exact reviewed revision.

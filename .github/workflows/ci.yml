@@ -67,19 +67,11 @@ jobs:
         run: ${{ matrix.command }}
 
   backup-restore-integration:
-    name: Backup/restore (${{ matrix.source }})
+    name: Backup/restore (current)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - source: current
-            compose: .github/compose.backup-restore.yaml
-          - source: legacy-pg16-ch24
-            compose: .github/compose.backup-restore-legacy.yaml
     env:
-      BACKUP_SOURCE_COMPOSE_FILE: ${{ matrix.compose }}
+      BACKUP_SOURCE_COMPOSE_FILE: .github/compose.backup-restore.yaml
       BACKUP_SOURCE_ENV_FILE: ${{ github.workspace }}/.ci-backup-restore/source.env
       BACKUP_SOURCE_COMPOSE_PROJECT: backup-restore-source-${{ github.run_id }}-${{ github.run_attempt }}
       BACKUP_SOURCE_ID: ci-source
@@ -287,20 +279,6 @@ jobs:
 
       - name: Verify legacy PostgreSQL upgrade migrations
         run: bash infra/scripts/test-db-migrations.sh
-
-      - name: Verify PostgreSQL 18 refuses an unmigrated root-level store
-        run: |
-          timeout 30s docker run --rm --entrypoint bash postgres:18.6-alpine -euc '
-            printf "16\n" > /var/lib/postgresql/PG_VERSION
-            export POSTGRES_PASSWORD=synthetic-old-store-probe
-            if docker-entrypoint.sh postgres >/tmp/startup.log 2>&1; then
-              printf "PG18 accepted an unmigrated old store\n" >&2
-              exit 1
-            fi
-            grep -q "there appears to be PostgreSQL data" /tmp/startup.log
-            test "$(cat /var/lib/postgresql/PG_VERSION)" = 16
-            test ! -s "$PGDATA/PG_VERSION"
-          '
 
   e2e:
     name: e2e

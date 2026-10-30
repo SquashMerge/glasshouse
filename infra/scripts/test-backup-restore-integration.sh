@@ -63,7 +63,6 @@ PGPASSWORD="$pg_password" "${source_compose[@]}" exec -T -e PGPASSWORD "$pg_serv
 BACKUP_DESTINATION="$destination" BACKUP_SOURCE_ID=integration BACKUP_ID="$backup_id" "$root_dir/infra/scripts/backup.sh"
 artifact="$destination/$backup_id"
 BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh" --validate-only
-BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh"
 
 target_env_file="$(resolve_path "$RESTORE_TARGET_DIRECTORY" "${RESTORE_TARGET_ENV_FILE:-infra/.env}")"
 target_compose=(docker compose --project-directory "$RESTORE_TARGET_DIRECTORY" --env-file "$target_env_file" --project-name "$RESTORE_TARGET_COMPOSE_PROJECT" -f "$RESTORE_TARGET_COMPOSE_FILE")
@@ -76,6 +75,19 @@ target_ch_user="$(compose_service_value "$target_ch_service" CLICKHOUSE_USER "${
 target_ch_password="$(compose_service_value "$target_ch_service" CLICKHOUSE_PASSWORD "${target_compose[@]}")"
 target_ch_database="$(compose_service_value "$target_ch_service" CLICKHOUSE_DB "${target_compose[@]}")"
 target_ch_client_config="$(create_clickhouse_client_config "$target_ch_service" "$target_ch_user" "$target_ch_password" "${target_compose[@]}")"
+target_pg_version="$(PGPASSWORD="$target_pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$target_pg_service" psql --no-password --tuples-only --no-align --username="$target_pg_user" --dbname="$target_pg_database" --command="SELECT current_setting('server_version')" | tr -d '[:space:]')"
+target_ch_version="$("${target_compose[@]}" exec -T "$target_ch_service" clickhouse-client --config-file "$target_ch_client_config" --query='SELECT version()' | tr -d '[:space:]')"
+python3 - "$artifact/manifest.json" "$target_pg_version" "$target_ch_version" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as stream:
+    manifest = json.load(stream)
+for key, version in zip(("postgres_server_version", "clickhouse_server_version"), sys.argv[2:]):
+    if manifest.get(key) != version:
+        raise SystemExit(f"current-version recovery probe requires matching source and target {key}")
+PY
+BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh"
 target_pg_probe="$(PGPASSWORD="$target_pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$target_pg_service" psql --no-password --tuples-only --no-align --username="$target_pg_user" --dbname="$target_pg_database" --command="SELECT payload->>'value' FROM $probe WHERE probe_id = 'issue-43' AND organization_id = '43000000-0000-4000-8000-000000000001' AND project_id = '43000000-0000-4000-8000-000000000002'")"
 target_ch_probe="$("${target_compose[@]}" exec -T "$target_ch_service" clickhouse-client --config-file "$target_ch_client_config" --database="$target_ch_database" --query="SELECT payload FROM $probe WHERE probe_id = 'issue-43' AND organization_id = '43000000-0000-4000-8000-000000000001' AND project_id = '43000000-0000-4000-8000-000000000002' AND metadata['fixture'] = 'upgrade' AND start_time = toDateTime64('2026-10-30 00:00:00.123', 3)")"
 [[ "$target_pg_probe" == *representative-record* && "$target_ch_probe" == *representative-record* ]]
