@@ -444,6 +444,32 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 	test("keeps dashboard content scrolling independent and matches the evaluations heading", async ({
 		page,
 	}, testInfo) => {
+		const navigationEvents: Array<{
+			type: "navigation" | "response";
+			url: string;
+			method?: string;
+			status?: number;
+		}> = [];
+		page.on("response", (response) => {
+			const url = new URL(response.url());
+			if (url.pathname.startsWith("/v1/")) {
+				navigationEvents.push({
+					type: "response",
+					url: `${url.origin}${url.pathname}`,
+					method: response.request().method(),
+					status: response.status(),
+				});
+			}
+		});
+		page.on("framenavigated", (frame) => {
+			if (frame === page.mainFrame()) {
+				const url = new URL(frame.url());
+				navigationEvents.push({
+					type: "navigation",
+					url: `${url.origin}${url.pathname}`,
+				});
+			}
+		});
 		async function captureLayout(
 			headingName: "Organization overview" | "Evaluations",
 			phase: string,
@@ -620,6 +646,10 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 						}),
 					);
 				}
+				console.log(
+					"[evaluations-navigation-events]",
+					JSON.stringify({ retry: testInfo.retry, events: navigationEvents }),
+				);
 			}
 		}
 	});
