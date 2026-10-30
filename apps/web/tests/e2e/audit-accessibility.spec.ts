@@ -63,6 +63,10 @@ async function mockWorkspace(page: Page, recovery = false) {
 			return route.fulfill({
 				json: { items: [defaultProject, project], total: 2 },
 			});
+		if (["/v1/datasets", "/v1/experiments", "/v1/evaluations"].includes(path))
+			return route.fulfill({ json: { items: [], total: 0 } });
+		if (path === "/v1/evaluations/compatibility")
+			return route.fulfill({ json: { items: [] } });
 		if (path === "/v1/admin/actors" || path === "/v1/admin/local-accounts")
 			return route.fulfill({ json: { items: [] } });
 		if (path === "/v1/traces" || path === "/v1/observations")
