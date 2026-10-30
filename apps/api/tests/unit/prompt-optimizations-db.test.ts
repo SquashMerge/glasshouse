@@ -661,7 +661,7 @@ describe("prompt optimization repository", () => {
 				{
 					project_limit: 3,
 					requester_limit: 1,
-					project_count: 2,
+					project_count: 0,
 					requester_count: 1,
 				},
 			].entries()) {
@@ -674,6 +674,7 @@ describe("prompt optimization repository", () => {
 				const pool = new MockPool([
 					{ rows: [] },
 					{ rows: [{ id: PROJECT }] },
+					{ rows: [] },
 					{ rows: [] },
 					{
 						rows: [
@@ -700,8 +701,18 @@ describe("prompt optimization repository", () => {
 					}),
 				).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", status: 429 });
 				expect(pool.client.calls[1]?.text).toContain("FOR UPDATE");
-				expect(pool.client.calls[3]?.text).toContain("requested_by=$2");
-				expect(pool.client.calls[4]?.text).toBe("ROLLBACK");
+				expect(pool.client.calls[3]).toEqual({
+					text: "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+					values: ["gepa-requester:admin"],
+				});
+				expect(pool.client.calls[4]?.text).toContain(
+					"FILTER (WHERE project_id=$1)",
+				);
+				expect(pool.client.calls[4]?.text).toContain(
+					"FILTER (WHERE requested_by=$2)",
+				);
+				expect(pool.client.calls[4]?.values).toEqual([PROJECT, "admin"]);
+				expect(pool.client.calls[5]?.text).toBe("ROLLBACK");
 				expect(
 					pool.client.calls.some(({ text }) =>
 						text.startsWith("INSERT INTO prompt_optimization_jobs"),

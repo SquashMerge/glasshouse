@@ -104,6 +104,8 @@ On protected-page focus, the browser starts a fresh session request and fences o
 
 **Expected control:** API body-size and route-level structural bounds, bounded model-call/sample/concurrency budgets, worker output/diagnostic limits, bounded SSE frames/bytes/timeouts, and idempotent/recovery rules reduce selected paths. Login verification also has bounded admission. These limits do not by themselves prove system-wide rate limiting or capacity safety.
 
+GEPA job creation enforces separate active-job caps per Project and per stored requester identity across all Projects. A transaction-scoped, requester-namespaced advisory lock follows authorization/Project locks and precedes counting/insertion; admission acquires no further Project locks while holding it. Active-job replay precedes capacity checks. This bounds job admission, not provider-side resource consumption after dispatch.
+
 **Residual:** operators must configure ingress/network rate limits, capacity, monitoring, quotas, disk limits, and backups. Health and other documented public operations can still be availability targets. Test worst-case bounded paths and cancellation/recovery when changing these controls.
 
 ### F. Provider configuration and worker execution boundary (high impact)

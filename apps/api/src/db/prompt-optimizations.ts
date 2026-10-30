@@ -534,10 +534,16 @@ export async function createOptimizationJob(
 			)
 		)[0];
 		if (existing) return mapJob(existing);
+		// Take the requester fence after authorization/Project locks; admission
+		// never acquires another Project while holding this cross-Project lock.
+		await client.query(
+			"SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+			[`gepa-requester:${input.actor}`],
+		);
 		const counts = (
 			await rows(
 				client,
-				"SELECT count(*) FILTER (WHERE status IN ('queued','preparing','optimizing','evaluating'))::int AS project_count, count(*) FILTER (WHERE status IN ('queued','preparing','optimizing','evaluating') AND requested_by=$2)::int AS requester_count FROM prompt_optimization_jobs WHERE project_id=$1",
+				"SELECT count(*) FILTER (WHERE project_id=$1)::int AS project_count, count(*) FILTER (WHERE requested_by=$2)::int AS requester_count FROM prompt_optimization_jobs WHERE status IN ('queued','preparing','optimizing','evaluating') AND (project_id=$1 OR requested_by=$2)",
 				[input.project_id, input.actor],
 			)
 		)[0];
