@@ -147,6 +147,10 @@ describe("local authentication pages", () => {
 					: json({ ok: true }),
 		);
 		mount(<LoginPage />);
+		expect(screen.getByLabelText("Password")).toHaveAttribute(
+			"minLength",
+			"12",
+		);
 		fireEvent.change(screen.getByLabelText("Username"), {
 			target: { value: "test.admin" },
 		});

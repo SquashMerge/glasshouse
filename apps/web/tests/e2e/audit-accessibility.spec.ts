@@ -482,7 +482,7 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 		await content.evaluate((element) => {
 			element.scrollTop = 0;
 		});
-		await page.goto("/evaluations");
+		await sidebar.getByRole("link", { name: "Evaluations" }).click();
 		const evaluationsHeading = page.getByRole("heading", {
 			name: "Evaluations",
 			exact: true,

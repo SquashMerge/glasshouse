@@ -7,7 +7,7 @@ import {
 import type { Pool, PoolClient } from "pg";
 import {
 	hashLocalPassword,
-	validNewLocalPassword,
+	validLocalPassword,
 	verifyLocalPassword,
 	type PasswordHash,
 } from "../lib/local-passwords.js";
@@ -203,8 +203,7 @@ export class LocalCredentialStore {
 		)
 			throw new LocalCredentialError();
 		const username = normalizeLocalUsername(input.username);
-		if (!validNewLocalPassword(input.password))
-			throw new LocalCredentialError();
+		if (!validLocalPassword(input.password)) throw new LocalCredentialError();
 		tokenDigest(input.token);
 		const hash = await hashLocalPassword(input.password);
 		return credentialTransaction(
@@ -388,7 +387,7 @@ export class LocalCredentialStore {
 
 	async enroll(token: string, password: string): Promise<LocalPrincipal> {
 		const digest = tokenDigest(token);
-		if (!validNewLocalPassword(password)) throw new LocalCredentialError();
+		if (!validLocalPassword(password)) throw new LocalCredentialError();
 		const hash = await hashLocalPassword(password);
 		return transaction(this.pool, async (client) => {
 			const target = await client.query<{ actor_id: string }>(

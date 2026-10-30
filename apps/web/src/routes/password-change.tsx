@@ -70,8 +70,9 @@ export function PasswordChangePage() {
 					Change password
 				</h1>
 				<CardDescription>
-					Enter your current password and choose a new one. You will be signed
-					out on this and other sessions after the change.
+					Enter your current password (at least 12 characters) and choose a new
+					one. You will be signed out on this and other sessions after the
+					change.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
@@ -86,6 +87,7 @@ export function PasswordChangePage() {
 							value={currentPassword}
 							onChange={(event) => setCurrentPassword(event.target.value)}
 							required
+							minLength={12}
 							disabled={submitting}
 							maxLength={1024}
 						/>

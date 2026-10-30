@@ -15,13 +15,9 @@ export type PasswordHash = {
 export function validLocalPassword(password: unknown): password is string {
 	return (
 		typeof password === "string" &&
-		Buffer.byteLength(password) > 0 &&
+		Array.from(password).length >= 12 &&
 		Buffer.byteLength(password) <= 1024
 	);
-}
-
-export function validNewLocalPassword(password: unknown): password is string {
-	return validLocalPassword(password) && Array.from(password).length >= 12;
 }
 
 export async function hashLocalPassword(
