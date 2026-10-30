@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
+import { getNewPasswordValidationError } from "../lib/password-policy";
 
 export function AuthCard({
 	title,
@@ -58,8 +59,9 @@ export function FirstPasswordForm({
 			setError("Passwords must match.");
 			return;
 		}
-		if (new TextEncoder().encode(password).length > 1024) {
-			setError("Password must be at most 1024 UTF-8 bytes.");
+		const passwordError = getNewPasswordValidationError(password);
+		if (passwordError) {
+			setError(passwordError);
 			return;
 		}
 		setPending(true);
@@ -155,7 +157,12 @@ export function FirstPasswordForm({
 					value={password}
 					onChange={(event) => setPassword(event.target.value)}
 					disabled={pending}
+					aria-describedby="new-password-help"
 				/>
+				<p id="new-password-help" className="text-xs text-muted-foreground">
+					Use at least 12 characters. Longer, unique passphrases are easier to
+					remember. Don’t reuse a password from another site.
+				</p>
 			</div>
 			<div className="space-y-2">
 				<Label htmlFor="confirm-password">Confirm password</Label>

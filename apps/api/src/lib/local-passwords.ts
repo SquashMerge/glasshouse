@@ -20,6 +20,10 @@ export function validLocalPassword(password: unknown): password is string {
 	);
 }
 
+export function validNewLocalPassword(password: unknown): password is string {
+	return validLocalPassword(password) && Array.from(password).length >= 12;
+}
+
 export async function hashLocalPassword(
 	password: string,
 ): Promise<PasswordHash> {

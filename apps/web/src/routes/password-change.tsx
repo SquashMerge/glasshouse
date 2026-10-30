@@ -12,6 +12,7 @@ import {
 } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { getNewPasswordValidationError } from "../lib/password-policy";
 
 export function PasswordChangePage() {
 	const [currentPassword, setCurrentPassword] = React.useState("");
@@ -30,6 +31,11 @@ export function PasswordChangePage() {
 		if (submitting) return;
 		if (newPassword !== confirmation) {
 			setError("New passwords do not match.");
+			return;
+		}
+		const passwordError = getNewPasswordValidationError(newPassword);
+		if (passwordError) {
+			setError(passwordError);
 			return;
 		}
 
@@ -96,7 +102,12 @@ export function PasswordChangePage() {
 							required
 							disabled={submitting}
 							maxLength={1024}
+							aria-describedby="new-password-help"
 						/>
+						<p id="new-password-help" className="text-xs text-muted-foreground">
+							Use at least 12 characters. Longer, unique passphrases are easier
+							to remember. Don’t reuse a password from another site.
+						</p>
 					</div>
 					<div className="space-y-2">
 						<Label htmlFor="confirm-password">Confirm new password</Label>

@@ -9073,8 +9073,8 @@ paths:
               additionalProperties: false
               properties:
                 password:
-                  maxLength: 1024
-                  minLength: 1
+                  description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                  minLength: 12
                   type: string
                   writeOnly: true
                 token:
@@ -9223,8 +9223,8 @@ paths:
                   type: string
                   writeOnly: true
                 new_password:
-                  maxLength: 1024
-                  minLength: 1
+                  description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                  minLength: 12
                   type: string
                   writeOnly: true
               required:
@@ -9355,8 +9355,8 @@ paths:
               additionalProperties: false
               properties:
                 password:
-                  maxLength: 1024
-                  minLength: 1
+                  description: At least 12 Unicode code points and no more than 1024 UTF-8 bytes.
+                  minLength: 12
                   type: string
                   writeOnly: true
                 token:

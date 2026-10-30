@@ -112,11 +112,11 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 		isActive("/ingestion-credentials");
 
 	return (
-		<div className="flex bg-background text-foreground">
+		<div className="flex h-dvh overflow-hidden bg-background text-foreground">
 			<aside
 				aria-label="Primary"
 				className={cn(
-					"sticky top-0 flex h-screen shrink-0 flex-col border-r border-border bg-background transition-[width] duration-200",
+					"flex h-full shrink-0 flex-col border-r border-border bg-background transition-[width] duration-200",
 					width,
 				)}
 			>
@@ -461,7 +461,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 				</div>
 			</aside>
 
-			<main className="flex-1 min-w-0">
+			<main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 				<div
 					className={cn(
 						"mx-auto w-full px-4 py-5 sm:px-6 sm:py-8",

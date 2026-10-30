@@ -16,6 +16,7 @@ import {
 import {
 	hashLocalPassword,
 	validLocalPassword,
+	validNewLocalPassword,
 	verifyLocalPassword,
 	type PasswordHash,
 } from "../lib/local-passwords.js";
@@ -35,6 +36,18 @@ const password = z
 	.max(1024)
 	.refine(validLocalPassword)
 	.openapi({ writeOnly: true });
+const newPassword = z
+	.string()
+	.refine(validNewLocalPassword, {
+		message:
+			"Use at least 12 characters and choose a shorter password if it is too long.",
+	})
+	.openapi({
+		writeOnly: true,
+		minLength: 12,
+		description:
+			"At least 12 Unicode code points and no more than 1024 UTF-8 bytes.",
+	});
 const secret = z.string().length(43).openapi({ writeOnly: true });
 const ok = z.object({ ok: z.literal(true) });
 const responses = {
@@ -121,7 +134,7 @@ export const changePasswordRoute = createRoute({
 			content: {
 				"application/json": {
 					schema: z
-						.object({ current_password: password, new_password: password })
+						.object({ current_password: password, new_password: newPassword })
 						.strict(),
 				},
 			},
@@ -168,7 +181,7 @@ export const setupRoute = createRoute({
 					schema: z
 						.object({
 							username: z.string().min(3).max(64),
-							password,
+							password: newPassword,
 							token: secret,
 						})
 						.strict(),
@@ -189,7 +202,7 @@ export const acceptInvitationRoute = createRoute({
 			required: true,
 			content: {
 				"application/json": {
-					schema: z.object({ token: secret, password }).strict(),
+					schema: z.object({ token: secret, password: newPassword }).strict(),
 				},
 			},
 		},

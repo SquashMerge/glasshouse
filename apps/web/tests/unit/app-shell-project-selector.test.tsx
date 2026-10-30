@@ -398,6 +398,6 @@ describe("AppShell project selector", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(container.querySelector("main")?.className).not.toMatch(/\bmax-w-/);
+		expect(container.firstElementChild?.className).not.toMatch(/\bmax-w-/);
 	});
 });
