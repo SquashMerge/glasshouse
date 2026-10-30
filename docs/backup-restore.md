@@ -1,6 +1,6 @@
 # Backup and restore
 
-These commands are repository-supported operator tooling for the durable Glasshouse stores. They use the versions in the repository Compose files: PostgreSQL 16 (`postgres:16-alpine`) and ClickHouse 24 (`clickhouse/clickhouse-server:24-alpine`). A backup is not a database snapshot across both systems: PostgreSQL is dumped first and ClickHouse second, so writes during the operation can produce a cross-store point-in-time difference. Pause ingestion and application writes when a tighter consistency point is required, and record the resulting recovery point.
+These commands are repository-supported operator tooling for the durable Glasshouse stores. Current Compose files pin PostgreSQL 18.6 (`postgres:18.6-alpine`) and ClickHouse 26.10.3.7 (`clickhouse/clickhouse-server:26.10.3.7-alpine`); Valkey 9.1.3 is rebuilt separately. See [datastore upgrades](datastore-upgrades.md) before changing an existing installation, especially PostgreSQL 16 volumes. A backup is not a database snapshot across both systems: PostgreSQL is dumped first and ClickHouse second, so writes during the operation can produce a cross-store point-in-time difference. Pause ingestion and application writes when a tighter consistency point is required, and record the resulting recovery point.
 
 ClickHouse's local `File()` backup backend requires both `backups.allowed_disk` and `backups.allowed_path`. The development Compose files mount `infra/clickhouse/backup.xml`, which confines backup files to `/var/lib/clickhouse/backup/` inside the ClickHouse data volume. Custom Compose deployments must mount equivalent ClickHouse server configuration before starting the service; restarting ClickHouse is required for a changed server config to take effect.
 
@@ -36,7 +36,7 @@ Valkey is disposable coordination/cache state and is intentionally not included.
 
 Restore is never an in-place repair command. Prepare a stopped or separately running target deployment in a different directory and Compose project. Its PostgreSQL and ClickHouse volumes must have unique names and must not be bind mounts or named volumes used by the live/source stack. Both target databases must contain no application objects or tables; only server system objects may exist. Do not pre-run migrations: the backup restores the source migration bookkeeping, and target migrations are applied or validated after restore. Do not use the source `infra/compose.yaml` as the target file. Do not delete volumes or databases to make a target empty.
 
-The target Compose file must use the same supported service images, and the selected target environment file must contain target-only credentials; it may be the default `infra/.env` or an external secret file passed via `RESTORE_TARGET_ENV_FILE`. Start only the isolated target data services, then run:
+For a recovery drill, the target Compose file must use the same supported service images. For the explicit PostgreSQL 16/ClickHouse 24 logical migration, use the current target images and the separate [upgrade procedure](datastore-upgrades.md). Preserve the source PostgreSQL and ClickHouse database names. The selected target environment file must contain target-only credentials; it may be the default `infra/.env` or an external secret file passed via `RESTORE_TARGET_ENV_FILE`. Start only the isolated target data services, then run:
 
 ```sh
 BACKUP_ARTIFACT=/secure/glasshouse-backups/20261027T120000Z-1234 \
@@ -76,11 +76,15 @@ make test-backup-restore-integration
 
 The integration gate removes only its uniquely named source probe table after the check. It does not remove target data, volumes, databases, or deployments.
 
+CI runs this gate for both current→current recovery and a historical PG16/CH24→current logical migration fixture. The records include tenant IDs, JSONB, DateTime64, Map metadata, a MergeTree token index, and restored storage constraints. The artifact format remains `glasshouse-backup-v1`; minimal historical manifests accepted by artifact validation remain supported. PostgreSQL restore uses the target server's bundled `pg_restore` with `--exit-on-error --single-transaction`. A PostgreSQL failure rolls back that store; a later ClickHouse failure does not roll PostgreSQL back. Provision another empty isolated target after any partial restore rather than deleting data to retry.
+
+Disposable Linux CI projects additionally set `BACKUP_RESTORE_APPLICATION_FIXTURE=1` to migrate both full schemas, seed real Project/Trace/Observation records, and verify restored migration ledgers through repeated migrations. This fixture uses private Compose bridge IPs and intentionally leaves its application rows in the disposable source; do not enable it on a live/operator source. The ordinary operator integration gate still removes only its uniquely named probe table.
+
 ## Operations and security
 
 - Retain multiple dated artifacts according to the organization’s recovery policy, and rotate/delete old artifacts only through an approved operator process after retention/legal holds are checked.
 - Encrypt backups at rest and in transit using the destination filesystem/object-storage controls. The scripts do not implement encryption or key management.
 - Restrict the destination and restore commands to operators who are authorized to read all tenant data and administer both databases. Use filesystem ACLs, storage IAM, audit logs, and separate restore credentials where available.
 - Keep `infra/.env`, database passwords, and provider credentials outside artifacts and logs. Never put secrets in `BACKUP_SOURCE_ID`, target IDs, artifact names, or shell transcripts.
-- Test restores on the same major versions recorded in the manifest before upgrading either database. Cross-major-version restore is an operator migration exercise, not a guarantee of this tooling.
+- Test recovery on the same major versions recorded in the manifest before upgrading either database. Cross-major-version restore follows the explicit migration procedure and requires an installation-specific rehearsal; the CI fixture is not a guarantee for arbitrary extensions, custom schema or server versions. Keep the old stores and pre-upgrade artifact for rollback; never run an older binary on upgraded data files.
 - Backups do not guarantee zero data loss, cross-store transactional consistency, a particular RPO/RTO, or recovery of Valkey queues/sessions.

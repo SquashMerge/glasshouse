@@ -90,6 +90,8 @@ if "name != 'glasshouse_schema_migrations'" in restore:
     raise SystemExit("ClickHouse restore target must reject existing tables")
 if 'chown clickhouse:clickhouse "$1" && chmod 600 "$1"' not in restore:
     raise SystemExit("ClickHouse restore archive must be readable only by the ClickHouse user")
+if "pg_restore --exit-on-error --single-transaction" not in restore:
+    raise SystemExit("PostgreSQL restore must fail fast and roll back on errors")
 PY
 if grep -Eq -- 'clickhouse-client.*--password' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh" "$root_dir/infra/scripts/test-backup-restore-integration.sh"; then
 	printf 'ClickHouse passwords must not be passed in process arguments\n' >&2

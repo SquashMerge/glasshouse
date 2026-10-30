@@ -4,7 +4,9 @@
 
 > Glasshouse is designed to make agent behavior visible, inspectable, and testable.
 
-**Local dev stack:** Postgres 16 + ClickHouse 24 + [Valkey 8](https://valkey.io) (open-source Redis fork) + Hono + React dashboard, behind `make dev`.
+**Local dev stack:** PostgreSQL 18.6 + ClickHouse 26.10.3.7 + [Valkey 9.1.3](https://valkey.io) (open-source Redis fork) + Hono + React dashboard, behind `make dev`.
+
+**Existing installations:** follow the [datastore migration and rollback runbook](docs/datastore-upgrades.md) before starting these images. PostgreSQL 16 data requires an explicit isolated dump/restore into PostgreSQL 18; changing the image tag does not upgrade an existing volume.
 
 For the separate self-hosted production path, use [`docs/self-hosted-production.md`](docs/self-hosted-production.md) and `infra/compose.production.yaml`. The other Compose files and `make dev` are development-only.
 

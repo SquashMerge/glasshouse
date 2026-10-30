@@ -84,15 +84,21 @@ Use `/health` or `/v1/health` for a public liveness check. The Compose health
 checks also gate API startup on all three data services. Do not use health
 success as evidence that backups exist or that an upgrade is recoverable.
 
-For an upgrade, stop traffic, take an operator-verified database backup, deploy
-the new image, and let the normal API startup migration complete. Confirm
+The data services are pinned to PostgreSQL 18.6, ClickHouse 26.10.3.7 and
+Valkey 9.1.3. For the PG16/CH24 migration, follow the explicit
+[datastore upgrade and rollback runbook](datastore-upgrades.md): quiesce writes,
+back up the old deployment and restore into separately provisioned empty stores.
+Do not run these images against the source volumes. PostgreSQL 18 uses a parent
+mount at `/var/lib/postgresql`; changing the mount/tag is not a data conversion.
+For subsequent compatible upgrades, stop traffic, take an operator-verified
+database backup, deploy the new image, and let startup migration complete. Confirm
 `/health`, logs, and representative authenticated reads before reopening the
 proxy. Never edit an applied migration; rollback the application only when its
 schema contract supports the already-applied migrations.
 
-Backups, restore testing, retention, encryption, and point-in-time recovery
-remain operator responsibilities and are intentionally specified by the
-backup/restore work tracked separately in issue #7. Restore PostgreSQL,
-ClickHouse, and Valkey according to their own documented procedures, then run
-the same production deployment and migration path above; do not restore into a
-development stack or guess tenant/project provenance.
+Use the repository's [backup/restore tooling](backup-restore.md) and rehearse
+recovery on the selected versions. Retention, encryption, point-in-time recovery
+and installation-specific validation remain operator responsibilities. Valkey
+is recreated as disposable coordination state. Preserve source data and the
+pre-upgrade artifact for rollback; never downgrade binaries against new data
+files or guess tenant/project provenance.

@@ -11,7 +11,7 @@ name: glasshouse-deps
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18.6-alpine
     container_name: glasshouse-postgres
     restart: unless-stopped
     logging:
@@ -26,7 +26,8 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - glasshouse_pg_data:/var/lib/postgresql/data
+      # Keep the physical volume identity; PG18 refuses an unmigrated PG16 store.
+      - glasshouse_pg_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -34,7 +35,7 @@ services:
       retries: 10
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+    image: clickhouse/clickhouse-server:26.10.3.7-alpine
     container_name: glasshouse-clickhouse
     restart: unless-stopped
     logging:
@@ -68,7 +69,7 @@ services:
       retries: 10
 
   valkey:
-    image: valkey/valkey:8-alpine
+    image: valkey/valkey:9.1.3-alpine
     container_name: glasshouse-valkey
     restart: unless-stopped
     logging:
@@ -84,7 +85,7 @@ services:
     ports:
       - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
     volumes:
-      - ./valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+      - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
       - glasshouse_valkey_data:/data
     healthcheck:
       test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set in infra/.env}", "ping"]

@@ -65,7 +65,7 @@ db-migrate: ## Apply Postgres migrations and seed the default project (idempoten
 devcontainer-db-migrate: ## Apply Postgres migrations through the active devcontainer network
 	bash infra/scripts/with-local-env.sh bash -c 'cd apps/api && bun run db:migrate'
 
-test-db-migrations: ## Verify SQL migrations against legacy prompt data in PostgreSQL 16
+test-db-migrations: ## Verify SQL migrations against legacy prompt data in PostgreSQL 18
 	bash infra/scripts/test-db-migrations.sh
 
 ch-schema: ## Apply ClickHouse schema migrations (idempotent)

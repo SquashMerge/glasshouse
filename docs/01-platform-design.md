@@ -254,11 +254,11 @@ API LAYER (Python, FastAPI + Uvicorn):
   BullMQ worker consuming jobs
 
 STORAGE:
-  PostgreSQL 16 + pgvector       (relational, prompts, agents, experiments, scores)
-  ClickHouse 24                  (traces, observations, partitioned by month)
+  PostgreSQL 18.6                (relational, prompts, agents, experiments, scores)
+  ClickHouse 26.10.3.7           (traces, observations, partitioned by month)
                                  Skipping indexes + bloom filters + tokenbf_v1 full-text
                                  Targets: <50ms filtered, <100ms full-text
-  Redis 7                        (BullMQ queue + L1 cache + pub/sub for SSE + rate-limit)
+  Valkey 9.1.3                  (pub/sub for SSE; future queue/cache/rate-limit)
   S3 / MinIO                     (raw blobs, multimodal attachments, exports)
   SQLite                         (dev mode single-binary, zero deps)
 

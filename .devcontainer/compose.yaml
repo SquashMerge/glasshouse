@@ -27,11 +27,12 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18.6-alpine
     env_file:
       - ../infra/.env
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # Keep the physical volume identity; PG18 refuses an unmigrated PG16 store.
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
@@ -39,7 +40,7 @@ services:
       retries: 12
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+    image: clickhouse/clickhouse-server:26.10.3.7-alpine
     platform: linux/amd64
     env_file:
       - ../infra/.env
@@ -47,6 +48,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      - ../infra/clickhouse/backup.xml:/etc/clickhouse-server/config.d/glasshouse-backup.xml:ro
     ulimits:
       nofile:
         soft: 262144
@@ -59,7 +61,7 @@ services:
       retries: 12
 
   valkey:
-    image: valkey/valkey:8-alpine
+    image: valkey/valkey:9.1.3-alpine
     env_file:
       - ../infra/.env
     command: ["sh", "-ec", "exec valkey-server /usr/local/etc/valkey/valkey.conf --requirepass \"$${VALKEY_PASSWORD}\""]
