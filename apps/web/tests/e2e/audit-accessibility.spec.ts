@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { assertSignedOutAppFlow } from "../smoke-flow";
 import type {
 	OrganizationUsageDashboard,
@@ -443,7 +443,70 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 
 	test("keeps dashboard content scrolling independent and matches the evaluations heading", async ({
 		page,
-	}) => {
+	}, testInfo) => {
+		async function captureLayout(heading: Locator, phase: string) {
+			return {
+				phase,
+				...(await heading.evaluate((element) => {
+					function describe(target: Element | null) {
+						if (!target) return null;
+						const rect = target.getBoundingClientRect();
+						const style = getComputedStyle(target);
+						return {
+							tag: target.tagName,
+							rect: {
+								top: rect.top,
+								left: rect.left,
+								width: rect.width,
+								height: rect.height,
+							},
+							scrollTop: target.scrollTop,
+							scrollHeight: target.scrollHeight,
+							clientHeight: target.clientHeight,
+							display: style.display,
+							overflowY: style.overflowY,
+							overflowAnchor: style.overflowAnchor,
+							paddingTop: style.paddingTop,
+							hidden: target.hasAttribute("hidden"),
+							ariaHidden: target.getAttribute("aria-hidden"),
+							inert: target.hasAttribute("inert"),
+						};
+					}
+					const main = element.closest("main");
+					const ancestors = [];
+					for (
+						let parent = element.parentElement;
+						parent;
+						parent = parent.parentElement
+					) {
+						ancestors.push(describe(parent));
+					}
+					return {
+						time: performance.now(),
+						pathname: location.pathname,
+						headingTop: element.getBoundingClientRect().top,
+						heading: describe(element),
+						main: describe(main),
+						wrapper: describe(main?.firstElementChild ?? null),
+						ancestors,
+						window: {
+							scrollX: window.scrollX,
+							scrollY: window.scrollY,
+							innerHeight: window.innerHeight,
+							innerWidth: window.innerWidth,
+						},
+						scrollingElement: describe(document.scrollingElement),
+						activeElementTag: document.activeElement?.tagName,
+						activeElementInMain: main?.contains(document.activeElement),
+						revalidationDialogOpen: Boolean(
+							document.querySelector(
+								'dialog[aria-label="Checking session"][open]',
+							),
+						),
+					};
+				})),
+			};
+		}
 		await page.setViewportSize({ width: 1280, height: 720 });
 		await page.route("**/v1/organization/usage?*", (route) =>
 			route.fulfill({ json: usageSnapshot("30d", 4) }),
@@ -453,9 +516,12 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 			name: "Organization overview",
 		});
 		await expect(dashboardHeading).toBeVisible();
-		const dashboardTop = await dashboardHeading.evaluate(
-			(element) => element.getBoundingClientRect().top,
+		const dashboardLayout = await captureLayout(
+			dashboardHeading,
+			"dashboard-initial",
 		);
+		const dashboardTop = dashboardLayout.headingTop;
+		const layouts = [dashboardLayout];
 		const content = page.getByRole("main").first();
 		await expect(content).toHaveCSS("overflow-y", "auto");
 		const scrollMetrics = await content.evaluate((element) => ({
@@ -486,19 +552,37 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 		await content.evaluate((element) => {
 			element.scrollTop = 0;
 		});
+		layouts.push(
+			await captureLayout(dashboardHeading, "dashboard-before-navigation"),
+		);
 		await sidebar.getByRole("link", { name: "Evaluations" }).click();
 		const evaluationsHeading = page.getByRole("heading", {
 			name: "Evaluations",
 			exact: true,
 		});
 		await expect(evaluationsHeading).toBeVisible();
-		await expect
-			.poll(() =>
-				evaluationsHeading.evaluate(
-					(element) => element.getBoundingClientRect().top,
+		try {
+			await expect
+				.poll(async () => {
+					const layout = await captureLayout(
+						evaluationsHeading,
+						"evaluations-poll",
+					);
+					layouts.push(layout);
+					return layout.headingTop;
+				})
+				.toBe(dashboardTop);
+		} catch (error) {
+			await testInfo.attach("heading-scroll-layout", {
+				body: JSON.stringify(
+					{ expectedHeadingTop: dashboardTop, layouts },
+					null,
+					2,
 				),
-			)
-			.toBe(dashboardTop);
+				contentType: "application/json",
+			});
+			throw error;
+		}
 	});
 
 	test("keeps the telemetry caption accessible without overlapping the visual chart", async ({
