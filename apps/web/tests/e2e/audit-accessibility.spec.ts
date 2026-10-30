@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { assertSignedOutAppFlow } from "../smoke-flow";
 import type {
 	OrganizationUsageDashboard,
@@ -444,10 +444,13 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 	test("keeps dashboard content scrolling independent and matches the evaluations heading", async ({
 		page,
 	}, testInfo) => {
-		async function captureLayout(heading: Locator, phase: string) {
+		async function captureLayout(
+			headingName: "Organization overview" | "Evaluations",
+			phase: string,
+		) {
 			return {
 				phase,
-				...(await heading.evaluate((element) => {
+				...(await page.evaluate((headingName) => {
 					function describe(target: Element | null) {
 						if (!target) return null;
 						const rect = target.getBoundingClientRect();
@@ -461,9 +464,13 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 								height: rect.height,
 							},
 							scrollTop: target.scrollTop,
+							scrollLeft: target.scrollLeft,
 							scrollHeight: target.scrollHeight,
+							scrollWidth: target.scrollWidth,
 							clientHeight: target.clientHeight,
+							clientWidth: target.clientWidth,
 							display: style.display,
+							visibility: style.visibility,
 							overflowY: style.overflowY,
 							overflowAnchor: style.overflowAnchor,
 							paddingTop: style.paddingTop,
@@ -472,20 +479,32 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 							inert: target.hasAttribute("inert"),
 						};
 					}
-					const main = element.closest("main");
+					const element = Array.from(
+						document.querySelectorAll(
+							'h1, h2, h3, h4, h5, h6, [role="heading"]',
+						),
+					).find((target) => target.textContent?.trim() === headingName);
+					const main =
+						element?.closest("main") ?? document.querySelector("main");
 					const ancestors = [];
 					for (
-						let parent = element.parentElement;
+						let parent: Element | null =
+							element?.parentElement ?? main ?? document.body;
 						parent;
 						parent = parent.parentElement
 					) {
 						ancestors.push(describe(parent));
 					}
+					const revalidationDialog = document.querySelector<HTMLDialogElement>(
+						'dialog[aria-label="Checking session"]',
+					);
 					return {
 						time: performance.now(),
-						pathname: location.pathname,
-						headingTop: element.getBoundingClientRect().top,
-						heading: describe(element),
+						// Query strings and fragments can contain auth material.
+						url: `${location.origin}${location.pathname}`,
+						targetHeading: headingName,
+						headingTop: element?.getBoundingClientRect().top ?? null,
+						heading: describe(element ?? null),
 						main: describe(main),
 						wrapper: describe(main?.firstElementChild ?? null),
 						ancestors,
@@ -496,15 +515,17 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 							innerWidth: window.innerWidth,
 						},
 						scrollingElement: describe(document.scrollingElement),
+						documentElement: describe(document.documentElement),
+						body: describe(document.body),
 						activeElementTag: document.activeElement?.tagName,
 						activeElementInMain: main?.contains(document.activeElement),
-						revalidationDialogOpen: Boolean(
-							document.querySelector(
-								'dialog[aria-label="Checking session"][open]',
-							),
-						),
+						revalidationDialog: {
+							element: describe(revalidationDialog),
+							open: revalidationDialog?.open ?? false,
+							modal: revalidationDialog?.matches(":modal") ?? false,
+						},
 					};
-				})),
+				}, headingName)),
 			};
 		}
 		await page.setViewportSize({ width: 1280, height: 720 });
@@ -517,10 +538,11 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 		});
 		await expect(dashboardHeading).toBeVisible();
 		const dashboardLayout = await captureLayout(
-			dashboardHeading,
+			"Organization overview",
 			"dashboard-initial",
 		);
 		const dashboardTop = dashboardLayout.headingTop;
+		expect(dashboardTop).not.toBeNull();
 		const layouts = [dashboardLayout];
 		const content = page.getByRole("main").first();
 		await expect(content).toHaveCSS("overflow-y", "auto");
@@ -553,35 +575,52 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 			element.scrollTop = 0;
 		});
 		layouts.push(
-			await captureLayout(dashboardHeading, "dashboard-before-navigation"),
+			await captureLayout(
+				"Organization overview",
+				"dashboard-before-navigation",
+			),
 		);
-		await sidebar.getByRole("link", { name: "Evaluations" }).click();
 		const evaluationsHeading = page.getByRole("heading", {
 			name: "Evaluations",
 			exact: true,
 		});
-		await expect(evaluationsHeading).toBeVisible();
+		let navigationChecksPassed = false;
 		try {
+			await sidebar.getByRole("link", { name: "Evaluations" }).click();
+			await expect(evaluationsHeading).toBeVisible();
 			await expect
 				.poll(async () => {
-					const layout = await captureLayout(
-						evaluationsHeading,
-						"evaluations-poll",
-					);
+					const layout = await captureLayout("Evaluations", "evaluations-poll");
 					layouts.push(layout);
 					return layout.headingTop;
 				})
 				.toBe(dashboardTop);
-		} catch (error) {
-			await testInfo.attach("heading-scroll-layout", {
-				body: JSON.stringify(
-					{ expectedHeadingTop: dashboardTop, layouts },
-					null,
-					2,
-				),
-				contentType: "application/json",
-			});
-			throw error;
+			navigationChecksPassed = true;
+		} finally {
+			if (!navigationChecksPassed) {
+				try {
+					layouts.push(await captureLayout("Evaluations", "evaluations-final"));
+				} catch {
+					console.log(
+						"[heading-scroll-layout]",
+						JSON.stringify({
+							retry: testInfo.retry,
+							phase: "evaluations-final",
+							snapshotUnavailable: true,
+						}),
+					);
+				}
+				for (const layout of layouts) {
+					console.log(
+						"[heading-scroll-layout]",
+						JSON.stringify({
+							retry: testInfo.retry,
+							expectedHeadingTop: dashboardTop,
+							...layout,
+						}),
+					);
+				}
+			}
 		}
 	});
 
