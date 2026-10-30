@@ -57,7 +57,7 @@ Enrollment tokens use 32 random bytes, are stored only as SHA-256 digests, expir
 
 ## Argon2id policy and calibration
 
-`Bun.password.hash` generates the random salt and PHC string; `Bun.password.verify` performs password verification. Policy **version 1** is Argon2id v19, **64 MiB**, **3 iterations**, Bun's **p=1**. PostgreSQL stores the PHC hash, algorithm, and policy version together, or all three NULL before enrollment. The service and HTTP boundary bound input to 1–1024 UTF-8 bytes; the [session API runbook](local-sessions-runbook.md) defines login admission and revocation.
+`Bun.password.hash` generates the random salt and PHC string; `Bun.password.verify` performs password verification. Policy **version 1** is Argon2id v19, **64 MiB**, **3 iterations**, Bun's **p=1**. PostgreSQL stores the PHC hash, algorithm, and policy version together, or all three NULL before enrollment. Every local password—including login and current-password verification—requires at least 12 Unicode code points and no more than 1024 UTF-8 bytes. The [session API runbook](local-sessions-runbook.md) defines login admission and revocation.
 
 From `apps/api`, `bun run auth:calibrate-passwords` runs 20 sequential hash/verify samples and emits only runtime, public policy, count, and latency percentiles. Reference measurement on the branch devcontainer with Bun 1.3.14: hash p50/p95 **91/96 ms**, verify p50/p95 **90/97 ms**. Recalibrate on deployment hardware and size memory/concurrency admission in the later login boundary; these sequential numbers are not a production-load guarantee.
 

@@ -238,10 +238,20 @@ describe("organization usage homepage", () => {
 		}
 	});
 
+	it("keeps the accessible telemetry table visually clipped", async () => {
+		renderDashboard();
+		const activity = await screen.findByRole("table", {
+			name: "Telemetry activity by UTC time bucket",
+		});
+		expect(activity).not.toHaveClass("sr-only");
+		expect(activity.parentElement).toHaveClass("sr-only");
+	});
+
 	it("keeps the summary, trend, Projects, and health card visually separated", async () => {
 		const { container } = renderDashboard();
 		await screen.findByText("Assistant");
-		expect(container.querySelector("main")).toHaveClass("space-y-8");
+		expect(container.firstElementChild).toHaveClass("space-y-6");
+		expect(container.firstElementChild).not.toHaveClass("py-10");
 		expect(screen.getByLabelText("Usage summary")).toHaveClass("gap-6");
 		expect(screen.getByLabelText("Project usage")).toHaveClass("gap-6");
 		expect(

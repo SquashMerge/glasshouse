@@ -31,10 +31,16 @@ import { trustedTenant } from "../tenancy.js";
 const tag = "auth";
 const password = z
 	.string()
-	.min(1)
-	.max(1024)
-	.refine(validLocalPassword)
-	.openapi({ writeOnly: true });
+	.refine(validLocalPassword, {
+		message:
+			"Use at least 12 Unicode code points and no more than 1024 UTF-8 bytes.",
+	})
+	.openapi({
+		writeOnly: true,
+		minLength: 12,
+		description:
+			"At least 12 Unicode code points and no more than 1024 UTF-8 bytes.",
+	});
 const secret = z.string().length(43).openapi({ writeOnly: true });
 const ok = z.object({ ok: z.literal(true) });
 const responses = {
@@ -57,7 +63,7 @@ export const loginRoute = createRoute({
 	tags: [tag],
 	summary: "Sign in to Glasshouse",
 	description:
-		"Verify a deployment-scoped local username/password and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.",
+		"Verify a deployment-scoped local username/password meeting the 12-Unicode-code-point minimum and set an HttpOnly session cookie. No token is returned. Basic-header-only prevalidation remains available for compatibility; it does not issue a local session. Failures are uniform, including bounded login lockout. Never send an organization, role, or actor claim.",
 	security: [],
 	request: {
 		body: {
@@ -168,7 +174,7 @@ export const setupRoute = createRoute({
 					schema: z
 						.object({
 							username: z.string().min(3).max(64),
-							password,
+							password: password,
 							token: secret,
 						})
 						.strict(),
