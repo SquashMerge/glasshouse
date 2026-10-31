@@ -29,6 +29,7 @@ Project vocabulary lives in `docs/04-glossary.md`. When you add a new entity, ro
 - Python is intentionally isolated to compute-heavy integrations such as the GEPA worker. Keep the TypeScript API boundary and Python worker boundary explicit; do not move GEPA/provider credentials into API request bodies, job records, logs, or SSE payloads.
 - Every API start runs PostgreSQL and ClickHouse migrations concurrently before serving: `bun run migrate && bun run src/index.ts`. PostgreSQL waits for its migration advisory lock, while ClickHouse takes a PostgreSQL advisory lock, checksum-verifies applied changesets, and skips them on later starts. `make dev-backend` uses the same startup contract; the watch process itself does not re-run migrations on each source reload.
 - Docker Compose is invoked with the repository root as its project directory. Preserve root-relative build contexts and ensure every runtime dependency used by startup commands is present in the production image.
+- PostgreSQL 18 uses the `/var/lib/postgresql` parent volume mount. Support current-version backup/restore only; do not add legacy datastore migration or cross-version restore paths. Never delete existing data volumes to make verification pass.
 
 ## Isolated OpenCode execution
 

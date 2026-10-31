@@ -7,7 +7,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/artifact"
-printf '%s\n' '{"format":"glasshouse-backup-v1","source_id":"source","stores":["postgresql","clickhouse"],"complete":true}' > "$tmp/artifact/manifest.json"
+printf '%s\n' '{"format":"glasshouse-backup-v1","backup_id":"current-version-fixture","source_id":"source","created_at":"2026-10-30T00:00:00Z","postgres_server_version":"18.6","clickhouse_server_version":"26.10.2.103","stores":["postgresql","clickhouse"],"files":["postgres.dump","clickhouse.zip","SHA256SUMS"],"complete":true}' > "$tmp/artifact/manifest.json"
 printf x > "$tmp/artifact/postgres.dump"
 python3 - "$tmp/artifact/clickhouse.zip" <<'PY'
 import pathlib
@@ -90,6 +90,8 @@ if "name != 'glasshouse_schema_migrations'" in restore:
     raise SystemExit("ClickHouse restore target must reject existing tables")
 if 'chown clickhouse:clickhouse "$1" && chmod 600 "$1"' not in restore:
     raise SystemExit("ClickHouse restore archive must be readable only by the ClickHouse user")
+if "pg_restore --exit-on-error --single-transaction" not in restore:
+    raise SystemExit("PostgreSQL restore must fail fast and roll back on errors")
 PY
 if grep -Eq -- 'clickhouse-client.*--password' "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/restore.sh" "$root_dir/infra/scripts/test-backup-restore-integration.sh"; then
 	printf 'ClickHouse passwords must not be passed in process arguments\n' >&2

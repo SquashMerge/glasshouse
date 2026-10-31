@@ -84,15 +84,19 @@ Use `/health` or `/v1/health` for a public liveness check. The Compose health
 checks also gate API startup on all three data services. Do not use health
 success as evidence that backups exist or that an upgrade is recoverable.
 
-For an upgrade, stop traffic, take an operator-verified database backup, deploy
-the new image, and let the normal API startup migration complete. Confirm
+The data services are pinned to PostgreSQL 18.6, ClickHouse 26.10.2.103 and
+Valkey 9.1.3. PostgreSQL 18 uses a parent mount at `/var/lib/postgresql`.
+See the [supported datastore contract](datastore-upgrades.md); recovery covers
+current-version backup/restore into empty isolated stores. Legacy migration
+and cross-version restore are unsupported. For compatible application upgrades,
+stop traffic, take an operator-verified
+database backup, deploy the new image, and let startup migration complete. Confirm
 `/health`, logs, and representative authenticated reads before reopening the
 proxy. Never edit an applied migration; rollback the application only when its
 schema contract supports the already-applied migrations.
 
-Backups, restore testing, retention, encryption, and point-in-time recovery
-remain operator responsibilities and are intentionally specified by the
-backup/restore work tracked separately in issue #7. Restore PostgreSQL,
-ClickHouse, and Valkey according to their own documented procedures, then run
-the same production deployment and migration path above; do not restore into a
-development stack or guess tenant/project provenance.
+Use the repository's [backup/restore tooling](backup-restore.md) and rehearse
+recovery on the selected versions. Retention, encryption, point-in-time recovery
+and installation-specific validation remain operator responsibilities. Valkey
+is recreated as disposable coordination state. Never delete existing data
+volumes to make deployment or verification pass, or guess tenant/project provenance.

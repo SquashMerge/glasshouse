@@ -39,7 +39,7 @@ docker run --detach --rm \
   --env "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
   --env "POSTGRES_DB=$POSTGRES_DB" \
   --publish 127.0.0.1::5432 \
-  postgres:16-alpine >/dev/null
+  postgres:18.6-alpine >/dev/null
 
 for _ in {1..30}; do
   if docker exec "$CONTAINER" \

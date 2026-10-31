@@ -1,6 +1,8 @@
 # Glasshouse devcontainer
 
-This Compose-based devcontainer gives each OpenCode workspace its own PostgreSQL 16, ClickHouse 24, and Valkey 8 network. Data-service ports are intentionally **not** published to the host, so concurrent branches do not collide.
+This Compose-based devcontainer gives each OpenCode workspace its own PostgreSQL 18.6, ClickHouse 26.10.2.103, and Valkey 9.1.3 network. Data-service ports are intentionally **not** published to the host, so concurrent branches do not collide.
+
+PostgreSQL 18 mounts `/var/lib/postgresql`. ClickHouse mounts the same restricted backup configuration as production. See [supported datastores](../docs/datastore-upgrades.md) for current-version recovery and verification; legacy migration and cross-version restore are unsupported. Never delete existing volumes to make startup or verification pass.
 
 ## OpenCode
 
