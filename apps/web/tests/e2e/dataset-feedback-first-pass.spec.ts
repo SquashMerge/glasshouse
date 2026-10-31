@@ -537,10 +537,16 @@ test("reviews negative feedback through the inbox without promoting a dataset ca
 	expect(created.status).toBe("new");
 
 	await page.goto("/feedback");
-	await expect(page.getByText("Needs a human review")).toBeVisible();
-	await page.getByRole("button", { name: "Mark reviewed" }).click();
+	const feedbackRow = page.getByRole("listitem").filter({
+		has: page.getByRole("link", {
+			name: `${trace.traceId.slice(0, 8)}...`,
+			exact: true,
+		}),
+	});
+	await expect(feedbackRow.getByText("Needs a human review")).toBeVisible();
+	await feedbackRow.getByRole("button", { name: "Mark reviewed" }).click();
 	await page.getByRole("button", { name: "All feedback" }).click();
-	await expect(page.getByText(/trace · reviewed/).first()).toBeVisible();
+	await expect(feedbackRow.getByText("trace · reviewed")).toBeVisible();
 
 	const feedback = await apiJson<{ items: Feedback[] }>(
 		await request.get(`${API_BASE}/v1/feedback?project_id=${project.id}`, {
