@@ -17,7 +17,7 @@ RUN bun --filter "@glasshouse/web" build
 
 FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app
-RUN apk add --no-cache libpq wget
+RUN apk upgrade --no-cache && apk add --no-cache libpq wget
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/web/node_modules ./apps/web/node_modules
 COPY --from=build /app/package.json ./package.json

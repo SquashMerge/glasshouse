@@ -26,6 +26,84 @@ class DockerBuildContextTests(unittest.TestCase):
                     dockerfile.read_text().splitlines(),
                 )
 
+    def test_api_uses_a_fresh_frozen_production_dependency_stage(self):
+        dockerfile = (ROOT / "apps/api/Dockerfile").read_text()
+        self.assertIn("FROM base AS prod-deps\n", dockerfile)
+        stage = dockerfile.split("FROM base AS prod-deps\n", 1)[1].split("\nFROM ", 1)[0]
+        self.assertIn('RUN bun install --frozen-lockfile --production --filter "glasshouse" --filter "@glasshouse/api"', stage)
+        self.assertNotIn("COPY --from=", stage)
+        production = dockerfile.split(" AS prod\n", 1)[1]
+        self.assertIn("COPY --from=prod-deps /app/node_modules ./node_modules", production)
+        self.assertIn("COPY --from=prod-deps /app/apps/api/node_modules ./apps/api/node_modules", production)
+        self.assertNotIn("COPY --from=build /app/node_modules", production)
+
+    @unittest.skipUnless(
+        os.environ.get("GLASSHOUSE_TEST_PRODUCTION_INSTALL") == "1",
+        "set GLASSHOUSE_TEST_PRODUCTION_INSTALL=1 to exercise the frozen install",
+    )
+    def test_api_frozen_production_install_has_runtime_but_no_web_dev_dependencies(self):
+        stage = (ROOT / "apps/api/Dockerfile").read_text().split("FROM base AS prod-deps\n", 1)[1].split("\nFROM ", 1)[0]
+        install = next(line.removeprefix("RUN ") for line in stage.splitlines() if line.startswith("RUN bun install "))
+        with tempfile.TemporaryDirectory(prefix="glasshouse-prod-deps-") as directory:
+            root = Path(directory)
+            for name in ("package.json", "bun.lock", "apps/api/package.json", "apps/web/package.json"):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / name, target)
+            subprocess.run(install, cwd=root, shell=True, check=True, timeout=180)
+            # Replicate the final-stage COPYs, including Bun's relative symlinks.
+            runtime = root / "runtime"
+            shutil.copytree(root / "node_modules", runtime / "node_modules", symlinks=True)
+            shutil.copytree(root / "apps/api/node_modules", runtime / "apps/api/node_modules", symlinks=True)
+            for name in ("package.json", "apps/api/package.json", "apps/web/package.json"):
+                target = runtime / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / name, target)
+            for name in ("jsdom", "undici", "source-map-js", "vite", "typescript", "@typescript+typescript-linux-x64"):
+                self.assertFalse(list((runtime / "node_modules/.bun").glob(f"{name}@*")), name)
+            for location in (runtime / "node_modules", runtime / "apps/api/node_modules"):
+                for link in location.rglob("*"):
+                    if link.is_symlink():
+                        self.assertTrue(link.exists(), f"broken runtime dependency symlink: {link}")
+            for cwd, packages in (
+                (runtime, ("config", "dotenv", "dotenv-expand")),
+                (runtime / "apps/api", ("pg", "node-pg-migrate", "@clickhouse/client", "hono", "js-yaml")),
+            ):
+                program = "for (const p of " + repr(list(packages)) + ") { await import(p); }"
+                subprocess.run(["bun", "-e", program], cwd=cwd, check=True, timeout=60)
+            shutil.copytree(ROOT / "apps/api/src", runtime / "apps/api/src")
+            for name in ("migrations", "clickhouse"):
+                shutil.copytree(ROOT / "infra/db" / name, runtime / "infra/db" / name)
+            (runtime / "infra/scripts").mkdir(parents=True)
+            shutil.copy2(ROOT / "infra/scripts/verify-pg-migration-filenames.ts", runtime / "infra/scripts")
+            env = {
+                "PATH": os.environ["PATH"],
+                "HOME": str(root),
+                "NODE_ENV": "production",
+                "SUPPRESS_NO_CONFIG_WARNING": "true",
+                "DATABASE_URL": "postgres://synthetic:synthetic@127.0.0.1:1/synthetic",
+                "CLICKHOUSE_URL": "http://127.0.0.1:1",
+            }
+            subprocess.run(["bun", "build", "src/index.ts", "--target=bun", "--outdir", str(root / "dist")],
+                           cwd=runtime / "apps/api", env=env, check=True, timeout=60)
+            result = subprocess.run(["bun", "run", "start"], cwd=runtime / "apps/api", env=env,
+                                    text=True, capture_output=True, timeout=30)
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0, "startup unexpectedly connected to a datastore")
+            self.assertIn("ECONNREFUSED", output)
+            self.assertNotIn("Cannot find module", output)
+            self.assertNotIn("ModuleNotFound", output)
+
+    def test_ci_exercises_the_frozen_production_install(self):
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("GLASSHOUSE_TEST_PRODUCTION_INSTALL=1", ci)
+
+    def test_runtime_stages_upgrade_alpine_packages(self):
+        for app in ("api", "web"):
+            with self.subTest(app=app):
+                production = (ROOT / f"apps/{app}/Dockerfile").read_text().split(" AS prod\n", 1)[1]
+                self.assertIn("apk upgrade --no-cache", production)
+
     def test_publisher_fixtures_cannot_enter_build_context(self):
         self.assertTrue((ROOT / "scripts/fixtures/trivy-v0.69.3-fluentd.cdx.json").is_file())
         patterns = (ROOT / ".dockerignore").read_text().splitlines()
@@ -35,8 +113,8 @@ class DockerBuildContextTests(unittest.TestCase):
     def test_production_stages_copy_only_explicit_runtime_inputs(self):
         expected = {
             "api": {
-                "COPY --from=build /app/node_modules ./node_modules",
-                "COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules",
+                "COPY --from=prod-deps /app/node_modules ./node_modules",
+                "COPY --from=prod-deps /app/apps/api/node_modules ./apps/api/node_modules",
                 "COPY --from=build /app/package.json ./package.json",
                 "COPY --from=build /app/apps/api/package.json ./apps/api/package.json",
                 "COPY --from=build /app/apps/web/package.json ./apps/web/package.json",

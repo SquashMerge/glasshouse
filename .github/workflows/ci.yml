@@ -32,7 +32,7 @@ jobs:
           - check: supply-chain
             command: bun run test:supply-chain
           - check: infra-security
-            command: GLASSHOUSE_TEST_DOCKER_CONTEXT=1 bun run test:infra-security
+            command: GLASSHOUSE_TEST_DOCKER_CONTEXT=1 GLASSHOUSE_TEST_PRODUCTION_INSTALL=1 bun run test:infra-security
           - check: worker-test
             command: python3 -m pip install --user --disable-pip-version-check --require-hashes -r worker/requirements.lock && python3 -m unittest worker.test_dev_cli_llm
           - check: build
