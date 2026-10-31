@@ -1623,6 +1623,16 @@ export async function listFeedback(input: {
 		"listFeedback",
 	);
 }
+export async function getOwnFeedback(input: {
+	project_id: string;
+	trace_id: string;
+	observation_id?: string;
+}): Promise<Feedback | null> {
+	return responseJson(
+		await authedFetch(`/v1/feedback/mine${buildQs(input)}`),
+		"getOwnFeedback",
+	);
+}
 export async function createFeedback(input: {
 	project_id: string;
 	trace_id: string;

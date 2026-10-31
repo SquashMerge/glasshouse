@@ -10,6 +10,7 @@ import {
 	authorizeFeedbackProject,
 	FeedbackRepositoryError,
 	getFeedbackPromotionTarget,
+	getOwnFeedback,
 	listFeedback,
 	promoteFeedback,
 	reviewFeedback,
@@ -53,6 +54,8 @@ export const createFeedbackRoute = createRoute({
 	path: "/v1/feedback",
 	tags: ["feedback"],
 	summary: "Record human trace or Observation feedback",
+	description:
+		"The first response for the authenticated Actor and exact Project/trace/Observation is immutable. A new idempotency key for that target returns the existing response, even if the payload differs. A key reused by another Actor or with a different payload conflicts. Historical feedback of unknown authorship is not attributed.",
 	security: [{ basicAuth: [] }],
 	request: {
 		headers: FeedbackIdempotencyHeader,
@@ -77,6 +80,31 @@ export const listFeedbackRoute = createRoute({
 		200: {
 			description: "OK",
 			content: { "application/json": { schema: FeedbackList } },
+		},
+		...FeedbackErrors,
+	},
+});
+export const getOwnFeedbackRoute = createRoute({
+	method: "get",
+	path: "/v1/feedback/mine",
+	tags: ["feedback"],
+	summary: "Read the current Actor's feedback for one trace or Observation",
+	security: [{ basicAuth: [] }],
+	request: {
+		query: z
+			.object({
+				project_id: z.string().uuid(),
+				trace_id: z.string().regex(/^[0-9a-f]{32}$/),
+				observation_id: z.string().min(1).max(128).optional(),
+			})
+			.strict(),
+	},
+	responses: {
+		200: {
+			description: "Current feedback, or null when none exists",
+			content: {
+				"application/json": { schema: z.union([Feedback, z.null()]) },
+			},
 		},
 		...FeedbackErrors,
 	},
@@ -201,6 +229,21 @@ export const handleListFeedback = async (
 	try {
 		return c.json(
 			await listFeedback(pgPool(), {
+				...c.req.valid("query"),
+				authorization: projectAuthorization(trustedTenant(c), "product_read"),
+			}),
+		);
+	} catch (cause) {
+		return errorResponse(c, cause);
+	}
+};
+export const handleGetOwnFeedback = async (
+	c: Parameters<RouteHandler<typeof getOwnFeedbackRoute>>[0],
+) => {
+	c.header("Cache-Control", "no-store");
+	try {
+		return c.json(
+			await getOwnFeedback(pgPool(), {
 				...c.req.valid("query"),
 				authorization: projectAuthorization(trustedTenant(c), "product_read"),
 			}),

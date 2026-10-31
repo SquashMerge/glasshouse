@@ -273,6 +273,8 @@ import {
 	handleCreateFeedback,
 	listFeedbackRoute,
 	handleListFeedback,
+	getOwnFeedbackRoute,
+	handleGetOwnFeedback,
 	promoteFeedbackRoute,
 	handlePromoteFeedback,
 	reviewFeedbackRoute,
@@ -544,6 +546,7 @@ register(deleteDatasetItem, handleDeleteDatasetItem);
 
 register(createFeedbackRoute, handleCreateFeedback);
 register(listFeedbackRoute, handleListFeedback);
+register(getOwnFeedbackRoute, handleGetOwnFeedback);
 register(promoteFeedbackRoute, handlePromoteFeedback);
 register(reviewFeedbackRoute, handleReviewFeedback);
 
@@ -555,7 +558,7 @@ register(previewRetention, handlePreviewRetention);
 register(runRetention, handleRunRetention);
 register(listRetentionRuns, handleListRetentionRuns);
 
-openapiApp.doc("/openapi.json", {
+openapiApp.doc31("/openapi.json", {
 	openapi: "3.1.0",
 	info: {
 		title: "Glasshouse API",

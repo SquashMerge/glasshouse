@@ -336,12 +336,61 @@ test("records trace feedback and preserves observation provenance when adding it
 		status: "reviewed",
 	});
 	await expect(traceFeedback.getByRole("status")).toBeVisible();
-	await expect(traceFeedback.getByRole("status")).toHaveText("Recorded");
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Your feedback: positive",
+	);
+	await expect(
+		traceFeedback.getByRole("button", { name: "Thumbs up trace" }),
+	).toHaveAttribute("aria-pressed", "true");
+	await expect(
+		traceFeedback.getByRole("button", { name: "Thumbs up trace" }),
+	).toBeDisabled();
+	await page.reload();
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Helpful first-pass trace",
+	);
+	await expect(
+		traceFeedback.getByRole("button", { name: "Thumbs up trace" }),
+	).toHaveAttribute("aria-pressed", "true");
 
 	const panel = page.getByTestId("observation-detail");
 	await expect(panel).toHaveAttribute(
 		"data-observation-id",
 		trace.observationId,
+	);
+	const spanFeedback = panel
+		.getByRole("button", { name: "Thumbs down Observation" })
+		.locator("..");
+	await expect(
+		spanFeedback.getByRole("button", { name: "Thumbs down Observation" }),
+	).toBeEnabled();
+	await spanFeedback.getByLabel("Comment").fill("Span needs correction");
+	await spanFeedback
+		.getByRole("button", { name: "Thumbs down Observation" })
+		.click();
+	await spanFeedback.getByLabel("Reason").fill("incorrect span");
+	await spanFeedback.getByRole("button", { name: "Record" }).click();
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"incorrect span",
+	);
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"Span needs correction",
+	);
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Helpful first-pass trace",
+	);
+	await page.reload();
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"incorrect span",
+	);
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"Span needs correction",
+	);
+	await expect(
+		spanFeedback.getByRole("button", { name: "Thumbs down Observation" }),
+	).toHaveAttribute("aria-pressed", "true");
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Helpful first-pass trace",
 	);
 	await panel.getByRole("button", { name: "Add to dataset" }).click();
 	const dialog = page.getByRole("dialog", {
@@ -488,10 +537,16 @@ test("reviews negative feedback through the inbox without promoting a dataset ca
 	expect(created.status).toBe("new");
 
 	await page.goto("/feedback");
-	await expect(page.getByText("Needs a human review")).toBeVisible();
-	await page.getByRole("button", { name: "Mark reviewed" }).click();
+	const feedbackRow = page.getByRole("listitem").filter({
+		has: page.getByRole("link", {
+			name: `${trace.traceId.slice(0, 8)}...`,
+			exact: true,
+		}),
+	});
+	await expect(feedbackRow.getByText("Needs a human review")).toBeVisible();
+	await feedbackRow.getByRole("button", { name: "Mark reviewed" }).click();
 	await page.getByRole("button", { name: "All feedback" }).click();
-	await expect(page.getByText(/trace · reviewed/).first()).toBeVisible();
+	await expect(feedbackRow.getByText("trace · reviewed")).toBeVisible();
 
 	const feedback = await apiJson<{ items: Feedback[] }>(
 		await request.get(`${API_BASE}/v1/feedback?project_id=${project.id}`, {

@@ -4,8 +4,10 @@ import {
 	ApiError,
 	captureDatasetDraftItem,
 	createFeedback,
+	getOwnFeedback,
 	getDatasetDraft,
 	listDatasets,
+	type Feedback,
 } from "../lib/api";
 import { Button } from "./ui/button";
 import { DialogContent, DialogOverlay } from "./ui/dialog";
@@ -236,25 +238,73 @@ export function AddToDatasetDialog({
 		</>
 	);
 }
-export function FeedbackControls({
-	projectId,
-	traceId,
-	observationId,
-	label,
-	canCurate = true,
-}: {
+type FeedbackControlsProps = {
 	projectId: string | null;
 	traceId: string;
 	observationId?: string;
 	label: string;
 	canCurate?: boolean;
-}) {
+};
+export function FeedbackControls(props: FeedbackControlsProps) {
+	return (
+		<FeedbackTarget
+			key={JSON.stringify([
+				props.projectId,
+				props.traceId,
+				props.observationId,
+			])}
+			{...props}
+		/>
+	);
+}
+function FeedbackTarget({
+	projectId,
+	traceId,
+	observationId,
+	label,
+	canCurate = true,
+}: FeedbackControlsProps) {
 	const [reason, setReason] = React.useState("");
 	const [comment, setComment] = React.useState("");
 	const commentRef = React.useRef("");
 	const [negative, setNegative] = React.useState(false);
 	const [message, setMessage] = React.useState("");
 	const [pending, setPending] = React.useState(false);
+	const [saved, setSaved] = React.useState<Feedback | null>(null);
+	const [loading, setLoading] = React.useState(true);
+	const [loadError, setLoadError] = React.useState("");
+	const [loadAttempt, setLoadAttempt] = React.useState(0);
+	const active = React.useRef(true);
+	const submitting = React.useRef(false);
+	React.useEffect(() => {
+		active.current = true;
+		return () => {
+			active.current = false;
+		};
+	}, []);
+	React.useEffect(() => {
+		if (!projectId) return;
+		let current = true;
+		setLoading(true);
+		setLoadError("");
+		getOwnFeedback({
+			project_id: projectId,
+			trace_id: traceId,
+			observation_id: observationId,
+		})
+			.then((value) => {
+				if (current) setSaved(value);
+			})
+			.catch(() => {
+				if (current) setLoadError("Could not load your feedback.");
+			})
+			.finally(() => {
+				if (current) setLoading(false);
+			});
+		return () => {
+			current = false;
+		};
+	}, [projectId, traceId, observationId, canCurate, loadAttempt]);
 	const idempotencyKeys = React.useRef<
 		Partial<Record<"positive" | "negative", string>>
 	>({});
@@ -266,6 +316,10 @@ export function FeedbackControls({
 		if (
 			!canCurate ||
 			pending ||
+			submitting.current ||
+			loading ||
+			!!loadError ||
+			!!saved ||
 			!projectId ||
 			(value === -1 && !reason.trim())
 		) {
@@ -277,8 +331,9 @@ export function FeedbackControls({
 			idempotencyKeys.current[intent] ?? crypto.randomUUID();
 		idempotencyKeys.current[intent] = idempotency_key;
 		try {
+			submitting.current = true;
 			setPending(true);
-			await createFeedback({
+			const result = await createFeedback({
 				project_id: projectId,
 				trace_id: traceId,
 				observation_id: observationId,
@@ -293,16 +348,33 @@ export function FeedbackControls({
 					},
 				},
 			});
-			setMessage(value === -1 ? "Added to review queue" : "Recorded");
+			if (!active.current) return;
+			setSaved(result);
+			setMessage("");
 			setNegative(false);
 			delete idempotencyKeys.current[intent];
 		} catch (cause) {
-			setMessage((cause as Error).message);
+			if (active.current) setMessage((cause as Error).message);
 		} finally {
-			setPending(false);
+			submitting.current = false;
+			if (active.current) setPending(false);
 		}
 	}
-	if (!canCurate) return null;
+	if (!canCurate && !saved) {
+		if (loadError) {
+			return (
+				<span role="alert">
+					{loadError}{" "}
+					<Button size="sm" onClick={() => setLoadAttempt((n) => n + 1)}>
+						Retry
+					</Button>
+				</span>
+			);
+		}
+		return projectId && loading ? (
+			<span role="status">Loading your feedback...</span>
+		) : null;
+	}
 	return (
 		<div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
 			<Button
@@ -311,8 +383,12 @@ export function FeedbackControls({
 				variant="outline"
 				onClick={() => void record(1)}
 				aria-label={`Thumbs up ${label}`}
+				aria-pressed={saved?.value === 1}
+				className={
+					saved?.value === 1 ? "border-primary ring-2 ring-primary" : undefined
+				}
 				title={`Thumbs up ${label}`}
-				disabled={pending || !projectId}
+				disabled={pending || loading || !!loadError || !!saved || !projectId}
 			>
 				<LuThumbsUp className="h-4 w-4" aria-hidden="true" />
 			</Button>
@@ -322,23 +398,45 @@ export function FeedbackControls({
 				variant="outline"
 				onClick={() => setNegative(true)}
 				aria-label={`Thumbs down ${label}`}
+				aria-pressed={saved?.value === -1}
+				className={
+					saved?.value === -1 ? "border-primary ring-2 ring-primary" : undefined
+				}
 				title={`Thumbs down ${label}`}
-				disabled={pending || !projectId}
+				disabled={pending || loading || !!loadError || !!saved || !projectId}
 			>
 				<LuThumbsDown className="h-4 w-4" aria-hidden="true" />
 			</Button>
-			<Input
-				className="h-8 w-full max-w-48"
-				placeholder="Optional comment"
-				aria-label="Comment"
-				value={comment}
-				disabled={!projectId}
-				onChange={(event) => {
-					commentRef.current = event.target.value;
-					setComment(event.target.value);
-				}}
-			/>
-			{negative && (
+			{!saved && (
+				<Input
+					className="h-8 w-full max-w-48"
+					placeholder="Optional comment"
+					aria-label="Comment"
+					value={comment}
+					disabled={!projectId || loading || !!loadError || pending}
+					onChange={(event) => {
+						commentRef.current = event.target.value;
+						setComment(event.target.value);
+					}}
+				/>
+			)}
+			{loading && <span role="status">Loading your feedback...</span>}
+			{loadError && (
+				<span role="alert">
+					{loadError}{" "}
+					<Button size="sm" onClick={() => setLoadAttempt((n) => n + 1)}>
+						Retry
+					</Button>
+				</span>
+			)}
+			{saved && (
+				<span role="status">
+					Your feedback: {saved.sentiment}
+					{saved.reason ? ` · ${saved.reason}` : ""}
+					{saved.comment ? ` · ${saved.comment}` : ""}
+				</span>
+			)}
+			{negative && !saved && (
 				<>
 					<Input
 						className="h-8 w-40"
