@@ -6,6 +6,11 @@ services:
   postgres:
     image: postgres:18.6-alpine
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -21,6 +26,11 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:26.10.2.103-alpine
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     platform: linux/amd64
     cap_add: [SYS_NICE]
     environment:
@@ -43,6 +53,11 @@ services:
   valkey:
     image: valkey/valkey:9.1.3-alpine
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     command: ["valkey-server", "/usr/local/etc/valkey/valkey.conf", "--requirepass", "${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}"]
     volumes:
       - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
@@ -58,6 +73,11 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     environment:
       NODE_ENV: production
       API_PORT: 3000
@@ -114,6 +134,11 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: ${DOCKER_LOG_DRIVER:-local}
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     environment:
       NODE_ENV: production
       WEB_PORT: 5173

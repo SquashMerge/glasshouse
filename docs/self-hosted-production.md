@@ -4,6 +4,8 @@ This is the supported production path for a single Glasshouse host. It is
 separate from the development workflow: `make dev`, `infra/compose.yaml`, and
 `infra/compose.deps.yaml` remain local-development-only.
 
+An experimental image-only bundle lives in [`deploy/snapshot`](../deploy/snapshot/README.md). A read-only CI job exercises it; check the hosted result for the exact revision. A verified private publisher and production release path are not yet established.
+
 ## Topology
 
 Run `infra/compose.production.yaml` from the repository root with a deployment
@@ -23,6 +25,10 @@ The proxy must route `/` to the web service and `/v1`, `/health`, and any
 OpenAPI/reference routes that operators choose to expose to the API. Do not
 expose database, ClickHouse, or Valkey ports. This repository does not ship or
 support a specific proxy, certificate issuer, HTTP/2 policy, or firewall.
+The production manifests default to the `local` Docker logging driver with a
+10 MB, three-file rotation limit per service; driver and limits may be overridden
+with `DOCKER_LOG_DRIVER`, `DOCKER_LOG_MAX_SIZE`, and `DOCKER_LOG_MAX_FILE`.
+Use a driver compatible with those options and retain bounded logs.
 
 ## Configuration and startup
 
