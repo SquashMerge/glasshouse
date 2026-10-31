@@ -95,5 +95,10 @@ variables precedence over the supplied production env file, so use a controlled
 environment without conflicting exports and verify the resolved configuration
 and project before running the backup.
 
-This does not replace an isolated restore rehearsal; follow the guide's target
-checks and current-version restrictions. Do not delete live volumes.
+This does not replace an isolated restore rehearsal. In the guide's
+[restore example](../../docs/backup-restore.md#isolated-restore), replace the
+three `BACKUP_SOURCE_*` values with the same **live snapshot** Compose file,
+production env file, and actual project name used above. Run from the matching
+source root; its source-side Compose project-directory is still the repository
+root, while the separately provisioned target uses its own directory. Follow the
+guide's target checks and current-version restrictions. Do not delete live volumes.
