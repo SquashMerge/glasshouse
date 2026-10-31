@@ -6,7 +6,7 @@ ClickHouse's local `File()` backup backend requires both `backups.allowed_disk` 
 
 ## Backup
 
-Install the client/runtime prerequisites used by the operator host: Docker Compose v2, GNU Make, `python3`, `sha256sum`, and a running repository stack. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
+Install the client/runtime prerequisites used by the operator host: Bash, Docker Compose v2, `python3`, `sha256sum`, and a running stack; other examples use GNU Make. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
 
 Choose a destination with restrictive permissions. The destination can be a local disk, an encrypted mounted filesystem, or an operator-managed object-storage sync target. The script itself writes only to a local filesystem path.
 
@@ -16,8 +16,17 @@ BACKUP_SOURCE_ID=production-eu-1 \
 BACKUP_SOURCE_COMPOSE_FILE=/srv/glasshouse/infra/compose.production.yaml \
 BACKUP_SOURCE_ENV_FILE=/run/secrets/glasshouse-production.env \
 BACKUP_SOURCE_COMPOSE_PROJECT=glasshouse-production \
-make backup
+bash infra/scripts/backup.sh
 ```
+
+Run this from the matching source checkout. The script uses the repository root as
+the Compose project directory, so relative bind mounts in the selected manifest
+resolve there. It does not source the checkout's `infra/.env`; avoid `make backup`
+for production because that target sources the local development environment and
+can override the selected source. Compose gives exported shell variables
+precedence over the supplied env file, so use a controlled environment without
+conflicting exports and verify the resolved configuration and project before
+running the backup.
 
 The script creates a mode-0700 staging directory and mode-0600 dump files, validates both files, writes SHA-256 checksums and a secret-free manifest, then atomically renames the staging directory. A directory is a complete backup only when it contains `manifest.json` with `complete: true`; a failed or interrupted staging directory is never published as a completed artifact. Existing artifact IDs are never overwritten.
 

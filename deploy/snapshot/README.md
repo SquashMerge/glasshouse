@@ -65,8 +65,9 @@ not supported.
 The application images and bundle do not contain the operator scripts, Makefile,
 or guides. Obtain the [backup/restore guide](../../docs/backup-restore.md) and a
 trusted matching source revision separately; links outside this directory do not
-work if only the bundle was transferred. The tools require Docker Compose, GNU
-Make, Python 3 and `sha256sum` on their operator host. They are not a standalone
+work if only the bundle was transferred. The direct backup script requires Bash,
+Docker Compose, Python 3 and `sha256sum` on its operator host; other guide
+commands use GNU Make. The tools are not a standalone
 checkout-free bundle: `backup.sh` and the source side of `restore.sh` force the
 **repository root** as Compose project-directory. Therefore relative bind mounts
 in the selected source manifest resolve against that root, not the deployed
@@ -84,8 +85,15 @@ BACKUP_SOURCE_ID=production-1 \
 BACKUP_SOURCE_COMPOSE_FILE=/path/to/snapshot/compose.yaml \
 BACKUP_SOURCE_ENV_FILE=/secure/glasshouse.production.env \
 BACKUP_SOURCE_COMPOSE_PROJECT=glasshouse-production \
-make backup
+bash infra/scripts/backup.sh
 ```
+
+Do not use `make backup` for this production invocation: it sources the
+checkout's `infra/.env` and can override the selected production settings. The
+direct script does not source that file. Compose still gives exported shell
+variables precedence over the supplied production env file, so use a controlled
+environment without conflicting exports and verify the resolved configuration
+and project before running the backup.
 
 This does not replace an isolated restore rehearsal; follow the guide's target
 checks and current-version restrictions. Do not delete live volumes.
