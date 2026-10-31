@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -48,6 +49,65 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(commands[0][commands[0].index('--severity') + 1], 'HIGH,CRITICAL')
         self.assertEqual(commands[0][commands[0].index('--exit-code') + 1], '1')
         self.assertEqual(commands[0][commands[0].index('--format') + 1], 'json')
+
+    def test_vulnerabilities_show_all_34_and_safe_fingerprinted_details(self):
+        items = [{'VulnerabilityID': f'CVE-2026-{i:04}', 'Severity': 'HIGH',
+                  'PkgName': 'dependency', 'InstalledVersion': SENTINEL,
+                  'FixedVersion': SENTINEL, 'Title': SENTINEL, 'Match': SENTINEL,
+                  'PkgPath': SENTINEL} for i in range(34)]
+        items += [dict(items[0], PkgName=SENTINEL, Severity='CRITICAL')]
+        message, _ = self.scan(report([
+            {'Class': 'lang-pkgs', 'Type': 'python-pkg', 'Vulnerabilities': items},
+            {'Class': SENTINEL, 'Type': SENTINEL,
+             'Vulnerabilities': [dict(items[0], PkgName=SENTINEL)]},
+        ]), 1)
+        summary = json.loads(message.removeprefix('Trivy findings: '))
+        self.assertEqual(summary['vulnerability_count'], 36)
+        self.assertEqual(len(summary['vulnerabilities']), 35)
+        self.assertEqual({entry[0] for entry in summary['vulnerabilities']},
+                         {f'CVE-2026-{i:04}' for i in range(34)})
+        digest = hashlib.sha256(b'dependency').hexdigest()
+        injected_digest = hashlib.sha256(SENTINEL.encode()).hexdigest()
+        self.assertIn(['CVE-2026-0000', 'HIGH', 'lang-pkgs', 'python-pkg', digest],
+                      summary['vulnerability_details'])
+        self.assertIn(['CVE-2026-0000', 'HIGH', 'other', 'other', injected_digest],
+                      summary['vulnerability_details'])
+        self.assertNotIn(SENTINEL, message)
+        self.assertNotIn('dependency', message)
+        self.assertFalse(summary['details_truncated'])
+
+    def test_upstream_v0693_json_report_with_gate_filter(self):
+        # Apache-2.0 upstream integration/testdata/alpine-39.json.golden at v0.69.3.
+        doc = json.loads((Path(__file__).parent / 'fixtures/trivy-v0.69.3-alpine-39.json').read_bytes())
+        doc['ArtifactName'] = IMAGE
+        doc['Metadata']['ImageID'] = CONFIG
+        for entry in doc['Results']:
+            entry['Vulnerabilities'] = [v for v in entry['Vulnerabilities']
+                                        if v['Severity'] in ('HIGH', 'CRITICAL')
+                                        and v.get('FixedVersion')]
+        message, _ = self.scan(json.dumps(doc).encode(), 1)
+        summary = json.loads(message.removeprefix('Trivy findings: '))
+        self.assertEqual(summary['vulnerability_count'], 2)
+        self.assertTrue(all(row[2:4] == ['os-pkgs', 'alpine']
+                            and len(row[4]) == 64 for row in summary['vulnerability_details']))
+        self.assertNotIn('libssl', message)
+
+    def test_details_are_bounded_independently_from_unique_cves(self):
+        items = [{'VulnerabilityID': 'CVE-2026-1234', 'Severity': 'HIGH',
+                  'PkgName': f'package-{i}'} for i in range(200)]
+        items += [{'VulnerabilityID': f'CVE-2026-{i:04}', 'Severity': 'HIGH',
+                   'PkgName': None} for i in range(140)]
+        message, _ = self.scan(report([{'Class': {'secret': SENTINEL}, 'Type': [SENTINEL],
+                                        'Vulnerabilities': items}]), 1)
+        summary = json.loads(message.removeprefix('Trivy findings: '))
+        self.assertEqual(summary['vulnerability_count'], 340)
+        self.assertEqual(len(summary['vulnerabilities']), 128)
+        self.assertEqual(len(summary['vulnerability_details']), 128)
+        self.assertTrue(summary['details_truncated'])
+        self.assertTrue(all(x[2:4] == ['other', 'other'] for x in summary['vulnerability_details']))
+        self.assertLess(len(message), 24000)
+        self.assertNotIn(SENTINEL, message)
+        self.assertNotIn('package-', message)
 
     def test_secret_is_bounded_and_redacts_content(self):
         item = {'RuleID': 'aws-access-key-id', 'Severity': 'CRITICAL', 'Match': SENTINEL,

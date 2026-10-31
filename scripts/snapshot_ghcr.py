@@ -76,6 +76,17 @@ symfony-default-secret
 '''.split())
 SCAN_REPORT_LIMIT = 32 * 1024 * 1024
 SCAN_ENTRY_LIMIT = 20
+SCAN_VULNERABILITY_LIMIT = 128
+SAFE_RESULT_CLASSES = frozenset(('os-pkgs', 'lang-pkgs'))
+# Pinned v0.69.3 pkg/fanal/types/const.go package target types; never echo unknown values.
+SAFE_RESULT_TYPES = frozenset('''
+activestate alma alpine amazon azurelinux bottlerocket cbl-mariner centos centos-stream
+chainguard coreos debian echo fedora minimos opensuse opensuse-leap opensuse-tumbleweed
+oracle photon redhat rocky slem sles ubuntu wolfi bundler gemspec cargo composer
+composer-vendor npm bun nuget dotnet-core packages-props pip pipenv poetry uv conda-pkg
+conda-environment python-pkg node-pkg yarn pnpm jar pom gradle sbt gobinary gomod
+javascript rustbinary conan cocoapods swift pub hex bitnami julia kubernetes eks gke aks rke ocp
+'''.split())
 
 
 def unique_json_object(pairs):
@@ -119,6 +130,10 @@ def scan_image(image, config_digest):
                     or not set(entry).issubset({'Target', 'Class', 'Type', 'Packages',
                                                 'Vulnerabilities', 'Secrets'})):
                 raise ValueError
+            result_class = entry.get('Class')
+            result_type = entry.get('Type')
+            result_class = result_class if isinstance(result_class, str) and result_class in SAFE_RESULT_CLASSES else 'other'
+            result_type = result_type if isinstance(result_type, str) and result_type in SAFE_RESULT_TYPES else 'other'
             for key, dest in (('Vulnerabilities', vulnerabilities), ('Secrets', secrets)):
                 findings = entry.get(key, [])
                 if not isinstance(findings, list):
@@ -132,7 +147,10 @@ def scan_image(image, config_digest):
                         raise ValueError
                     if key == 'Vulnerabilities':
                         ident = ident if re.fullmatch(r'CVE-[0-9]{4}-[0-9]{4,7}', ident) else 'other'
-                        dest.append((ident, finding['Severity']))
+                        package = finding.get('PkgName')
+                        fingerprint = (hashlib.sha256(package.encode('utf-8')).hexdigest()
+                                       if isinstance(package, str) and package else '')
+                        dest.append((ident, finding['Severity'], result_class, result_type, fingerprint))
                     else:
                         dest.append(ident if ident in SAFE_SECRET_RULES else 'other')
     except (ValueError, TypeError, UnicodeError, RecursionError):
@@ -142,12 +160,17 @@ def scan_image(image, config_digest):
     if result.returncode == 0 and not vulnerabilities and not secrets:
         return
     if result.returncode == 1 and (vulnerabilities or secrets):
-        vuln_summary = sorted(set(vulnerabilities))[:SCAN_ENTRY_LIMIT]
-        secret_summary = sorted(set(secrets))[:SCAN_ENTRY_LIMIT]
+        vuln_summary = sorted({(ident, severity) for ident, severity, *_ in vulnerabilities})
+        vuln_details = sorted(set(vulnerabilities))
+        secret_summary = sorted(set(secrets))
         raise ScanFailure('Trivy findings: ' + json.dumps({
-            'vulnerability_count': len(vulnerabilities), 'vulnerabilities': vuln_summary,
-            'secret_count': len(secrets), 'secret_rule_ids': secret_summary,
-            'details_truncated': len(set(vulnerabilities)) > SCAN_ENTRY_LIMIT or len(set(secrets)) > SCAN_ENTRY_LIMIT,
+            'vulnerability_count': len(vulnerabilities),
+            'vulnerabilities': vuln_summary[:SCAN_VULNERABILITY_LIMIT],
+            'vulnerability_details': vuln_details[:SCAN_VULNERABILITY_LIMIT],
+            'secret_count': len(secrets), 'secret_rule_ids': secret_summary[:SCAN_ENTRY_LIMIT],
+            'details_truncated': (len(vuln_summary) > SCAN_VULNERABILITY_LIMIT
+                                  or len(vuln_details) > SCAN_VULNERABILITY_LIMIT
+                                  or len(secret_summary) > SCAN_ENTRY_LIMIT),
         }, separators=(',', ':')))
     raise ScanFailure('Trivy operational failure (exit/report mismatch; output suppressed)')
 
