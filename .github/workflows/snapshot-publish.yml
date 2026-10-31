@@ -56,10 +56,7 @@ jobs:
       - name: Install OCI transport
         run: sudo apt-get update && sudo apt-get install -y skopeo=1.13.3+ds1-2ubuntu0.24.04.3
       - name: Install pinned vulnerability scanner
-        uses: aquasecurity/setup-trivy@151a37f29c09e4ff49f853d2b23682e688bb1fa1 # v0.3.0
-        with:
-          version: v0.69.3
-          cache: 'false'
+        run: python3 scripts/install_snapshot_trivy.py
       - name: Reconcile gated revisions and publish candidates
         env:
           GH_TOKEN: ${{ github.token }}
