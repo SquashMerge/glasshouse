@@ -31,6 +31,8 @@ describe("trace workspace 5k release gate", () => {
 		);
 	});
 
+	// Rendering 5,000 rows in jsdom can exceed Vitest's default on CI.
+	// The separate browser fixture retains its own 5,000-row timeout.
 	it("renders every observation with stable browser selectors", () => {
 		const observations: CanonicalObservation[] = Array.from(
 			{ length: 5_000 },
@@ -64,5 +66,5 @@ describe("trace workspace 5k release gate", () => {
 			"2,000 or more observations",
 		);
 		expect(rows[0]).toHaveAttribute("data-observation-id", "observation-0000");
-	});
+	}, 15_000);
 });
