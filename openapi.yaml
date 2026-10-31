@@ -14308,11 +14308,9 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
+                anyOf:
                   - $ref: '#/components/schemas/Feedback'
-                  - type:
-                      - object
-                      - 'null'
+                  - type: 'null'
           description: Current feedback, or null when none exists
         '400':
           content:

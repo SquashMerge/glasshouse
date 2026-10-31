@@ -360,7 +360,21 @@ function FeedbackTarget({
 			if (active.current) setPending(false);
 		}
 	}
-	if (!canCurate && !saved) return null;
+	if (!canCurate && !saved) {
+		if (loadError) {
+			return (
+				<span role="alert">
+					{loadError}{" "}
+					<Button size="sm" onClick={() => setLoadAttempt((n) => n + 1)}>
+						Retry
+					</Button>
+				</span>
+			);
+		}
+		return projectId && loading ? (
+			<span role="status">Loading your feedback...</span>
+		) : null;
+	}
 	return (
 		<div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
 			<Button

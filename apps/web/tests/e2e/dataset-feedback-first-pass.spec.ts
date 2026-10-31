@@ -358,6 +358,40 @@ test("records trace feedback and preserves observation provenance when adding it
 		"data-observation-id",
 		trace.observationId,
 	);
+	const spanFeedback = panel
+		.getByRole("button", { name: "Thumbs down Observation" })
+		.locator("..");
+	await expect(
+		spanFeedback.getByRole("button", { name: "Thumbs down Observation" }),
+	).toBeEnabled();
+	await spanFeedback.getByLabel("Comment").fill("Span needs correction");
+	await spanFeedback
+		.getByRole("button", { name: "Thumbs down Observation" })
+		.click();
+	await spanFeedback.getByLabel("Reason").fill("incorrect span");
+	await spanFeedback.getByRole("button", { name: "Record" }).click();
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"incorrect span",
+	);
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"Span needs correction",
+	);
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Helpful first-pass trace",
+	);
+	await page.reload();
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"incorrect span",
+	);
+	await expect(spanFeedback.getByRole("status")).toContainText(
+		"Span needs correction",
+	);
+	await expect(
+		spanFeedback.getByRole("button", { name: "Thumbs down Observation" }),
+	).toHaveAttribute("aria-pressed", "true");
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Helpful first-pass trace",
+	);
 	await panel.getByRole("button", { name: "Add to dataset" }).click();
 	const dialog = page.getByRole("dialog", {
 		name: "Capture Observation as a Dataset draft",

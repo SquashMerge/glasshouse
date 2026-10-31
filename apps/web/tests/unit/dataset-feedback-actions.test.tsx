@@ -57,6 +57,62 @@ beforeEach(() => {
 });
 
 describe("dataset feedback actions", () => {
+	it("shows a read-only user a failed feedback load and allows retry without offering mutations", async () => {
+		getOwnFeedback
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce({
+				value: -1,
+				sentiment: "negative",
+				reason: "incorrect",
+				comment: "previous",
+			});
+		render(
+			<FeedbackControls
+				projectId="project"
+				traceId="trace"
+				label="trace"
+				canCurate={false}
+			/>,
+		);
+		await screen.findByRole("alert");
+		expect(screen.queryByLabelText("Thumbs up trace")).toBeNull();
+		expect(screen.queryByLabelText("Comment")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await screen.findByText(/previous/);
+		expect(
+			(screen.getByLabelText("Thumbs down trace") as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
+		expect(createFeedback).not.toHaveBeenCalled();
+	});
+
+	it("sends one feedback request for rapid pending and repeated recorded clicks", async () => {
+		let finish!: (value: unknown) => void;
+		createFeedback.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				}),
+		);
+		render(
+			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
+		);
+		const up = screen.getByLabelText("Thumbs up trace") as HTMLButtonElement;
+		await waitFor(() => expect(up.disabled).toBe(false));
+		act(() => {
+			up.click();
+			up.click();
+			up.click();
+		});
+		expect(createFeedback).toHaveBeenCalledTimes(1);
+		await act(async () => finish({ value: 1, sentiment: "positive" }));
+		expect(up.disabled).toBe(true);
+		act(() => {
+			up.click();
+			up.click();
+		});
+		expect(createFeedback).toHaveBeenCalledTimes(1);
+	});
 	it("shows saved feedback read-only after curation access is removed", async () => {
 		getOwnFeedback.mockResolvedValue({
 			value: 1,

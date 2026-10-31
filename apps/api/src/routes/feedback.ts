@@ -102,7 +102,9 @@ export const getOwnFeedbackRoute = createRoute({
 	responses: {
 		200: {
 			description: "Current feedback, or null when none exists",
-			content: { "application/json": { schema: Feedback.nullable() } },
+			content: {
+				"application/json": { schema: z.union([Feedback, z.null()]) },
+			},
 		},
 		...FeedbackErrors,
 	},

@@ -558,7 +558,7 @@ register(previewRetention, handlePreviewRetention);
 register(runRetention, handleRunRetention);
 register(listRetentionRuns, handleListRetentionRuns);
 
-openapiApp.doc("/openapi.json", {
+openapiApp.doc31("/openapi.json", {
 	openapi: "3.1.0",
 	info: {
 		title: "Glasshouse API",
