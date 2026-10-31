@@ -49,10 +49,12 @@
       "dependencies": {
         "@tanstack/react-query": "5.102.8",
         "@tanstack/react-router": "1.170.41",
+        "@vitejs/plugin-react": "6.1.2",
         "class-variance-authority": "0.7.1",
         "react": "19.3.0",
         "react-dom": "19.3.0",
         "react-icons": "5.7.0",
+        "vite": "8.3.4",
       },
       "devDependencies": {
         "@playwright/test": "1.63.0",
@@ -64,13 +66,11 @@
         "@types/node": "26.6.5",
         "@types/react": "19.3.0",
         "@types/react-dom": "19.3.0",
-        "@vitejs/plugin-react": "6.1.2",
         "autoprefixer": "10.6.1",
         "jsdom": "30.1.1",
         "postcss": "8.5.30",
         "tailwindcss": "4.3.3",
         "typescript": "7.0.2",
-        "vite": "8.3.4",
         "vitest": "5.0.3",
       },
     },
@@ -568,7 +568,7 @@
 
     "seroval-plugins": ["seroval-plugins@1.6.8", "", { "peerDependencies": { "seroval": "^1.0" } }, "sha512-N7mWAMydj89EnYTHtRpS3LBrAz3J9O6oVrqpuXuvlAHfAUG8WEKqtbAd7SBiJNY5NfCAFhSdyAh7wI4Shjqy4g=="],
 
-    "source-map-js": ["source-map-js@1.2.1", "", {}, "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="],
+    "source-map-js": ["source-map-js@1.2.2", "", {}, "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="],
 
     "split2": ["split2@4.2.0", "", {}, "sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg=="],
 

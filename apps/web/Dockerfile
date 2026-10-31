@@ -8,6 +8,12 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 RUN bun install --frozen-lockfile --filter "@glasshouse/*"
 
+FROM base AS prod-deps
+COPY package.json bun.lock ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+RUN bun install --frozen-lockfile --production --filter "glasshouse" --filter "@glasshouse/web"
+
 FROM base AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -18,8 +24,8 @@ RUN bun --filter "@glasshouse/web" build
 FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app
 RUN apk upgrade --no-cache && apk add --no-cache libpq wget
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps/web/node_modules ./apps/web/node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=prod-deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 COPY --from=build /app/apps/web/package.json ./apps/web/package.json

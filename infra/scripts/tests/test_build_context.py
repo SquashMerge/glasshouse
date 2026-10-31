@@ -1,8 +1,15 @@
+import http.client
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import shutil
+import signal
+import socket
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 
 
@@ -35,6 +42,17 @@ class DockerBuildContextTests(unittest.TestCase):
         production = dockerfile.split(" AS prod\n", 1)[1]
         self.assertIn("COPY --from=prod-deps /app/node_modules ./node_modules", production)
         self.assertIn("COPY --from=prod-deps /app/apps/api/node_modules ./apps/api/node_modules", production)
+        self.assertNotIn("COPY --from=build /app/node_modules", production)
+
+    def test_web_uses_a_fresh_frozen_production_dependency_stage(self):
+        dockerfile = (ROOT / "apps/web/Dockerfile").read_text()
+        self.assertIn("FROM base AS prod-deps\n", dockerfile)
+        stage = dockerfile.split("FROM base AS prod-deps\n", 1)[1].split("\nFROM ", 1)[0]
+        self.assertIn('RUN bun install --frozen-lockfile --production --filter "glasshouse" --filter "@glasshouse/web"', stage)
+        self.assertNotIn("COPY --from=", stage)
+        production = dockerfile.split(" AS prod\n", 1)[1]
+        self.assertIn("COPY --from=prod-deps /app/node_modules ./node_modules", production)
+        self.assertIn("COPY --from=prod-deps /app/apps/web/node_modules ./apps/web/node_modules", production)
         self.assertNotIn("COPY --from=build /app/node_modules", production)
 
     @unittest.skipUnless(
@@ -94,6 +112,130 @@ class DockerBuildContextTests(unittest.TestCase):
             self.assertNotIn("Cannot find module", output)
             self.assertNotIn("ModuleNotFound", output)
 
+    @unittest.skipUnless(
+        os.environ.get("GLASSHOUSE_TEST_PRODUCTION_INSTALL") == "1",
+        "set GLASSHOUSE_TEST_PRODUCTION_INSTALL=1 to exercise the frozen install",
+    )
+    def test_web_frozen_production_preview_contract(self):
+        stage = (ROOT / "apps/web/Dockerfile").read_text().split("FROM base AS prod-deps\n", 1)[1].split("\nFROM ", 1)[0]
+        install = next(line.removeprefix("RUN ") for line in stage.splitlines() if line.startswith("RUN bun install "))
+        subprocess.run(["bun", "--filter", "@glasshouse/web", "build"], cwd=ROOT, check=True, timeout=180)
+
+        release = threading.Event()
+
+        class Upstream(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream" if self.path == "/v1/events" else "text/plain")
+                self.end_headers()
+                self.wfile.write(b"data: live\n\n" if self.path == "/v1/events" else self.path.encode())
+                self.wfile.flush()
+                if self.path == "/v1/events":
+                    # Keep upstream open to prove the first SSE frame is not buffered.
+                    release.wait(10)
+
+            def log_message(self, format, *args):
+                pass
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        upstream.daemon_threads = True
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(upstream.server_close)
+        self.addCleanup(upstream.shutdown)
+        self.addCleanup(release.set)
+        with tempfile.TemporaryDirectory(prefix="glasshouse-web-prod-deps-") as directory:
+            root = Path(directory)
+            for name in ("package.json", "bun.lock", "apps/api/package.json", "apps/web/package.json"):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / name, target)
+            subprocess.run(install, cwd=root, shell=True, check=True, timeout=180)
+            runtime = root / "runtime"
+            for name in ("node_modules", "apps/web/node_modules"):
+                shutil.copytree(root / name, runtime / name, symlinks=True)
+            for name in ("package.json", "apps/api/package.json", "apps/web/package.json", "apps/web/vite.config.ts"):
+                target = runtime / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / name, target)
+            shutil.copytree(ROOT / "apps/web/dist", runtime / "apps/web/dist")
+            for name in ("jsdom", "undici", "typescript", "@typescript+typescript-linux-x64"):
+                self.assertFalse(list((runtime / "node_modules/.bun").glob(f"{name}@*")), name)
+            source_maps = []
+            for location in (runtime / "node_modules", runtime / "apps/web/node_modules"):
+                for directory, _, files in os.walk(location, followlinks=False):
+                    if "package.json" in files:
+                        manifest = Path(directory) / "package.json"
+                        package = json.loads(manifest.read_text())
+                        if package.get("name") == "source-map-js":
+                            source_maps.append((manifest, package.get("version")))
+            self.assertTrue(source_maps, "production install must include source-map-js")
+            for manifest, version in source_maps:
+                self.assertEqual(version, "1.2.2", str(manifest))
+            for location in (runtime / "node_modules", runtime / "apps/web/node_modules"):
+                for link in location.rglob("*"):
+                    if link.is_symlink():
+                        self.assertTrue(link.exists(), f"broken runtime dependency symlink: {link}")
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            env = {"PATH": os.environ["PATH"], "HOME": str(root), "NODE_ENV": "production",
+                   "VITE_API_PROXY": f"http://127.0.0.1:{upstream.server_port}"}
+            preview = subprocess.Popen(["bun", "run", "preview", "--host", "127.0.0.1", "--port", str(port), "--strictPort"],
+                                       cwd=runtime / "apps/web", env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
+            try:
+                deadline = time.monotonic() + 20
+                while True:
+                    try:
+                        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                        connection.request("GET", "/")
+                        response = connection.getresponse()
+                        html = response.read()
+                        break
+                    except OSError:
+                        if preview.poll() is not None or time.monotonic() >= deadline:
+                            self.fail(f"Vite preview failed to start (exit {preview.poll()})")
+                        time.sleep(0.1)
+                self.assertEqual(response.status, 200)
+                self.assertIn(b'<div id="root"></div>', html)
+                csp = response.getheader("Content-Security-Policy", "")
+                self.assertIn("default-src 'self'", csp)
+                self.assertIn("frame-ancestors 'none'", csp)
+                self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
+                self.assertEqual(response.getheader("Cross-Origin-Opener-Policy"), "same-origin")
+                self.assertEqual(response.getheader("Cross-Origin-Resource-Policy"), "same-origin")
+                connection.close()
+                for path in ("/projects/deep-link", "/v1/health", "/health", "/openapi.json", "/reference"):
+                    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+                    connection.request("GET", path, headers={"Accept": "text/html"})
+                    response = connection.getresponse()
+                    body = response.read()
+                    self.assertEqual(response.status, 200, path)
+                    self.assertIn(b'<div id="root"></div>' if path.startswith("/projects/") else path.encode(), body)
+                    connection.close()
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+                connection.request("GET", "/v1/events")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.getheader("cache-control"), "no-cache")
+                self.assertEqual(response.getheader("x-accel-buffering"), "no")
+                self.assertEqual(response.readline(), b"data: live\n")
+                self.assertFalse(release.is_set())
+                connection.close()
+                subprocess.run(["wget", "--spider", "--quiet", f"http://127.0.0.1:{port}/"], check=True, timeout=10, env=env)
+            finally:
+                try:
+                    os.killpg(preview.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    preview.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(preview.pid, signal.SIGKILL)
+                    preview.wait()
+
     def test_ci_exercises_the_frozen_production_install(self):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("GLASSHOUSE_TEST_PRODUCTION_INSTALL=1", ci)
@@ -128,8 +270,8 @@ class DockerBuildContextTests(unittest.TestCase):
                 "COPY --from=build /app/worker/requirements.lock ./worker/requirements.lock",
             },
             "web": {
-                "COPY --from=build /app/node_modules ./node_modules",
-                "COPY --from=build /app/apps/web/node_modules ./apps/web/node_modules",
+                "COPY --from=prod-deps /app/node_modules ./node_modules",
+                "COPY --from=prod-deps /app/apps/web/node_modules ./apps/web/node_modules",
                 "COPY --from=build /app/package.json ./package.json",
                 "COPY --from=build /app/apps/api/package.json ./apps/api/package.json",
                 "COPY --from=build /app/apps/web/package.json ./apps/web/package.json",
@@ -155,6 +297,8 @@ class DockerBuildContextTests(unittest.TestCase):
         web = (ROOT / "apps/web/Dockerfile").read_text().split(" AS prod\n", 1)[1]
         self.assertIn('bun run preview', web)
         self.assertIn("wget", web)
+        self.assertIn("USER bun", web.splitlines())
+        self.assertIn("RUN chown -R bun:bun /app", web.splitlines())
 
     @unittest.skipUnless(
         os.environ.get("GLASSHOUSE_TEST_DOCKER_CONTEXT") == "1",
