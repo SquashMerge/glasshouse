@@ -26,6 +26,58 @@ class DockerBuildContextTests(unittest.TestCase):
                     dockerfile.read_text().splitlines(),
                 )
 
+    def test_publisher_fixtures_cannot_enter_build_context(self):
+        self.assertTrue((ROOT / "scripts/fixtures/trivy-v0.69.3-fluentd.cdx.json").is_file())
+        patterns = (ROOT / ".dockerignore").read_text().splitlines()
+        self.assertIn("scripts/", patterns)
+        self.assertFalse(any(line.startswith("!scripts/") for line in patterns))
+
+    def test_production_stages_copy_only_explicit_runtime_inputs(self):
+        expected = {
+            "api": {
+                "COPY --from=build /app/node_modules ./node_modules",
+                "COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules",
+                "COPY --from=build /app/package.json ./package.json",
+                "COPY --from=build /app/apps/api/package.json ./apps/api/package.json",
+                "COPY --from=build /app/apps/web/package.json ./apps/web/package.json",
+                "COPY --from=build /app/apps/api/src ./apps/api/src",
+                "COPY --from=build /app/infra/db/migrations ./infra/db/migrations",
+                "COPY --from=build /app/infra/db/clickhouse ./infra/db/clickhouse",
+                "COPY --from=build /app/infra/scripts/verify-pg-migration-filenames.ts ./infra/scripts/verify-pg-migration-filenames.ts",
+                "COPY --from=build /app/worker/gepa_worker.py ./worker/gepa_worker.py",
+                "COPY --from=build /app/worker/dev_cli_llm.py ./worker/dev_cli_llm.py",
+                "COPY --from=build /app/worker/__init__.py ./worker/__init__.py",
+                "COPY --from=build /app/worker/requirements.lock ./worker/requirements.lock",
+            },
+            "web": {
+                "COPY --from=build /app/node_modules ./node_modules",
+                "COPY --from=build /app/apps/web/node_modules ./apps/web/node_modules",
+                "COPY --from=build /app/package.json ./package.json",
+                "COPY --from=build /app/apps/api/package.json ./apps/api/package.json",
+                "COPY --from=build /app/apps/web/package.json ./apps/web/package.json",
+                "COPY --from=build /app/apps/web/dist ./apps/web/dist",
+                "COPY --from=build /app/apps/web/vite.config.ts ./apps/web/vite.config.ts",
+            },
+        }
+        for app, allowed in expected.items():
+            with self.subTest(app=app):
+                dockerfile = (ROOT / f"apps/{app}/Dockerfile").read_text()
+                production = dockerfile.split(" AS prod\n", 1)[1]
+                copies = {line for line in production.splitlines() if line.startswith("COPY ")}
+                self.assertEqual(copies, allowed)
+                for line in copies:
+                    source = line.split()[2]
+                    if not source.endswith("node_modules") and not source.endswith("/dist"):
+                        self.assertTrue((ROOT / source.removeprefix("/app/")).exists(), source)
+        api = (ROOT / "apps/api/Dockerfile").read_text().split(" AS prod\n", 1)[1]
+        self.assertIn("util-linux wget", api)
+        self.assertIn("--require-hashes -r /app/worker/requirements.lock", api)
+        self.assertIn("GEPA_PYTHON=/opt/gepa/bin/python", api)
+        self.assertIn('bun run start', api)
+        web = (ROOT / "apps/web/Dockerfile").read_text().split(" AS prod\n", 1)[1]
+        self.assertIn('bun run preview', web)
+        self.assertIn("wget", web)
+
     @unittest.skipUnless(
         os.environ.get("GLASSHOUSE_TEST_DOCKER_CONTEXT") == "1",
         "set GLASSHOUSE_TEST_DOCKER_CONTEXT=1 for the Docker/BuildKit context check",
@@ -56,6 +108,7 @@ class DockerBuildContextTests(unittest.TestCase):
             ".venv-gepa/lib/dependency.py", "worker/__pycache__/worker.pyc",
             ".cache/state", "apps/web/dist/index.html", "logs/api.log",
             ".opencode/factory/state.json", ".ci-backup-restore/source.env",
+            "scripts/fixtures/trivy-v0.69.3-fluentd.cdx.json",
         ]
         with tempfile.TemporaryDirectory(prefix="glasshouse-build-context-") as directory:
             directory = Path(directory)
