@@ -24,6 +24,7 @@ Do not put real credentials, local paths, auth-state locations, copied diagnosti
 - The production ClickHouse service mounts `infra/clickhouse/backup.xml`; keep this file with the deployment so `File()` backup and restore remain restricted to the configured backup path.
 - App Docker builds share the root `.dockerignore`, which excludes local secrets/environment files, backups/dumps, checkout metadata, dependencies, virtual environments, and generated artifacts. SQL build inputs are retained only under `infra/db/` and `infra/scripts/`; keep new required build inputs covered by the build-context regression.
 - Production Compose explicitly forwards `VALKEY_PASSWORD`, deployment redaction controls, and the Evaluation model/budget envelope. `--env-file` supplies interpolation values; it does not automatically inject them into the API. See `infra/production.env.example` and `docs/self-hosted-production.md` for defaults and bounds.
+- Snapshot publication remains disabled. Its private checkpoint, sole-writer assumptions, SBOM/source/digest verifier, and unresolved live package/token checks are documented in `docs/snapshot-publication-security.md`; the read-only preflight defaults to a no-op.
 
 ## Prerequisites
 

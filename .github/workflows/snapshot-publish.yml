@@ -1,0 +1,71 @@
+name: Private snapshot publisher
+
+on:
+  workflow_run:
+    workflows: [CI, Dependency release age]
+    types: [completed]
+  schedule:
+    - cron: '43 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      initialize_checkpoint:
+        description: 'Initialize once after reviewed private bootstrap (never use for recovery)'
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: private-snapshot-publisher
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # workflow_run is only a wake-up. The script independently reconciles all
+    # first-parent revisions against both exact-SHA push workflow runs.
+    if: >-
+      github.repository == 'SquashMerge/glasshouse' &&
+      github.ref == 'refs/heads/main' &&
+      vars.SNAPSHOT_PUBLISH_ENABLED == 'true' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.repository.full_name == 'SquashMerge/glasshouse' &&
+        github.event.workflow_run.head_repository.full_name == 'SquashMerge/glasshouse'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - name: Check out trusted main history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up OCI-capable BuildKit
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.28.0
+          driver-opts: image=moby/buildkit@sha256:0f63d66f8d2de0bd16438284831a3e9ee6ca7cd57b6eb3ed6e38a7a456590fa7 # v0.25.2
+      - name: Install OCI transport
+        run: sudo apt-get update && sudo apt-get install -y skopeo=1.13.3+ds1-2ubuntu0.24.04.3
+      - name: Install pinned vulnerability scanner
+        uses: aquasecurity/setup-trivy@151a37f29c09e4ff49f853d2b23682e688bb1fa1 # v0.3.0
+        with:
+          version: v0.69.3
+          cache: 'false'
+      - name: Reconcile gated revisions and publish candidates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SNAPSHOT_PUBLISH_ENABLED: ${{ vars.SNAPSHOT_PUBLISH_ENABLED }}
+          SNAPSHOT_PACKAGE_POLICY_REVIEWED: ${{ vars.SNAPSHOT_PACKAGE_POLICY_REVIEWED }}
+          SNAPSHOT_ANCHOR: ${{ vars.SNAPSHOT_PUBLISH_ANCHOR }}
+          SNAPSHOT_RECORD_DIR: ${{ runner.temp }}/snapshot-records
+          SNAPSHOT_INITIALIZE_CHECKPOINT: ${{ inputs.initialize_checkpoint == true && 'true' || 'false' }}
+        run: python3 scripts/snapshot_ghcr.py

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Hosted-only disposable stack: application images are built here, then the
-# copied deployment bundle runs independently with all application builds off.
+# Disposable stack: use either a locally built pair or the publisher's prebuilt
+# candidates, then run the copied bundle with all application builds off.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
@@ -9,8 +9,8 @@ if revision="$(git rev-parse HEAD 2>/dev/null)"; then
     test "$revision" = "${GITHUB_SHA:?GITHUB_SHA is required in Actions}"
   fi
 elif [[ -z "${GITHUB_ACTIONS:-}" && -n "${IMAGE_TEST_REVISION:-}" ]]; then
-  # Some devcontainers cannot see a linked worktree's host-side Git directory.
-  # This is a caller assertion, never accepted by hosted CI as trace evidence.
+  # The publisher tests an admitted archive with its scrubbed child environment;
+  # caller assertions are never accepted directly by hosted CI as trace evidence.
   revision="$IMAGE_TEST_REVISION"
   printf 'Warning: source revision supplied by caller, not verified by Git\n' >&2
 else
@@ -22,10 +22,13 @@ if ! command -v docker >/dev/null; then
   printf 'Docker CLI and a reachable daemon are required for this integration test\n' >&2
   exit 1
 fi
+if [[ -n "${IMAGE_TEST_API:-}${IMAGE_TEST_WEB:-}" ]]; then
+  : "${IMAGE_TEST_API:?both prebuilt images required}" "${IMAGE_TEST_WEB:?both prebuilt images required}"
+fi
 project="image-ci-$(python3 -c 'import secrets; print(secrets.token_hex(8))')"
 tmp="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/glasshouse-image-ci.XXXXXXXX")"
-api_image="glasshouse-image-test-api:${revision}-${project}"
-web_image="glasshouse-image-test-web:${revision}-${project}"
+api_image="${IMAGE_TEST_API:-glasshouse-image-test-api:${revision}-${project}}"
+web_image="${IMAGE_TEST_WEB:-glasshouse-image-test-web:${revision}-${project}}"
 cp -R deploy/snapshot/. "$tmp/"
 cp infra/scripts/image-integration/{compose.test.yaml,proxy.conf} "$tmp/"
 cat > "$tmp/test.env" <<EOF
@@ -73,7 +76,9 @@ expected_ch="$(find infra/db/clickhouse -maxdepth 1 -type f -name '*.sql' | wc -
 for component in api web; do
   image_var="${component}_image"
   image="${!image_var}"
-  docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$revision" -f "apps/$component/Dockerfile" -t "$image" .
+  if [[ -z "${IMAGE_TEST_API:-}" ]]; then
+    docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$revision" -f "apps/$component/Dockerfile" -t "$image" .
+  fi
   test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$revision"
   printf '%s image %s revision %s\n' "$component" "$(docker image inspect --format '{{.Id}}' "$image")" "$revision"
 done
@@ -111,7 +116,7 @@ migrations > "$tmp/migrations-before"
 migrations > "$tmp/migrations-after"
 cmp "$tmp/migrations-before" "$tmp/migrations-after"
 
-probe() { "${compose[@]}" run --rm --no-deps --pull never probe "$@"; }
+probe() { "${compose[@]}" run --rm --no-deps probe "$@"; }
 probe --silent --show-error --fail http://proxy:8080/ > "$tmp/web.html"
 python3 - "$tmp/web.html" <<'PY'
 import sys
