@@ -237,4 +237,5 @@ for compose_name in ("infra/compose.yaml", "infra/compose.deps.yaml", ".github/c
     if compose.count(mount) != 1:
         raise SystemExit(f"{compose_name} must mount the restricted ClickHouse backup config exactly once")
 PY
+python3 -m unittest discover -s "$root_dir/infra/scripts/tests" -p 'test_production_restore_docs.py'
 printf 'backup/restore safety checks passed\n'

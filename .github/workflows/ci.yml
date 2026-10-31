@@ -32,7 +32,7 @@ jobs:
           - check: supply-chain
             command: bun run test:supply-chain
           - check: infra-security
-            command: GLASSHOUSE_TEST_DOCKER_CONTEXT=1 bun run test:infra-security
+            command: GLASSHOUSE_TEST_DOCKER_CONTEXT=1 GLASSHOUSE_TEST_PRODUCTION_INSTALL=1 bun run test:infra-security
           - check: worker-test
             command: python3 -m pip install --user --disable-pip-version-check --require-hashes -r worker/requirements.lock && python3 -m unittest worker.test_dev_cli_llm
           - check: build
@@ -65,6 +65,29 @@ jobs:
 
       - name: Run ${{ matrix.check }}
         run: ${{ matrix.command }}
+
+  image-compose-integration:
+    name: Image-only Compose integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build and test isolated image bundle
+        run: bash infra/scripts/test-image-compose-integration.sh
+
+  snapshot-safety:
+    name: Snapshot safety
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Run offline admission and publisher safety tests
+        run: python3 -m unittest discover -s scripts -p 'test_snapshot*.py' -v
 
   backup-restore-integration:
     name: Backup/restore (current)

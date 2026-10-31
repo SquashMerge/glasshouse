@@ -6,7 +6,7 @@ ClickHouse's local `File()` backup backend requires both `backups.allowed_disk` 
 
 ## Backup
 
-Install the client/runtime prerequisites used by the operator host: Docker Compose v2, GNU Make, `python3`, `sha256sum`, and a running repository stack. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
+Install the client/runtime prerequisites used by the operator host: Bash, Docker Compose v2, `python3`, `sha256sum`, and a running stack; other examples use GNU Make. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
 
 Choose a destination with restrictive permissions. The destination can be a local disk, an encrypted mounted filesystem, or an operator-managed object-storage sync target. The script itself writes only to a local filesystem path.
 
@@ -16,8 +16,17 @@ BACKUP_SOURCE_ID=production-eu-1 \
 BACKUP_SOURCE_COMPOSE_FILE=/srv/glasshouse/infra/compose.production.yaml \
 BACKUP_SOURCE_ENV_FILE=/run/secrets/glasshouse-production.env \
 BACKUP_SOURCE_COMPOSE_PROJECT=glasshouse-production \
-make backup
+bash infra/scripts/backup.sh
 ```
+
+Run this from the matching source checkout. The script uses the repository root as
+the Compose project directory, so relative bind mounts in the selected manifest
+resolve there. It does not source the checkout's `infra/.env`; avoid `make backup`
+for production because that target sources the local development environment and
+can override the selected source. Compose gives exported shell variables
+precedence over the supplied env file, so use a controlled environment without
+conflicting exports and verify the resolved configuration and project before
+running the backup.
 
 The script creates a mode-0700 staging directory and mode-0600 dump files, validates both files, writes SHA-256 checksums and a secret-free manifest, then atomically renames the staging directory. A directory is a complete backup only when it contains `manifest.json` with `complete: true`; a failed or interrupted staging directory is never published as a completed artifact. Existing artifact IDs are never overwritten.
 
@@ -40,6 +49,9 @@ For a recovery drill, the target Compose file must use the same supported servic
 
 ```sh
 BACKUP_ARTIFACT=/secure/glasshouse-backups/20261027T120000Z-1234 \
+BACKUP_SOURCE_COMPOSE_FILE=/srv/glasshouse/infra/compose.production.yaml \
+BACKUP_SOURCE_ENV_FILE=/run/secrets/glasshouse-production.env \
+BACKUP_SOURCE_COMPOSE_PROJECT=glasshouse-production \
 RESTORE_TARGET_ID=restore-drill-2026-10-27 \
 RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO restore-drill-2026-10-27' \
 RESTORE_TARGET_LIVE=false \
@@ -50,7 +62,9 @@ RESTORE_TARGET_COMPOSE_PROJECT=glasshouse-restore-20261027 \
 make restore
 ```
 
-`BACKUP_SOURCE_COMPOSE_FILE`, `BACKUP_SOURCE_ENV_FILE`, and `BACKUP_SOURCE_COMPOSE_PROJECT` default to `infra/compose.yaml`, `infra/.env`, and `glasshouse`. Restore uses those same source defaults for its live/source checks. `RESTORE_TARGET_ENV_FILE` defaults to `infra/.env` below the target directory and may point to an external production secret env file; the selected Compose service configuration supplies both database usernames and passwords, so no credential variables need to be copied into the command or documentation.
+Run this from the matching source checkout. Set the three `BACKUP_SOURCE_*` values to the **actual live stack** to be protected by the safety checks, not a different stack or an arbitrary local development project. Verify that the selected project and its running containers and mounts correspond to that live stack and to the artifact's source; the manifest's source ID does not verify this mapping. The source must remain running for inspection. The script uses the checkout root as the source Compose project directory and `RESTORE_TARGET_DIRECTORY` as the target Compose project directory. Relative source paths resolve from the checkout root and relative target paths from the target directory; relative Compose bind mounts also resolve from their respective project directories, not the manifest directories. Check the resolved configurations, project names, containers and mounts before proceeding. Use a controlled shell without conflicting exports: Compose gives exported variables precedence over env-file values. Image-only manifests also require the matching image references for interpolation, even when operating only on the databases.
+
+`BACKUP_SOURCE_COMPOSE_FILE`, `BACKUP_SOURCE_ENV_FILE`, and `BACKUP_SOURCE_COMPOSE_PROJECT` default to `infra/compose.yaml`, `infra/.env`, and `glasshouse`. Restore uses those same source defaults for its live/source checks; do not rely on them for a production stack with different settings. `RESTORE_TARGET_ENV_FILE` defaults to `infra/.env` below the target directory and may point to an external production secret env file; the selected Compose service configuration supplies both database usernames and passwords, so no credential variables need to be copied into the command or documentation.
 
 The exact confirmation, an explicit target identity, a distinct Compose project, non-overlapping inspected storage mounts, and empty target stores are mandatory. The command fails before any restore write when confirmation is missing, the target is marked live, the target is the source checkout, a service/container/storage mount is shared or overlaps, or either target store contains application objects. It does not use `--clean`, drop a database, remove a volume, or overwrite an existing installation.
 
@@ -62,7 +76,7 @@ For a repeatable manual gate, seed representative records in the source, create 
 make test-backup-restore
 ```
 
-With a separately provisioned, running, empty target deployment, the real probe gate creates temporary representative records in both stores, backs them up, validates and restores them, and verifies the records in the target. It never creates or destroys target services or volumes:
+With a separately provisioned, running, empty target deployment, the real probe gate creates temporary representative records in both stores, backs them up, validates and restores them, and verifies the records in the target. It never creates or destroys target services or volumes. The following is a **development-only** example: `make test-backup-restore-integration` sources `infra/.env` and can override selected source settings. Do not use it for the production invocation above; it writes probe data to its source and requires carefully configured, isolated test deployments.
 
 ```sh
 RESTORE_TARGET_ID=restore-drill-2026-10-27 \
