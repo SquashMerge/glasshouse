@@ -575,14 +575,27 @@ function useUrlBackedListState(
 	filterFields: readonly FilterFieldDef[],
 ) {
 	const location = useLocation();
-	const [search, setSearch] = React.useState(location.searchStr);
+	const [{ search, resetKey }, setUrlState] = React.useState({
+		search: location.searchStr,
+		resetKey: 0,
+	});
+	const restoreSearch = React.useCallback((nextSearch: string) => {
+		setUrlState((current) =>
+			current.search === nextSearch
+				? current
+				: { search: nextSearch, resetKey: current.resetKey + 1 },
+		);
+	}, []);
 
-	React.useEffect(() => setSearch(location.searchStr), [location.searchStr]);
+	React.useEffect(
+		() => restoreSearch(location.searchStr),
+		[location.searchStr, restoreSearch],
+	);
 	React.useEffect(() => {
-		const onPopState = () => setSearch(window.location.search);
+		const onPopState = () => restoreSearch(window.location.search);
 		window.addEventListener("popstate", onPopState);
 		return () => window.removeEventListener("popstate", onPopState);
-	}, []);
+	}, [restoreSearch]);
 
 	const filterKeys = React.useMemo(
 		() => filterFields.map((field) => field.key),
@@ -600,12 +613,13 @@ function useUrlBackedListState(
 			});
 			if (next === search) return;
 			window.history.pushState({}, "", `${window.location.pathname}${next}`);
-			setSearch(next);
+			// A filter's own URL update must keep its input and caret mounted.
+			setUrlState((current) => ({ ...current, search: next }));
 		},
 		[prefix, search],
 	);
 
-	return { search, state, persist };
+	return { resetKey, state, persist };
 }
 
 function CopyActiveLink() {
@@ -637,7 +651,7 @@ export function TracesTab() {
 	const navigate = useNavigate();
 	const data = useTracesData();
 	const {
-		search: urlSearch,
+		resetKey: filterResetKey,
 		state: urlState,
 		persist: persistUrlState,
 	} = useUrlBackedListState("traces", TRACE_FILTER_FIELDS);
@@ -652,7 +666,7 @@ export function TracesTab() {
 	return (
 		<>
 			<FilterableTable<TraceRow>
-				key={urlSearch}
+				key={filterResetKey}
 				title="Traces"
 				headerActions={
 					<>
@@ -1045,7 +1059,7 @@ export function SpansTab() {
 	const navigate = useNavigate();
 	const data = useSpansData();
 	const {
-		search: urlSearch,
+		resetKey: filterResetKey,
 		state: urlState,
 		persist: persistUrlState,
 	} = useUrlBackedListState("spans", SPAN_FILTER_FIELDS);
@@ -1060,7 +1074,7 @@ export function SpansTab() {
 	return (
 		<>
 			<FilterableTable<ObservationRow>
-				key={urlSearch}
+				key={filterResetKey}
 				title="Spans"
 				headerActions={
 					<>

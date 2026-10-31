@@ -66,6 +66,7 @@ async function mockWorkspace(page: Page, recovery = false) {
 		if (
 			[
 				"/v1/datasets",
+				"/v1/feedback",
 				"/v1/experiments",
 				"/v1/evaluations",
 				"/v1/evaluation-runs",
@@ -100,6 +101,78 @@ test.describe("Observability tabs in the real browser", () => {
 		await mockWorkspace(page);
 		await page.goto("/observability?tab=traces");
 	});
+
+	for (const [tab, label, endpoint] of [
+		["traces", "Traces", "/v1/traces"],
+		["spans", "Spans", "/v1/observations"],
+	] as const) {
+		test(`${label} filters preserve focus, caret, and typing through debounced requests`, async ({
+			page,
+		}) => {
+			await page.getByRole("tab", { name: label, exact: true }).click();
+			const filter = page.getByRole("textbox", { name: "Name", exact: true });
+			let release!: () => void;
+			const pending = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			let requested!: () => void;
+			const firstRequest = new Promise<void>((resolve) => {
+				requested = resolve;
+			});
+			await page.route(`**${endpoint}?*`, async (route) => {
+				if (
+					new URL(route.request().url()).searchParams.get("filter[name]") ===
+					"agnt"
+				) {
+					requested();
+					await pending;
+				}
+				return route.fulfill({ json: { items: [], total: 0 } });
+			});
+			await filter.click();
+			const original = await filter.elementHandle();
+			try {
+				await page.keyboard.insertText("agnt");
+				await firstRequest;
+				await expect(filter).toBeFocused();
+				expect(await original!.evaluate((input) => input.isConnected)).toBe(
+					true,
+				);
+				await page.keyboard.press("ArrowLeft");
+				await page.keyboard.press("ArrowLeft");
+				await page.keyboard.insertText("e");
+				await expect(filter).toHaveValue("agent");
+				expect(
+					await filter.evaluate(
+						(input: HTMLInputElement) => input.selectionStart,
+					),
+				).toBe(3);
+			} finally {
+				release();
+			}
+			await expect
+				.poll(() => new URL(page.url()).searchParams.get(`${tab}.name`))
+				.toBe("agent");
+			await expect(filter).toBeFocused();
+			expect(
+				await filter.evaluate(
+					(input: HTMLInputElement) => input.selectionStart,
+				),
+			).toBe(3);
+
+			await page
+				.getByRole("button", { name: "Clear filters", exact: true })
+				.click();
+			await expect(filter).toHaveValue("");
+			await expect
+				.poll(() => new URL(page.url()).searchParams.get(`${tab}.name`))
+				.toBeNull();
+			await page.goBack();
+			await expect(filter).toHaveValue("agent");
+			await page.goForward();
+			await expect(filter).toHaveValue("");
+		});
+	}
 
 	test("names the tab group and each active panel", async ({ page }) => {
 		await expect(page.getByRole("tablist")).toHaveAccessibleName(/\S/);
@@ -415,6 +488,48 @@ test.describe("usage dashboard freshness and keyboard access", () => {
 			),
 		};
 	}
+
+	test("reuses the verified session during sidebar navigation and rechecks on focus", async ({
+		page,
+	}) => {
+		let sessionRequests = 0;
+		await page.route("**/v1/auth/session", async (route) => {
+			sessionRequests++;
+			return route.fallback();
+		});
+		await page.route("**/v1/organization/usage?*", (route) =>
+			route.fulfill({ json: usageSnapshot("30d", 30) }),
+		);
+		await page.goto("/");
+		await expect(
+			page.getByRole("heading", { name: "Organization overview" }),
+		).toBeVisible();
+		expect(sessionRequests).toBe(1);
+
+		const navigation = page.getByRole("navigation", { name: "Sections" });
+		for (const [label, heading] of [
+			["Observability", "Traces"],
+			["Datasets", "Datasets"],
+			["Evaluations", "Evaluations"],
+			["Feedback", "Feedback"],
+			["Dashboard", "Organization overview"],
+		]) {
+			await navigation.getByRole("link", { name: label, exact: true }).click();
+			await expect(
+				page.getByRole("heading", { name: heading, exact: true }).first(),
+			).toBeVisible();
+			expect(sessionRequests).toBe(1);
+			await expect(
+				page.getByText("Checking session…", { exact: true }),
+			).toHaveCount(0);
+		}
+
+		await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+		await expect.poll(() => sessionRequests).toBe(2);
+		await expect(
+			page.getByRole("heading", { name: "Organization overview" }),
+		).toBeVisible();
+	});
 
 	test("changes the range using the keyboard and exposes the bucket values to assistive technology", async ({
 		page,

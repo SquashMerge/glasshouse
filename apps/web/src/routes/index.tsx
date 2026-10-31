@@ -6,6 +6,7 @@ import { useProjectSelection } from "../components/ProjectProvider";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Select } from "../components/ui/select";
+import { Label } from "../components/ui/label";
 import { PageHeader } from "../components/ui/page-header";
 import { Skeleton } from "../components/ui/skeleton";
 import { copyText } from "../lib/clipboard";
@@ -99,8 +100,8 @@ export function DashboardPage() {
 						</span>
 					}
 				/>
-				<label className="block space-y-2 text-sm" htmlFor="usage-time-range">
-					<span className="font-medium">Time range (UTC)</span>
+				<div className="grid gap-2">
+					<Label htmlFor="usage-time-range">Time range (UTC)</Label>
 					<Select
 						id="usage-time-range"
 						aria-label="Usage time range"
@@ -115,7 +116,7 @@ export function DashboardPage() {
 							</option>
 						))}
 					</Select>
-				</label>
+				</div>
 			</div>
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div className="space-y-1 text-sm text-muted-foreground">

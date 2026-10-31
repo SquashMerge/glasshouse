@@ -31,7 +31,7 @@ export interface TraceTimeline {
 }
 
 const CLICKHOUSE_UTC =
-	/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?$/;
+	/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z?$/;
 
 export function parseClickHouseUtc(value: unknown): number | null {
 	if (typeof value !== "string") return null;

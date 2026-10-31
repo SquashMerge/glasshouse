@@ -358,6 +358,7 @@ describe("SpansTab — SSE merge + highlight", () => {
 		// SPAN_FILTER_FIELDS first non-type filter is `name`, placeholder
 		// "e.g. llm.call".
 		const nameInput = screen.getByPlaceholderText("e.g. llm.call");
+		nameInput.focus();
 		fireEvent.change(nameInput, { target: { value: "specific-span" } });
 
 		await act(async () => {
@@ -372,5 +373,7 @@ describe("SpansTab — SSE merge + highlight", () => {
 			name?: string;
 		};
 		expect(lastCall?.name).toBe("specific-span");
+		expect(screen.getByRole("textbox", { name: "Name" })).toBe(nameInput);
+		expect(nameInput).toHaveFocus();
 	});
 });

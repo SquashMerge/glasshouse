@@ -312,6 +312,8 @@ SEED_PROJECT_ID=<uuid> make seed-traces          # target a non-default project
 
 The seeder resolves the authenticated organization's current `default` project from `GET /v1/projects` and sends its ID on every OTLP request. This is required because traces without an explicit project selector are intentionally unscoped; use `SEED_PROJECT_ID` or `--project-id` to target another project.
 
+Seeded timestamps use decimal nanosecond strings, and each root span's time range contains all of its children. Trace timelines accept the API's ISO UTC timestamps as well as ClickHouse UTC timestamps, so previously seeded traces do not need to be recreated to display their timing.
+
 Or invoke the script directly for finer control:
 
 ```sh

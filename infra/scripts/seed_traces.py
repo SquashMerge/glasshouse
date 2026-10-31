@@ -228,8 +228,8 @@ def make_span(
         "parent_span_id": parent_span_id,
         "name": name,
         "kind": kind,
-        "start_time_unix_nano": start_ns,
-        "end_time_unix_nano": end_ns,
+        "start_time_unix_nano": str(start_ns),
+        "end_time_unix_nano": str(end_ns),
         "status": {"code": status_code},
         "attributes": attrs,
     }
@@ -322,6 +322,10 @@ def build_trace_payload(ctx: TraceContext, num_children: int, conv: str) -> dict
             attrs=tool_span_attrs(tool, json.dumps({"q": prompt[:60]}), f"ok ({random.randint(1, 50)} rows)", ctx.agent_id, ctx.agent_version),
             kind=3,
         ))
+
+    root_span["end_time_unix_nano"] = str(max(
+        int(span["end_time_unix_nano"]) for span in spans
+    ))
 
     if conv == "genai":
         resource_attrs = genai_resource_attrs(ctx)
@@ -513,7 +517,7 @@ def main() -> int:
             print("error: ClickHouse trace reset failed; client diagnostics suppressed", file=sys.stderr)
             return 1
 
-    now_ns = int(time.time() * 1_000_000_000)
+    now_ns = time.time_ns()
     window_ns = args.days * 24 * 3600 * 1_000_000_000
 
     def make_trace() -> tuple[TraceContext, int, str]:

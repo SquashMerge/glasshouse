@@ -18,6 +18,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const location = useLocation();
+	const isPublicAuthRoute = ["/login", "/setup", "/enroll"].includes(
+		location.pathname,
+	);
 	const [ready, setReady] = React.useState(false);
 	const [revalidating, setRevalidating] = React.useState(false);
 	const [error, setError] = React.useState(false);
@@ -37,7 +40,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 		setError(false);
 		// The protected layout route is pathless and can remain mounted while
 		// navigating to a public auth route. Do not redirect it to itself.
-		if (["/login", "/setup", "/enroll"].includes(location.pathname)) {
+		if (isPublicAuthRoute) {
 			clearTimeout(expiry.current);
 			setRevalidating(false);
 			setReady(true);
@@ -146,7 +149,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 			off();
 			window.removeEventListener("focus", revalidate);
 		};
-	}, [attempt, location.pathname, navigate, queryClient]);
+	}, [attempt, isPublicAuthRoute, navigate, queryClient]);
 	if (error)
 		return (
 			<div

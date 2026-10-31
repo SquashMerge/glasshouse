@@ -252,6 +252,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						collapsed={collapsed}
 					/>
 					<SidebarLink
+						to="/observability"
+						label="Observability"
+						icon={<LuActivity className="h-4 w-4" />}
+						active={isActive("/observability") || isActive("/traces")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
 						to="/datasets"
 						label="Datasets"
 						icon={<LuDatabase className="h-4 w-4" />}
@@ -270,13 +277,6 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						label="Feedback"
 						icon={<LuMessageSquare className="h-4 w-4" />}
 						active={isActive("/feedback")}
-						collapsed={collapsed}
-					/>
-					<SidebarLink
-						to="/observability"
-						label="Observability"
-						icon={<LuActivity className="h-4 w-4" />}
-						active={isActive("/observability") || isActive("/traces")}
 						collapsed={collapsed}
 					/>
 					<SidebarLink

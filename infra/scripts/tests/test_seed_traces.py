@@ -35,6 +35,63 @@ class FakeResponse:
         return self._body
 
 
+class SeedTraceTimingTests(unittest.TestCase):
+    def context(self):
+        return seed_traces.TraceContext(
+            trace_id="0" * 32,
+            root_span_id="1" * 16,
+            start_unix_nano=1_700_000_000_000_123_456,
+            env="development",
+            agent_id="code-reviewer",
+            agent_version="1.0.0",
+            user_id="user-1",
+            session_id="session-1",
+        )
+
+    def test_serializes_nanosecond_timestamps_as_exact_decimal_strings(self):
+        ctx = self.context()
+        span = seed_traces.make_span(
+            "llm.call", "2" * 16, ctx.root_span_id, ctx,
+            start_offset_ms=25, duration_ms=2100, status_code=1, attrs=[], kind=3,
+        )
+        encoded = json.loads(json.dumps(span))
+
+        self.assertIsInstance(encoded["start_time_unix_nano"], str)
+        self.assertIsInstance(encoded["end_time_unix_nano"], str)
+        self.assertEqual(
+            int(encoded["start_time_unix_nano"]),
+            ctx.start_unix_nano + 25_000_000,
+        )
+        self.assertEqual(
+            int(encoded["end_time_unix_nano"]),
+            ctx.start_unix_nano + 2_125_000_000,
+        )
+
+    def test_parent_timing_contains_every_generated_child(self):
+        state = seed_traces.random.getstate()
+        self.addCleanup(seed_traces.random.setstate, state)
+        for convention in ("genai", "openinference"):
+            for child_count in (1, 3, 5):
+                for seed in range(20):
+                    with self.subTest(convention=convention, children=child_count, seed=seed):
+                        seed_traces.random.seed(seed)
+                        payload = seed_traces.build_trace_payload(
+                            self.context(), child_count, convention
+                        )
+                        spans = payload["resource_spans"][0]["scope_spans"][0]["spans"]
+                        root = spans[0]
+                        start = int(root["start_time_unix_nano"])
+                        end = int(root["end_time_unix_nano"])
+                        for span in spans[1:]:
+                            self.assertEqual(span["parent_span_id"], root["span_id"])
+                            self.assertGreaterEqual(int(span["start_time_unix_nano"]), start)
+                            self.assertGreaterEqual(
+                                int(span["end_time_unix_nano"]),
+                                int(span["start_time_unix_nano"]),
+                            )
+                            self.assertLessEqual(int(span["end_time_unix_nano"]), end)
+
+
 class SeedTraceProjectRoutingTests(unittest.TestCase):
     def test_resolves_default_project_and_sends_it_on_every_otlp_request(self):
         requests = []
