@@ -1,4 +1,5 @@
 import * as React from "react";
+import { LuThumbsDown, LuThumbsUp } from "react-icons/lu";
 import {
 	ApiError,
 	captureDatasetDraftItem,
@@ -303,29 +304,31 @@ export function FeedbackControls({
 	}
 	if (!canCurate) return null;
 	return (
-		<div className="flex flex-wrap items-center gap-2">
+		<div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
 			<Button
 				type="button"
-				size="sm"
+				size="icon"
 				variant="outline"
 				onClick={() => void record(1)}
 				aria-label={`Thumbs up ${label}`}
+				title={`Thumbs up ${label}`}
 				disabled={pending || !projectId}
 			>
-				Thumbs up
+				<LuThumbsUp className="h-4 w-4" aria-hidden="true" />
 			</Button>
 			<Button
 				type="button"
-				size="sm"
+				size="icon"
 				variant="outline"
 				onClick={() => setNegative(true)}
 				aria-label={`Thumbs down ${label}`}
+				title={`Thumbs down ${label}`}
 				disabled={pending || !projectId}
 			>
-				Thumbs down
+				<LuThumbsDown className="h-4 w-4" aria-hidden="true" />
 			</Button>
 			<Input
-				className="h-8 w-48"
+				className="h-8 w-full max-w-48"
 				placeholder="Optional comment"
 				aria-label="Comment"
 				value={comment}

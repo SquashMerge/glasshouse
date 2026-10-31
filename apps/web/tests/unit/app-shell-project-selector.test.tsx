@@ -139,6 +139,12 @@ describe("AppShell project selector", () => {
 			"href",
 			"/prompts",
 		);
+		const sectionLinks = within(
+			screen.getByRole("navigation", { name: "Sections" }),
+		).getAllByRole("link");
+		expect(
+			sectionLinks.slice(0, 2).map((link) => link.getAttribute("href")),
+		).toEqual(["/", "/observability"]);
 		fireEvent.change(selector, {
 			target: { value: "11111111-1111-4111-8111-111111111111" },
 		});

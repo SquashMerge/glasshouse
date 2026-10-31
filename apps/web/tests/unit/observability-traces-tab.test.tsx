@@ -411,6 +411,7 @@ describe("TracesTab — SSE merge + highlight", () => {
 		const nameInput = screen.getByPlaceholderText(
 			"e.g. llm.call or tool.search_db",
 		);
+		nameInput.focus();
 		fireEvent.change(nameInput, { target: { value: "specific-name" } });
 
 		// FilterableTable debounces by 250ms; advance past it.
@@ -427,6 +428,8 @@ describe("TracesTab — SSE merge + highlight", () => {
 			name?: string;
 		};
 		expect(lastCall?.name).toBe("specific-name");
+		expect(screen.getByRole("textbox", { name: "Name" })).toBe(nameInput);
+		expect(nameInput).toHaveFocus();
 	});
 
 	it("isolates REST rows and SSE scope when the selected project changes", async () => {

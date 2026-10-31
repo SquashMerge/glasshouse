@@ -143,6 +143,49 @@ it("does not revalidate when only the route search parameters change", async () 
 	expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+it("reuses the verified session across protected pages and still revalidates on focus", async () => {
+	const fetchMock = vi.fn(async () => Response.json(session));
+	vi.stubGlobal("fetch", fetchMock);
+	const client = new QueryClient();
+	const content = (
+		<QueryClientProvider client={client}>
+			<AuthGate>
+				<SessionDraft />
+			</AuthGate>
+		</QueryClientProvider>
+	);
+	const view = render(content);
+	const input = await screen.findByRole("textbox", { name: "Unsaved draft" });
+	fireEvent.change(input, { target: { value: "Keep this draft" } });
+
+	for (const pathname of [
+		"/",
+		"/observability",
+		"/datasets",
+		"/evaluations",
+		"/feedback",
+	]) {
+		location.pathname = pathname;
+		view.rerender(
+			<QueryClientProvider client={client}>
+				<AuthGate>
+					<SessionDraft />
+				</AuthGate>
+			</QueryClientProvider>,
+		);
+		expect(input).toBeVisible();
+		expect(input).toHaveValue("Keep this draft");
+		expect(screen.queryByText("Checking session…")).not.toBeInTheDocument();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	}
+
+	fireEvent.focus(window);
+	expectDraftHidden(input);
+	await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+	await waitFor(() => expect(input).toBeVisible());
+	expect(input).toHaveValue("Keep this draft");
+});
+
 it("overlapping focus checks request a fresh session and fence an older principal response", async () => {
 	let finishOldSession!: (response: Response) => void;
 	let finishNewSession!: (response: Response) => void;

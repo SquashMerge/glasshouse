@@ -25,6 +25,21 @@ describe("trace timeline", () => {
 		expect(parseClickHouseUtc("2026-02-30 00:00:00.000")).toBeNull();
 	});
 
+	it.each([
+		["2026-01-01T00:00:00Z", 0],
+		["2026-01-01T00:00:00.123Z", 123],
+		["2026-01-01T00:00:00.123456789Z", 123],
+	])("parses public API UTC timestamps: %s", (timestamp, milliseconds) => {
+		expect(parseClickHouseUtc(timestamp)).toBe(
+			Date.UTC(2026, 0, 1, 0, 0, 0, milliseconds),
+		);
+	});
+
+	it("rejects invalid calendar dates in public API timestamps", () => {
+		expect(parseClickHouseUtc("2026-02-30T00:00:00.000Z")).toBeNull();
+		expect(parseClickHouseUtc("2026-01-01T25:00:00.000Z")).toBeNull();
+	});
+
 	it("fails safely for unset duration and end-before-start", () => {
 		expect(
 			observationTiming(observation("a", { duration_ms: null })),

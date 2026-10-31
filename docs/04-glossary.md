@@ -39,9 +39,11 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 
 ## Observability UI
 
-- `/observability` — Traces tab + Spans tab. The "Spans" tab is really the observations table (all four types mixed); the label is a legacy holdover.
+- `/observability` — the second sidebar destination, directly after Dashboard, with a Traces tab + Spans tab. The "Spans" tab is really the observations table (all four types mixed); the label is a legacy holdover.
 - `observabilityTabFocus` — browser history state recording the selected tab's focus intent so keyboard selection survives a protected-page remount during URL navigation. It carries no credentials or telemetry.
-- `/observability/traces/$id` — Trace detail: tree of observations + detail panel.
+- **Observability filters** — URL-backed Trace and Span filters. Debounced changes retain the current textbox and caret while rows reload; browser Back/Forward restores the saved filter values.
+- `/observability/traces/$id` — Trace detail: tree of observations + detail panel. Trace and Observation feedback use thumbs-up/down icon buttons with accessible labels and hover titles.
+- **Trace timing** — observation start/end times displayed in UTC. Timelines accept public API ISO timestamps ending in `Z` and zone-less ClickHouse UTC timestamps; invalid calendar values remain unavailable rather than being inferred.
 
 ## Prompt UI
 

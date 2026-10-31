@@ -86,6 +86,31 @@ describe("TraceWorkspace", () => {
 		}),
 	];
 
+	it("renders public API UTC timestamps without invalid timing warnings", () => {
+		render(
+			<TraceWorkspace
+				observations={[
+					observation({
+						start_time: "2026-07-13T12:00:00.000Z",
+						end_time: "2026-07-13T12:00:00.100Z",
+					}),
+					observation({
+						observation_id: "child",
+						parent_observation_id: "root",
+						start_time: "2026-07-13T12:00:00.025Z",
+						end_time: "2026-07-13T12:00:00.050Z",
+						duration_ms: 25,
+					}),
+				]}
+				selectedObservationId="root"
+				onSelectObservation={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getAllByTestId("waterfall-bar")).toHaveLength(2);
+		expect(screen.queryByTestId("timing-warning")).not.toBeInTheDocument();
+	});
+
 	it("renders hierarchy, selects waterfall bars, and reveals search matches", () => {
 		const onSelectObservation = vi.fn();
 		render(
