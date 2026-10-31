@@ -273,6 +273,8 @@ import {
 	handleCreateFeedback,
 	listFeedbackRoute,
 	handleListFeedback,
+	getOwnFeedbackRoute,
+	handleGetOwnFeedback,
 	promoteFeedbackRoute,
 	handlePromoteFeedback,
 	reviewFeedbackRoute,
@@ -544,6 +546,7 @@ register(deleteDatasetItem, handleDeleteDatasetItem);
 
 register(createFeedbackRoute, handleCreateFeedback);
 register(listFeedbackRoute, handleListFeedback);
+register(getOwnFeedbackRoute, handleGetOwnFeedback);
 register(promoteFeedbackRoute, handlePromoteFeedback);
 register(reviewFeedbackRoute, handleReviewFeedback);
 

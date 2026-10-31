@@ -137,10 +137,13 @@ export async function createFeedback(
 		);
 		if (existing.rows[0]) {
 			const key = await client.query(
-				"SELECT request_hash FROM feedback_idempotency WHERE project_id=$1 AND idempotency_key=$2",
+				"SELECT i.request_hash, s.feedback_actor_id FROM feedback_idempotency i JOIN scores s ON s.id=i.score_id WHERE i.project_id=$1 AND i.idempotency_key=$2",
 				[input.project_id, input.idempotency_key],
 			);
-			if (key.rows[0]?.request_hash !== hash)
+			if (
+				key.rows[0]?.request_hash !== hash ||
+				key.rows[0]?.feedback_actor_id !== input.authorization.actor_id
+			)
 				throw new FeedbackRepositoryError(
 					"IDEMPOTENCY_CONFLICT",
 					"Idempotency key was already used with a different request",
@@ -148,10 +151,27 @@ export async function createFeedback(
 			await client.query("COMMIT");
 			return present(existing.rows[0]);
 		}
+		const recorded = await client.query(
+			`${SELECT} WHERE s.project_id=$1 AND s.feedback_actor_id=$2 AND s.trace_id=$3 AND s.observation_id IS NOT DISTINCT FROM $4 AND s.name='human.feedback'`,
+			[
+				input.project_id,
+				input.authorization.actor_id,
+				input.trace_id,
+				input.observation_id ?? null,
+			],
+		);
+		if (recorded.rows[0]) {
+			await client.query(
+				`INSERT INTO feedback_idempotency (project_id,idempotency_key,request_hash,score_id) VALUES ($1,$2,$3,$4)`,
+				[input.project_id, input.idempotency_key, hash, recorded.rows[0].id],
+			);
+			await client.query("COMMIT");
+			return present(recorded.rows[0]);
+		}
 		const id = randomUUID();
 		const feedback = input.metadata.feedback;
 		await client.query(
-			`INSERT INTO scores (id, project_id, trace_id, observation_id, name, value, metadata) VALUES ($1,$2,$3,$4,'human.feedback',$5,$6::jsonb) RETURNING *`,
+			`INSERT INTO scores (id, project_id, trace_id, observation_id, name, value, metadata, feedback_actor_id) VALUES ($1,$2,$3,$4,'human.feedback',$5,$6::jsonb,$7) RETURNING *`,
 			[
 				id,
 				input.project_id,
@@ -159,6 +179,7 @@ export async function createFeedback(
 				input.observation_id ?? null,
 				input.value,
 				JSON.stringify({ feedback }),
+				input.authorization.actor_id,
 			],
 		);
 		await client.query(
@@ -175,8 +196,55 @@ export async function createFeedback(
 	} catch (cause) {
 		await client.query("ROLLBACK");
 		if (cause instanceof FeedbackRepositoryError) throw cause;
-		if ((cause as { code?: string }).code === "23505")
-			return createFeedback(db, input);
+		const pgError = cause as { code?: string; constraint?: string };
+		if (
+			pgError.code === "23505" &&
+			[
+				"scores_feedback_actor_target_key",
+				"feedback_idempotency_pkey",
+			].includes(pgError.constraint ?? "")
+		)
+			throw new FeedbackRepositoryError(
+				"CONFLICT",
+				"Feedback was recorded concurrently; reload and retry",
+				cause,
+			);
+		throw new FeedbackRepositoryError(
+			"INTERNAL",
+			"Feedback operation failed",
+			cause,
+		);
+	} finally {
+		client.release();
+	}
+}
+export async function getOwnFeedback(
+	db: Pick<Pool, "connect">,
+	input: {
+		project_id: string;
+		trace_id: string;
+		observation_id?: string;
+		authorization: ProjectAuthorization;
+	},
+) {
+	const client = await db.connect();
+	try {
+		await client.query("BEGIN");
+		await requireActiveProject(client, input.project_id, input.authorization);
+		const result = await client.query(
+			`${SELECT} WHERE s.project_id=$1 AND s.feedback_actor_id=$2 AND s.trace_id=$3 AND s.observation_id IS NOT DISTINCT FROM $4 AND s.name='human.feedback'`,
+			[
+				input.project_id,
+				input.authorization.actor_id,
+				input.trace_id,
+				input.observation_id ?? null,
+			],
+		);
+		await client.query("COMMIT");
+		return result.rows[0] ? present(result.rows[0]) : null;
+	} catch (cause) {
+		await client.query("ROLLBACK");
+		if (cause instanceof FeedbackRepositoryError) throw cause;
 		throw new FeedbackRepositoryError(
 			"INTERNAL",
 			"Feedback operation failed",

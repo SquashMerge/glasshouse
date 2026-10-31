@@ -14,6 +14,7 @@ import {
 	sessionDigest,
 } from "../../src/db/local-sessions";
 import { migrate } from "../../src/db/migrate";
+import { createFeedback } from "../../src/db/feedback";
 import {
 	createEvaluation,
 	publishEvaluationDraft,
@@ -28,6 +29,7 @@ import {
 	claimExperimentTask,
 } from "../../src/db/experiments";
 import * as postgres from "../../src/db/postgres";
+import * as clickhouse from "../../src/db/clickhouse";
 import { createAuthorizedSseDelivery } from "../../src/lib/authorized-sse";
 import {
 	DEFAULT_ORGANIZATION_ID,
@@ -183,6 +185,118 @@ async function waitForLock(pattern: string, applicationName?: string) {
 	}
 	throw new Error("Expected PostgreSQL interleaving was not observed");
 }
+
+test("feedback follows the durable Actor across independent local sessions", async () => {
+	const f = await fixture();
+	const first = await f.signedIn();
+	const feedback = await createFeedback(pool, {
+		project_id: f.projectId,
+		trace_id: "f".repeat(32),
+		value: -1,
+		metadata: {
+			feedback: {
+				schema_version: 1,
+				sentiment: "negative",
+				reason: "incorrect",
+				comment: "details",
+			},
+		},
+		idempotency_key: randomUUID(),
+		authorization: {
+			organization_id: f.id,
+			actor_id: f.principal.actorId,
+			operation: "curation_write",
+		},
+	});
+	const second = await f.signedIn();
+	const target = `/v1/feedback/mine?project_id=${f.projectId}&trace_id=${"f".repeat(32)}`;
+	for (const signed of [first, second]) {
+		const response = await f.api.request(target, {
+			headers: { cookie: signed.cookie },
+		});
+		expect(response.status).toBe(200);
+		expect(response.headers.get("cache-control")).toBe("no-store");
+		expect(await response.json()).toMatchObject({
+			id: feedback.id,
+			reason: "incorrect",
+			comment: "details",
+		});
+	}
+	const span = await f.api.request(`${target}&observation_id=span`, {
+		headers: { cookie: second.cookie },
+	});
+	expect(span.status).toBe(200);
+	expect(await span.json()).toBeNull();
+});
+
+test("feedback API enforces Actor uniqueness across session requests", async () => {
+	const f = await fixture();
+	const first = await f.signedIn();
+	const second = await f.signedIn();
+	const trace = "e".repeat(32);
+	const chSpy = spyOn(clickhouse, "ch").mockReturnValue({
+		query: async ({
+			query_params,
+		}: {
+			query_params: Record<string, unknown>;
+		}) => ({
+			json: async () =>
+				query_params.organization_id === f.id &&
+				query_params.project_id === f.projectId &&
+				query_params.trace_id === trace
+					? [{}]
+					: [],
+		}),
+	} as never);
+	try {
+		const body = JSON.stringify({
+			project_id: f.projectId,
+			trace_id: trace,
+			value: -1,
+			metadata: {
+				feedback: {
+					schema_version: 1,
+					sentiment: "negative",
+					reason: "wrong",
+					comment: "details",
+				},
+			},
+		});
+		const responses = await Promise.all(
+			[first, second].map((session) =>
+				f.api.request("/v1/feedback", {
+					method: "POST",
+					headers: { ...session.headers, "idempotency-key": randomUUID() },
+					body,
+				}),
+			),
+		);
+		expect(responses.map((response) => response.status)).toEqual([201, 201]);
+		const records = await Promise.all(
+			responses.map((response) => response.json()),
+		);
+		expect(records[0].id).toBe(records[1].id);
+		const count = await pool.query(
+			"SELECT count(*)::int AS count FROM scores s JOIN feedback_reviews r ON r.score_id=s.id WHERE s.project_id=$1 AND s.trace_id=$2",
+			[f.projectId, trace],
+		);
+		expect(count.rows[0].count).toBe(1);
+		const invalid = await f.api.request("/v1/feedback", {
+			method: "POST",
+			headers: { ...first.headers, "idempotency-key": randomUUID() },
+			body: JSON.stringify({ ...JSON.parse(body), actor_id: randomUUID() }),
+		});
+		expect(invalid.status).toBe(400);
+		const missing = await f.api.request("/v1/feedback", {
+			method: "POST",
+			headers: { ...first.headers, "idempotency-key": randomUUID() },
+			body: JSON.stringify({ ...JSON.parse(body), trace_id: "b".repeat(32) }),
+		});
+		expect(missing.status).toBe(404);
+	} finally {
+		chSpy.mockRestore();
+	}
+});
 
 test("local login issues only a production HttpOnly cookie with bounded hashed server state and a separate CSRF value", async () => {
 	const f = await fixture();

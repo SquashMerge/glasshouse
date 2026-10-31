@@ -70,6 +70,7 @@ describe("feedback contract", () => {
 				if (sql.startsWith("SELECT authorization_allows_project"))
 					return { rows: [{ allowed: true }] };
 				if (sql.includes("FROM feedback_idempotency")) return { rows: [] };
+				if (sql.includes("s.feedback_actor_id=$2")) return { rows: [] };
 				if (sql.startsWith("INSERT INTO scores")) {
 					inserted.push(values ?? []);
 					return { rows: [] };
@@ -249,8 +250,15 @@ describe("feedback review persistence", () => {
 				if (sql.startsWith("SELECT authorization_allows_project"))
 					return { rows: [{ allowed: true }] };
 				if (sql.includes("JOIN feedback_reviews")) return { rows: [row] };
-				if (sql.includes("SELECT request_hash"))
-					return { rows: [{ request_hash: requestHash(base) }] };
+				if (sql.includes("SELECT i.request_hash"))
+					return {
+						rows: [
+							{
+								request_hash: requestHash(base),
+								feedback_actor_id: authorization.actor_id,
+							},
+						],
+					};
 				return { rows: [] };
 			},
 			release: () => {},

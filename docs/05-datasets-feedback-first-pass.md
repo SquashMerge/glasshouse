@@ -19,7 +19,7 @@ The first pass must extend—not replace—the functionality that landed in the 
 | Scores are schema/API stubs | `apps/api/src/routes/scores.ts`, `apps/api/src/schemas/scores.ts`, `infra/db/migrations/0007_scores.sql` | Implement the narrow feedback-on-score path now; do not build a general metrics product. |
 | The dashboard has only Observability and Prompts routes | `apps/web/src/App.tsx`, `apps/web/src/components/AppShell.tsx` | Add Datasets, Evaluations, and Feedback routes/navigation using the established TanStack Router, React Query, and `apps/web/src/lib/api.ts` patterns. |
 | Trace detail already renders a selected observation and its sanitized input/output | `apps/web/src/routes/observability/traces/$id.tsx`, `apps/web/src/components/ObservationDetailPanel.tsx` | Add feedback and “add to dataset” actions at the trace/selected-observation context; do not build a second trace viewer. |
-| Authentication is project-scoped Basic Auth, not an identity/RBAC system | current API authentication and project-selector flow | Treat the authenticated project actor as a single trusted operator. Do not promise end-user identity, per-user voting, assignment, or role separation in this slice. |
+| Original first-pass authentication | superseded by durable Actor identity and Organization roles | Current feedback is per authenticated Actor and target; assignment remains out of scope. |
 
 ## 2. Product promise for this release
 
@@ -115,7 +115,7 @@ Required behavior:
 - Add `GET /v1/feedback` with project, sentiment, review status, trace, and observation filters; return only the safe feedback summary needed by the UI.
 - Add a narrow review transition endpoint: `POST /v1/feedback/{id}/review` with `status: new | reviewed | dismissed | added_to_dataset` and optional bounded note. Treat this as workflow state separate from the immutable score.
 - Negative feedback starts `new`; positive feedback is still listed but starts `reviewed`/non-queue by default. The Feedback page’s queue is negative feedback in `new` state.
-- Add a deterministic `Idempotency-Key` request header on `POST /v1/feedback`, persisted per project/request key so a retry does not create duplicate thumbs. There is no per-user “current vote” feature without a user identity model.
+- `POST /v1/feedback` requires an `Idempotency-Key` scoped to the Project. New feedback records the trusted server-resolved Actor and is unique for that Actor, Project, trace and optional Observation. A new key for the same target returns the original immutable feedback, even if its payload differs; reusing a key with another payload or Actor conflicts. `GET /v1/feedback/mine` reads only the current Actor's exact target, returning JSON null when none is recorded. Unknown legacy authors remain unknown, and historical duplicates and links are preserved.
 - Comments and review notes are bounded plain text, rendered as text, and must not be inserted into ClickHouse trace/observation metadata or full-text search. Do not copy secrets/raw OTLP payloads into feedback rows.
 
 **Feedback page**
@@ -162,7 +162,7 @@ Create/update a repository design document (for example `docs/06-dataset-feedbac
 
 ### Feedback flywheel maturity
 
-- User identity, RBAC, actor-specific current-vote semantics, ownership/assignment, multi-reviewer approval, and content-free audit ledger.
+- Ownership/assignment, multi-reviewer approval, and a feedback-specific content-free audit ledger.
 - Dataset candidates versus active cases, explicit curator promotion, feedback-to-version lineage, and automated “protected by run” display.
 - PII/secret detection/redaction workflows, retention/deletion controls, evidence snapshots, and policy approvals.
 - Exact/semantic dedupe, feedback clusters, priority models, similarity search, notification/alerting, and cross-run failure analysis.

@@ -14230,6 +14230,7 @@ paths:
       tags:
         - feedback
     post:
+      description: The first response for the authenticated Actor and exact Project/trace/Observation is immutable. A new idempotency key for that target returns the existing response, even if the payload differs. A key reused by another Actor or with a different payload conflicts. Historical feedback of unknown authorship is not attributed.
       parameters:
         - in: header
           name: idempotency-key
@@ -14278,6 +14279,69 @@ paths:
           sessionCookie: []
         - basicAuth: []
       summary: Record human trace or Observation feedback
+      tags:
+        - feedback
+  /v1/feedback/mine:
+    get:
+      parameters:
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: trace_id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{32}$
+            type: string
+        - in: query
+          name: observation_id
+          required: false
+          schema:
+            maxLength: 128
+            minLength: 1
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Feedback'
+                  - type:
+                      - object
+                      - 'null'
+          description: Current feedback, or null when none exists
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Bad request
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Feedback target not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Feedback conflict
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal server error
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: Read the current Actor's feedback for one trace or Observation
       tags:
         - feedback
   /v1/feedback/{id}/promote:

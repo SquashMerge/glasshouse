@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
@@ -11,6 +12,7 @@ const {
 	ApiError,
 	captureDatasetDraftItem,
 	createFeedback,
+	getOwnFeedback,
 	getDatasetDraft,
 	listDatasets,
 } = vi.hoisted(() => ({
@@ -25,6 +27,7 @@ const {
 	},
 	captureDatasetDraftItem: vi.fn(),
 	createFeedback: vi.fn(),
+	getOwnFeedback: vi.fn(),
 	getDatasetDraft: vi.fn(),
 	listDatasets: vi.fn(),
 }));
@@ -33,6 +36,7 @@ vi.mock("../../src/lib/api", () => ({
 	ApiError,
 	captureDatasetDraftItem,
 	createFeedback,
+	getOwnFeedback,
 	getDatasetDraft,
 	listDatasets,
 }));
@@ -49,9 +53,149 @@ afterEach(() => {
 
 beforeEach(() => {
 	getDatasetDraft.mockResolvedValue({ revision: 1 });
+	getOwnFeedback.mockResolvedValue(null);
 });
 
 describe("dataset feedback actions", () => {
+	it("shows saved feedback read-only after curation access is removed", async () => {
+		getOwnFeedback.mockResolvedValue({
+			value: 1,
+			sentiment: "positive",
+			comment: "previous feedback",
+		});
+		render(
+			<FeedbackControls
+				projectId="project"
+				traceId="trace"
+				label="trace"
+				canCurate={false}
+			/>,
+		);
+		await screen.findByText(/previous feedback/);
+		expect(
+			screen.getByLabelText("Thumbs up trace").getAttribute("aria-pressed"),
+		).toBe("true");
+		expect(
+			(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement).disabled,
+		).toBe(true);
+	});
+	it("restores the current target's saved feedback and disables repeat submissions", async () => {
+		getOwnFeedback.mockResolvedValue({
+			value: -1,
+			sentiment: "negative",
+			reason: "incorrect",
+			comment: "Needs work",
+		});
+		render(
+			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByLabelText("Thumbs down trace").getAttribute("aria-pressed"),
+			).toBe("true"),
+		);
+		expect(screen.getByText(/incorrect/)).toBeTruthy();
+		expect(screen.getByText(/Needs work/)).toBeTruthy();
+		expect(
+			(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement).disabled,
+		).toBe(true);
+	});
+	it("blocks submission on load failure and retries the read", async () => {
+		getOwnFeedback
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce(null);
+		render(
+			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
+		);
+		await screen.findByRole("alert");
+		expect(
+			(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement).disabled,
+		).toBe(true);
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
+		);
+		expect(createFeedback).not.toHaveBeenCalled();
+	});
+	it("ignores a late read after switching from trace to span", async () => {
+		let resolveOld!: (value: unknown) => void;
+		getOwnFeedback
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveOld = resolve;
+					}),
+			)
+			.mockResolvedValueOnce(null);
+		const { rerender } = render(
+			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
+		);
+		expect(
+			(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement).disabled,
+		).toBe(true);
+		rerender(
+			<FeedbackControls
+				projectId="project"
+				traceId="trace"
+				observationId="span"
+				label="span"
+			/>,
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs up span") as HTMLButtonElement).disabled,
+			).toBe(false),
+		);
+		await act(async () =>
+			resolveOld({ value: -1, sentiment: "negative", reason: "old trace" }),
+		);
+		expect(screen.queryByText(/old trace/)).toBeNull();
+		expect(
+			screen.getByLabelText("Thumbs down span").getAttribute("aria-pressed"),
+		).toBe("false");
+	});
+	it("ignores a late submission after switching targets", async () => {
+		let finish!: (value: unknown) => void;
+		createFeedback.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				}),
+		);
+		const { rerender } = render(
+			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
+		);
+		fireEvent.click(screen.getByLabelText("Thumbs up trace"));
+		rerender(
+			<FeedbackControls
+				projectId="project"
+				traceId="trace"
+				observationId="span"
+				label="span"
+			/>,
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs up span") as HTMLButtonElement).disabled,
+			).toBe(false),
+		);
+		await act(async () =>
+			finish({ value: 1, sentiment: "positive", comment: "old result" }),
+		);
+		expect(screen.queryByText(/old result/)).toBeNull();
+		expect(
+			screen.getByLabelText("Thumbs up span").getAttribute("aria-pressed"),
+		).toBe("false");
+	});
 	it("does not offer trace capture without Dataset curation access", () => {
 		render(
 			<AddToDatasetDialog
@@ -66,7 +210,7 @@ describe("dataset feedback actions", () => {
 		expect(listDatasets).not.toHaveBeenCalled();
 	});
 
-	it("does not expose accessible feedback mutations without curation access", () => {
+	it("does not expose accessible feedback mutations without curation access", async () => {
 		render(
 			<FeedbackControls
 				projectId="project"
@@ -80,6 +224,7 @@ describe("dataset feedback actions", () => {
 		expect(screen.queryByLabelText("Thumbs down trace")).toBeNull();
 		expect(screen.queryByLabelText("Comment")).toBeNull();
 		expect(createFeedback).not.toHaveBeenCalled();
+		await act(async () => {});
 	});
 
 	it("captures only source identity and lets the server redact the source", async () => {
@@ -329,6 +474,9 @@ describe("dataset feedback actions", () => {
 			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
 		);
 		const thumbsUp = screen.getByRole("button", { name: "Thumbs up trace" });
+		await waitFor(() =>
+			expect((thumbsUp as HTMLButtonElement).disabled).toBe(false),
+		);
 		fireEvent.click(thumbsUp);
 		await screen.findByText("network interrupted");
 		fireEvent.click(thumbsUp);
@@ -349,6 +497,12 @@ describe("dataset feedback actions", () => {
 		const { rerender } = render(
 			<FeedbackControls projectId="project" traceId="trace-a" label="trace" />,
 		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Thumbs up trace" }));
 		await screen.findByText("network interrupted");
 		const first = createFeedback.mock.calls[0]?.[0] as {
@@ -357,6 +511,12 @@ describe("dataset feedback actions", () => {
 
 		rerender(
 			<FeedbackControls projectId="project" traceId="trace-b" label="trace" />,
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Thumbs up trace" }));
 		await waitFor(() => expect(createFeedback).toHaveBeenCalledTimes(2));
@@ -370,9 +530,20 @@ describe("dataset feedback actions", () => {
 	});
 
 	it("sends the latest trimmed comment while requiring a negative reason", async () => {
-		createFeedback.mockResolvedValue({});
-		render(
+		createFeedback.mockResolvedValue({
+			value: 1,
+			sentiment: "positive",
+			reason: null,
+			comment: "Useful response",
+		});
+		const { rerender } = render(
 			<FeedbackControls projectId="project" traceId="trace" label="trace" />,
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs up trace") as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
 		);
 		fireEvent.input(screen.getByLabelText("Comment"), {
 			target: { value: " Useful response " },
@@ -391,6 +562,21 @@ describe("dataset feedback actions", () => {
 			}),
 		);
 
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs down trace") as HTMLButtonElement)
+					.disabled,
+			).toBe(true),
+		);
+		rerender(
+			<FeedbackControls projectId="project" traceId="other" label="trace" />,
+		);
+		await waitFor(() =>
+			expect(
+				(screen.getByLabelText("Thumbs down trace") as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Thumbs down trace" }));
 		fireEvent.click(screen.getByRole("button", { name: "Record" }));
 		expect(createFeedback).toHaveBeenCalledTimes(1);

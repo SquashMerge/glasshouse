@@ -138,6 +138,8 @@ The optional GEPA worker receives a structured request over stdin and has bounde
 
 **Review focus:** check direct API calls as well as UI flows; preserve approval/version semantics; ensure destructive actions are scoped, auditable, bounded, and replay-safe; inspect each data store's actual retention/deletion coverage. A documented retention run is not proof that every resource class is deleted.
 
+New human feedback is attributed from the trusted authorization Actor, never a client-supplied author. A PostgreSQL unique index separates trace from Observation targets and serializes duplicate Actor/Project/target inserts; current-feedback reads reauthorize the Project and filter to that Actor. Legacy feedback authors are unknown and are not guessed or deduplicated. Project-scoped idempotency keys cannot replay another Actor's record, including unattributed legacy records. Feedback remains evidence, not ground truth or an automatic Dataset/deployment change.
+
 ## Production deployment path
 
 The supported single-host production topology is `infra/compose.production.yaml`

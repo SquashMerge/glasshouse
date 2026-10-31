@@ -36,7 +36,11 @@ vi.mock("../../src/lib/api", async () => {
 		await vi.importActual<typeof import("../../src/lib/api")>(
 			"../../src/lib/api",
 		);
-	return { ...actual, getTraceDetail: vi.fn() };
+	return {
+		...actual,
+		getTraceDetail: vi.fn(),
+		getOwnFeedback: vi.fn().mockResolvedValue(null),
+	};
 });
 
 const mockedGetTraceDetail = vi.mocked(getTraceDetail);
@@ -251,7 +255,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("TraceDetailPage — feedback project readiness", () => {
-	it("does not accept a comment that project restoration would discard", () => {
+	it("does not accept a comment that project restoration would discard", async () => {
 		const { rerender } = renderAt(VALID_ID);
 
 		expect(screen.getByLabelText("Comment")).toBeDisabled();
@@ -265,7 +269,7 @@ describe("TraceDetailPage — feedback project readiness", () => {
 		selectedProjectId = PROJECT_ID;
 		rerender(<TraceDetailPage />);
 
-		expect(screen.getByLabelText("Comment")).toBeEnabled();
+		await waitFor(() => expect(screen.getByLabelText("Comment")).toBeEnabled());
 		fireEvent.input(screen.getByLabelText("Comment"), {
 			target: { value: "Helpful first-pass trace" },
 		});

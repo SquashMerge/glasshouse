@@ -336,7 +336,22 @@ test("records trace feedback and preserves observation provenance when adding it
 		status: "reviewed",
 	});
 	await expect(traceFeedback.getByRole("status")).toBeVisible();
-	await expect(traceFeedback.getByRole("status")).toHaveText("Recorded");
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Your feedback: positive",
+	);
+	await expect(
+		traceFeedback.getByRole("button", { name: "Thumbs up trace" }),
+	).toHaveAttribute("aria-pressed", "true");
+	await expect(
+		traceFeedback.getByRole("button", { name: "Thumbs up trace" }),
+	).toBeDisabled();
+	await page.reload();
+	await expect(traceFeedback.getByRole("status")).toContainText(
+		"Helpful first-pass trace",
+	);
+	await expect(
+		traceFeedback.getByRole("button", { name: "Thumbs up trace" }),
+	).toHaveAttribute("aria-pressed", "true");
 
 	const panel = page.getByTestId("observation-detail");
 	await expect(panel).toHaveAttribute(
