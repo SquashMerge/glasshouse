@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import snapshot_dry_run as dry
 import snapshot_ghcr as g
 
 IMAGE = 'glasshouse-local-api:' + 'a' * 40
@@ -38,6 +37,131 @@ class ScannerTests(unittest.TestCase):
                 return '', commands
             except ValueError as exc:
                 return str(exc), commands
+
+    def test_scan_and_sbom_ignore_untrusted_configuration(self):
+        from test_snapshot_ghcr import CONFIGS, MANIFESTS, sbom
+        calls, config_paths = [], []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            work, records = root / 'work', root / 'records'
+            work.mkdir()
+            records.mkdir()
+            (root / '.trivyignore').write_text('aws-access-key-id\n')
+            (root / 'trivy.yaml').write_text('scan:\n  skip-files: ["**/*"]\n')
+            (root / 'trivy-secret.yaml').write_text('disable-rules: [aws-access-key-id]\n')
+            hostile = {'TRIVY_CONFIG': str(root / 'trivy.yaml'),
+                       'TRIVY_SECRET_CONFIG': str(root / 'trivy-secret.yaml'),
+                       'TRIVY_IGNOREFILE': str(root / '.trivyignore'),
+                       'TRIVY_SKIP_FILES': '**/*', 'TRIVY_SCANNERS': 'vuln',
+                       'TRIVY_DB_REPOSITORY': 'attacker.invalid/db',
+                       'TRIVY_JAVA_DB_REPOSITORY': 'attacker.invalid/java',
+                       'TRIVY_USERNAME': 'untrusted', 'TRIVY_PASSWORD': 'untrusted',
+                       'GH_TOKEN': 'untrusted', 'GITHUB_TOKEN': 'untrusted',
+                       'DOCKER_CONFIG': str(root), 'DOCKER_AUTH_CONFIG': 'untrusted',
+                       'REGISTRY_AUTH_FILE': str(root / 'auth.json'), 'OTHER_SECRET': 'untrusted',
+                       'HTTPS_PROXY': 'http://proxy.invalid:8080', 'XDG_CACHE_HOME': str(root / 'cache')}
+            def output(command, **kwargs):
+                name = 'api' if 'api' in command[-1] else 'web'
+                if command[0] == 'skopeo':
+                    return MANIFESTS[name]
+                return CONFIGS[name] + '\n' if command[4] == '{{.Id}}' else 'a' * 40 + '\n'
+            def child(command, **kwargs):
+                if command[0] != 'trivy':
+                    return subprocess.CompletedProcess(command, 0)
+                calls.append(command)
+                env = kwargs['env']
+                trivy_env = {k: v for k, v in env.items() if k.startswith('TRIVY_')}
+                self.assertEqual(trivy_env, {
+                    'TRIVY_DB_REPOSITORY': 'mirror.gcr.io/aquasec/trivy-db:2',
+                    'TRIVY_JAVA_DB_REPOSITORY': 'mirror.gcr.io/aquasec/trivy-java-db:1',
+                })
+                self.assertNotIn('GH_TOKEN', env)
+                self.assertNotIn('GITHUB_TOKEN', env)
+                self.assertNotIn('DOCKER_AUTH_CONFIG', env)
+                self.assertNotIn('REGISTRY_AUTH_FILE', env)
+                self.assertNotIn('OTHER_SECRET', env)
+                self.assertEqual(env['HTTPS_PROXY'], hostile['HTTPS_PROXY'])
+                self.assertEqual(env['XDG_CACHE_HOME'], hostile['XDG_CACHE_HOME'])
+                self.assertNotEqual(env['DOCKER_CONFIG'], str(root))
+                self.assertEqual(list(Path(env['DOCKER_CONFIG']).iterdir()), [])
+                self.assertLess(command.index('--config'), command.index('image'))
+                for flag, expected in (('--config', '{}'), ('--secret-config', '{}'), ('--ignorefile', '')):
+                    path = Path(command[command.index(flag) + 1])
+                    self.assertEqual(path.read_text().strip(), expected)
+                    self.assertEqual(path.stat().st_mode & 0o077, 0)
+                    self.assertEqual(path.parent.stat().st_mode & 0o077, 0)
+                    config_paths.append(path)
+                name = 'api' if 'api' in command[-1] else 'web'
+                if '--output' in command:
+                    Path(command[command.index('--output') + 1]).write_bytes(sbom(name))
+                else:
+                    doc = json.loads(report())
+                    doc['ArtifactName'] = command[-1]
+                    doc['Metadata']['ImageID'] = CONFIGS[name]
+                    kwargs['stdout'].write(json.dumps(doc).encode())
+                    self.assertEqual(command[command.index('--scanners') + 1], 'vuln,secret')
+                    self.assertEqual(command[command.index('--severity') + 1], 'HIGH,CRITICAL')
+                    self.assertIn('--ignore-unfixed', command)
+                return subprocess.CompletedProcess(command, 0)
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict(os.environ, hostile, clear=True), \
+                     patch.object(g, 'run'), patch.object(g.subprocess, 'check_output', side_effect=output), \
+                     patch.object(g.subprocess, 'run', side_effect=child):
+                    g.build_test_scan('a' * 40, root, work, records, archive_factory=lambda *_: b'source')
+            finally:
+                os.chdir(previous)
+            self.assertEqual(len(calls), 4)
+            self.assertTrue(all(not path.exists() for path in config_paths))
+
+    def test_trivy_config_cleanup_on_error(self):
+        paths = []
+        with self.assertRaisesRegex(RuntimeError, 'fixture failure'):
+            with g.trivy_invocation('image', [IMAGE]) as (command, _):
+                paths = [Path(command[command.index(flag) + 1])
+                         for flag in ('--config', '--secret-config', '--ignorefile')]
+                self.assertTrue(all(path.is_file() for path in paths))
+                raise RuntimeError('fixture failure')
+        self.assertTrue(all(not path.exists() for path in paths))
+
+    @unittest.skipUnless(os.environ.get('SNAPSHOT_TEST_TRIVY'), 'optional pinned Trivy binary not supplied')
+    def test_real_pinned_trivy_detects_secret_despite_hostile_defaults(self):
+        binary = Path(os.environ['SNAPSHOT_TEST_TRIVY']).resolve()
+        version = subprocess.run([str(binary), '--version'], capture_output=True, text=True, check=True)
+        self.assertIn('Version: 0.69.3', version.stdout)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scan = root / 'fixture'
+            scan.mkdir()
+            # Synthetic noncredential assembled at runtime, never logged.
+            (scan / 'synthetic.txt').write_text('aws_access_key_id = ' + 'AK' + 'IA' + '1234567890ABCDEF' + '\n')
+            (root / '.trivyignore').write_text('aws-access-key-id\n')
+            (root / 'trivy.yaml').write_text('scan:\n  skip-files: ["**/synthetic.txt"]\n')
+            (root / 'trivy-secret.yaml').write_text('disable-rules: [aws-access-key-id]\n')
+            hostile = {'PATH': str(binary.parent) + ':/usr/bin:/bin', 'HOME': str(root),
+                       'TRIVY_CONFIG': str(root / 'trivy.yaml'),
+                       'TRIVY_SECRET_CONFIG': str(root / 'trivy-secret.yaml'),
+                       'TRIVY_IGNOREFILE': str(root / '.trivyignore'),
+                       'TRIVY_SKIP_FILES': '**/synthetic.txt'}
+            args = ['--scanners', 'secret', '--offline-scan', '--exit-code', '1',
+                    '--severity', 'HIGH,CRITICAL', '--format', 'json', str(scan)]
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict(os.environ, hostile, clear=True):
+                    unsafe = subprocess.run([str(binary), 'fs', *args], env=hostile,
+                                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                    self.assertEqual(unsafe.returncode, 0)
+                    self.assertFalse(any(r.get('Secrets') for r in json.loads(unsafe.stdout).get('Results', [])))
+                    with g.trivy_invocation('fs', args) as (command, env):
+                        result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            finally:
+                os.chdir(previous)
+            self.assertEqual(result.returncode, 1)
+            findings = [(s.get('RuleID'), s.get('Severity')) for r in json.loads(result.stdout).get('Results', [])
+                        for s in r.get('Secrets', [])]
+            self.assertIn(('aws-access-key-id', 'CRITICAL'), findings)
 
     def test_vulnerability_is_bounded_and_not_passed(self):
         item = {'VulnerabilityID': 'CVE-2026-12345', 'Severity': 'HIGH', 'Title': SENTINEL}
@@ -122,13 +246,11 @@ class ScannerTests(unittest.TestCase):
         self.assertNotIn(SENTINEL, message)
         self.assertNotIn(IMAGE, message)
 
-    def test_dry_run_does_not_print_subprocess_arguments(self):
-        error = subprocess.CalledProcessError(1, ['tar', SENTINEL])
-        with patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40, 'GITHUB_WORKSPACE': '/tmp'}), \
-             patch.object(dry, 'dry_run', side_effect=error), \
-             patch('sys.stderr', new_callable=io.StringIO) as stderr:
-            self.assertEqual(dry.main(), 1)
-            self.assertNotIn(SENTINEL, stderr.getvalue())
+    def test_malformed_packages_fail_closed(self):
+        for packages in ('bad', {}, None, [None], ['bad']):
+            with self.subTest(packages=packages):
+                self.assertIn('invalid scan report', self.scan(report([{'Packages': packages}]), 0)[0])
+        self.assertEqual(self.scan(report([{'Packages': []}, {'Packages': [{'ID': 'pkg@1'}]}]), 0)[0], '')
 
     def test_clean_only_with_consistent_success_and_correct_identity(self):
         self.assertEqual(self.scan(report(), 0)[0], '')

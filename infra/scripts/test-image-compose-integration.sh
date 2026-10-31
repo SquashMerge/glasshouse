@@ -65,7 +65,10 @@ cleanup() {
   fi
   # Only the randomly named disposable CI project is ever removed.
   "${compose[@]}" down --volumes --remove-orphans || true
-  docker image rm "$api_image" "$web_image" >/dev/null 2>&1 || true
+  # Prebuilt references belong to the caller; only remove our generated tags.
+  if [[ -z "${IMAGE_TEST_API:-}" ]]; then
+    docker image rm "$api_image" "$web_image" >/dev/null 2>&1 || true
+  fi
   rm -rf -- "$tmp"
   exit "$status"
 }

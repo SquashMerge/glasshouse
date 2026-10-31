@@ -78,32 +78,6 @@ jobs:
       - name: Build and test isolated image bundle
         run: bash infra/scripts/test-image-compose-integration.sh
 
-  snapshot-candidate-dry-run:
-    name: Snapshot candidate dry run
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    permissions:
-      contents: read
-    env:
-      TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2
-      TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1
-    steps:
-      - name: Check out candidate revision
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Set up OCI-capable BuildKit
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
-        with:
-          version: v0.28.0
-          driver-opts: image=moby/buildkit@sha256:0f63d66f8d2de0bd16438284831a3e9ee6ca7cd57b6eb3ed6e38a7a456590fa7 # v0.25.2
-      - name: Install pinned OCI transport
-        run: sudo apt-get update && sudo apt-get install -y skopeo=1.13.3+ds1-2ubuntu0.24.04.3
-      - name: Install pinned vulnerability scanner
-        run: python3 scripts/install_snapshot_trivy.py
-      - name: Build, scan and compose-test candidate without publishing
-        run: python3 scripts/snapshot_dry_run.py
-
   snapshot-safety:
     name: Snapshot safety
     runs-on: ubuntu-latest

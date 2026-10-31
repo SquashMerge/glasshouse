@@ -45,8 +45,10 @@ without reviewing the actual GitHub package access policy.
 
 An HTTPS reverse proxy must route `/v1` (including `/v1/*`), `/health`,
 `/openapi.json`, and `/reference` to the loopback API port, and `/` to the
-loopback web port. Vite preview does **not** proxy API requests and checks the
-upstream Host: configure the proxy to send `Host: localhost` to the web service
+loopback web port. Vite preview inherits the development proxy configuration,
+but its default API target is `localhost:3000` inside the web container, not the
+API service; route API paths directly to the API as above. Preview also checks
+the upstream Host: configure the proxy to send `Host: localhost` to the web service
 (or explicitly permit a trusted host in Vite configuration). Preserve the
 path, Authorization headers and SSE streaming for the API; disable proxy buffering for
 SSE, and use suitable streaming timeouts. The CI-only proxy is not a production

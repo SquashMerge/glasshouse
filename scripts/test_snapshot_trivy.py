@@ -19,12 +19,10 @@ class TrivyInstallTests(unittest.TestCase):
             archive.addfile(item, io.BytesIO(binary))
         return data.getvalue()
 
-    def test_both_workflows_use_the_same_pinned_installer(self):
-        for workflow in ('ci.yml', 'snapshot-publish.yml'):
-            text = Path('.github/workflows', workflow).read_text()
-            with self.subTest(workflow=workflow):
-                self.assertIn('python3 scripts/install_snapshot_trivy.py', text)
-                self.assertNotIn('aquasecurity/setup-trivy@', text)
+    def test_publisher_workflow_uses_pinned_installer(self):
+        text = Path('.github/workflows/snapshot-publish.yml').read_text()
+        self.assertIn('python3 scripts/install_snapshot_trivy.py', text)
+        self.assertNotIn('aquasecurity/setup-trivy@', text)
         self.assertEqual(installer.VERSION, '0.69.3')
         self.assertEqual(installer.SHA256, '1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75')
 

@@ -34,21 +34,6 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(tar.getnames(), ['source'])
             self.assertEqual(tar.extractfile('source').read(), b'committed')
 
-    def test_ci_archive_requires_exact_checked_out_commit_not_main(self):
-        self.git('checkout', '-qb', 'side')
-        (self.repo / 'source').write_text('candidate')
-        self.git('commit', '-qam', 'candidate')
-        head = self.git('rev-parse', 'HEAD').strip()
-        (self.repo / 'source').write_text('dirty')
-        archive = candidate.checked_out_archive(self.repo, head)
-        with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as tar:
-            self.assertEqual(tar.extractfile('source').read(), b'candidate')
-        for bad in (self.sha, head[:12], 'HEAD'):
-            with self.subTest(bad=bad), self.assertRaises(ValueError):
-                candidate.checked_out_archive(self.repo, bad)
-        with self.assertRaises(ValueError):
-            candidate.source_archive(self.repo, head)
-
     def test_rejects_non_first_parent_and_noncanonical_sha(self):
         self.git('checkout', '-qb', 'side')
         (self.repo / 'source').write_text('side')

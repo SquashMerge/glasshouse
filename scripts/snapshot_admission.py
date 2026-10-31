@@ -15,11 +15,18 @@ WORKFLOWS = {
         'backup-restore-safety', 'doctor-version', 'Backup/restore (current)',
         'Security scan', 'ClickHouse schema', 'PostgreSQL migration upgrade',
         'e2e', 'Local first-run browser journey', 'Snapshot safety',
-        'Image-only Compose integration', 'Snapshot candidate dry run',
+        'Image-only Compose integration',
     }),
     'Dependency release age': ('.github/workflows/dependency-release-age.yml',
                                {'Verify newly locked package ages'}),
 }
+
+
+def matches_run(run, sha, path):
+    return (run.get('head_sha') == sha and run.get('path') == path
+            and run.get('event') == 'push' and run.get('head_branch') == 'main'
+            and (run.get('repository') or {}).get('full_name') == REPOSITORY
+            and (run.get('head_repository') or {}).get('full_name') == REPOSITORY)
 
 
 def assess(commits, runs, jobs):
@@ -34,11 +41,7 @@ def assess(commits, runs, jobs):
             raise ValueError('invalid commit SHA')
         reasons, evidence = [], {}
         for name, (path, expected) in WORKFLOWS.items():
-            matching = [r for r in runs if r.get('head_sha') == sha
-                        and r.get('path') == path and r.get('event') == 'push'
-                        and r.get('head_branch') == 'main'
-                        and (r.get('repository') or {}).get('full_name') == REPOSITORY
-                        and (r.get('head_repository') or {}).get('full_name') == REPOSITORY]
+            matching = [r for r in runs if matches_run(r, sha, path)]
             if not matching:
                 reasons.append(f'{name}:missing')
                 continue
@@ -131,10 +134,7 @@ def collect(commits):
             endpoint = f'repos/{REPOSITORY}/actions/workflows/{workflow}/runs?head_sha={sha}&per_page=100'
             found = gh_pages(endpoint, 'workflow_runs')
             runs.extend(found)
-            matching = [run for run in found if run.get('head_sha') == sha and run.get('path') == path
-                        and run.get('event') == 'push' and run.get('head_branch') == 'main'
-                        and (run.get('repository') or {}).get('full_name') == REPOSITORY
-                        and (run.get('head_repository') or {}).get('full_name') == REPOSITORY]
+            matching = [run for run in found if matches_run(run, sha, path)]
             if matching and all(type(run.get('id')) is int and run['id'] > 0
                                 and type(run.get('run_attempt')) is int and run['run_attempt'] > 0
                                 for run in matching):

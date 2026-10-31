@@ -52,6 +52,19 @@ class ArchiveHarnessTests(unittest.TestCase):
         self.assertIn('image inspect', calls)
         self.assertNotIn('build ', calls)
 
+    def test_failure_never_removes_caller_owned_images(self):
+        result, calls = self.run_harness({'IMAGE_TEST_API': 'local-api:test', 'IMAGE_TEST_WEB': 'local-web:test'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('image rm', calls)
+
+    def test_failure_removes_generated_images(self):
+        result, calls = self.run_harness({})
+        self.assertNotEqual(result.returncode, 0)
+        removals = [line for line in calls.splitlines() if line.startswith('image rm ')]
+        self.assertEqual(len(removals), 1)
+        self.assertIn('glasshouse-image-test-api:', removals[0])
+        self.assertIn('glasshouse-image-test-web:', removals[0])
+
     def test_untrusted_archive_without_complete_image_pair_is_rejected(self):
         result, calls = self.run_harness({'IMAGE_TEST_API': 'local-api:test'})
         self.assertNotEqual(result.returncode, 0)

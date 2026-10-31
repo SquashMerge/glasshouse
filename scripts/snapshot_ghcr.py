@@ -6,6 +6,7 @@ retargeting by the serialized workflow and digest checks, not against administra
 or other writers. Private registry records are not a lock or signature.
 """
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -98,13 +99,36 @@ def unique_json_object(pairs):
     return result
 
 
+@contextmanager
+def trivy_invocation(subcommand, args):
+    """Use only reviewed scanner settings, independent of the caller's defaults."""
+    allowed = ('PATH', 'HOME', 'TMPDIR', 'XDG_CACHE_HOME', 'LANG', 'LC_ALL',
+               'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+               'SSL_CERT_FILE', 'SSL_CERT_DIR', 'DOCKER_HOST', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH')
+    env = {key: os.environ[key] for key in allowed if key in os.environ}
+    env.update({'TRIVY_DB_REPOSITORY': 'mirror.gcr.io/aquasec/trivy-db:2',
+                'TRIVY_JAVA_DB_REPOSITORY': 'mirror.gcr.io/aquasec/trivy-java-db:1'})
+    with tempfile.TemporaryDirectory(prefix='snapshot-trivy-') as directory:
+        docker_config = Path(directory) / 'docker'
+        docker_config.mkdir(mode=0o700)
+        env['DOCKER_CONFIG'] = str(docker_config)
+        paths = {}
+        for name, contents in (('config.yaml', '{}\n'), ('secret.yaml', '{}\n'), ('ignore', '')):
+            path = Path(directory) / name
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as output:
+                output.write(contents)
+            paths[name] = str(path)
+        yield (['trivy', '--config', paths['config.yaml'], subcommand,
+                '--secret-config', paths['secret.yaml'], '--ignorefile', paths['ignore'], *args], env)
+
+
 def scan_image(image, config_digest):
     """Fail closed; never expose raw scanner output, metadata, or subprocess args."""
-    command = ['trivy', 'image', '--scanners', 'vuln,secret', '--exit-code', '1',
-               '--severity', 'HIGH,CRITICAL', '--ignore-unfixed', '--format', 'json', image]
+    args = ['--scanners', 'vuln,secret', '--exit-code', '1',
+            '--severity', 'HIGH,CRITICAL', '--ignore-unfixed', '--format', 'json', image]
     try:
-        with tempfile.TemporaryFile() as output:
-            result = subprocess.run(command, env=clean_env(), stdout=output,
+        with trivy_invocation('image', args) as (command, env), tempfile.TemporaryFile() as output:
+            result = subprocess.run(command, env=env, stdout=output,
                                     stderr=subprocess.DEVNULL, check=False)
             output.seek(0)
             raw = output.read(SCAN_REPORT_LIMIT + 1)
@@ -129,6 +153,9 @@ def scan_image(image, config_digest):
             if (not isinstance(entry, dict) or not isinstance(entry.get('Target'), str)
                     or not set(entry).issubset({'Target', 'Class', 'Type', 'Packages',
                                                 'Vulnerabilities', 'Secrets'})):
+                raise ValueError
+            packages = entry.get('Packages', [])
+            if not isinstance(packages, list) or any(not isinstance(package, dict) for package in packages):
                 raise ValueError
             result_class = entry.get('Class')
             result_type = entry.get('Type')
@@ -198,7 +225,7 @@ def registry_head(package, tag, authenticated=True):
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             digest = response.headers.get('Docker-Content-Digest', '')
-        if not __import__('re').fullmatch(r'sha256:[0-9a-f]{64}', digest):
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
             raise ValueError('registry returned an invalid digest')
         return digest
     except urllib.error.HTTPError as exc:
@@ -241,7 +268,7 @@ def raw_manifest(archive):
     if not isinstance(manifest, dict) or manifest.get('schemaVersion') != 2 or 'config' not in manifest:
         raise ValueError('candidate must have one image manifest, not an index')
     config = manifest.get('config', {}).get('digest', '')
-    if not __import__('re').fullmatch(r'sha256:[0-9a-f]{64}', config):
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', config):
         raise ValueError('candidate config digest invalid')
     return 'sha256:' + hashlib.sha256(raw).hexdigest(), config, raw
 
@@ -270,7 +297,8 @@ def build_test_scan(sha, root, work, record_dir, *, archive_factory=source_archi
             raise ValueError('candidate revision label mismatch')
         scan_image(image, config_digest)
         sbom = record_dir / f'{sha}-{name}-sbom.json'
-        run(['trivy', 'image', '--format', 'cyclonedx', '--output', str(sbom), image])
+        with trivy_invocation('image', ['--format', 'cyclonedx', '--output', str(sbom), image]) as (command, env):
+            subprocess.run(command, env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         validate_sbom_identity(sbom.read_bytes(), config_digest)
         images[name], archives[name] = image, output
     env = clean_env({'IMAGE_TEST_REVISION': sha, 'IMAGE_TEST_API': images['api'], 'IMAGE_TEST_WEB': images['web']})
@@ -393,7 +421,7 @@ def validate_sbom_identity(raw, config_digest):
     if not isinstance(bom, dict) or bom.get('bomFormat') != 'CycloneDX':
         raise ValueError('invalid CycloneDX SBOM')
     if (not isinstance(bom.get('specVersion'), str)
-            or not __import__('re').fullmatch(r'1\.[0-7]', bom['specVersion'])
+            or not re.fullmatch(r'1\.[0-7]', bom['specVersion'])
             or ('version' in bom and (type(bom['version']) is not int or bom['version'] < 1))):
         raise ValueError('invalid CycloneDX version')
     metadata = bom.get('metadata')
@@ -433,7 +461,7 @@ def manifest_config(encoded, digest):
         if (not isinstance(item, dict) or not isinstance(item.get('mediaType'), str)
                 or not item['mediaType'].strip() or type(item.get('size')) is not int or item['size'] < 0
                 or not isinstance(item.get('digest'), str)
-                or not __import__('re').fullmatch(r'sha256:[0-9a-f]{64}', item['digest'])):
+                or not re.fullmatch(r'sha256:[0-9a-f]{64}', item['digest'])):
             raise ValueError('invalid image descriptor')
         return item['digest']
     config = validate_descriptor(descriptor)
@@ -481,18 +509,17 @@ def valid_reservation(record, sha):
         return False
     return (record.get('sha') == sha and record.get('platform') == 'linux/amd64'
             and record.get('repository') == REPOSITORY and record.get('packages') == PACKAGES
-            and all(isinstance(record.get(key), str) and __import__('re').fullmatch(r'[1-9][0-9]*', record[key])
+            and all(isinstance(record.get(key), str) and re.fullmatch(r'[1-9][0-9]*', record[key])
                     for key in ('build_run', 'build_attempt'))
             and isinstance(evidence, dict) and set(evidence) == set(WORKFLOWS)
             and all(isinstance(item, dict) and set(item) == {'run_id', 'attempt'}
                     and all(type(item[key]) is int and item[key] > 0 for key in item)
                     for item in evidence.values())
             and isinstance(sbom, dict) and set(sbom) == set(PACKAGES)
-            and all(isinstance(value, str) and __import__('re').fullmatch(r'[0-9a-f]{64}', value) for value in sbom.values())
+            and all(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) for value in sbom.values())
             and all(hashlib.sha256(decoded[name]).hexdigest() == sbom[name] for name in PACKAGES)
             and record.get('pair_test') == 'passed' and record.get('scans') == {'api': 'passed', 'web': 'passed'}
-            and set(digests) == set(PACKAGES)
-            and all(isinstance(value, str) and __import__('re').fullmatch(r'sha256:[0-9a-f]{64}', value)
+            and all(isinstance(value, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', value)
                     for value in digests.values()))
 
 

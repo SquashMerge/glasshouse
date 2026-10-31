@@ -27,6 +27,40 @@ def fixture(sha=SHA):
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_updated_ci_contract_accepts_exact_set_and_rejects_extra_or_missing(self):
+        expected = {
+            'lint', 'format', 'typecheck', 'test', 'supply-chain', 'infra-security',
+            'worker-test', 'build', 'openapi-artifact', 'compose-paths',
+            'backup-restore-safety', 'doctor-version', 'Backup/restore (current)',
+            'Security scan', 'ClickHouse schema', 'PostgreSQL migration upgrade',
+            'e2e', 'Local first-run browser journey', 'Snapshot safety',
+            'Image-only Compose integration',
+        }
+        runs, jobs = fixture()
+        template = jobs[(101, 1)][0]
+        jobs[(101, 1)] = [dict(template, name=name) for name in sorted(expected)]
+        self.assertEqual(assess([SHA], runs, jobs)[0]['state'], 'gates-passed')
+        for change in ('extra', 'missing'):
+            with self.subTest(change=change):
+                altered = copy.deepcopy(jobs)
+                if change == 'extra':
+                    altered[(101, 1)].append(dict(template, name='Snapshot candidate dry run'))
+                else:
+                    altered[(101, 1)].pop()
+                result = assess([SHA], runs, altered)[0]
+                self.assertEqual(result['state'], 'blocked')
+                self.assertIn('CI:job-set-mismatch', result['reasons'])
+
+    def test_ci_retains_existing_security_gates_without_candidate_dry_run(self):
+        ci = Path('.github/workflows/ci.yml').read_text()
+        self.assertNotIn('  snapshot-candidate-dry-run:', ci)
+        self.assertIn('  image-compose-integration:', ci)
+        job = ci.split('  image-compose-integration:', 1)[1].split('\n  snapshot-safety:', 1)[0]
+        self.assertIn('timeout-minutes: 40', job)
+        self.assertIn('test-image-compose-integration.sh', job)
+        self.assertIn('scan-type: fs', ci)
+        self.assertIn('test_snapshot*.py', ci)
+
     def test_image_only_compose_job_is_required_for_admission(self):
         self.assertIn("Image-only Compose integration", WORKFLOWS["CI"][1])
 
@@ -167,6 +201,23 @@ class InventoryTests(unittest.TestCase):
         endpoints = [item.args[0] for item in call.call_args_list]
         self.assertEqual(len(endpoints), 4)
         self.assertFalse(any('/runs/99/' in endpoint or '/runs/999/' in endpoint for endpoint in endpoints))
+
+    def test_collect_never_fetches_jobs_for_mismatched_runs(self):
+        from snapshot_admission import collect
+        for field, value in [('head_sha', OTHER), ('path', '.github/workflows/other.yml'),
+                             ('event', 'pull_request'), ('head_branch', 'feature'),
+                             ('repository', {'full_name': 'fork/glasshouse'}),
+                             ('head_repository', {'full_name': 'fork/glasshouse'})]:
+            with self.subTest(field=field):
+                runs, jobs = fixture()
+                bad = dict(runs[0], id=999, **{field: value})
+                def pages(endpoint, key):
+                    if key == 'workflow_runs':
+                        return [bad, runs[0]] if 'ci.yml' in endpoint else [runs[1]]
+                    return jobs[(int(endpoint.split('/runs/')[1].split('/')[0]), 1)]
+                with patch('snapshot_admission.gh_pages', side_effect=pages) as calls:
+                    self.assertEqual(collect([SHA])[0]['state'], 'gates-passed')
+                self.assertFalse(any('/runs/999/' in call.args[0] for call in calls.call_args_list))
 
     def test_exact_sha_requires_first_parent_and_both_live_workflows(self):
         from snapshot_admission import admit_exact
