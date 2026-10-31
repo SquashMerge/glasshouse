@@ -29,20 +29,20 @@
     "codegen:py": "cd ../.. && mkdir -p clients && uvx --from openapi-python-client==0.29.0 openapi-python-client generate --path openapi.yaml --config infra/codegen/openapi-python-client.config.yaml --output-path clients/python --overwrite --no-fail-on-warning"
   },
   "dependencies": {
-    "@clickhouse/client": "1.23.1",
+    "@clickhouse/client": "1.24.1",
     "@hono/zod-openapi": "1.6.3",
-    "@scalar/hono-api-reference": "0.12.11",
+    "@scalar/hono-api-reference": "0.12.14",
     "config": "5.0.1",
-    "dotenv": "18.0.5",
+    "dotenv": "18.0.9",
     "dotenv-expand": "1000.0.0",
     "hono": "4.13.13",
     "ioredis": "6.0.0",
-    "js-yaml": "5.4.3",
+    "js-yaml": "5.5.0",
     "mustache": "4.2.0",
     "node-pg-migrate": "9.0.0",
     "pg": "8.23.1",
     "unicode-confusables": "0.1.1",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",
