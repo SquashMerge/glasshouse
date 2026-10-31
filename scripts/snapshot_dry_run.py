@@ -46,8 +46,11 @@ def main():
         root = Path(os.environ['GITHUB_WORKSPACE']).resolve()
         print(json.dumps(dry_run(sha, root), indent=2, sort_keys=True))
         return 0
-    except (KeyError, ValueError, OSError, TypeError, g.subprocess.SubprocessError) as exc:
+    except g.ScanFailure as exc:
         print(f'candidate dry run failed: {exc}', file=sys.stderr)
+        return 1
+    except (KeyError, ValueError, OSError, TypeError, g.subprocess.SubprocessError) as exc:
+        print(f'candidate dry run failed: {type(exc).__name__} (details suppressed)', file=sys.stderr)
         return 1
 
 

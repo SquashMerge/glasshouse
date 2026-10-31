@@ -106,6 +106,15 @@ class DryRunTests(unittest.TestCase):
                 return SHA + '\n'
             def compose(command, **kwargs):
                 commands.append((command, kwargs))
+                if command[0] == 'trivy':
+                    import json
+                    import subprocess
+                    name = 'api' if 'api' in command[-1] else 'web'
+                    kwargs['stdout'].write(json.dumps({
+                        'SchemaVersion': 2, 'ArtifactType': 'container_image',
+                        'ArtifactName': command[-1], 'Metadata': {'ImageID': CONFIGS[name]},
+                    }).encode())
+                    return subprocess.CompletedProcess(command, 0)
             with patch.object(g, 'run', side_effect=run), \
                  patch.object(g.subprocess, 'check_output', side_effect=output), \
                  patch.object(g.subprocess, 'run', side_effect=compose):

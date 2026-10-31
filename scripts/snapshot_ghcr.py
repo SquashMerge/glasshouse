@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,113 @@ def clean_env(extra=None):
 def run(command, **kwargs):
     return subprocess.run(command, check=True, env=clean_env(),
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+
+
+class ScanFailure(ValueError):
+    """A scanner failure whose message contains only explicitly allowed data."""
+
+
+# Only known built-in rule names may appear in public logs. Unknown/custom rule
+# IDs are counted, not echoed: rule IDs themselves are untrusted input.
+SAFE_SECRET_RULES = frozenset('''
+aws-access-key-id aws-secret-access-key github-pat github-oauth github-app-token
+github-refresh-token github-fine-grained-pat gitlab-pat hugging-face-access-token
+private-key shopify-token slack-access-token stripe-publishable-token stripe-secret-token
+gcp-service-account heroku-api-key slack-web-hook twilio-api-key age-secret-key
+facebook-token twitter-token adobe-client-id adobe-client-secret alibaba-access-key-id
+alibaba-secret-key asana-client-id asana-client-secret atlassian-api-token
+bitbucket-client-id bitbucket-client-secret beamer-api-token clojars-api-token
+contentful-delivery-api-token databricks-api-token discord-api-token discord-client-id
+discord-client-secret doppler-api-token dropbox-api-secret dropbox-short-lived-api-token
+dropbox-long-lived-api-token duffel-api-token dynatrace-api-token easypost-api-token
+fastly-api-token finicity-client-secret finicity-api-token flutterwave-public-key
+flutterwave-enc-key frameio-api-token gocardless-api-token grafana-api-token
+hashicorp-tf-api-token hubspot-api-token intercom-api-token intercom-client-secret
+ionic-api-token jwt-token linear-api-token linear-client-secret lob-api-key lob-pub-api-key
+mailchimp-api-key mailgun-token mailgun-signing-key mapbox-api-token messagebird-api-token
+messagebird-client-id new-relic-user-api-key new-relic-user-api-id
+new-relic-browser-api-token npm-access-token planetscale-password planetscale-api-token
+private-packagist-token postman-api-token pulumi-api-token rubygems-api-token
+sendgrid-api-token sendinblue-api-token shippo-api-token linkedin-client-secret
+linkedin-client-id twitch-api-token typeform-api-token dockerconfig-secret
+symfony-default-secret
+'''.split())
+SCAN_REPORT_LIMIT = 32 * 1024 * 1024
+SCAN_ENTRY_LIMIT = 20
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate JSON key')
+        result[key] = value
+    return result
+
+
+def scan_image(image, config_digest):
+    """Fail closed; never expose raw scanner output, metadata, or subprocess args."""
+    command = ['trivy', 'image', '--scanners', 'vuln,secret', '--exit-code', '1',
+               '--severity', 'HIGH,CRITICAL', '--ignore-unfixed', '--format', 'json', image]
+    try:
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run(command, env=clean_env(), stdout=output,
+                                    stderr=subprocess.DEVNULL, check=False)
+            output.seek(0)
+            raw = output.read(SCAN_REPORT_LIMIT + 1)
+    except (OSError, subprocess.SubprocessError):
+        raise ScanFailure('Trivy operational failure (process could not run)') from None
+    if result.returncode not in (0, 1):
+        raise ScanFailure('Trivy operational failure (nonzero exit; output suppressed)')
+    try:
+        if len(raw) > SCAN_REPORT_LIMIT:
+            raise ValueError
+        doc = json.loads(raw, object_pairs_hook=unique_json_object)
+        if (not isinstance(doc, dict) or type(doc.get('SchemaVersion')) is not int
+                or doc['SchemaVersion'] != 2 or doc.get('ArtifactType') != 'container_image'
+                or doc.get('ArtifactName') != image or not isinstance(doc.get('Metadata'), dict)
+                or doc['Metadata'].get('ImageID') != config_digest):
+            raise ValueError
+        results = doc.get('Results', [])
+        if not isinstance(results, list):
+            raise ValueError
+        vulnerabilities, secrets = [], []
+        for entry in results:
+            if (not isinstance(entry, dict) or not isinstance(entry.get('Target'), str)
+                    or not set(entry).issubset({'Target', 'Class', 'Type', 'Packages',
+                                                'Vulnerabilities', 'Secrets'})):
+                raise ValueError
+            for key, dest in (('Vulnerabilities', vulnerabilities), ('Secrets', secrets)):
+                findings = entry.get(key, [])
+                if not isinstance(findings, list):
+                    raise ValueError
+                for finding in findings:
+                    if (not isinstance(finding, dict)
+                            or finding.get('Severity') not in ('HIGH', 'CRITICAL')):
+                        raise ValueError
+                    ident = finding.get('VulnerabilityID' if key == 'Vulnerabilities' else 'RuleID')
+                    if not isinstance(ident, str) or not ident:
+                        raise ValueError
+                    if key == 'Vulnerabilities':
+                        ident = ident if re.fullmatch(r'CVE-[0-9]{4}-[0-9]{4,7}', ident) else 'other'
+                        dest.append((ident, finding['Severity']))
+                    else:
+                        dest.append(ident if ident in SAFE_SECRET_RULES else 'other')
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        if result.returncode:
+            raise ScanFailure('Trivy operational failure (no valid scan report; output suppressed)') from None
+        raise ScanFailure('Trivy invalid scan report (output suppressed)') from None
+    if result.returncode == 0 and not vulnerabilities and not secrets:
+        return
+    if result.returncode == 1 and (vulnerabilities or secrets):
+        vuln_summary = sorted(set(vulnerabilities))[:SCAN_ENTRY_LIMIT]
+        secret_summary = sorted(set(secrets))[:SCAN_ENTRY_LIMIT]
+        raise ScanFailure('Trivy findings: ' + json.dumps({
+            'vulnerability_count': len(vulnerabilities), 'vulnerabilities': vuln_summary,
+            'secret_count': len(secrets), 'secret_rule_ids': secret_summary,
+            'details_truncated': len(set(vulnerabilities)) > SCAN_ENTRY_LIMIT or len(set(secrets)) > SCAN_ENTRY_LIMIT,
+        }, separators=(',', ':')))
+    raise ScanFailure('Trivy operational failure (exit/report mismatch; output suppressed)')
 
 
 def registry_token(package, authenticated):
@@ -105,7 +213,7 @@ def persist(path, record):
 
 
 def raw_manifest(archive):
-    raw = subprocess.check_output(['skopeo', 'inspect', '--raw', f'oci-archive:{archive}'], env=clean_env())
+    raw = subprocess.check_output(['skopeo', 'inspect', '--raw', f'oci-archive:{archive}'], env=clean_env(), stderr=subprocess.DEVNULL)
     manifest = json.loads(raw)
     if not isinstance(manifest, dict) or manifest.get('schemaVersion') != 2 or 'config' not in manifest:
         raise ValueError('candidate must have one image manifest, not an index')
@@ -131,13 +239,13 @@ def build_test_scan(sha, root, work, record_dir, *, archive_factory=source_archi
              '--label', f'org.opencontainers.image.revision={sha}', '-'], cwd=work, input=archive)
         digests[name], config_digest, manifests[name] = raw_manifest(output)
         run(['skopeo', 'copy', f'oci-archive:{output}', f'docker-daemon:{image}'])
-        loaded_id = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image], env=clean_env(), text=True).strip()
+        loaded_id = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image], env=clean_env(), text=True, stderr=subprocess.DEVNULL).strip()
         if loaded_id != config_digest:
             raise ValueError('loaded image differs from OCI candidate')
-        actual = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{ index .Config.Labels "org.opencontainers.image.revision" }}', image], env=clean_env(), text=True).strip()
+        actual = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{ index .Config.Labels "org.opencontainers.image.revision" }}', image], env=clean_env(), text=True, stderr=subprocess.DEVNULL).strip()
         if actual != sha:
             raise ValueError('candidate revision label mismatch')
-        run(['trivy', 'image', '--scanners', 'vuln,secret', '--exit-code', '1', '--severity', 'HIGH,CRITICAL', '--ignore-unfixed', image])
+        scan_image(image, config_digest)
         sbom = record_dir / f'{sha}-{name}-sbom.json'
         run(['trivy', 'image', '--format', 'cyclonedx', '--output', str(sbom), image])
         validate_sbom_identity(sbom.read_bytes(), config_digest)
