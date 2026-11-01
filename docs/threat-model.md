@@ -46,6 +46,10 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 | API ↔ GEPA worker / configured LLM provider | Inputs and outputs can contain sensitive prompt/dataset material. The provider is an external recipient. The worker is a subprocess, not a separately sandboxed security domain. |
 | Repository/CI/dependencies ↔ release/deployment | PR content and third-party packages are untrusted inputs to the build/review process. Deployment credentials or Docker access materially increase impact. |
 
+## Whole-instance backup boundary
+
+The native backup and restore scripts are trusted-host operator tools, not an API or Organization/Project administrator capability. They may expose all tenants and credential/session digests. Neither checksum verification nor `pg_restore --list` authenticates an artifact or makes arbitrary SQL safe. The operator must authenticate provenance independently and protect private artifacts and the local staging filesystem. Root, Docker administrators, and processes running as the operator remain trusted. Source-unavailable recovery requires authenticated source daemon and Compose-project metadata, exact operator attestations, and a separately provisioned empty target with exclusive local optionless named volumes; older artifacts missing metadata fail closed in this mode. Different daemon IDs and project names are not cryptographic proof of a distinct physical host or storage, and Docker inspection cannot establish isolation against aliases, hidden mounts, or concurrent changes. The operator must independently establish isolation and keep it throughout recovery. Restored PostgreSQL session records and credentials can regain validity; invalidate sessions and re-secure credentials before cutover. See [backup and restore](backup-restore.md).
+
 ## Principal attack scenarios
 
 ### A. Cross-tenant or cross-Project access (high impact)
@@ -94,7 +98,7 @@ Ordinary navigation within the protected workspace reuses the verified in-memory
 
 **Goal:** persist or disclose credentials, PII, prompts, tool results, feedback, or customer data beyond its intended scope; poison evidence or manipulate evaluation outcomes.
 
-**Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence and governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
+**Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence and governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. The Admin-only internal-log view stores only a tenant-derived API request-outcome allowlist: a static route group plus validated method, status, and duration. It excludes bodies, headers (including request IDs), query strings, user-selected path parameters, telemetry/prompt content, and host/Docker logs before queueing or persistence. Short-lived shared pagination snapshots store only ordered identifiers and sort keys, with bounded per-Actor, Organization and global quotas. Cursors bind Actor, Organization and filters; expired or invalidated snapshots fail closed. PostgreSQL invalidates an Actor's snapshots when their Admin role is removed, so regranting it does not revive old cursors. A current-Admin authorization fence and the resulting query share one transaction, so a completed Admin demotion cannot be followed by an admitted stale read. Each collection transaction holds a per-Organization advisory lock across its insert and bounded over-cap trim, preventing concurrent API replicas from accumulating an unbounded cap overflow. A transaction-lock-coordinated hourly cleanup deletes bounded expired batches across Organizations, while reads independently enforce the 14-day cutoff; downtime or a large backlog can delay physical deletion but cannot make expired rows readable through this endpoint. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [internal-log runbook](internal-logs.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
 
 The authenticated user audit-log route reads only an allowlisted projection of
 existing content-free PostgreSQL audit ledgers. Every query binds Organization
@@ -106,12 +110,13 @@ only immutable Actor/Organization/Project/resource provenance; they retain no
 prompt, feedback, or telemetry payload. The projection excludes secrets,
 credential/session material, payloads, correlation IDs, arbitrary JSON, and
 internal diagnostics. Keyset pagination retains the exact UTC PostgreSQL
-timestamp string plus event/source tie-breakers so tied microseconds and
-concurrent inserts do not change an existing page boundary. Its cursor binds
+timestamp string plus event/source tie-breakers to maintain an exact page
+boundary for tied microseconds. It does not freeze a snapshot: a transaction
+committing later with an older sort key may appear on a subsequent page. Its cursor binds
 the trusted Organization and Actor plus every canonical filter, rejecting
 cross-scope or changed-filter replay.
 
-**Residual:** redaction defaults off unless configured; redaction is not retroactive and cannot reliably identify every secret. Trace input/output, dataset examples, prompts, and model outputs may be sensitive. Evaluation/optimization can send configured input to a third-party LLM; treat that provider and configured endpoint as data recipients. Verify model/provider, endpoint, retention terms, and data approval before sending sensitive content. Prompt injection in a trace or dataset is untrusted content and can influence model output/score; never treat model output as authorization, code, or a trusted release decision. Review dataset curation, output handling, retention scope, and provider egress in every relevant change.
+**Residual:** redaction defaults off unless configured; redaction is not retroactive and cannot reliably identify every secret. Trace input/output, dataset examples, prompts, and model outputs may be sensitive. Internal logs are a bounded diagnostic aid, not a guarantee of complete event history: collection can be disabled or unavailable and the 14-day/50,000-row bound can evict entries. Evaluation/optimization can send configured input to a third-party LLM; treat that provider and configured endpoint as data recipients. Verify model/provider, endpoint, retention terms, and data approval before sending sensitive content. Prompt injection in a trace or dataset is untrusted content and can influence model output/score; never treat model output as authorization, code, or a trusted release decision. Review dataset curation, output handling, retention scope, and provider egress in every relevant change.
 
 ### E. Ingestion, expensive work, and availability abuse (medium/high impact)
 
@@ -185,8 +190,8 @@ Current-version backup/restore uses a separate empty target with inspected
 non-overlapping mounts. PostgreSQL restore is fail-fast and single-transaction,
 but there is no atomic restore across PostgreSQL and ClickHouse. A partial
 restore needs another empty target. Legacy datastore migration and cross-version
-restore are unsupported. Artifact validation checks integrity, not version or
-custom-schema compatibility; current-version CI does not replace an installation's
+restore are unsupported. Artifact validation checks checksums and declared supported
+versions, not provenance or custom-schema compatibility; current-version CI does not replace an installation's
 recovery drill. See [supported datastores](datastore-upgrades.md) and
 [backup/restore](backup-restore.md).
 

@@ -5,11 +5,13 @@ import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
 const ORGANIZATION = "00000000-0000-4000-8000-000000000010";
 const PROJECT = "00000000-0000-4000-8000-000000000011";
 const ACTOR = "00000000-0000-4000-8000-000000000013";
+const NON_ADMIN = "00000000-0000-4000-8000-000000000014";
 const ID = "00000000-0000-4000-8000-000000000012";
-let adminAllowed = true;
 const actions: string[] = [];
 const query = mock(async (sql: string, values: unknown[] = []) => {
 	if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+	if (sql.startsWith("SELECT authorization_allows_organization"))
+		return { rows: [{ allowed: values[1] === ACTOR }] };
 	if (sql.startsWith("SELECT id FROM projects"))
 		return {
 			rows:
@@ -96,22 +98,14 @@ const query = mock(async (sql: string, values: unknown[] = []) => {
 	return { rows: [] };
 });
 
-const postgres = await import("../../src/db/postgres");
-mock.module("../../src/db/postgres", () => ({
-	...postgres,
-	pgPool: () => ({ query, connect: async () => ({ query, release() {} }) }),
-}));
-const projectAuthorization = await import("../../src/db/project-authorization");
-mock.module("../../src/db/project-authorization", () => ({
-	...projectAuthorization,
-	lockAuthorizedOrganization: async () => adminAllowed,
-}));
 const routes = await import("../../src/routes/otlp-credentials");
+const handlers = routes.createOtlpCredentialRouteHandlers({
+	pool: () => ({ connect: async () => ({ query, release() {} }) }),
+});
 
 afterEach(() => {
 	query.mockClear();
 	actions.length = 0;
-	adminAllowed = true;
 });
 
 function app() {
@@ -127,15 +121,15 @@ function app() {
 	api.use("*", async (c, next) => {
 		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
 			actor: "admin",
-			actorId: ACTOR,
+			actorId: c.req.header("x-test-actor") === "user" ? NON_ADMIN : ACTOR,
 			organizationId: ORGANIZATION,
 		});
 		await next();
 	});
-	api.openapi(routes.listOtlpCredentials, routes.handleListOtlpCredentials);
-	api.openapi(routes.createOtlpCredential, routes.handleCreateOtlpCredential);
-	api.openapi(routes.rotateOtlpCredential, routes.handleRotateOtlpCredential);
-	api.openapi(routes.revokeOtlpCredential, routes.handleRevokeOtlpCredential);
+	api.openapi(routes.listOtlpCredentials, handlers.handleListOtlpCredentials);
+	api.openapi(routes.createOtlpCredential, handlers.handleCreateOtlpCredential);
+	api.openapi(routes.rotateOtlpCredential, handlers.handleRotateOtlpCredential);
+	api.openapi(routes.revokeOtlpCredential, handlers.handleRevokeOtlpCredential);
 	return api;
 }
 
@@ -187,20 +181,25 @@ test("Admin can create, list, rotate, and revoke a project-bound OTLP credential
 	]);
 });
 
-test("non-Admins and Projects outside the authenticated organization cannot manage credentials", async () => {
+test("real organization authorization denies non-Admins before credential Project access", async () => {
 	const api = app();
-	adminAllowed = false;
 	const denied = await api.request(
 		`/v1/admin/otlp-credentials?project_id=${PROJECT}`,
+		{ headers: { "x-test-actor": "user" } },
 	);
 	expect(denied.status).toBe(403);
+	expect(
+		query.mock.calls.some(([sql]) =>
+			String(sql).startsWith("SELECT authorization_allows_organization"),
+		),
+	).toBe(true);
 	expect(
 		query.mock.calls.some(([sql]) =>
 			String(sql).startsWith("SELECT id FROM projects"),
 		),
 	).toBe(false);
 
-	adminAllowed = true;
+	query.mockClear();
 	const foreign = await api.request("/v1/admin/otlp-credentials", {
 		method: "POST",
 		headers: { "content-type": "application/json" },

@@ -19,6 +19,8 @@ import {
 	LuUsers,
 	LuKeyRound,
 	LuClipboardList,
+	LuScrollText,
+	LuArchive,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -108,8 +110,10 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	const settingsActive =
 		isActive("/governance") ||
 		isActive("/access") ||
+		isActive("/logs") ||
 		isActive("/projects") ||
 		isActive("/audit-log") ||
+		isActive("/instance-recovery") ||
 		isActive("/ingestion-credentials");
 
 	return (
@@ -342,6 +346,15 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 							)}
 							{organizationRole === "admin" && (
 								<SidebarLink
+									to="/logs"
+									label="Logs"
+									icon={<LuScrollText className="h-4 w-4" />}
+									active={isActive("/logs")}
+									collapsed={collapsed}
+								/>
+							)}
+							{organizationRole === "admin" && (
+								<SidebarLink
 									to="/ingestion-credentials"
 									label="Ingestion credentials"
 									icon={<LuKeyRound className="h-4 w-4" />}
@@ -361,6 +374,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 								label="Projects"
 								icon={<LuFolderKanban className="h-4 w-4" />}
 								active={isActive("/projects")}
+								collapsed={collapsed}
+							/>
+							<SidebarLink
+								to="/instance-recovery"
+								label="Instance recovery"
+								icon={<LuArchive className="h-4 w-4" />}
+								active={isActive("/instance-recovery")}
 								collapsed={collapsed}
 							/>
 						</div>
@@ -596,7 +616,9 @@ function SidebarLink({
 		| "/audit-log"
 		| "/governance"
 		| "/access"
+		| "/logs"
 		| "/projects"
+		| "/instance-recovery"
 		| "/ingestion-credentials";
 	label: string;
 	icon: React.ReactNode;

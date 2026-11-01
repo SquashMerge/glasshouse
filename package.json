@@ -16,7 +16,7 @@
     "lint": "bun --filter '*' lint",
     "typecheck": "bun --filter '*' typecheck",
     "test": "bun run test:pg-migration-filenames && bun --filter @glasshouse/api test:unit && bun --filter @glasshouse/web test",
-    "test:pg-migration-filenames": "bun test ./infra/scripts/tests/verify-pg-migration-filenames.test.ts ./infra/scripts/tests/pg-migration-order-mode.test.ts",
+    "test:pg-migration-filenames": "bun test ./infra/scripts/tests/verify-pg-migration-filenames.test.ts ./infra/scripts/tests/pg-migration-order-mode.test.ts ./infra/scripts/tests/internal-logs-migration.test.ts",
     "smoke": "make smoke",
     "doctor": "make doctor",
     "openapi:snapshot": "bun --filter @glasshouse/api openapi:snapshot",

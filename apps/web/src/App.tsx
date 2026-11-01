@@ -181,12 +181,28 @@ const governanceRoute = createRoute({
 		"GovernancePage",
 	),
 });
+const instanceRecoveryRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/instance-recovery",
+	component: lazyRouteComponent(
+		() => import("./routes/instance-recovery"),
+		"InstanceRecoveryPage",
+	),
+});
 const adminAccessRoute = createRoute({
 	getParentRoute: () => protectedRoute,
 	path: "/access",
 	component: lazyRouteComponent(
 		() => import("./routes/admin-access"),
 		"AdminAccessPage",
+	),
+});
+const internalLogsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/logs",
+	component: lazyRouteComponent(
+		() => import("./routes/internal-logs"),
+		"InternalLogsPage",
 	),
 });
 const passwordChangeRoute = createRoute({
@@ -228,7 +244,9 @@ const router = createRouter({
 			auditLogRoute,
 			projectsRoute,
 			governanceRoute,
+			instanceRecoveryRoute,
 			adminAccessRoute,
+			internalLogsRoute,
 			passwordChangeRoute,
 			otlpCredentialsRoute,
 		]),

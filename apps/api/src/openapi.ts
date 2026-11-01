@@ -171,6 +171,10 @@ import {
 } from "./routes/admin-access.js";
 import { auditLogRoute, handleListAuditEvents } from "./routes/audit-log.js";
 import {
+	handleListInternalLogs,
+	listInternalLogsRoute,
+} from "./routes/internal-logs.js";
+import {
 	createOtlpCredential,
 	handleCreateOtlpCredential,
 	handleListOtlpCredentials,
@@ -495,6 +499,7 @@ register(setAdminActorRole, handleSetAdminActorRole);
 register(listAdminAuditEvents, handleListAdminAuditEvents);
 register(auditLogRoute, handleListAuditEvents);
 register(recoverAdmin, handleRecoverAdmin);
+register(listInternalLogsRoute, handleListInternalLogs);
 register(listOtlpCredentials, handleListOtlpCredentials);
 register(createOtlpCredential, handleCreateOtlpCredential);
 register(rotateOtlpCredential, handleRotateOtlpCredential);

@@ -31,6 +31,7 @@ export interface FilterFieldDef {
 	key: string;
 	placeholder: string;
 	className?: string;
+	validate?: (value: string) => string | undefined;
 }
 
 /**
@@ -144,8 +145,14 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 
 	React.useEffect(() => {
 		if (!isTimeRangeValid(debouncedTimeRange)) return;
+		if (
+			filterFields.some((field) =>
+				field.validate?.(debouncedFilters[field.key] ?? ""),
+			)
+		)
+			return;
 		onFiltersChange?.(debouncedFilters, debouncedTimeRange);
-	}, [debouncedFilters, debouncedTimeRange, onFiltersChange]);
+	}, [debouncedFilters, debouncedTimeRange, filterFields, onFiltersChange]);
 
 	const hasColumnFilters = Object.values(filters).some((v) => v.length > 0);
 	const hasTimeFilter = timeRange.kind !== "all";
@@ -158,7 +165,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 		const observer = new IntersectionObserver(
 			(entries) => {
 				const first = entries[0];
-				if (first?.isIntersecting && hasNextPage && !isLoading) {
+				if (first?.isIntersecting && hasNextPage && !isLoading && !isError) {
 					onLoadMore();
 				}
 			},
@@ -166,7 +173,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 		);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [hasNextPage, isLoading, onLoadMore]);
+	}, [hasNextPage, isLoading, isError, onLoadMore]);
 
 	function setFilter(key: string, value: string) {
 		setFilters((prev) => ({ ...prev, [key]: value }));
@@ -179,9 +186,9 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 
 	return (
 		<Card>
-			<CardHeader className="flex-row items-center justify-between space-y-0">
+			<CardHeader className="flex-col items-start justify-between gap-3 space-y-0 sm:flex-row sm:items-center">
 				<CardTitle>{title}</CardTitle>
-				<div className="flex items-center gap-3">
+				<div className="flex flex-wrap items-center gap-3">
 					{headerActions}
 					{hasActiveFilters && (
 						<Button
@@ -197,7 +204,9 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 					<div className="text-xs text-muted-foreground">
 						{isLoading && items.length === 0
 							? "loading…"
-							: `${items.length} of ${total} ${total === 1 ? noun.singular : noun.plural}`}
+							: isError && items.length === 0
+								? "unavailable"
+								: `${items.length} of ${total} ${total === 1 ? noun.singular : noun.plural}`}
 					</div>
 				</div>
 			</CardHeader>
@@ -242,7 +251,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 									</TableCell>
 								</TableRow>
 							))
-						) : items.length === 0 ? (
+						) : items.length === 0 && isError ? null : items.length === 0 ? (
 							<TableRow>
 								<TableCell
 									colSpan={totalColCount}
@@ -281,7 +290,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 								);
 							})
 						)}
-						{hasNextPage && (
+						{hasNextPage && !isError && (
 							<TableRow ref={sentinelRef} className="hover:bg-transparent">
 								<TableCell
 									colSpan={totalColCount}
@@ -316,6 +325,7 @@ function FilterBar({
 	filters: Record<string, string>;
 	setFilter: (key: string, value: string) => void;
 }) {
+	const id = React.useId();
 	if (filterFields.length === 0) return null;
 	return (
 		<fieldset
@@ -329,6 +339,8 @@ function FilterBar({
 				const label = field.key
 					.replaceAll("_", " ")
 					.replace(/\b\w/g, (character) => character.toUpperCase());
+				const error = field.validate?.(filters[field.key] ?? "");
+				const errorId = `${id}-${field.key}-error`;
 				return (
 					<label key={field.key} className="grid gap-1 text-xs font-medium">
 						<span>{label}</span>
@@ -338,7 +350,14 @@ function FilterBar({
 							placeholder={field.placeholder}
 							className={cn("h-8 text-xs", field.className)}
 							aria-label={label}
+							aria-invalid={error ? true : undefined}
+							aria-describedby={error ? errorId : undefined}
 						/>
+						{error && (
+							<span id={errorId} role="alert" className="text-destructive">
+								{error} Results reflect the last valid filters.
+							</span>
+						)}
 					</label>
 				);
 			})}

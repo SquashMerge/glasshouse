@@ -1,6 +1,6 @@
 import { createRoute, type RouteHandler } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
 	createOtlpCredential as createCredentialRecord,
 	listOtlpCredentials as listCredentialRecords,
@@ -101,13 +101,14 @@ export const revokeOtlpCredential = createRoute({
 });
 
 async function adminProjectTransaction<T>(
+	pool: () => Pick<Pool, "connect">,
 	c: Context,
 	projectId: string,
 	allowArchived: boolean,
 	work: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
 	const tenant = trustedTenant(c);
-	const client = await pgPool().connect();
+	const client = await pool().connect();
 	let open = false;
 	try {
 		await client.query("BEGIN");
@@ -145,6 +146,15 @@ async function adminProjectTransaction<T>(
 		client.release();
 	}
 }
+
+export type OtlpCredentialRouteDependencies = {
+	pool: () => Pick<Pool, "connect">;
+};
+
+const productionOtlpCredentialRouteDependencies: OtlpCredentialRouteDependencies =
+	{
+		pool: pgPool,
+	};
 
 function publicCredential(
 	credential: Awaited<
@@ -198,120 +208,148 @@ function failure(c: Context, cause: unknown): any {
 	);
 }
 
-export const handleListOtlpCredentials: RouteHandler<
-	typeof listOtlpCredentials
-> = async (c) => {
-	try {
-		const tenant = trustedTenant(c);
-		const { project_id } = c.req.valid("query");
-		const result = await adminProjectTransaction(
-			c,
-			project_id,
-			true,
-			(client) =>
-				listCredentialRecords(client, {
-					organization_id: tenant.organizationId,
-					project_id,
-				}),
-		);
-		return c.json({ items: result.items.map(publicCredential) }, 200);
-	} catch (cause) {
-		return failure(c, cause);
-	}
-};
+export function createOtlpCredentialRouteHandlers(
+	dependencies: OtlpCredentialRouteDependencies = productionOtlpCredentialRouteDependencies,
+) {
+	const handleListOtlpCredentials: RouteHandler<
+		typeof listOtlpCredentials
+	> = async (c) => {
+		try {
+			const tenant = trustedTenant(c);
+			const { project_id } = c.req.valid("query");
+			const result = await adminProjectTransaction(
+				dependencies.pool,
+				c,
+				project_id,
+				true,
+				(client) =>
+					listCredentialRecords(client, {
+						organization_id: tenant.organizationId,
+						project_id,
+					}),
+			);
+			return c.json({ items: result.items.map(publicCredential) }, 200);
+		} catch (cause) {
+			return failure(c, cause);
+		}
+	};
 
-export const handleCreateOtlpCredential: RouteHandler<
-	typeof createOtlpCredential
-> = async (c) => {
-	try {
-		const tenant = trustedTenant(c);
-		const body = c.req.valid("json");
-		const result = await adminProjectTransaction(
-			c,
-			body.project_id,
-			false,
-			async (client) => {
-				const created = await createCredentialRecord(client, {
-					organization_id: tenant.organizationId,
-					project_id: body.project_id,
-					name: body.name,
-					created_by_actor_id: tenant.actorId,
-				});
-				await auditCredential(client, {
-					organizationId: tenant.organizationId,
-					projectId: body.project_id,
-					actorId: tenant.actorId,
-					action: "project_otlp_credential_created",
-				});
-				return { ...created, credential: publicCredential(created.credential) };
-			},
-		);
-		return c.json(result, 201);
-	} catch (cause) {
-		return failure(c, cause);
-	}
-};
+	const handleCreateOtlpCredential: RouteHandler<
+		typeof createOtlpCredential
+	> = async (c) => {
+		try {
+			const tenant = trustedTenant(c);
+			const body = c.req.valid("json");
+			const result = await adminProjectTransaction(
+				dependencies.pool,
+				c,
+				body.project_id,
+				false,
+				async (client) => {
+					const created = await createCredentialRecord(client, {
+						organization_id: tenant.organizationId,
+						project_id: body.project_id,
+						name: body.name,
+						created_by_actor_id: tenant.actorId,
+					});
+					await auditCredential(client, {
+						organizationId: tenant.organizationId,
+						projectId: body.project_id,
+						actorId: tenant.actorId,
+						action: "project_otlp_credential_created",
+					});
+					return {
+						...created,
+						credential: publicCredential(created.credential),
+					};
+				},
+			);
+			return c.json(result, 201);
+		} catch (cause) {
+			return failure(c, cause);
+		}
+	};
 
-export const handleRotateOtlpCredential: RouteHandler<
-	typeof rotateOtlpCredential
-> = async (c) => {
-	try {
-		const tenant = trustedTenant(c);
-		const { id } = c.req.valid("param");
-		const { project_id } = c.req.valid("query");
-		const result = await adminProjectTransaction(
-			c,
-			project_id,
-			false,
-			async (client) => {
-				const rotated = await rotateCredentialRecord(client, {
-					organization_id: tenant.organizationId,
-					project_id,
-					id,
-				});
-				await auditCredential(client, {
-					organizationId: tenant.organizationId,
-					projectId: project_id,
-					actorId: tenant.actorId,
-					action: "project_otlp_credential_rotated",
-				});
-				return { ...rotated, credential: publicCredential(rotated.credential) };
-			},
-		);
-		return c.json(result, 200);
-	} catch (cause) {
-		return failure(c, cause);
-	}
-};
+	const handleRotateOtlpCredential: RouteHandler<
+		typeof rotateOtlpCredential
+	> = async (c) => {
+		try {
+			const tenant = trustedTenant(c);
+			const { id } = c.req.valid("param");
+			const { project_id } = c.req.valid("query");
+			const result = await adminProjectTransaction(
+				dependencies.pool,
+				c,
+				project_id,
+				false,
+				async (client) => {
+					const rotated = await rotateCredentialRecord(client, {
+						organization_id: tenant.organizationId,
+						project_id,
+						id,
+					});
+					await auditCredential(client, {
+						organizationId: tenant.organizationId,
+						projectId: project_id,
+						actorId: tenant.actorId,
+						action: "project_otlp_credential_rotated",
+					});
+					return {
+						...rotated,
+						credential: publicCredential(rotated.credential),
+					};
+				},
+			);
+			return c.json(result, 200);
+		} catch (cause) {
+			return failure(c, cause);
+		}
+	};
 
-export const handleRevokeOtlpCredential: RouteHandler<
-	typeof revokeOtlpCredential
-> = async (c) => {
-	try {
-		const tenant = trustedTenant(c);
-		const { id } = c.req.valid("param");
-		const { project_id } = c.req.valid("query");
-		const result = await adminProjectTransaction(
-			c,
-			project_id,
-			true,
-			async (client) => {
-				const revoked = await revokeCredentialRecord(client, {
-					organization_id: tenant.organizationId,
-					project_id,
-					id,
-				});
-				await auditCredential(client, {
-					organizationId: tenant.organizationId,
-					projectId: project_id,
-					actorId: tenant.actorId,
-					action: "project_otlp_credential_revoked",
-				});
-				return publicCredential(revoked);
-			},
-		);
-		return c.json(result, 200);
-	} catch (cause) {
-		return failure(c, cause);
-	}
-};
+	const handleRevokeOtlpCredential: RouteHandler<
+		typeof revokeOtlpCredential
+	> = async (c) => {
+		try {
+			const tenant = trustedTenant(c);
+			const { id } = c.req.valid("param");
+			const { project_id } = c.req.valid("query");
+			const result = await adminProjectTransaction(
+				dependencies.pool,
+				c,
+				project_id,
+				true,
+				async (client) => {
+					const revoked = await revokeCredentialRecord(client, {
+						organization_id: tenant.organizationId,
+						project_id,
+						id,
+					});
+					await auditCredential(client, {
+						organizationId: tenant.organizationId,
+						projectId: project_id,
+						actorId: tenant.actorId,
+						action: "project_otlp_credential_revoked",
+					});
+					return publicCredential(revoked);
+				},
+			);
+			return c.json(result, 200);
+		} catch (cause) {
+			return failure(c, cause);
+		}
+	};
+
+	return {
+		handleListOtlpCredentials,
+		handleCreateOtlpCredential,
+		handleRotateOtlpCredential,
+		handleRevokeOtlpCredential,
+	};
+}
+
+export const {
+	handleListOtlpCredentials,
+	handleCreateOtlpCredential,
+	handleRotateOtlpCredential,
+	handleRevokeOtlpCredential,
+} = createOtlpCredentialRouteHandlers();
