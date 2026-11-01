@@ -70,6 +70,7 @@ services:
       NODE_ENV: production
       API_PORT: 3000
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      GLASSHOUSE_INTERNAL_LOGS_ENABLED: ${GLASSHOUSE_INTERNAL_LOGS_ENABLED:-true}
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-glasshouse}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
