@@ -194,6 +194,9 @@ describe("Compose API database configuration", () => {
 			"GLASSHOUSE_REDACT_KEYS: ${GLASSHOUSE_REDACT_KEYS:-}",
 		);
 		expect(apiEnvironment).toContain(
+			"GLASSHOUSE_INTERNAL_LOGS_ENABLED: ${GLASSHOUSE_INTERNAL_LOGS_ENABLED:-true}",
+		);
+		expect(apiEnvironment).toContain(
 			"API_MAX_BODY_BYTES: ${API_MAX_BODY_BYTES:-1048576}",
 		);
 	});

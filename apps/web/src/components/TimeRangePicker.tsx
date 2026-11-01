@@ -116,6 +116,7 @@ export function TimeRangePicker({
 
 			<label>
 				<Select
+					aria-label="Time range"
 					value={selectedLabel}
 					onChange={(e) => {
 						const preset = PRESETS.find((p) => p.label === e.target.value);
@@ -131,6 +132,7 @@ export function TimeRangePicker({
 					))}
 				</Select>
 			</label>
+			<span className="text-xs text-muted-foreground">Local time</span>
 
 			{isCustom && (
 				<>

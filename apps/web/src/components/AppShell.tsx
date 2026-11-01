@@ -18,6 +18,7 @@ import {
 	LuShieldCheck,
 	LuUsers,
 	LuKeyRound,
+	LuScrollText,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -340,6 +341,15 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 							)}
 							{organizationRole === "admin" && (
 								<SidebarLink
+									to="/logs"
+									label="Logs"
+									icon={<LuScrollText className="h-4 w-4" />}
+									active={isActive("/logs")}
+									collapsed={collapsed}
+								/>
+							)}
+							{organizationRole === "admin" && (
+								<SidebarLink
 									to="/ingestion-credentials"
 									label="Ingestion credentials"
 									icon={<LuKeyRound className="h-4 w-4" />}
@@ -586,6 +596,7 @@ function SidebarLink({
 		| "/feedback"
 		| "/governance"
 		| "/access"
+		| "/logs"
 		| "/projects"
 		| "/ingestion-credentials";
 	label: string;

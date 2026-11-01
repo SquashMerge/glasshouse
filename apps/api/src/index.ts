@@ -5,11 +5,20 @@ import { handleHealth } from "./routes/health.js";
 import {
 	authenticationMiddleware,
 	PUBLIC_API_ROUTES,
+	TRUSTED_TENANT_CONTEXT_KEY,
 } from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { authenticationPool, pgPool } from "./db/postgres.js";
+import {
+	createInternalLogCollector,
+	internalLogCollectionEnabled,
+	internalLogRequestContext,
+	startInternalLogCleanup,
+	type InternalLogContext,
+	type InternalLogLevel,
+} from "./db/internal-logs.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
 import { cancelInterruptedExecutionAdmissions } from "./db/execution-admissions.js";
 import { failInterruptedOptimizationJobs } from "./db/prompt-optimizations.js";
@@ -45,8 +54,14 @@ export type ApiDependencies = {
 	resolveTenantProject: typeof resolveTenantProject;
 	authenticate: typeof authenticationMiddleware;
 	authenticationPool: typeof authenticationPool;
+	collectInternalLog: (entry: {
+		organizationId: string;
+		severity: InternalLogLevel;
+		context: InternalLogContext;
+	}) => boolean;
 };
 
+const internalLogCollector = createInternalLogCollector(pgPool());
 const productionApiDependencies: ApiDependencies = {
 	handleHealth,
 	handleOtlpIngest,
@@ -55,6 +70,7 @@ const productionApiDependencies: ApiDependencies = {
 	resolveTenantProject,
 	authenticate: authenticationMiddleware,
 	authenticationPool,
+	collectInternalLog: (entry) => internalLogCollector.record(entry),
 };
 
 function isUuid(value: unknown): value is string {
@@ -185,6 +201,24 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 			else if (c.res.status >= 400)
 				logger.warn("http.request.rejected", fields);
 			else logger.info("http.request", fields);
+			const tenant = (c as unknown as { get: (key: string) => unknown }).get(
+				TRUSTED_TENANT_CONTEXT_KEY,
+			) as { organizationId?: string } | undefined;
+			const context = internalLogRequestContext(
+				c.req.path,
+				c.req.method,
+				c.res.status,
+				durationMs,
+			);
+			if (internalLogCollectionEnabled() && tenant?.organizationId && context) {
+				const severity: InternalLogLevel =
+					c.res.status >= 500 ? "error" : c.res.status >= 400 ? "warn" : "info";
+				resolvedDependencies.collectInternalLog({
+					organizationId: tenant.organizationId,
+					severity,
+					context,
+				});
+			}
 		}
 	});
 	apiApp.onError((error, c) => {
@@ -330,6 +364,9 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 const apiApp = createApiApp();
 
 if (import.meta.main) {
+	startInternalLogCleanup(pgPool(), (event, fields) =>
+		logger.warn(event, fields),
+	);
 	await recoverInterruptedWork({
 		pool: pgPool,
 		cancelAdmissions: () => cancelInterruptedExecutionAdmissions(pgPool()),

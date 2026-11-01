@@ -1,0 +1,21 @@
+# Internal operational logs
+
+Settings → Logs lets an Organization Admin inspect retained Glasshouse API operational records without access to a host filesystem, Docker socket, container runtime, or Docker's rotated log files. It is not the user-action audit trail.
+
+## Source and trust boundary
+
+The only shipped source is `api`. After an authenticated request in a static allowlist of `/v1` route groups completes, the API stores a record for that request's server-derived Organization: timestamp, severity derived from the response status, a fixed route-group name, HTTP method, status, and duration. Source and message are fixed values. Request IDs, request bodies, headers, cookies, authorization values, prompts, telemetry payloads, query strings, and user-supplied route content are never placed in the collection record. The collector accepts only those primitive allowlisted fields before it queues an insert.
+
+Records have a required `organization_id`; `GET /v1/admin/logs` derives that scope from trusted authentication and requires current `organization_manage` authority. An Admin can never select another Organization or retrieve instance-wide records. Unscoped process startup, host/container, database, worker, and Docker runtime logs are intentionally not collected or shown. Operators remain responsible for those sources through their normal deployment tooling.
+
+## Retention and availability
+
+Collection is enabled by default. Set `GLASSHOUSE_INTERNAL_LOGS_ENABLED=false` to disable it; the API then returns a clear source-unavailable response and the UI exposes a retry state. Enabling it begins collecting new records only; it does not import historical stdout or rotated Docker logs.
+
+Rows are visible for at most 14 days and capped at 50,000 rows per Organization. Every read enforces the 14-day cutoff. Each collection transaction takes its Organization's transaction-scoped advisory lock before inserting and removes up to 1,000 over-cap rows before it commits, so concurrent API replicas cannot race an insert against a stale trim. Every API process also runs an hourly, transaction-lock-coordinated cleanup that deletes up to 1,000 expired rows, so cleanup continues even when an Organization is inactive and only one process works on a batch. The maintenance timer does not keep a shutting-down API process alive; an interrupted transaction rolls back and another process resumes later. The physical deletion backlog can lag if the API is down, the database is unavailable, or more than one batch is overdue; the query cutoff still prevents expired rows from being returned. This is a bounded in-product store, not an archival logging system; high traffic can evict newer-than-14-day records once the row cap is reached. Database unavailability can prevent collection or cleanup, so absence of an entry is not proof that an event did not occur.
+
+## Query behavior
+
+`GET /v1/admin/logs` accepts a time range, level, source, and free-text query. It searches the complete retained tenant-scoped dataset before keyset paging. Results are sorted by `recorded_at DESC, id DESC`; the API renders PostgreSQL timestamps as UTC text with six fractional digits before building the cursor, so concurrent rows in the same millisecond retain their microsecond keyset boundary. The opaque continuation cursor is bound to the Organization and complete filter set, avoiding boundary duplicates/gaps and rejecting a cursor reused after a filter change. The page loads further results on scroll and has a keyboard-accessible **Load more logs** button.
+
+The page presents only safe persisted context. Selecting a row opens its JSON context; it cannot reveal data removed during collection.
