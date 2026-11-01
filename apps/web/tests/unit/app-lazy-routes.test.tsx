@@ -130,9 +130,9 @@ it("keeps route components preloadable without changing route IDs or public/prot
 	const pages = routes.filter(
 		(route) => route.options.path !== undefined && route.id !== "__root__",
 	);
-	expect(pages).toHaveLength(24);
+	expect(pages).toHaveLength(23);
 	expect(pages.map((route) => route.fullPath)).toEqual(
-		expect.arrayContaining(["/audit-log", "/logs", "/instance-recovery"]),
+		expect.arrayContaining(["/audit-log", "/instance-recovery"]),
 	);
 	for (const route of pages) {
 		expect(route.options.component).toHaveProperty(

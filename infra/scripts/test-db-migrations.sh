@@ -149,9 +149,6 @@ DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_P
   bun test --cwd "$ROOT/apps/api" tests/integration/authorization-revocation-serialization.test.ts
 
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
-  bun test --cwd "$ROOT/apps/api" tests/integration/internal-logs-serialization.test.ts
-
-DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
   bun test --cwd "$ROOT/apps/api" tests/integration/local-credentials.test.ts
 
 DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB" \
