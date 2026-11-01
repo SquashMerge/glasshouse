@@ -3,6 +3,13 @@ import { ErrorEnvelope } from "./common.js";
 
 const Filter = z.string().trim().min(1).max(200);
 
+function timestampOrderKey(value: string): string {
+	return value.replace(
+		/(?:\.(\d+))?Z$/,
+		(_, fraction: string = "") => `.${fraction.replace(/0+$/, "")}`,
+	);
+}
+
 export const AuditLogQuery = z
 	.object({
 		limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -16,10 +23,16 @@ export const AuditLogQuery = z
 		search: Filter.optional(),
 	})
 	.strict()
-	.refine((value) => !value.from || !value.to || value.from <= value.to, {
-		message: "from must be before to",
-		path: ["to"],
-	});
+	.refine(
+		(value) =>
+			!value.from ||
+			!value.to ||
+			timestampOrderKey(value.from) <= timestampOrderKey(value.to),
+		{
+			message: "from must be before to",
+			path: ["to"],
+		},
+	);
 
 export const AuditEvent = z
 	.object({

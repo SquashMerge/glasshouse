@@ -76,4 +76,40 @@ it("offers an explicit retry state", async () => {
 	renderPage();
 	expect(await screen.findByRole("alert")).toHaveTextContent("offline");
 	expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+	expect(
+		screen.queryByText("No retained audit events are available."),
+	).not.toBeInTheDocument();
+});
+
+it("shows the empty state after a successful empty response", async () => {
+	api.listAuditEvents.mockResolvedValueOnce({ items: [] });
+	renderPage();
+	expect(
+		await screen.findByText("No retained audit events are available."),
+	).toBeVisible();
+});
+
+it("explains reversed local date filters and submits only after correction", async () => {
+	renderPage();
+	expect(await screen.findByText("alice")).toBeVisible();
+	const from = screen.getByLabelText("From");
+	const to = screen.getByLabelText("To");
+	const calls = api.listAuditEvents.mock.calls.length;
+	fireEvent.change(from, { target: { value: "2026-11-03T12:00" } });
+	fireEvent.change(to, { target: { value: "2026-11-02T12:00" } });
+	expect(screen.queryByText("alice")).not.toBeInTheDocument();
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		"The start time must be before the end time.",
+	);
+	expect(from).toHaveAttribute("aria-invalid", "true");
+	expect(to).toHaveAttribute("aria-invalid", "true");
+	expect(from).toHaveAccessibleDescription(/start time must be before/);
+	expect(to).toHaveAccessibleDescription(/start time must be before/);
+	expect(screen.getByText(/local time zone/i)).toBeVisible();
+	await new Promise((resolve) => setTimeout(resolve, 350));
+	expect(api.listAuditEvents).toHaveBeenCalledTimes(calls);
+	fireEvent.change(to, { target: { value: "2026-11-04T12:00" } });
+	await new Promise((resolve) => setTimeout(resolve, 350));
+	expect(api.listAuditEvents).toHaveBeenCalledTimes(calls + 1);
+	expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

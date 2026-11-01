@@ -321,6 +321,31 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 	});
 }, 30000);
 
+test("time filters compare timestamps rather than their textual fractional precision", async () => {
+	const organization = await createOrganization("Fractional time");
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type, created_at) VALUES ($1, $2, $3, 'project_updated', '2026-11-01T12:00:00.050Z')",
+		[
+			organization.organizationId,
+			organization.projectId,
+			organization.adminUsername,
+		],
+	);
+	const valid = await organization.request(
+		"/v1/audit-events?from=2026-11-01T12%3A00%3A00Z&to=2026-11-01T12%3A00%3A00.1Z&action=project_updated",
+	);
+	expect(valid.status).toBe(200);
+	expect(((await valid.json()) as { items: unknown[] }).items).toHaveLength(1);
+	const equal = await organization.request(
+		"/v1/audit-events?from=2026-11-01T12%3A00%3A00.100Z&to=2026-11-01T12%3A00%3A00.1Z",
+	);
+	expect(equal.status).toBe(200);
+	const invalid = await organization.request(
+		"/v1/audit-events?from=2026-11-01T12%3A00%3A00.000002Z&to=2026-11-01T12%3A00%3A00.000001Z",
+	);
+	expect(invalid.status).toBe(400);
+}, 30000);
+
 test.each(["display", "filter"] as const)(
 	"project creation resolves a local session actor for %s",
 	async (mode) => {

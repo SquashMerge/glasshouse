@@ -53,6 +53,16 @@ export function AuditLogPage() {
 		const timeout = window.setTimeout(() => setDebounced(filters), 250);
 		return () => window.clearTimeout(timeout);
 	}, [filters]);
+	const from = asIso(filters.from);
+	const to = asIso(filters.to);
+	const rangeError =
+		from && to && from > to
+			? "The start time must be before the end time."
+			: null;
+	const showResults =
+		!rangeError &&
+		filters.from === debounced.from &&
+		filters.to === debounced.to;
 
 	const params = React.useMemo(
 		() => ({
@@ -68,6 +78,7 @@ export function AuditLogPage() {
 	);
 	const query = useInfiniteQuery({
 		queryKey: ["audit-events", params],
+		enabled: showResults,
 		queryFn: ({ pageParam }) =>
 			listAuditEvents({ ...params, cursor: pageParam }),
 		initialPageParam: undefined as string | undefined,
@@ -90,9 +101,14 @@ export function AuditLogPage() {
 	}, [query.data]);
 	const sentinel = React.useRef<HTMLDivElement>(null);
 	const loadMore = React.useCallback(() => {
-		if (query.hasNextPage && !query.isFetchingNextPage)
+		if (showResults && query.hasNextPage && !query.isFetchingNextPage)
 			void query.fetchNextPage();
-	}, [query.fetchNextPage, query.hasNextPage, query.isFetchingNextPage]);
+	}, [
+		query.fetchNextPage,
+		query.hasNextPage,
+		query.isFetchingNextPage,
+		showResults,
+	]);
 	React.useEffect(() => {
 		const node = sentinel.current;
 		if (!node || typeof IntersectionObserver === "undefined") return;
@@ -122,12 +138,24 @@ export function AuditLogPage() {
 							label="From"
 							type="datetime-local"
 							value={filters.from}
+							invalid={!!rangeError}
+							describedBy={
+								rangeError
+									? "audit-time-zone audit-time-error"
+									: "audit-time-zone"
+							}
 							onChange={(value) => update("from", value)}
 						/>
 						<FilterInput
 							label="To"
 							type="datetime-local"
 							value={filters.to}
+							invalid={!!rangeError}
+							describedBy={
+								rangeError
+									? "audit-time-zone audit-time-error"
+									: "audit-time-zone"
+							}
 							onChange={(value) => update("to", value)}
 						/>
 						<FilterInput
@@ -157,6 +185,19 @@ export function AuditLogPage() {
 							className="xl:col-span-2"
 						/>
 					</fieldset>
+					<p id="audit-time-zone" className="text-xs text-muted-foreground">
+						Dates use your local time zone (
+						{Intl.DateTimeFormat().resolvedOptions().timeZone ?? "local"}).
+					</p>
+					{rangeError && (
+						<p
+							id="audit-time-error"
+							role="alert"
+							className="text-xs text-destructive"
+						>
+							{rangeError}
+						</p>
+					)}
 					{hasFilters && (
 						<Button
 							type="button"
@@ -167,7 +208,7 @@ export function AuditLogPage() {
 							Clear filters
 						</Button>
 					)}
-					{query.isError && (
+					{showResults && query.isError && (
 						<div
 							role="alert"
 							className="flex items-center justify-between gap-3 text-sm text-destructive"
@@ -196,7 +237,7 @@ export function AuditLogPage() {
 								</TableRow>
 							</TableHeader>
 							<TableBody>
-								{query.isLoading ? (
+								{!showResults ? null : query.isLoading ? (
 									<TableRow>
 										<TableCell
 											colSpan={6}
@@ -205,7 +246,7 @@ export function AuditLogPage() {
 											Loading audit events…
 										</TableCell>
 									</TableRow>
-								) : events.length === 0 ? (
+								) : events.length === 0 && !query.isError ? (
 									<TableRow>
 										<TableCell
 											colSpan={6}
@@ -233,30 +274,31 @@ export function AuditLogPage() {
 						</Table>
 					</div>
 					<div ref={sentinel} aria-hidden="true" />
-					{query.hasNextPage ? (
-						<Button
-							type="button"
-							variant="outline"
-							onClick={loadMore}
-							disabled={query.isFetchingNextPage}
-							aria-label="Load more audit events"
-						>
-							{query.isFetchingNextPage ? (
-								<>
-									<LuLoader className="h-4 w-4 animate-spin" />
-									Loading more…
-								</>
-							) : (
-								"Load more"
-							)}
-						</Button>
-					) : (
-						events.length > 0 && (
-							<p className="text-sm text-muted-foreground" role="status">
-								End of retained audit events.
-							</p>
-						)
-					)}
+					{showResults &&
+						(query.hasNextPage ? (
+							<Button
+								type="button"
+								variant="outline"
+								onClick={loadMore}
+								disabled={query.isFetchingNextPage}
+								aria-label="Load more audit events"
+							>
+								{query.isFetchingNextPage ? (
+									<>
+										<LuLoader className="h-4 w-4 animate-spin" />
+										Loading more…
+									</>
+								) : (
+									"Load more"
+								)}
+							</Button>
+						) : (
+							events.length > 0 && (
+								<p className="text-sm text-muted-foreground" role="status">
+									End of retained audit events.
+								</p>
+							)
+						))}
 				</CardContent>
 			</Card>
 		</div>
@@ -269,12 +311,16 @@ function FilterInput({
 	onChange,
 	type = "search",
 	className,
+	invalid,
+	describedBy,
 }: {
 	label: string;
 	value: string;
 	onChange: (value: string) => void;
 	type?: string;
 	className?: string;
+	invalid?: boolean;
+	describedBy?: string;
 }) {
 	const id = `audit-filter-${label.toLowerCase()}`;
 	return (
@@ -287,6 +333,8 @@ function FilterInput({
 				id={id}
 				type={type}
 				value={value}
+				aria-invalid={invalid || undefined}
+				aria-describedby={describedBy}
 				onChange={(event) => onChange(event.target.value)}
 			/>
 		</label>
