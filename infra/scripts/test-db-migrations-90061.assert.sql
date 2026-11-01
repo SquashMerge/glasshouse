@@ -20,7 +20,7 @@ BEGIN
         'action', 'actor_id', 'created_at', 'feedback_score_id', 'id',
         'organization_id', 'project_id', 'prompt_id', 'prompt_version'
     ] THEN
-        RAISE EXCEPTION '90059 user action audit columns are not content-free: %', column_names;
+        RAISE EXCEPTION '90061 user action audit columns are not content-free: %', column_names;
     END IF;
 
     WITH inserted AS (
@@ -55,7 +55,7 @@ BEGIN
       ) VALUES (
         organization, foreign_project, actor, 'feedback_created', score
       );
-      RAISE EXCEPTION '90059 accepted a cross-organization Project';
+      RAISE EXCEPTION '90061 accepted a cross-organization Project';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
     BEGIN
@@ -64,7 +64,7 @@ BEGIN
       ) VALUES (
         organization, project, foreign_actor, 'feedback_created', score
       );
-      RAISE EXCEPTION '90059 accepted an Actor outside the Organization';
+      RAISE EXCEPTION '90061 accepted an Actor outside the Organization';
     EXCEPTION WHEN foreign_key_violation THEN NULL;
     END;
 
@@ -74,22 +74,22 @@ BEGIN
       ) VALUES (
         organization, project, actor, 'feedback_created', score
       );
-      RAISE EXCEPTION '90059 accepted duplicate feedback action scope';
+      RAISE EXCEPTION '90061 accepted duplicate feedback action scope';
     EXCEPTION WHEN unique_violation THEN NULL;
     END;
     BEGIN
       UPDATE user_action_audit_events SET action = 'prompt_created' WHERE id = event;
-      RAISE EXCEPTION '90059 accepted an audit event update';
+      RAISE EXCEPTION '90061 accepted an audit event update';
     EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
     END;
     BEGIN
       DELETE FROM user_action_audit_events WHERE id = event;
-      RAISE EXCEPTION '90059 accepted an audit event delete';
+      RAISE EXCEPTION '90061 accepted an audit event delete';
     EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
     END;
     IF pg_get_functiondef('prevent_project_audit_uuid_reuse'::regproc)
         NOT LIKE '%user_action_audit_events%' THEN
-        RAISE EXCEPTION '90059 omitted user action events from the Project UUID reuse fence';
+        RAISE EXCEPTION '90061 omitted user action events from the Project UUID reuse fence';
     END IF;
 END $$;
 ROLLBACK;
