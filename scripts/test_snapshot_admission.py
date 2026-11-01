@@ -34,7 +34,7 @@ class AdmissionTests(unittest.TestCase):
             'backup-restore-safety', 'doctor-version', 'Backup/restore (current)',
             'Security scan', 'ClickHouse schema', 'PostgreSQL migration upgrade',
             'e2e', 'Local first-run browser journey', 'Snapshot safety',
-            'Image-only Compose integration',
+            'Image-only Compose integration', 'Backup source routing',
         }
         runs, jobs = fixture()
         template = jobs[(101, 1)][0]
@@ -46,7 +46,8 @@ class AdmissionTests(unittest.TestCase):
                 if change == 'extra':
                     altered[(101, 1)].append(dict(template, name='Snapshot candidate dry run'))
                 else:
-                    altered[(101, 1)].pop()
+                    altered[(101, 1)] = [job for job in altered[(101, 1)]
+                                           if job['name'] != 'Backup source routing']
                 result = assess([SHA], runs, altered)[0]
                 self.assertEqual(result['state'], 'blocked')
                 self.assertIn('CI:job-set-mismatch', result['reasons'])
@@ -60,6 +61,8 @@ class AdmissionTests(unittest.TestCase):
         self.assertIn('test-image-compose-integration.sh', job)
         self.assertIn('scan-type: fs', ci)
         self.assertIn('test_snapshot*.py', ci)
+        self.assertIn('name: Backup source routing', ci)
+        self.assertIn('test-backup-source-routing.sh', ci)
 
     def test_image_only_compose_job_is_required_for_admission(self):
         self.assertIn("Image-only Compose integration", WORKFLOWS["CI"][1])

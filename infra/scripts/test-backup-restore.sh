@@ -15,10 +15,67 @@ import sys
 import zipfile
 
 with zipfile.ZipFile(pathlib.Path(sys.argv[1]), "w") as archive:
-    archive.writestr("metadata.txt", "clickhouse backup fixture\n")
+    archive.writestr("metadata/fixture.sql", "CREATE DATABASE fixture")
+    archive.writestr(".backup", "<config><version>1</version><timestamp>2026-10-30 00:00:00</timestamp><uuid>00000000-0000-0000-0000-000000000001</uuid><contents><file><name>metadata/fixture.sql</name><size>23</size><checksum>40335961bc46f9a0b4d2eac29708fba9</checksum></file></contents></config>")
 PY
 (cd "$tmp/artifact" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
+ln -s "$tmp/artifact" "$tmp/artifact-link"
+if BACKUP_ARTIFACT="$tmp/artifact-link/" "$root_dir/infra/scripts/restore.sh" --validate-only >"$tmp/symlink-dir-output" 2>&1; then
+    printf 'symlinked artifact directory accepted\n' >&2; exit 1
+fi
+mkdir "$tmp/symlink-artifact"
+cp "$tmp/artifact/manifest.json" "$tmp/artifact/SHA256SUMS" "$tmp/artifact/clickhouse.zip" "$tmp/symlink-artifact/"
+ln -s "$tmp/artifact/postgres.dump" "$tmp/symlink-artifact/postgres.dump"
+if BACKUP_ARTIFACT="$tmp/symlink-artifact" "$root_dir/infra/scripts/restore.sh" --validate-only >"$tmp/symlink-output" 2>&1; then
+    printf 'symlinked artifact file accepted\n' >&2; exit 1
+fi
 BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" --validate-only >/dev/null
+for version in missing 17.4; do
+    python3 - "$tmp/artifact/manifest.json" "$version" <<'PY'
+import json, sys
+path, version = sys.argv[1:]
+with open(path) as stream:
+    data = json.load(stream)
+if version == 'missing':
+    del data['postgres_server_version']
+else:
+    data['postgres_server_version'] = version
+with open(path, 'w') as stream:
+    json.dump(data, stream)
+PY
+    if BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" --validate-only >"$tmp/version-output" 2>&1; then
+        printf 'invalid PostgreSQL version %s accepted\n' "$version" >&2; exit 1
+    fi
+    grep -qi version "$tmp/version-output" || { printf 'version refusal lacked reason\n' >&2; exit 1; }
+done
+python3 - "$tmp/artifact/manifest.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as stream: data = json.load(stream)
+data['postgres_server_version'] = '18.6'
+with open(path, 'w') as stream: json.dump(data, stream)
+PY
+for version in missing 25.1; do
+    python3 - "$tmp/artifact/manifest.json" "$version" <<'PY'
+import json, sys
+path, version = sys.argv[1:]
+with open(path) as stream: data = json.load(stream)
+if version == 'missing': data.pop('clickhouse_server_version', None)
+else: data['clickhouse_server_version'] = version
+with open(path, 'w') as stream: json.dump(data, stream)
+PY
+    if BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" --validate-only >"$tmp/version-output" 2>&1; then
+        printf 'invalid ClickHouse version %s accepted\n' "$version" >&2; exit 1
+    fi
+    grep -qi version "$tmp/version-output" || { printf 'version refusal lacked reason\n' >&2; exit 1; }
+done
+python3 - "$tmp/artifact/manifest.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as stream: data = json.load(stream)
+data['clickhouse_server_version'] = '26.10.2.103'
+with open(path, 'w') as stream: json.dump(data, stream)
+PY
 cp "$tmp/artifact/clickhouse.zip" "$tmp/valid-clickhouse.zip"
 python3 - "$tmp/artifact/clickhouse.zip" <<'PY'
 import pathlib
@@ -56,9 +113,22 @@ import sys
 import zipfile
 
 with zipfile.ZipFile(pathlib.Path(sys.argv[1]), "w") as archive:
-    archive.writestr("metadata.txt", "clickhouse backup fixture\n")
+    archive.writestr("metadata/fixture.sql", "CREATE DATABASE fixture")
+    archive.writestr(".backup", "<config><version>1</version><timestamp>2026-10-30 00:00:00</timestamp><uuid>00000000-0000-0000-0000-000000000001</uuid><contents><file><name>metadata/fixture.sql</name><size>23</size><checksum>40335961bc46f9a0b4d2eac29708fba9</checksum></file></contents></config>")
 PY
 (cd "$tmp/artifact" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
+if env -u RESTORE_TARGET_LIVE RESTORE_TARGET_ID=target RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO target' BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" >"$tmp/live-output" 2>&1; then
+    printf 'missing RESTORE_TARGET_LIVE was accepted\n' >&2
+    exit 1
+fi
+if ! grep -q 'set RESTORE_TARGET_LIVE=false' "$tmp/live-output"; then
+    printf 'missing RESTORE_TARGET_LIVE did not reach explicit live-target check\n' >&2
+    exit 1
+fi
+if RESTORE_TARGET_ID=target RESTORE_TARGET_LIVE=false RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO target' BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" >"$tmp/trust-output" 2>&1; then
+    printf 'untrusted archive was accepted\n' >&2; exit 1
+fi
+grep -q 'RESTORE_TRUSTED_ARTIFACT' "$tmp/trust-output" || { printf 'missing trust confirmation did not reach trust check\n' >&2; exit 1; }
 if RESTORE_TARGET_ID=source RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO source' BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" >"$tmp/output" 2>&1; then
 	printf 'unsafe target was accepted\n' >&2
  exit 1
@@ -67,6 +137,25 @@ if ! grep -q 'differ from source identity' "$tmp/output"; then
 	printf 'unsafe target refusal did not identify the source-identity check\n' >&2
 	 exit 1
 fi
+# Independent CityHash v1.0.2 zero-seed vectors (native clickhouse-cityhash),
+# including both short and long paths. Real backups test chained 2048-byte blocks.
+python3 - "$root_dir/infra/scripts/check-clickhouse-backup.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('check_clickhouse_backup', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+vectors = {
+    0: 'fcf7cc0ecf416467b2369acfccf83dbf', 1: '981cb2d77e16fc67c918b110cc3f7e87',
+    8: '1f3a61772ea03be3c44680f970e048b2', 16: '26c1206b9ea553abb9c34e21ef8571be',
+    17: 'bc2f58d494fd56133eb9e72fb9036f04', 127: '8e1e73e646a2d5a2342514871496a1dd',
+    128: '09c9c5c3733db4ca1a23574109a76c50', 129: 'ae8181480db6cc2ab447f9107514e56f',
+    255: '0642022a2315baa729f1b963bce0949d', 2048: '9678b556f10c628a5f8765e25f4dbadb',
+}
+for size, expected in vectors.items():
+    data = bytes((i * 31 + 7) % 256 for i in range(size))
+    lo, hi = module.city128(data, (0, 0))
+    assert f'{lo:016x}{hi:016x}' == expected, size
+PY
 python3 - "$root_dir/infra/scripts/restore.sh" <<'PY'
 from pathlib import Path
 import sys
@@ -106,6 +195,17 @@ mkdir -p "$tmp/source/infra" "$tmp/target/infra" "$tmp/bin"
 touch "$tmp/source/infra/compose.custom.yaml" "$tmp/target/infra/compose.custom.yaml"
 printf 'source-secret\n' > "$tmp/source/production.env"
 printf 'target-secret\n' > "$tmp/target/production.env"
+mkdir -p "$tmp/production-bin" "$tmp/repo/infra/scripts"
+cp "$root_dir/Makefile" "$tmp/repo/Makefile"
+cp "$root_dir/infra/scripts/backup.sh" "$root_dir/infra/scripts/backup-restore-common.sh" "$root_dir/infra/scripts/with-local-env.sh" "$tmp/repo/infra/scripts/"
+printf '#!/usr/bin/env bash\nprintf "production compose reached\\n" >&2\nexit 42\n' > "$tmp/production-bin/docker"
+chmod 700 "$tmp/production-bin/docker"
+if PATH="$tmp/production-bin:$PATH" BACKUP_SOURCE_COMPOSE_FILE="$tmp/source/infra/compose.custom.yaml" BACKUP_SOURCE_ENV_FILE="$tmp/source/production.env" make -C "$tmp/repo" backup >"$tmp/production-output" 2>&1; then
+    printf 'mock production backup unexpectedly succeeded\n' >&2; exit 1
+fi
+if ! grep -q 'production compose reached' "$tmp/production-output"; then
+    printf 'make backup did not use the explicit production environment\n' >&2; exit 1
+fi
 cat > "$tmp/bin/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

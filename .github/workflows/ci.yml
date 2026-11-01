@@ -42,7 +42,7 @@ jobs:
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
           - check: backup-restore-safety
-            command: bash infra/scripts/test-backup-restore.sh
+            command: python3 infra/scripts/test-isolated-target.py && python3 infra/scripts/test-source-unavailable.py && bash infra/scripts/test-backup-restore.sh
           - check: doctor-version
             command: bash infra/scripts/test-doctor-version.sh
     steps:
@@ -89,6 +89,16 @@ jobs:
       - name: Run offline admission and publisher safety tests
         run: python3 -m unittest discover -s scripts -p 'test_snapshot*.py' -v
 
+  backup-source-routing:
+    name: Backup source routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify source routing with real disposable databases
+        run: bash infra/scripts/test-backup-source-routing.sh
+
   backup-restore-integration:
     name: Backup/restore (current)
     runs-on: ubuntu-latest
@@ -105,6 +115,7 @@ jobs:
       RESTORE_TARGET_ID: ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
       RESTORE_CONFIRMATION: RESTORE GLASSHOUSE TO ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
       RESTORE_TARGET_LIVE: "false"
+      RESTORE_TRUSTED_ARTIFACT: I TRUST THIS BACKUP
       RESTORE_TARGET_DIRECTORY: ${{ github.workspace }}/.ci-backup-restore/target
       RESTORE_TARGET_COMPOSE_FILE: ${{ github.workspace }}/.github/compose.backup-restore.yaml
       RESTORE_TARGET_ENV_FILE: ${{ github.workspace }}/.ci-backup-restore/target.env
@@ -169,6 +180,8 @@ jobs:
           up --detach --wait --wait-timeout 180 postgres clickhouse
       - name: Back up, restore, and verify representative rows
         run: bash infra/scripts/test-backup-restore-integration.sh
+      - name: Verify source-unavailable recovery on disposable stores
+        run: bash infra/scripts/test-source-down-integration.sh
       - name: Dump restore-target ClickHouse diagnostics
         if: failure()
         run: |

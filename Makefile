@@ -119,8 +119,8 @@ seed-traces: ## Seed OTLP traces (default: 100k mixed genai+openinference, last 
 seed-traces-reset: ## Wipe ClickHouse traces + observations, then seed (100k mixed)
 	bash infra/scripts/seed-traces.sh --reset
 
-backup: ## Create an atomic PostgreSQL + ClickHouse backup (BACKUP_DESTINATION=...)
-	bash infra/scripts/with-local-env.sh bash infra/scripts/backup.sh
+backup: ## Create a PostgreSQL + ClickHouse backup (BACKUP_DESTINATION=...)
+	bash infra/scripts/backup.sh
 
 backup-validate: ## Validate a backup artifact (BACKUP_ARTIFACT=...)
 	bash infra/scripts/restore.sh --validate-only
@@ -132,4 +132,4 @@ test-backup-restore: ## Exercise artifact validation and unsafe-target refusal
 	bash infra/scripts/test-backup-restore.sh
 
 test-backup-restore-integration: ## Real PG + ClickHouse probe against an isolated target
-	bash infra/scripts/with-local-env.sh bash infra/scripts/test-backup-restore-integration.sh
+	bash infra/scripts/test-backup-restore-integration.sh

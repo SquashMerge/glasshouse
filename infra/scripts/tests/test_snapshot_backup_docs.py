@@ -19,6 +19,46 @@ import sys
 import zipfile
 
 args = sys.argv[1:]
+with open(os.environ["DOCKER_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\n")
+if args == ["info", "--format", "{{.ID}}"]:
+    print("fixture-daemon")
+    raise SystemExit(0)
+if len(args) == 3 and args[0] == "inspect" and args[1].startswith("--format=") and args[2] in ("source-postgres", "source-clickhouse"):
+    print(os.environ["EXPECTED_PROJECT"])
+    raise SystemExit(0)
+if args[:2] == ["exec", "-i"]:
+    if len(args) >= 5 and args[2:5] == ["-e", "PGPASSWORD", "source-postgres"]:
+        if os.environ.get("PGPASSWORD") != "prod_password":
+            raise SystemExit("incorrect PostgreSQL credentials")
+        if "pg_dump" in args:
+            if "--username=prod_user" not in args or "--dbname=prod_db" not in args:
+                raise SystemExit("incorrect PostgreSQL identity")
+            print("synthetic PostgreSQL dump")
+        elif "psql" in args:
+            print("18.6")
+        else:
+            raise SystemExit("unexpected PostgreSQL operation")
+    elif args[2] == "source-clickhouse":
+        if any("mktemp /tmp/glasshouse-clickhouse-client." in arg for arg in args):
+            print("/tmp/glasshouse-clickhouse-client.fixture123")
+        elif any("cat >" in arg for arg in args):
+            config = sys.stdin.read()
+            if "prod_ch_user" not in config or "prod_ch_password" not in config:
+                raise SystemExit("incorrect ClickHouse credentials")
+        elif "--query=SELECT version()" in args:
+            print("26.10.2.103")
+        elif any("BACKUP DATABASE `prod_ch_db`" in arg for arg in args) or any("rm -f --" in arg for arg in args):
+            pass
+        else:
+            raise SystemExit("unexpected ClickHouse operation")
+    else:
+        raise SystemExit("unexpected pinned container")
+    raise SystemExit(0)
+if len(args) == 3 and args[0] == "cp" and args[1].startswith("source-clickhouse:/var/lib/clickhouse/backup/"):
+    with zipfile.ZipFile(args[-1], "w") as archive:
+        archive.writestr("metadata.txt", "synthetic fixture")
+    raise SystemExit(0)
 expected = ["compose", "--project-directory", os.environ["EXPECTED_ROOT"],
             "--env-file", os.environ["EXPECTED_ENV"], "--project-name",
             os.environ["EXPECTED_PROJECT"], "-f", os.environ["EXPECTED_COMPOSE"]]
@@ -26,31 +66,16 @@ if args[:len(expected)] != expected:
     raise SystemExit(f"wrong Compose target: {args!r}")
 if (os.environ.get("GLASSHOUSE_API_IMAGE"), os.environ.get("GLASSHOUSE_WEB_IMAGE")) != ("api-production", "web-production"):
     raise SystemExit("production image references were overridden")
-with open(os.environ["DOCKER_LOG"], "a") as log:
-    log.write(json.dumps(args) + "\n")
 command = args[len(expected):]
-if command == ["config", "--format", "json"]:
+if command[:2] == ["ps", "-q"] and command[2:] in (["postgres"], ["clickhouse"]):
+    print("source-" + command[2])
+elif command == ["config", "--format", "json"]:
     print(json.dumps({"services": {
         "postgres": {"environment": {"POSTGRES_USER": "prod_user", "POSTGRES_PASSWORD": "prod_password", "POSTGRES_DB": "prod_db"}},
         "clickhouse": {"environment": {"CLICKHOUSE_USER": "prod_ch_user", "CLICKHOUSE_PASSWORD": "prod_ch_password", "CLICKHOUSE_DB": "prod_ch_db"}}
     }}))
-elif command[0] == "cp":
-    with zipfile.ZipFile(command[-1], "w") as archive:
-        archive.writestr("metadata.txt", "synthetic fixture")
-elif "pg_dump" in command:
-    if os.environ.get("PGPASSWORD") != "prod_password" or "--username=prod_user" not in command or "prod_db" not in command:
-        raise SystemExit("incorrect PostgreSQL credentials or database")
-    print("synthetic PostgreSQL dump")
-elif "psql" in command:
-    print("18.6")
-elif any("mktemp /tmp/glasshouse-clickhouse-client." in arg for arg in command):
-    print("/tmp/glasshouse-clickhouse-client.fixture123")
-elif any("cat >" in arg for arg in command):
-    config = sys.stdin.read()
-    if "prod_ch_user" not in config or "prod_ch_password" not in config:
-        raise SystemExit("incorrect ClickHouse credentials")
-elif "--query=SELECT version()" in command:
-    print("26.10.2.103")
+else:
+    raise SystemExit("unexpected Compose operation: " + repr(command))
 '''
 
 
@@ -116,6 +141,8 @@ class ProductionBackupDocumentationTest(unittest.TestCase):
                     self.assertTrue(manifest["complete"])
                     self.assertEqual(manifest["postgres_server_version"], "18.6")
                     self.assertEqual(manifest["clickhouse_server_version"], "26.10.2.103")
+                    self.assertEqual(manifest["source_docker_daemon_id"], "fixture-daemon")
+                    self.assertEqual(manifest["source_compose_project"], "glasshouse-production")
                     if local_env:
                         self.assertEqual((checkout / "infra/.env").read_bytes(), original_local_env)
                     else:
