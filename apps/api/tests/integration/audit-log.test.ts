@@ -321,6 +321,80 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 	});
 }, 30000);
 
+test.each(["display", "filter"] as const)(
+	"project creation resolves a local session actor for %s",
+	async (mode) => {
+		const organization = await createOrganization(`Actor ${mode}`);
+		const created = await organization.request("/v1/projects", "POST", {
+			name: "Actor identity project",
+			slug: `actor-identity-${mode}`,
+		});
+		expect(created.status).toBe(201);
+		const project = (await created.json()) as { id: string };
+		const stored = await pool.query<{ actor_subject: string }>(
+			"SELECT actor_subject FROM project_authorization_audit_events WHERE organization_id = $1 AND project_id = $2 AND event_type = 'project_created'",
+			[organization.organizationId, project.id],
+		);
+		expect(stored.rows[0]?.actor_subject).toBe(
+			`actor:${organization.admin.actorId}`,
+		);
+		const filter =
+			mode === "filter"
+				? `&actor=${encodeURIComponent(organization.adminUsername)}`
+				: "";
+		const response = await organization.request(
+			`/v1/audit-events?limit=100&action=project_created&resource=${project.id}${filter}`,
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			items: Array<{ actor: string; source: string }>;
+		};
+		const event = body.items.filter(
+			(item) => item.source === "project_authorization",
+		);
+		expect(event).toHaveLength(1);
+		expect(event[0]?.actor).toBe(organization.adminUsername);
+	},
+	30000,
+);
+
+test("subject resolution stays in the event organization and preserves unknown historical subjects", async () => {
+	const primary = await createOrganization("Subject scope");
+	const foreign = await createOrganization("Foreign subject");
+	const subjects = [
+		`actor:${foreign.admin.actorId}`,
+		`actor:${randomUUID()}`,
+		"legacy-subject",
+		`actor:${primary.admin.actorId}:suffix`,
+	];
+	for (const subject of subjects) {
+		await pool.query(
+			"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated')",
+			[primary.organizationId, primary.projectId, subject],
+		);
+	}
+	const response = await primary.request(
+		`/v1/audit-events?limit=100&action=project_updated&resource=${primary.projectId}`,
+	);
+	expect(response.status).toBe(200);
+	const body = (await response.json()) as {
+		items: Array<{ actor: string; source: string }>;
+	};
+	expect(
+		body.items
+			.filter((event) => event.source === "project_authorization")
+			.map((event) => event.actor)
+			.sort(),
+	).toEqual(subjects.sort());
+	const filtered = await primary.request(
+		`/v1/audit-events?limit=100&action=project_updated&actor=${encodeURIComponent(foreign.adminUsername)}`,
+	);
+	expect(filtered.status).toBe(200);
+	expect(((await filtered.json()) as { items: unknown[] }).items).toHaveLength(
+		0,
+	);
+}, 30000);
+
 test("prompt creation and versioning create visible, content-free user action events", async () => {
 	const organization = await createOrganization("Prompt actions");
 	const secretPrompt = "do not retain this prompt content";

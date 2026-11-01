@@ -198,10 +198,11 @@ WITH audit_events AS (
   FROM user_action_audit_events e
 ), visible_events AS (
   SELECT e.event_id, e.source,
-    COALESCE(e.actor_subject, credential.username, identity.canonical_subject, 'Unavailable') AS actor,
+    COALESCE(credential.username, e.actor_subject, identity.canonical_subject, 'Unavailable') AS actor,
     e.action, e.resource_type, e.resource_id, e.outcome, e.created_at
   FROM audit_events e
-  LEFT JOIN local_credentials credential ON credential.organization_id = e.organization_id AND credential.actor_id = e.actor_id
+  LEFT JOIN local_credentials credential ON credential.organization_id = e.organization_id
+    AND (credential.actor_id = e.actor_id OR (e.actor_id IS NULL AND e.actor_subject = 'actor:' || credential.actor_id::text))
   LEFT JOIN LATERAL (
     SELECT ai.canonical_subject FROM actor_identities ai
     WHERE ai.organization_id = e.organization_id AND ai.actor_id = e.actor_id
