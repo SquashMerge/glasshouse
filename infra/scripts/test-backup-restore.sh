@@ -15,7 +15,8 @@ import sys
 import zipfile
 
 with zipfile.ZipFile(pathlib.Path(sys.argv[1]), "w") as archive:
-    archive.writestr("metadata.txt", "clickhouse backup fixture\n")
+    archive.writestr("metadata/fixture.sql", "CREATE DATABASE fixture")
+    archive.writestr(".backup", "<config><version>1</version><timestamp>2026-10-30 00:00:00</timestamp><uuid>00000000-0000-0000-0000-000000000001</uuid><contents><file><name>metadata/fixture.sql</name><size>23</size><checksum>40335961bc46f9a0b4d2eac29708fba9</checksum></file></contents></config>")
 PY
 (cd "$tmp/artifact" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 ln -s "$tmp/artifact" "$tmp/artifact-link"
@@ -112,7 +113,8 @@ import sys
 import zipfile
 
 with zipfile.ZipFile(pathlib.Path(sys.argv[1]), "w") as archive:
-    archive.writestr("metadata.txt", "clickhouse backup fixture\n")
+    archive.writestr("metadata/fixture.sql", "CREATE DATABASE fixture")
+    archive.writestr(".backup", "<config><version>1</version><timestamp>2026-10-30 00:00:00</timestamp><uuid>00000000-0000-0000-0000-000000000001</uuid><contents><file><name>metadata/fixture.sql</name><size>23</size><checksum>40335961bc46f9a0b4d2eac29708fba9</checksum></file></contents></config>")
 PY
 (cd "$tmp/artifact" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 if env -u RESTORE_TARGET_LIVE RESTORE_TARGET_ID=target RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO target' BACKUP_ARTIFACT="$tmp/artifact" "$root_dir/infra/scripts/restore.sh" >"$tmp/live-output" 2>&1; then
@@ -135,6 +137,25 @@ if ! grep -q 'differ from source identity' "$tmp/output"; then
 	printf 'unsafe target refusal did not identify the source-identity check\n' >&2
 	 exit 1
 fi
+# Independent CityHash v1.0.2 zero-seed vectors (native clickhouse-cityhash),
+# including both short and long paths. Real backups test chained 2048-byte blocks.
+python3 - "$root_dir/infra/scripts/check-clickhouse-backup.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('check_clickhouse_backup', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+vectors = {
+    0: 'fcf7cc0ecf416467b2369acfccf83dbf', 1: '981cb2d77e16fc67c918b110cc3f7e87',
+    8: '1f3a61772ea03be3c44680f970e048b2', 16: '26c1206b9ea553abb9c34e21ef8571be',
+    17: 'bc2f58d494fd56133eb9e72fb9036f04', 127: '8e1e73e646a2d5a2342514871496a1dd',
+    128: '09c9c5c3733db4ca1a23574109a76c50', 129: 'ae8181480db6cc2ab447f9107514e56f',
+    255: '0642022a2315baa729f1b963bce0949d', 2048: '9678b556f10c628a5f8765e25f4dbadb',
+}
+for size, expected in vectors.items():
+    data = bytes((i * 31 + 7) % 256 for i in range(size))
+    lo, hi = module.city128(data, (0, 0))
+    assert f'{lo:016x}{hi:016x}' == expected, size
+PY
 python3 - "$root_dir/infra/scripts/restore.sh" <<'PY'
 from pathlib import Path
 import sys

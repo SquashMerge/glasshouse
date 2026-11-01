@@ -22,7 +22,8 @@ class SourceUnavailableTests(unittest.TestCase):
         self.artifact.mkdir(mode=0o700)
         (self.artifact / 'postgres.dump').write_bytes(b'fixture')
         with zipfile.ZipFile(self.artifact / 'clickhouse.zip', 'w') as z:
-            z.writestr('fixture', 'content')
+            z.writestr('metadata/fixture.sql', 'CREATE DATABASE fixture')
+            z.writestr('.backup', '<config><version>1</version><timestamp>2026-10-30 00:00:00</timestamp><uuid>00000000-0000-0000-0000-000000000001</uuid><contents><file><name>metadata/fixture.sql</name><size>23</size><checksum>40335961bc46f9a0b4d2eac29708fba9</checksum></file></contents></config>')
         sums = ''.join(f'{hashlib.sha256((self.artifact / name).read_bytes()).hexdigest()}  {name}\n' for name in ('postgres.dump', 'clickhouse.zip'))
         (self.artifact / 'SHA256SUMS').write_text(sums)
         self.manifest = {'format': 'glasshouse-backup-v1', 'source_id': 'source', 'stores': ['postgresql', 'clickhouse'], 'complete': True, 'postgres_server_version': '18.6', 'clickhouse_server_version': '26.10.2.103', 'source_docker_daemon_id': 'same-daemon', 'source_compose_project': 'source'}

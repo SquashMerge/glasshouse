@@ -107,6 +107,10 @@ for name, digest in checksums.items():
         raise SystemExit(f"checksum mismatch: {name}")
 PY
 
+# Validate native backup metadata and each referenced data file, not only ZIP
+# CRCs and the operator-supplied outer checksum. Runs on the private copy.
+python3 "$root_dir/infra/scripts/check-clickhouse-backup.py" "$artifact/clickhouse.zip"
+
 if [[ "$validate_only" == true ]]; then
 	printf 'Backup artifact is valid.\n'
 	exit 0
@@ -239,6 +243,14 @@ if [[ ! "$pg_database" =~ ^[A-Za-z0-9_]+$ || ! "$ch_database" =~ ^[A-Za-z0-9_]+$
 	printf 'Restore database names must use only safe ASCII identifier characters.\n' >&2
 	exit 1
 fi
+# A valid backup of some *other* database cannot satisfy this RESTORE DATABASE.
+python3 - "$artifact/clickhouse.zip" "$ch_database" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    expected = 'metadata/' + sys.argv[2] + '.sql'
+    if expected not in archive.namelist():
+        raise SystemExit('Refusing restore: ClickHouse backup does not contain target database metadata.')
+PY
 ch_remote="/var/lib/clickhouse/backup/restore-${target_id}-$$.zip"
 ch_client_config=""
 ch_remote_created=false
@@ -296,7 +308,9 @@ for key, actual in zip(("postgres_server_version", "clickhouse_server_version"),
     if not actual or manifest[key] != actual:
         raise SystemExit(f"Refusing restore: target {key} does not match supported backup version")
 PY
-if ! "${target_compose[@]}" exec -T -i "$pg_service" pg_restore --list < "$artifact/postgres.dump" >/dev/null; then
+# --list reads only the table of contents; render the whole custom dump to a
+# discarded stream so compressed data is read without executing SQL or logging it.
+if ! pg_client pg_restore --exit-on-error --file=- < "$artifact/postgres.dump" >/dev/null 2>/dev/null; then
     printf 'Refusing restore: PostgreSQL archive failed validation.\n' >&2
     exit 1
 fi
