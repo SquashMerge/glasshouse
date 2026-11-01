@@ -1,8 +1,8 @@
 import { expect, mock, spyOn, test } from "bun:test";
-import { internalLogCollector } from "../../src/lib/internal-log-collector";
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
 import { createInternalLogCollector } from "../../src/db/internal-logs";
+import { internalLogCollector } from "../../src/lib/internal-log-collector";
+import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
 
 const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 const ADMIN = "11111111-1111-4111-8111-111111111111";
@@ -40,28 +40,37 @@ const client = { query, release() {} };
 const { createHandleListInternalLogs, listInternalLogsRoute } = await import(
 	"../../src/routes/internal-logs"
 );
-const handleListInternalLogs = createHandleListInternalLogs(() => ({
-	connect: async () => client,
-}));
+const getPool = () => ({ connect: async () => client });
 
-const app = new OpenAPIHono({
-	defaultHook: (result, c) =>
-		result.success
-			? undefined
-			: c.json(
-					{ code: "BAD_REQUEST", message: "Request validation failed" },
-					400,
-				),
-});
-app.use("*", async (c, next) => {
-	c.set(TRUSTED_TENANT_CONTEXT_KEY, {
-		actor: "test",
-		actorId: c.req.header("x-test-actor") === "user" ? USER : ADMIN,
-		organizationId: ORGANIZATION,
+function createTestApp(useProductionHealth = false) {
+	const app = new OpenAPIHono({
+		defaultHook: (result, c) =>
+			result.success
+				? undefined
+				: c.json(
+						{ code: "BAD_REQUEST", message: "Request validation failed" },
+						400,
+					),
 	});
-	await next();
-});
-app.openapi(listInternalLogsRoute, handleListInternalLogs);
+	app.use("*", async (c, next) => {
+		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+			actor: "test",
+			actorId: c.req.header("x-test-actor") === "user" ? USER : ADMIN,
+			organizationId: ORGANIZATION,
+		});
+		await next();
+	});
+	app.openapi(
+		listInternalLogsRoute,
+		useProductionHealth
+			? createHandleListInternalLogs(getPool)
+			: createHandleListInternalLogs(getPool, () => true),
+	);
+	return app;
+}
+
+const app = createTestApp();
+const defaultHealthApp = createTestApp(true);
 
 test("the public route reports collector insert failure and recovers after a successful insert", async () => {
 	let failInsert = true;
@@ -134,15 +143,34 @@ test("the default route reads production collector health after checking access"
 		queries.length = 0;
 		expect(
 			(
-				await app.request("/v1/admin/logs", {
+				await defaultHealthApp.request("/v1/admin/logs", {
 					headers: { "x-test-actor": "user" },
 				})
 			).status,
 		).toBe(403);
-		expect((await app.request("/v1/admin/logs")).status).toBe(503);
+		expect((await defaultHealthApp.request("/v1/admin/logs")).status).toBe(503);
 		expect(
 			queries.some(({ sql }) => sql.includes("FROM internal_log_entries")),
 		).toBe(false);
+	} finally {
+		health.mockRestore();
+	}
+});
+
+test("route fixtures remain available when the production collector is unhealthy", async () => {
+	const health = spyOn(internalLogCollector, "healthy").mockReturnValue(false);
+	try {
+		expect(
+			(
+				await app.request(
+					"/v1/admin/logs?level=warn&source=api&q=projects&limit=25",
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(await app.request("/v1/admin/logs?time_from=0001-01-01T00:00:00Z"))
+				.status,
+		).toBe(200);
 	} finally {
 		health.mockRestore();
 	}
