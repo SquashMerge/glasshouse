@@ -16,7 +16,7 @@ docker run --detach --rm --name "$container" --network "$network" \
 	--env POSTGRES_DB=glasshouse \
 	--env POSTGRES_PASSWORD=glasshouse-audit-log-test \
 	--env POSTGRES_USER=glasshouse \
-	--health-cmd "pg_isready -U glasshouse -d glasshouse" \
+	--health-cmd "pg_isready -h 127.0.0.1 -U glasshouse -d glasshouse" \
 	--health-interval 1s \
 	--health-retries 60 \
 	--health-timeout 1s \
