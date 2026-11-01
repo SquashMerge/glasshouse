@@ -26,6 +26,20 @@ ch_user="$(compose_service_value "$ch_service" CLICKHOUSE_USER "${compose[@]}")"
 ch_database="$(compose_service_value "$ch_service" CLICKHOUSE_DB "${compose[@]}")"
 ch_password="$(compose_service_value "$ch_service" CLICKHOUSE_PASSWORD "${compose[@]}")"
 
+# Record the actual source daemon and project for a future isolated recovery.
+# Neither field authenticates the artifact or proves independent storage.
+source_daemon_id="$(docker info --format '{{.ID}}')"
+source_pg="$("${compose[@]}" ps -q "$pg_service")"
+source_ch="$("${compose[@]}" ps -q "$ch_service")"
+if [[ -z "$source_daemon_id" || "$source_daemon_id" == '<no value>' || -z "$source_pg" || -z "$source_ch" || "$source_pg" == "$source_ch" ]]; then
+	printf 'Refusing backup: source daemon and distinct running services must be identifiable.\n' >&2
+	exit 1
+fi
+if [[ "$(inspect_compose_project "$source_pg")" != "$source_project" || "$(inspect_compose_project "$source_ch")" != "$source_project" ]]; then
+	printf 'Refusing backup: source containers do not match the selected Compose project.\n' >&2
+	exit 1
+fi
+
 if [[ ! "$backup_id" =~ ^[A-Za-z0-9._-]+$ || ! "$pg_database" =~ ^[A-Za-z0-9_]+$ || ! "$ch_database" =~ ^[A-Za-z0-9_]+$ ]]; then
 	printf 'Backup ID and database names must use only safe ASCII identifier characters.\n' >&2
 	exit 1
@@ -69,7 +83,7 @@ ch_version="$("${compose[@]}" exec -T "$ch_service" clickhouse-client --config-f
 
 (cd "$staging" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 chmod 600 "$staging/SHA256SUMS"
-BACKUP_ID="$backup_id" SOURCE_ID="$source_id" PG_VERSION="$pg_version" CH_VERSION="$ch_version" python3 - "$staging/manifest.json" <<'PY'
+BACKUP_ID="$backup_id" SOURCE_ID="$source_id" SOURCE_DAEMON_ID="$source_daemon_id" SOURCE_COMPOSE_PROJECT="$source_project" PG_VERSION="$pg_version" CH_VERSION="$ch_version" python3 - "$staging/manifest.json" <<'PY'
 import json
 import os
 import pathlib
@@ -80,6 +94,8 @@ path.write_text(json.dumps({
     "format": "glasshouse-backup-v1",
     "backup_id": os.environ["BACKUP_ID"],
     "source_id": os.environ["SOURCE_ID"],
+    "source_docker_daemon_id": os.environ["SOURCE_DAEMON_ID"],
+    "source_compose_project": os.environ["SOURCE_COMPOSE_PROJECT"],
     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "postgres_server_version": os.environ["PG_VERSION"],
     "clickhouse_server_version": os.environ["CH_VERSION"],

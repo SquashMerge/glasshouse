@@ -62,6 +62,19 @@ PGPASSWORD="$pg_password" "${source_compose[@]}" exec -T -e PGPASSWORD "$pg_serv
 
 BACKUP_DESTINATION="$destination" BACKUP_SOURCE_ID=integration BACKUP_ID="$backup_id" "$root_dir/infra/scripts/backup.sh"
 artifact="$destination/$backup_id"
+# Record source identifiers at backup time for later target-side comparisons;
+# the operator must authenticate the manifest and independently verify isolation.
+source_daemon_id="$(docker info --format '{{.ID}}')"
+python3 - "$artifact/manifest.json" "$source_daemon_id" "$source_project" <<'PY'
+import json
+import sys
+with open(sys.argv[1]) as stream:
+    manifest = json.load(stream)
+if not sys.argv[2] or manifest.get("source_docker_daemon_id") != sys.argv[2]:
+    raise SystemExit("backup must record the actual source Docker daemon ID")
+if not sys.argv[3] or manifest.get("source_compose_project") != sys.argv[3]:
+    raise SystemExit("backup must record the source Compose project")
+PY
 BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh" --validate-only
 
 target_env_file="$(resolve_path "$RESTORE_TARGET_DIRECTORY" "${RESTORE_TARGET_ENV_FILE:-infra/.env}")"

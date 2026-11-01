@@ -42,7 +42,7 @@ jobs:
           - check: compose-paths
             command: bash infra/scripts/test-compose-paths.sh
           - check: backup-restore-safety
-            command: bash infra/scripts/test-backup-restore.sh
+            command: python3 infra/scripts/test-isolated-target.py && python3 infra/scripts/test-source-unavailable.py && bash infra/scripts/test-backup-restore.sh
           - check: doctor-version
             command: bash infra/scripts/test-doctor-version.sh
     steps:
@@ -147,6 +147,8 @@ jobs:
           up --detach --wait --wait-timeout 180 postgres clickhouse
       - name: Back up, restore, and verify representative rows
         run: bash infra/scripts/test-backup-restore-integration.sh
+      - name: Verify source-unavailable recovery on disposable stores
+        run: bash infra/scripts/test-source-down-integration.sh
       - name: Dump restore-target ClickHouse diagnostics
         if: failure()
         run: |

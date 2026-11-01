@@ -48,7 +48,7 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 ## Whole-instance backup boundary
 
-The native backup and restore scripts are trusted-host operator tools, not an API or Organization/Project administrator capability. They may expose all tenants and credential/session digests. Neither checksum verification nor `pg_restore --list` authenticates an artifact or makes arbitrary SQL safe. The operator must authenticate provenance independently and protect private artifacts and the local staging filesystem. Root, Docker administrators, and processes running as the operator remain trusted. Restore requires a reachable source and rejects it being absent; source-host-loss recovery is not implemented. Mount-path comparison is not proof against network-backed storage aliases or concurrent changes, and target isolation must be independently established. See [backup and restore](backup-restore.md) for restrictions and credential re-securing before cutover.
+The native backup and restore scripts are trusted-host operator tools, not an API or Organization/Project administrator capability. They may expose all tenants and credential/session digests. Neither checksum verification nor `pg_restore --list` authenticates an artifact or makes arbitrary SQL safe. The operator must authenticate provenance independently and protect private artifacts and the local staging filesystem. Root, Docker administrators, and processes running as the operator remain trusted. Source-unavailable recovery requires authenticated source daemon and Compose-project metadata, exact operator attestations, and a separately provisioned empty target with exclusive local optionless named volumes; older artifacts missing metadata fail closed in this mode. Different daemon IDs and project names are not cryptographic proof of a distinct physical host or storage, and Docker inspection cannot establish isolation against aliases, hidden mounts, or concurrent changes. The operator must independently establish isolation and keep it throughout recovery. Restored PostgreSQL session records and credentials can regain validity; invalidate sessions and re-secure credentials before cutover. See [backup and restore](backup-restore.md).
 
 ## Principal attack scenarios
 
@@ -174,8 +174,8 @@ Current-version backup/restore uses a separate empty target with inspected
 non-overlapping mounts. PostgreSQL restore is fail-fast and single-transaction,
 but there is no atomic restore across PostgreSQL and ClickHouse. A partial
 restore needs another empty target. Legacy datastore migration and cross-version
-restore are unsupported. Artifact validation checks integrity, not version or
-custom-schema compatibility; current-version CI does not replace an installation's
+restore are unsupported. Artifact validation checks checksums and declared supported
+versions, not provenance or custom-schema compatibility; current-version CI does not replace an installation's
 recovery drill. See [supported datastores](datastore-upgrades.md) and
 [backup/restore](backup-restore.md).
 

@@ -150,35 +150,79 @@ source_env_file="$(resolve_path "$root_dir" "${BACKUP_SOURCE_ENV_FILE:-infra/.en
 source_project="${BACKUP_SOURCE_COMPOSE_PROJECT:-glasshouse}"
 require_file 'RESTORE_TARGET_COMPOSE_FILE' "$target_compose_file"
 require_file 'RESTORE_TARGET_ENV_FILE' "$target_env_file"
-require_file 'BACKUP_SOURCE_COMPOSE_FILE' "$source_compose_file"
-require_file 'BACKUP_SOURCE_ENV_FILE' "$source_env_file"
+if [[ "${RESTORE_SOURCE_UNAVAILABLE:-false}" != true ]]; then
+	require_file 'BACKUP_SOURCE_COMPOSE_FILE' "$source_compose_file"
+	require_file 'BACKUP_SOURCE_ENV_FILE' "$source_env_file"
+fi
 if [[ "$target_dir" == "$root_dir" || "$target_compose_file" == "$root_dir/infra/compose.yaml" ]]; then
 	printf 'Refusing restore into the source checkout or Compose file.\n' >&2
 	exit 1
 fi
 
 target_compose=(docker compose --project-directory "$target_dir" --env-file "$target_env_file" --project-name "$target_project" -f "$target_compose_file")
-source_compose=(docker compose --project-directory "$root_dir" --env-file "$source_env_file" --project-name "$source_project" -f "$source_compose_file")
-target_pg="$("${target_compose[@]}" ps -q "${RESTORE_POSTGRES_SERVICE:-postgres}")"
-target_ch="$("${target_compose[@]}" ps -q "${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}")"
-source_pg="$("${source_compose[@]}" ps -q "${BACKUP_POSTGRES_SERVICE:-postgres}")"
-source_ch="$("${source_compose[@]}" ps -q "${BACKUP_CLICKHOUSE_SERVICE:-clickhouse}")"
-if [[ -z "$target_pg" || -z "$target_ch" || -z "$source_pg" || -z "$source_ch" ]]; then
-	printf 'Refusing restore: source and target services must already be running.\n' >&2
-	exit 1
-fi
-if [[ "$target_pg" == "$source_pg" || "$target_ch" == "$source_ch" ]]; then
-	printf 'Refusing restore: target shares a source container.\n' >&2
-	exit 1
-fi
-source_container_project="$(inspect_compose_project "$source_pg")"
-if [[ "$target_project" == "$source_container_project" || "$target_project" == "$source_project" ]]; then
-	printf 'Refusing restore: target Compose project is the live/source project.\n' >&2
-	exit 1
-fi
-if ! docker inspect "$source_pg" "$source_ch" "$target_pg" "$target_ch" | python3 "$root_dir/infra/scripts/check-restore-mounts.py"; then
-	printf 'Refusing restore: source and target storage mounts overlap or could not be inspected.\n' >&2
-	exit 1
+if [[ "${RESTORE_SOURCE_UNAVAILABLE:-false}" == true ]]; then
+	if [[ "${RESTORE_SOURCE_UNAVAILABLE_CONFIRMATION:-}" != 'SOURCE IS UNAVAILABLE' || "${RESTORE_DISTINCT_HOST_CONFIRMATION:-}" != 'I VERIFIED DISTINCT HOST' || "${RESTORE_DISTINCT_STORAGE_CONFIRMATION:-}" != 'I VERIFIED DISTINCT STORAGE' ]]; then
+		printf 'Refusing restore: source unavailability and independently verified distinct host and storage confirmations are required.\n' >&2
+		exit 1
+	fi
+	mapfile -t source_metadata < <(python3 - "$manifest" <<'PY'
+import json, re, sys
+with open(sys.argv[1]) as stream:
+    data = json.load(stream)
+values = [data.get('source_docker_daemon_id'), data.get('source_compose_project')]
+if all(isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:-]+', value) for value in values):
+    print(*values, sep='\n')
+PY
+)
+	if [[ "${#source_metadata[@]}" != 2 ]]; then
+		printf 'Refusing restore: source Docker daemon and Compose project metadata are required.\n' >&2
+		exit 1
+	fi
+	target_daemon_id="$(docker info --format '{{.ID}}')"
+	if [[ -z "$target_daemon_id" || "$target_daemon_id" == '<no value>' || "$target_daemon_id" == "${source_metadata[0]}" ]]; then
+		printf 'Refusing restore: source and target Docker daemon IDs must differ.\n' >&2
+		exit 1
+	fi
+	if [[ "$target_project" == "${source_metadata[1]}" ]]; then
+		printf 'Refusing restore: source and target Compose projects must differ.\n' >&2
+		exit 1
+	fi
+	target_pg="$("${target_compose[@]}" ps -q "${RESTORE_POSTGRES_SERVICE:-postgres}")"
+	target_ch="$("${target_compose[@]}" ps -q "${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}")"
+	if [[ -z "$target_pg" || -z "$target_ch" ]]; then
+		printf 'Refusing restore: target services must already be running.\n' >&2
+		exit 1
+	fi
+	target_pg="$(docker inspect --format '{{.Id}}' "$target_pg")"
+	target_ch="$(docker inspect --format '{{.Id}}' "$target_ch")"
+	"${target_compose[@]}" config --format json > "$private_stage/target-compose.json"
+	python3 "$root_dir/infra/scripts/check-isolated-target.py" \
+		"$target_project" "$target_pg" "$target_ch" \
+		"${RESTORE_POSTGRES_SERVICE:-postgres}" "${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}" \
+		"$private_stage/target-compose.json"
+else
+	source_compose=(docker compose --project-directory "$root_dir" --env-file "$source_env_file" --project-name "$source_project" -f "$source_compose_file")
+	target_pg="$("${target_compose[@]}" ps -q "${RESTORE_POSTGRES_SERVICE:-postgres}")"
+	target_ch="$("${target_compose[@]}" ps -q "${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}")"
+	source_pg="$("${source_compose[@]}" ps -q "${BACKUP_POSTGRES_SERVICE:-postgres}")"
+	source_ch="$("${source_compose[@]}" ps -q "${BACKUP_CLICKHOUSE_SERVICE:-clickhouse}")"
+	if [[ -z "$target_pg" || -z "$target_ch" || -z "$source_pg" || -z "$source_ch" ]]; then
+		printf 'Refusing restore: source and target services must already be running.\n' >&2
+		exit 1
+	fi
+	if [[ "$target_pg" == "$source_pg" || "$target_ch" == "$source_ch" ]]; then
+		printf 'Refusing restore: target shares a source container.\n' >&2
+		exit 1
+	fi
+	source_container_project="$(inspect_compose_project "$source_pg")"
+	if [[ "$target_project" == "$source_container_project" || "$target_project" == "$source_project" ]]; then
+		printf 'Refusing restore: target Compose project is the live/source project.\n' >&2
+		exit 1
+	fi
+	if ! docker inspect "$source_pg" "$source_ch" "$target_pg" "$target_ch" | python3 "$root_dir/infra/scripts/check-restore-mounts.py"; then
+		printf 'Refusing restore: source and target storage mounts overlap or could not be inspected.\n' >&2
+		exit 1
+	fi
 fi
 
 pg_service="${RESTORE_POSTGRES_SERVICE:-postgres}"
