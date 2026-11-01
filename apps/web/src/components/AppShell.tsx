@@ -108,6 +108,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 	const settingsActive =
 		isActive("/governance") ||
 		isActive("/access") ||
+		isActive("/logs") ||
 		isActive("/projects") ||
 		isActive("/ingestion-credentials");
 

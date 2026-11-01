@@ -4,6 +4,16 @@ import { ErrorEnvelope } from "./common.js";
 const InternalLogLevel = z.enum(["debug", "info", "warn", "error"]);
 const Timestamp = z.string().datetime({ offset: true });
 
+function laterThan(first: string, second: string): boolean {
+	const firstSecond = Math.floor(Date.parse(first) / 1000);
+	const secondSecond = Math.floor(Date.parse(second) / 1000);
+	if (firstSecond !== secondSecond) return firstSecond > secondSecond;
+	const firstFraction = /\.(\d+)(?:Z|[+-])/u.exec(first)?.[1] ?? "";
+	const secondFraction = /\.(\d+)(?:Z|[+-])/u.exec(second)?.[1] ?? "";
+	const width = Math.max(firstFraction.length, secondFraction.length);
+	return firstFraction.padEnd(width, "0") > secondFraction.padEnd(width, "0");
+}
+
 export const InternalLogQuery = z
 	.object({
 		limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -16,7 +26,11 @@ export const InternalLogQuery = z
 	})
 	.strict()
 	.superRefine((value, context) => {
-		if (value.time_from && value.time_to && value.time_from > value.time_to)
+		if (
+			value.time_from &&
+			value.time_to &&
+			laterThan(value.time_from, value.time_to)
+		)
 			context.addIssue({
 				code: "custom",
 				message: "time_from must be before time_to",

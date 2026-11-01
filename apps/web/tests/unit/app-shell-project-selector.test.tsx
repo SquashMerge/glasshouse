@@ -234,6 +234,18 @@ describe("AppShell project selector", () => {
 		expect(new Set(icons).size).toBe(5);
 	});
 
+	it("marks Settings active on Logs", () => {
+		render(
+			<AppShell currentPath="/logs">
+				<div>Page</div>
+			</AppShell>,
+		);
+		expect(screen.getByRole("group", { name: "Settings" })).toHaveAttribute(
+			"data-active",
+			"true",
+		);
+	});
+
 	it("keeps Access hidden inside Settings without Admin or recovery access", () => {
 		selection.organizationRole = "user";
 		render(

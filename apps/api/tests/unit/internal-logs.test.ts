@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { InternalLogQuery } from "../../src/schemas/internal-logs";
 import {
 	decodeInternalLogCursor,
 	encodeInternalLogCursor,
@@ -211,6 +212,26 @@ describe("internal operational log persistence", () => {
 });
 
 describe("internal operational log cursor", () => {
+	it("compares time bounds chronologically across offsets and microseconds", () => {
+		expect(
+			InternalLogQuery.safeParse({
+				time_from: "2026-01-01T10:00:00+02:00",
+				time_to: "2026-01-01T09:00:00Z",
+			}).success,
+		).toBe(true);
+		expect(
+			InternalLogQuery.safeParse({
+				time_from: "2026-01-01T09:00:00-02:00",
+				time_to: "2026-01-01T10:00:00Z",
+			}).success,
+		).toBe(false);
+		expect(
+			InternalLogQuery.safeParse({
+				time_from: "2026-01-01T00:00:00.000002Z",
+				time_to: "2026-01-01T00:00:00.000001Z",
+			}).success,
+		).toBe(false);
+	});
 	it("rejects invalid calendar timestamps while preserving valid microseconds", () => {
 		const cursor = (recorded_at: string) =>
 			encodeInternalLogCursor(
