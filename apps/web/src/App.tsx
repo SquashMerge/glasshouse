@@ -173,6 +173,14 @@ const governanceRoute = createRoute({
 		"GovernancePage",
 	),
 });
+const instanceRecoveryRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/instance-recovery",
+	component: lazyRouteComponent(
+		() => import("./routes/instance-recovery"),
+		"InstanceRecoveryPage",
+	),
+});
 const adminAccessRoute = createRoute({
 	getParentRoute: () => protectedRoute,
 	path: "/access",
@@ -219,6 +227,7 @@ const router = createRouter({
 			feedbackRoute,
 			projectsRoute,
 			governanceRoute,
+			instanceRecoveryRoute,
 			adminAccessRoute,
 			passwordChangeRoute,
 			otlpCredentialsRoute,

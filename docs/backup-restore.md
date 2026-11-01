@@ -28,9 +28,11 @@ BACKUP_ARTIFACT=/secure/glasshouse-backups/20261027T120000Z-1234 \
 make backup-validate
 ```
 
-The manifest contains the source identity, creation time, store names, and server versions. It does not contain passwords, connection URLs, or application data. Treat the dump and ClickHouse archive as sensitive: they include tenant data, prompts, traces, audit records, and any retained secrets that were already present in application data.
+The manifest contains the source identity, Docker daemon ID, Compose project, creation time, store names, and server versions. Backups created before daemon and project recording do not have those fields. The daemon ID and project are metadata, not proof that a target is on an independent host or independent storage; they are not an authenticity mechanism. It does not contain passwords, connection URLs, or application data. The full-instance database contents **can** contain credentials, credential digests, API keys, sessions, tenant data, prompts, traces and audit records. Restore can reinstate old users, privileges, session records and credentials: keep the target offline, invalidate sessions and rotate or revoke compromised/restored credentials and keys before cutover. Secure artifacts accordingly.
 
-Valkey is disposable coordination/cache state and is intentionally not included. Recreate it from the target Compose deployment; do not treat queued jobs, locks, sessions, or cache entries as durable recovery data. Pending work must be re-admitted or re-created according to the application’s normal recovery behavior.
+Checksums detect corruption, not provenance: an attacker can replace both data and checksums, and even a structurally valid PostgreSQL dump can execute arbitrary SQL on restore. Restore only an artifact whose provenance and integrity were independently authenticated by the trusted host operator (for example, verify an out-of-band signature or digests from a trusted channel), not an upload or tenant-supplied archive. `RESTORE_TRUSTED_ARTIFACT` is the operator's explicit attestation, not an authenticity check. The artifact directory and its regular files must be owned by the current operator, inaccessible to group/other users, and not symlinks or hard links. Restore copies them to a private local temporary directory before validation and uses that copy throughout; allow temporary disk space for the full artifact. This protects against unprivileged other users, not a compromised operator account, root, Docker administrator, or a malicious process running under the same user. The temporary directory and backing filesystem must also be trusted.
+
+Valkey is disposable coordination/cache state and is intentionally not included. Recreate it from the target Compose deployment; do not treat Valkey-resident queued jobs, locks, or cache entries as durable recovery data. Pending work must be re-admitted or re-created according to the application’s normal recovery behavior. Local authentication session token digests and session records are persisted in PostgreSQL, not Valkey, and are included in the backup; invalidate restored sessions and re-secure credentials before cutover.
 
 ## Isolated restore
 
@@ -43,6 +45,7 @@ BACKUP_ARTIFACT=/secure/glasshouse-backups/20261027T120000Z-1234 \
 RESTORE_TARGET_ID=restore-drill-2026-10-27 \
 RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO restore-drill-2026-10-27' \
 RESTORE_TARGET_LIVE=false \
+RESTORE_TRUSTED_ARTIFACT='I TRUST THIS BACKUP' \
 RESTORE_TARGET_DIRECTORY=/srv/glasshouse-restore \
 RESTORE_TARGET_COMPOSE_FILE=/srv/glasshouse-restore/infra/compose.production.yaml \
 RESTORE_TARGET_ENV_FILE=/run/secrets/glasshouse-restore.env \
@@ -52,7 +55,36 @@ make restore
 
 `BACKUP_SOURCE_COMPOSE_FILE`, `BACKUP_SOURCE_ENV_FILE`, and `BACKUP_SOURCE_COMPOSE_PROJECT` default to `infra/compose.yaml`, `infra/.env`, and `glasshouse`. Restore uses those same source defaults for its live/source checks. `RESTORE_TARGET_ENV_FILE` defaults to `infra/.env` below the target directory and may point to an external production secret env file; the selected Compose service configuration supplies both database usernames and passwords, so no credential variables need to be copied into the command or documentation.
 
-The exact confirmation, an explicit target identity, a distinct Compose project, non-overlapping inspected storage mounts, and empty target stores are mandatory. The command fails before any restore write when confirmation is missing, the target is marked live, the target is the source checkout, a service/container/storage mount is shared or overlaps, or either target store contains application objects. It does not use `--clean`, drop a database, remove a volume, or overwrite an existing installation.
+The exact confirmation, an explicit target identity, a distinct Compose project, non-overlapping inspected storage mounts, and empty target stores are mandatory. Both modes now require the target's two dedicated, writable, non-external local-driver Docker volumes at `/var/lib/postgresql` and `/var/lib/clickhouse`, with a local Unix Docker endpoint, no driver options, no nested mounts and no other container attached. PostgreSQL must listen on `/var/run/postgresql` port 5432; validation and restore use that socket with a cleared libpq environment inside the inspected container. The running server's canonical `data_directory` and `pg_wal` must be inside its volume, and custom tablespaces are rejected; restored objects use the default tablespace. ClickHouse must listen on 127.0.0.1 port 9000 and its reported server path and all configured disk paths must be local and resolve inside its volume, as must the backup directory. This stricter contract also applies when the source is live. In default mode both source containers must currently be reachable on the same Docker daemon; a missing source fails closed.
+
+These are point-in-time checks, not protection against a hostile operator or server. The trusted operator must authenticate the backup, trust the selected container images, processes and configuration (including no malicious internal symlinks, SQL, plugins, remote storage aliases, or hidden mounts), and prevent concurrent container, filesystem, database, and configuration changes throughout the operation. Independently verify that target storage is local and dedicated, source and target cannot share a backing device, and the target cannot receive traffic. If isolation cannot be established, do not proceed. The tool does not use `--clean`, drop a database, remove a volume, or intentionally overwrite an existing installation.
+
+### When the source is unavailable
+
+This is an explicit disaster-recovery mode, **not an in-place restore** or a bypass for an unsafe target. Independently authenticate the artifact, including its manifest, using a trusted out-of-band source before attesting trust. The manifest must contain the source Docker daemon ID and Compose project recorded at backup time; older backups without these fields fail closed in this mode. The current target daemon ID and project must differ from the recorded source values. Neither an unsigned manifest nor different daemon IDs or project names proves a separate physical host or independent storage: independently establish both, and do not edit a real manifest merely to pass the checks.
+
+Prepare a separate target host and directory, with the same supported server versions and database names, offline from application traffic. Connect Docker via a **local Unix socket** on that target. Start both target Compose data services with two distinct writable non-external named volumes using the `local` driver with no driver options, at `/var/lib/postgresql` and `/var/lib/clickhouse` respectively. Do not use bind mounts for data. Both stores must be empty, and no other running or stopped container may use either volume; the inspector also rejects overlapping inspected mount sources. Docker inspection cannot rule out backing-store aliases, hidden mounts, malicious administrators, or races: the operator must verify physical/storage independence and prevent concurrent changes throughout the restore. If that cannot be established, stop.
+
+Use the same target and trust variables as above, adding all four source-loss variables (the example repeats the complete command):
+
+```sh
+BACKUP_ARTIFACT=/secure/glasshouse-backups/20261027T120000Z-1234 \
+RESTORE_TARGET_ID=restore-drill-2026-10-27 \
+RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO restore-drill-2026-10-27' \
+RESTORE_TARGET_LIVE=false \
+RESTORE_TRUSTED_ARTIFACT='I TRUST THIS BACKUP' \
+RESTORE_SOURCE_UNAVAILABLE=true \
+RESTORE_SOURCE_UNAVAILABLE_CONFIRMATION='SOURCE IS UNAVAILABLE' \
+RESTORE_DISTINCT_HOST_CONFIRMATION='I VERIFIED DISTINCT HOST' \
+RESTORE_DISTINCT_STORAGE_CONFIRMATION='I VERIFIED DISTINCT STORAGE' \
+RESTORE_TARGET_DIRECTORY=/srv/glasshouse-restore \
+RESTORE_TARGET_COMPOSE_FILE=/srv/glasshouse-restore/infra/compose.production.yaml \
+RESTORE_TARGET_ENV_FILE=/run/secrets/glasshouse-restore.env \
+RESTORE_TARGET_COMPOSE_PROJECT=glasshouse-restore-20261027 \
+make restore
+```
+
+The script does not require source Compose files or a reachable source in this mode, but does require the target services to be running. Keep the restored target offline and invalidate PostgreSQL-backed sessions, rotate or revoke restored credentials and keys as appropriate, then complete the migration and verification steps below before cutover.
 
 After the restore completes, apply the repository migrations against the target before serving traffic. Use the target deployment’s normal migration command, not the source deployment’s command, and confirm the migration count/checksum checks succeed. Then run the target API health endpoint and the repository smoke checks. Verify representative records in both stores, including at least one organization/project-scoped PostgreSQL record and one organization/project-scoped ClickHouse trace/observation. Compare counts or known test IDs with the source; a health response alone is not data-integrity proof.
 
@@ -68,6 +100,7 @@ With a separately provisioned, running, empty target deployment, the real probe 
 RESTORE_TARGET_ID=restore-drill-2026-10-27 \
 RESTORE_CONFIRMATION='RESTORE GLASSHOUSE TO restore-drill-2026-10-27' \
 RESTORE_TARGET_LIVE=false \
+RESTORE_TRUSTED_ARTIFACT='I TRUST THIS BACKUP' \
 RESTORE_TARGET_DIRECTORY=/srv/glasshouse-restore \
 RESTORE_TARGET_COMPOSE_FILE=/srv/glasshouse-restore/infra/compose.yaml \
 RESTORE_TARGET_COMPOSE_PROJECT=glasshouse-restore-20261027 \
@@ -76,15 +109,19 @@ make test-backup-restore-integration
 
 The integration gate removes only its uniquely named source probe table after the check. It does not remove target data, volumes, databases, or deployments.
 
-CI runs this gate for current-to-current recovery. The records include tenant IDs, JSONB, DateTime64, Map metadata, a MergeTree token index, and restored storage constraints. The artifact format remains `glasshouse-backup-v1`; artifact validation proves integrity, not server-version compatibility. PostgreSQL restore uses the target server's bundled `pg_restore` with `--exit-on-error --single-transaction`. A PostgreSQL failure rolls back that store; a later ClickHouse failure does not roll PostgreSQL back. Provision another empty isolated target after any partial restore rather than deleting data to retry.
+CI runs this gate for current-to-current recovery. It also runs `bash infra/scripts/test-source-down-integration.sh`, which creates and removes its own uniquely named disposable source and target projects and volumes, tests fail-closed cases, and verifies restored PostgreSQL and ClickHouse rows after removing the source. Both projects are on one local Docker daemon: the test changes only the private synthetic fixture's source daemon ID to exercise the source-unavailable success branch. It does not prove two-host or physical-storage isolation. The live-source gate's records include tenant IDs, JSONB, DateTime64, Map metadata, a MergeTree token index, and restored storage constraints.
+
+The artifact format remains `glasshouse-backup-v1`. Offline `--validate-only` checks the outer manifest, SHA-256 and ZIP CRCs, and the ClickHouse native `.backup` version-1 manifest, referenced file sizes and native CityHash checksums. Only standalone, non-encrypted, non-incremental backups in the supported current-server format are accepted. This is a streaming, CPU-intensive pass over the ClickHouse contents and may take substantial time for large backups. Offline validation does **not** inspect PostgreSQL dump contents. Before either restore writes, the running target versions must match the supported manifest versions, the ClickHouse backup must contain the target database metadata, and the target's `pg_restore` renders the complete dump to a discarded stream without connecting to a database. This catches malformed and truncated compressed data that `pg_restore --list` can miss, but does not execute SQL or guarantee that restore will succeed. Native checksums and metadata cannot establish provenance or detect intentional omission of both an entry and its associated files; authenticate the artifact independently and run a recovery drill.
+
+PostgreSQL restore uses `--exit-on-error --single-transaction`. A PostgreSQL failure rolls back that store; a later ClickHouse failure does not roll PostgreSQL back. After any partial or uncertain restore, do not blindly retry: investigate the state and provision another empty isolated target rather than deleting data.
 
 Disposable Linux CI projects additionally set `BACKUP_RESTORE_APPLICATION_FIXTURE=1` to migrate both full schemas, seed real Project/Trace/Observation records, and verify restored migration ledgers through repeated migrations. This fixture uses private Compose bridge IPs and intentionally leaves its application rows in the disposable source; do not enable it on a live/operator source. The ordinary operator integration gate still removes only its uniquely named probe table.
 
 ## Operations and security
 
-- Retain multiple dated artifacts according to the organization’s recovery policy, and rotate/delete old artifacts only through an approved operator process after retention/legal holds are checked.
+- Retain multiple dated artifacts **off the source host** according to the organization’s recovery policy, and rotate/delete old artifacts only through an approved operator process after retention/legal holds are checked.
 - Encrypt backups at rest and in transit using the destination filesystem/object-storage controls. The scripts do not implement encryption or key management.
 - Restrict the destination and restore commands to operators who are authorized to read all tenant data and administer both databases. Use filesystem ACLs, storage IAM, audit logs, and separate restore credentials where available.
 - Keep `infra/.env`, database passwords, and provider credentials outside artifacts and logs. Never put secrets in `BACKUP_SOURCE_ID`, target IDs, artifact names, or shell transcripts.
 - Test recovery using the same supported service images recorded in the manifest. Legacy backups and cross-version restore are unsupported; custom schema and extensions still need an installation-specific recovery drill.
-- Backups do not guarantee zero data loss, cross-store transactional consistency, a particular RPO/RTO, or recovery of Valkey queues/sessions.
+- Backups do not guarantee zero data loss, cross-store transactional consistency, a particular RPO/RTO, or recovery of Valkey queues and cache entries.
