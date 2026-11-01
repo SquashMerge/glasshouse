@@ -44,6 +44,19 @@ if [[ ! "$backup_id" =~ ^[A-Za-z0-9._-]+$ || ! "$pg_database" =~ ^[A-Za-z0-9_]+$
 	printf 'Backup ID and database names must use only safe ASCII identifier characters.\n' >&2
 	exit 1
 fi
+# Pin all clients and filesystem operations to the inspected containers.  A
+# clean libpq environment is essential: PGHOSTADDR overrides even --host.
+pg_client() {
+	PGPASSWORD="$pg_password" docker exec -i -e PGPASSWORD "$source_pg" sh -ec \
+		'exec env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin PGPASSWORD="$PGPASSWORD" "$@"' sh "$@"
+}
+# Adapter for the shared ClickHouse config helpers' compose exec interface.
+ch_pinned_exec() {
+	[[ "$1" == exec && "$2" == -T && "$3" == "$ch_service" ]] || return 1
+	shift 3
+	docker exec -i "$source_ch" "$@"
+}
+
 ch_remote="/var/lib/clickhouse/backup/glasshouse-${backup_id}-$$.zip"
 ch_client_config=""
 
@@ -59,27 +72,27 @@ mkdir "$staging"
 chmod 700 "$staging"
 cleanup() {
 	if [[ -n "$ch_client_config" ]]; then
-		remove_clickhouse_client_config "$ch_service" "$ch_client_config" "${compose[@]}"
+		remove_clickhouse_client_config "$ch_service" "$ch_client_config" ch_pinned_exec
 	fi
-	"${compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote" >/dev/null 2>&1 || true
+	docker exec -i "$source_ch" sh -ec 'rm -f -- "$1"' sh "$ch_remote" >/dev/null 2>&1 || true
 	rm -rf -- "$staging"
 }
 trap cleanup EXIT
-ch_client_config="$(create_clickhouse_client_config "$ch_service" "$ch_user" "$ch_password" "${compose[@]}")"
+ch_client_config="$(create_clickhouse_client_config "$ch_service" "$ch_user" "$ch_password" ch_pinned_exec)"
 
 printf 'Creating PostgreSQL backup...\n'
-PGPASSWORD="$pg_password" "${compose[@]}" exec -T -e PGPASSWORD "$pg_service" pg_dump --no-password --format=custom --no-owner --no-privileges --username="$pg_user" "$pg_database" > "$staging/postgres.dump"
+pg_client pg_dump --no-password --format=custom --no-owner --no-privileges --host=/var/run/postgresql --port=5432 --username="$pg_user" --dbname="$pg_database" > "$staging/postgres.dump"
 chmod 600 "$staging/postgres.dump"
 
 printf 'Creating ClickHouse backup...\n'
-"${compose[@]}" exec -T "$ch_service" sh -ec 'mkdir -p /var/lib/clickhouse/backup && rm -f -- "$1"' sh "$ch_remote"
-"${compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query "BACKUP DATABASE \`$ch_database\` TO File('$ch_remote')"
-"${compose[@]}" cp "$ch_service:$ch_remote" "$staging/clickhouse.zip"
-"${compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote"
+docker exec -i "$source_ch" sh -ec 'mkdir -p /var/lib/clickhouse/backup && rm -f -- "$1"' sh "$ch_remote"
+docker exec -i "$source_ch" clickhouse-client --host=127.0.0.1 --port=9000 --config-file "$ch_client_config" --database "$ch_database" --query "BACKUP DATABASE \`$ch_database\` TO File('$ch_remote')"
+docker cp "$source_ch:$ch_remote" "$staging/clickhouse.zip"
+docker exec -i "$source_ch" sh -ec 'rm -f -- "$1"' sh "$ch_remote"
 chmod 600 "$staging/clickhouse.zip"
 
-pg_version="$(PGPASSWORD="$pg_password" "${compose[@]}" exec -T -e PGPASSWORD "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT current_setting('server_version')" | tr -d '\r' | tr -d '[:space:]')"
-ch_version="$("${compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --query='SELECT version()' | tr -d '\r' | tr -d '[:space:]')"
+pg_version="$(pg_client psql --no-psqlrc --no-password --host=/var/run/postgresql --port=5432 --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT current_setting('server_version')" | tr -d '\r' | tr -d '[:space:]')"
+ch_version="$(docker exec -i "$source_ch" clickhouse-client --host=127.0.0.1 --port=9000 --config-file "$ch_client_config" --query='SELECT version()' | tr -d '\r' | tr -d '[:space:]')"
 
 (cd "$staging" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
 chmod 600 "$staging/SHA256SUMS"

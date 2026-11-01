@@ -66,6 +66,16 @@ jobs:
       - name: Run ${{ matrix.check }}
         run: ${{ matrix.command }}
 
+  backup-source-routing:
+    name: Backup source routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify source routing with real disposable databases
+        run: bash infra/scripts/test-backup-source-routing.sh
+
   backup-restore-integration:
     name: Backup/restore (current)
     runs-on: ubuntu-latest
