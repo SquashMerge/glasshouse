@@ -165,7 +165,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 		const observer = new IntersectionObserver(
 			(entries) => {
 				const first = entries[0];
-				if (first?.isIntersecting && hasNextPage && !isLoading) {
+				if (first?.isIntersecting && hasNextPage && !isLoading && !isError) {
 					onLoadMore();
 				}
 			},
@@ -173,7 +173,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 		);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [hasNextPage, isLoading, onLoadMore]);
+	}, [hasNextPage, isLoading, isError, onLoadMore]);
 
 	function setFilter(key: string, value: string) {
 		setFilters((prev) => ({ ...prev, [key]: value }));
@@ -186,9 +186,9 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 
 	return (
 		<Card>
-			<CardHeader className="flex-row items-center justify-between space-y-0">
+			<CardHeader className="flex-col items-start justify-between gap-3 space-y-0 sm:flex-row sm:items-center">
 				<CardTitle>{title}</CardTitle>
-				<div className="flex items-center gap-3">
+				<div className="flex flex-wrap items-center gap-3">
 					{headerActions}
 					{hasActiveFilters && (
 						<Button
@@ -290,7 +290,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 								);
 							})
 						)}
-						{hasNextPage && (
+						{hasNextPage && !isError && (
 							<TableRow ref={sentinelRef} className="hover:bg-transparent">
 								<TableCell
 									colSpan={totalColCount}

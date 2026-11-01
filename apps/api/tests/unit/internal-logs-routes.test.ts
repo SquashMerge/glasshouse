@@ -178,6 +178,20 @@ test("internal logs reject malformed queries before authorization or storage acc
 	expect(queries).toEqual([]);
 });
 
+test("rejects year zero time bounds before storage and accepts year one", async () => {
+	for (const field of ["time_from", "time_to"]) {
+		queries.length = 0;
+		const response = await app.request(
+			`/v1/admin/logs?${field}=0000-01-01T00:00:00Z`,
+		);
+		expect(response.status).toBe(400);
+		expect(queries).toEqual([]);
+	}
+	expect(
+		(await app.request("/v1/admin/logs?time_from=0001-01-01T00:00:00Z")).status,
+	).toBe(200);
+});
+
 test("internal logs report a disabled collector without querying stored records", async () => {
 	const previous = process.env.GLASSHOUSE_INTERNAL_LOGS_ENABLED;
 	process.env.GLASSHOUSE_INTERNAL_LOGS_ENABLED = "false";

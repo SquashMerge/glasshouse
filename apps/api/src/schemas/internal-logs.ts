@@ -3,6 +3,9 @@ import { ErrorEnvelope } from "./common.js";
 
 const InternalLogLevel = z.enum(["debug", "info", "warn", "error"]);
 const Timestamp = z.string().datetime({ offset: true });
+const QueryTimestamp = Timestamp.refine((value) => !value.startsWith("0000-"), {
+	message: "Year must be 0001 or later",
+});
 
 function laterThan(first: string, second: string): boolean {
 	const firstSecond = Math.floor(Date.parse(first) / 1000);
@@ -21,8 +24,8 @@ export const InternalLogQuery = z
 		level: InternalLogLevel.optional(),
 		source: z.string().trim().min(1).max(80).optional(),
 		q: z.string().trim().min(1).max(256).optional(),
-		time_from: Timestamp.optional(),
-		time_to: Timestamp.optional(),
+		time_from: QueryTimestamp.optional(),
+		time_to: QueryTimestamp.optional(),
 	})
 	.strict()
 	.superRefine((value, context) => {

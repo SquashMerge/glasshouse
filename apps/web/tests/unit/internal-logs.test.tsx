@@ -75,6 +75,110 @@ describe("InternalLogsPage", () => {
 		);
 	}
 
+	it("stacks the title and counter on narrow screens while retaining the desktop row", async () => {
+		renderPage();
+		const title = await screen.findByText("Operational logs");
+		const header = title.parentElement;
+		expect(header).toHaveClass("flex-col", "sm:flex-row");
+	});
+
+	it("does not automatically retry a failed next page while the sentinel is visible", async () => {
+		api.listInternalLogs.mockReset();
+		api.listInternalLogs.mockResolvedValueOnce({
+			items: [first],
+			total: 2,
+			next_cursor: "next",
+			sources: ["api"],
+			retention_days: 14,
+		});
+		api.listInternalLogs.mockRejectedValue(new Error("page offline"));
+		globalThis.IntersectionObserver = class {
+			callback: IntersectionObserverCallback;
+			constructor(callback: IntersectionObserverCallback) {
+				this.callback = callback;
+			}
+			active = true;
+			observe() {
+				setTimeout(() => {
+					if (this.active)
+						this.callback(
+							[{ isIntersecting: true } as IntersectionObserverEntry],
+							this as unknown as IntersectionObserver,
+						);
+				}, 0);
+			}
+			disconnect() {
+				this.active = false;
+			}
+			unobserve() {}
+		} as unknown as typeof IntersectionObserver;
+		renderPage();
+		expect(
+			await screen.findByText("Failed to load: page offline"),
+		).toBeVisible();
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 200));
+		});
+		expect(api.listInternalLogs).toHaveBeenCalledTimes(2);
+		api.listInternalLogs.mockResolvedValue({
+			items: [first],
+			total: 1,
+			sources: ["api"],
+			retention_days: 14,
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await waitFor(() =>
+			expect(
+				screen.queryByText("Failed to load: page offline"),
+			).not.toBeInTheDocument(),
+		);
+	});
+
+	it.each([
+		["Level", "warn", "level", "warn"],
+		["Source", "api", "source", "api"],
+		["Search", "needle", "q", "needle"],
+		["Time range", "Last 5 minutes", "time_from", expect.any(String)],
+	])(
+		"ignores an older response after changing %s",
+		async (label, value, key, expected) => {
+			let finishOld!: (value: unknown) => void;
+			api.listInternalLogs.mockReset();
+			api.listInternalLogs.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finishOld = resolve;
+					}),
+			);
+			api.listInternalLogs.mockResolvedValue({
+				items: [{ ...first, message: "Newest filter result" }],
+				total: 1,
+				sources: ["api"],
+				retention_days: 14,
+			});
+			renderPage();
+			const control = await screen.findByLabelText(label);
+			await waitFor(() =>
+				expect(api.listInternalLogs).toHaveBeenCalledTimes(1),
+			);
+			fireEvent.change(control, { target: { value } });
+			await screen.findByText("Newest filter result");
+			expect(api.listInternalLogs).toHaveBeenLastCalledWith(
+				expect.objectContaining({ [key]: expected, cursor: undefined }),
+			);
+			await act(async () => {
+				finishOld({
+					items: [first],
+					total: 1,
+					sources: ["api"],
+					retention_days: 14,
+				});
+			});
+			expect(screen.queryByText(first.message)).not.toBeInTheDocument();
+			expect(screen.getByText("Newest filter result")).toBeVisible();
+		},
+	);
+
 	it("appends keyset pages, exposes keyboard load more, and shows safe context", async () => {
 		renderPage();
 		expect(await screen.findByText("HTTP GET /v1/projects")).toBeVisible();
