@@ -16,6 +16,7 @@ WORKFLOWS = {
         'Security scan', 'ClickHouse schema', 'PostgreSQL migration upgrade',
         'e2e', 'Local first-run browser journey', 'Snapshot safety',
         'Image-only Compose integration', 'Backup source routing',
+        'Audit log PostgreSQL integration',
     }),
     'Dependency release age': ('.github/workflows/dependency-release-age.yml',
                                {'Verify newly locked package ages'}),

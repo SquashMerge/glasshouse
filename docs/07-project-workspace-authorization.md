@@ -1,6 +1,6 @@
 # Project workspace authorization contract
 
-**Implementation contract for [#51](https://github.com/dsarlo/astraea/issues/51) and [#98](https://github.com/dsarlo/astraea/issues/98)**
+**Implementation contract for [#51](https://github.com/dsarlo/astraea/issues/51), [#59](https://github.com/SquashMerge/glasshouse/issues/59), and [#98](https://github.com/dsarlo/astraea/issues/98)**
 
 ## Purpose
 
@@ -106,6 +106,71 @@ mode, preserving prior Basic Auth effective access; strict enforcement is enable
       attach request cancellation before subscribing. Overflow, timeout, write error,
       backpressure, or client cancellation drops queued frames and closes or declines
       the stream before a later frame can be emitted.
+
+## User audit log
+
+`GET /v1/audit-events` and the authenticated `/audit-log` page expose a
+read-only, newest-first view of existing, content-free user-action evidence.
+Admin, User, and Read-only actors may use it. The server derives the
+Organization and Actor from authentication on every request; it never accepts an
+Organization or Project selector from the browser. An event with a Project is
+returned only when the current Actor still has `audit_read` access to that
+Project. Organization-wide events (for example, local authentication and
+organization-role changes) are shared with every current durable Organization
+role. Events for permanently deleted Projects cannot be shown because there is
+no longer an authorized Project resource to inspect.
+
+The endpoint combines only retained PostgreSQL records from the following
+existing append-only ledgers: Project authorization and lifecycle, Dataset
+lifecycle, Evaluation and Evaluation Gate lifecycle, governance, Admin access,
+local authentication, prompt deletion, and user actions. The user-action ledger
+currently covers prompt creation, prompt version creation, and the first durable
+feedback record for an Actor/target. It presents the recorded timestamp,
+safe Actor label (or `Unavailable`), action, resource type/ID, and a recorded
+outcome when one exists. The inspectable detail is deliberately limited to the
+ledger source. It does not return credentials, cookie/session material, token or
+secret digests, raw prompt/Dataset/telemetry payloads, retention counts, request
+contents, correlation IDs, or arbitrary audit JSON.
+
+Coverage begins only when each respective ledger was introduced; the page does
+not invent missing historical events, names, outcomes, or resource content.
+Some actions have no outcome field and are displayed as unavailable. It is not
+an internal operational-log surface and does not promise a complete record of
+every historical platform operation.
+Subject-only historical records whose `actor:<UUID>` value matches both a local
+credential and a different Basic identity's canonical subject are displayed as
+`Unavailable`, rather than guessing which Actor performed the action. Records
+with a durable Actor ID do not have this ambiguity.
+
+All time, Actor, action, resource, outcome, and free-text filters run in the
+server-side visibility query over retained events, rather than over loaded
+browser rows. The first request selects one PostgreSQL MVCC snapshot ordered by
+`created_at`, event identifier, and source, all descending, preserving six-digit
+UTC timestamps and deterministic ties. A transaction not committed when that
+selection runs is excluded from the entire traversal, even if it commits before
+a later page. Start a fresh traversal to see later commits; this is not a promise
+that every transaction started before the first request will be included.
+
+A multi-page result stores a short-lived copy of the allowlisted audit projection
+in PostgreSQL; source audit ledgers are not changed. It is limited to 5,000
+matching events, 1 MiB of serialized result data, and 5,000 Projects per
+Organization. At most eight snapshots per Actor, 32 per Organization, and 128
+globally may be live. Capacity or lock/statement failures may prevent a request;
+narrow the filters or retry later. Expired entries are inaccessible after five
+minutes and physically cleaned on subsequent snapshot allocation. One-page
+results need no retained snapshot. These bounds can require multiple distinct
+filtered traversals for larger histories; the API does not silently truncate.
+
+The authenticated cursor binds the trusted Organization, Actor, canonical
+filters, and snapshot position; changing only `limit` is permitted. Repeated
+requests with the same cursor are retryable until expiry or invalidation. Each
+request rechecks current authority under session, membership and Project fences;
+role, local-credential and Project lifecycle changes invalidate affected
+snapshots, including after a subsequent regrant or restoration. An invalid,
+expired, cross-scope or changed-filter cursor returns 400; refresh to restart.
+Format changes also invalidate old cursors. The UI rekeys filter results through
+React Query, drops this authorization-sensitive cache after unmount, and
+debounces filter input so an old scoped response cannot replace a newer view.
 
 ## In scope
 

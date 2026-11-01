@@ -2624,6 +2624,56 @@ function buildQs(
 	return s ? `?${s}` : "";
 }
 
+export interface AuditEvent {
+	id: string;
+	source: string;
+	actor: string;
+	action: string;
+	resource_type: string;
+	resource_id: string | null;
+	outcome: string | null;
+	created_at: string;
+	details: { source: string };
+}
+
+export interface ListAuditEventsParams {
+	limit?: number;
+	cursor?: string;
+	from?: string;
+	to?: string;
+	actor?: string;
+	action?: string;
+	resource?: string;
+	outcome?: string;
+	search?: string;
+}
+
+export interface AuditEventListResponse {
+	items: AuditEvent[];
+	next_cursor?: string;
+}
+
+export async function listAuditEvents(
+	params: ListAuditEventsParams = {},
+): Promise<AuditEventListResponse> {
+	return responseJson(
+		await authedFetch(
+			`/v1/audit-events${buildQs({
+				limit: params.limit,
+				cursor: params.cursor,
+				from: params.from,
+				to: params.to,
+				actor: params.actor,
+				action: params.action,
+				resource: params.resource,
+				outcome: params.outcome,
+				search: params.search,
+			})}`,
+		),
+		"List audit events",
+	);
+}
+
 export interface ListTracesParams {
 	project_id: string;
 	limit?: number;

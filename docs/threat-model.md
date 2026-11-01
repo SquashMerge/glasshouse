@@ -100,6 +100,27 @@ Ordinary navigation within the protected workspace reuses the verified in-memory
 
 **Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence and governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. The Admin-only internal-log view stores only a tenant-derived API request-outcome allowlist: a static route group plus validated method, status, and duration. It excludes bodies, headers (including request IDs), query strings, user-selected path parameters, telemetry/prompt content, and host/Docker logs before queueing or persistence. Short-lived shared pagination snapshots store only ordered identifiers and sort keys, with bounded per-Actor, Organization and global quotas. Cursors bind Actor, Organization and filters; expired or invalidated snapshots fail closed. PostgreSQL invalidates an Actor's snapshots when their Admin role is removed, so regranting it does not revive old cursors. A current-Admin authorization fence and the resulting query share one transaction, so a completed Admin demotion cannot be followed by an admitted stale read. Each collection transaction holds a per-Organization advisory lock across its insert and bounded over-cap trim, preventing concurrent API replicas from accumulating an unbounded cap overflow. A transaction-lock-coordinated hourly cleanup deletes bounded expired batches across Organizations, while reads independently enforce the 14-day cutoff; downtime or a large backlog can delay physical deletion but cannot make expired rows readable through this endpoint. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [internal-log runbook](internal-logs.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
 
+The authenticated user audit-log route reads only an allowlisted projection of
+existing content-free PostgreSQL audit ledgers. Every query binds Organization
+scope to the trusted authenticated Actor; Project-bearing rows additionally
+evaluate current `audit_read` authorization in SQL, including filtering, search,
+and cursor traversal. Organization-wide records are visible only to current
+durable Organization roles. Prompt creation/version and feedback creation add
+only immutable Actor/Organization/Project/resource provenance; they retain no
+prompt, feedback, or telemetry payload. The projection excludes secrets,
+credential/session material, payloads, correlation IDs, arbitrary JSON, and
+internal diagnostics. A bounded, five-minute PostgreSQL snapshot holds the
+allowlisted projection selected in one MVCC statement, ordered by the exact
+microsecond timestamp and event/source tie-breakers. Later commits are excluded
+from that traversal. Authenticated cursors bind the trusted Organization,
+Actor, filters and position. Current authorization is rechecked under session,
+role and Project fences; credential, role and Project lifecycle changes
+invalidate affected snapshots. Snapshot quotas and row/byte limits fail closed
+rather than silently truncate. Snapshot copies add short-lived sensitive
+metadata in PostgreSQL, including Actor labels and resource identifiers; expired
+rows are physically removed by a later allocation. See the user audit-log
+section of the authorization contract for limits and restart behavior.
+
 **Residual:** redaction defaults off unless configured; redaction is not retroactive and cannot reliably identify every secret. Trace input/output, dataset examples, prompts, and model outputs may be sensitive. Internal logs are a bounded diagnostic aid, not a guarantee of complete event history: collection can be disabled or unavailable and the 14-day/50,000-row bound can evict entries. Evaluation/optimization can send configured input to a third-party LLM; treat that provider and configured endpoint as data recipients. Verify model/provider, endpoint, retention terms, and data approval before sending sensitive content. Prompt injection in a trace or dataset is untrusted content and can influence model output/score; never treat model output as authorization, code, or a trusted release decision. Review dataset curation, output handling, retention scope, and provider egress in every relevant change.
 
 ### E. Ingestion, expensive work, and availability abuse (medium/high impact)

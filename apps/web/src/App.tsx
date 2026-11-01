@@ -157,6 +157,14 @@ const feedbackRoute = createRoute({
 		"FeedbackPage",
 	),
 });
+const auditLogRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/audit-log",
+	component: lazyRouteComponent(
+		() => import("./routes/audit-log"),
+		"AuditLogPage",
+	),
+});
 const projectsRoute = createRoute({
 	getParentRoute: () => protectedRoute,
 	path: "/projects",
@@ -233,6 +241,7 @@ const router = createRouter({
 			evaluationDetailRoute,
 			evaluationRunDetailRoute,
 			feedbackRoute,
+			auditLogRoute,
 			projectsRoute,
 			governanceRoute,
 			instanceRecoveryRoute,

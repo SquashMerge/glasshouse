@@ -18,6 +18,7 @@ import {
 	LuShieldCheck,
 	LuUsers,
 	LuKeyRound,
+	LuClipboardList,
 	LuScrollText,
 	LuArchive,
 } from "react-icons/lu";
@@ -111,6 +112,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 		isActive("/access") ||
 		isActive("/logs") ||
 		isActive("/projects") ||
+		isActive("/audit-log") ||
 		isActive("/instance-recovery") ||
 		isActive("/ingestion-credentials");
 
@@ -361,6 +363,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 								/>
 							)}
 							<SidebarLink
+								to="/audit-log"
+								label="Audit log"
+								icon={<LuClipboardList className="h-4 w-4" />}
+								active={isActive("/audit-log")}
+								collapsed={collapsed}
+							/>
+							<SidebarLink
 								to="/projects"
 								label="Projects"
 								icon={<LuFolderKanban className="h-4 w-4" />}
@@ -604,6 +613,7 @@ function SidebarLink({
 		| "/datasets"
 		| "/evaluations"
 		| "/feedback"
+		| "/audit-log"
 		| "/governance"
 		| "/access"
 		| "/logs"

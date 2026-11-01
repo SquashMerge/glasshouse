@@ -218,6 +218,7 @@ describe("AppShell project selector", () => {
 			"Access",
 			"Logs",
 			"Ingestion credentials",
+			"Audit log",
 			"Projects",
 			"Instance recovery",
 		]);
@@ -226,6 +227,7 @@ describe("AppShell project selector", () => {
 			"/access",
 			"/logs",
 			"/ingestion-credentials",
+			"/audit-log",
 			"/projects",
 			"/instance-recovery",
 		]);
@@ -233,7 +235,7 @@ describe("AppShell project selector", () => {
 		const icons = settingsLinks.map(
 			(link) => link.querySelector("svg")?.innerHTML,
 		);
-		expect(new Set(icons).size).toBe(6);
+		expect(new Set(icons).size).toBe(7);
 	});
 
 	it("marks Settings active on Logs", () => {

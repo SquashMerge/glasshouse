@@ -319,6 +319,7 @@ describe("prompt repository", () => {
 					],
 				},
 				{ rows: [] },
+				{ rows: [] },
 			],
 		);
 
@@ -372,6 +373,13 @@ describe("prompt repository", () => {
 		]);
 		expect(pool.client.calls[6]?.values?.[8]).toBe("support-agent");
 		expect(pool.client.calls[6]?.values?.[9]).toBe(PROJECT);
+		expect(pool.client.calls[7]?.values).toEqual([
+			authorization.organization_id,
+			PROJECT,
+			authorization.actor_id,
+			expect.any(String),
+			1,
+		]);
 		expect(pool.client.calls.map((call) => call.text)).toEqual([
 			"BEGIN",
 			expect.stringContaining("authorization_allows_project"),
@@ -380,6 +388,7 @@ describe("prompt repository", () => {
 			expect.stringContaining("FROM prompts"),
 			expect.stringContaining("INSERT INTO prompts"),
 			expect.stringContaining("INSERT INTO prompt_versions"),
+			expect.stringContaining("INSERT INTO user_action_audit_events"),
 			"COMMIT",
 		]);
 	});
@@ -422,6 +431,7 @@ describe("prompt repository", () => {
 					],
 				},
 				{ rows: [] },
+				{ rows: [] },
 			],
 		);
 
@@ -439,6 +449,9 @@ describe("prompt repository", () => {
 		expect(pool.client.calls[6]?.values).toEqual([PROJECT, "support-agent-2"]);
 		expect(pool.client.calls[7]?.values).toEqual([PROJECT, "support-agent-3"]);
 		expect(pool.client.calls[9]?.values?.[3]).toBe("support-agent-3");
+		expect(pool.client.calls[11]?.text).toContain(
+			"INSERT INTO user_action_audit_events",
+		);
 
 		const longName = "a".repeat(64);
 		const longPool = new MockPool(
@@ -475,6 +488,7 @@ describe("prompt repository", () => {
 						},
 					],
 				},
+				{ rows: [] },
 				{ rows: [] },
 			],
 		);
@@ -544,6 +558,7 @@ describe("prompt repository", () => {
 					],
 				},
 				{ rows: [] },
+				{ rows: [] },
 			],
 		);
 
@@ -567,6 +582,13 @@ describe("prompt repository", () => {
 			"gpt-test",
 			'{"temperature":0.4}',
 			'[{"role":"user","content":"new source"}]',
+		]);
+		expect(inheritancePool.client.calls[6]?.values).toEqual([
+			authorization.organization_id,
+			PROJECT,
+			authorization.actor_id,
+			"internal-prompt-id",
+			3,
 		]);
 
 		const stalePool = new MockPool(
@@ -628,6 +650,7 @@ describe("prompt repository", () => {
 					],
 				},
 				{ rows: [] },
+				{ rows: [] },
 			],
 		);
 		const cleared = await createPromptVersion(
@@ -650,6 +673,9 @@ describe("prompt repository", () => {
 			null,
 			"{}",
 		]);
+		expect(replacementPool.client.calls[6]?.text).toContain(
+			"INSERT INTO user_action_audit_events",
+		);
 
 		const invalidSettingsPool = new MockPool();
 		await expectError(

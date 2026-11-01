@@ -35,6 +35,7 @@ class AdmissionTests(unittest.TestCase):
             'Security scan', 'ClickHouse schema', 'PostgreSQL migration upgrade',
             'e2e', 'Local first-run browser journey', 'Snapshot safety',
             'Image-only Compose integration', 'Backup source routing',
+            'Audit log PostgreSQL integration',
         }
         runs, jobs = fixture()
         template = jobs[(101, 1)][0]
@@ -63,6 +64,25 @@ class AdmissionTests(unittest.TestCase):
         self.assertIn('test_snapshot*.py', ci)
         self.assertIn('name: Backup source routing', ci)
         self.assertIn('test-backup-source-routing.sh', ci)
+
+    def test_audit_postgresql_job_is_required_and_must_succeed(self):
+        ci = Path('.github/workflows/ci.yml').read_text()
+        job = ci.split('  audit-log-integration:', 1)[1].split('\n  image-compose-integration:', 1)[0]
+        self.assertIn('name: Audit log PostgreSQL integration', job)
+        self.assertIn('test-audit-log-integration.sh', job)
+        for change in ('missing', 'failed'):
+            with self.subTest(change=change):
+                runs, jobs = fixture()
+                entries = jobs[(101, 1)]
+                audit = next(job for job in entries if job['name'] == 'Audit log PostgreSQL integration')
+                if change == 'missing':
+                    entries.remove(audit)
+                else:
+                    audit['conclusion'] = 'failure'
+                result = assess([SHA], runs, jobs)[0]
+                self.assertEqual(result['state'], 'blocked')
+                self.assertIn('CI:job-set-mismatch' if change == 'missing'
+                              else 'CI:job-not-successful-or-mismatched', result['reasons'])
 
     def test_image_only_compose_job_is_required_for_admission(self):
         self.assertIn("Image-only Compose integration", WORKFLOWS["CI"][1])

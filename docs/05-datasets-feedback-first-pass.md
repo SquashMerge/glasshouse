@@ -162,7 +162,7 @@ Create/update a repository design document (for example `docs/06-dataset-feedbac
 
 ### Feedback flywheel maturity
 
-- Ownership/assignment, multi-reviewer approval, and a feedback-specific content-free audit ledger.
+- Ownership/assignment and multi-reviewer approval.
 - Dataset candidates versus active cases, explicit curator promotion, feedback-to-version lineage, and automated “protected by run” display.
 - PII/secret detection/redaction workflows, retention/deletion controls, evidence snapshots, and policy approvals.
 - Exact/semantic dedupe, feedback clusters, priority models, similarity search, notification/alerting, and cross-run failure analysis.

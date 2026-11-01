@@ -2689,6 +2689,66 @@ components:
           required:
             - bytesValue
           type: object
+    AuditEvent:
+      additionalProperties: false
+      properties:
+        action:
+          minLength: 1
+          type: string
+        actor:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        details:
+          additionalProperties: false
+          properties:
+            source:
+              minLength: 1
+              type: string
+          required:
+            - source
+          type: object
+        id:
+          minLength: 1
+          type: string
+        outcome:
+          type:
+            - string
+            - 'null'
+        resource_id:
+          type:
+            - string
+            - 'null'
+        resource_type:
+          minLength: 1
+          type: string
+        source:
+          minLength: 1
+          type: string
+      required:
+        - id
+        - source
+        - actor
+        - action
+        - resource_type
+        - resource_id
+        - outcome
+        - created_at
+        - details
+      type: object
+    AuditEventList:
+      additionalProperties: false
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
     BenchmarkRanking:
       additionalProperties: false
       properties:
@@ -9398,6 +9458,107 @@ paths:
         - basicAuth: []
       tags:
         - administration
+  /v1/audit-events:
+    get:
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 100
+            minimum: 1
+            type: integer
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            minLength: 1
+            type: string
+        - in: query
+          name: from
+          required: false
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: to
+          required: false
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: actor
+          required: false
+          schema:
+            maxLength: 200
+            minLength: 1
+            type: string
+        - in: query
+          name: action
+          required: false
+          schema:
+            maxLength: 200
+            minLength: 1
+            type: string
+        - in: query
+          name: resource
+          required: false
+          schema:
+            maxLength: 200
+            minLength: 1
+            type: string
+        - in: query
+          name: outcome
+          required: false
+          schema:
+            maxLength: 200
+            minLength: 1
+            type: string
+        - in: query
+          name: search
+          required: false
+          schema:
+            maxLength: 200
+            minLength: 1
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventList'
+          description: OK
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Authentication required
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Snapshot capacity exceeded
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      tags:
+        - audit
   /v1/auth/invitations/accept:
     post:
       requestBody:

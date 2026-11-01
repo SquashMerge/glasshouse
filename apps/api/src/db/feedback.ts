@@ -190,6 +190,17 @@ export async function createFeedback(
 			`INSERT INTO feedback_idempotency (project_id,idempotency_key,request_hash,score_id) VALUES ($1,$2,$3,$4)`,
 			[input.project_id, input.idempotency_key, hash, id],
 		);
+		await client.query(
+			`INSERT INTO user_action_audit_events (
+				organization_id, project_id, actor_id, action, feedback_score_id
+			) VALUES ($1, $2, $3, 'feedback_created', $4)`,
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				input.authorization.actor_id,
+				id,
+			],
+		);
 		const result = await client.query(`${SELECT} WHERE s.id=$1`, [id]);
 		await client.query("COMMIT");
 		return present(result.rows[0]!);
