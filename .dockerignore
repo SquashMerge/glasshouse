@@ -50,6 +50,8 @@
 # Checkout metadata, local tools, dependencies and generated artifacts.
 **/.git
 .github
+# Publisher tooling and scanner fixtures are not application build inputs.
+scripts/
 .devcontainer
 .opencode
 **/.idea
