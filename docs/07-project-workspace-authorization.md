@@ -148,9 +148,10 @@ browser rows. Results use a bounded, opaque keyset cursor ordered by
 `created_at`, event identifier, and source, all descending. The cursor carries
 the exact six-digit UTC PostgreSQL timestamp string, rather than a JavaScript
 `Date`, so its boundary does not lose microseconds. This deterministic
-tie-breaker prevents page-boundary duplicates or omissions for equal timestamps
-and concurrent inserts; inserts newer than an already-issued boundary appear on
-a later fresh traversal. The UI rekeys filter results through React Query, drops
+tie-breaker preserves the page boundary for equal timestamps. A traversal is not
+a frozen snapshot: a transaction committing after page one with an older sort
+key can appear on a later page; inserts newer than the issued boundary appear on
+a fresh traversal. The UI rekeys filter results through React Query, drops
 this authorization-sensitive cache after it unmounts, and debounces filter input
 so an old scoped response cannot replace a newer filter view.
 
