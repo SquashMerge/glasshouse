@@ -281,6 +281,33 @@ test("feedback API enforces Actor uniqueness across session requests", async () 
 			[f.projectId, trace],
 		);
 		expect(count.rows[0].count).toBe(1);
+		const audit = await pool.query(
+			"SELECT organization_id, project_id, actor_id, feedback_score_id, action FROM user_action_audit_events WHERE project_id=$1 AND feedback_score_id=$2",
+			[f.projectId, records[0].id],
+		);
+		expect(audit.rows).toEqual([
+			{
+				organization_id: f.id,
+				project_id: f.projectId,
+				actor_id: f.principal.actorId,
+				feedback_score_id: records[0].id,
+				action: "feedback_created",
+			},
+		]);
+		const history = await f.api.request("/v1/audit-events?limit=100", {
+			headers: { cookie: first.cookie },
+		});
+		expect(history.status).toBe(200);
+		expect(
+			(
+				(await history.json()) as {
+					items: Array<{ action: string; source: string }>;
+				}
+			).items.some(
+				(event) =>
+					event.action === "feedback_created" && event.source === "user_action",
+			),
+		).toBe(true);
 		const invalid = await f.api.request("/v1/feedback", {
 			method: "POST",
 			headers: { ...first.headers, "idempotency-key": randomUUID() },

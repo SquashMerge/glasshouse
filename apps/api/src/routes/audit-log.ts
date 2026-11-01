@@ -24,7 +24,23 @@ export const auditLogRoute = createRoute({
 	},
 });
 
-type Cursor = { created_at: string; id: string; source: string };
+type AuditFilters = {
+	from: string | null;
+	to: string | null;
+	actor: string | null;
+	action: string | null;
+	resource: string | null;
+	outcome: string | null;
+	search: string | null;
+};
+type Cursor = {
+	created_at: string;
+	id: string;
+	source: string;
+	organization_id: string;
+	actor_id: string;
+	filters: AuditFilters;
+};
 type AuditRow = {
 	id: string;
 	source: string;
@@ -36,35 +52,97 @@ type AuditRow = {
 	created_at: string;
 };
 
+function isUuid(value: unknown): value is string {
+	return (
+		typeof value === "string" &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+			value,
+		)
+	);
+}
+
+function cursorFilters(value: unknown): AuditFilters | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		return undefined;
+	const filters = value as Record<string, unknown>;
+	const keys = [
+		"from",
+		"to",
+		"actor",
+		"action",
+		"resource",
+		"outcome",
+		"search",
+	] as const;
+	if (Object.keys(filters).length !== keys.length) return undefined;
+	for (const key of keys) {
+		const filter = filters[key];
+		if (filter !== null && (typeof filter !== "string" || filter.length > 200))
+			return undefined;
+	}
+	return filters as AuditFilters;
+}
+
 function decodeCursor(value: string | undefined): Cursor | undefined {
 	if (!value) return undefined;
 	try {
 		const decoded = JSON.parse(
 			Buffer.from(value, "base64url").toString("utf8"),
 		) as Partial<Cursor>;
+		const filters = cursorFilters(decoded.filters);
 		if (
 			typeof decoded.created_at !== "string" ||
 			Number.isNaN(Date.parse(decoded.created_at)) ||
 			typeof decoded.id !== "string" ||
 			decoded.id.length === 0 ||
 			typeof decoded.source !== "string" ||
-			decoded.source.length === 0
+			decoded.source.length === 0 ||
+			!isUuid(decoded.organization_id) ||
+			!isUuid(decoded.actor_id) ||
+			!filters
 		)
 			return undefined;
-		return decoded as Cursor;
+		return { ...(decoded as Cursor), filters };
 	} catch {
 		return undefined;
 	}
 }
 
-function encodeCursor(row: AuditRow): string {
+function encodeCursor(
+	row: AuditRow,
+	tenant: { organizationId: string; actorId: string },
+	filters: AuditFilters,
+): string {
 	return Buffer.from(
 		JSON.stringify({
 			created_at: row.created_at,
 			id: row.id,
 			source: row.source,
+			organization_id: tenant.organizationId,
+			actor_id: tenant.actorId,
+			filters,
 		}),
 	).toString("base64url");
+}
+
+function canonicalFilters(input: {
+	from?: string;
+	to?: string;
+	actor?: string;
+	action?: string;
+	resource?: string;
+	outcome?: string;
+	search?: string;
+}): AuditFilters {
+	return {
+		from: input.from ?? null,
+		to: input.to ?? null,
+		actor: input.actor ?? null,
+		action: input.action ?? null,
+		resource: input.resource ?? null,
+		outcome: input.outcome ?? null,
+		search: input.search ?? null,
+	};
 }
 
 const auditEventsSql = `
@@ -113,6 +191,11 @@ WITH audit_events AS (
     'deleted', 'prompt', e.prompt_id::text, 'success', e.deleted_at
   FROM prompt_deletion_audit e
   JOIN projects p ON p.id = e.project_id
+  UNION ALL
+  SELECT e.id::text, 'user_action', e.organization_id, e.project_id, NULL::text, e.actor_id,
+    e.action, CASE WHEN e.prompt_id IS NULL THEN 'feedback' ELSE 'prompt' END,
+    COALESCE(e.prompt_id, e.feedback_score_id)::text, NULL::text, e.created_at
+  FROM user_action_audit_events e
 ), visible_events AS (
   SELECT e.event_id, e.source,
     COALESCE(e.actor_subject, credential.username, identity.canonical_subject, 'Unavailable') AS actor,
@@ -171,16 +254,27 @@ export async function handleListAuditEvents(c: Context) {
 		);
 	try {
 		const tenant = trustedTenant(c);
+		const filters = canonicalFilters(input);
+		if (
+			cursor &&
+			(cursor.organization_id !== tenant.organizationId ||
+				cursor.actor_id !== tenant.actorId ||
+				JSON.stringify(cursor.filters) !== JSON.stringify(filters))
+		)
+			return c.json(
+				{ code: "BAD_REQUEST", message: "Request validation failed" },
+				400,
+			);
 		const rows = await pgPool().query<AuditRow>(auditEventsSql, [
 			tenant.organizationId,
 			tenant.actorId,
-			input.from ?? null,
-			input.to ?? null,
-			input.actor ?? null,
-			input.action ?? null,
-			input.resource ?? null,
-			input.outcome ?? null,
-			input.search ?? null,
+			filters.from,
+			filters.to,
+			filters.actor,
+			filters.action,
+			filters.resource,
+			filters.outcome,
+			filters.search,
 			cursor?.created_at ?? null,
 			cursor?.id ?? null,
 			cursor?.source ?? null,
@@ -196,7 +290,7 @@ export async function handleListAuditEvents(c: Context) {
 				details: { source: row.source },
 			})),
 			...(rows.rows.length > input.limit && last
-				? { next_cursor: encodeCursor(last) }
+				? { next_cursor: encodeCursor(last, tenant, filters) }
 				: {}),
 		});
 	} catch (cause) {

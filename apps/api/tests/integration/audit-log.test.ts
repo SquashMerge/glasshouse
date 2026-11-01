@@ -82,7 +82,10 @@ async function createOrganization(name: string) {
 	const store = new LocalCredentialStore(pool, organizationId);
 	const setupSecret = secret();
 	const password = secret();
-	const adminUsername = `${name.toLowerCase()}.admin`;
+	const adminUsername = `admin-${organizationId.replaceAll("-", "").slice(0, 16)}`;
+	const useOrganization = () => {
+		process.env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID = organizationId;
+	};
 	await provisionLocalBootstrap(pool, organizationId, setupSecret);
 	const admin = await store.bootstrap({
 		username: adminUsername,
@@ -90,13 +93,14 @@ async function createOrganization(name: string) {
 		token: setupSecret,
 	});
 	expect(await store.verify(adminUsername, password)).not.toBeNull();
-	process.env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID = organizationId;
+	useOrganization();
 	const api = createApiApp({
 		pgPool: () => pool,
 		authenticationPool: () => authenticationPool,
 	});
-	const publicRequest = (path: string, body: unknown) =>
-		api.request(path, {
+	const publicRequest = (path: string, body: unknown) => {
+		useOrganization();
+		return api.request(path, {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -104,8 +108,9 @@ async function createOrganization(name: string) {
 			},
 			body: JSON.stringify(body),
 		});
+	};
 	const login = async (username: string, loginPassword: string) => {
-		process.env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID = organizationId;
+		useOrganization();
 		const response = await publicRequest("/v1/auth/login", {
 			username,
 			password: loginPassword,
@@ -126,14 +131,16 @@ async function createOrganization(name: string) {
 		method = "GET",
 		body?: unknown,
 		headers: Headers = adminHeaders,
-	) =>
-		api.request(path, {
+	) => {
+		useOrganization();
+		return api.request(path, {
 			method,
 			headers,
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});
+	};
 	const provision = async (username: string, role: "user" | "read_only") => {
-		process.env.GLASSHOUSE_DEFAULT_ORGANIZATION_ID = organizationId;
+		useOrganization();
 		const response = await request("/v1/admin/local-accounts", "POST", {
 			username,
 			role,
@@ -273,6 +280,27 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 		),
 	).toEqual([ids[0]]);
 
+	for (const request of [
+		() =>
+			primary.request(
+				`/v1/audit-events?limit=2&action=project_created&resource=project&cursor=${encodeURIComponent(firstPage.next_cursor)}`,
+			),
+		() =>
+			primary.request(
+				`/v1/audit-events?limit=2&action=project_updated&resource=project&cursor=${encodeURIComponent(firstPage.next_cursor)}`,
+				"GET",
+				undefined,
+				user.headers,
+			),
+		() =>
+			foreign.request(
+				`/v1/audit-events?limit=2&action=project_updated&resource=project&cursor=${encodeURIComponent(firstPage.next_cursor)}`,
+			),
+	]) {
+		const replay = await request();
+		expect(replay.status).toBe(400);
+	}
+
 	const fresh = await primary.api.request(
 		"/v1/audit-events?limit=2&action=project_updated&resource=project",
 		{ headers: primary.adminHeaders },
@@ -291,4 +319,71 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 	expect((await combined.json()) as { items: unknown[] }).toEqual({
 		items: [],
 	});
+}, 30000);
+
+test("prompt creation and versioning create visible, content-free user action events", async () => {
+	const organization = await createOrganization("Prompt actions");
+	const secretPrompt = "do not retain this prompt content";
+	const created = await organization.request("/v1/prompts", "POST", {
+		project_id: organization.projectId,
+		name: "Support response",
+		messages: [{ role: "system", content: secretPrompt }],
+	});
+	expect(created.status).toBe(201);
+	const prompt = (await created.json()) as { id: string; version: number };
+	const version = await organization.request(
+		`/v1/prompts/${prompt.id}/versions?project_id=${organization.projectId}`,
+		"POST",
+		{
+			base_version: prompt.version,
+			messages: [{ role: "system", content: "a revised prompt" }],
+			change_summary: "Revise response",
+		},
+	);
+	expect(version.status).toBe(201);
+
+	const stored = await pool.query<{
+		action: string;
+		organization_id: string;
+		project_id: string;
+		actor_id: string;
+		prompt_id: string;
+		prompt_version: number;
+	}>(
+		`SELECT action, organization_id, project_id, actor_id, prompt_id, prompt_version
+		 FROM user_action_audit_events
+		 WHERE project_id = $1
+		 ORDER BY prompt_version`,
+		[organization.projectId],
+	);
+	expect(stored.rows).toEqual([
+		{
+			action: "prompt_created",
+			organization_id: organization.organizationId,
+			project_id: organization.projectId,
+			actor_id: organization.admin.actorId,
+			prompt_id: expect.any(String),
+			prompt_version: 1,
+		},
+		{
+			action: "prompt_version_created",
+			organization_id: organization.organizationId,
+			project_id: organization.projectId,
+			actor_id: organization.admin.actorId,
+			prompt_id: expect.any(String),
+			prompt_version: 2,
+		},
+	]);
+	const history = await organization.request("/v1/audit-events?limit=100");
+	expect(history.status).toBe(200);
+	const historyBody = (await history.json()) as {
+		items: Array<{ action: string; source: string }>;
+	};
+	expect(
+		historyBody.items
+			.filter((event) => event.source === "user_action")
+			.map((event) => event.action)
+			.sort(),
+	).toEqual(["prompt_created", "prompt_version_created"]);
+	expect(JSON.stringify(historyBody)).not.toContain(secretPrompt);
 }, 30000);

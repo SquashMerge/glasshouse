@@ -123,7 +123,9 @@ no longer an authorized Project resource to inspect.
 The endpoint combines only retained PostgreSQL records from the following
 existing append-only ledgers: Project authorization and lifecycle, Dataset
 lifecycle, Evaluation and Evaluation Gate lifecycle, governance, Admin access,
-local authentication, and prompt deletion. It presents the recorded timestamp,
+local authentication, prompt deletion, and user actions. The user-action ledger
+currently covers prompt creation, prompt version creation, and the first durable
+feedback record for an Actor/target. It presents the recorded timestamp,
 safe Actor label (or `Unavailable`), action, resource type/ID, and a recorded
 outcome when one exists. The inspectable detail is deliberately limited to the
 ledger source. It does not return credentials, cookie/session material, token or
@@ -147,6 +149,10 @@ and concurrent inserts; inserts newer than an already-issued boundary appear on
 a later fresh traversal. The UI rekeys filter results through React Query, drops
 this authorization-sensitive cache after it unmounts, and debounces filter input
 so an old scoped response cannot replace a newer filter view.
+
+Each cursor also binds the trusted Organization and Actor plus every canonical
+filter. Reusing it after switching account or Organization, or changing a
+filter, is rejected; changing only `limit` remains a valid continuation.
 
 ## In scope
 

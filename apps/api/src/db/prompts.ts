@@ -756,6 +756,19 @@ export async function createPrompt(
 			changeSummary,
 			actor,
 		});
+		await query(
+			client,
+			`INSERT INTO user_action_audit_events (
+				organization_id, project_id, actor_id, action, prompt_id, prompt_version
+			) VALUES ($1, $2, $3, 'prompt_created', $4, $5)`,
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				input.authorization.actor_id,
+				promptId,
+				version.version,
+			],
+		);
 		return {
 			...version,
 			project_id: stringValue(promptRow, "project_id"),
@@ -902,7 +915,7 @@ export async function createPromptVersion(
 		const settings =
 			providedSettings ??
 			serializedSettings(jsonObjectValue(latest, "settings"));
-		return insertVersion(client, {
+		const version = await insertVersion(client, {
 			promptId: stringValue(prompt, "id"),
 			projectId: input.project_id,
 			slug: stringValue(prompt, "slug"),
@@ -913,6 +926,20 @@ export async function createPromptVersion(
 			changeSummary,
 			actor,
 		});
+		await query(
+			client,
+			`INSERT INTO user_action_audit_events (
+				organization_id, project_id, actor_id, action, prompt_id, prompt_version
+			) VALUES ($1, $2, $3, 'prompt_version_created', $4, $5)`,
+			[
+				input.authorization.organization_id,
+				input.project_id,
+				input.authorization.actor_id,
+				stringValue(prompt, "id"),
+				version.version,
+			],
+		);
+		return version;
 	});
 }
 

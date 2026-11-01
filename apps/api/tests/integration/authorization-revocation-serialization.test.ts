@@ -241,7 +241,10 @@ async function deleteScenarioActor(pool: Pool, actorId: string) {
 	await pool.query("DELETE FROM actor_identities WHERE actor_id = $1", [
 		actorId,
 	]);
-	await pool.query("DELETE FROM actors WHERE id = $1", [actorId]);
+	await pool.query(
+		"DELETE FROM actors WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM user_action_audit_events WHERE actor_id = $1)",
+		[actorId],
+	);
 }
 
 async function seedExecutionExperiment(pool: Pool) {

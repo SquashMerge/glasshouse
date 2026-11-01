@@ -101,11 +101,15 @@ existing content-free PostgreSQL audit ledgers. Every query binds Organization
 scope to the trusted authenticated Actor; Project-bearing rows additionally
 evaluate current `audit_read` authorization in SQL, including filtering, search,
 and cursor traversal. Organization-wide records are visible only to current
-durable Organization roles. The projection excludes secrets, credential/session
-material, payloads, correlation IDs, arbitrary JSON, and internal diagnostics.
-Keyset pagination retains the exact UTC PostgreSQL timestamp string plus
-event/source tie-breakers so tied microseconds and concurrent inserts do not
-change an existing page boundary.
+durable Organization roles. Prompt creation/version and feedback creation add
+only immutable Actor/Organization/Project/resource provenance; they retain no
+prompt, feedback, or telemetry payload. The projection excludes secrets,
+credential/session material, payloads, correlation IDs, arbitrary JSON, and
+internal diagnostics. Keyset pagination retains the exact UTC PostgreSQL
+timestamp string plus event/source tie-breakers so tied microseconds and
+concurrent inserts do not change an existing page boundary. Its cursor binds
+the trusted Organization and Actor plus every canonical filter, rejecting
+cross-scope or changed-filter replay.
 
 **Residual:** redaction defaults off unless configured; redaction is not retroactive and cannot reliably identify every secret. Trace input/output, dataset examples, prompts, and model outputs may be sensitive. Evaluation/optimization can send configured input to a third-party LLM; treat that provider and configured endpoint as data recipients. Verify model/provider, endpoint, retention terms, and data approval before sending sensitive content. Prompt injection in a trace or dataset is untrusted content and can influence model output/score; never treat model output as authorization, code, or a trusted release decision. Review dataset curation, output handling, retention scope, and provider egress in every relevant change.
 
