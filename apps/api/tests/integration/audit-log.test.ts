@@ -258,6 +258,20 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 		JSON.parse(Buffer.from(firstPage.next_cursor, "base64url").toString("utf8"))
 			.created_at,
 	).toBe(timestamp);
+	const invalidDateCursor = JSON.parse(
+		Buffer.from(firstPage.next_cursor, "base64url").toString("utf8"),
+	);
+	for (const value of [
+		"2026-02-30T00:00:00.000000Z",
+		"0000-01-01T00:00:00.000000Z",
+		"2026-11-01T12:00:00Z",
+	]) {
+		invalidDateCursor.created_at = value;
+		const invalidDate = await primary.request(
+			`/v1/audit-events?limit=2&action=project_updated&resource=project&cursor=${Buffer.from(JSON.stringify(invalidDateCursor)).toString("base64url")}`,
+		);
+		expect(invalidDate.status).toBe(400);
+	}
 
 	await pool.query(
 		"INSERT INTO project_authorization_audit_events(id, organization_id, project_id, actor_subject, event_type, created_at) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'project_updated', $5::timestamptz)",

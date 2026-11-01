@@ -61,6 +61,20 @@ function isUuid(value: unknown): value is string {
 	);
 }
 
+function isCursorTimestamp(value: unknown): value is string {
+	if (
+		typeof value !== "string" ||
+		!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value) ||
+		value.startsWith("0000-")
+	)
+		return false;
+	const date = new Date(value);
+	return (
+		!Number.isNaN(date.valueOf()) &&
+		date.toISOString().slice(0, 19) === value.slice(0, 19)
+	);
+}
+
 function cursorFilters(value: unknown): AuditFilters | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value))
 		return undefined;
@@ -91,8 +105,7 @@ function decodeCursor(value: string | undefined): Cursor | undefined {
 		) as Partial<Cursor>;
 		const filters = cursorFilters(decoded.filters);
 		if (
-			typeof decoded.created_at !== "string" ||
-			Number.isNaN(Date.parse(decoded.created_at)) ||
+			!isCursorTimestamp(decoded.created_at) ||
 			typeof decoded.id !== "string" ||
 			decoded.id.length === 0 ||
 			typeof decoded.source !== "string" ||
