@@ -1,6 +1,6 @@
 # Project workspace authorization contract
 
-**Implementation contract for [#51](https://github.com/dsarlo/astraea/issues/51) and [#98](https://github.com/dsarlo/astraea/issues/98)**
+**Implementation contract for [#51](https://github.com/dsarlo/astraea/issues/51), [#59](https://github.com/SquashMerge/glasshouse/issues/59), and [#98](https://github.com/dsarlo/astraea/issues/98)**
 
 ## Purpose
 
@@ -106,6 +106,47 @@ mode, preserving prior Basic Auth effective access; strict enforcement is enable
       attach request cancellation before subscribing. Overflow, timeout, write error,
       backpressure, or client cancellation drops queued frames and closes or declines
       the stream before a later frame can be emitted.
+
+## User audit log
+
+`GET /v1/audit-events` and the authenticated `/audit-log` page expose a
+read-only, newest-first view of existing, content-free user-action evidence.
+Admin, User, and Read-only actors may use it. The server derives the
+Organization and Actor from authentication on every request; it never accepts an
+Organization or Project selector from the browser. An event with a Project is
+returned only when the current Actor still has `audit_read` access to that
+Project. Organization-wide events (for example, local authentication and
+organization-role changes) are shared with every current durable Organization
+role. Events for permanently deleted Projects cannot be shown because there is
+no longer an authorized Project resource to inspect.
+
+The endpoint combines only retained PostgreSQL records from the following
+existing append-only ledgers: Project authorization and lifecycle, Dataset
+lifecycle, Evaluation and Evaluation Gate lifecycle, governance, Admin access,
+local authentication, and prompt deletion. It presents the recorded timestamp,
+safe Actor label (or `Unavailable`), action, resource type/ID, and a recorded
+outcome when one exists. The inspectable detail is deliberately limited to the
+ledger source. It does not return credentials, cookie/session material, token or
+secret digests, raw prompt/Dataset/telemetry payloads, retention counts, request
+contents, correlation IDs, or arbitrary audit JSON.
+
+Coverage begins only when each respective ledger was introduced; the page does
+not invent missing historical events, names, outcomes, or resource content.
+Some actions have no outcome field and are displayed as unavailable. It is not
+an internal operational-log surface and does not promise a complete record of
+every historical platform operation.
+
+All time, Actor, action, resource, outcome, and free-text filters run in the
+same server-side visibility query over retained events, rather than over loaded
+browser rows. Results use a bounded, opaque keyset cursor ordered by
+`created_at`, event identifier, and source, all descending. The cursor carries
+the exact six-digit UTC PostgreSQL timestamp string, rather than a JavaScript
+`Date`, so its boundary does not lose microseconds. This deterministic
+tie-breaker prevents page-boundary duplicates or omissions for equal timestamps
+and concurrent inserts; inserts newer than an already-issued boundary appear on
+a later fresh traversal. The UI rekeys filter results through React Query, drops
+this authorization-sensitive cache after it unmounts, and debounces filter input
+so an old scoped response cannot replace a newer filter view.
 
 ## In scope
 

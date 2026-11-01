@@ -228,6 +228,10 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		c.header("Cache-Control", "no-store");
 		await next();
 	});
+	apiApp.use("/v1/audit-events", async (c, next) => {
+		c.header("Cache-Control", "no-store");
+		await next();
+	});
 	apiApp.use(
 		"*",
 		resolvedDependencies.authenticate(
@@ -242,6 +246,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				c.req.path.startsWith("/v1/auth/") ||
 				PUBLIC_API_ROUTES.has(`${c.req.method} ${c.req.path}`) ||
 				c.req.path === "/v1/otel/v1/traces" ||
+				c.req.path === "/v1/audit-events" ||
 				c.req.path.startsWith("/v1/projects") ||
 				c.req.path.startsWith("/v1/admin/") ||
 				c.req.path.startsWith("/v1/organization/")

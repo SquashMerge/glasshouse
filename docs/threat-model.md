@@ -96,6 +96,17 @@ Ordinary navigation within the protected workspace reuses the verified in-memory
 
 **Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence and governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
 
+The authenticated user audit-log route reads only an allowlisted projection of
+existing content-free PostgreSQL audit ledgers. Every query binds Organization
+scope to the trusted authenticated Actor; Project-bearing rows additionally
+evaluate current `audit_read` authorization in SQL, including filtering, search,
+and cursor traversal. Organization-wide records are visible only to current
+durable Organization roles. The projection excludes secrets, credential/session
+material, payloads, correlation IDs, arbitrary JSON, and internal diagnostics.
+Keyset pagination retains the exact UTC PostgreSQL timestamp string plus
+event/source tie-breakers so tied microseconds and concurrent inserts do not
+change an existing page boundary.
+
 **Residual:** redaction defaults off unless configured; redaction is not retroactive and cannot reliably identify every secret. Trace input/output, dataset examples, prompts, and model outputs may be sensitive. Evaluation/optimization can send configured input to a third-party LLM; treat that provider and configured endpoint as data recipients. Verify model/provider, endpoint, retention terms, and data approval before sending sensitive content. Prompt injection in a trace or dataset is untrusted content and can influence model output/score; never treat model output as authorization, code, or a trusted release decision. Review dataset curation, output handling, retention scope, and provider egress in every relevant change.
 
 ### E. Ingestion, expensive work, and availability abuse (medium/high impact)

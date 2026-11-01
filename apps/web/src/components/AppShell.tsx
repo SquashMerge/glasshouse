@@ -18,6 +18,7 @@ import {
 	LuShieldCheck,
 	LuUsers,
 	LuKeyRound,
+	LuClipboardList,
 } from "react-icons/lu";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -108,6 +109,7 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 		isActive("/governance") ||
 		isActive("/access") ||
 		isActive("/projects") ||
+		isActive("/audit-log") ||
 		isActive("/ingestion-credentials");
 
 	return (
@@ -348,6 +350,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 								/>
 							)}
 							<SidebarLink
+								to="/audit-log"
+								label="Audit log"
+								icon={<LuClipboardList className="h-4 w-4" />}
+								active={isActive("/audit-log")}
+								collapsed={collapsed}
+							/>
+							<SidebarLink
 								to="/projects"
 								label="Projects"
 								icon={<LuFolderKanban className="h-4 w-4" />}
@@ -584,6 +593,7 @@ function SidebarLink({
 		| "/datasets"
 		| "/evaluations"
 		| "/feedback"
+		| "/audit-log"
 		| "/governance"
 		| "/access"
 		| "/projects"

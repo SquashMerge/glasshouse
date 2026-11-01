@@ -196,6 +196,11 @@ make test
 make test-api-integration
 # Runs API integration tests after deps-up plus PostgreSQL and ClickHouse migrations are ready.
 
+bash infra/scripts/test-audit-log-integration.sh
+# Starts a uniquely named PostgreSQL 18.6-alpine container on a private Docker
+# network with a dynamic loopback port, no mounts/volumes or shared services,
+# runs the audit-log integration regression, then removes only those resources.
+
 make test-e2e
 # Runs Playwright after deps-up, dev-backend, and dev-frontend are running.
 ```
