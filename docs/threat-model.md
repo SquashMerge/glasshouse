@@ -109,12 +109,17 @@ durable Organization roles. Prompt creation/version and feedback creation add
 only immutable Actor/Organization/Project/resource provenance; they retain no
 prompt, feedback, or telemetry payload. The projection excludes secrets,
 credential/session material, payloads, correlation IDs, arbitrary JSON, and
-internal diagnostics. Keyset pagination retains the exact UTC PostgreSQL
-timestamp string plus event/source tie-breakers to maintain an exact page
-boundary for tied microseconds. It does not freeze a snapshot: a transaction
-committing later with an older sort key may appear on a subsequent page. Its cursor binds
-the trusted Organization and Actor plus every canonical filter, rejecting
-cross-scope or changed-filter replay.
+internal diagnostics. A bounded, five-minute PostgreSQL snapshot holds the
+allowlisted projection selected in one MVCC statement, ordered by the exact
+microsecond timestamp and event/source tie-breakers. Later commits are excluded
+from that traversal. Authenticated cursors bind the trusted Organization,
+Actor, filters and position. Current authorization is rechecked under session,
+role and Project fences; credential, role and Project lifecycle changes
+invalidate affected snapshots. Snapshot quotas and row/byte limits fail closed
+rather than silently truncate. Snapshot copies add short-lived sensitive
+metadata in PostgreSQL, including Actor labels and resource identifiers; expired
+rows are physically removed by a later allocation. See the user audit-log
+section of the authorization contract for limits and restart behavior.
 
 **Residual:** redaction defaults off unless configured; redaction is not retroactive and cannot reliably identify every secret. Trace input/output, dataset examples, prompts, and model outputs may be sensitive. Internal logs are a bounded diagnostic aid, not a guarantee of complete event history: collection can be disabled or unavailable and the 14-day/50,000-row bound can evict entries. Evaluation/optimization can send configured input to a third-party LLM; treat that provider and configured endpoint as data recipients. Verify model/provider, endpoint, retention terms, and data approval before sending sensitive content. Prompt injection in a trace or dataset is untrusted content and can influence model output/score; never treat model output as authorization, code, or a trusted release decision. Review dataset curation, output handling, retention scope, and provider egress in every relevant change.
 

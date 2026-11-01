@@ -143,25 +143,34 @@ credential and a different Basic identity's canonical subject are displayed as
 with a durable Actor ID do not have this ambiguity.
 
 All time, Actor, action, resource, outcome, and free-text filters run in the
-same server-side visibility query over retained events, rather than over loaded
-browser rows. Results use a bounded, opaque keyset cursor ordered by
-`created_at`, event identifier, and source, all descending. The cursor carries
-the exact six-digit UTC PostgreSQL timestamp string, rather than a JavaScript
-`Date`, so its boundary does not lose microseconds. This deterministic
-tie-breaker preserves the page boundary for equal timestamps. A traversal is not
-a frozen snapshot: a transaction committing after page one with an older sort
-key can appear on a later page; inserts newer than the issued boundary appear on
-a fresh traversal. The UI rekeys filter results through React Query, drops
-this authorization-sensitive cache after it unmounts, and debounces filter input
-so an old scoped response cannot replace a newer filter view.
+server-side visibility query over retained events, rather than over loaded
+browser rows. The first request selects one PostgreSQL MVCC snapshot ordered by
+`created_at`, event identifier, and source, all descending, preserving six-digit
+UTC timestamps and deterministic ties. A transaction not committed when that
+selection runs is excluded from the entire traversal, even if it commits before
+a later page. Start a fresh traversal to see later commits; this is not a promise
+that every transaction started before the first request will be included.
 
-Each cursor also binds the trusted Organization and Actor plus every canonical
-filter. Reusing it after switching account or Organization, or changing a
-filter, is rejected; changing only `limit` remains a valid continuation. The
-filter binding is a fixed-size digest. Cursors are not authenticated tokens and
-must not be treated as authorization; every page independently rechecks current
-visibility. Changing the cursor format invalidates previously issued cursors;
-restart the traversal if that happens.
+A multi-page result stores a short-lived copy of the allowlisted audit projection
+in PostgreSQL; source audit ledgers are not changed. It is limited to 5,000
+matching events, 1 MiB of serialized result data, and 5,000 Projects per
+Organization. At most eight snapshots per Actor, 32 per Organization, and 128
+globally may be live. Capacity or lock/statement failures may prevent a request;
+narrow the filters or retry later. Expired entries are inaccessible after five
+minutes and physically cleaned on subsequent snapshot allocation. One-page
+results need no retained snapshot. These bounds can require multiple distinct
+filtered traversals for larger histories; the API does not silently truncate.
+
+The authenticated cursor binds the trusted Organization, Actor, canonical
+filters, and snapshot position; changing only `limit` is permitted. Repeated
+requests with the same cursor are retryable until expiry or invalidation. Each
+request rechecks current authority under session, membership and Project fences;
+role, local-credential and Project lifecycle changes invalidate affected
+snapshots, including after a subsequent regrant or restoration. An invalid,
+expired, cross-scope or changed-filter cursor returns 400; refresh to restart.
+Format changes also invalidate old cursors. The UI rekeys filter results through
+React Query, drops this authorization-sensitive cache after unmount, and
+debounces filter input so an old scoped response cannot replace a newer view.
 
 ## In scope
 

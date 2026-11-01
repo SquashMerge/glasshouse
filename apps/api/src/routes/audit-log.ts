@@ -1,5 +1,18 @@
 import { createRoute } from "@hono/zod-openapi";
-import { createHash } from "node:crypto";
+import {
+	createHash,
+	createHmac,
+	randomBytes,
+	randomUUID,
+	timingSafeEqual,
+} from "node:crypto";
+import type { PoolClient } from "pg";
+import {
+	lockLocalActor,
+	lockSessionPrincipal,
+	AuthenticationError,
+} from "../db/local-sessions.js";
+import { withLockPhaseTransaction } from "../db/project-authorization.js";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import { logger } from "../lib/logger.js";
@@ -34,14 +47,7 @@ type AuditFilters = {
 	outcome: string | null;
 	search: string | null;
 };
-type Cursor = {
-	created_at: string;
-	id: string;
-	source: string;
-	organization_id: string;
-	actor_id: string;
-	filters: string;
-};
+type Cursor = { id: string; offset: number; signature: string };
 type AuditRow = {
 	id: string;
 	source: string;
@@ -53,28 +59,8 @@ type AuditRow = {
 	created_at: string;
 };
 
-function isUuid(value: unknown): value is string {
-	return (
-		typeof value === "string" &&
-		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-			value,
-		)
-	);
-}
-
-function isCursorTimestamp(value: unknown): value is string {
-	if (
-		typeof value !== "string" ||
-		!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value) ||
-		value.startsWith("0000-")
-	)
-		return false;
-	const date = new Date(value);
-	return (
-		!Number.isNaN(date.valueOf()) &&
-		date.toISOString().slice(0, 19) === value.slice(0, 19)
-	);
-}
+const MAX_ROWS = 5000;
+const MAX_BYTES = 2 * 1024 * 1024;
 
 function filterDigest(filters: AuditFilters): string {
 	return createHash("sha256").update(JSON.stringify(filters)).digest("hex");
@@ -82,43 +68,20 @@ function filterDigest(filters: AuditFilters): string {
 
 function decodeCursor(value: string | undefined): Cursor | undefined {
 	if (!value) return undefined;
-	try {
-		const decoded = JSON.parse(
-			Buffer.from(value, "base64url").toString("utf8"),
-		) as Partial<Cursor>;
-		if (
-			!isCursorTimestamp(decoded.created_at) ||
-			typeof decoded.id !== "string" ||
-			decoded.id.length === 0 ||
-			typeof decoded.source !== "string" ||
-			decoded.source.length === 0 ||
-			!isUuid(decoded.organization_id) ||
-			!isUuid(decoded.actor_id) ||
-			typeof decoded.filters !== "string" ||
-			!/^[0-9a-f]{64}$/.test(decoded.filters)
-		)
-			return undefined;
-		return decoded as Cursor;
-	} catch {
-		return undefined;
-	}
+	const match =
+		/^v1\.([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.([1-9][0-9]{0,3})\.([A-Za-z0-9_-]{43})$/.exec(
+			value,
+		);
+	if (!match || Number(match[2]) >= MAX_ROWS) return undefined;
+	return { id: match[1]!, offset: Number(match[2]), signature: match[3]! };
 }
-
-function encodeCursor(
-	row: AuditRow,
-	tenant: { organizationId: string; actorId: string },
-	filters: AuditFilters,
-): string {
-	return Buffer.from(
-		JSON.stringify({
-			created_at: row.created_at,
-			id: row.id,
-			source: row.source,
-			organization_id: tenant.organizationId,
-			actor_id: tenant.actorId,
-			filters: filterDigest(filters),
-		}),
-	).toString("base64url");
+function signature(id: string, offset: number, key: Buffer): string {
+	return createHmac("sha256", key)
+		.update(`${id}.${offset}`)
+		.digest("base64url");
+}
+function encodeCursor(id: string, offset: number, key: Buffer): string {
+	return `v1.${id}.${offset}.${signature(id, offset, key)}`;
 }
 
 function canonicalFilters(input: {
@@ -193,7 +156,7 @@ WITH audit_events AS (
     COALESCE(e.prompt_id, e.feedback_score_id)::text, NULL::text, e.created_at
   FROM user_action_audit_events e
 ), visible_events AS (
-  SELECT e.event_id, e.source,
+  SELECT e.event_id, e.source, e.project_id,
     CASE WHEN e.actor_id IS NULL AND credential.actor_id IS NOT NULL AND EXISTS (
       SELECT 1 FROM actor_identities basic_identity
       WHERE basic_identity.organization_id = e.organization_id
@@ -218,7 +181,7 @@ WITH audit_events AS (
         SELECT 1 FROM organization_actor_roles role
         WHERE role.organization_id = $1 AND role.actor_id = $2
       ))
-      OR (e.project_id IS NOT NULL AND authorization_allows_project($1, e.project_id, $2, 'audit_read'))
+      OR (e.project_id IS NOT NULL AND e.project_id = ANY($10::uuid[]) AND authorization_allows_project($1, e.project_id, $2, 'audit_read'))
     )
 ), filtered_events AS (
   SELECT * FROM visible_events e
@@ -230,12 +193,11 @@ WITH audit_events AS (
     AND ($8::text IS NULL OR COALESCE(e.outcome, '') ILIKE '%' || $8 || '%')
     AND ($9::text IS NULL OR concat_ws(' ', e.actor, e.action, e.resource_type, e.resource_id, e.outcome) ILIKE '%' || $9 || '%')
 )
-SELECT e.event_id AS id, e.source, e.actor, e.action, e.resource_type, e.resource_id, e.outcome,
+SELECT e.event_id AS id, e.source, e.project_id, e.actor, e.action, e.resource_type, e.resource_id, e.outcome,
   to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
 FROM filtered_events e
-WHERE ($10::timestamptz IS NULL OR (e.created_at, e.event_id, e.source) < ($10::timestamptz, $11::text, $12::text))
 ORDER BY e.created_at DESC, e.event_id DESC, e.source DESC
-LIMIT $13`;
+LIMIT 5001`;
 
 export async function handleListAuditEvents(c: Context) {
 	c.header("Cache-Control", "no-store");
@@ -259,17 +221,126 @@ export async function handleListAuditEvents(c: Context) {
 	try {
 		const tenant = trustedTenant(c);
 		const filters = canonicalFilters(input);
-		if (
-			cursor &&
-			(cursor.organization_id !== tenant.organizationId ||
-				cursor.actor_id !== tenant.actorId ||
-				cursor.filters !== filterDigest(filters))
-		)
+		let projectIds: string[] = [];
+		const result = await withLockPhaseTransaction(
+			pgPool(),
+			async (client) => {
+				await client.query(
+					"SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '15s'",
+				);
+				if (tenant.sessionId)
+					await lockSessionPrincipal(client, {
+						...tenant,
+						sessionId: tenant.sessionId,
+					});
+				else if (
+					!(await lockLocalActor(client, tenant.organizationId, tenant.actorId))
+				)
+					throw new AuthenticationError();
+				await client.query(
+					"SELECT actor_subject FROM organization_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $2) FOR SHARE",
+					[tenant.organizationId, tenant.actorId],
+				);
+				const role = await client.query(
+					"SELECT actor_id FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2 FOR SHARE",
+					[tenant.organizationId, tenant.actorId],
+				);
+				if (!role.rowCount) throw new AuthenticationError();
+				await client.query(
+					"SELECT project_id FROM project_memberships WHERE organization_id = $1 AND basic_auth_identity_matches($1, actor_subject, $2) ORDER BY project_id, actor_subject FOR SHARE",
+					[tenant.organizationId, tenant.actorId],
+				);
+				await client.query(
+					"SELECT project_id FROM project_actor_grants WHERE organization_id = $1 AND actor_id = $2 ORDER BY project_id FOR SHARE",
+					[tenant.organizationId, tenant.actorId],
+				);
+				const projects = await client.query<{ id: string }>(
+					"SELECT id FROM projects WHERE organization_id = $1 ORDER BY id LIMIT 5001 FOR SHARE",
+					[tenant.organizationId],
+				);
+				if (projects.rows.length > MAX_ROWS) throw new AuditCapacityError();
+				projectIds = projects.rows.map((project) => project.id);
+			},
+			async (client) =>
+				listSnapshot(client, tenant, filters, input.limit, cursor, projectIds),
+		);
+		return c.json(result);
+	} catch (cause) {
+		if (cause instanceof AuditSnapshotError)
 			return c.json(
-				{ code: "BAD_REQUEST", message: "Request validation failed" },
+				{
+					code: "BAD_REQUEST",
+					message: "Audit results expired or changed. Refresh to restart.",
+				},
 				400,
 			);
-		const rows = await pgPool().query<AuditRow>(auditEventsSql, [
+		if (cause instanceof AuthenticationError)
+			return c.json(
+				{ code: "UNAUTHORIZED", message: "Authentication required" },
+				401,
+			);
+		if (cause instanceof AuditCapacityError)
+			return c.json(
+				{
+					code: "SERVICE_UNAVAILABLE",
+					message:
+						"Audit snapshot capacity reached. Narrow your filters or try again later.",
+				},
+				503,
+			);
+		logger.error("audit_log.list_failed", cause);
+		return c.json(
+			{ code: "INTERNAL", message: "Audit events could not be loaded" },
+			500,
+		);
+	}
+}
+
+class AuditSnapshotError extends Error {}
+class AuditCapacityError extends Error {}
+
+type SnapshotRow = AuditRow & { project_id: string | null };
+async function listSnapshot(
+	client: PoolClient,
+	tenant: { organizationId: string; actorId: string },
+	filters: AuditFilters,
+	limit: number,
+	cursor: Cursor | undefined,
+	projectIds: string[],
+) {
+	let entries: SnapshotRow[];
+	let id: string;
+	let key: Buffer;
+	let offset = 0;
+	if (cursor) {
+		const found = await client.query<{
+			entries: SnapshotRow[];
+			signing_key: Buffer;
+			authorized: boolean;
+		}>(
+			`SELECT entries, signing_key,
+			NOT EXISTS (SELECT 1 FROM jsonb_array_elements(entries) e WHERE e->>'project_id' IS NOT NULL AND NOT authorization_allows_project($2, (e->>'project_id')::uuid, $3, 'audit_read')) AS authorized
+			FROM audit_log_snapshots WHERE id = $1 AND organization_id = $2 AND actor_id = $3 AND filter_hash = $4 AND expires_at > clock_timestamp()`,
+			[cursor.id, tenant.organizationId, tenant.actorId, filterDigest(filters)],
+		);
+		const snap = found.rows[0];
+		if (!snap || !snap.authorized || cursor.offset >= snap.entries.length)
+			throw new AuditSnapshotError();
+		const expected = Buffer.from(
+			signature(cursor.id, cursor.offset, snap.signing_key),
+		);
+		const received = Buffer.from(cursor.signature);
+		if (
+			expected.length !== received.length ||
+			!timingSafeEqual(expected, received)
+		)
+			throw new AuditSnapshotError();
+		entries = snap.entries;
+		key = snap.signing_key;
+		id = cursor.id;
+		offset = cursor.offset;
+	} else {
+		const rows = await client.query<SnapshotRow>(auditEventsSql, [
 			tenant.organizationId,
 			tenant.actorId,
 			filters.from,
@@ -279,29 +350,64 @@ export async function handleListAuditEvents(c: Context) {
 			filters.resource,
 			filters.outcome,
 			filters.search,
-			cursor?.created_at ?? null,
-			cursor?.id ?? null,
-			cursor?.source ?? null,
-			input.limit + 1,
+			projectIds,
 		]);
-		const page = rows.rows.slice(0, input.limit);
-		const last = page.at(-1);
-		return c.json({
-			items: page.map((row) => ({
-				...row,
-				actor: row.actor ?? "Unavailable",
-				created_at: row.created_at,
-				details: { source: row.source },
-			})),
-			...(rows.rows.length > input.limit && last
-				? { next_cursor: encodeCursor(last, tenant, filters) }
-				: {}),
-		});
-	} catch (cause) {
-		logger.error("audit_log.list_failed", cause);
-		return c.json(
-			{ code: "INTERNAL", message: "Audit events could not be loaded" },
-			500,
+		// A Project created while the authorization locks were acquired was not
+		// locked and must not be silently omitted from the admitted snapshot.
+		const added = await client.query(
+			"SELECT 1 FROM projects WHERE organization_id = $1 AND id <> ALL($2::uuid[]) LIMIT 1",
+			[tenant.organizationId, projectIds],
 		);
+		if (added.rowCount) throw new AuditCapacityError();
+		entries = rows.rows;
+		if (
+			entries.length > MAX_ROWS ||
+			Buffer.byteLength(JSON.stringify(entries)) > MAX_BYTES / 2
+		)
+			throw new AuditCapacityError();
+		id = randomUUID();
+		key = randomBytes(32);
+		if (entries.length > limit) {
+			await client.query(
+				"SELECT pg_advisory_xact_lock(hashtext('glasshouse.audit_log_snapshots'))",
+			);
+			await client.query(
+				"DELETE FROM audit_log_snapshots WHERE expires_at <= clock_timestamp()",
+			);
+			const quota = await client.query<{
+				total: number;
+				org: number;
+				actor: number;
+			}>(
+				`SELECT count(*)::int AS total, count(*) FILTER (WHERE organization_id = $1)::int AS org, count(*) FILTER (WHERE organization_id = $1 AND actor_id = $2)::int AS actor FROM audit_log_snapshots`,
+				[tenant.organizationId, tenant.actorId],
+			);
+			const counts = quota.rows[0]!;
+			if (counts.total >= 128 || counts.org >= 32 || counts.actor >= 8)
+				throw new AuditCapacityError();
+			await client.query(
+				"INSERT INTO audit_log_snapshots(id, organization_id, actor_id, filter_hash, signing_key, entries, expires_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, clock_timestamp() + interval '5 minutes')",
+				[
+					id,
+					tenant.organizationId,
+					tenant.actorId,
+					filterDigest(filters),
+					key,
+					JSON.stringify(entries),
+				],
+			);
+		}
 	}
+	const page = entries.slice(offset, offset + limit);
+	const next = offset + page.length;
+	return {
+		items: page.map(({ project_id: _projectId, ...row }) => ({
+			...row,
+			actor: row.actor ?? "Unavailable",
+			details: { source: row.source },
+		})),
+		...(next < entries.length
+			? { next_cursor: encodeCursor(id, next, key) }
+			: {}),
+	};
 }

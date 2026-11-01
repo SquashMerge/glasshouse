@@ -3,54 +3,58 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 
 const organizationId = "00000000-0000-4000-8000-000000000001";
 const actorId = "11111111-1111-4111-8111-111111111111";
-const eventId = "22222222-2222-4222-822222222222";
+const eventId = "22222222-2222-4222-8222-222222222222";
+const projectId = "33333333-3333-4333-8333-333333333333";
 const createdAt = "2026-11-01T12:00:00.123456Z";
-
+const statements: Array<{ sql: string; values?: unknown[] }> = [];
+let snapshot: { entries: unknown[]; signing_key: Buffer } | undefined;
+const rows = [eventId, "22222222-2222-4222-8222-222222222223"].map((id) => ({
+	id,
+	source: "project_authorization",
+	project_id: projectId,
+	actor: "alice",
+	action: "project_updated",
+	resource_type: "project",
+	resource_id: projectId,
+	outcome: null,
+	created_at: createdAt,
+}));
+const query = mock(async (sql: string, values?: unknown[]) => {
+	statements.push({ sql, values });
+	if (sql.includes("SELECT actor_id FROM organization_actor_roles"))
+		return { rows: [{ actor_id: actorId }], rowCount: 1 };
+	if (sql.includes("SELECT id FROM projects WHERE"))
+		return { rows: [{ id: projectId }], rowCount: 1 };
+	if (sql.includes("WITH audit_events AS"))
+		return { rows, rowCount: rows.length };
+	if (sql.includes("count(*)::int AS total"))
+		return { rows: [{ total: 0, org: 0, actor: 0 }], rowCount: 1 };
+	if (sql.startsWith("INSERT INTO audit_log_snapshots")) {
+		snapshot = {
+			signing_key: values![4] as Buffer,
+			entries: JSON.parse(values![5] as string),
+		};
+	}
+	if (sql.includes("FROM audit_log_snapshots WHERE id = $1"))
+		return {
+			rows: snapshot ? [{ ...snapshot, authorized: true }] : [],
+			rowCount: snapshot ? 1 : 0,
+		};
+	return { rows: [], rowCount: 0 };
+});
 const postgres = await import("../../src/db/postgres.js");
 const { TRUSTED_TENANT_CONTEXT_KEY } = await import(
 	"../../src/middleware/auth.js"
 );
-const query = mock(async () => ({ rows: [] }));
 mock.module("../../src/db/postgres.js", () => ({
 	...postgres,
-	pgPool: () => ({ query }),
+	pgPool: () => ({ connect: async () => ({ query, release: () => {} }) }),
 }));
 const { auditLogRoute, handleListAuditEvents } = await import(
 	"../../src/routes/audit-log.js"
 );
-
-test("lists only audit-safe, cursor-paged events for every authorized role", async () => {
-	let statement = "";
-	let parameters: unknown[] = [];
-	query.mockImplementation(async (sql: string, values: unknown[]) => {
-		statement = sql;
-		parameters = values;
-		return {
-			rows: [
-				{
-					id: eventId,
-					source: "project_authorization",
-					actor: "alice",
-					action: "project_updated",
-					resource_type: "project",
-					resource_id: "33333333-3333-4333-8333-333333333333",
-					outcome: null,
-					created_at: createdAt,
-				},
-				{
-					id: "22222222-2222-4222-8222-222222222223",
-					source: "project_authorization",
-					actor: "alice",
-					action: "project_created",
-					resource_type: "project",
-					resource_id: "33333333-3333-4333-8333-333333333333",
-					outcome: null,
-					created_at: createdAt,
-				},
-			],
-		};
-	});
-	const app = new OpenAPIHono({
+function app() {
+	const instance = new OpenAPIHono({
 		defaultHook: (result, c) =>
 			result.success
 				? undefined
@@ -59,7 +63,7 @@ test("lists only audit-safe, cursor-paged events for every authorized role", asy
 						400,
 					),
 	});
-	app.use("/v1/*", async (c, next) => {
+	instance.use("/v1/*", async (c, next) => {
 		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
 			actor: "reader",
 			actorId,
@@ -67,70 +71,48 @@ test("lists only audit-safe, cursor-paged events for every authorized role", asy
 		});
 		await next();
 	});
-	app.openapi(auditLogRoute, handleListAuditEvents);
+	instance.openapi(auditLogRoute, handleListAuditEvents);
+	return instance;
+}
 
-	try {
-		const response = await app.request(
-			"http://localhost/v1/audit-events?limit=1&actor=alice&action=project_updated&resource=project&outcome=success&search=alice",
-		);
-		const body = await response.json();
-		expect(query).toHaveBeenCalled();
-		expect(response.status).toBe(200);
-		expect(statement).toContain("authorization_allows_project");
-		expect(statement).toContain("'audit_read'");
-		expect(statement).toContain(
-			"e.created_at DESC, e.event_id DESC, e.source DESC",
-		);
-		expect(statement).toContain("ILIKE");
-		expect(statement).not.toContain("token");
-		expect(parameters).toContain(organizationId);
-		expect(body).toEqual({
-			items: [
-				{
-					id: eventId,
-					source: "project_authorization",
-					actor: "alice",
-					action: "project_updated",
-					resource_type: "project",
-					resource_id: "33333333-3333-4333-8333-333333333333",
-					outcome: null,
-					created_at: createdAt,
-					details: { source: "project_authorization" },
-				},
-			],
-			next_cursor: expect.any(String),
-		});
-		expect(
-			JSON.parse(Buffer.from(body.next_cursor, "base64url").toString("utf8"))
-				.created_at,
-		).toBe(createdAt);
-	} finally {
-		query.mockReset();
-	}
+test("lists audit-safe entries using scoped projection and snapshot cursor", async () => {
+	statements.length = 0;
+	snapshot = undefined;
+	const response = await app().request(
+		"http://localhost/v1/audit-events?limit=1&actor=alice&action=project_updated&resource=project&outcome=success&search=alice",
+	);
+	expect(response.status).toBe(200);
+	const body = await response.json();
+	const projection = statements.find((statement) =>
+		statement.sql.includes("WITH audit_events AS"),
+	)!;
+	expect(projection.sql).toContain("authorization_allows_project");
+	expect(projection.sql).toContain("'audit_read'");
+	expect(projection.sql).toContain(
+		"e.created_at DESC, e.event_id DESC, e.source DESC",
+	);
+	expect(projection.sql).toContain("ILIKE");
+	expect(projection.values).toContain(organizationId);
+	expect(projection.values).toContainEqual([projectId]);
+	expect(body.items).toEqual([
+		{
+			id: eventId,
+			source: "project_authorization",
+			actor: "alice",
+			action: "project_updated",
+			resource_type: "project",
+			resource_id: projectId,
+			outcome: null,
+			created_at: createdAt,
+			details: { source: "project_authorization" },
+		},
+	]);
+	expect(body.next_cursor).toMatch(/^v1\./);
 });
 
 test("continuation accepts its own cursor with maximum-length Unicode filters", async () => {
-	const row = {
-		id: eventId,
-		source: "project_authorization",
-		actor: "alice",
-		action: "project_updated",
-		resource_type: "project",
-		resource_id: null,
-		outcome: null,
-		created_at: createdAt,
-	};
-	query.mockImplementation(async () => ({ rows: [row, row] }));
-	const app = new OpenAPIHono();
-	app.use("/v1/*", async (c, next) => {
-		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
-			actor: "reader",
-			actorId,
-			organizationId,
-		});
-		await next();
-	});
-	app.openapi(auditLogRoute, handleListAuditEvents);
+	snapshot = undefined;
+	const application = app();
 	const params = new URLSearchParams({
 		limit: "1",
 		actor: "界".repeat(200),
@@ -139,41 +121,23 @@ test("continuation accepts its own cursor with maximum-length Unicode filters", 
 		outcome: "界".repeat(200),
 		search: "界".repeat(200),
 	});
-	try {
-		const first = await app.request(
-			`http://localhost/v1/audit-events?${params}`,
-		);
-		expect(first.status).toBe(200);
-		const body = await first.json();
-		expect(body.next_cursor).toBeDefined();
-		params.set("cursor", body.next_cursor);
-		expect(
-			(await app.request(`http://localhost/v1/audit-events?${params}`)).status,
-		).toBe(200);
-	} finally {
-		query.mockReset();
-	}
+	const first = await application.request(
+		`http://localhost/v1/audit-events?${params}`,
+	);
+	expect(first.status).toBe(200);
+	params.set("cursor", (await first.json()).next_cursor);
+	const second = await application.request(
+		`http://localhost/v1/audit-events?${params}`,
+	);
+	expect(second.status).toBe(200);
+	expect((await second.json()).items[0].id).toBe(rows[1]!.id);
 });
 
 test("rejects malformed cursors before querying", async () => {
-	query.mockImplementation(async () => ({ rows: [] }));
-	const app = new OpenAPIHono();
-	app.use("/v1/*", async (c, next) => {
-		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
-			actor: "reader",
-			actorId,
-			organizationId,
-		});
-		await next();
-	});
-	app.openapi(auditLogRoute, handleListAuditEvents);
-	try {
-		const response = await app.request(
-			"http://localhost/v1/audit-events?cursor=not-a-cursor",
-		);
-		expect(response.status).toBe(400);
-		expect(query).not.toHaveBeenCalled();
-	} finally {
-		query.mockReset();
-	}
+	query.mockClear();
+	const response = await app().request(
+		"http://localhost/v1/audit-events?cursor=not-a-cursor",
+	);
+	expect(response.status).toBe(400);
+	expect(query).not.toHaveBeenCalled();
 });

@@ -9548,6 +9548,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Internal error
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Snapshot capacity exceeded
       security:
         - sessionCookie: []
         - basicAuth: []

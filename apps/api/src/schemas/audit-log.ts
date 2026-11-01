@@ -66,6 +66,10 @@ export const AuditLogErrorResponses = {
 		description: "Authentication required",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
+	503: {
+		description: "Snapshot capacity exceeded",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
 	500: {
 		description: "Internal error",
 		content: { "application/json": { schema: ErrorEnvelope } },

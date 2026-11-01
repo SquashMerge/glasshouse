@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import { runner } from "node-pg-migrate";
 import { Pool } from "pg";
 import {
 	LocalCredentialStore,
@@ -254,23 +257,16 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 		timestamp,
 		timestamp,
 	]);
-	expect(
-		JSON.parse(Buffer.from(firstPage.next_cursor, "base64url").toString("utf8"))
-			.created_at,
-	).toBe(timestamp);
-	const invalidDateCursor = JSON.parse(
-		Buffer.from(firstPage.next_cursor, "base64url").toString("utf8"),
-	);
-	for (const value of [
-		"2026-02-30T00:00:00.000000Z",
-		"0000-01-01T00:00:00.000000Z",
-		"2026-11-01T12:00:00Z",
-	]) {
-		invalidDateCursor.created_at = value;
-		const invalidDate = await primary.request(
-			`/v1/audit-events?limit=2&action=project_updated&resource=project&cursor=${Buffer.from(JSON.stringify(invalidDateCursor)).toString("base64url")}`,
+	const invalidCursors = [
+		`${firstPage.next_cursor}x`,
+		firstPage.next_cursor.replace(/^v1\./, "v2."),
+		firstPage.next_cursor.replace(/\.2\./, ".3."),
+	];
+	for (const invalidCursor of invalidCursors) {
+		const invalid = await primary.request(
+			`/v1/audit-events?limit=2&action=project_updated&resource=project&cursor=${encodeURIComponent(invalidCursor)}`,
 		);
-		expect(invalidDate.status).toBe(400);
+		expect(invalid.status).toBe(400);
 	}
 
 	await pool.query(
@@ -333,6 +329,523 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 	expect((await combined.json()) as { items: unknown[] }).toEqual({
 		items: [],
 	});
+}, 30000);
+
+test("late commits do not enter an already admitted traversal", async () => {
+	const organization = await createOrganization("Late commit snapshot");
+	const [lateId, olderId, newestId] = [
+		randomUUID(),
+		randomUUID(),
+		randomUUID(),
+	].sort();
+	const subject = `snapshot-${randomUUID()}`;
+	const insert =
+		"INSERT INTO project_authorization_audit_events(id, organization_id, project_id, actor_subject, event_type, created_at) VALUES ($1, $2, $3, $4, 'project_updated', $5)";
+	for (const id of [olderId, newestId])
+		await pool.query(insert, [
+			id,
+			organization.organizationId,
+			organization.projectId,
+			subject,
+			timestamp,
+		]);
+	const writer = await pool.connect();
+	try {
+		await writer.query("BEGIN");
+		await writer.query(insert, [
+			lateId,
+			organization.organizationId,
+			organization.projectId,
+			subject,
+			timestamp,
+		]);
+		const params = new URLSearchParams({ limit: "1", actor: subject });
+		const first = await organization.request(`/v1/audit-events?${params}`);
+		expect(first.status).toBe(200);
+		const page = (await first.json()) as {
+			items: Array<{ id: string }>;
+			next_cursor: string;
+		};
+		expect(page.items.map((item) => item.id)).toEqual([newestId]);
+		await writer.query("COMMIT");
+		params.set("cursor", page.next_cursor);
+		const next = await organization.request(`/v1/audit-events?${params}`);
+		expect(next.status).toBe(200);
+		const continuation = (await next.json()) as {
+			items: Array<{ id: string }>;
+			next_cursor?: string;
+		};
+		expect(continuation.items.map((item) => item.id)).toEqual([olderId]);
+		expect(continuation.next_cursor).toBeUndefined();
+		const fresh = await organization.request(
+			`/v1/audit-events?limit=100&actor=${subject}`,
+		);
+		expect(
+			((await fresh.json()) as { items: Array<{ id: string }> }).items.map(
+				(item) => item.id,
+			),
+		).toEqual([newestId, olderId, lateId]);
+	} finally {
+		await writer.query("ROLLBACK");
+		writer.release();
+	}
+}, 30000);
+
+test("snapshot retry, expiry, and role revocation fail closed", async () => {
+	const organization = await createOrganization("Snapshot revocation");
+	const user = await organization.provision("snapshot.user", "user");
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, organization.projectId, subject],
+	);
+	const params = new URLSearchParams({ limit: "1", actor: subject });
+	const request = () =>
+		organization.request(
+			`/v1/audit-events?${params}`,
+			"GET",
+			undefined,
+			user.headers,
+		);
+	const first = await request();
+	expect(first.status).toBe(200);
+	const page = (await first.json()) as { next_cursor: string };
+	params.set("cursor", page.next_cursor);
+	const second = await request();
+	const retried = await request();
+	expect(second.status).toBe(200);
+	expect(await second.json()).toEqual(await retried.json());
+	await pool.query(
+		"UPDATE organization_actor_roles SET role = 'read_only' WHERE organization_id = $1 AND actor_id = $2",
+		[organization.organizationId, user.actorId],
+	);
+	await pool.query(
+		"UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
+		[organization.organizationId, user.actorId],
+	);
+	expect((await request()).status).toBe(400);
+	params.delete("cursor");
+	const again = await request();
+	const newPage = (await again.json()) as { next_cursor: string };
+	const snapshotId = newPage.next_cursor.split(".")[1];
+	await pool.query(
+		"UPDATE audit_log_snapshots SET expires_at = clock_timestamp() - interval '1 second' WHERE id = $1",
+		[snapshotId],
+	);
+	params.set("cursor", newPage.next_cursor);
+	expect((await request()).status).toBe(400);
+}, 30000);
+
+test("a continuation blocked behind a committed role change cannot use its old snapshot", async () => {
+	const organization = await createOrganization("Snapshot role race");
+	const user = await organization.provision("snapshot.race", "user");
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, organization.projectId, subject],
+	);
+	const params = new URLSearchParams({ limit: "1", actor: subject });
+	const first = await organization.request(
+		`/v1/audit-events?${params}`,
+		"GET",
+		undefined,
+		user.headers,
+	);
+	expect(first.status).toBe(200);
+	params.set(
+		"cursor",
+		((await first.json()) as { next_cursor: string }).next_cursor,
+	);
+	const writer = await pool.connect();
+	let pending: Promise<Response> | undefined;
+	try {
+		await writer.query("BEGIN");
+		await writer.query(
+			"UPDATE organization_actor_roles SET role = 'read_only' WHERE organization_id = $1 AND actor_id = $2",
+			[organization.organizationId, user.actorId],
+		);
+		pending = organization.request(
+			`/v1/audit-events?${params}`,
+			"GET",
+			undefined,
+			user.headers,
+		);
+		let waiting = false;
+		for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+			const observation = await pool.query<{ waiting: boolean }>(
+				"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%organization_actor_roles%' AND pid <> pg_backend_pid()) AS waiting",
+			);
+			waiting = observation.rows[0]!.waiting;
+			if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		expect(waiting).toBe(true);
+		await writer.query("COMMIT");
+		expect((await pending).status).toBe(400);
+	} finally {
+		await writer.query("ROLLBACK");
+		writer.release();
+		if (pending) await pending;
+	}
+}, 30000);
+
+test("a project archive invalidates the traversal even after restoration", async () => {
+	const organization = await createOrganization("Snapshot project revocation");
+	const user = await organization.provision("snapshot.project", "user");
+	const created = await organization.request("/v1/projects", "POST", {
+		name: "Revocable",
+		slug: "revocable",
+	});
+	expect(created.status).toBe(201);
+	const project = (await created.json()) as { id: string };
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, project.id, subject],
+	);
+	const params = new URLSearchParams({ limit: "1", actor: subject });
+	const first = await organization.request(
+		`/v1/audit-events?${params}`,
+		"GET",
+		undefined,
+		user.headers,
+	);
+	expect(first.status).toBe(200);
+	params.set(
+		"cursor",
+		((await first.json()) as { next_cursor: string }).next_cursor,
+	);
+	await pool.query(
+		"UPDATE projects SET status = 'archived' WHERE organization_id = $1 AND id = $2",
+		[organization.organizationId, project.id],
+	);
+	const rejected = await organization.request(
+		`/v1/audit-events?${params}`,
+		"GET",
+		undefined,
+		user.headers,
+	);
+	expect(rejected.status).toBe(400);
+	await pool.query(
+		"UPDATE projects SET status = 'active' WHERE organization_id = $1 AND id = $2",
+		[organization.organizationId, project.id],
+	);
+	expect(
+		(
+			await organization.request(
+				`/v1/audit-events?${params}`,
+				"GET",
+				undefined,
+				user.headers,
+			)
+		).status,
+	).toBe(400);
+}, 30000);
+
+test("a read fence delays role revocation until snapshot admission commits", async () => {
+	const organization = await createOrganization("Snapshot read fence");
+	const user = await organization.provision("snapshot.fence", "user");
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, organization.projectId, subject],
+	);
+	const blocker = await pool.connect();
+	const writer = await pool.connect();
+	let pending: Promise<Response> | undefined;
+	let revoke: Promise<unknown> | undefined;
+	try {
+		await blocker.query("BEGIN");
+		await blocker.query(
+			"SELECT pg_advisory_xact_lock(hashtext('glasshouse.audit_log_snapshots'))",
+		);
+		const params = new URLSearchParams({ limit: "1", actor: subject });
+		pending = organization.request(
+			`/v1/audit-events?${params}`,
+			"GET",
+			undefined,
+			user.headers,
+		);
+		let readerWaiting = false;
+		for (let attempt = 0; attempt < 100 && !readerWaiting; attempt++) {
+			const observed = await pool.query<{ waiting: boolean }>(
+				"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%pg_advisory_xact_lock%glasshouse.audit_log_snapshots%' AND pid <> pg_backend_pid()) AS waiting",
+			);
+			readerWaiting = observed.rows[0]!.waiting;
+			if (!readerWaiting)
+				await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		expect(readerWaiting).toBe(true);
+		await writer.query("BEGIN");
+		revoke = writer.query(
+			"UPDATE organization_actor_roles SET role = 'read_only' WHERE organization_id = $1 AND actor_id = $2",
+			[organization.organizationId, user.actorId],
+		);
+		let writerWaiting = false;
+		for (let attempt = 0; attempt < 100 && !writerWaiting; attempt++) {
+			const observed = await pool.query<{ waiting: boolean }>(
+				"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'UPDATE organization_actor_roles SET role%' AND pid <> pg_backend_pid()) AS waiting",
+			);
+			writerWaiting = observed.rows[0]!.waiting;
+			if (!writerWaiting)
+				await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		expect(writerWaiting).toBe(true);
+		await blocker.query("COMMIT");
+		const first = await pending;
+		expect(first.status).toBe(200);
+		const body = (await first.json()) as { next_cursor: string };
+		await revoke;
+		await writer.query("COMMIT");
+		params.set("cursor", body.next_cursor);
+		expect(
+			(
+				await organization.request(
+					`/v1/audit-events?${params}`,
+					"GET",
+					undefined,
+					user.headers,
+				)
+			).status,
+		).toBe(400);
+	} finally {
+		await blocker.query("ROLLBACK");
+		if (revoke) await revoke.catch(() => {});
+		await writer.query("ROLLBACK");
+		blocker.release();
+		writer.release();
+		if (pending) await pending;
+	}
+}, 30000);
+
+test("snapshot quota rejects excess allocations and cleans expired snapshots", async () => {
+	const organization = await createOrganization("Snapshot capacity");
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, organization.projectId, subject],
+	);
+	const params = new URLSearchParams({ limit: "1", actor: subject });
+	const cursors: string[] = [];
+	for (let i = 0; i < 8; i++) {
+		const response = await organization.request(`/v1/audit-events?${params}`);
+		expect(response.status).toBe(200);
+		cursors.push(
+			((await response.json()) as { next_cursor: string }).next_cursor,
+		);
+	}
+	expect(
+		(await organization.request(`/v1/audit-events?${params}`)).status,
+	).toBe(503);
+	await pool.query(
+		"UPDATE audit_log_snapshots SET expires_at = clock_timestamp() - interval '1 second' WHERE id = $1",
+		[cursors[0]!.split(".")[1]],
+	);
+	expect(
+		(await organization.request(`/v1/audit-events?${params}`)).status,
+	).toBe(200);
+	params.set("cursor", cursors[0]!);
+	expect(
+		(await organization.request(`/v1/audit-events?${params}`)).status,
+	).toBe(400);
+	const count = await pool.query<{ count: number }>(
+		"SELECT count(*)::int AS count FROM audit_log_snapshots WHERE organization_id = $1",
+		[organization.organizationId],
+	);
+	expect(count.rows[0]!.count).toBe(8);
+}, 30000);
+
+test("oversized matching results fail explicitly rather than truncate", async () => {
+	const organization = await createOrganization("Snapshot row capacity");
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) SELECT $1, $2, $3, 'project_updated' FROM generate_series(1, 5001)",
+		[organization.organizationId, organization.projectId, subject],
+	);
+	const response = await organization.request(
+		`/v1/audit-events?limit=1&actor=${subject}`,
+	);
+	expect(response.status).toBe(503);
+	const snapshots = await pool.query(
+		"SELECT id FROM audit_log_snapshots WHERE organization_id = $1",
+		[organization.organizationId],
+	);
+	expect(snapshots.rowCount).toBe(0);
+}, 30000);
+
+test("snapshot migration replays on a populated database without changing audit events", async () => {
+	const organization = await createOrganization("Snapshot migration replay");
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, organization.projectId, subject],
+	);
+	const migration = await Bun.file(
+		new URL(
+			"../../../../infra/db/migrations/90062_audit_log_snapshots.sql",
+			import.meta.url,
+		),
+	).text();
+	await pool.query(migration);
+	await pool.query(migration);
+	const retained = await pool.query<{ count: number }>(
+		"SELECT count(*)::int AS count FROM project_authorization_audit_events WHERE organization_id = $1 AND actor_subject = $2",
+		[organization.organizationId, subject],
+	);
+	expect(retained.rows[0]!.count).toBe(1);
+}, 30000);
+
+test("populated 90061 upgrades without changing immutable audit evidence", async () => {
+	const name = `audit_upgrade_${randomUUID().replaceAll("-", "")}`;
+	await adminPool.query(`CREATE DATABASE ${name}`);
+	const url = new URL(process.env.DATABASE_URL!);
+	url.pathname = `/${name}`;
+	const upgrade = new Pool({ connectionString: url.toString() });
+	try {
+		const dir = resolve(import.meta.dir, "../../../../infra/db/migrations");
+		await runner({
+			databaseUrl: url.toString(),
+			dir,
+			direction: "up",
+			migrationsTable: "pgmigrations",
+			migrationLoaderStrategies: [{ extensions: [".sql"], loader: "sql" }],
+			count: (await readdir(dir)).filter(
+				(filename) =>
+					filename.endsWith(".sql") && Number(filename.split("_")[0]) < 90062,
+			).length,
+			singleTransaction: true,
+			log: () => {},
+		});
+		const org = randomUUID(),
+			project = randomUUID(),
+			event = randomUUID();
+		await upgrade.query(
+			"WITH o AS (INSERT INTO organizations(id,name,slug,default_project_id) VALUES ($1,'Audit upgrade',$1::uuid::text,$2) RETURNING id) INSERT INTO projects(id,organization_id,name,slug) SELECT $2,id,'Default','default' FROM o",
+			[org, project],
+		);
+		await upgrade.query(
+			"INSERT INTO project_authorization_audit_events(id,organization_id,project_id,actor_subject,event_type) VALUES ($1,$2,$3,'upgrade-subject','project_updated')",
+			[event, org, project],
+		);
+		await migrate({ DATABASE_URL: url.toString() });
+		await migrate({ DATABASE_URL: url.toString() });
+		const retained = await upgrade.query(
+			"SELECT id,actor_subject FROM project_authorization_audit_events WHERE id = $1",
+			[event],
+		);
+		expect(retained.rows).toEqual([
+			{ id: event, actor_subject: "upgrade-subject" },
+		]);
+		const error = await upgrade
+			.query(
+				"UPDATE project_authorization_audit_events SET actor_subject = 'tampered' WHERE id = $1",
+				[event],
+			)
+			.then(
+				() => null,
+				(cause) => cause,
+			);
+		expect(error).toMatchObject({
+			code: "55000",
+			message: "project authorization audit events are append-only",
+		});
+	} finally {
+		await upgrade.end();
+		await adminPool.query(`DROP DATABASE ${name} WITH (FORCE)`);
+	}
+}, 60000);
+
+test("a continuation waiting for project archival fails closed after commit", async () => {
+	const organization = await createOrganization("Snapshot project race");
+	const user = await organization.provision("snapshot.projectrace", "user");
+	const created = await organization.request("/v1/projects", "POST", {
+		name: "Race project",
+		slug: "race-project",
+	});
+	expect(created.status).toBe(201);
+	const project = (await created.json()) as { id: string };
+	const subject = `snapshot-${randomUUID()}`;
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, project.id, subject],
+	);
+	const params = new URLSearchParams({ limit: "1", actor: subject });
+	const first = await organization.request(
+		`/v1/audit-events?${params}`,
+		"GET",
+		undefined,
+		user.headers,
+	);
+	expect(first.status).toBe(200);
+	params.set(
+		"cursor",
+		((await first.json()) as { next_cursor: string }).next_cursor,
+	);
+	const writer = await pool.connect();
+	let pending: Promise<Response> | undefined;
+	try {
+		await writer.query("BEGIN");
+		await writer.query(
+			"UPDATE projects SET status = 'archived' WHERE organization_id = $1 AND id = $2",
+			[organization.organizationId, project.id],
+		);
+		pending = organization.request(
+			`/v1/audit-events?${params}`,
+			"GET",
+			undefined,
+			user.headers,
+		);
+		let waiting = false;
+		for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+			const observed = await pool.query<{ waiting: boolean }>(
+				"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%SELECT id FROM projects WHERE organization_id%' AND pid <> pg_backend_pid()) AS waiting",
+			);
+			waiting = observed.rows[0]!.waiting;
+			if (!waiting) await Bun.sleep(20);
+		}
+		expect(waiting).toBe(true);
+		await writer.query("COMMIT");
+		expect((await pending).status).toBe(400);
+	} finally {
+		await writer.query("ROLLBACK");
+		writer.release();
+		if (pending) await pending;
+	}
+}, 30000);
+
+test("a Project created while the authorization scope is locked fails closed", async () => {
+	const organization = await createOrganization("Snapshot project phantom");
+	const blocker = await pool.connect();
+	const creator = await pool.connect();
+	let pending: Promise<Response> | undefined;
+	try {
+		await blocker.query("BEGIN");
+		await blocker.query("SELECT id FROM projects WHERE id = $1 FOR UPDATE", [
+			organization.projectId,
+		]);
+		pending = organization.request("/v1/audit-events?limit=1");
+		let waiting = false;
+		for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+			const observed = await pool.query<{ waiting: boolean }>(
+				"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%SELECT id FROM projects WHERE organization_id%' AND pid <> pg_backend_pid()) AS waiting",
+			);
+			waiting = observed.rows[0]!.waiting;
+			if (!waiting) await Bun.sleep(20);
+		}
+		expect(waiting).toBe(true);
+		await creator.query("SET statement_timeout = '3s'");
+		await creator.query(
+			"INSERT INTO projects(id, organization_id, name, slug) VALUES ($1, $2, 'New', 'new-during-read')",
+			[randomUUID(), organization.organizationId],
+		);
+		await blocker.query("COMMIT");
+		expect((await pending).status).toBe(503);
+	} finally {
+		await blocker.query("ROLLBACK");
+		blocker.release();
+		await creator.query("RESET statement_timeout");
+		creator.release();
+		if (pending) await pending;
+	}
 }, 30000);
 
 test("Unicode filter pagination returns a reusable bounded cursor through the authenticated API", async () => {
