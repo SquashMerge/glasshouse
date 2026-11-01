@@ -30,15 +30,12 @@ const query = mock(async (sql: string, values: unknown[] = []) => {
 
 const client = { query, release() {} };
 
-const postgres = await import("../../src/db/postgres");
-mock.module("../../src/db/postgres", () => ({
-	...postgres,
-	pgPool: () => ({ query, connect: async () => client }),
-}));
-
-const { handleListInternalLogs, listInternalLogsRoute } = await import(
+const { createHandleListInternalLogs, listInternalLogsRoute } = await import(
 	"../../src/routes/internal-logs"
 );
+const handleListInternalLogs = createHandleListInternalLogs(() => ({
+	connect: async () => client,
+}));
 
 const app = new OpenAPIHono({
 	defaultHook: (result, c) =>

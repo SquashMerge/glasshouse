@@ -1,5 +1,6 @@
 import { createRoute } from "@hono/zod-openapi";
 import type { Context } from "hono";
+import type { Pool } from "pg";
 import { pgPool } from "../db/postgres.js";
 import {
 	assertInternalLogAccess,
@@ -37,77 +38,84 @@ export const listInternalLogsRoute = createRoute({
 	},
 });
 
-export async function handleListInternalLogs(c: Context): Promise<Response> {
-	try {
-		const tenant = trustedTenant(c);
-		const query = (
-			c.req as {
-				valid: (target: "query") => {
-					limit: number;
-					cursor?: string;
-					level?: "debug" | "info" | "warn" | "error";
-					source?: string;
-					q?: string;
-					time_from?: string;
-					time_to?: string;
-				};
+export function createHandleListInternalLogs(
+	getPool: () => Pick<Pool, "connect"> = pgPool,
+) {
+	return async function handleListInternalLogs(c: Context): Promise<Response> {
+		try {
+			const tenant = trustedTenant(c);
+			const query = (
+				c.req as {
+					valid: (target: "query") => {
+						limit: number;
+						cursor?: string;
+						level?: "debug" | "info" | "warn" | "error";
+						source?: string;
+						q?: string;
+						time_from?: string;
+						time_to?: string;
+					};
+				}
+			).valid("query");
+			const pool = getPool();
+			if (!internalLogCollectionEnabled()) {
+				await assertInternalLogAccess(pool, tenant);
+				return c.json(
+					{
+						code: "SERVICE_UNAVAILABLE",
+						message:
+							"Internal log collection is unavailable on this deployment",
+					},
+					503,
+				);
 			}
-		).valid("query");
-		const pool = pgPool();
-		if (!internalLogCollectionEnabled()) {
-			await assertInternalLogAccess(pool, tenant);
+			const filters = {
+				level: query.level,
+				source: query.source,
+				search: query.q,
+				timeFrom: query.time_from,
+				timeTo: query.time_to,
+			};
+			const cursor = decodeInternalLogCursor(
+				query.cursor,
+				tenant.organizationId,
+				filters,
+			);
+			const page = await listAuthorizedInternalLogs(pool, tenant, {
+				...filters,
+				limit: query.limit,
+				cursor,
+			});
+			return c.json({
+				items: page.items,
+				total: page.total,
+				...(page.nextCursor
+					? {
+							next_cursor: encodeInternalLogCursor(
+								tenant.organizationId,
+								filters,
+								page.nextCursor,
+							),
+						}
+					: {}),
+				sources: ["api"],
+				retention_days: INTERNAL_LOG_RETENTION_DAYS,
+			});
+		} catch (cause) {
+			if (cause instanceof InternalLogAccessDeniedError)
+				return c.json(
+					{ code: "FORBIDDEN", message: "Admin access required" },
+					403,
+				);
+			if (cause instanceof InvalidInternalLogCursorError)
+				return c.json({ code: "BAD_REQUEST", message: cause.message }, 400);
+			logger.error("internal_logs.request_failed", cause);
 			return c.json(
-				{
-					code: "SERVICE_UNAVAILABLE",
-					message: "Internal log collection is unavailable on this deployment",
-				},
-				503,
+				{ code: "INTERNAL", message: "Could not load internal logs" },
+				500,
 			);
 		}
-		const filters = {
-			level: query.level,
-			source: query.source,
-			search: query.q,
-			timeFrom: query.time_from,
-			timeTo: query.time_to,
-		};
-		const cursor = decodeInternalLogCursor(
-			query.cursor,
-			tenant.organizationId,
-			filters,
-		);
-		const page = await listAuthorizedInternalLogs(pool, tenant, {
-			...filters,
-			limit: query.limit,
-			cursor,
-		});
-		return c.json({
-			items: page.items,
-			total: page.total,
-			...(page.nextCursor
-				? {
-						next_cursor: encodeInternalLogCursor(
-							tenant.organizationId,
-							filters,
-							page.nextCursor,
-						),
-					}
-				: {}),
-			sources: ["api"],
-			retention_days: INTERNAL_LOG_RETENTION_DAYS,
-		});
-	} catch (cause) {
-		if (cause instanceof InternalLogAccessDeniedError)
-			return c.json(
-				{ code: "FORBIDDEN", message: "Admin access required" },
-				403,
-			);
-		if (cause instanceof InvalidInternalLogCursorError)
-			return c.json({ code: "BAD_REQUEST", message: cause.message }, 400);
-		logger.error("internal_logs.request_failed", cause);
-		return c.json(
-			{ code: "INTERNAL", message: "Could not load internal logs" },
-			500,
-		);
-	}
+	};
 }
+
+export const handleListInternalLogs = createHandleListInternalLogs();
