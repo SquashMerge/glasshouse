@@ -454,7 +454,11 @@ test.skipIf(!databaseUrl)(
 		const pool = new Pool({ connectionString: databaseUrl, max: 3 });
 		try {
 			const { organizationId } = await seedOrganization(pool);
-			const reader = await seedAdmin(pool, organizationId, "snapshot-regenerated");
+			const reader = await seedAdmin(
+				pool,
+				organizationId,
+				"snapshot-regenerated",
+			);
 			await seedAdmin(pool, organizationId, "snapshot-regenerated-peer");
 			await pool.query(
 				"INSERT INTO internal_log_entries (organization_id, severity, source, message, context) SELECT $1, 'info', 'api', 'API request outcome', '{}'::jsonb FROM generate_series(1,2)",
@@ -484,6 +488,65 @@ test.skipIf(!databaseUrl)(
 			expect(((await continuation.json()) as { code: string }).code).toBe(
 				"CONFLICT",
 			);
+		} finally {
+			await pool.end();
+		}
+	},
+	15000,
+);
+
+test.skipIf(!databaseUrl)(
+	"removing an Admin invalidates only that Admin's snapshot",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 3 });
+		try {
+			const { organizationId } = await seedOrganization(pool);
+			const reader = await seedAdmin(pool, organizationId, "snapshot-removed");
+			const peer = await seedAdmin(pool, organizationId, "snapshot-peer");
+			await pool.query(
+				"INSERT INTO internal_log_entries (organization_id, severity, source, message, context) SELECT $1, 'info', 'api', 'API request outcome', '{}'::jsonb FROM generate_series(1,2)",
+				[organizationId],
+			);
+			const readerApp = snapshotApp(pool, {
+				organizationId,
+				actorId: reader.actorId,
+			});
+			const peerApp = snapshotApp(pool, {
+				organizationId,
+				actorId: peer.actorId,
+			});
+			const readerPage = await readerApp.request("/v1/admin/logs?limit=1");
+			const peerPage = await peerApp.request("/v1/admin/logs?limit=1");
+			expect(readerPage.status).toBe(200);
+			expect(peerPage.status).toBe(200);
+			const { next_cursor: readerCursor } = (await readerPage.json()) as {
+				next_cursor: string;
+			};
+			const { next_cursor: peerCursor } = (await peerPage.json()) as {
+				next_cursor: string;
+			};
+			await pool.query(
+				"DELETE FROM organization_actor_roles WHERE organization_id = $1 AND actor_id = $2",
+				[organizationId, reader.actorId],
+			);
+			await pool.query(
+				"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin')",
+				[organizationId, reader.actorId],
+			);
+			expect(
+				(
+					await readerApp.request(
+						`/v1/admin/logs?limit=1&cursor=${encodeURIComponent(readerCursor)}`,
+					)
+				).status,
+			).toBe(409);
+			expect(
+				(
+					await peerApp.request(
+						`/v1/admin/logs?limit=1&cursor=${encodeURIComponent(peerCursor)}`,
+					)
+				).status,
+			).toBe(200);
 		} finally {
 			await pool.end();
 		}
