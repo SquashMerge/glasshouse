@@ -211,6 +211,33 @@ describe("internal operational log persistence", () => {
 });
 
 describe("internal operational log cursor", () => {
+	it("rejects invalid calendar timestamps while preserving valid microseconds", () => {
+		const cursor = (recorded_at: string) =>
+			encodeInternalLogCursor(
+				ORGANIZATION,
+				{},
+				{
+					recorded_at,
+					id: "11111111-1111-4111-8111-111111111111",
+				},
+			);
+		for (const timestamp of [
+			"0000-01-01T00:00:00.0Z",
+			"2026-02-30T00:00:00.0Z",
+			"2026-99-99T00:00:00.0Z",
+		]) {
+			expect(() =>
+				decodeInternalLogCursor(cursor(timestamp), ORGANIZATION, {}),
+			).toThrow("Invalid or mismatched internal log cursor");
+		}
+		expect(
+			decodeInternalLogCursor(
+				cursor("2024-02-29T23:59:59.123456Z"),
+				ORGANIZATION,
+				{},
+			)?.recorded_at,
+		).toBe("2024-02-29T23:59:59.123456Z");
+	});
 	it("binds a cursor to its organization and the complete filter set", () => {
 		const filters = {
 			level: "error",

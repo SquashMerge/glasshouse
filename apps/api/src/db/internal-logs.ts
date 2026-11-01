@@ -122,6 +122,16 @@ export function encodeInternalLogCursor(
 	).toString("base64url");
 }
 
+function validInternalLogTimestamp(value: string): boolean {
+	if (!INTERNAL_LOG_CURSOR_TIMESTAMP.test(value) || value.startsWith("0000"))
+		return false;
+	const wholeSecond = `${value.slice(0, 19)}.000Z`;
+	const parsed = new Date(wholeSecond);
+	return (
+		Number.isFinite(parsed.getTime()) && parsed.toISOString() === wholeSecond
+	);
+}
+
 export function decodeInternalLogCursor(
 	encoded: string | undefined,
 	organizationId: string,
@@ -137,7 +147,7 @@ export function decodeInternalLogCursor(
 			value.organization_id !== organizationId ||
 			value.filter !== filterFingerprint(filters) ||
 			typeof value.recorded_at !== "string" ||
-			!INTERNAL_LOG_CURSOR_TIMESTAMP.test(value.recorded_at) ||
+			!validInternalLogTimestamp(value.recorded_at) ||
 			typeof value.id !== "string" ||
 			!INTERNAL_LOG_CURSOR_ID.test(value.id)
 		)
