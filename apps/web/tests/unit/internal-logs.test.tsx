@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -154,16 +160,28 @@ describe("InternalLogsPage", () => {
 	it("explains an invalid level rather than silently showing unfiltered logs", async () => {
 		renderPage();
 		await screen.findByText("HTTP GET /v1/projects");
-		fireEvent.change(screen.getByLabelText("Level"), {
-			target: { value: "bogus" },
-		});
-		expect(
-			await screen.findByText(/Enter debug, info, warn, or error/),
-		).toBeVisible();
-		expect(screen.getByLabelText("Level")).toHaveAttribute(
-			"aria-invalid",
-			"true",
-		);
+		const callsBeforeInvalidFilter = api.listInternalLogs.mock.calls.length;
+		vi.useFakeTimers();
+		try {
+			fireEvent.change(screen.getByLabelText("Level"), {
+				target: { value: "bogus" },
+			});
+			expect(
+				screen.getByText(/Enter debug, info, warn, or error/),
+			).toBeVisible();
+			expect(screen.getByLabelText("Level")).toHaveAttribute(
+				"aria-invalid",
+				"true",
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(api.listInternalLogs).toHaveBeenCalledTimes(
+				callsBeforeInvalidFilter,
+			);
+		} finally {
+			vi.useRealTimers();
+		}
 		fireEvent.change(screen.getByLabelText("Level"), {
 			target: { value: "warn" },
 		});
