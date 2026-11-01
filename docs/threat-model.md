@@ -46,6 +46,10 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 | API ↔ GEPA worker / configured LLM provider | Inputs and outputs can contain sensitive prompt/dataset material. The provider is an external recipient. The worker is a subprocess, not a separately sandboxed security domain. |
 | Repository/CI/dependencies ↔ release/deployment | PR content and third-party packages are untrusted inputs to the build/review process. Deployment credentials or Docker access materially increase impact. |
 
+## Whole-instance backup boundary
+
+The native backup and restore scripts are trusted-host operator tools, not an API or Organization/Project administrator capability. They may expose all tenants and credential/session digests. Neither checksum verification nor `pg_restore --list` authenticates an artifact or makes arbitrary SQL safe. The operator must authenticate provenance independently and protect private artifacts and the local staging filesystem. Root, Docker administrators, and processes running as the operator remain trusted. Restore requires a reachable source and rejects it being absent; source-host-loss recovery is not implemented. Mount-path comparison is not proof against network-backed storage aliases or concurrent changes, and target isolation must be independently established. See [backup and restore](backup-restore.md) for restrictions and credential re-securing before cutover.
+
 ## Principal attack scenarios
 
 ### A. Cross-tenant or cross-Project access (high impact)

@@ -87,6 +87,39 @@ for key, version in zip(("postgres_server_version", "clickhouse_server_version")
     if manifest.get(key) != version:
         raise SystemExit(f"current-version recovery probe requires matching source and target {key}")
 PY
+# Intercept only the target version response; all target inspection and other
+# operations still reach the real disposable stores.
+version_bin="$(mktemp -d)"
+real_docker="$(command -v docker)"
+cat > "$version_bin/docker" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"--project-name $RESTORE_TARGET_COMPOSE_PROJECT "* ]]; then
+    if [[ "$MOCK_BAD_VERSION" == postgres && "$*" == *"current_setting('server_version')"* ]]; then printf '17.4\n'; exit 0; fi
+    if [[ "$MOCK_BAD_VERSION" == clickhouse && "$*" == *'SELECT version()'* ]]; then printf '25.1\n'; exit 0; fi
+fi
+exec "$REAL_DOCKER" "$@"
+SH
+chmod 700 "$version_bin/docker"
+for store in postgres clickhouse; do
+    if PATH="$version_bin:$PATH" REAL_DOCKER="$real_docker" MOCK_BAD_VERSION="$store" BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh" >"$destination/${backup_id}-${store}-version.log" 2>&1; then
+        printf 'mismatched target %s version accepted\n' "$store" >&2; exit 1
+    fi
+    grep -q 'target .*server_version does not match' "$destination/${backup_id}-${store}-version.log" || { printf 'target %s version did not fail preflight\n' "$store" >&2; exit 1; }
+done
+rm -rf -- "$version_bin"
+# A checksum can be recomputed for malformed or malicious input; reject an
+# invalid native archive in preflight, before issuing restore commands.
+bad_artifact="$destination/${backup_id}-malformed"
+cp -a "$artifact" "$bad_artifact"
+printf 'not a PostgreSQL archive' > "$bad_artifact/postgres.dump"
+(cd "$bad_artifact" && sha256sum postgres.dump clickhouse.zip > SHA256SUMS)
+if BACKUP_ARTIFACT="$bad_artifact" "$root_dir/infra/scripts/restore.sh" >"$destination/${backup_id}-malformed.log" 2>&1; then
+    printf 'malformed PostgreSQL archive accepted\n' >&2; exit 1
+fi
+if ! grep -q 'PostgreSQL archive failed validation' "$destination/${backup_id}-malformed.log"; then
+    printf 'malformed PostgreSQL archive was not rejected in preflight\n' >&2; exit 1
+fi
+[[ "$(PGPASSWORD="$target_pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$target_pg_service" psql --no-password -At --username="$target_pg_user" --dbname="$target_pg_database" --command="SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" == 0 ]]
 BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh"
 target_pg_probe="$(PGPASSWORD="$target_pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$target_pg_service" psql --no-password --tuples-only --no-align --username="$target_pg_user" --dbname="$target_pg_database" --command="SELECT payload->>'value' FROM $probe WHERE probe_id = 'issue-43' AND organization_id = '43000000-0000-4000-8000-000000000001' AND project_id = '43000000-0000-4000-8000-000000000002'")"
 target_ch_probe="$("${target_compose[@]}" exec -T "$target_ch_service" clickhouse-client --config-file "$target_ch_client_config" --database="$target_ch_database" --query="SELECT payload FROM $probe WHERE probe_id = 'issue-43' AND organization_id = '43000000-0000-4000-8000-000000000001' AND project_id = '43000000-0000-4000-8000-000000000002' AND metadata['fixture'] = 'upgrade' AND start_time = toDateTime64('2026-10-30 00:00:00.123', 3)")"

@@ -17,6 +17,37 @@ if [[ -z "$artifact" || ! -d "$artifact" ]]; then
 	exit 1
 fi
 
+# Open each operator-owned file without following symlinks and copy it into a
+# private directory. All subsequent checks and restores use the same copy.
+private_stage="$(mktemp -d)"
+trap 'rm -rf -- "$private_stage"' EXIT
+python3 - "$artifact" "$private_stage" <<'PY'
+import os
+import shutil
+import stat
+import sys
+
+source, destination = sys.argv[1:]
+# A trailing slash otherwise causes the kernel to follow the final symlink
+# despite O_NOFOLLOW on the directory open.
+source = source.rstrip('/') or '/'
+fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise SystemExit("artifact directory must be operator-owned and private")
+    for name in ("manifest.json", "SHA256SUMS", "postgres.dump", "clickhouse.zip"):
+        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        with os.fdopen(file_fd, 'rb') as src:
+            info = os.fstat(src.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+                raise SystemExit(f"artifact file must be private, operator-owned, regular and unlinked: {name}")
+            with open(os.path.join(destination, name), 'xb') as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
+finally:
+    os.close(fd)
+PY
+artifact="$private_stage"
 manifest="$artifact/manifest.json"
 if [[ ! -f "$manifest" ]]; then
 	printf 'Refusing artifact without a completion manifest.\n' >&2
@@ -45,6 +76,9 @@ if not isinstance(manifest.get("source_id"), str) or not manifest["source_id"].s
     raise SystemExit("backup source identity is missing")
 if manifest.get("stores") != ["postgresql", "clickhouse"]:
     raise SystemExit("backup does not cover both stores")
+for key, supported in (("postgres_server_version", "18.6"), ("clickhouse_server_version", "26.10.2.103")):
+    if manifest.get(key) != supported:
+        raise SystemExit(f"unsupported or missing {key}: current version required")
 for name in ("postgres.dump", "clickhouse.zip", "SHA256SUMS"):
     if not (root / name).is_file() or (root / name).stat().st_size == 0:
         raise SystemExit(f"backup file is missing or empty: {name}")
@@ -85,12 +119,17 @@ if [[ -z "$target_id" || "$target_id" == "$source_id" || ! "$target_id" =~ ^[A-Z
 	printf 'Refusing restore: RESTORE_TARGET_ID must be explicit and differ from source identity.\n' >&2
 	exit 1
 fi
-if [[ "${RESTORE_TARGET_LIVE:-false}" != "false" ]]; then
+if [[ "${RESTORE_TARGET_LIVE:-}" != "false" ]]; then
 	printf 'Refusing restore to a live installation; set RESTORE_TARGET_LIVE=false.\n' >&2
 	exit 1
 fi
 if [[ "$confirmation" != "RESTORE GLASSHOUSE TO $target_id" ]]; then
 	printf 'Refusing restore: exact RESTORE_CONFIRMATION is required.\n' >&2
+	exit 1
+fi
+
+if [[ "${RESTORE_TRUSTED_ARTIFACT:-}" != 'I TRUST THIS BACKUP' ]]; then
+	printf 'Refusing restore: verify provenance and set RESTORE_TRUSTED_ARTIFACT="I TRUST THIS BACKUP". Checksums do not establish trust.\n' >&2
 	exit 1
 fi
 
@@ -161,9 +200,24 @@ restore_cleanup() {
 		remove_clickhouse_client_config "$ch_service" "$ch_client_config" "${target_compose[@]}"
 	fi
 	"${target_compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote" >/dev/null 2>&1 || true
+	rm -rf -- "$private_stage"
 }
 trap restore_cleanup EXIT
 ch_client_config="$(create_clickhouse_client_config "$ch_service" "$ch_user" "$ch_password" "${target_compose[@]}")"
+pg_target_version="$(PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT current_setting('server_version')" | tr -d '[:space:]')"
+ch_target_version="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --query='SELECT version()' | tr -d '[:space:]')"
+python3 - "$manifest" "$pg_target_version" "$ch_target_version" <<'PY'
+import json, sys
+with open(sys.argv[1]) as stream:
+    manifest = json.load(stream)
+for key, actual in zip(("postgres_server_version", "clickhouse_server_version"), sys.argv[2:]):
+    if not actual or manifest[key] != actual:
+        raise SystemExit(f"Refusing restore: target {key} does not match supported backup version")
+PY
+if ! "${target_compose[@]}" exec -T -i "$pg_service" pg_restore --list < "$artifact/postgres.dump" >/dev/null; then
+    printf 'Refusing restore: PostgreSQL archive failed validation.\n' >&2
+    exit 1
+fi
 pg_empty_query="$(cat <<'SQL'
 SELECT
   (SELECT count(*) FROM pg_namespace

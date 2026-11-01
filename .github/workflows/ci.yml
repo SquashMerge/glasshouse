@@ -82,6 +82,7 @@ jobs:
       RESTORE_TARGET_ID: ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
       RESTORE_CONFIRMATION: RESTORE GLASSHOUSE TO ci-restore-${{ github.run_id }}-${{ github.run_attempt }}
       RESTORE_TARGET_LIVE: "false"
+      RESTORE_TRUSTED_ARTIFACT: I TRUST THIS BACKUP
       RESTORE_TARGET_DIRECTORY: ${{ github.workspace }}/.ci-backup-restore/target
       RESTORE_TARGET_COMPOSE_FILE: ${{ github.workspace }}/.github/compose.backup-restore.yaml
       RESTORE_TARGET_ENV_FILE: ${{ github.workspace }}/.ci-backup-restore/target.env
