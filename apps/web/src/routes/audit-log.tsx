@@ -61,8 +61,9 @@ export function AuditLogPage() {
 			: null;
 	const showResults =
 		!rangeError &&
-		filters.from === debounced.from &&
-		filters.to === debounced.to;
+		(Object.keys(filters) as (keyof Filters)[]).every(
+			(key) => filters[key] === debounced[key],
+		);
 
 	const params = React.useMemo(
 		() => ({
@@ -113,11 +114,11 @@ export function AuditLogPage() {
 		const node = sentinel.current;
 		if (!node || typeof IntersectionObserver === "undefined") return;
 		const observer = new IntersectionObserver(([entry]) => {
-			if (entry?.isIntersecting) loadMore();
+			if (entry?.isIntersecting && !query.isFetchNextPageError) loadMore();
 		});
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [loadMore]);
+	}, [loadMore, query.isFetchNextPageError]);
 
 	function update(name: keyof Filters, value: string) {
 		setFilters((current) => ({ ...current, [name]: value }));
@@ -131,8 +132,8 @@ export function AuditLogPage() {
 				description="Read-only, content-free history of retained user actions you are allowed to inspect."
 			/>
 			<Card>
-				<CardContent className="space-y-4 pt-6">
-					<fieldset className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+				<CardContent className="space-y-4 !px-3 pt-6 sm:!px-6">
+					<fieldset className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
 						<legend className="mb-2 text-sm font-medium">Filters</legend>
 						<FilterInput
 							label="From"
@@ -326,11 +327,14 @@ function FilterInput({
 	return (
 		<label
 			htmlFor={id}
-			className={`grid gap-1 text-sm font-medium ${className ?? ""}`}
+			className={`grid min-w-0 gap-1 text-sm font-medium ${className ?? ""}`}
 		>
 			<span>{label}</span>
 			<Input
 				id={id}
+				className={
+					type === "datetime-local" ? "min-w-0 !px-1 !text-xs" : "min-w-0"
+				}
 				type={type}
 				value={value}
 				aria-invalid={invalid || undefined}

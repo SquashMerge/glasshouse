@@ -1,4 +1,5 @@
 import { createRoute } from "@hono/zod-openapi";
+import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import { pgPool } from "../db/postgres.js";
 import { logger } from "../lib/logger.js";
@@ -39,7 +40,7 @@ type Cursor = {
 	source: string;
 	organization_id: string;
 	actor_id: string;
-	filters: AuditFilters;
+	filters: string;
 };
 type AuditRow = {
 	id: string;
@@ -75,26 +76,8 @@ function isCursorTimestamp(value: unknown): value is string {
 	);
 }
 
-function cursorFilters(value: unknown): AuditFilters | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value))
-		return undefined;
-	const filters = value as Record<string, unknown>;
-	const keys = [
-		"from",
-		"to",
-		"actor",
-		"action",
-		"resource",
-		"outcome",
-		"search",
-	] as const;
-	if (Object.keys(filters).length !== keys.length) return undefined;
-	for (const key of keys) {
-		const filter = filters[key];
-		if (filter !== null && (typeof filter !== "string" || filter.length > 200))
-			return undefined;
-	}
-	return filters as AuditFilters;
+function filterDigest(filters: AuditFilters): string {
+	return createHash("sha256").update(JSON.stringify(filters)).digest("hex");
 }
 
 function decodeCursor(value: string | undefined): Cursor | undefined {
@@ -103,7 +86,6 @@ function decodeCursor(value: string | undefined): Cursor | undefined {
 		const decoded = JSON.parse(
 			Buffer.from(value, "base64url").toString("utf8"),
 		) as Partial<Cursor>;
-		const filters = cursorFilters(decoded.filters);
 		if (
 			!isCursorTimestamp(decoded.created_at) ||
 			typeof decoded.id !== "string" ||
@@ -112,10 +94,11 @@ function decodeCursor(value: string | undefined): Cursor | undefined {
 			decoded.source.length === 0 ||
 			!isUuid(decoded.organization_id) ||
 			!isUuid(decoded.actor_id) ||
-			!filters
+			typeof decoded.filters !== "string" ||
+			!/^[0-9a-f]{64}$/.test(decoded.filters)
 		)
 			return undefined;
-		return { ...(decoded as Cursor), filters };
+		return decoded as Cursor;
 	} catch {
 		return undefined;
 	}
@@ -133,7 +116,7 @@ function encodeCursor(
 			source: row.source,
 			organization_id: tenant.organizationId,
 			actor_id: tenant.actorId,
-			filters,
+			filters: filterDigest(filters),
 		}),
 	).toString("base64url");
 }
@@ -211,7 +194,14 @@ WITH audit_events AS (
   FROM user_action_audit_events e
 ), visible_events AS (
   SELECT e.event_id, e.source,
-    COALESCE(credential.username, e.actor_subject, identity.canonical_subject, 'Unavailable') AS actor,
+    CASE WHEN e.actor_id IS NULL AND credential.actor_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM actor_identities basic_identity
+      WHERE basic_identity.organization_id = e.organization_id
+        AND basic_identity.provider_namespace = 'basic:v1'
+        AND basic_identity.canonical_subject = e.actor_subject
+        AND basic_identity.actor_id <> credential.actor_id
+    ) THEN 'Unavailable'
+    ELSE COALESCE(credential.username, e.actor_subject, identity.canonical_subject, 'Unavailable') END AS actor,
     e.action, e.resource_type, e.resource_id, e.outcome, e.created_at
   FROM audit_events e
   LEFT JOIN local_credentials credential ON credential.organization_id = e.organization_id
@@ -273,7 +263,7 @@ export async function handleListAuditEvents(c: Context) {
 			cursor &&
 			(cursor.organization_id !== tenant.organizationId ||
 				cursor.actor_id !== tenant.actorId ||
-				JSON.stringify(cursor.filters) !== JSON.stringify(filters))
+				cursor.filters !== filterDigest(filters))
 		)
 			return c.json(
 				{ code: "BAD_REQUEST", message: "Request validation failed" },

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({ listAuditEvents: vi.fn() }));
@@ -58,17 +58,83 @@ it("renders safe audit fields, filters, and a keyboard load-more control", async
 	expect(await screen.findByText("alice")).toBeVisible();
 	expect(screen.getByText("project_updated")).toBeVisible();
 	expect(screen.getByText(/project-1/)).toBeVisible();
+	expect(screen.getByText("Safe details")).toBeVisible();
 	expect(
 		screen.getByRole("button", { name: "Load more audit events" }),
 	).toBeVisible();
 	fireEvent.change(screen.getByLabelText("Actor"), {
 		target: { value: "alice" },
 	});
-	expect(await screen.findByText("Safe details")).toBeVisible();
 	await new Promise((resolve) => setTimeout(resolve, 300));
 	expect(api.listAuditEvents).toHaveBeenLastCalledWith(
 		expect.objectContaining({ actor: "alice" }),
 	);
+});
+
+it.each(["Actor", "Action", "Resource", "Outcome", "Search"])(
+	"hides stale rows immediately when %s changes",
+	async (label) => {
+		renderPage();
+		expect(await screen.findByText("alice")).toBeVisible();
+		fireEvent.change(screen.getByLabelText(label), {
+			target: { value: "new" },
+		});
+		expect(screen.queryByText("alice")).not.toBeInTheDocument();
+	},
+);
+
+it("does not automatically retry a failed next page while the sentinel remains visible", async () => {
+	globalThis.IntersectionObserver = class {
+		observe() {
+			setTimeout(
+				() =>
+					this.callback(
+						[{ isIntersecting: true }] as IntersectionObserverEntry[],
+						this as unknown as IntersectionObserver,
+					),
+				0,
+			);
+		}
+		disconnect() {}
+		unobserve() {}
+		takeRecords() {
+			return [];
+		}
+		root = null;
+		rootMargin = "";
+		thresholds = [];
+		constructor(private callback: IntersectionObserverCallback) {}
+	} as unknown as typeof IntersectionObserver;
+	api.listAuditEvents.mockImplementation(async ({ cursor }) => {
+		if (cursor) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			throw new Error("offline");
+		}
+		return { items: [event], next_cursor: "next" };
+	});
+	renderPage();
+	expect(await screen.findByRole("alert")).toHaveTextContent("offline");
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	expect(
+		api.listAuditEvents.mock.calls.filter(([params]) => params.cursor),
+	).toHaveLength(1);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Load more audit events" }),
+	);
+	await waitFor(() =>
+		expect(
+			api.listAuditEvents.mock.calls.filter(([params]) => params.cursor),
+		).toHaveLength(2),
+	);
+});
+
+it("allows filter controls and their grid items to shrink on narrow screens", async () => {
+	renderPage();
+	await screen.findByText("alice");
+	const from = screen.getByLabelText("From");
+	expect(from).toHaveClass("min-w-0");
+	expect(from.closest("label")).toHaveClass("min-w-0");
+	expect(from.closest("fieldset")).toHaveClass("min-w-0");
 });
 
 it("offers an explicit retry state", async () => {

@@ -335,6 +335,37 @@ test("audit log uses a full-precision database cursor, current role checks, and 
 	});
 }, 30000);
 
+test("Unicode filter pagination returns a reusable bounded cursor through the authenticated API", async () => {
+	const organization = await createOrganization("Unicode cursor");
+	const subject = "界".repeat(200);
+	await pool.query(
+		"INSERT INTO project_authorization_audit_events(organization_id, project_id, actor_subject, event_type) VALUES ($1, $2, $3, 'project_updated'), ($1, $2, $3, 'project_updated')",
+		[organization.organizationId, organization.projectId, subject],
+	);
+	const params = new URLSearchParams({
+		limit: "1",
+		actor: subject,
+		search: subject,
+		action: "%".repeat(200),
+		resource: "%".repeat(200),
+		outcome: "%".repeat(200),
+	});
+	const first = await organization.request(`/v1/audit-events?${params}`);
+	expect(first.status).toBe(200);
+	const body = (await first.json()) as {
+		items: Array<{ id: string }>;
+		next_cursor: string;
+	};
+	expect(body.items).toHaveLength(1);
+	expect(body.next_cursor.length).toBeLessThanOrEqual(2048);
+	params.set("cursor", body.next_cursor);
+	const second = await organization.request(`/v1/audit-events?${params}`);
+	expect(second.status).toBe(200);
+	const next = (await second.json()) as { items: Array<{ id: string }> };
+	expect(next.items).toHaveLength(1);
+	expect(next.items[0]!.id).not.toBe(body.items[0]!.id);
+}, 30000);
+
 test("time filters compare timestamps rather than their textual fractional precision", async () => {
 	const organization = await createOrganization("Fractional time");
 	await pool.query(
@@ -396,6 +427,80 @@ test.each(["display", "filter"] as const)(
 	},
 	30000,
 );
+
+test("ambiguous canonical Basic and local session subjects are not attributed to the wrong actor", async () => {
+	const organization = await createOrganization("Ambiguous actor");
+	const basicUsername = `actor：${organization.admin.actorId}`;
+	const password = secret();
+	process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify([
+		{
+			username: basicUsername,
+			password,
+			organization_id: organization.organizationId,
+		},
+	]);
+	process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME = basicUsername;
+	try {
+		const { bootstrapAuthorization } = await import(
+			"../../src/db/bootstrap-authorization.js"
+		);
+		const { basicCredentialsFromEnvironment } = await import(
+			"../../src/middleware/auth.js"
+		);
+		const basicActor = basicCredentialsFromEnvironment()[0]!;
+		const url = new URL(process.env.DATABASE_URL!);
+		url.pathname = `/${database}`;
+		const isolatedPool = new Pool({ connectionString: url.toString() });
+		await bootstrapAuthorization(process.env, isolatedPool);
+		await pool.query(
+			"INSERT INTO organization_actor_roles (organization_id, actor_id, role) VALUES ($1, $2, 'admin')",
+			[organization.organizationId, basicActor.actorId],
+		);
+		const api = createApiApp({
+			pgPool: () => pool,
+			authenticationPool: () => authenticationPool,
+		});
+		const sessionCreated = await api.request("/v1/projects", {
+			method: "POST",
+			headers: organization.adminHeaders,
+			body: JSON.stringify({
+				name: "Session project",
+				slug: "session-collision",
+			}),
+		});
+		expect(sessionCreated.status).toBe(201);
+		const basicHeaders = {
+			authorization: `Basic ${Buffer.from(`${basicUsername}:${password}`).toString("base64")}`,
+			"content-type": "application/json",
+		};
+		const basicCreated = await api.request("/v1/projects", {
+			method: "POST",
+			headers: basicHeaders,
+			body: JSON.stringify({ name: "Basic project", slug: "basic-collision" }),
+		});
+		expect(basicCreated.status).toBe(201);
+		const sessionProject = (await sessionCreated.json()) as { id: string };
+		const basicProject = (await basicCreated.json()) as { id: string };
+		const response = await api.request(
+			"/v1/audit-events?limit=100&action=project_created",
+			{ headers: organization.adminHeaders },
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			items: Array<{ resource_id: string; actor: string; source: string }>;
+		};
+		const eventFor = (id: string) =>
+			body.items.find(
+				(event) =>
+					event.source === "project_authorization" && event.resource_id === id,
+			);
+		expect(eventFor(sessionProject.id)?.actor).toBe("Unavailable");
+		expect(eventFor(basicProject.id)?.actor).toBe(basicUsername);
+	} finally {
+		delete process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS;
+		delete process.env.GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME;
+	}
+}, 30000);
 
 test("subject resolution stays in the event organization and preserves unknown historical subjects", async () => {
 	const primary = await createOrganization("Subject scope");

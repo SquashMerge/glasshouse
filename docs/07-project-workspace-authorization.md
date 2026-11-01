@@ -137,6 +137,10 @@ not invent missing historical events, names, outcomes, or resource content.
 Some actions have no outcome field and are displayed as unavailable. It is not
 an internal operational-log surface and does not promise a complete record of
 every historical platform operation.
+Subject-only historical records whose `actor:<UUID>` value matches both a local
+credential and a different Basic identity's canonical subject are displayed as
+`Unavailable`, rather than guessing which Actor performed the action. Records
+with a durable Actor ID do not have this ambiguity.
 
 All time, Actor, action, resource, outcome, and free-text filters run in the
 same server-side visibility query over retained events, rather than over loaded
@@ -152,7 +156,11 @@ so an old scoped response cannot replace a newer filter view.
 
 Each cursor also binds the trusted Organization and Actor plus every canonical
 filter. Reusing it after switching account or Organization, or changing a
-filter, is rejected; changing only `limit` remains a valid continuation.
+filter, is rejected; changing only `limit` remains a valid continuation. The
+filter binding is a fixed-size digest. Cursors are not authenticated tokens and
+must not be treated as authorization; every page independently rechecks current
+visibility. Changing the cursor format invalidates previously issued cursors;
+restart the traversal if that happens.
 
 ## In scope
 

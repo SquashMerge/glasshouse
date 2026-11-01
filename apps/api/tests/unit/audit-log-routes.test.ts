@@ -109,6 +109,52 @@ test("lists only audit-safe, cursor-paged events for every authorized role", asy
 	}
 });
 
+test("continuation accepts its own cursor with maximum-length Unicode filters", async () => {
+	const row = {
+		id: eventId,
+		source: "project_authorization",
+		actor: "alice",
+		action: "project_updated",
+		resource_type: "project",
+		resource_id: null,
+		outcome: null,
+		created_at: createdAt,
+	};
+	query.mockImplementation(async () => ({ rows: [row, row] }));
+	const app = new OpenAPIHono();
+	app.use("/v1/*", async (c, next) => {
+		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+			actor: "reader",
+			actorId,
+			organizationId,
+		});
+		await next();
+	});
+	app.openapi(auditLogRoute, handleListAuditEvents);
+	const params = new URLSearchParams({
+		limit: "1",
+		actor: "界".repeat(200),
+		action: "界".repeat(200),
+		resource: "界".repeat(200),
+		outcome: "界".repeat(200),
+		search: "界".repeat(200),
+	});
+	try {
+		const first = await app.request(
+			`http://localhost/v1/audit-events?${params}`,
+		);
+		expect(first.status).toBe(200);
+		const body = await first.json();
+		expect(body.next_cursor).toBeDefined();
+		params.set("cursor", body.next_cursor);
+		expect(
+			(await app.request(`http://localhost/v1/audit-events?${params}`)).status,
+		).toBe(200);
+	} finally {
+		query.mockReset();
+	}
+});
+
 test("rejects malformed cursors before querying", async () => {
 	query.mockImplementation(async () => ({ rows: [] }));
 	const app = new OpenAPIHono();
