@@ -112,6 +112,20 @@ describe("InternalLogsPage", () => {
 		).toBeVisible();
 	});
 
+	it("explains an invalid level rather than silently showing unfiltered logs", async () => {
+		renderPage();
+		await screen.findByText("HTTP GET /v1/projects");
+		fireEvent.change(screen.getByLabelText("Level"), {
+			target: { value: "bogus" },
+		});
+		expect(
+			await screen.findByText(/Enter debug, info, warn, or error/),
+		).toBeVisible();
+		expect(api.listInternalLogs).not.toHaveBeenCalledWith(
+			expect.objectContaining({ level: "bogus" }),
+		);
+	});
+
 	it("explains a disabled source and offers a retry", async () => {
 		api.listInternalLogs.mockReset();
 		api.listInternalLogs.mockRejectedValueOnce(

@@ -206,6 +206,7 @@ describe("internal operational log persistence", () => {
 			INTERNAL_LOG_MAX_PENDING + 1,
 		);
 		expect(collector.record(entry)).toBe(false);
+		expect(collector.healthy()).toBe(false);
 		resolveFirst?.();
 		collector.close();
 	});

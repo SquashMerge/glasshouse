@@ -19,9 +19,26 @@ import {
 
 const PAGE_SIZE = 50;
 const FILTER_FIELDS: FilterFieldDef[] = [
-	{ key: "level", placeholder: "debug, info, warn, or error" },
-	{ key: "source", placeholder: "api" },
-	{ key: "search", placeholder: "Search safe message and context" },
+	{
+		key: "level",
+		placeholder: "debug, info, warn, or error",
+		validate: (value) =>
+			value.trim() && !level(value.trim())
+				? "Enter debug, info, warn, or error."
+				: undefined,
+	},
+	{
+		key: "source",
+		placeholder: "api",
+		validate: (value) =>
+			value.trim().length > 80 ? "Use at most 80 characters." : undefined,
+	},
+	{
+		key: "search",
+		placeholder: "Search safe message and context",
+		validate: (value) =>
+			value.trim().length > 256 ? "Use at most 256 characters." : undefined,
+	},
 ];
 
 const COLUMNS: ColumnDef<InternalLogEntry>[] = [
@@ -112,9 +129,9 @@ export function InternalLogsPage() {
 	const params = React.useMemo(
 		() => ({
 			limit: PAGE_SIZE,
-			level: level(filters.level ?? ""),
-			source: filters.source || undefined,
-			q: filters.search || undefined,
+			level: level(filters.level?.trim() ?? ""),
+			source: filters.source?.trim() || undefined,
+			q: filters.search?.trim() || undefined,
 			...timeParams(timeRange),
 		}),
 		[filters, timeRange],
@@ -167,8 +184,8 @@ export function InternalLogsPage() {
 				>
 					<h2 className="font-medium">Log source unavailable</h2>
 					<p className="mt-1 text-sm text-muted-foreground">
-						{sourceUnavailableError.message} Try again after collection is
-						enabled by the deployment operator.
+						{sourceUnavailableError.message} Try again; contact the deployment
+						operator if the problem persists.
 					</p>
 					<Button
 						className="mt-4"

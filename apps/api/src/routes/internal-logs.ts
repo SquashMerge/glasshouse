@@ -19,6 +19,7 @@ import {
 } from "../schemas/internal-logs.js";
 import { trustedTenant } from "../tenancy.js";
 import { logger } from "../lib/logger.js";
+import { internalLogCollector } from "../lib/internal-log-collector.js";
 
 export const listInternalLogsRoute = createRoute({
 	method: "get",
@@ -40,6 +41,7 @@ export const listInternalLogsRoute = createRoute({
 
 export function createHandleListInternalLogs(
 	getPool: () => Pick<Pool, "connect"> = pgPool,
+	collectorHealthy: () => boolean = () => internalLogCollector.healthy(),
 ) {
 	return async function handleListInternalLogs(c: Context): Promise<Response> {
 		try {
@@ -58,7 +60,7 @@ export function createHandleListInternalLogs(
 				}
 			).valid("query");
 			const pool = getPool();
-			if (!internalLogCollectionEnabled()) {
+			if (!internalLogCollectionEnabled() || !collectorHealthy()) {
 				await assertInternalLogAccess(pool, tenant);
 				return c.json(
 					{

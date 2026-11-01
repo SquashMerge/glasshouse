@@ -31,6 +31,7 @@ export interface FilterFieldDef {
 	key: string;
 	placeholder: string;
 	className?: string;
+	validate?: (value: string) => string | undefined;
 }
 
 /**
@@ -144,8 +145,14 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 
 	React.useEffect(() => {
 		if (!isTimeRangeValid(debouncedTimeRange)) return;
+		if (
+			filterFields.some((field) =>
+				field.validate?.(debouncedFilters[field.key] ?? ""),
+			)
+		)
+			return;
 		onFiltersChange?.(debouncedFilters, debouncedTimeRange);
-	}, [debouncedFilters, debouncedTimeRange, onFiltersChange]);
+	}, [debouncedFilters, debouncedTimeRange, filterFields, onFiltersChange]);
 
 	const hasColumnFilters = Object.values(filters).some((v) => v.length > 0);
 	const hasTimeFilter = timeRange.kind !== "all";
@@ -316,6 +323,7 @@ function FilterBar({
 	filters: Record<string, string>;
 	setFilter: (key: string, value: string) => void;
 }) {
+	const id = React.useId();
 	if (filterFields.length === 0) return null;
 	return (
 		<fieldset
@@ -329,6 +337,8 @@ function FilterBar({
 				const label = field.key
 					.replaceAll("_", " ")
 					.replace(/\b\w/g, (character) => character.toUpperCase());
+				const error = field.validate?.(filters[field.key] ?? "");
+				const errorId = `${id}-${field.key}-error`;
 				return (
 					<label key={field.key} className="grid gap-1 text-xs font-medium">
 						<span>{label}</span>
@@ -338,7 +348,14 @@ function FilterBar({
 							placeholder={field.placeholder}
 							className={cn("h-8 text-xs", field.className)}
 							aria-label={label}
+							aria-invalid={error ? true : undefined}
+							aria-describedby={error ? errorId : undefined}
 						/>
+						{error && (
+							<span id={errorId} role="alert" className="text-destructive">
+								{error} Results reflect the last valid filters.
+							</span>
+						)}
 					</label>
 				);
 			})}

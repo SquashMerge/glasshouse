@@ -11,8 +11,8 @@ import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { authenticationPool, pgPool } from "./db/postgres.js";
+import { internalLogCollector } from "./lib/internal-log-collector.js";
 import {
-	createInternalLogCollector,
 	internalLogCollectionEnabled,
 	internalLogRequestContext,
 	startInternalLogCleanup,
@@ -61,7 +61,6 @@ export type ApiDependencies = {
 	}) => boolean;
 };
 
-const internalLogCollector = createInternalLogCollector(pgPool());
 const productionApiDependencies: ApiDependencies = {
 	handleHealth,
 	handleOtlpIngest,

@@ -1,6 +1,8 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
+import { internalLogCollector } from "../../src/lib/internal-log-collector";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { TRUSTED_TENANT_CONTEXT_KEY } from "../../src/middleware/auth";
+import { createInternalLogCollector } from "../../src/db/internal-logs";
 
 const ORGANIZATION = "00000000-0000-4000-8000-000000000001";
 const ADMIN = "11111111-1111-4111-8111-111111111111";
@@ -55,6 +57,91 @@ app.use("*", async (c, next) => {
 	await next();
 });
 app.openapi(listInternalLogsRoute, handleListInternalLogs);
+
+test("the public route reports collector insert failure and recovers after a successful insert", async () => {
+	let failInsert = true;
+	let finished: () => void = () => {};
+	const writer = {
+		connect: async () => ({
+			query: async (sql: string) => {
+				if (sql.startsWith("INSERT") && failInsert)
+					throw new Error("private database detail");
+				return { rows: [] };
+			},
+			release: () => finished(),
+		}),
+	};
+	const onFailure = mock(() => {});
+	const collector = createInternalLogCollector(writer as never, onFailure);
+	const localApp = new OpenAPIHono();
+	localApp.use("*", async (c, next) => {
+		c.set(TRUSTED_TENANT_CONTEXT_KEY, {
+			actor: "test",
+			actorId: ADMIN,
+			organizationId: ORGANIZATION,
+		});
+		await next();
+	});
+	localApp.openapi(
+		listInternalLogsRoute,
+		createHandleListInternalLogs(
+			() => ({ connect: async () => client }) as never,
+			() => collector.healthy(),
+		),
+	);
+	const entry = {
+		organizationId: ORGANIZATION,
+		severity: "info" as const,
+		context: {
+			route: "projects" as const,
+			method: "GET" as const,
+			status: 200,
+			duration_ms: 1,
+		},
+	};
+	let done = new Promise<void>((resolve) => {
+		finished = resolve;
+	});
+	collector.record(entry);
+	await done;
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	const failed = await localApp.request("/v1/admin/logs");
+	expect(failed.status).toBe(503);
+	expect(onFailure).toHaveBeenCalledTimes(1);
+	expect(onFailure).toHaveBeenCalledWith();
+	expect(JSON.stringify(await failed.json())).not.toContain(
+		"private database detail",
+	);
+	failInsert = false;
+	done = new Promise<void>((resolve) => {
+		finished = resolve;
+	});
+	collector.record(entry);
+	await done;
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	expect((await localApp.request("/v1/admin/logs")).status).toBe(200);
+	collector.close();
+});
+
+test("the default route reads production collector health after checking access", async () => {
+	const health = spyOn(internalLogCollector, "healthy").mockReturnValue(false);
+	try {
+		queries.length = 0;
+		expect(
+			(
+				await app.request("/v1/admin/logs", {
+					headers: { "x-test-actor": "user" },
+				})
+			).status,
+		).toBe(403);
+		expect((await app.request("/v1/admin/logs")).status).toBe(503);
+		expect(
+			queries.some(({ sql }) => sql.includes("FROM internal_log_entries")),
+		).toBe(false);
+	} finally {
+		health.mockRestore();
+	}
+});
 
 test("internal logs require an Admin and scope the filtered query to their organization", async () => {
 	queries.length = 0;

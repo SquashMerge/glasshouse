@@ -417,7 +417,10 @@ export async function cleanupExpiredInternalLogs(
 	}
 }
 
-export function createInternalLogCollector(pool: Pick<Pool, "connect">) {
+export function createInternalLogCollector(
+	pool: Pick<Pool, "connect">,
+	onFailure: () => void = () => {},
+) {
 	const queue: Array<{
 		organizationId: string;
 		severity: InternalLogLevel;
@@ -425,6 +428,11 @@ export function createInternalLogCollector(pool: Pick<Pool, "connect">) {
 	}> = [];
 	let draining = false;
 	let closed = false;
+	let healthy = true;
+	const fail = () => {
+		if (healthy) onFailure();
+		healthy = false;
+	};
 
 	const drain = async () => {
 		if (draining) return;
@@ -435,8 +443,9 @@ export function createInternalLogCollector(pool: Pick<Pool, "connect">) {
 				if (!entry) continue;
 				try {
 					await persistInternalLog(pool, entry);
+					healthy = true;
 				} catch {
-					// Collection is best effort and must not affect request outcomes.
+					fail();
 				}
 			}
 		} finally {
@@ -450,10 +459,17 @@ export function createInternalLogCollector(pool: Pick<Pool, "connect">) {
 			severity: InternalLogLevel;
 			context: InternalLogContext;
 		}): boolean {
-			if (closed || queue.length >= INTERNAL_LOG_MAX_PENDING) return false;
+			if (closed) return false;
+			if (queue.length >= INTERNAL_LOG_MAX_PENDING) {
+				fail();
+				return false;
+			}
 			queue.push(entry);
 			void drain();
 			return true;
+		},
+		healthy() {
+			return healthy && !closed;
 		},
 		close() {
 			closed = true;
