@@ -223,6 +223,55 @@ describe("InternalLogsPage", () => {
 		);
 	});
 
+	it("keeps the filtered traversal mounted when a continuation returns 503", async () => {
+		api.listInternalLogs.mockReset();
+		api.listInternalLogs
+			.mockResolvedValueOnce({
+				items: [first],
+				total: 1,
+				sources: ["api"],
+				retention_days: 14,
+			})
+			.mockResolvedValueOnce({
+				items: [first],
+				total: 2,
+				next_cursor: "filtered-next",
+				sources: ["api"],
+				retention_days: 14,
+			})
+			.mockRejectedValueOnce(
+				new ApiError(503, "SERVICE_UNAVAILABLE", "Log source unavailable"),
+			)
+			.mockResolvedValueOnce({
+				items: [{ ...first, id: "22222222-2222-4222-8222-222222222222" }],
+				total: 2,
+				sources: ["api"],
+				retention_days: 14,
+			});
+		renderPage();
+		await screen.findByText(first.message);
+		fireEvent.change(screen.getByLabelText("Search"), {
+			target: { value: "needle" },
+		});
+		await waitFor(() =>
+			expect(api.listInternalLogs).toHaveBeenLastCalledWith(
+				expect.objectContaining({ q: "needle", cursor: undefined }),
+			),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Load more logs" }));
+		expect(
+			await screen.findByText("Failed to load: Log source unavailable"),
+		).toBeVisible();
+		expect(screen.getByLabelText("Search")).toHaveValue("needle");
+		expect(screen.getByText(first.message)).toBeVisible();
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		await waitFor(() =>
+			expect(api.listInternalLogs).toHaveBeenLastCalledWith(
+				expect.objectContaining({ q: "needle", cursor: "filtered-next" }),
+			),
+		);
+	});
+
 	it.each([
 		["Level", "warn", "level", "warn"],
 		["Source", "api", "source", "api"],

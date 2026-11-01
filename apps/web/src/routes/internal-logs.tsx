@@ -260,7 +260,7 @@ export function InternalLogsPage() {
 					Refresh
 				</Button>
 			</div>
-			{sourceUnavailableError ? (
+			{sourceUnavailableError && !query.data ? (
 				<section
 					className="rounded-lg border border-border bg-muted/30 p-6"
 					role="status"

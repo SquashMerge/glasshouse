@@ -219,6 +219,7 @@ describe("AppShell project selector", () => {
 			"Logs",
 			"Ingestion credentials",
 			"Projects",
+			"Instance recovery",
 		]);
 		expect(settingsLinks.map((link) => link.getAttribute("href"))).toEqual([
 			"/governance",
@@ -226,12 +227,13 @@ describe("AppShell project selector", () => {
 			"/logs",
 			"/ingestion-credentials",
 			"/projects",
+			"/instance-recovery",
 		]);
 		expect(settingsLinks[0]).toHaveAttribute("aria-current", "page");
 		const icons = settingsLinks.map(
 			(link) => link.querySelector("svg")?.innerHTML,
 		);
-		expect(new Set(icons).size).toBe(5);
+		expect(new Set(icons).size).toBe(6);
 	});
 
 	it("marks Settings active on Logs", () => {

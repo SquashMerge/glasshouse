@@ -75,6 +75,7 @@ test.skipIf(!databaseUrl)(
 			const found: string[] = [];
 			let complete = false;
 			let snapshotId = "";
+			let finalPageCursor = "";
 			for (let i = 0; i < 10; i++) {
 				expect(response.status).toBe(200);
 				const page = (await response.json()) as {
@@ -88,6 +89,7 @@ test.skipIf(!databaseUrl)(
 					complete = true;
 					break;
 				}
+				finalPageCursor = page.next_cursor;
 				response = await replica.request(
 					`/v1/admin/logs?limit=1&cursor=${encodeURIComponent(page.next_cursor)}`,
 				);
@@ -99,7 +101,11 @@ test.skipIf(!databaseUrl)(
 				"SELECT id FROM internal_log_snapshots WHERE id = $1",
 				[snapshotId],
 			);
-			expect(remaining.rows).toHaveLength(0);
+			expect(remaining.rows).toHaveLength(1);
+			const retriedFinalPage = await replica.request(
+				`/v1/admin/logs?limit=1&cursor=${encodeURIComponent(finalPageCursor)}`,
+			);
+			expect(retriedFinalPage.status).toBe(200);
 			const refreshed = await app.request("/v1/admin/logs?limit=100");
 			expect(refreshed.status).toBe(200);
 			const freshPage = (await refreshed.json()) as {
@@ -437,6 +443,49 @@ test.skipIf(!databaseUrl)(
 			holder.release();
 			await readerPool.end();
 			await monitor.end();
+		}
+	},
+	15000,
+);
+
+test.skipIf(!databaseUrl)(
+	"a demoted and regranted Admin must restart an earlier snapshot",
+	async () => {
+		const pool = new Pool({ connectionString: databaseUrl, max: 3 });
+		try {
+			const { organizationId } = await seedOrganization(pool);
+			const reader = await seedAdmin(pool, organizationId, "snapshot-regenerated");
+			await seedAdmin(pool, organizationId, "snapshot-regenerated-peer");
+			await pool.query(
+				"INSERT INTO internal_log_entries (organization_id, severity, source, message, context) SELECT $1, 'info', 'api', 'API request outcome', '{}'::jsonb FROM generate_series(1,2)",
+				[organizationId],
+			);
+			const app = snapshotApp(pool, {
+				organizationId,
+				actorId: reader.actorId,
+			});
+			const first = await app.request("/v1/admin/logs?limit=1");
+			expect(first.status).toBe(200);
+			const { next_cursor } = (await first.json()) as {
+				next_cursor: string;
+			};
+			await pool.query(
+				"UPDATE organization_actor_roles SET role = 'user' WHERE organization_id = $1 AND actor_id = $2",
+				[organizationId, reader.actorId],
+			);
+			await pool.query(
+				"UPDATE organization_actor_roles SET role = 'admin' WHERE organization_id = $1 AND actor_id = $2",
+				[organizationId, reader.actorId],
+			);
+			const continuation = await app.request(
+				`/v1/admin/logs?limit=1&cursor=${encodeURIComponent(next_cursor)}`,
+			);
+			expect(continuation.status).toBe(409);
+			expect(((await continuation.json()) as { code: string }).code).toBe(
+				"CONFLICT",
+			);
+		} finally {
+			await pool.end();
 		}
 	},
 	15000,

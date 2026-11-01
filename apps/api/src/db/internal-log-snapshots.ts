@@ -221,7 +221,9 @@ export async function listInternalLogSnapshot(
 			context: row.context!,
 		}));
 	const nextOffset = offset + items.length;
-	if (nextOffset >= first.total)
+	// A continuation can be retried if its response was lost. Keep its snapshot
+	// until expiry; one-page results have no cursor and need no retained state.
+	if (!filters.cursor && nextOffset >= first.total)
 		await client.query("DELETE FROM internal_log_snapshots WHERE id = $1", [
 			snapshot.id,
 		]);
