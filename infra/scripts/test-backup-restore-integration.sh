@@ -104,20 +104,21 @@ PY
 # operations still reach the real disposable stores.
 version_bin="$(mktemp -d)"
 real_docker="$(command -v docker)"
+target_pg_id="$(docker inspect --format '{{.Id}}' "$("${target_compose[@]}" ps -q "$target_pg_service")")"
 cat > "$version_bin/docker" <<'SH'
 #!/usr/bin/env bash
+if [[ "$MOCK_BAD_VERSION" == postgres && "$*" == *"exec -i -e PGPASSWORD $TARGET_PG_ID "* && "$*" == *"current_setting('server_version')"* ]]; then printf '17.4\n'; exit 0; fi
 if [[ "$*" == *"--project-name $RESTORE_TARGET_COMPOSE_PROJECT "* ]]; then
-    if [[ "$MOCK_BAD_VERSION" == postgres && "$*" == *"current_setting('server_version')"* ]]; then printf '17.4\n'; exit 0; fi
     if [[ "$MOCK_BAD_VERSION" == clickhouse && "$*" == *'SELECT version()'* ]]; then printf '25.1\n'; exit 0; fi
 fi
 exec "$REAL_DOCKER" "$@"
 SH
 chmod 700 "$version_bin/docker"
 for store in postgres clickhouse; do
-    if PATH="$version_bin:$PATH" REAL_DOCKER="$real_docker" MOCK_BAD_VERSION="$store" BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh" >"$destination/${backup_id}-${store}-version.log" 2>&1; then
+    if PATH="$version_bin:$PATH" REAL_DOCKER="$real_docker" TARGET_PG_ID="$target_pg_id" MOCK_BAD_VERSION="$store" BACKUP_ARTIFACT="$artifact" "$root_dir/infra/scripts/restore.sh" >"$destination/${backup_id}-${store}-version.log" 2>&1; then
         printf 'mismatched target %s version accepted\n' "$store" >&2; exit 1
     fi
-    grep -q 'target .*server_version does not match' "$destination/${backup_id}-${store}-version.log" || { printf 'target %s version did not fail preflight\n' "$store" >&2; exit 1; }
+    grep -q 'target .*server_version does not match' "$destination/${backup_id}-${store}-version.log" || { printf 'target %s version did not fail preflight\n' "$store" >&2; cat "$destination/${backup_id}-${store}-version.log" >&2; exit 1; }
 done
 rm -rf -- "$version_bin"
 # A checksum can be recomputed for malformed or malicious input; reject an

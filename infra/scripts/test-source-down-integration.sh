@@ -39,6 +39,9 @@ cleanup() {
     docker rm -f "$shared_container" >/dev/null 2>&1 || true
     "${source_compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
     "${target_compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    if [[ -d "$work/pg-outside" ]]; then
+        docker run --rm --user root --mount "type=bind,source=$work/pg-outside,target=/data" --entrypoint chown postgres:18.6-alpine -R "$(id -u):$(id -g)" /data >/dev/null 2>&1 || true
+    fi
     rm -rf -- "$work"
 }
 trap cleanup EXIT
@@ -124,12 +127,100 @@ expect_refusal 'same project' 'source and target Compose projects must differ' "
 docker create --name "$shared_container" --mount "type=volume,source=${target_project}_postgres-data,target=/attached" postgres:18.6-alpine true >/dev/null
 expect_refusal 'volume attached to another stopped container' 'data volume attached to another container'
 docker rm "$shared_container" >/dev/null
+# An apparently dedicated volume does not prove that PostgreSQL uses it.
+# Recreate only this disposable target with PGDATA in the writable layer.
+python3 - "$work/compose.yaml" "$work/outside.yaml" <<'PY'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+s = s.replace('      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}',
+              '      PGDATA: /tmp/outside-pgdata\n      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}', 1)
+Path(sys.argv[2]).write_text(s)
+PY
+outside_compose=(docker compose --project-directory "$work/target" --env-file "$work/test.env" --project-name "$target_project" -f "$work/outside.yaml")
+"${outside_compose[@]}" up --detach --wait --wait-timeout 180 postgres
+expect_refusal 'PostgreSQL data outside dedicated volume' 'PostgreSQL data directory' "RESTORE_TARGET_COMPOSE_FILE=$work/outside.yaml"
+outside_result="$(PGPASSWORD="$POSTGRES_PASSWORD" "${outside_compose[@]}" exec -T -e PGPASSWORD postgres psql --no-password -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT to_regclass('public.recovery_probe') IS NULL")"
+[[ "$outside_result" == t ]]
+# Repeat with the actual data directory on a separate bind mount.
+mkdir "$work/pg-outside"
+python3 - "$work/outside.yaml" "$work/outside-bind.yaml" "$work/pg-outside" <<'PY'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+old = '      - postgres-data:/var/lib/postgresql'
+assert s.count(old) == 1
+Path(sys.argv[2]).write_text(s.replace(old, old + '\n      - ' + sys.argv[3] + ':/tmp/outside-pgdata'))
+PY
+bind_compose=(docker compose --project-directory "$work/target" --env-file "$work/test.env" --project-name "$target_project" -f "$work/outside-bind.yaml")
+"${bind_compose[@]}" up --detach --wait --wait-timeout 180 postgres
+expect_refusal 'PostgreSQL data on outside bind mount' 'PostgreSQL data directory' "RESTORE_TARGET_COMPOSE_FILE=$work/outside-bind.yaml"
+[[ "$(PGPASSWORD="$POSTGRES_PASSWORD" "${bind_compose[@]}" exec -T -e PGPASSWORD postgres psql --no-password -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT to_regclass('public.recovery_probe') IS NULL")" == t ]]
+"${target_compose[@]}" up --detach --wait --wait-timeout 180 postgres
+# Also reject a running ClickHouse whose server path is outside its volume.
+printf '<clickhouse><path>/tmp/outside-clickhouse/</path></clickhouse>\n' > "$work/ch-outside.xml"
+chmod 644 "$work/ch-outside.xml"
+python3 - "$work/compose.yaml" "$work/ch-outside.yaml" "$work/ch-outside.xml" <<'PY'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+old = '      - clickhouse-data:/var/lib/clickhouse'
+assert s.count(old) == 1
+s = s.replace(old, old + '\n      - ' + sys.argv[3] + ':/etc/clickhouse-server/config.d/outside.xml:ro')
+Path(sys.argv[2]).write_text(s)
+PY
+outside_ch_compose=(docker compose --project-directory "$work/target" --env-file "$work/test.env" --project-name "$target_project" -f "$work/ch-outside.yaml")
+"${outside_ch_compose[@]}" up --detach --wait --wait-timeout 180 clickhouse
+expect_refusal 'ClickHouse data outside dedicated volume' 'ClickHouse data paths or disks' "RESTORE_TARGET_COMPOSE_FILE=$work/ch-outside.yaml"
+ch_outside_config="$(create_clickhouse_client_config clickhouse "$CLICKHOUSE_USER" "$CLICKHOUSE_PASSWORD" "${outside_ch_compose[@]}")"
+[[ "$("${outside_ch_compose[@]}" exec -T clickhouse clickhouse-client --config-file "$ch_outside_config" --database "$CLICKHOUSE_DB" --query="SELECT count() FROM system.tables WHERE database = '$CLICKHOUSE_DB' AND name = 'recovery_probe'")" == 0 ]]
+remove_clickhouse_client_config clickhouse "$ch_outside_config" "${outside_ch_compose[@]}"
+[[ "$(PGPASSWORD="$POSTGRES_PASSWORD" "${target_compose[@]}" exec -T -e PGPASSWORD postgres psql --no-password -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT to_regclass('public.recovery_probe') IS NULL")" == t ]]
+"${target_compose[@]}" up --detach --wait --wait-timeout 180 clickhouse
 PGPASSWORD="$POSTGRES_PASSWORD" "${target_compose[@]}" exec -T -e PGPASSWORD postgres psql --no-password -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'CREATE TABLE unsafe_existing_target (id int)' >/dev/null
 expect_refusal 'non-empty target' 'target data stores are not empty'
 PGPASSWORD="$POSTGRES_PASSWORD" "${target_compose[@]}" exec -T -e PGPASSWORD postgres psql --no-password -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'DROP TABLE unsafe_existing_target' >/dev/null
-"$root_dir/infra/scripts/restore.sh"
+# Start a second real, empty server on the test network; inherited libpq
+# variables must not divert any validation or restore operation to it.
+docker run -d --name "$shared_container" --network "${target_project}_default" \
+    -e POSTGRES_USER -e POSTGRES_PASSWORD -e POSTGRES_DB postgres:18.6-alpine >/dev/null
+for attempt in {1..60}; do
+    if docker exec "$shared_container" pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then break; fi
+    sleep 1
+done
+docker exec "$shared_container" pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null
+alternate_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$shared_container")"
+python3 - "$work/compose.yaml" "$work/hostile.yaml" "$alternate_ip" <<'PY'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+s = s.replace('      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}',
+              '      PGHOST: hostile-alias\n      PGHOSTADDR: ' + sys.argv[3] + '\n      PGSERVICE: nonexistent\n      PGSERVICEFILE: /tmp/nonexistent-service\n      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}', 1)
+s = s.replace('pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}',
+              'env -i PATH=/usr/local/bin:/usr/bin:/bin pg_isready -h /var/run/postgresql -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}', 1)
+Path(sys.argv[2]).with_name('hostile-service.conf').write_text('[hostile]\nhost=hostile-alias\nhostaddr=' + sys.argv[3] + '\nport=5432\n')
+s = s.replace('      PGHOST: hostile-alias\n      PGHOSTADDR: ' + sys.argv[3] + '\n      PGSERVICE: nonexistent\n      PGSERVICEFILE: /tmp/nonexistent-service',
+              '      PGHOST: hostile-alias\n      PGHOSTADDR: ' + sys.argv[3] + '\n      PGSERVICE: hostile\n      PGSERVICEFILE: /tmp/hostile-service.conf')
+s = s.replace('      - postgres-data:/var/lib/postgresql',
+              '      - postgres-data:/var/lib/postgresql\n      - ' + str(Path(sys.argv[2]).with_name('hostile-service.conf')) + ':/tmp/hostile-service.conf:ro', 1)
+Path(sys.argv[2]).write_text(s)
+PY
+hostile_compose=(docker compose --project-directory "$work/target" --env-file "$work/test.env" --project-name "$target_project" -f "$work/hostile.yaml")
+"${hostile_compose[@]}" up --detach --wait --wait-timeout 180 postgres
+hostile_psql() {
+    PGPASSWORD="$POSTGRES_PASSWORD" "${hostile_compose[@]}" exec -T -e PGPASSWORD postgres sh -c \
+        'exec env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSWORD="$PGPASSWORD" "$@"' sh \
+        psql --no-password -h /var/run/postgresql -p 5432 -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"
+}
+hostile_psql -c 'CREATE TABLE unsafe_existing_target (id int)' >/dev/null
+expect_refusal 'hostile libpq environment cannot bypass target emptiness' 'target data stores are not empty' "RESTORE_TARGET_COMPOSE_FILE=$work/hostile.yaml"
+hostile_psql -c 'DROP TABLE unsafe_existing_target' >/dev/null
+RESTORE_TARGET_COMPOSE_FILE="$work/hostile.yaml" "$root_dir/infra/scripts/restore.sh"
+alternate_result="$(PGPASSWORD="$POSTGRES_PASSWORD" docker exec -e PGPASSWORD "$shared_container" psql --no-password -h /var/run/postgresql -p 5432 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT to_regclass('public.recovery_probe') IS NULL")"
+[[ "$alternate_result" == t ]]
+target_compose=("${hostile_compose[@]}")
 target_ch_config="$(create_clickhouse_client_config clickhouse "$CLICKHOUSE_USER" "$CLICKHOUSE_PASSWORD" "${target_compose[@]}")"
-pg_result="$(PGPASSWORD="$POSTGRES_PASSWORD" "${target_compose[@]}" exec -T -e PGPASSWORD postgres psql --no-password -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT payload FROM recovery_probe WHERE id = 'source-down'")"
+pg_result="$(PGPASSWORD="$POSTGRES_PASSWORD" "${target_compose[@]}" exec -T -e PGPASSWORD postgres sh -c 'exec env -i PATH=/usr/local/bin:/usr/bin:/bin PGPASSWORD="$PGPASSWORD" "$@"' sh psql --no-password -h /var/run/postgresql -p 5432 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT payload FROM recovery_probe WHERE id = 'source-down'")"
 ch_result="$("${target_compose[@]}" exec -T clickhouse clickhouse-client --config-file "$target_ch_config" --database "$CLICKHOUSE_DB" --query "SELECT payload FROM recovery_probe WHERE id = 'source-down'")"
 remove_clickhouse_client_config clickhouse "$target_ch_config" "${target_compose[@]}"
 [[ "$pg_result" == postgres-recovered && "$ch_result" == clickhouse-recovered ]]

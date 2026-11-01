@@ -193,13 +193,6 @@ PY
 		printf 'Refusing restore: target services must already be running.\n' >&2
 		exit 1
 	fi
-	target_pg="$(docker inspect --format '{{.Id}}' "$target_pg")"
-	target_ch="$(docker inspect --format '{{.Id}}' "$target_ch")"
-	"${target_compose[@]}" config --format json > "$private_stage/target-compose.json"
-	python3 "$root_dir/infra/scripts/check-isolated-target.py" \
-		"$target_project" "$target_pg" "$target_ch" \
-		"${RESTORE_POSTGRES_SERVICE:-postgres}" "${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}" \
-		"$private_stage/target-compose.json"
 else
 	source_compose=(docker compose --project-directory "$root_dir" --env-file "$source_env_file" --project-name "$source_project" -f "$source_compose_file")
 	target_pg="$("${target_compose[@]}" ps -q "${RESTORE_POSTGRES_SERVICE:-postgres}")"
@@ -225,6 +218,15 @@ else
 	fi
 fi
 
+# Apply the same dedicated local-volume contract in both source modes.
+target_pg="$(docker inspect --format '{{.Id}}' "$target_pg")"
+target_ch="$(docker inspect --format '{{.Id}}' "$target_ch")"
+"${target_compose[@]}" config --format json > "$private_stage/target-compose.json"
+python3 "$root_dir/infra/scripts/check-isolated-target.py" \
+    "$target_project" "$target_pg" "$target_ch" \
+    "${RESTORE_POSTGRES_SERVICE:-postgres}" "${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}" \
+    "$private_stage/target-compose.json"
+
 pg_service="${RESTORE_POSTGRES_SERVICE:-postgres}"
 ch_service="${RESTORE_CLICKHOUSE_SERVICE:-clickhouse}"
 pg_user="$(compose_service_value "$pg_service" POSTGRES_USER "${target_compose[@]}")"
@@ -239,17 +241,53 @@ if [[ ! "$pg_database" =~ ^[A-Za-z0-9_]+$ || ! "$ch_database" =~ ^[A-Za-z0-9_]+$
 fi
 ch_remote="/var/lib/clickhouse/backup/restore-${target_id}-$$.zip"
 ch_client_config=""
+ch_remote_created=false
 restore_cleanup() {
 	if [[ -n "$ch_client_config" ]]; then
 		remove_clickhouse_client_config "$ch_service" "$ch_client_config" "${target_compose[@]}"
 	fi
-	"${target_compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote" >/dev/null 2>&1 || true
+	if [[ "$ch_remote_created" == true ]]; then
+		"${target_compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote" >/dev/null 2>&1 || true
+	fi
 	rm -rf -- "$private_stage"
 }
 trap restore_cleanup EXIT
+# A clean libpq environment and fixed Unix socket/port bind every PostgreSQL
+# query and restore to the inspected container, not inherited service settings.
+pg_client() {
+    PGPASSWORD="$pg_password" docker exec -i -e PGPASSWORD "$target_pg" sh -ec \
+        'exec env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin PGPASSWORD="$PGPASSWORD" "$@"' sh "$@"
+}
+pg_psql() {
+    pg_client psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 \
+        --host=/var/run/postgresql --port=5432 --username="$pg_user" --dbname="$pg_database" "$@"
+}
 ch_client_config="$(create_clickhouse_client_config "$ch_service" "$ch_user" "$ch_password" "${target_compose[@]}")"
-pg_target_version="$(PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="SELECT current_setting('server_version')" | tr -d '[:space:]')"
-ch_target_version="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --query='SELECT version()' | tr -d '[:space:]')"
+pg_target_version="$(pg_psql --tuples-only --no-align --command="SELECT current_setting('server_version')" | tr -d '[:space:]')"
+pg_data="$(pg_psql --tuples-only --no-align --command="SHOW data_directory")"
+if ! python3 "$root_dir/infra/scripts/check-isolated-target.py" --runtime-paths "$target_pg" /var/lib/postgresql "$pg_data" "$pg_data/pg_wal"; then
+    printf 'Refusing restore: PostgreSQL data directory or WAL is outside the dedicated volume.\n' >&2
+    exit 1
+fi
+pg_tablespaces="$(pg_psql --tuples-only --no-align --command="SELECT count(*) FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global')")"
+if [[ "$pg_tablespaces" != 0 ]]; then
+    printf 'Refusing restore: PostgreSQL custom tablespaces are unsupported.\n' >&2
+    exit 1
+fi
+ch_target_version="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --host=127.0.0.1 --port=9000 --config-file "$ch_client_config" --query='SELECT version()' | tr -d '[:space:]')"
+"${target_compose[@]}" exec -T "$ch_service" clickhouse-client --host=127.0.0.1 --port=9000 --config-file "$ch_client_config" --query="SELECT value FROM system.server_settings WHERE name='path' FORMAT TSVRaw" > "$private_stage/ch-path"
+"${target_compose[@]}" exec -T "$ch_service" clickhouse-client --host=127.0.0.1 --port=9000 --config-file "$ch_client_config" --query='SELECT name, path, type FROM system.disks FORMAT JSONEachRow' > "$private_stage/ch-disks"
+python3 - "$private_stage" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = {'path': (p / 'ch-path').read_text().strip(),
+        'disks': [json.loads(line) for line in (p / 'ch-disks').read_text().splitlines()]}
+(p / 'ch-storage.json').write_text(json.dumps(data))
+PY
+if ! python3 "$root_dir/infra/scripts/check-isolated-target.py" --clickhouse-paths "$target_ch" /var/lib/clickhouse/backup "$private_stage/ch-storage.json"; then
+    printf 'Refusing restore: ClickHouse data paths or disks are outside the dedicated volume.\n' >&2
+    exit 1
+fi
 python3 - "$manifest" "$pg_target_version" "$ch_target_version" <<'PY'
 import json, sys
 with open(sys.argv[1]) as stream:
@@ -280,18 +318,20 @@ SELECT
   + (SELECT count(*) FROM pg_largeobject_metadata);
 SQL
 )"
-pg_tables="$(PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -e PGPASSWORD "$pg_service" psql --no-password --tuples-only --no-align --username="$pg_user" --dbname="$pg_database" --command="$pg_empty_query" | tr -d '[:space:]')"
-ch_tables="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query="SELECT count() FROM system.tables WHERE database = '$ch_database'" | tr -d '[:space:]')"
+pg_tables="$(pg_psql --tuples-only --no-align --command="$pg_empty_query" | tr -d '[:space:]')"
+ch_tables="$("${target_compose[@]}" exec -T "$ch_service" clickhouse-client --host=127.0.0.1 --port=9000 --config-file "$ch_client_config" --database "$ch_database" --query="SELECT count() FROM system.tables WHERE database = '$ch_database'" | tr -d '[:space:]')"
 if [[ "$pg_tables" != "0" || "$ch_tables" != "0" ]]; then
 	printf 'Refusing restore: target data stores are not empty.\n' >&2
 	exit 1
 fi
 
 printf 'Restoring PostgreSQL...\n'
-cat "$artifact/postgres.dump" | PGPASSWORD="$pg_password" "${target_compose[@]}" exec -T -i -e PGPASSWORD "$pg_service" pg_restore --exit-on-error --single-transaction --no-password --no-owner --no-privileges --username="$pg_user" --dbname="$pg_database"
+pg_client pg_restore --exit-on-error --single-transaction --no-password --no-owner --no-privileges --no-tablespaces --host=/var/run/postgresql --port=5432 --username="$pg_user" --dbname="$pg_database" < "$artifact/postgres.dump"
+ch_remote_created=true
 "${target_compose[@]}" cp "$artifact/clickhouse.zip" "$ch_service:$ch_remote"
 "${target_compose[@]}" exec -T --user root "$ch_service" sh -ec 'chown clickhouse:clickhouse "$1" && chmod 600 "$1"' sh "$ch_remote"
 printf 'Restoring ClickHouse...\n'
-"${target_compose[@]}" exec -T "$ch_service" clickhouse-client --config-file "$ch_client_config" --database "$ch_database" --query="RESTORE DATABASE \`$ch_database\` FROM File('$ch_remote')"
+"${target_compose[@]}" exec -T "$ch_service" clickhouse-client --host=127.0.0.1 --port=9000 --config-file "$ch_client_config" --database "$ch_database" --query="RESTORE DATABASE \`$ch_database\` FROM File('$ch_remote')"
 "${target_compose[@]}" exec -T "$ch_service" sh -ec 'rm -f -- "$1"' sh "$ch_remote"
+ch_remote_created=false
 printf 'Restore complete. Run the target migrations and health smoke checks before serving traffic.\n'

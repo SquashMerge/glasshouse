@@ -31,6 +31,30 @@ class IsolationTests(unittest.TestCase):
     def check(self, containers, volumes, config):
         module.validate(containers, volumes, config, 'target', 'pg', 'ch', 'postgres', 'clickhouse')
 
+    def test_runtime_paths_must_stay_on_unshadowed_volume(self):
+        mountinfo = ('1 0 0:1 / / rw - overlay overlay rw\n'
+                     '2 1 0:2 / /var/lib/postgresql rw - ext4 /dev/x rw\n')
+        module.validate_data_paths('/var/lib/postgresql',
+                                   ['/var/lib/postgresql/18/docker', '/var/lib/postgresql/18/docker/pg_wal'], mountinfo)
+        for paths, mounts in [
+            (['/tmp/outside-pgdata'], mountinfo),
+            (['/var/lib/postgresql/18/docker', '/tmp/external-wal'], mountinfo),
+            (['/var/lib/postgresql/18/docker'], mountinfo + '3 2 0:3 / /var/lib/postgresql/18 rw - ext4 /dev/y rw\n'),
+            (['/var/lib/postgresql2/data'], mountinfo),
+            (['/var/lib/postgresql/data'], ''),
+        ]:
+            with self.subTest(paths=paths, mounts=mounts), self.assertRaises(ValueError):
+                module.validate_data_paths('/var/lib/postgresql', paths, mounts)
+
+    def test_clickhouse_disks_must_be_local(self):
+        valid = {'path': '/var/lib/clickhouse/', 'disks': [
+            {'name': 'default', 'path': '/var/lib/clickhouse/', 'type': 'Local'}]}
+        self.assertEqual(module.clickhouse_paths(valid), ['/var/lib/clickhouse/', '/var/lib/clickhouse/'])
+        bad = copy.deepcopy(valid)
+        bad['disks'][0]['type'] = 'S3'
+        with self.assertRaises(ValueError):
+            module.clickhouse_paths(bad)
+
     def test_accept_isolated_volumes(self):
         self.check(*fixture())
 

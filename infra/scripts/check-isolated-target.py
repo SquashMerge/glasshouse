@@ -68,11 +68,69 @@ def validate(containers, volumes, config, project, pg_id, ch_id, pg_service, ch_
     return selected
 
 
+def validate_data_paths(destination, paths, mountinfo):
+    if not paths or any(not p.startswith('/') or posixpath.normpath(p) != p or
+                        posixpath.commonpath((destination, p)) != destination for p in paths):
+        raise ValueError('data path escapes dedicated volume')
+    mounts = []
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if len(fields) < 10 or '-' not in fields:
+            raise ValueError('invalid mountinfo')
+        # Linux mountinfo escapes whitespace and backslashes with octal codes.
+        import re
+        mount = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m.group(1), 8)), fields[4])
+        mounts.append(mount)
+    if mounts.count(destination) != 1 or any(
+        m != destination and posixpath.commonpath((destination, m)) == destination
+        for m in mounts
+    ):
+        raise ValueError('volume mount is absent or contains nested mounts')
+
+
+def clickhouse_paths(data):
+    disks = data.get('disks')
+    if not isinstance(data.get('path'), str) or not isinstance(disks, list) or not disks:
+        raise ValueError('ClickHouse runtime storage configuration unavailable')
+    if not any(disk.get('name') == 'default' for disk in disks if isinstance(disk, dict)):
+        raise ValueError('ClickHouse default disk unavailable')
+    if any(not isinstance(disk, dict) or disk.get('type') != 'Local' or
+           not isinstance(disk.get('path'), str) or not disk['path'] for disk in disks):
+        raise ValueError('ClickHouse requires local disks only')
+    return [data['path'], *(disk['path'] for disk in disks)]
+
+
+def validate_runtime_paths(identifier, destination, paths):
+    # Resolve inside the very container that owns the mount, not on the host.
+    resolved = []
+    for path in [destination, *paths]:
+        if not path.startswith('/') or '\n' in path:
+            raise ValueError('invalid data path')
+        canonical = docker('exec', identifier, 'sh', '-ec',
+                           'test -d "$1"; realpath "$1"', 'sh', path).strip()
+        if not canonical.startswith('/') or '\n' in canonical:
+            raise ValueError('cannot resolve data path')
+        resolved.append(canonical)
+    if resolved[0] != destination:
+        raise ValueError('data volume destination is a symlink')
+    mountinfo = docker('exec', identifier, 'cat', '/proc/self/mountinfo')
+    validate_data_paths(destination, resolved[1:], mountinfo)
+
+
 def docker(*args):
     return subprocess.check_output(['docker', *args], text=True)
 
 
 def main():
+    if len(sys.argv) == 5 and sys.argv[1] == '--clickhouse-paths':
+        with open(sys.argv[4]) as stream:
+            data = json.load(stream)
+        validate_runtime_paths(sys.argv[2], '/var/lib/clickhouse',
+                               [*clickhouse_paths(data), sys.argv[3]])
+        return
+    if len(sys.argv) >= 5 and sys.argv[1] == '--runtime-paths':
+        validate_runtime_paths(sys.argv[2], sys.argv[3], sys.argv[4:])
+        return
     # All Docker calls use the same client environment; do not support a remote
     # daemon in this mode. The socket's ownership/host remains operator trust.
     context = os.environ.get('DOCKER_CONTEXT') or docker('context', 'show').strip()
