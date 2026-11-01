@@ -75,6 +75,92 @@ describe("InternalLogsPage", () => {
 		);
 	}
 
+	it("hides loaded logs when a continuation loses Admin access", async () => {
+		api.listInternalLogs.mockReset();
+		api.listInternalLogs.mockResolvedValueOnce({
+			items: [first],
+			total: 2,
+			next_cursor: "next",
+			sources: ["api"],
+			retention_days: 14,
+		});
+		api.listInternalLogs.mockRejectedValueOnce(
+			new ApiError(403, "FORBIDDEN", "Admin access required"),
+		);
+		renderPage();
+		await screen.findByText(first.message);
+		fireEvent.click(screen.getByRole("button", { name: "Load more logs" }));
+		expect(await screen.findByText(/Access changed/)).toBeVisible();
+		expect(screen.queryByText(first.message)).not.toBeInTheDocument();
+	});
+
+	it("does not silently create a new snapshot when active queries reset", async () => {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<InternalLogsPage />
+			</QueryClientProvider>,
+		);
+		await screen.findByText(first.message);
+		await act(async () => {
+			await client.resetQueries({ queryKey: ["admin", "internal-logs"] });
+		});
+		expect(api.listInternalLogs).toHaveBeenCalledTimes(1);
+		expect(await screen.findByText(/Refresh to restart/)).toBeVisible();
+	});
+
+	it("refresh starts a new traversal instead of appending old pages", async () => {
+		renderPage();
+		await screen.findByText(first.message);
+		fireEvent.click(screen.getByRole("button", { name: "Load more logs" }));
+		await screen.findByText("End of retained results.");
+		api.listInternalLogs.mockResolvedValueOnce({
+			items: [{ ...first, message: "Refreshed result" }],
+			total: 1,
+			sources: ["api"],
+			retention_days: 14,
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		expect(await screen.findByText("Refreshed result")).toBeVisible();
+		expect(screen.queryByText(first.message)).not.toBeInTheDocument();
+		expect(api.listInternalLogs).toHaveBeenLastCalledWith(
+			expect.objectContaining({ cursor: undefined }),
+		);
+	});
+
+	it("requires a restart after a snapshot is invalidated", async () => {
+		api.listInternalLogs.mockReset();
+		api.listInternalLogs.mockResolvedValueOnce({
+			items: [first],
+			total: 2,
+			next_cursor: "next",
+			sources: ["api"],
+			retention_days: 14,
+		});
+		api.listInternalLogs.mockRejectedValueOnce(
+			new ApiError(
+				409,
+				"CONFLICT",
+				"Log results expired or changed. Refresh to restart.",
+			),
+		);
+		api.listInternalLogs.mockResolvedValueOnce({
+			items: [{ ...first, message: "New snapshot" }],
+			total: 1,
+			sources: ["api"],
+			retention_days: 14,
+		});
+		renderPage();
+		await screen.findByText(first.message);
+		fireEvent.click(screen.getByRole("button", { name: "Load more logs" }));
+		expect(await screen.findByText(/Refresh to restart/)).toBeVisible();
+		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		expect(await screen.findByText("New snapshot")).toBeVisible();
+		expect(screen.queryByText(first.message)).not.toBeInTheDocument();
+	});
+
 	it("stacks the title and counter on narrow screens while retaining the desktop row", async () => {
 		renderPage();
 		const title = await screen.findByText("Operational logs");
@@ -131,6 +217,9 @@ describe("InternalLogsPage", () => {
 			expect(
 				screen.queryByText("Failed to load: page offline"),
 			).not.toBeInTheDocument(),
+		);
+		expect(api.listInternalLogs).toHaveBeenLastCalledWith(
+			expect.objectContaining({ cursor: "next" }),
 		);
 	});
 

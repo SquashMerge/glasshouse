@@ -8594,7 +8594,7 @@ paths:
         - administration
   /v1/admin/logs:
     get:
-      description: Returns retained API operational records for the authenticated Organization only. Records are sanitized before persistence, sorted by recorded_at DESC and id DESC, and continued with an opaque filter-bound cursor.
+      description: Returns a short-lived first-page snapshot of retained API operational records, scoped to the authenticated Admin, Organization and filters. Refresh starts a new snapshot; expired or invalidated snapshots require a restart.
       parameters:
         - in: query
           name: limit
@@ -8672,6 +8672,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
           description: Admin access required
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Snapshot expired, changed, or cursor is invalid; refresh to restart
         '500':
           content:
             application/json:

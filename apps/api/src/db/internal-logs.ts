@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { TrustedTenantContext } from "../middleware/auth.js";
 import { lockSessionPrincipal } from "./local-sessions.js";
+import { listInternalLogSnapshot } from "./internal-log-snapshots.js";
 import {
 	lockAuthorizedOrganization,
 	withLockPhaseTransaction,
@@ -171,6 +172,7 @@ export function internalLogRequestContext(
 	status: number,
 	durationMs: number,
 ): InternalLogContext | undefined {
+	if (path === "/v1/admin/logs" && method === "GET") return undefined;
 	const route = internalLogRoute(path);
 	if (!route || !INTERNAL_LOG_METHODS.includes(method as InternalLogMethod))
 		return undefined;
@@ -386,6 +388,19 @@ export function listAuthorizedInternalLogs(
 	);
 }
 
+export function listAuthorizedInternalLogSnapshot(
+	db: Pick<Pool, "connect">,
+	tenant: Pick<
+		TrustedTenantContext,
+		"actorId" | "organizationId" | "sessionId"
+	>,
+	filters: InternalLogFilters & { limit: number; cursor?: string },
+) {
+	return withAuthorizedInternalLogRead(db, tenant, (client) =>
+		listInternalLogSnapshot(client, tenant, filters),
+	);
+}
+
 export async function cleanupExpiredInternalLogs(
 	pool: Pick<Pool, "connect">,
 ): Promise<number> {
@@ -402,6 +417,9 @@ export async function cleanupExpiredInternalLogs(
 		const deleted = await client.query<{ deleted: string }>(
 			"WITH expired AS (SELECT ctid FROM internal_log_entries WHERE recorded_at < now() - INTERVAL '14 days' ORDER BY recorded_at ASC, id ASC LIMIT $1) DELETE FROM internal_log_entries entry USING expired WHERE entry.ctid = expired.ctid RETURNING 1",
 			[INTERNAL_LOG_CLEANUP_BATCH_SIZE],
+		);
+		await client.query(
+			"DELETE FROM internal_log_snapshots WHERE expires_at <= clock_timestamp()",
 		);
 		await client.query("COMMIT");
 		return deleted.rowCount ?? deleted.rows.length;

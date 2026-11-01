@@ -13,17 +13,22 @@ const query = mock(async (sql: string, values: unknown[] = []) => {
 	queries.push({ sql, values });
 	if (sql.startsWith("SELECT authorization_allows_organization"))
 		return { rows: [{ allowed: values[1] === ADMIN }] };
-	if (sql.includes("FROM internal_log_entries"))
+	if (sql.includes("AS global_count"))
+		return { rows: [{ global_count: 0, org_count: 0, actor_count: 0 }] };
+	if (sql.includes("SELECT count FROM collected"))
+		return { rows: [{ count: 1 }] };
+	if (sql.includes("SELECT checked.valid"))
 		return {
 			rows: [
 				{
+					valid: true,
 					id: "33333333-3333-4333-8333-333333333333",
-					recorded_at: new Date("2026-11-01T00:01:00.000Z"),
+					recorded_at: "2026-11-01T00:01:00.000Z",
 					severity: "warn",
 					source: "api",
 					message: "HTTP GET /v1/projects",
 					context: { status: 403 },
-					total: "1",
+					total: 1,
 				},
 			],
 		};
@@ -168,7 +173,7 @@ test("internal logs require an Admin and scope the filtered query to their organ
 		sql.includes("FROM internal_log_entries"),
 	);
 	expect(queryCall?.values).toContain(ORGANIZATION);
-	expect(queryCall?.sql).toContain("ORDER BY cursor_recorded_at DESC, id DESC");
+	expect(queryCall?.sql).toContain("ORDER BY recorded_at DESC, id DESC");
 });
 
 test("internal logs reject malformed queries before authorization or storage access", async () => {

@@ -18,6 +18,7 @@ import {
 } from "../lib/api";
 
 const PAGE_SIZE = 50;
+let nextGeneration = 0;
 const FILTER_FIELDS: FilterFieldDef[] = [
 	{
 		key: "level",
@@ -126,6 +127,7 @@ export function InternalLogsPage() {
 	const [filters, setFilters] = React.useState<Record<string, string>>({});
 	const [timeRange, setTimeRange] = React.useState<TimeRange>({ kind: "all" });
 	const [selected, setSelected] = React.useState<InternalLogEntry | null>(null);
+	const [generation, setGeneration] = React.useState(() => ++nextGeneration);
 	const params = React.useMemo(
 		() => ({
 			limit: PAGE_SIZE,
@@ -134,16 +136,48 @@ export function InternalLogsPage() {
 			q: filters.search?.trim() || undefined,
 			...timeParams(timeRange),
 		}),
-		[filters, timeRange],
+		[filters, timeRange, generation],
 	);
+	const traversalKey = JSON.stringify([generation, params]);
+	const traversalRef = React.useRef({ key: traversalKey, started: false });
+	if (traversalRef.current.key !== traversalKey)
+		traversalRef.current = { key: traversalKey, started: false };
+	const traversal = traversalRef.current;
 	const query = useInfiniteQuery({
-		queryKey: ["admin", "internal-logs", params],
-		queryFn: ({ pageParam }) =>
-			listInternalLogs({ ...params, cursor: pageParam as string | undefined }),
+		queryKey: ["admin", "internal-logs", generation, params],
+		queryFn: async ({ pageParam }) => {
+			if (pageParam === undefined && traversal.started)
+				throw new ApiError(
+					409,
+					"CONFLICT",
+					"Log results must be reauthorized. Refresh to restart.",
+				);
+			const page = await listInternalLogs({
+				...params,
+				cursor: pageParam as string | undefined,
+			});
+			if (pageParam === undefined) traversal.started = true;
+			return page;
+		},
 		initialPageParam: undefined as string | undefined,
 		enabled: actorQuery.data?.organization_role === "admin",
 		getNextPageParam: (page) => page.next_cursor,
+		staleTime: Infinity,
+		gcTime: 0,
+		refetchOnWindowFocus: false,
+		refetchOnReconnect: false,
+		retry: false,
 	});
+	const refresh = () => {
+		setSelected(null);
+		setGeneration(++nextGeneration);
+	};
+	const retry = () => {
+		if (query.error instanceof ApiError && query.error.status === 409)
+			refresh();
+		else if (query.isFetchNextPageError) void query.fetchNextPage();
+		else void query.refetch();
+	};
 	const entries = React.useMemo(() => {
 		const seen = new Set<string>();
 		return (query.data?.pages ?? []).flatMap((page) =>
@@ -188,6 +222,29 @@ export function InternalLogsPage() {
 				</p>
 			</div>
 		);
+	if (
+		query.error instanceof ApiError &&
+		[401, 403].includes(query.error.status)
+	)
+		return (
+			<div className="space-y-6">
+				<PageHeader title="Logs" description="Internal operational records." />
+				<div role="alert" className="space-y-3">
+					<p className="text-sm text-destructive">
+						Access changed. Check your access and refresh to restart.
+					</p>
+					<Button
+						variant="outline"
+						onClick={() => {
+							void actorQuery.refetch();
+							refresh();
+						}}
+					>
+						Check access
+					</Button>
+				</div>
+			</div>
+		);
 
 	return (
 		<div className="space-y-4">
@@ -195,6 +252,14 @@ export function InternalLogsPage() {
 				title="Logs"
 				description="Retained API operational records for this Organization. Sensitive values are removed before collection."
 			/>
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<p className="text-sm text-muted-foreground">
+					Results are fixed until refreshed.
+				</p>
+				<Button variant="outline" onClick={refresh}>
+					Refresh
+				</Button>
+			</div>
 			{sourceUnavailableError ? (
 				<section
 					className="rounded-lg border border-border bg-muted/30 p-6"
@@ -205,11 +270,7 @@ export function InternalLogsPage() {
 						{sourceUnavailableError.message} Try again; contact the deployment
 						operator if the problem persists.
 					</p>
-					<Button
-						className="mt-4"
-						variant="outline"
-						onClick={() => void query.refetch()}
-					>
+					<Button className="mt-4" variant="outline" onClick={retry}>
 						Retry
 					</Button>
 				</section>
@@ -231,7 +292,7 @@ export function InternalLogsPage() {
 							if (query.hasNextPage && !query.isFetchingNextPage)
 								void query.fetchNextPage();
 						}}
-						onRetry={() => void query.refetch()}
+						onRetry={retry}
 						rowKey={(entry) => entry.id}
 						onRowClick={setSelected}
 						onFiltersChange={(next, range) => {

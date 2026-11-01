@@ -77,6 +77,11 @@ export const InternalLogErrorResponses = {
 		description: "Admin access required",
 		content: { "application/json": { schema: ErrorEnvelope } },
 	},
+	409: {
+		description:
+			"Snapshot expired, changed, or cursor is invalid; refresh to restart",
+		content: { "application/json": { schema: ErrorEnvelope } },
+	},
 	503: {
 		description: "Internal log collection is unavailable",
 		content: { "application/json": { schema: ErrorEnvelope } },

@@ -6,6 +6,7 @@ import {
 	INTERNAL_LOG_MAX_PENDING,
 	INTERNAL_LOG_ORGANIZATION_LOCK_SEED,
 	internalLogRoute,
+	internalLogRequestContext,
 	listInternalLogs,
 	persistInternalLog,
 	cleanupExpiredInternalLogs,
@@ -65,6 +66,15 @@ describe("internal operational log persistence", () => {
 		expect(internalLogRoute("/v1/not-a-real-route/customer-secret")).toBe(
 			undefined,
 		);
+	});
+
+	it("does not collect log paging requests", () => {
+		expect(
+			internalLogRequestContext("/v1/admin/logs", "GET", 200, 1),
+		).toBeUndefined();
+		expect(
+			internalLogRequestContext("/v1/admin/other", "GET", 200, 1)?.route,
+		).toBe("admin");
 	});
 
 	it("stores only the fixed source/message and safe primitive request outcome context", async () => {

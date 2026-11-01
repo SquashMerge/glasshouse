@@ -4,14 +4,15 @@ import type { Pool } from "pg";
 import { pgPool } from "../db/postgres.js";
 import {
 	assertInternalLogAccess,
-	decodeInternalLogCursor,
-	encodeInternalLogCursor,
 	internalLogCollectionEnabled,
 	INTERNAL_LOG_RETENTION_DAYS,
 	InternalLogAccessDeniedError,
-	InvalidInternalLogCursorError,
-	listAuthorizedInternalLogs,
+	listAuthorizedInternalLogSnapshot,
 } from "../db/internal-logs.js";
+import {
+	InternalLogSnapshotCapacityError,
+	InternalLogSnapshotInvalidError,
+} from "../db/internal-log-snapshots.js";
 import {
 	InternalLogErrorResponses,
 	InternalLogList,
@@ -27,7 +28,7 @@ export const listInternalLogsRoute = createRoute({
 	tags: ["administration"],
 	summary: "List tenant-scoped internal operational logs",
 	description:
-		"Returns retained API operational records for the authenticated Organization only. Records are sanitized before persistence, sorted by recorded_at DESC and id DESC, and continued with an opaque filter-bound cursor.",
+		"Returns a short-lived first-page snapshot of retained API operational records, scoped to the authenticated Admin, Organization and filters. Refresh starts a new snapshot; expired or invalidated snapshots require a restart.",
 	security: [{ basicAuth: [] }],
 	request: { query: InternalLogQuery },
 	responses: {
@@ -78,26 +79,17 @@ export function createHandleListInternalLogs(
 				timeFrom: query.time_from,
 				timeTo: query.time_to,
 			};
-			const cursor = decodeInternalLogCursor(
-				query.cursor,
-				tenant.organizationId,
-				filters,
-			);
-			const page = await listAuthorizedInternalLogs(pool, tenant, {
+			const page = await listAuthorizedInternalLogSnapshot(pool, tenant, {
 				...filters,
 				limit: query.limit,
-				cursor,
+				cursor: query.cursor,
 			});
 			return c.json({
 				items: page.items,
 				total: page.total,
 				...(page.nextCursor
 					? {
-							next_cursor: encodeInternalLogCursor(
-								tenant.organizationId,
-								filters,
-								page.nextCursor,
-							),
+							next_cursor: page.nextCursor,
 						}
 					: {}),
 				sources: ["api"],
@@ -109,8 +101,13 @@ export function createHandleListInternalLogs(
 					{ code: "FORBIDDEN", message: "Admin access required" },
 					403,
 				);
-			if (cause instanceof InvalidInternalLogCursorError)
-				return c.json({ code: "BAD_REQUEST", message: cause.message }, 400);
+			if (cause instanceof InternalLogSnapshotInvalidError)
+				return c.json({ code: "CONFLICT", message: cause.message }, 409);
+			if (cause instanceof InternalLogSnapshotCapacityError)
+				return c.json(
+					{ code: "SERVICE_UNAVAILABLE", message: cause.message },
+					503,
+				);
 			logger.error("internal_logs.request_failed", cause);
 			return c.json(
 				{ code: "INTERNAL", message: "Could not load internal logs" },

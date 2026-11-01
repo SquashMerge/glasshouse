@@ -283,6 +283,9 @@ docker exec --interactive "$CONTAINER" \
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   < "$ROOT/infra/scripts/test-db-migrations-90058.assert.sql"
+docker exec --interactive "$CONTAINER" \
+  psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  < "$ROOT/infra/scripts/test-db-migrations-90059.assert.sql"
 
 docker exec --interactive "$CONTAINER" \
   psql --set ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
