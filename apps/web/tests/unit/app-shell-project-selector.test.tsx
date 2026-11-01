@@ -216,6 +216,7 @@ describe("AppShell project selector", () => {
 		).toEqual([
 			"Governance",
 			"Access",
+			"Logs",
 			"Ingestion credentials",
 			"Projects",
 			"Instance recovery",
@@ -223,6 +224,7 @@ describe("AppShell project selector", () => {
 		expect(settingsLinks.map((link) => link.getAttribute("href"))).toEqual([
 			"/governance",
 			"/access",
+			"/logs",
 			"/ingestion-credentials",
 			"/projects",
 			"/instance-recovery",
@@ -231,7 +233,19 @@ describe("AppShell project selector", () => {
 		const icons = settingsLinks.map(
 			(link) => link.querySelector("svg")?.innerHTML,
 		);
-		expect(new Set(icons).size).toBe(5);
+		expect(new Set(icons).size).toBe(6);
+	});
+
+	it("marks Settings active on Logs", () => {
+		render(
+			<AppShell currentPath="/logs">
+				<div>Page</div>
+			</AppShell>,
+		);
+		expect(screen.getByRole("group", { name: "Settings" })).toHaveAttribute(
+			"data-active",
+			"true",
+		);
 	});
 
 	it("keeps Access hidden inside Settings without Admin or recovery access", () => {

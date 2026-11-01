@@ -189,6 +189,14 @@ const adminAccessRoute = createRoute({
 		"AdminAccessPage",
 	),
 });
+const internalLogsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/logs",
+	component: lazyRouteComponent(
+		() => import("./routes/internal-logs"),
+		"InternalLogsPage",
+	),
+});
 const passwordChangeRoute = createRoute({
 	getParentRoute: () => protectedRoute,
 	path: "/account/password",
@@ -229,6 +237,7 @@ const router = createRouter({
 			governanceRoute,
 			instanceRecoveryRoute,
 			adminAccessRoute,
+			internalLogsRoute,
 			passwordChangeRoute,
 			otlpCredentialsRoute,
 		]),

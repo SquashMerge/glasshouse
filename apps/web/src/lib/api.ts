@@ -1969,6 +1969,52 @@ export async function listAdminActors(): Promise<{ items: AdminActor[] }> {
 	return responseJson(await authedFetch("/v1/admin/actors"), "listAdminActors");
 }
 
+export interface InternalLogEntry {
+	id: string;
+	recorded_at: string;
+	severity: "debug" | "info" | "warn" | "error";
+	source: string;
+	message: string;
+	context: JsonObject;
+}
+
+export interface InternalLogListResponse {
+	items: InternalLogEntry[];
+	total: number;
+	next_cursor?: string;
+	sources: string[];
+	retention_days: number;
+}
+
+export interface ListInternalLogsParams {
+	limit?: number;
+	cursor?: string;
+	level?: InternalLogEntry["severity"];
+	source?: string;
+	q?: string;
+	time_from?: string;
+	time_to?: string;
+}
+
+export async function listInternalLogs(
+	params: ListInternalLogsParams,
+): Promise<InternalLogListResponse> {
+	return responseJson(
+		await authedFetch(
+			`/v1/admin/logs${buildQs({
+				limit: params.limit,
+				cursor: params.cursor,
+				level: params.level,
+				source: params.source,
+				q: params.q,
+				time_from: params.time_from,
+				time_to: params.time_to,
+			})}`,
+		),
+		"listInternalLogs",
+	);
+}
+
 export async function setAdminActorRole(input: {
 	actorId: string;
 	role: Exclude<AdminActor["organization_role"], null>;

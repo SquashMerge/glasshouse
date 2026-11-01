@@ -170,6 +170,10 @@ import {
 	setAdminActorRole,
 } from "./routes/admin-access.js";
 import {
+	handleListInternalLogs,
+	listInternalLogsRoute,
+} from "./routes/internal-logs.js";
+import {
 	createOtlpCredential,
 	handleCreateOtlpCredential,
 	handleListOtlpCredentials,
@@ -493,6 +497,7 @@ register(listAdminActors, handleListAdminActors);
 register(setAdminActorRole, handleSetAdminActorRole);
 register(listAdminAuditEvents, handleListAdminAuditEvents);
 register(recoverAdmin, handleRecoverAdmin);
+register(listInternalLogsRoute, handleListInternalLogs);
 register(listOtlpCredentials, handleListOtlpCredentials);
 register(createOtlpCredential, handleCreateOtlpCredential);
 register(rotateOtlpCredential, handleRotateOtlpCredential);

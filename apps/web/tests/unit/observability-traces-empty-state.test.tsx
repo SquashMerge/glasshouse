@@ -110,6 +110,10 @@ describe("TracesTab empty and failure states", () => {
 			"Failed to load: Query failed; check server logs",
 		);
 		expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+		expect(screen.queryByText(/No traces yet/)).not.toBeInTheDocument();
+		expect(
+			screen.queryByText("No traces match the current filters."),
+		).not.toBeInTheDocument();
 	});
 
 	it("does not offer Retry for a non-500 listTraces response", async () => {

@@ -31,6 +31,9 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 ### Trace cursor
 An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and is not transferable to another endpoint. Trace and Observation list cursors are Project-scoped (`start_time, id`); Trace-detail and detail-SSE cursors are both Project- and trace-scoped (`start_time, observation_id`).
 
+### Internal operational log
+A tenant-scoped API request-outcome record shown only to current Organization Admins at Settings → Logs. Collection persists only a fixed static route group plus validated method, status, and duration; it is not an audit trail or host/Docker log reader. An internal-log snapshot fixes the ordered identifiers and sort keys visible at the first page, scoped to Actor, Organization and filters; refresh starts a new snapshot and invalidated traversals must restart. Reads enforce a 14-day cutoff and the bounded store retains at most 50,000 rows per Organization. See `docs/internal-logs.md`.
+
 ## Organization usage dashboard
 
 - `/` — authenticated organization homepage. It summarizes retained Trace and Observation rows for all active and archived Projects, with `24h`, `7d`, `30d`, and `90d` UTC ranges. Counts are grouped by `start_time` and are storage-row counts, not unique events or billing values.
