@@ -204,7 +204,9 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 					<div className="text-xs text-muted-foreground">
 						{isLoading && items.length === 0
 							? "loading…"
-							: `${items.length} of ${total} ${total === 1 ? noun.singular : noun.plural}`}
+							: isError && items.length === 0
+								? "unavailable"
+								: `${items.length} of ${total} ${total === 1 ? noun.singular : noun.plural}`}
 					</div>
 				</div>
 			</CardHeader>
@@ -249,7 +251,7 @@ export function FilterableTable<TRow>(props: FilterableTableProps<TRow>) {
 									</TableCell>
 								</TableRow>
 							))
-						) : items.length === 0 ? (
+						) : items.length === 0 && isError ? null : items.length === 0 ? (
 							<TableRow>
 								<TableCell
 									colSpan={totalColCount}

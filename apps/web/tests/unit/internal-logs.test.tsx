@@ -25,7 +25,8 @@ const first = {
 
 describe("InternalLogsPage", () => {
 	beforeEach(() => {
-		vi.clearAllMocks();
+		api.getCurrentActor.mockReset();
+		api.listInternalLogs.mockReset();
 		api.getCurrentActor.mockResolvedValue({ organization_role: "admin" });
 		api.listInternalLogs
 			.mockResolvedValueOnce({
@@ -112,6 +113,44 @@ describe("InternalLogsPage", () => {
 		).toBeVisible();
 	});
 
+	it("offers retry when access status fails instead of claiming access is restricted", async () => {
+		api.getCurrentActor.mockRejectedValueOnce(new Error("network"));
+		renderPage();
+		expect(
+			await screen.findByText("Access status could not be loaded."),
+		).toBeVisible();
+		expect(
+			screen.queryByText("Logs are restricted to Organization Admins."),
+		).not.toBeInTheDocument();
+		expect(api.listInternalLogs).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		expect(await screen.findByText("HTTP GET /v1/projects")).toBeVisible();
+	});
+
+	it("offers retry when logs fail without showing a misleading empty state", async () => {
+		api.listInternalLogs.mockReset();
+		api.listInternalLogs.mockRejectedValueOnce(
+			new ApiError(500, "INTERNAL", "Could not load internal logs"),
+		);
+		api.listInternalLogs.mockResolvedValueOnce({
+			items: [first],
+			total: 1,
+			sources: ["api"],
+			retention_days: 14,
+		});
+		renderPage();
+		expect(
+			await screen.findByText("Failed to load: Could not load internal logs"),
+		).toBeVisible();
+		expect(
+			screen.queryByText(/No retained API operational logs/),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText(/No logs match/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Scroll to load more/)).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		expect(await screen.findByText("HTTP GET /v1/projects")).toBeVisible();
+	});
+
 	it("explains an invalid level rather than silently showing unfiltered logs", async () => {
 		renderPage();
 		await screen.findByText("HTTP GET /v1/projects");
@@ -121,9 +160,21 @@ describe("InternalLogsPage", () => {
 		expect(
 			await screen.findByText(/Enter debug, info, warn, or error/),
 		).toBeVisible();
-		expect(api.listInternalLogs).not.toHaveBeenCalledWith(
-			expect.objectContaining({ level: "bogus" }),
+		expect(screen.getByLabelText("Level")).toHaveAttribute(
+			"aria-invalid",
+			"true",
 		);
+		fireEvent.change(screen.getByLabelText("Level"), {
+			target: { value: "warn" },
+		});
+		await waitFor(() =>
+			expect(api.listInternalLogs).toHaveBeenLastCalledWith(
+				expect.objectContaining({ level: "warn", cursor: undefined }),
+			),
+		);
+		expect(
+			screen.queryByText(/Enter debug, info, warn, or error/),
+		).not.toBeInTheDocument();
 	});
 
 	it("explains a disabled source and offers a retry", async () => {

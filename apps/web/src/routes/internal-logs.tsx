@@ -161,7 +161,25 @@ export function InternalLogsPage() {
 			: null;
 
 	if (actorQuery.isLoading) return <div aria-busy="true" className="h-40" />;
-	if (actorQuery.data?.organization_role !== "admin")
+	if (actorQuery.isError || !actorQuery.data)
+		return (
+			<div className="space-y-6">
+				<PageHeader title="Logs" description="Internal operational records." />
+				<div className="space-y-3" role="alert">
+					<p className="text-sm text-destructive">
+						Access status could not be loaded.
+					</p>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={() => void actorQuery.refetch()}
+					>
+						Retry
+					</Button>
+				</div>
+			</div>
+		);
+	if (actorQuery.data.organization_role !== "admin")
 		return (
 			<div className="space-y-6">
 				<PageHeader title="Logs" description="Internal operational records." />
@@ -221,24 +239,26 @@ export function InternalLogsPage() {
 							setTimeRange(range);
 						}}
 					/>
-					<div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
-						<span>
-							{entries.length > 0 &&
-							!query.hasNextPage &&
-							!query.isFetchingNextPage
-								? "End of retained results."
-								: "Scroll to load more, or use the button."}
-						</span>
-						{query.hasNextPage ? (
-							<Button
-								variant="outline"
-								disabled={query.isFetchingNextPage}
-								onClick={() => void query.fetchNextPage()}
-							>
-								Load more logs
-							</Button>
-						) : null}
-					</div>
+					{!query.error && (
+						<div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+							<span>
+								{entries.length > 0 &&
+								!query.hasNextPage &&
+								!query.isFetchingNextPage
+									? "End of retained results."
+									: "Scroll to load more, or use the button."}
+							</span>
+							{query.hasNextPage ? (
+								<Button
+									variant="outline"
+									disabled={query.isFetchingNextPage}
+									onClick={() => void query.fetchNextPage()}
+								>
+									Load more logs
+								</Button>
+							) : null}
+						</div>
+					)}
 				</>
 			)}
 			{selected ? (
