@@ -84,7 +84,6 @@ describe("production Compose API environment contract", () => {
 		const environment = renderApiEnvironment();
 		expect(environment.GLASSHOUSE_REDACT_INPUT).toBe("false");
 		expect(environment.GLASSHOUSE_REDACT_KEYS).toBe("");
-		expect(environment.GLASSHOUSE_INTERNAL_LOGS_ENABLED).toBe("true");
 		expect(resolveEvaluationExecutionPolicy({}, 1, environment).bounds).toEqual(
 			{
 				max_active_runs_per_project: 4,

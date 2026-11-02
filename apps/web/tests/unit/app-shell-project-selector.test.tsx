@@ -216,7 +216,6 @@ describe("AppShell project selector", () => {
 		).toEqual([
 			"Governance",
 			"Access",
-			"Logs",
 			"Ingestion credentials",
 			"Audit log",
 			"Projects",
@@ -225,7 +224,6 @@ describe("AppShell project selector", () => {
 		expect(settingsLinks.map((link) => link.getAttribute("href"))).toEqual([
 			"/governance",
 			"/access",
-			"/logs",
 			"/ingestion-credentials",
 			"/audit-log",
 			"/projects",
@@ -235,12 +233,12 @@ describe("AppShell project selector", () => {
 		const icons = settingsLinks.map(
 			(link) => link.querySelector("svg")?.innerHTML,
 		);
-		expect(new Set(icons).size).toBe(7);
+		expect(new Set(icons).size).toBe(6);
 	});
 
-	it("marks Settings active on Logs", () => {
+	it("marks Settings active on Audit log", () => {
 		render(
-			<AppShell currentPath="/logs">
+			<AppShell currentPath="/audit-log">
 				<div>Page</div>
 			</AppShell>,
 		);
