@@ -104,6 +104,7 @@ test("OTLP gRPC forwards and normalizes the original protobuf request", async ()
 											"hex",
 										),
 										spanId: Buffer.from("0011223344556677", "hex"),
+										parentSpanId: Buffer.alloc(0),
 										name: "grpc",
 										startTimeUnixNano: "1700000000000000000",
 										attributes: [

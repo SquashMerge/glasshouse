@@ -289,7 +289,9 @@ function otlpSpanToLegacy(value: unknown): unknown {
 }
 
 function lowerParentSpanId(value: unknown): unknown {
-	return value === "" ? undefined : lowerHex(value);
+	return value === "" || (Array.isArray(value) && value.length === 0)
+		? undefined
+		: lowerHex(value);
 }
 
 function lowerHex(value: unknown): unknown {

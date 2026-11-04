@@ -192,6 +192,7 @@ test("OTLP protobuf persists root and child spans encoded by the official schema
 							{
 								traceId,
 								spanId: rootSpanId,
+								parentSpanId: Buffer.alloc(0),
 								name: "root",
 								startTimeUnixNano: "1700000000000000000",
 							},
