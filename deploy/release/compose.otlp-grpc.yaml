@@ -1,0 +1,8 @@
+# Optional plaintext OTLP/gRPC listener; use only behind a TLS edge or on a private host.
+services:
+  api:
+    environment:
+      OTLP_GRPC_PORT: 4317
+      OTLP_GRPC_HOST: api
+    ports:
+      - "127.0.0.1:${OTLP_GRPC_HOST_PORT:-4317}:4317"

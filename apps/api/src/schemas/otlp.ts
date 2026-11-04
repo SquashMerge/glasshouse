@@ -6,7 +6,8 @@ export const MAX_OTLP_SPANS_PER_SCOPE = 512;
 export const MAX_OTLP_SPANS_PER_REQUEST = 2_000;
 export const MAX_OTLP_ATTRIBUTES_PER_RECORD = 128;
 
-// OTLP uses lowercase hex with no "0x" prefix.
+// OTLP uses lowercase hex with no "0x" prefix. The HTTP adapter canonicalizes
+// standards-compatible JSON before it reaches this legacy-safe schema.
 // trace_id = 16 bytes (32 hex chars), span_id = 8 bytes (16 hex chars).
 const hexBytes = (len: number) =>
 	z
@@ -32,7 +33,7 @@ const AnyValue = z
 		z.object({ boolValue: z.boolean() }),
 		z.object({ intValue: z.union([z.number().int(), z.string()]) }),
 		z.object({ doubleValue: z.number() }),
-		z.object({ stringValue: z.string() }).array(),
+		z.object({ arrayValue: z.object({ values: z.array(z.any()).optional() }) }),
 		z.object({ kvlistValue: KvlistValue }).optional(),
 		z.object({ bytesValue: z.string() }),
 	])

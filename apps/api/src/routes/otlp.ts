@@ -1,5 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createHash } from "node:crypto";
+import { gunzipSync } from "node:zlib";
+import { decodeOtlpTraceExport } from "../lib/otlp-protobuf.js";
+import {
+	otlpErrorResponse,
+	otlpSuccessResponse,
+} from "../lib/otlp-response.js";
 import { ErrorEnvelope } from "../schemas/common.js";
 import {
 	ExportTraceServiceRequest,
@@ -27,6 +33,7 @@ import {
 import { pgPool } from "../db/postgres.js";
 import { publishSync } from "../lib/event-bus.js";
 import { logger } from "../lib/logger.js";
+import { isTransientStorageFailure } from "../lib/transient-storage-error.js";
 import {
 	boundObservationMetadata,
 	boundText,
@@ -36,7 +43,7 @@ const tag = "otlp";
 
 export const otlpIngestRoute = createRoute({
 	method: "post",
-	path: "/v1/otel/v1/traces",
+	path: "/v1/traces",
 	tags: [tag],
 	summary: "OTLP HTTP/JSON trace ingest",
 	description:
@@ -98,14 +105,7 @@ export type OtlpIngestDependencies = {
 export async function resourceProjectIds(
 	req: Request,
 ): Promise<ReadonlySet<string>> {
-	let bodyJson: unknown;
-	try {
-		bodyJson = await req.clone().json();
-	} catch {
-		return new Set();
-	}
-
-	const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
+	const parsed = await parseOtlpHttpRequest(req.clone());
 	if (!parsed.success) return new Set();
 
 	return new Set(
@@ -114,6 +114,217 @@ export async function resourceProjectIds(
 				resourceProjectId(resourceSpan.resource?.attributes ?? []),
 			)
 			.filter(Boolean),
+	);
+}
+
+const configuredOtlpBodyLimit = Number(process.env.API_MAX_BODY_BYTES);
+const MAX_OTLP_DECOMPRESSED_BYTES =
+	Number.isSafeInteger(configuredOtlpBodyLimit) && configuredOtlpBodyLimit > 0
+		? configuredOtlpBodyLimit
+		: 1_048_576;
+
+type ParsedOtlpRequest =
+	| { success: true; data: z.infer<typeof ExportTraceServiceRequest> }
+	| { success: false; status: 400 | 413 | 415; message: string };
+
+async function parseOtlpHttpRequest(req: {
+	headers: {
+		get: (name: string) => string | null;
+		has: (name: string) => boolean;
+	};
+	arrayBuffer: () => Promise<ArrayBuffer>;
+}): Promise<ParsedOtlpRequest> {
+	const contentType =
+		req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ??
+		"application/json";
+	if (
+		contentType !== "application/json" &&
+		contentType !== "application/x-protobuf" &&
+		contentType !== "application/protobuf"
+	)
+		return {
+			success: false,
+			status: 415,
+			message: "OTLP trace export requires application/json",
+		};
+
+	let body: Uint8Array;
+	try {
+		body = new Uint8Array(await req.arrayBuffer());
+		if (req.headers.get("content-encoding")?.toLowerCase() === "gzip")
+			body = gunzipSync(body, { maxOutputLength: MAX_OTLP_DECOMPRESSED_BYTES });
+		else if (req.headers.has("content-encoding"))
+			return {
+				success: false,
+				status: 415,
+				message: "Unsupported content encoding",
+			};
+	} catch (cause) {
+		return {
+			success: false,
+			status: isGzipLimitError(cause) ? 413 : 400,
+			message: isGzipLimitError(cause)
+				? "OTLP request exceeds the decompressed body limit"
+				: "Request body is not valid OTLP JSON",
+		};
+	}
+	if (body.byteLength > MAX_OTLP_DECOMPRESSED_BYTES)
+		return {
+			success: false,
+			status: 413,
+			message: "OTLP request exceeds the decompressed body limit",
+		};
+
+	if (contentType !== "application/json") {
+		try {
+			return parseNormalizedOtlpRequest(
+				otlpJsonToLegacy(normalizeOtlpBytes(decodeOtlpTraceExport(body))),
+			);
+		} catch {
+			return {
+				success: false,
+				status: 400,
+				message: "Request body is not valid OTLP protobuf",
+			};
+		}
+	}
+
+	let bodyJson: unknown;
+	try {
+		bodyJson = JSON.parse(new TextDecoder().decode(body));
+	} catch {
+		return {
+			success: false,
+			status: 400,
+			message: "Request body is not valid OTLP JSON",
+		};
+	}
+	try {
+		return parseNormalizedOtlpRequest(
+			otlpJsonToLegacy(normalizeOtlpBytes(bodyJson)),
+		);
+	} catch {
+		return {
+			success: false,
+			status: 400,
+			message: "Invalid ExportTraceServiceRequest",
+		};
+	}
+}
+
+function parseNormalizedOtlpRequest(normalized: unknown): ParsedOtlpRequest {
+	if (
+		normalized &&
+		typeof normalized === "object" &&
+		Array.isArray(
+			(normalized as { resource_spans?: unknown }).resource_spans,
+		) &&
+		(normalized as { resource_spans: unknown[] }).resource_spans.length === 0
+	)
+		return {
+			success: true,
+			data: { resource_spans: [] } as z.infer<typeof ExportTraceServiceRequest>,
+		};
+	const parsed = ExportTraceServiceRequest.safeParse(normalized);
+	return parsed.success
+		? { success: true, data: parsed.data }
+		: {
+				success: false,
+				status: 400,
+				message: "Invalid ExportTraceServiceRequest",
+			};
+}
+
+function otlpJsonToLegacy(value: unknown): unknown {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const request = value as Record<string, unknown>;
+	const resourceSpans = request.resourceSpans ?? request.resource_spans ?? [];
+	if (!Array.isArray(resourceSpans)) return value;
+	return {
+		resource_spans: resourceSpans.map((resourceSpan) => {
+			if (
+				!resourceSpan ||
+				typeof resourceSpan !== "object" ||
+				Array.isArray(resourceSpan)
+			)
+				return resourceSpan;
+			const resource = resourceSpan as Record<string, unknown>;
+			const scopeSpans = resource.scopeSpans ?? resource.scope_spans;
+			return {
+				resource: resource.resource,
+				scope_spans: Array.isArray(scopeSpans)
+					? scopeSpans.map((scopeSpan) => {
+							if (
+								!scopeSpan ||
+								typeof scopeSpan !== "object" ||
+								Array.isArray(scopeSpan)
+							)
+								return scopeSpan;
+							const scope = scopeSpan as Record<string, unknown>;
+							const spans = scope.spans;
+							return {
+								scope: scope.scope,
+								spans: Array.isArray(spans)
+									? spans.map((span) => otlpSpanToLegacy(span))
+									: spans,
+							};
+						})
+					: scopeSpans,
+			};
+		}),
+	};
+}
+
+function otlpSpanToLegacy(value: unknown): unknown {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const span = value as Record<string, unknown>;
+	return {
+		...span,
+		trace_id: lowerHex(span.traceId ?? span.trace_id),
+		span_id: lowerHex(span.spanId ?? span.span_id),
+		parent_span_id: lowerParentSpanId(span.parentSpanId ?? span.parent_span_id),
+		start_time_unix_nano: span.startTimeUnixNano ?? span.start_time_unix_nano,
+		end_time_unix_nano: span.endTimeUnixNano ?? span.end_time_unix_nano,
+		trace_state: span.traceState ?? span.trace_state,
+	};
+}
+
+function lowerParentSpanId(value: unknown): unknown {
+	return value === "" || (Array.isArray(value) && value.length === 0)
+		? undefined
+		: lowerHex(value);
+}
+
+function lowerHex(value: unknown): unknown {
+	if (typeof value === "string") return value.toLowerCase();
+	if (Array.isArray(value) && value.every((byte) => Number.isInteger(byte)))
+		return Buffer.from(value).toString("hex");
+	return value;
+}
+
+function normalizeOtlpBytes(value: unknown, depth = 0): unknown {
+	if (depth > 32 || !value || typeof value !== "object") return value;
+	if (Array.isArray(value))
+		return value.map((item) => normalizeOtlpBytes(item, depth + 1));
+	const object = value as Record<string, unknown>;
+	const normalized: Record<string, unknown> = {};
+	for (const [key, child] of Object.entries(object)) {
+		if (
+			key === "bytesValue" &&
+			Array.isArray(child) &&
+			child.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+		)
+			normalized[key] = Buffer.from(child).toString("base64");
+		else normalized[key] = normalizeOtlpBytes(child, depth + 1);
+	}
+	return normalized;
+}
+
+function isGzipLimitError(cause: unknown): boolean {
+	return (
+		cause instanceof Error &&
+		"code" in cause &&
+		cause.code === "ERR_BUFFER_TOO_LARGE"
 	);
 }
 
@@ -165,24 +376,12 @@ export function createOtlpIngestHandler(
 		tenant: OtlpIngestTenantScope,
 		fallbackProjectId = tenant.projectId,
 	): Promise<Response> {
-		let bodyJson: unknown;
-		try {
-			bodyJson = await req.json();
-		} catch (err) {
-			logger.warn("otlp.body_parse_failed", err, {});
-			return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
-		}
-
-		const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
+		const parsed = await parseOtlpHttpRequest(req);
 		if (!parsed.success) {
-			return jsonError(
-				400,
-				"BAD_REQUEST",
-				`Invalid ExportTraceServiceRequest: ${parsed.error.message}`,
-			);
+			return otlpErrorResponse(req, parsed.status);
 		}
 
-		const request = parsed.data;
+		const { request, rejectedSpans } = rejectUnsupportedSpans(parsed.data);
 		const deduplicationTokens = otlpDeduplicationTokens(request, tenant);
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];
@@ -280,14 +479,9 @@ export function createOtlpIngestHandler(
 			);
 		} catch (err) {
 			if (err instanceof TenantScopeError) throw err;
-			if (err instanceof OtlpConflictError)
-				return jsonError(400, "BAD_REQUEST", err.message);
+			if (err instanceof OtlpConflictError) return otlpErrorResponse(req, 400);
 			logger.error("otlp.persist_failed", err);
-			return jsonError(
-				500,
-				"INTERNAL",
-				"Failed to persist traces; check server logs",
-			);
+			return otlpErrorResponse(req, isTransientStorageFailure(err) ? 503 : 500);
 		}
 
 		try {
@@ -301,12 +495,52 @@ export function createOtlpIngestHandler(
 			logger.warn("otlp.event_publish_failed", err, {});
 		}
 
-		return new Response(JSON.stringify({ partial_success: {} }), {
-			status: 200,
-			headers: { "content-type": "application/json" },
-		});
+		return otlpSuccessResponse(req, rejectedSpans);
 	};
 }
+
+function rejectUnsupportedSpans(
+	request: z.infer<typeof ExportTraceServiceRequest>,
+): {
+	request: z.infer<typeof ExportTraceServiceRequest>;
+	rejectedSpans: number;
+} {
+	let rejectedSpans = 0;
+	return {
+		request: {
+			...request,
+			resource_spans: request.resource_spans
+				.map((resourceSpan) => ({
+					...resourceSpan,
+					scope_spans: resourceSpan.scope_spans
+						.map((scopeSpan) => ({
+							...scopeSpan,
+							spans: scopeSpan.spans.filter((span) => {
+								const unsupported =
+									Boolean(span.events?.length) || Boolean(span.links?.length);
+								if (unsupported) rejectedSpans += 1;
+								return !unsupported;
+							}),
+						}))
+						.filter((scopeSpan) => scopeSpan.spans.length > 0),
+				}))
+				.filter((resourceSpan) => resourceSpan.scope_spans.length > 0),
+		} as z.infer<typeof ExportTraceServiceRequest>,
+		rejectedSpans,
+	};
+}
+
+const MAX_OTLP_REDACTION_DEPTH = 32;
+const MAX_OTLP_REDACTION_NODES = 4_096;
+const OTLP_ANY_VALUE_KEYS = new Set([
+	"stringValue",
+	"boolValue",
+	"intValue",
+	"doubleValue",
+	"arrayValue",
+	"kvlistValue",
+	"bytesValue",
+]);
 
 function redactAttributes<T extends { key: string }>(
 	attributes: T[],
@@ -314,7 +548,113 @@ function redactAttributes<T extends { key: string }>(
 ): T[] {
 	if (!keys.length) return attributes;
 	const redacted = new Set(keys);
-	return attributes.filter((attribute) => !redacted.has(attribute.key));
+	const budget = { remaining: MAX_OTLP_REDACTION_NODES };
+	return attributes.flatMap((attribute) => {
+		const value = redactAttribute(attribute, redacted, budget, 0);
+		return value === null ? [] : [value as T];
+	});
+}
+
+function redactAttribute(
+	attribute: { key: string },
+	keys: ReadonlySet<string>,
+	budget: { remaining: number },
+	depth: number,
+): object | null {
+	if (budget.remaining <= 0 || depth > MAX_OTLP_REDACTION_DEPTH) return null;
+	budget.remaining -= 1;
+	if (!attribute || typeof attribute !== "object" || Array.isArray(attribute))
+		return null;
+	const source = attribute as Record<string, unknown>;
+	if (
+		typeof source.key !== "string" ||
+		Object.keys(source).some((key) => key !== "key" && key !== "value")
+	)
+		return null;
+	if (keys.has(attribute.key)) return null;
+	if (!("value" in source)) return { key: attribute.key };
+	const value = redactAttributeValue(source.value, keys, budget, depth + 1);
+	return value === null ? null : { key: attribute.key, value };
+}
+
+function redactAttributeValue(
+	value: unknown,
+	keys: ReadonlySet<string>,
+	budget: { remaining: number },
+	depth: number,
+): unknown | null {
+	if (budget.remaining <= 0 || depth > MAX_OTLP_REDACTION_DEPTH) return null;
+	budget.remaining -= 1;
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const anyValue = value as Record<string, unknown>;
+	const valueKeys = Object.keys(anyValue);
+	if (valueKeys.length !== 1 || !OTLP_ANY_VALUE_KEYS.has(valueKeys[0] ?? ""))
+		return null;
+
+	switch (valueKeys[0]) {
+		case "stringValue":
+			return typeof anyValue.stringValue === "string"
+				? { stringValue: anyValue.stringValue }
+				: null;
+		case "boolValue":
+			return typeof anyValue.boolValue === "boolean"
+				? { boolValue: anyValue.boolValue }
+				: null;
+		case "intValue":
+			return typeof anyValue.intValue === "string" ||
+				(typeof anyValue.intValue === "number" &&
+					Number.isInteger(anyValue.intValue))
+				? { intValue: anyValue.intValue }
+				: null;
+		case "doubleValue":
+			return typeof anyValue.doubleValue === "number"
+				? { doubleValue: anyValue.doubleValue }
+				: null;
+		case "bytesValue":
+			return typeof anyValue.bytesValue === "string"
+				? { bytesValue: anyValue.bytesValue }
+				: null;
+		case "arrayValue":
+			return redactAnyValueCollection(
+				anyValue.arrayValue,
+				keys,
+				budget,
+				depth,
+				"arrayValue",
+			);
+		case "kvlistValue":
+			return redactAnyValueCollection(
+				anyValue.kvlistValue,
+				keys,
+				budget,
+				depth,
+				"kvlistValue",
+			);
+		default:
+			return null;
+	}
+}
+
+function redactAnyValueCollection(
+	value: unknown,
+	keys: ReadonlySet<string>,
+	budget: { remaining: number },
+	depth: number,
+	type: "arrayValue" | "kvlistValue",
+): object | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const collection = value as Record<string, unknown>;
+	if (Object.keys(collection).some((key) => key !== "values")) return null;
+	if (!("values" in collection)) return { [type]: {} };
+	if (!Array.isArray(collection.values)) return null;
+	const values = collection.values.flatMap((item) => {
+		const nested =
+			type === "arrayValue"
+				? redactAttributeValue(item, keys, budget, depth + 1)
+				: redactAttribute(item as { key: string }, keys, budget, depth + 1);
+		return nested === null ? [] : [nested];
+	});
+	return { [type]: { values } };
 }
 
 function aggregateTrace(
@@ -359,10 +699,3 @@ function latestTime(left: string | null, right: string | null): string | null {
 }
 
 export const handleOtlpIngest = createOtlpIngestHandler();
-
-function jsonError(code: number, errorCode: string, message: string): Response {
-	return new Response(JSON.stringify({ code: errorCode, message }), {
-		status: code,
-		headers: { "content-type": "application/json" },
-	});
-}

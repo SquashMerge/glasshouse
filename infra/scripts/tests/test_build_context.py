@@ -17,6 +17,177 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class DockerBuildContextTests(unittest.TestCase):
+    def test_staged_context_excludes_an_arbitrary_untracked_sentinel(self):
+        with tempfile.TemporaryDirectory(prefix="glasshouse-staged-context-") as directory:
+            source = Path(directory) / "source"
+            context = Path(directory) / "context"
+            (source / "infra/scripts").mkdir(parents=True)
+            (source / "apps/api").mkdir(parents=True)
+            (source / "apps/web").mkdir(parents=True)
+            (source / ".github").mkdir()
+            (source / "infra/clickhouse").mkdir(parents=True)
+            (source / "infra/db").mkdir(parents=True)
+            (source / "worker").mkdir()
+            shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", source / "infra/scripts")
+            shutil.copy2(ROOT / "apps/api/Dockerfile", source / "apps/api")
+            (source / "apps/web/placeholder").write_text("fixture\n")
+            (source / ".github/compose.otlp-sdk-integration.yaml").write_text("services: {}\n")
+            (source / "infra/clickhouse/backup.xml").write_text("<clickhouse/>\n")
+            (source / "infra/db/placeholder").write_text("fixture\n")
+            (source / "worker/placeholder").write_text("fixture\n")
+            for name in (".dockerignore", "package.json", "bun.lock"):
+                shutil.copy2(ROOT / name, source / name)
+            subprocess.run(["git", "init", "--quiet"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture"],
+                cwd=source,
+                check=True,
+            )
+            sentinel = source / "arbitrary-build-context-sentinel"
+            sentinel.write_text("must-not-reach-docker\n")
+            context.mkdir()
+            subprocess.run(
+                ["bash", source / "infra/scripts/stage-build-context.sh", context],
+                cwd=source,
+                check=True,
+                timeout=30,
+            )
+            self.assertTrue((context / "apps/api/Dockerfile").is_file())
+            self.assertFalse((context / sentinel.name).exists())
+
+    def test_staged_allowlisted_changes_are_refused(self):
+        with tempfile.TemporaryDirectory(prefix="glasshouse-staged-context-") as directory:
+            source = Path(directory) / "source"
+            context = Path(directory) / "context"
+            (source / "infra/scripts").mkdir(parents=True)
+            (source / "apps/api").mkdir(parents=True)
+            (source / "apps/web").mkdir(parents=True)
+            (source / ".github").mkdir()
+            (source / "infra/clickhouse").mkdir(parents=True)
+            (source / "infra/db").mkdir(parents=True)
+            (source / "worker").mkdir()
+            shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", source / "infra/scripts")
+            dockerfile = source / "apps/api/Dockerfile"
+            dockerfile.write_text("FROM scratch\n")
+            (source / "apps/web/placeholder").write_text("fixture\n")
+            (source / ".github/compose.otlp-sdk-integration.yaml").write_text("services: {}\n")
+            (source / "infra/clickhouse/backup.xml").write_text("<clickhouse/>\n")
+            (source / "infra/db/placeholder").write_text("fixture\n")
+            (source / "worker/placeholder").write_text("fixture\n")
+            for name in (".dockerignore", "package.json", "bun.lock"):
+                shutil.copy2(ROOT / name, source / name)
+            subprocess.run(["git", "init", "--quiet"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture"],
+                cwd=source,
+                check=True,
+            )
+            dockerfile.write_text("FROM staged-working-tree\n")
+            subprocess.run(["git", "add", dockerfile], cwd=source, check=True)
+            dockerfile.write_text("FROM scratch\n")
+            context.mkdir()
+            result = subprocess.run(
+                ["bash", source / "infra/scripts/stage-build-context.sh", context],
+                cwd=source,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("tracked changes", result.stderr)
+            self.assertFalse((context / "apps/api/Dockerfile").exists())
+
+    def test_assume_unchanged_allowlisted_changes_are_refused(self):
+        with tempfile.TemporaryDirectory(prefix="glasshouse-staged-context-") as directory:
+            source = Path(directory) / "source"
+            context = Path(directory) / "context"
+            (source / "infra/scripts").mkdir(parents=True)
+            (source / "apps/api").mkdir(parents=True)
+            (source / "apps/web").mkdir(parents=True)
+            (source / ".github").mkdir()
+            (source / "infra/clickhouse").mkdir(parents=True)
+            (source / "infra/db").mkdir(parents=True)
+            (source / "worker").mkdir()
+            shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", source / "infra/scripts")
+            dockerfile = source / "apps/api/Dockerfile"
+            dockerfile.write_text("FROM scratch\n")
+            (source / "apps/web/placeholder").write_text("fixture\n")
+            (source / ".github/compose.otlp-sdk-integration.yaml").write_text("services: {}\n")
+            (source / "infra/clickhouse/backup.xml").write_text("<clickhouse/>\n")
+            (source / "infra/db/placeholder").write_text("fixture\n")
+            (source / "worker/placeholder").write_text("fixture\n")
+            for name in (".dockerignore", "package.json", "bun.lock"):
+                shutil.copy2(ROOT / name, source / name)
+            subprocess.run(["git", "init", "--quiet"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(["git", "update-index", "--assume-unchanged", dockerfile], cwd=source, check=True)
+            dockerfile.write_text("FROM hidden-working-tree-change\n")
+            context.mkdir()
+            result = subprocess.run(
+                ["bash", source / "infra/scripts/stage-build-context.sh", context],
+                cwd=source,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("assume-unchanged", result.stderr)
+            self.assertFalse((context / "apps/api/Dockerfile").exists())
+
+    def test_symlinked_allowlisted_parent_is_refused_without_leaking_external_file(self):
+        with tempfile.TemporaryDirectory(prefix="glasshouse-staged-context-") as directory:
+            source = Path(directory) / "source"
+            context = Path(directory) / "context"
+            external = Path(directory) / "external"
+            (source / "infra/scripts").mkdir(parents=True)
+            (source / "apps/api").mkdir(parents=True)
+            (source / "apps/web").mkdir(parents=True)
+            (source / ".github").mkdir()
+            (source / "infra/clickhouse").mkdir(parents=True)
+            (source / "infra/db").mkdir(parents=True)
+            (source / "worker").mkdir()
+            shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", source / "infra/scripts")
+            (source / "apps/api/Dockerfile").write_text("FROM scratch\n")
+            (source / "apps/web/placeholder").write_text("fixture\n")
+            (source / ".github/compose.otlp-sdk-integration.yaml").write_text("services: {}\n")
+            (source / "infra/clickhouse/backup.xml").write_text("<clickhouse/>\n")
+            (source / "infra/db/placeholder").write_text("fixture\n")
+            (source / "worker/placeholder").write_text("fixture\n")
+            for name in (".dockerignore", "package.json", "bun.lock"):
+                shutil.copy2(ROOT / name, source / name)
+            subprocess.run(["git", "init", "--quiet"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture"],
+                cwd=source,
+                check=True,
+            )
+            subprocess.run(["git", "update-index", "--assume-unchanged", "apps/api/Dockerfile"], cwd=source, check=True)
+            shutil.rmtree(source / "apps/api")
+            external.mkdir()
+            sentinel = external / "synthetic-external-sentinel"
+            sentinel.write_text("must-not-reach-docker\n")
+            (external / "Dockerfile").write_text("FROM external\n")
+            (source / "apps/api").symlink_to(external, target_is_directory=True)
+            context.mkdir()
+            result = subprocess.run(
+                ["bash", source / "infra/scripts/stage-build-context.sh", context],
+                cwd=source,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((context / "apps/api/Dockerfile").exists())
+            self.assertFalse((context / "apps/api" / sentinel.name).exists())
+
     def test_app_dockerfiles_share_the_root_ignore_policy(self):
         self.assertTrue((ROOT / ".dockerignore").is_file())
         for app in ("api", "web"):

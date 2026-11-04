@@ -677,8 +677,7 @@ export function TracesTab() {
 				noun={{ singular: "trace", plural: "traces" }}
 				emptyHint={
 					<>
-						No traces yet. Send one to <code>/v1/otel/v1/traces</code> to get
-						started.
+						No traces yet. Send one to <code>/v1/traces</code> to get started.
 					</>
 				}
 				noMatchMessage="No traces match the current filters."
@@ -1085,8 +1084,7 @@ export function SpansTab() {
 				noun={{ singular: "span", plural: "spans" }}
 				emptyHint={
 					<>
-						No spans yet. Send one to <code>/v1/otel/v1/traces</code> to get
-						started.
+						No spans yet. Send one to <code>/v1/traces</code> to get started.
 					</>
 				}
 				noMatchMessage="No spans match the current filters."

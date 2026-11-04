@@ -31,6 +31,9 @@ import { logger } from "./lib/logger.js";
 import { AuthenticationError } from "./db/local-sessions.js";
 import { assertProductionConfiguration } from "./lib/production-config.js";
 import { createSingleImageFetch } from "./lib/single-image-web.js";
+import { startOtlpGrpcServer } from "./lib/otlp-grpc.js";
+import { otlpErrorResponse } from "./lib/otlp-response.js";
+import { isTransientStorageFailure } from "./lib/transient-storage-error.js";
 
 if (process.env.NODE_ENV === "production") assertProductionConfiguration();
 const PORT = Number(process.env.API_PORT ?? 3000);
@@ -144,7 +147,7 @@ async function requestedProjectIds(c: {
 	addProjectId(c.req.query("project_id"));
 	addProjectId(c.req.query("filter[project_id]"));
 	if (
-		c.req.path === "/v1/otel/v1/traces" ||
+		(c.req.raw.method === "POST" && c.req.path === "/v1/traces") ||
 		!isJsonContentType(c.req.header("content-type"))
 	)
 		return projectIds;
@@ -189,6 +192,11 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		}
 	});
 	apiApp.onError((error, c) => {
+		if (c.req.method === "POST" && c.req.path === "/v1/traces")
+			return otlpErrorResponse(
+				c.req.raw,
+				isTransientStorageFailure(error) ? 503 : 500,
+			);
 		if (
 			error instanceof AuthenticationError ||
 			(error instanceof HTTPException &&
@@ -246,7 +254,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				c.req.path === "/v1/me" ||
 				c.req.path.startsWith("/v1/auth/") ||
 				PUBLIC_API_ROUTES.has(`${c.req.method} ${c.req.path}`) ||
-				c.req.path === "/v1/otel/v1/traces" ||
+				(c.req.method === "POST" && c.req.path === "/v1/traces") ||
 				c.req.path === "/v1/audit-events" ||
 				c.req.path.startsWith("/v1/projects") ||
 				c.req.path.startsWith("/v1/admin/") ||
@@ -287,7 +295,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 
 	// OTLP is mounted as a raw handler (not via openapiApp) because it consumes
 	// the raw JSON body and returns a non-typed OTLP response shape.
-	apiApp.post("/v1/otel/v1/traces", async (c) => {
+	apiApp.post("/v1/traces", async (c) => {
 		try {
 			const tenant = trustedTenant(c);
 			const header = c.req.header("x-glasshouse-project-id");
@@ -320,10 +328,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 			);
 		} catch (cause) {
 			if (cause instanceof TenantScopeError) {
-				return c.json(
-					{ code: "NOT_FOUND", message: "Project is not available" },
-					404,
-				);
+				return otlpErrorResponse(c.req.raw, 404);
 			}
 			throw cause;
 		}
@@ -334,6 +339,10 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 }
 
 const apiApp = createApiApp();
+
+export function createServerFetch(webRoot: string | undefined) {
+	return webRoot ? createSingleImageFetch(webRoot, apiApp.fetch) : apiApp.fetch;
+}
 
 if (import.meta.main) {
 	await recoverInterruptedWork({
@@ -366,26 +375,43 @@ if (import.meta.main) {
 		},
 		log: logger.info,
 	});
+	const stopGrpc = await startOtlpGrpcServer(apiApp.fetch);
+	const server = Bun.serve({
+		port: PORT,
+		hostname: "0.0.0.0",
+		fetch: createServerFetch(process.env.GLASSHOUSE_WEB_ROOT),
+	});
+	let shuttingDown = false;
+	const shutdown = () => {
+		if (shuttingDown) return;
+		shuttingDown = true;
+		const deadline = setTimeout(() => {
+			void server.stop(true);
+			process.exit(1);
+		}, 10_000);
+		void Promise.all([server.stop(), stopGrpc?.()]).then(
+			() => {
+				clearTimeout(deadline);
+				process.exit(0);
+			},
+			(cause) => {
+				logger.error("api.shutdown_failed", cause);
+				process.exit(1);
+			},
+		);
+	};
+	process.once("SIGTERM", shutdown);
+	process.once("SIGINT", shutdown);
+
+	logger.info("api.started", {
+		port: PORT,
+		host: "0.0.0.0",
+		log_level: process.env.LOG_LEVEL ?? "info",
+	});
+	logger.info("api.routes_ready", {
+		openapi: `/openapi.json`,
+		reference: `/reference`,
+		health: `/health`,
+		otlp_ingest: "/v1/traces",
+	});
 }
-
-logger.info("api.started", {
-	port: PORT,
-	host: "0.0.0.0",
-	log_level: process.env.LOG_LEVEL ?? "info",
-});
-logger.info("api.routes_ready", {
-	openapi: `/openapi.json`,
-	reference: `/reference`,
-	health: `/health`,
-	otlp_ingest: "/v1/otel/v1/traces",
-});
-
-export function createServerFetch(webRoot: string | undefined) {
-	return webRoot ? createSingleImageFetch(webRoot, apiApp.fetch) : apiApp.fetch;
-}
-
-export default {
-	port: PORT,
-	hostname: "0.0.0.0",
-	fetch: createServerFetch(process.env.GLASSHOUSE_WEB_ROOT),
-};

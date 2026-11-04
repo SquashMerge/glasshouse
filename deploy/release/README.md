@@ -30,9 +30,15 @@ docker compose --project-directory /srv/glasshouse --env-file /run/secrets/glass
 The application binds `127.0.0.1:3000` by default; put a TLS reverse proxy in
 front of that one port and forward all paths, Authorization and cookies; do not
 buffer SSE and configure appropriate streaming timeouts. Datastore ports are not
-published. No gRPC listener is included; any future gRPC endpoint requires a
-separate port. Preserve the Compose project name and named volumes; do not use
-`down --volumes`. Back up and verify before upgrading. Application migrations
+published. OTLP HTTP trace ingestion uses `POST /v1/traces`; the old
+`/v1/otel/v1/traces` endpoint is removed. Optional OTLP/gRPC is disabled by
+default. To enable it, add `-f /srv/glasshouse/compose.otlp-grpc.yaml` to both
+Compose commands above. It publishes port 4317 to loopback only; configure an
+operator-managed TLS-terminating gRPC proxy before accepting remote exporters.
+The listener itself is plaintext. Set `OTLP_GRPC_HOST_PORT` in the environment
+file to change the host port, and provide authorization and
+`x-glasshouse-project-id` metadata. Preserve the Compose project name and
+named volumes; do not use `down --volumes`. Back up and verify before upgrading. Application migrations
 run on startup and rollback can be impossible. Cross-version datastore restores
 are unsupported. For an existing two-image install, independently check its
 project, volume names, public origin and reverse-proxy routes before changing

@@ -16,7 +16,7 @@ class BundleTests(unittest.TestCase):
             self.assertIn('GLASSHOUSE_IMAGE=glasshouse:v1.2.3-rc.1', (dest / 'production.env.example').read_text())
             for name in ('backup.sh', 'restore.sh', 'backup-restore-common.sh', 'check-clickhouse-backup.py', 'check-restore-mounts.py', 'check-isolated-target.py'):
                 self.assertEqual((dest / 'infra/scripts' / name).read_bytes(), (ROOT / 'infra/scripts' / name).read_bytes())
-            for name in ('compose.yaml', 'README.md', 'infra/clickhouse/backup.xml', 'infra/valkey/valkey.conf'):
+            for name in ('compose.yaml', 'compose.otlp-grpc.yaml', 'README.md', 'infra/clickhouse/backup.xml', 'infra/valkey/valkey.conf'):
                 self.assertTrue((dest / name).is_file(), name)
             sentinel = dest / 'sentinel'
             sentinel.write_text('keep')

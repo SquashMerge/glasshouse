@@ -8,6 +8,19 @@ const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 const parse = (path: string) => load(read(path)) as any;
 
 describe("standalone single-image release deployment", () => {
+	it("keeps gRPC opt-in and loopback-only", () => {
+		const release = parse("deploy/release/compose.yaml");
+		const overlay = parse("deploy/release/compose.otlp-grpc.yaml");
+		expect(release.services.api.environment.OTLP_GRPC_PORT).toBeUndefined();
+		expect(overlay.services.api.environment).toEqual({
+			OTLP_GRPC_PORT: 4317,
+			OTLP_GRPC_HOST: "api",
+		});
+		expect(overlay.services.api.ports).toEqual([
+			"127.0.0.1:${OTLP_GRPC_HOST_PORT:-4317}:4317",
+		]);
+	});
+
 	it("preserves production data services, volumes, and API settings without a web image", () => {
 		const production = parse("deploy/snapshot/compose.yaml");
 		const release = parse("deploy/release/compose.yaml");

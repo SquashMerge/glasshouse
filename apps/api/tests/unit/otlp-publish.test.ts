@@ -1,4 +1,4 @@
-// Verifies that POST /v1/otel/v1/traces publishes one trace.created event
+// Verifies that POST /v1/traces publishes one trace.created event
 // per inserted trace row and one observation.created event per observation.
 // We mock the ClickHouse writer so no DB is required and we can count calls.
 
@@ -83,6 +83,66 @@ function validOtlp(
 }
 
 describe("OTLP ingest publishes events", () => {
+	it("maps transient project-lock and redaction failures to 503 before any writes", async () => {
+		for (const failure of ["lock", "redaction"] as const) {
+			insertTraces.mockClear();
+			insertObservations.mockClear();
+			const handler = createOtlpIngestHandler({
+				defaultClient,
+				insertObservations,
+				insertTraces,
+				publishSync,
+				withActiveAuthorizedProjectLock: async (_tenant, callback) => {
+					if (failure === "lock")
+						throw Object.assign(new Error("PostgreSQL unavailable"), {
+							code: "57P03",
+						});
+					return callback({} as never);
+				},
+				approvedRedaction: async () => {
+					if (failure === "redaction")
+						throw Object.assign(new Error("PostgreSQL unavailable"), {
+							code: "53300",
+						});
+					return null;
+				},
+			});
+			const response = await handler(
+				new Request("http://x/v1/traces", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ resource_spans: [] }),
+				}),
+				TENANT,
+			);
+			expect(response.status).toBe(503);
+			expect(await response.json()).toEqual({
+				message: "Trace export temporarily unavailable",
+			});
+			expect(insertTraces).not.toHaveBeenCalled();
+			expect(insertObservations).not.toHaveBeenCalled();
+		}
+	});
+
+	it("maps exhausted database serialization and deadlock retries to 503", async () => {
+		for (const code of ["40P01", "40001"]) {
+			const handler = createOtlpIngestHandler({
+				withActiveAuthorizedProjectLock: async () => {
+					throw Object.assign(new Error("transaction aborted"), { code });
+				},
+			});
+			const response = await handler(
+				new Request("http://x/v1/traces", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ resource_spans: [] }),
+				}),
+				TENANT,
+			);
+			expect(response.status).toBe(503);
+		}
+	});
+
 	it("uses the checked-out authorization client for the redaction read", async () => {
 		const transaction = { query: async () => ({ rows: [] }) };
 		let usedTransaction = false;
@@ -101,7 +161,7 @@ describe("OTLP ingest publishes events", () => {
 		expect(
 			(
 				await handler(
-					new Request("http://x/v1/otel/v1/traces", {
+					new Request("http://x/v1/traces", {
 						method: "POST",
 						body: JSON.stringify(
 							validOtlp([
@@ -137,7 +197,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (event) => published.push(event));
 
 		const response = await handler(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(
@@ -197,7 +257,7 @@ describe("OTLP ingest publishes events", () => {
 
 			await expect(
 				rejectedHandler(
-					new Request("http://x/v1/otel/v1/traces", {
+					new Request("http://x/v1/traces", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify(
@@ -222,7 +282,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("propagates a resource project ID to traces and observations, not a span override", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -264,7 +324,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("falls back to the resolved project when resource project IDs are missing or malformed", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify({
@@ -328,7 +388,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (message) => observations.push(message));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify({
@@ -366,8 +426,7 @@ describe("OTLP ingest publishes events", () => {
 
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({
-			code: "BAD_REQUEST",
-			message: "Trace contains conflicting project provenance",
+			message: "Invalid trace export request",
 		});
 		expect(defaultClient).not.toHaveBeenCalled();
 		expect(insertTraces).not.toHaveBeenCalled();
@@ -378,7 +437,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("rejects a trace split across two scoped projects before writes or events", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify({
@@ -435,7 +494,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (m) => observations.push(m));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -466,7 +525,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("persists the authenticated organization with the resource project", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -520,7 +579,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (m) => observations.push(m));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -569,7 +628,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (m) => observations.push(m));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -601,7 +660,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("uses the root identity and aggregates timing and error status across spans", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -644,7 +703,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("sends a typed, prompt-safe metadata envelope to the observation writer", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -714,7 +773,7 @@ describe("OTLP ingest publishes events", () => {
 		});
 
 		const res = await redactedHandler(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(
@@ -755,6 +814,177 @@ describe("OTLP ingest publishes events", () => {
 		expect(insertTraces.mock.calls.at(-1)?.[1]?.[0]?.user_id).toBe("");
 	});
 
+	it("redacts configured keys nested in OTLP arrays and kvlists", async () => {
+		const secret = "NESTED_OTLP_SECRET";
+		const previousRedactKeys = process.env.GLASSHOUSE_REDACT_KEYS;
+		process.env.GLASSHOUSE_REDACT_KEYS = "api_key";
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => null,
+			withActiveAuthorizedProjectLock,
+		});
+
+		const res = await handler(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "nested-redaction",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "payload",
+									value: {
+										arrayValue: {
+											values: [
+												{
+													kvlistValue: {
+														values: [
+															{
+																key: "api_key",
+																value: { stringValue: secret },
+															},
+														],
+													},
+												},
+											],
+										},
+									},
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+		expect(res.status).toBe(200);
+		expect(
+			JSON.stringify(insertObservations.mock.calls.at(-1)?.[1]),
+		).not.toContain(secret);
+		if (previousRedactKeys === undefined)
+			delete process.env.GLASSHOUSE_REDACT_KEYS;
+		else process.env.GLASSHOUSE_REDACT_KEYS = previousRedactKeys;
+	});
+
+	it("drops malformed nested AnyValues instead of retaining an unredacted branch", async () => {
+		const secret = "AMBIGUOUS_NESTED_ANYVALUE_SECRET";
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => ({ mode: "none", keys: ["api_key"] }),
+			withActiveAuthorizedProjectLock,
+		});
+
+		const res = await handler(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "ambiguous-nested-value",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "payload",
+									value: {
+										arrayValue: {
+											values: [
+												{ stringValue: "retained" },
+												{
+													arrayValue: { values: [] },
+													kvlistValue: {
+														values: [
+															{
+																key: "api_key",
+																value: { stringValue: secret },
+															},
+														],
+													},
+												},
+												{ unknownValue: { stringValue: secret } },
+											],
+										},
+									},
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+
+		expect(res.status).toBe(200);
+		const persisted = JSON.stringify(insertObservations.mock.calls.at(-1)?.[1]);
+		expect(persisted).not.toContain(secret);
+		expect(persisted).toContain("retained");
+	});
+
+	it("does not resume recursive redaction after its node budget is exhausted", async () => {
+		const secret = "POST_BUDGET_ANYVALUE_SECRET";
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => ({ mode: "none", keys: ["api_key"] }),
+			withActiveAuthorizedProjectLock,
+		});
+		const fillerValues = Array.from({ length: 4_094 }, () => ({
+			stringValue: "filler",
+		}));
+
+		const res = await handler(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "redaction-budget",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "payload",
+									value: {
+										arrayValue: {
+											values: [
+												...fillerValues,
+												{ stringValue: secret },
+												{ stringValue: secret },
+											],
+										},
+									},
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+
+		expect(res.status).toBe(200);
+		expect(
+			JSON.stringify(insertObservations.mock.calls.at(-1)?.[1]),
+		).not.toContain(secret);
+	});
+
 	it("a throwing subscriber does NOT change the HTTP response", async () => {
 		const orig = console.error;
 		console.error = () => undefined;
@@ -767,7 +997,7 @@ describe("OTLP ingest publishes events", () => {
 		});
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -784,8 +1014,7 @@ describe("OTLP ingest publishes events", () => {
 			}),
 		);
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { partial_success: unknown };
-		expect(body.partial_success).toEqual({});
+		expect(await res.json()).toEqual({});
 		console.error = orig;
 	});
 
@@ -827,7 +1056,7 @@ describe("OTLP ingest publishes events", () => {
 		]);
 		const retry = () =>
 			retryHandler(
-				new Request("http://x/v1/otel/v1/traces", {
+				new Request("http://x/v1/traces", {
 					method: "POST",
 					headers: { authorization: AUTH, "content-type": "application/json" },
 					body: JSON.stringify(payload),
@@ -855,7 +1084,7 @@ describe("OTLP ingest publishes events", () => {
 		);
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(

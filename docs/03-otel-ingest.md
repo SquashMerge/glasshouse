@@ -1,24 +1,30 @@
 # OTel Ingest (Glasshouse)
 
-This page explains how to point an OpenTelemetry-instrumented agent at Glasshouse's `/v1/otel/v1/traces` endpoint.
+Glasshouse accepts OTLP trace JSON and protobuf at `POST /v1/traces`, and optionally accepts OTLP/gRPC trace exports. The same path's `GET` operation is the separately authorized product trace list; detail and SSE routes remain product reads.
 
-## TL;DR — set these five env vars on your agent
+This endpoint change is a breaking cutover: `POST /v1/otel/v1/traces` is removed. Update clients and proxies configured with the old URL. The old custom path was permitted by OTLP; this migration is a Glasshouse product decision, not a specification requirement.
+
+The gRPC receiver is disabled by default and needs a private network or a TLS-terminating proxy. See the listener settings and limitations below before exposing it.
+
+For production or the image-only snapshot bundle, the optional `infra/compose.otlp-grpc.yaml` overlay publishes gRPC only on the host loopback interface and binds the API listener to Docker's private `api` service address. Set `OTLP_GRPC_HOST_PORT` to change only the host-facing port; the container listener remains `4317`. Start it alongside the relevant production Compose file, then put an operator-managed TLS proxy in front of that loopback port if remote exporters need access. The snapshot copy is `deploy/snapshot/compose.otlp-grpc.yaml` and is intentionally identical.
+
+## Endpoint configuration
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel" # receiver mount; no trailing /v1/traces
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000" # base URL, no /v1/traces suffix
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'glasshouse:YOUR_PASSWORD' | base64),x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-`OTEL_EXPORTER_OTLP_ENDPOINT` should point at Glasshouse's **receiver mount** (`/v1/otel`), without the final `/v1/traces` suffix. The OTel SDK appends `/v1/traces` by default, producing Glasshouse's `POST /v1/otel/v1/traces` endpoint. If your SDK uses a non-standard path, see [Custom path](#custom-path) below.
+For an OTLP/HTTP sender, the base endpoint resolves traces to `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as-is and must include the complete path. Configure the sender for HTTP/protobuf or HTTP/JSON; a gRPC exporter instead needs the separately configured gRPC listener.
 
 ## Authentication
 
 OTLP trace ingestion accepts either the existing HTTP Basic Auth credentials or a dedicated Project-scoped bearer credential. Basic Auth remains suitable for existing integrations; a dedicated credential is safer for unattended agents because it cannot sign into the dashboard or read telemetry.
 
-An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/otel/v1/traces`.
+An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/traces`.
 
 Rotation and revocation require current organization Admin authority; they are not restricted to the credential's creator. Any current Admin in that organization can rotate an active credential for an active Project or revoke a credential for an active or archived Project. `created_by_actor_id` records the creator and supplies the actor used to authorize bearer ingestion; it is not a creator-only management permission.
 
@@ -29,7 +35,7 @@ For a dedicated credential, put the literal secret in a protected environment va
 ```sh
 export GLASSHOUSE_OTLP_INGEST_TOKEN="gh_ing_<secret-from-admin-ui>"
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer $GLASSHOUSE_OTLP_INGEST_TOKEN,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
@@ -56,62 +62,9 @@ export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-projec
 
 For a multi-organization deployment, configure `GLASSHOUSE_BASIC_AUTH_CREDENTIALS` on the API as JSON objects with `username`, `password`, and `organization_id`. The organization and selected project must already exist in Postgres; credentials are authentication configuration, not caller-controlled tenant metadata.
 
-## Python example
+## Sending JSON
 
-```python
-import os
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-resource = Resource.create({
-    "service.name": os.environ["OTEL_SERVICE_NAME"],
-    "deployment.environment": "production",
-})
-
-provider = TracerProvider(resource=resource)
-exporter = OTLPSpanExporter(
-    endpoint=os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] + "/v1/traces",
-)
-provider.add_span_processor(BatchSpanProcessor(exporter))
-trace.set_tracer_provider(provider)
-
-# Any spans created with this tracer go to Glasshouse.
-tracer = trace.get_tracer(__name__)
-with tracer.start_as_current_span("hello") as span:
-    span.set_attribute("gen_ai.system", "openai")
-    span.set_attribute("gen_ai.request.model", "gpt-4o")
-    span.set_attribute("gen_ai.usage.input_tokens", 12)
-    span.set_attribute("gen_ai.usage.output_tokens", 18)
-```
-
-`OTLPSpanExporter` reads `OTEL_EXPORTER_OTLP_HEADERS` from the env and applies them to every export request.
-
-## Node.js / TypeScript example
-
-```ts
-import { NodeSDK } from "@opentelemetry/sdk-node";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
-import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
-
-const sdk = new NodeSDK({
-  resource: new Resource({
-    [SemanticResourceAttributes.SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? "my-agent",
-  }),
-  traceExporter: new OTLPTraceExporter({
-    // @opentelemetry/exporter-trace-otlp-http appends /v1/traces by default.
-    url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces`,
-    headers: parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS),
-  }),
-});
-
-sdk.start();
-```
-
-Where `parseOtlpHeaders` is a small helper that splits the `k=v,k2=v2` string into a `Record<string, string>`.
+Use a sender that emits OTLP JSON with `Content-Type: application/json`, the authorization header, and the Project selector. The repository's `infra/scripts/seed_traces.py` is an example sender. OTLP/HTTP protobuf senders use the same endpoint with `Content-Type: application/x-protobuf`.
 
 ## Prompt provenance and sensitive data
 
@@ -143,7 +96,13 @@ Both flags default to off (dev-friendly). In production we recommend `GLASSHOUSE
 
 ## What gets captured
 
-Glasshouse accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normalized into:
+Glasshouse accepts standard OTLP HTTP JSON (lower-camel field names) and protobuf trace exports at the same endpoint. It accepts `Content-Encoding: gzip` with a decompressed body limit equal to `API_MAX_BODY_BYTES`, so compressed input cannot bypass the request budget. A successful export returns the protocol's empty response (`{}` for JSON, empty protobuf for protobuf). OTLP errors use a `google.rpc.Status` response in the request encoding, with generic messages that do not disclose tenant or credential state.
+
+An optional native gRPC TraceService listener is disabled by default. Set `OTLP_GRPC_PORT` to enable it; `OTLP_GRPC_HOST` defaults to `127.0.0.1` and only loopback/private bind addresses are accepted. Place it behind an operator-managed TLS edge. gRPC metadata must include exactly one `authorization` value and exactly one `x-glasshouse-project-id`; it uses the same Basic/Bearer authentication, Project authorization, provenance checks, redaction, and ingest lock as HTTP. Metrics and logs services are not registered and return `UNIMPLEMENTED`.
+
+The CI interoperability regression first installs the version- and hash-locked Python dependency closure in `infra/otlp-sdk-requirements.txt` and performs an offline real-SDK provider construction/export check with an in-memory exporter. It then uses `.github/compose.otlp-sdk-integration.yaml`, with no explicit container, port, or volume names and dynamically allocated loopback ports. The harness rejects caller/Compose project overrides, validates the rendered Compose model for fixed names, external resources, fixed published ports, and only the predicted generated network/volume names, generates an unpredictable project and ownership marker, and fails preflight if either project-labeled resources or predicted resource names already exist. It stops/removes only exact container and network IDs that are atomically verified to carry both the generated marker and project label, and never removes volumes. Mocked fake-Docker tests cover collision, inventory, ownership, partial-startup, signal, and ID-truncation failures without a Docker daemon. Docker-backed fixture/path resolution and exporter execution remain hosted-CI verification; they are not claimed from a devcontainer without Docker.
+
+Each span is normalized into:
 
 | Glasshouse column | Source |
 |---|---|
@@ -161,7 +120,9 @@ Glasshouse accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is norma
 
 ## Viewing trace metadata
 
-On the Observability trace-detail page, structured Observation attributes, events, and links are shown as expandable JSON trees. The metadata tree opens fully expanded; use its compact **Collapse all** / **Expand all** control to fold or reveal the whole tree, or use individual node controls. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
+On the Observability trace-detail page, structured Observation attributes are shown as expandable JSON trees. The metadata tree opens fully expanded; use its compact **Collapse all** / **Expand all** control to fold or reveal the whole tree, or use individual node controls. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
+
+Span events and links are not retained by the current storage model. A span containing either is rejected and the export returns OTLP partial success with its `rejectedSpans` count; other spans in the batch are retained. Exporters must not retry a partial-success response.
 
 The tree is a bounded presentation: it renders at most 500 nodes per detail view, up to 100 children per object or array, and 12 nested levels. When any limit is reached, the UI identifies how many entries were omitted. These display limits do not change stored telemetry; omitted entries remain part of the retained metadata when available through the API. A limited tree is not evidence that ingestion or storage dropped the omitted data.
 
@@ -189,7 +150,7 @@ The compact service-health card reports Postgres, ClickHouse, and Valkey depende
 
 ## Custom path
 
-If your OTel SDK needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or the SDK's equivalent) to the complete receiver URL, for example `https://api.example.com/v1/otel/v1/traces`.
+If your compatible sender needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or its equivalent) to the complete receiver URL, for example `https://api.example.com/v1/traces`.
 
 If you're sending spans to Glasshouse behind a reverse proxy with a different receiver mount, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to that proxy's complete trace URL.
 
@@ -200,6 +161,6 @@ Traces appear in the dashboard at `http://localhost:5173/observability`. Click a
 ## Production hardening (post-MVP)
 
 - Replace Basic Auth with mTLS or signed JWT (the OTel SDKs support custom exporters / headers).
-- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com/v1/otel`).
+- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com`).
 - Configure tenant routing with server-managed Basic credentials and select an authorized project with `x-glasshouse-project-id`.
 - Enable trace sampling at the agent side for high-volume services (see OTel SDK samplers).

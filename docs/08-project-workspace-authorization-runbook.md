@@ -168,7 +168,7 @@ cascades Project-owned relational rows, and preserves only content-free lifecycl
 
 ## OTLP
 
-Every direct request to `POST /v1/otel/v1/traces` needs one
+Every direct request to `POST /v1/traces` needs one
 `x-glasshouse-project-id` header for an active Project the Basic-auth actor can access.
 Resource attributes may match that target but never select it. Missing, conflicting,
 archived, or inaccessible IDs are rejected without disclosing cross-workspace data.

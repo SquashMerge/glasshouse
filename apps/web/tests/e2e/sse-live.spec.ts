@@ -173,7 +173,7 @@ async function postTrace(
 	request: APIRequestContext,
 	payload: Record<string, unknown>,
 ): Promise<void> {
-	const res = await request.post(`${API_BASE}/v1/otel/v1/traces`, {
+	const res = await request.post(`${API_BASE}/v1/traces`, {
 		data: payload,
 		headers: {
 			"content-type": "application/json",

@@ -2669,14 +2669,16 @@ components:
           required:
             - doubleValue
           type: object
-        - items:
-            properties:
-              stringValue:
-                type: string
-            required:
-              - stringValue
-            type: object
-          type: array
+        - properties:
+            arrayValue:
+              properties:
+                values:
+                  items: {}
+                  type: array
+              type: object
+          required:
+            - arrayValue
+          type: object
         - properties:
             kvlistValue:
               $ref: '#/components/schemas/KvlistValue'
@@ -8021,7 +8023,7 @@ components:
       scheme: basic
       type: http
     bearerAuth:
-      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/otel/v1/traces.
+      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/traces.
       scheme: bearer
       type: http
     csrfHeader:
@@ -15807,51 +15809,6 @@ paths:
         - basicAuth: []
       tags:
         - projects
-  /v1/otel/v1/traces:
-    post:
-      description: Accepts an ExportTraceServiceRequest (OTLP 1.4.x HTTP/JSON), validates with Zod, normalizes each span (gen_ai.* first, OpenInference fallback), and batch-inserts to ClickHouse `traces` and `observations`. Returns an empty ExportTraceServiceResponse on success.
-      parameters:
-        - description: Project selector, verified against the authenticated organization
-          in: header
-          name: x-glasshouse-project-id
-          required: true
-          schema:
-            description: Project selector, verified against the authenticated organization
-            format: uuid
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExportTraceServiceRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExportTraceServiceResponse'
-          description: Traces accepted
-        '400':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-          description: Malformed request body or conflicting project provenance for a trace
-        '404':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-          description: The OTLP project selector or resource provenance is unavailable to the authenticated organization
-      security:
-        - csrfHeader: []
-          sessionCookie: []
-        - basicAuth: []
-        - bearerAuth: []
-      summary: OTLP HTTP/JSON trace ingest
-      tags:
-        - otlp
   /v1/projects:
     get:
       parameters:
@@ -18701,6 +18658,50 @@ paths:
       summary: List traces
       tags:
         - traces
+    post:
+      description: Accepts an ExportTraceServiceRequest (OTLP 1.4.x HTTP/JSON), validates with Zod, normalizes each span (gen_ai.* first, OpenInference fallback), and batch-inserts to ClickHouse `traces` and `observations`. Returns an empty ExportTraceServiceResponse on success.
+      parameters:
+        - description: Project selector, verified against the authenticated organization
+          in: header
+          name: x-glasshouse-project-id
+          required: true
+          schema:
+            description: Project selector, verified against the authenticated organization
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportTraceServiceRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportTraceServiceResponse'
+          description: Traces accepted
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Malformed request body or conflicting project provenance for a trace
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: The OTLP project selector or resource provenance is unavailable to the authenticated organization
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+        - bearerAuth: []
+      summary: OTLP HTTP/JSON trace ingest
+      tags:
+        - otlp
   /v1/traces/events:
     get:
       description: 'Subscribes to the `trace.created` bus event and emits one `event: trace` SSE frame per published trace. Its trace payload uses the Trace list projection: no organization_id, input/output excerpts limited to 200 Unicode code points, and retained/excerpt truncation flags. Sends an `:ok` comment immediately on connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), and cleans up the bus subscription on client disconnect.'

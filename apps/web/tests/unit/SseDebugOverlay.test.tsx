@@ -118,7 +118,7 @@ describe("SseDebugOverlay (dev only)", () => {
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
 		const payload = JSON.parse(String(init.body));
 		const spans = payload.resource_spans[0].scope_spans[0].spans;
-		expect(url).toBe("/v1/otel/v1/traces");
+		expect(url).toBe("/v1/traces");
 		expect(init.method).toBe("POST");
 		expect(new Headers(init.headers).get("x-glasshouse-project-id")).toBe(
 			"33333333-3333-4333-8333-333333333333",

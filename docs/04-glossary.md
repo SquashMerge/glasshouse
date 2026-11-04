@@ -132,7 +132,8 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 
 ## Ingest
 
-- **OTLP** — `POST /v1/otel/v1/traces`. Accepts OTel + `gen_ai.*` + OpenInference attrs and generation-only prompt provenance (`glasshouse.prompt.id`, `.version`, `.content_hash`). Per span: classify, sanitize metadata, write to ClickHouse, publish to bus (`trace.created` / `observation.created`). See `docs/03-otel-ingest.md`.
+- **OTLP** — `POST /v1/traces` is the HTTP JSON/protobuf ingest operation; `GET /v1/traces` is the separately authorized product trace list. Accepts OTel + `gen_ai.*` + OpenInference attrs and generation-only prompt provenance (`glasshouse.prompt.id`, `.version`, `.content_hash`). Per span: classify, sanitize metadata, write to ClickHouse, publish to bus (`trace.created` / `observation.created`). See `docs/03-otel-ingest.md`.
+- **OTLP/gRPC receiver** — optional `TraceService/Export` listener enabled by `OTLP_GRPC_PORT`; it is loopback/private-only plaintext transport intended for a TLS proxy or private network and uses the HTTP ingest authentication/project metadata contract. See `apps/api/src/lib/otlp-grpc.ts`.
 
 ## Conventions
 

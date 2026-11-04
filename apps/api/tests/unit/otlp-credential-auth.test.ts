@@ -54,7 +54,7 @@ function app() {
 	else process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = original;
 	const api = new Hono();
 	api.use("*", authentication);
-	api.post("/v1/otel/v1/traces", (c) => {
+	api.post("/v1/traces", (c) => {
 		const tenant = trustedTenant(c);
 		return c.json({
 			organizationId: tenant.organizationId,
@@ -63,7 +63,6 @@ function app() {
 			digest: tenant.ingestCredential?.digest,
 		});
 	});
-	api.get("/v1/otel/v1/traces", (c) => c.json({ accepted: true }));
 	api.get("/v1/traces", (c) => c.json({ accepted: true }));
 	return api;
 }
@@ -71,7 +70,7 @@ function app() {
 test("bearer ingestion credentials authenticate only the OTLP trace POST and never expose the secret", async () => {
 	credentialLookup.length = 0;
 	const api = app();
-	const accepted = await api.request("/v1/otel/v1/traces", {
+	const accepted = await api.request("/v1/traces", {
 		method: "POST",
 		headers: { authorization: `Bearer ${secret}` },
 	});
@@ -83,20 +82,21 @@ test("bearer ingestion credentials authenticate only the OTLP trace POST and nev
 		digest,
 	});
 
-	const wrongMethod = await api.request("/v1/otel/v1/traces", {
-		headers: { authorization: `Bearer ${secret}` },
-	});
 	const dashboard = await api.request("/v1/traces", {
 		headers: { authorization: `Bearer ${secret}` },
 	});
-	expect(wrongMethod.status).toBe(401);
+	const oldPath = await api.request("/v1/otel/v1/traces", {
+		method: "POST",
+		headers: { authorization: `Bearer ${secret}` },
+	});
 	expect(dashboard.status).toBe(401);
+	expect(oldPath.status).toBe(401);
 	expect(credentialLookup).toHaveLength(1);
 });
 
 test("accepts case-insensitive HTTP Bearer authentication schemes", async () => {
 	credentialLookup.length = 0;
-	const response = await app().request("/v1/otel/v1/traces", {
+	const response = await app().request("/v1/traces", {
 		method: "POST",
 		headers: { authorization: `bearer ${secret}` },
 	});
@@ -114,11 +114,15 @@ test("documents the credential auth choices on the OTLP trace operation", () => 
 		type: "http",
 		scheme: "bearer",
 		description:
-			"Project-scoped OTLP ingest credential, accepted only for POST /v1/otel/v1/traces.",
+			"Project-scoped OTLP ingest credential, accepted only for POST /v1/traces.",
 	});
-	expect(document.paths?.["/v1/otel/v1/traces"]?.post?.security).toEqual([
+	expect(document.paths?.["/v1/traces"]?.post?.security).toEqual([
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
 		{ bearerAuth: [] },
 	]);
+	expect(document.paths?.["/v1/traces"]?.get?.security).not.toContainEqual({
+		bearerAuth: [],
+	});
+	expect(document.paths?.["/v1/otel/v1/traces"]?.post).toBeUndefined();
 });

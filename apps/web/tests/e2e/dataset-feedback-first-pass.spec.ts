@@ -166,7 +166,7 @@ async function ingestProjectTrace(
 	const traceId = hex(16);
 	const observationId = hex(8);
 	const timestamp = Date.now() * 1_000_000;
-	const response = await request.post(`${API_BASE}/v1/otel/v1/traces`, {
+	const response = await request.post(`${API_BASE}/v1/traces`, {
 		headers: {
 			authorization: authorization(),
 			"content-type": "application/json",
