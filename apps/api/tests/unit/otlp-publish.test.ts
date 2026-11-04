@@ -83,6 +83,47 @@ function validOtlp(
 }
 
 describe("OTLP ingest publishes events", () => {
+	it("maps transient project-lock and redaction failures to 503 before any writes", async () => {
+		for (const failure of ["lock", "redaction"] as const) {
+			insertTraces.mockClear();
+			insertObservations.mockClear();
+			const handler = createOtlpIngestHandler({
+				defaultClient,
+				insertObservations,
+				insertTraces,
+				publishSync,
+				withActiveAuthorizedProjectLock: async (_tenant, callback) => {
+					if (failure === "lock")
+						throw Object.assign(new Error("PostgreSQL unavailable"), {
+							code: "57P03",
+						});
+					return callback({} as never);
+				},
+				approvedRedaction: async () => {
+					if (failure === "redaction")
+						throw Object.assign(new Error("PostgreSQL unavailable"), {
+							code: "53300",
+						});
+					return null;
+				},
+			});
+			const response = await handler(
+				new Request("http://x/v1/traces", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ resource_spans: [] }),
+				}),
+				TENANT,
+			);
+			expect(response.status).toBe(503);
+			expect(await response.json()).toEqual({
+				message: "Trace export temporarily unavailable",
+			});
+			expect(insertTraces).not.toHaveBeenCalled();
+			expect(insertObservations).not.toHaveBeenCalled();
+		}
+	});
+
 	it("uses the checked-out authorization client for the redaction read", async () => {
 		const transaction = { query: async () => ({ rows: [] }) };
 		let usedTransaction = false;

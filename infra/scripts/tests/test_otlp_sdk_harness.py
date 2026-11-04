@@ -213,6 +213,12 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
             harness = sandbox / "infra/scripts/test-otlp-sdk-integration.sh"
             if mutate:
                 harness.write_text(mutate(harness.read_text()))
+                subprocess.run(["git", "add", harness], cwd=sandbox, check=True)
+                subprocess.run(
+                    ["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture mutation"],
+                    cwd=sandbox,
+                    check=True,
+                )
             fake_bin = temporary / "bin"
             fake_bin.mkdir()
             docker = fake_bin / "docker"

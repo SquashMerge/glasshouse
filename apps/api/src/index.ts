@@ -32,6 +32,7 @@ import { AuthenticationError } from "./db/local-sessions.js";
 import { assertProductionConfiguration } from "./lib/production-config.js";
 import { startOtlpGrpcServer } from "./lib/otlp-grpc.js";
 import { otlpErrorResponse } from "./lib/otlp-response.js";
+import { isTransientStorageFailure } from "./lib/transient-storage-error.js";
 
 if (process.env.NODE_ENV === "production") assertProductionConfiguration();
 const PORT = Number(process.env.API_PORT ?? 3000);
@@ -334,22 +335,6 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 
 	apiApp.route("/", openapiApp);
 	return apiApp;
-}
-
-function isTransientStorageFailure(error: unknown): boolean {
-	if (!error || typeof error !== "object" || !("code" in error)) return false;
-	return new Set([
-		"53300",
-		"57P01",
-		"57P03",
-		"ECONNABORTED",
-		"ECONNREFUSED",
-		"ECONNRESET",
-		"EAI_AGAIN",
-		"EHOSTUNREACH",
-		"ENETUNREACH",
-		"ETIMEDOUT",
-	]).has(String(error.code));
 }
 
 const apiApp = createApiApp();

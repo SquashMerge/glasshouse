@@ -220,6 +220,46 @@ test("OTLP gRPC maps temporary exporter failures to UNAVAILABLE", async () => {
 	}
 });
 
+test("OTLP gRPC maps transient project-lock failures to UNAVAILABLE", async () => {
+	const port = await unusedLoopbackPort();
+	const previousPort = process.env.OTLP_GRPC_PORT;
+	process.env.OTLP_GRPC_PORT = String(port);
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async () => {
+			throw Object.assign(new Error("PostgreSQL unavailable"), {
+				code: "57P01",
+			});
+		},
+	});
+	const stop = await startOtlpGrpcServer((request) =>
+		handler(request, {
+			actorId: "11111111-1111-4111-8111-111111111111",
+			organizationId: "22222222-2222-4222-8222-222222222222",
+			projectId: "33333333-3333-4333-8333-333333333333",
+		}),
+	);
+	const client = new grpc.Client(
+		`127.0.0.1:${port}`,
+		grpc.credentials.createInsecure(),
+	);
+	try {
+		const metadata = new grpc.Metadata();
+		metadata.set("authorization", "Bearer synthetic");
+		metadata.set(
+			"x-glasshouse-project-id",
+			"33333333-3333-4333-8333-333333333333",
+		);
+		await expect(
+			unary(client, traceExportPath, Buffer.alloc(0), metadata),
+		).rejects.toMatchObject({ code: grpc.status.UNAVAILABLE });
+	} finally {
+		client.close();
+		await stop?.();
+		if (previousPort === undefined) delete process.env.OTLP_GRPC_PORT;
+		else process.env.OTLP_GRPC_PORT = previousPort;
+	}
+});
+
 for (const code of ["57P01", "57P03", "53300"]) {
 	test(`OTLP gRPC maps PostgreSQL ${code} authentication failures to UNAVAILABLE`, async () => {
 		const port = await unusedLoopbackPort();

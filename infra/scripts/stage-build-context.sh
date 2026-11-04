@@ -20,16 +20,27 @@ readonly -a allowlisted_paths=(
 [[ -z "$(ls -A -- "$destination")" ]] || { printf '%s\n' 'Build context destination must be empty.' >&2; exit 2; }
 
 cd -- "$root"
-while IFS=$' \t' read -r mode _ _ path; do
-  [[ "$mode" != 120000 ]] || { printf 'Refusing symlinked build input: %s\n' "$path" >&2; exit 1; }
-done < <(git ls-files -s -- "${allowlisted_paths[@]}")
+git diff --quiet HEAD -- || {
+  printf '%s\n' 'Refusing build context with tracked changes.' >&2
+  exit 1
+}
 
-if git diff --quiet -- "${allowlisted_paths[@]}" && git diff --cached --quiet -- "${allowlisted_paths[@]}" && [[ -z "$(git ls-files --others --exclude-standard -- "${allowlisted_paths[@]}")" ]]; then
-  git archive --format=tar HEAD -- "${allowlisted_paths[@]}" | tar -x -C "$destination"
-else
-  while IFS= read -r -d '' path; do
-    [[ ! -L "$root/$path" ]] || { printf 'Refusing symlinked build input: %s\n' "$path" >&2; exit 1; }
-    mkdir -p -- "$destination/$(dirname -- "$path")"
-    cp -p -- "$root/$path" "$destination/$path"
-  done < <(git ls-files -z -- "${allowlisted_paths[@]}")
-fi
+while IFS= read -r -d '' entry; do
+  case "${entry:0:1}" in
+    [a-z])
+      printf '%s\n' 'Refusing build context with assume-unchanged tracked files.' >&2
+      exit 1
+      ;;
+  esac
+done < <(git ls-files -v -z)
+
+while IFS= read -r -d '' entry; do
+  mode="${entry%% *}"
+  path="${entry#*$'\t'}"
+  [[ "$mode" != 120000 ]] || {
+    printf 'Refusing symlinked build input: %s\n' "$path" >&2
+    exit 1
+  }
+done < <(git ls-tree -r -z HEAD -- "${allowlisted_paths[@]}")
+
+git archive --format=tar HEAD -- "${allowlisted_paths[@]}" | tar -x -C "$destination"

@@ -33,6 +33,7 @@ import {
 import { pgPool } from "../db/postgres.js";
 import { publishSync } from "../lib/event-bus.js";
 import { logger } from "../lib/logger.js";
+import { isTransientStorageFailure } from "../lib/transient-storage-error.js";
 import {
 	boundObservationMetadata,
 	boundText,
@@ -480,10 +481,7 @@ export function createOtlpIngestHandler(
 			if (err instanceof TenantScopeError) throw err;
 			if (err instanceof OtlpConflictError) return otlpErrorResponse(req, 400);
 			logger.error("otlp.persist_failed", err);
-			return otlpErrorResponse(
-				req,
-				isTransientClickHouseFailure(err) ? 503 : 500,
-			);
+			return otlpErrorResponse(req, isTransientStorageFailure(err) ? 503 : 500);
 		}
 
 		try {
@@ -657,19 +655,6 @@ function redactAnyValueCollection(
 		return nested === null ? [] : [nested];
 	});
 	return { [type]: { values } };
-}
-
-function isTransientClickHouseFailure(error: unknown): boolean {
-	if (!error || typeof error !== "object" || !("code" in error)) return false;
-	return new Set([
-		"ECONNABORTED",
-		"ECONNREFUSED",
-		"ECONNRESET",
-		"EAI_AGAIN",
-		"EHOSTUNREACH",
-		"ENETUNREACH",
-		"ETIMEDOUT",
-	]).has(String(error.code));
 }
 
 function aggregateTrace(
