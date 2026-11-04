@@ -6,6 +6,7 @@ set -euo pipefail
 [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]]
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
 test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+bun test apps/web/tests/release-candidate-browser.test.ts
 image="glasshouse:$VERSION"
 asset="$RUNNER_TEMP/glasshouse-image.tar.gz"
 bundle="$RUNNER_TEMP/glasshouse-candidate-bundle"

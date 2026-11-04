@@ -10,7 +10,8 @@ try {
 	const page = await browser.newPage();
 	const errors: string[] = [];
 	page.on("pageerror", (error) => errors.push(error.message));
-	await page.goto(baseURL, { waitUntil: "networkidle" });
+	// Long-lived requests need not settle; the assertions below define UI readiness.
+	await page.goto(baseURL, { waitUntil: "domcontentloaded" });
 	await expect(page).toHaveTitle("Glasshouse by SquashMerge");
 	await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 	await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
