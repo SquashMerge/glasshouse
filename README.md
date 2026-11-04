@@ -174,7 +174,7 @@ For concurrent AI-assisted development, Glasshouse provides a Compose-based devc
 | http://localhost:5173 | Dashboard (auth-gated; fresh setup or sign-in redirect) |
 | http://localhost:5173/observability | Trace and observation lists (auth-gated) |
 | http://localhost:5173/observability/traces/:id | Trace detail with observation tree (auth-gated) |
-| http://localhost:3000/v1/otel/v1/traces | OTLP HTTP/JSON trace ingest (auth-gated; OTel SDK target) |
+| http://localhost:3000/v1/traces | OTLP HTTP/JSON trace ingest (POST; auth-gated) and product trace list (GET) |
 | http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (auth-gated) |
 | http://localhost:3000/health | Backend health check (public; no auth) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (auth-gated) |
@@ -291,17 +291,17 @@ Codex's ChatGPT subscription OAuth remains in the local CLI credential store and
 
 ### Sending traces from your agent
 
-Set these five env vars on your instrumented agent. `GLASSHOUSE_PROJECT_ID` must be the UUID of a project that belongs to the authenticated user's organization:
+For an OTLP HTTP/JSON sender, configure the following. `GLASSHOUSE_PROJECT_ID` must be the UUID of a project that belongs to the authenticated user's organization:
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000"
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'glasshouse:YOUR_PASSWORD' | base64),x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-See [`docs/03-otel-ingest.md`](docs/03-otel-ingest.md) for Python and Node.js examples.
+The receiver supports OTLP/HTTP JSON and protobuf, plus an optional OTLP/gRPC listener. This is a breaking migration: update clients previously using `/v1/otel/v1/traces`. See [`docs/03-otel-ingest.md`](docs/03-otel-ingest.md) for details and limitations.
 
 ### Client code generation
 

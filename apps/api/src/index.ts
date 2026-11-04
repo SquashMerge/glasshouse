@@ -145,7 +145,7 @@ async function requestedProjectIds(c: {
 	addProjectId(c.req.query("project_id"));
 	addProjectId(c.req.query("filter[project_id]"));
 	if (
-		c.req.path === "/v1/otel/v1/traces" ||
+		(c.req.raw.method === "POST" && c.req.path === "/v1/traces") ||
 		!isJsonContentType(c.req.header("content-type"))
 	)
 		return projectIds;
@@ -190,7 +190,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		}
 	});
 	apiApp.onError((error, c) => {
-		if (c.req.path === "/v1/otel/v1/traces")
+		if (c.req.method === "POST" && c.req.path === "/v1/traces")
 			return otlpErrorResponse(c.req.raw, 500);
 		if (
 			error instanceof AuthenticationError ||
@@ -249,7 +249,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				c.req.path === "/v1/me" ||
 				c.req.path.startsWith("/v1/auth/") ||
 				PUBLIC_API_ROUTES.has(`${c.req.method} ${c.req.path}`) ||
-				c.req.path === "/v1/otel/v1/traces" ||
+				(c.req.method === "POST" && c.req.path === "/v1/traces") ||
 				c.req.path === "/v1/audit-events" ||
 				c.req.path.startsWith("/v1/projects") ||
 				c.req.path.startsWith("/v1/admin/") ||
@@ -290,7 +290,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 
 	// OTLP is mounted as a raw handler (not via openapiApp) because it consumes
 	// the raw JSON body and returns a non-typed OTLP response shape.
-	apiApp.post("/v1/otel/v1/traces", async (c) => {
+	apiApp.post("/v1/traces", async (c) => {
 		try {
 			const tenant = trustedTenant(c);
 			const header = c.req.header("x-glasshouse-project-id");
@@ -403,6 +403,6 @@ if (import.meta.main) {
 		openapi: `/openapi.json`,
 		reference: `/reference`,
 		health: `/health`,
-		otlp_ingest: "/v1/otel/v1/traces",
+		otlp_ingest: "/v1/traces",
 	});
 }

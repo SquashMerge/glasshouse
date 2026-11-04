@@ -24,7 +24,7 @@ test("maps a revocation race during OTLP ingest to project unavailable", async (
 		},
 	});
 
-	const response = await app.request("/v1/otel/v1/traces", {
+	const response = await app.request("/v1/traces", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
@@ -43,7 +43,7 @@ test("encodes authentication and pre-auth body limit failures as OTLP JSON statu
 	process.env.UI_PASSWORD ??= "test-password";
 	const { createApiApp } = await import("../../src/index.js");
 	const app = createApiApp();
-	const unauthenticated = await app.request("/v1/otel/v1/traces", {
+	const unauthenticated = await app.request("/v1/traces", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: "{}",
@@ -54,7 +54,7 @@ test("encodes authentication and pre-auth body limit failures as OTLP JSON statu
 		message: "Authentication required",
 	});
 
-	const tooLarge = await app.request("/v1/otel/v1/traces", {
+	const tooLarge = await app.request("/v1/traces", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",

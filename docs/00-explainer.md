@@ -177,7 +177,7 @@ The manifest solves all four by making "what is this agent" a single, versioned,
 
 There are 10+ major agent frameworks (Agno, LangGraph, CrewAI, Pydantic AI, Mastra, Vercel AI SDK, Letta, AutoGen, OpenAI Agents SDK, Claude Agent SDK) plus 100+ raw LLM client patterns. No team wants to be told "rewrite your agent in our framework." Hermes accepts:
 
-- **OTLP/HTTP** at `/v1/otel/v1/traces` (any framework that emits OpenTelemetry)
+- **OTLP HTTP/JSON** at `POST /v1/traces` (for compatible JSON senders)
 - **OpenAI-compat** at `/v1/chat/completions` (any OpenAI-compatible client — change one base URL)
 - **SDK adapters** for 8+ frameworks (introspect existing Agent objects, no code rewrite)
 - **HTTP endpoint registration** for black-box agents (Maxim-style)
@@ -210,7 +210,7 @@ The dev-mode difference is real: `cargo install hermes && hermes dev` gets you t
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │  Ingest API (Hono / TypeScript)                      │    │
-│  │  • OTLP receiver at /v1/otel/v1/traces             │    │
+│  │  • OTLP receiver at POST /v1/traces                │    │
 │  │  • OpenAI-compat proxy at /v1/chat/completions      │    │
 │  │  • REST endpoints /v1/agents, /v1/experiments, ...  │    │
 │  │  • SSE endpoints /v1/experiments/{id}/events        │    │

@@ -349,7 +349,7 @@ openapiApp.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
 	type: "http",
 	scheme: "bearer",
 	description:
-		"Project-scoped OTLP ingest credential, accepted only for POST /v1/otel/v1/traces.",
+		"Project-scoped OTLP ingest credential, accepted only for POST /v1/traces.",
 });
 openapiApp.openAPIRegistry.registerComponent(
 	"securitySchemes",

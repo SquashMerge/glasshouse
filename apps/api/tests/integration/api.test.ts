@@ -82,7 +82,7 @@ describe("API integration: health + openapi", () => {
 			type: "http",
 			scheme: "basic",
 		});
-		expect(document.paths?.["/v1/otel/v1/traces"]?.post).toBeDefined();
+		expect(document.paths?.["/v1/traces"]?.post).toBeDefined();
 	});
 
 	it("documents bounded trace-detail and snapshot recovery responses", async () => {
@@ -233,6 +233,28 @@ describe("API integration: auth gate", () => {
 			);
 			expect(res.status).toBe(404);
 		}
+	});
+
+	it("keeps trace GET project authorization separate from OTLP POST", async () => {
+		assertTenantProjectAccess.mockClear();
+		const missing = await apiApp.request("/v1/traces", {
+			headers: { authorization: AUTH },
+		});
+		expect(missing.status).toBe(400);
+		assertTenantProjectAccess.mockImplementationOnce(async () => {
+			throw new TenantScopeError("Project is not available");
+		});
+		const denied = await apiApp.request(
+			`/v1/traces?project_id=${TEST_SCOPE.projectId}`,
+			{ headers: { authorization: AUTH } },
+		);
+		expect(denied.status).toBe(404);
+		expect(assertTenantProjectAccess).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			TEST_SCOPE.projectId,
+			"product_read",
+		);
 	});
 
 	it("classifies persisted Prompt read surfaces as product_read before route execution", async () => {
@@ -566,6 +588,24 @@ describe("API integration: OTLP ingest", () => {
 		};
 	}
 
+	it("does not ingest on the removed endpoint, even with Basic and a project selector", async () => {
+		insertTraces.mockClear();
+		insertObservations.mockClear();
+		const res = await apiApp.fetch(
+			new Request(
+				`http://x/v1/otel/v1/traces?project_id=${TEST_SCOPE.projectId}`,
+				{
+					method: "POST",
+					headers: otlpHeaders(),
+					body: JSON.stringify(validOtlp()),
+				},
+			),
+		);
+		expect(res.status).toBe(404);
+		expect(insertTraces).not.toHaveBeenCalled();
+		expect(insertObservations).not.toHaveBeenCalled();
+	});
+
 	it("routes valid headed OTLP through its dedicated membership resolver", async () => {
 		insertTraces.mockClear();
 		insertObservations.mockClear();
@@ -573,7 +613,7 @@ describe("API integration: OTLP ingest", () => {
 		resolveTenantProject.mockClear();
 
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
 				body: JSON.stringify(validOtlp()),
@@ -608,7 +648,7 @@ describe("API integration: OTLP ingest", () => {
 		insertTraces.mockClear();
 		insertObservations.mockClear();
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
 				body: JSON.stringify(validOtlp()),
@@ -628,7 +668,7 @@ describe("API integration: OTLP ingest", () => {
 
 	it("returns 400 on malformed JSON", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
 				body: "not json",
@@ -641,7 +681,7 @@ describe("API integration: OTLP ingest", () => {
 
 	it("returns 400 on Zod validation failure", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
 				body: JSON.stringify({ resource_spans: [] }),
@@ -654,7 +694,7 @@ describe("API integration: OTLP ingest", () => {
 
 	it("returns 401 without auth", async () => {
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(validOtlp()),
@@ -674,7 +714,7 @@ describe("API integration: OTLP ingest", () => {
 			if (header) headers.set("x-glasshouse-project-id", header);
 
 			const res = await apiApp.fetch(
-				new Request("http://x/v1/otel/v1/traces", {
+				new Request("http://x/v1/traces", {
 					method: "POST",
 					headers,
 					body: JSON.stringify(validOtlp()),
@@ -697,7 +737,7 @@ describe("API integration: OTLP ingest", () => {
 		});
 
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(foreignProject),
 				body: JSON.stringify(validOtlp()),
@@ -716,7 +756,7 @@ describe("API integration: OTLP ingest", () => {
 		insertObservations.mockClear();
 
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
 				body: JSON.stringify(
@@ -741,7 +781,7 @@ describe("API integration: OTLP ingest", () => {
 		insertObservations.mockClear();
 		try {
 			const res = await apiApp.fetch(
-				new Request("http://x/v1/otel/v1/traces", {
+				new Request("http://x/v1/traces", {
 					method: "POST",
 					headers: otlpHeaders(),
 					body: JSON.stringify(
@@ -771,7 +811,7 @@ describe("API integration: OTLP ingest", () => {
 			Promise.reject(new Error("Connection refused: 10.0.0.1:8123")),
 		);
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
 				body: JSON.stringify(validOtlp()),
@@ -789,7 +829,7 @@ describe("API integration: body size limit", () => {
 	it("rejects oversized bodies with 413", async () => {
 		const big = "x".repeat(2_000_000);
 		const res = await apiApp.fetch(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: {
 					authorization: AUTH,

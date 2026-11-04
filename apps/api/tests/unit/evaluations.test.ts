@@ -86,7 +86,7 @@ describe("evaluation MVP", () => {
 			withActiveAuthorizedProjectLock: async (_tenant, callback) => callback(),
 		});
 		const response = await handler(
-			new Request("http://internal/v1/otel/v1/traces", {
+			new Request("http://internal/v1/traces", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(payload),

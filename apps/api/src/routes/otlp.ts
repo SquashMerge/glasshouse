@@ -42,7 +42,7 @@ const tag = "otlp";
 
 export const otlpIngestRoute = createRoute({
 	method: "post",
-	path: "/v1/otel/v1/traces",
+	path: "/v1/traces",
 	tags: [tag],
 	summary: "OTLP HTTP/JSON trace ingest",
 	description:

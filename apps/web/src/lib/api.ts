@@ -2799,7 +2799,7 @@ export async function seedRandomTrace(projectId: string): Promise<{
 	};
 	const spans = [...childSpans, rootSpan];
 
-	const res = await authedFetch("/v1/otel/v1/traces", {
+	const res = await authedFetch("/v1/traces", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",

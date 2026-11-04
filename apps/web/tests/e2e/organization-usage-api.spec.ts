@@ -102,7 +102,7 @@ test("API integration: Bearer OTLP ingestion and revoke/no-write populate organi
 			status: { code: 1 },
 			attributes: [],
 		});
-		const ingested = await credentialRequest("/v1/otel/v1/traces", {
+		const ingested = await credentialRequest("/v1/traces", {
 			method: "POST",
 			headers: ingestHeaders,
 			body: JSON.stringify({
@@ -169,7 +169,7 @@ test("API integration: Bearer OTLP ingestion and revoke/no-write populate organi
 		);
 		expect(revoked.status(), "credential revocation status").toBe(200);
 		credentialRevoked = true;
-		const denied = await credentialRequest("/v1/otel/v1/traces", {
+		const denied = await credentialRequest("/v1/traces", {
 			method: "POST",
 			headers: ingestHeaders,
 			body: JSON.stringify({

@@ -1,4 +1,4 @@
-// Verifies that POST /v1/otel/v1/traces publishes one trace.created event
+// Verifies that POST /v1/traces publishes one trace.created event
 // per inserted trace row and one observation.created event per observation.
 // We mock the ClickHouse writer so no DB is required and we can count calls.
 
@@ -101,7 +101,7 @@ describe("OTLP ingest publishes events", () => {
 		expect(
 			(
 				await handler(
-					new Request("http://x/v1/otel/v1/traces", {
+					new Request("http://x/v1/traces", {
 						method: "POST",
 						body: JSON.stringify(
 							validOtlp([
@@ -137,7 +137,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (event) => published.push(event));
 
 		const response = await handler(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(
@@ -197,7 +197,7 @@ describe("OTLP ingest publishes events", () => {
 
 			await expect(
 				rejectedHandler(
-					new Request("http://x/v1/otel/v1/traces", {
+					new Request("http://x/v1/traces", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify(
@@ -222,7 +222,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("propagates a resource project ID to traces and observations, not a span override", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -264,7 +264,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("falls back to the resolved project when resource project IDs are missing or malformed", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify({
@@ -328,7 +328,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (message) => observations.push(message));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify({
@@ -377,7 +377,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("rejects a trace split across two scoped projects before writes or events", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify({
@@ -434,7 +434,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (m) => observations.push(m));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -465,7 +465,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("persists the authenticated organization with the resource project", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -519,7 +519,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (m) => observations.push(m));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -568,7 +568,7 @@ describe("OTLP ingest publishes events", () => {
 		subscribe("observation.created", (m) => observations.push(m));
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -600,7 +600,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("uses the root identity and aggregates timing and error status across spans", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -643,7 +643,7 @@ describe("OTLP ingest publishes events", () => {
 
 	it("sends a typed, prompt-safe metadata envelope to the observation writer", async () => {
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -713,7 +713,7 @@ describe("OTLP ingest publishes events", () => {
 		});
 
 		const res = await redactedHandler(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(
@@ -766,7 +766,7 @@ describe("OTLP ingest publishes events", () => {
 		});
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(
@@ -825,7 +825,7 @@ describe("OTLP ingest publishes events", () => {
 		]);
 		const retry = () =>
 			retryHandler(
-				new Request("http://x/v1/otel/v1/traces", {
+				new Request("http://x/v1/traces", {
 					method: "POST",
 					headers: { authorization: AUTH, "content-type": "application/json" },
 					body: JSON.stringify(payload),
@@ -853,7 +853,7 @@ describe("OTLP ingest publishes events", () => {
 		);
 
 		const res = await handleOtlpIngest(
-			new Request("http://x/v1/otel/v1/traces", {
+			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: { authorization: AUTH, "content-type": "application/json" },
 				body: JSON.stringify(

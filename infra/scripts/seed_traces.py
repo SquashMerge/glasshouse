@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Seed a large number of OTLP traces into Glasshouse via POST /v1/otel/v1/traces.
+Seed a large number of OTLP traces into Glasshouse via POST /v1/traces.
 
 Three conventions are supported via --convention:
   - genai:        OTel GenAI semantic conventions (gen_ai.* attrs)
@@ -504,7 +504,7 @@ def main() -> int:
     except RuntimeError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    url = args.url.rstrip("/") + "/v1/otel/v1/traces"
+    url = args.url.rstrip("/") + "/v1/traces"
 
     if args.reset:
         if not args.clickhouse_password:

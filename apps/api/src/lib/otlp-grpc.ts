@@ -55,7 +55,7 @@ export async function startOtlpGrpcServer(fetch: Fetch) {
 				}
 				try {
 					const response = await fetch(
-						new Request("http://otlp-grpc.internal/v1/otel/v1/traces", {
+						new Request("http://otlp-grpc.internal/v1/traces", {
 							method: "POST",
 							headers: {
 								authorization,

@@ -1,24 +1,28 @@
 # OTel Ingest (Glasshouse)
 
-This page explains how to point an OpenTelemetry-instrumented agent at Glasshouse's `/v1/otel/v1/traces` endpoint.
+Glasshouse accepts OTLP trace JSON at `POST /v1/traces`. The same path's `GET` operation is the separately authorized product trace list; detail and SSE routes remain product reads.
 
-## TL;DR — set these five env vars on your agent
+This endpoint change is a breaking cutover: `POST /v1/otel/v1/traces` is removed. Update clients and proxies configured with the old URL. The old custom path was permitted by OTLP; this migration is a Glasshouse product decision, not a specification requirement.
+
+This checkout has a JSON-only receiver, no protobuf HTTP receiver or gRPC bridge. An SDK's default protocol or exporter may use protobuf or gRPC and cannot be assumed to work with it. The official HTTP/gRPC exporter interoperability tests and bridge are being developed independently and are not present here. When reconciling that OTLP work, update the bridge and official HTTP/gRPC exporter tests for the new endpoint and regenerate the OpenAPI snapshot.
+
+## Endpoint configuration
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel" # receiver mount; no trailing /v1/traces
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000" # base URL, no /v1/traces suffix
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'glasshouse:YOUR_PASSWORD' | base64),x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-`OTEL_EXPORTER_OTLP_ENDPOINT` should point at Glasshouse's **receiver mount** (`/v1/otel`), without the final `/v1/traces` suffix. The OTel SDK appends `/v1/traces` by default, producing Glasshouse's `POST /v1/otel/v1/traces` endpoint. If your SDK uses a non-standard path, see [Custom path](#custom-path) below.
+For a compatible HTTP/JSON sender, the base endpoint resolves traces to `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as-is and must include the complete path. Setting these variables alone does not change a protobuf or gRPC exporter into a JSON exporter; verify the sender's encoding and payload compatibility.
 
 ## Authentication
 
 OTLP trace ingestion accepts either the existing HTTP Basic Auth credentials or a dedicated Project-scoped bearer credential. Basic Auth remains suitable for existing integrations; a dedicated credential is safer for unattended agents because it cannot sign into the dashboard or read telemetry.
 
-An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/otel/v1/traces`.
+An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/traces`.
 
 Rotation and revocation require current organization Admin authority; they are not restricted to the credential's creator. Any current Admin in that organization can rotate an active credential for an active Project or revoke a credential for an active or archived Project. `created_by_actor_id` records the creator and supplies the actor used to authorize bearer ingestion; it is not a creator-only management permission.
 
@@ -29,7 +33,7 @@ For a dedicated credential, put the literal secret in a protected environment va
 ```sh
 export GLASSHOUSE_OTLP_INGEST_TOKEN="gh_ing_<secret-from-admin-ui>"
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer $GLASSHOUSE_OTLP_INGEST_TOKEN,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
@@ -56,62 +60,9 @@ export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-projec
 
 For a multi-organization deployment, configure `GLASSHOUSE_BASIC_AUTH_CREDENTIALS` on the API as JSON objects with `username`, `password`, and `organization_id`. The organization and selected project must already exist in Postgres; credentials are authentication configuration, not caller-controlled tenant metadata.
 
-## Python example
+## Sending JSON
 
-```python
-import os
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-resource = Resource.create({
-    "service.name": os.environ["OTEL_SERVICE_NAME"],
-    "deployment.environment": "production",
-})
-
-provider = TracerProvider(resource=resource)
-exporter = OTLPSpanExporter(
-    endpoint=os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] + "/v1/traces",
-)
-provider.add_span_processor(BatchSpanProcessor(exporter))
-trace.set_tracer_provider(provider)
-
-# Any spans created with this tracer go to Glasshouse.
-tracer = trace.get_tracer(__name__)
-with tracer.start_as_current_span("hello") as span:
-    span.set_attribute("gen_ai.system", "openai")
-    span.set_attribute("gen_ai.request.model", "gpt-4o")
-    span.set_attribute("gen_ai.usage.input_tokens", 12)
-    span.set_attribute("gen_ai.usage.output_tokens", 18)
-```
-
-`OTLPSpanExporter` reads `OTEL_EXPORTER_OTLP_HEADERS` from the env and applies them to every export request.
-
-## Node.js / TypeScript example
-
-```ts
-import { NodeSDK } from "@opentelemetry/sdk-node";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
-import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
-
-const sdk = new NodeSDK({
-  resource: new Resource({
-    [SemanticResourceAttributes.SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? "my-agent",
-  }),
-  traceExporter: new OTLPTraceExporter({
-    // @opentelemetry/exporter-trace-otlp-http appends /v1/traces by default.
-    url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces`,
-    headers: parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS),
-  }),
-});
-
-sdk.start();
-```
-
-Where `parseOtlpHeaders` is a small helper that splits the `k=v,k2=v2` string into a `Record<string, string>`.
+Use a sender that emits JSON accepted by the current receiver, with `Content-Type: application/json`, the authorization header, and the Project selector. The repository's `infra/scripts/seed_traces.py` is an example sender. Do not assume a protobuf HTTP exporter can be pointed at this endpoint until the independent interoperability work is reconciled.
 
 ## Prompt provenance and sensitive data
 
@@ -195,7 +146,7 @@ The compact service-health card reports Postgres, ClickHouse, and Valkey depende
 
 ## Custom path
 
-If your OTel SDK needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or the SDK's equivalent) to the complete receiver URL, for example `https://api.example.com/v1/otel/v1/traces`.
+If your compatible sender needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or its equivalent) to the complete receiver URL, for example `https://api.example.com/v1/traces`.
 
 If you're sending spans to Glasshouse behind a reverse proxy with a different receiver mount, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to that proxy's complete trace URL.
 
@@ -206,6 +157,6 @@ Traces appear in the dashboard at `http://localhost:5173/observability`. Click a
 ## Production hardening (post-MVP)
 
 - Replace Basic Auth with mTLS or signed JWT (the OTel SDKs support custom exporters / headers).
-- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com/v1/otel`).
+- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com`).
 - Configure tenant routing with server-managed Basic credentials and select an authorized project with `x-glasshouse-project-id`.
 - Enable trace sampling at the agent side for high-volume services (see OTel SDK samplers).

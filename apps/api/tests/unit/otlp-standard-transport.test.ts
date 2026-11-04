@@ -19,7 +19,7 @@ test("OTLP JSON accepts an empty export and returns an empty OTLP response", asy
 		insertObservations: async () => undefined,
 	});
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: "{}",
@@ -43,7 +43,7 @@ test("OTLP JSON accepts lower-camel OTLP fields, uppercase IDs, and gzip", async
 		insertObservations: async () => undefined,
 	});
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -87,7 +87,7 @@ test("OTLP protobuf accepts an empty official export and responds in protobuf", 
 		insertObservations: async () => undefined,
 	});
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "application/x-protobuf" },
 			body: new Uint8Array(),
@@ -167,7 +167,7 @@ test("OTLP protobuf persists root and child spans encoded by the official schema
 		],
 	}).finish();
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "application/x-protobuf" },
 			body,
@@ -200,7 +200,7 @@ test("OTLP JSON rejects null resource spans without attempting persistence", asy
 		},
 	});
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ resourceSpans: [null] }),
@@ -214,7 +214,7 @@ test("OTLP JSON rejects null resource spans without attempting persistence", asy
 test("OTLP gzip exceeding the decompressed limit returns 413", async () => {
 	const handler = createOtlpIngestHandler();
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -233,7 +233,7 @@ test("OTLP gzip exceeding the decompressed limit returns 413", async () => {
 test("OTLP errors use google.rpc.Status in the request encoding", async () => {
 	const handler = createOtlpIngestHandler();
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "application/x-protobuf" },
 			body: new Uint8Array([255]),
@@ -264,7 +264,7 @@ test("OTLP returns partial success instead of silently dropping event and link s
 		insertObservations: async () => undefined,
 	});
 	const response = await handler(
-		new Request("http://localhost/v1/otel/v1/traces", {
+		new Request("http://localhost/v1/traces", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({

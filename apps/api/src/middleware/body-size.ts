@@ -15,7 +15,7 @@ export function bodySizeLimit(
 ): MiddlewareHandler {
 	return async (c, next) => {
 		const rejectTooLarge = () =>
-			c.req.path === "/v1/otel/v1/traces"
+			c.req.method === "POST" && c.req.path === "/v1/traces"
 				? otlpErrorResponse(c.req.raw, 413)
 				: c.json(
 						{
