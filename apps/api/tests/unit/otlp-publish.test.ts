@@ -814,6 +814,117 @@ describe("OTLP ingest publishes events", () => {
 		else process.env.GLASSHOUSE_REDACT_KEYS = previousRedactKeys;
 	});
 
+	it("drops malformed nested AnyValues instead of retaining an unredacted branch", async () => {
+		const secret = "AMBIGUOUS_NESTED_ANYVALUE_SECRET";
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => ({ mode: "none", keys: ["api_key"] }),
+			withActiveAuthorizedProjectLock,
+		});
+
+		const res = await handler(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "ambiguous-nested-value",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "payload",
+									value: {
+										arrayValue: {
+											values: [
+												{ stringValue: "retained" },
+												{
+													arrayValue: { values: [] },
+													kvlistValue: {
+														values: [
+															{
+																key: "api_key",
+																value: { stringValue: secret },
+															},
+														],
+													},
+												},
+												{ unknownValue: { stringValue: secret } },
+											],
+										},
+									},
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+
+		expect(res.status).toBe(200);
+		const persisted = JSON.stringify(insertObservations.mock.calls.at(-1)?.[1]);
+		expect(persisted).not.toContain(secret);
+		expect(persisted).toContain("retained");
+	});
+
+	it("does not resume recursive redaction after its node budget is exhausted", async () => {
+		const secret = "POST_BUDGET_ANYVALUE_SECRET";
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => ({ mode: "none", keys: ["api_key"] }),
+			withActiveAuthorizedProjectLock,
+		});
+		const fillerValues = Array.from({ length: 4_094 }, () => ({
+			stringValue: "filler",
+		}));
+
+		const res = await handler(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "redaction-budget",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "payload",
+									value: {
+										arrayValue: {
+											values: [
+												...fillerValues,
+												{ stringValue: secret },
+												{ stringValue: secret },
+											],
+										},
+									},
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+
+		expect(res.status).toBe(200);
+		expect(
+			JSON.stringify(insertObservations.mock.calls.at(-1)?.[1]),
+		).not.toContain(secret);
+	});
+
 	it("a throwing subscriber does NOT change the HTTP response", async () => {
 		const orig = console.error;
 		console.error = () => undefined;

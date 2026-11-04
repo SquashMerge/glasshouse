@@ -532,6 +532,15 @@ function rejectUnsupportedSpans(
 
 const MAX_OTLP_REDACTION_DEPTH = 32;
 const MAX_OTLP_REDACTION_NODES = 4_096;
+const OTLP_ANY_VALUE_KEYS = new Set([
+	"stringValue",
+	"boolValue",
+	"intValue",
+	"doubleValue",
+	"arrayValue",
+	"kvlistValue",
+	"bytesValue",
+]);
 
 function redactAttributes<T extends { key: string }>(
 	attributes: T[],
@@ -552,16 +561,20 @@ function redactAttribute(
 	budget: { remaining: number },
 	depth: number,
 ): object | null {
-	if (!budget.remaining-- || depth > MAX_OTLP_REDACTION_DEPTH) return null;
+	if (budget.remaining <= 0 || depth > MAX_OTLP_REDACTION_DEPTH) return null;
+	budget.remaining -= 1;
+	if (!attribute || typeof attribute !== "object" || Array.isArray(attribute))
+		return null;
+	const source = attribute as Record<string, unknown>;
+	if (
+		typeof source.key !== "string" ||
+		Object.keys(source).some((key) => key !== "key" && key !== "value")
+	)
+		return null;
 	if (keys.has(attribute.key)) return null;
-	if (!("value" in attribute)) return attribute;
-	const value = redactAttributeValue(
-		(attribute as { value?: unknown }).value,
-		keys,
-		budget,
-		depth + 1,
-	);
-	return value === null ? null : { ...attribute, value };
+	if (!("value" in source)) return { key: attribute.key };
+	const value = redactAttributeValue(source.value, keys, budget, depth + 1);
+	return value === null ? null : { key: attribute.key, value };
 }
 
 function redactAttributeValue(
@@ -570,38 +583,78 @@ function redactAttributeValue(
 	budget: { remaining: number },
 	depth: number,
 ): unknown | null {
-	if (!budget.remaining-- || depth > MAX_OTLP_REDACTION_DEPTH) return null;
-	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	if (budget.remaining <= 0 || depth > MAX_OTLP_REDACTION_DEPTH) return null;
+	budget.remaining -= 1;
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	const anyValue = value as Record<string, unknown>;
-	if (Array.isArray((anyValue.arrayValue as { values?: unknown })?.values)) {
-		const arrayValue = anyValue.arrayValue as Record<string, unknown> & {
-			values: unknown[];
-		};
-		const values = arrayValue.values;
-		const redacted = values.flatMap((item) => {
-			const nested = redactAttributeValue(item, keys, budget, depth + 1);
-			return nested === null ? [] : [nested];
-		});
-		return { ...anyValue, arrayValue: { ...arrayValue, values: redacted } };
-	}
-	if (Array.isArray((anyValue.kvlistValue as { values?: unknown })?.values)) {
-		const kvlistValue = anyValue.kvlistValue as Record<string, unknown> & {
-			values: unknown[];
-		};
-		const values = kvlistValue.values;
-		const redacted = values.flatMap((item) => {
-			if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-			const nested = redactAttribute(
-				item as { key: string },
+	const valueKeys = Object.keys(anyValue);
+	if (valueKeys.length !== 1 || !OTLP_ANY_VALUE_KEYS.has(valueKeys[0] ?? ""))
+		return null;
+
+	switch (valueKeys[0]) {
+		case "stringValue":
+			return typeof anyValue.stringValue === "string"
+				? { stringValue: anyValue.stringValue }
+				: null;
+		case "boolValue":
+			return typeof anyValue.boolValue === "boolean"
+				? { boolValue: anyValue.boolValue }
+				: null;
+		case "intValue":
+			return typeof anyValue.intValue === "string" ||
+				(typeof anyValue.intValue === "number" &&
+					Number.isInteger(anyValue.intValue))
+				? { intValue: anyValue.intValue }
+				: null;
+		case "doubleValue":
+			return typeof anyValue.doubleValue === "number"
+				? { doubleValue: anyValue.doubleValue }
+				: null;
+		case "bytesValue":
+			return typeof anyValue.bytesValue === "string"
+				? { bytesValue: anyValue.bytesValue }
+				: null;
+		case "arrayValue":
+			return redactAnyValueCollection(
+				anyValue.arrayValue,
 				keys,
 				budget,
-				depth + 1,
+				depth,
+				"arrayValue",
 			);
-			return nested === null ? [] : [nested];
-		});
-		return { ...anyValue, kvlistValue: { ...kvlistValue, values: redacted } };
+		case "kvlistValue":
+			return redactAnyValueCollection(
+				anyValue.kvlistValue,
+				keys,
+				budget,
+				depth,
+				"kvlistValue",
+			);
+		default:
+			return null;
 	}
-	return value;
+}
+
+function redactAnyValueCollection(
+	value: unknown,
+	keys: ReadonlySet<string>,
+	budget: { remaining: number },
+	depth: number,
+	type: "arrayValue" | "kvlistValue",
+): object | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const collection = value as Record<string, unknown>;
+	if (Object.keys(collection).some((key) => key !== "values")) return null;
+	if (!("values" in collection)) return { [type]: {} };
+	if (!Array.isArray(collection.values)) return null;
+	const values = collection.values.flatMap((item) => {
+		const nested =
+			type === "arrayValue"
+				? redactAttributeValue(item, keys, budget, depth + 1)
+				: redactAttribute(item as { key: string }, keys, budget, depth + 1);
+		return nested === null ? [] : [nested];
+	});
+	return { [type]: { values } };
 }
 
 function isTransientClickHouseFailure(error: unknown): boolean {
