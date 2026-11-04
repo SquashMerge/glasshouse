@@ -1,5 +1,6 @@
 import * as grpc from "@grpc/grpc-js";
 import { isIP } from "node:net";
+import { lookup } from "node:dns/promises";
 import { logger } from "./logger.js";
 
 const TRACE_SERVICE_PATH =
@@ -13,8 +14,9 @@ type Fetch = (request: Request) => Response | Promise<Response>;
 export async function startOtlpGrpcServer(fetch: Fetch) {
 	const port = Number(process.env.OTLP_GRPC_PORT);
 	if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return null;
-	const host = process.env.OTLP_GRPC_HOST ?? "127.0.0.1";
-	if (!isPrivateBindHost(host))
+	const configuredHost = process.env.OTLP_GRPC_HOST ?? "127.0.0.1";
+	const host = await resolvePrivateBindHost(configuredHost);
+	if (!host)
 		throw new Error("OTLP_GRPC_HOST must be a loopback or private address");
 	const maxReceiveBytes = parsePositiveInt(
 		process.env.OTLP_GRPC_MAX_RECEIVE_BYTES,
@@ -191,6 +193,16 @@ function isPrivateBindHost(host: string): boolean {
 		);
 	}
 	return family === 6 && (host === "::1" || /^f[cd][0-9a-f:]+$/i.test(host));
+}
+
+async function resolvePrivateBindHost(host: string): Promise<string | null> {
+	if (isPrivateBindHost(host)) return host;
+	try {
+		const address = await lookup(host);
+		return isPrivateBindHost(address.address) ? address.address : null;
+	} catch {
+		return null;
+	}
 }
 
 function gracefulShutdown(server: grpc.Server): Promise<void> {

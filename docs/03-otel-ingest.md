@@ -1,10 +1,12 @@
 # OTel Ingest (Glasshouse)
 
-Glasshouse accepts OTLP trace JSON at `POST /v1/traces`. The same path's `GET` operation is the separately authorized product trace list; detail and SSE routes remain product reads.
+Glasshouse accepts OTLP trace JSON and protobuf at `POST /v1/traces`, and optionally accepts OTLP/gRPC trace exports. The same path's `GET` operation is the separately authorized product trace list; detail and SSE routes remain product reads.
 
 This endpoint change is a breaking cutover: `POST /v1/otel/v1/traces` is removed. Update clients and proxies configured with the old URL. The old custom path was permitted by OTLP; this migration is a Glasshouse product decision, not a specification requirement.
 
-This checkout has a JSON-only receiver, no protobuf HTTP receiver or gRPC bridge. An SDK's default protocol or exporter may use protobuf or gRPC and cannot be assumed to work with it. The official HTTP/gRPC exporter interoperability tests and bridge are being developed independently and are not present here. When reconciling that OTLP work, update the bridge and official HTTP/gRPC exporter tests for the new endpoint and regenerate the OpenAPI snapshot.
+The gRPC receiver is disabled by default and needs a private network or a TLS-terminating proxy. See the listener settings and limitations below before exposing it.
+
+For production or the image-only snapshot bundle, the optional `infra/compose.otlp-grpc.yaml` overlay publishes gRPC only on the host loopback interface and binds the API listener to Docker's private `api` service address. Set `OTLP_GRPC_HOST_PORT` to change only the host-facing port; the container listener remains `4317`. Start it alongside the relevant production Compose file, then put an operator-managed TLS proxy in front of that loopback port if remote exporters need access. The snapshot copy is `deploy/snapshot/compose.otlp-grpc.yaml` and is intentionally identical.
 
 ## Endpoint configuration
 
@@ -16,7 +18,7 @@ export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-For a compatible HTTP/JSON sender, the base endpoint resolves traces to `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as-is and must include the complete path. Setting these variables alone does not change a protobuf or gRPC exporter into a JSON exporter; verify the sender's encoding and payload compatibility.
+For an OTLP/HTTP sender, the base endpoint resolves traces to `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as-is and must include the complete path. Configure the sender for HTTP/protobuf or HTTP/JSON; a gRPC exporter instead needs the separately configured gRPC listener.
 
 ## Authentication
 
@@ -62,7 +64,7 @@ For a multi-organization deployment, configure `GLASSHOUSE_BASIC_AUTH_CREDENTIAL
 
 ## Sending JSON
 
-Use a sender that emits JSON accepted by the current receiver, with `Content-Type: application/json`, the authorization header, and the Project selector. The repository's `infra/scripts/seed_traces.py` is an example sender. Do not assume a protobuf HTTP exporter can be pointed at this endpoint until the independent interoperability work is reconciled.
+Use a sender that emits OTLP JSON with `Content-Type: application/json`, the authorization header, and the Project selector. The repository's `infra/scripts/seed_traces.py` is an example sender. OTLP/HTTP protobuf senders use the same endpoint with `Content-Type: application/x-protobuf`.
 
 ## Prompt provenance and sensitive data
 
@@ -97,6 +99,8 @@ Both flags default to off (dev-friendly). In production we recommend `GLASSHOUSE
 Glasshouse accepts standard OTLP HTTP JSON (lower-camel field names) and protobuf trace exports at the same endpoint. It accepts `Content-Encoding: gzip` with a decompressed body limit equal to `API_MAX_BODY_BYTES`, so compressed input cannot bypass the request budget. A successful export returns the protocol's empty response (`{}` for JSON, empty protobuf for protobuf). OTLP errors use a `google.rpc.Status` response in the request encoding, with generic messages that do not disclose tenant or credential state.
 
 An optional native gRPC TraceService listener is disabled by default. Set `OTLP_GRPC_PORT` to enable it; `OTLP_GRPC_HOST` defaults to `127.0.0.1` and only loopback/private bind addresses are accepted. Place it behind an operator-managed TLS edge. gRPC metadata must include exactly one `authorization` value and exactly one `x-glasshouse-project-id`; it uses the same Basic/Bearer authentication, Project authorization, provenance checks, redaction, and ingest lock as HTTP. Metrics and logs services are not registered and return `UNIMPLEMENTED`.
+
+The CI interoperability regression uses `.github/compose.otlp-sdk-integration.yaml`, with no explicit container, port, or volume names and dynamically allocated loopback ports. The harness rejects caller/Compose project overrides, validates the rendered Compose model for fixed names, external resources, fixed published ports, and only the predicted generated network/volume names, generates an unpredictable project and ownership marker, and fails preflight if either project-labeled resources or predicted resource names already exist. It stops/removes only exact container and network IDs that are atomically verified to carry both the generated marker and project label, and never removes volumes. The Python dependency closure in `infra/otlp-sdk-requirements.txt` is version- and hash-locked. Mocked fake-Docker tests cover collision, inventory, ownership, partial-startup, signal, and ID-truncation failures without a Docker daemon. Docker-backed fixture/path resolution and exporter execution remain hosted-CI verification; they are not claimed from a devcontainer without Docker.
 
 Each span is normalized into:
 

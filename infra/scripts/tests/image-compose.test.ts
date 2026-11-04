@@ -96,4 +96,10 @@ describe("checkout-free snapshot Compose bundle", () => {
 			}
 		}
 	});
+
+	it("keeps the optional gRPC overlay identical to production", () => {
+		expect(
+			readFileSync(resolve(bundle, "compose.otlp-grpc.yaml"), "utf8"),
+		).toEqual(readFileSync(resolve(root, "infra/compose.otlp-grpc.yaml"), "utf8"));
+	});
 });

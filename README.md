@@ -189,6 +189,12 @@ operator-controlled private network. Add the same `authorization` and
 `x-glasshouse-project-id` metadata used by HTTP exporters. Metrics and logs
 are not implemented and return `UNIMPLEMENTED`.
 
+For production or an image-only snapshot, add `-f infra/compose.otlp-grpc.yaml`
+or `-f deploy/snapshot/compose.otlp-grpc.yaml` to the relevant Compose command.
+The optional overlay resolves the listener's private Docker service address and
+publishes its port on host loopback only; a remote exporter still needs an
+operator-managed TLS proxy.
+
 ### Local credential foundation
 
 PostgreSQL local credential storage now supports organization-scoped ASCII usernames,
