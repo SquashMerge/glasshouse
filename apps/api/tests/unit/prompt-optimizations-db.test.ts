@@ -425,6 +425,36 @@ describe("prompt optimization repository", () => {
 		expect(metricCall?.values).toEqual([JOB, WORKER, 3]);
 	});
 
+	it("records zero metric calls through an execution admission", async () => {
+		const pool = new MockPool([
+			{ rows: [] },
+			{ rows: [{ created: true }] },
+			{ rows: [{ id: JOB }] },
+			{ rows: [] },
+		]);
+		await recordOptimizationMetricCalls(transactionPool(pool), {
+			id: JOB,
+			worker_id: WORKER,
+			metric_calls_used: 0,
+			admission_id: "admission",
+		});
+		const claim = pool.client.calls.find((call) =>
+			call.text.includes("INSERT INTO execution_effects"),
+		);
+		expect(claim?.values).toEqual([
+			"admission",
+			PROJECT,
+			"metric_write",
+			"metric_write:0",
+		]);
+		const update = pool.client.calls.find((call) =>
+			call.text.startsWith(
+				"UPDATE prompt_optimization_jobs SET metric_calls_used",
+			),
+		);
+		expect(update?.values).toEqual([JOB, WORKER, 0]);
+	});
+
 	it("includes persisted metric-call usage in the content-free completion event", async () => {
 		const pool = new MockPool([
 			{ rows: [] },

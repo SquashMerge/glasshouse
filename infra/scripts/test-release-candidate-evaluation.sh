@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Non-publishing hosted CI only. This is a test-mode stack, not a production configuration.
+# Hosted CI only: disposable test-mode stack used by candidate and publisher checks.
 set -euo pipefail
 : "${GITHUB_ACTIONS:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" "${RUNNER_TEMP:?}" "${VERSION:?}" "${CANDIDATE_SHA:?}"
 [[ "$GITHUB_ACTIONS" == true && "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
@@ -42,13 +42,16 @@ CANDIDATE_URL="http://$address" CANDIDATE_EXPECT_FAKE_DENIAL=true bun infra/scri
 # Only this disposable CI stack is switched to test mode; the bundle stays production-only.
 cat >> "$override" <<'YAML'
       NODE_ENV: test
+      GEPA_WORKER_MODE: fake
 YAML
 "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240 api
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$image"
 address="$("${compose[@]}" port api 3000)"
 CANDIDATE_URL="http://$address" CANDIDATE_STATE_FILE="$RUNNER_TEMP/candidate-evaluation-state.json" bun infra/scripts/release-candidate-evaluation.ts
+CANDIDATE_URL="http://$address" CANDIDATE_STATE_FILE="$RUNNER_TEMP/candidate-gepa-state.json" bun infra/scripts/release-candidate-gepa.ts
 "${compose[@]}" restart api
 "${compose[@]}" up -d --no-deps --no-build --pull never --wait --wait-timeout 240 api
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$image"
 address="$("${compose[@]}" port api 3000)"
 CANDIDATE_URL="http://$address" CANDIDATE_READBACK_FILE="$RUNNER_TEMP/candidate-evaluation-state.json" bun infra/scripts/release-candidate-evaluation.ts
+CANDIDATE_URL="http://$address" CANDIDATE_READBACK_FILE="$RUNNER_TEMP/candidate-gepa-state.json" bun infra/scripts/release-candidate-gepa.ts

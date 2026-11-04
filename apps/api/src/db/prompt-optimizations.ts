@@ -728,7 +728,7 @@ export async function recordOptimizationMetricCalls(
 				effect: "metric_write",
 				effect_key: executionOperationKey(
 					"metric_write",
-					input.metric_calls_used,
+					input.metric_calls_used === 0 ? "0" : input.metric_calls_used,
 				),
 			});
 			if (claim.status === "unavailable")

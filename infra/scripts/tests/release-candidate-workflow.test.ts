@@ -95,6 +95,25 @@ it("runs the fake-provider lifecycle on the exact reloaded release artifact", ()
 	expect(read("deploy/release/compose.yaml")).toContain("NODE_ENV: production");
 });
 
+it("runs and re-reads the real GEPA subprocess lifecycle only in the isolated test stack", () => {
+	const script = read("infra/scripts/test-release-candidate-evaluation.sh");
+	const testMode = script.indexOf("NODE_ENV: test");
+	const fake = script.indexOf("GEPA_WORKER_MODE: fake");
+	const first = script.indexOf("bun infra/scripts/release-candidate-gepa.ts");
+	const restart = script.indexOf('"${compose[@]}" restart api');
+	const readback = script.lastIndexOf(
+		"bun infra/scripts/release-candidate-gepa.ts",
+	);
+	expect(testMode).toBeGreaterThan(
+		script.indexOf("CANDIDATE_EXPECT_FAKE_DENIAL=true"),
+	);
+	expect(fake).toBeGreaterThan(testMode);
+	expect(first).toBeGreaterThan(fake);
+	expect(restart).toBeGreaterThan(first);
+	expect(readback).toBeGreaterThan(restart);
+	expect(script.slice(restart, readback)).toContain("CANDIDATE_READBACK_FILE");
+});
+
 it("transfers, attests and checksums the tested SBOM", () => {
 	const workflow = load(read(".github/workflows/release-publisher.yml")) as any;
 	const build = workflow.jobs["build-and-test"].steps as any[];
