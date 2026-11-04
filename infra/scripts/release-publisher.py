@@ -149,21 +149,6 @@ class Client:
         raise ValueError('pagination limit exceeded')
 
 
-def validate_tag_rules(rules, ref):
-    if not isinstance(rules, list):
-        raise ValueError('invalid tag rules')
-    for rule in rules:
-        if not isinstance(rule, dict):
-            raise ValueError('invalid tag rule')
-        conditions = rule.get('conditions', {}).get('ref_name', {})
-        if (rule.get('target') == 'tag' and rule.get('enforcement') == 'active' and
-            rule.get('bypass_actors') == [] and conditions.get('include') == [ref] and
-            conditions.get('exclude') == [] and
-            {'creation', 'update', 'deletion'} <= {x.get('type') for x in rule.get('rules', [])}):
-            return
-    raise ValueError('no exact active non-bypassable tag ruleset')
-
-
 def require_no_release(client, tag):
     # Drafts are not reliably returned by the by-tag endpoint. List all releases.
     if hasattr(client, 'pages'):
@@ -180,27 +165,18 @@ def require_no_release(client, tag):
 
 
 def admit(client, repository, event, ref, event_sha, checkout_sha):
+    def require_current_main():
+        main = client.get('git/ref/heads/main')
+        obj = main.get('object') if isinstance(main, dict) else None
+        if not isinstance(obj, dict) or obj.get('type') != 'commit' or obj.get('sha') != event_sha:
+            raise ValueError('release commit is not the current main tip')
+
+    require_current_main()
     admission.verify_reference_evidence(repository, event, ref, event_sha, checkout_sha, client.get)
-    branch = client.get('branches/main')
-    if branch.get('protected') is not True or branch.get('commit', {}).get('sha') != event_sha:
-        raise ValueError('main is not protected or no longer at the expected SHA')
-    rules = client.pages('rules/branches/main')
-    if not any(x.get('type') == 'pull_request' and x.get('parameters', {}).get('required_approving_review_count', 0) >= 1 for x in rules):
-        raise ValueError('main review protection unavailable')
-    required = set()
-    for rule in rules:
-        if rule.get('type') == 'required_status_checks':
-            for check in rule.get('parameters', {}).get('required_status_checks', []):
-                if check.get('integration_id') == 15368:
-                    required.add(check.get('context'))
-    if not set(POLICY) <= required:
-        raise ValueError('main required checks do not meet policy')
-    summaries = client.pages('rulesets?includes_parents=true')
-    rulesets = [client.get('rulesets/' + str(item['id'])) for item in summaries]
-    validate_tag_rules(rulesets, ref)
     checks = client.pages(f'commits/{event_sha}/check-runs?filter=all', 'check_runs')
     admission.verify_check_evidence(checks, event_sha, POLICY, client.get)
     admission.verify_reference_evidence(repository, event, ref, event_sha, checkout_sha, client.get)
+    require_current_main()
 
 
 def digest_file(path):

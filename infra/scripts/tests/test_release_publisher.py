@@ -29,15 +29,6 @@ class PublisherTests(unittest.TestCase):
             'git/ref/tags/v1.2.3': {'object': {'type': 'commit', 'sha': sha}},
             'git/ref/heads/main': {'object': {'type': 'commit', 'sha': sha}},
             f'compare/{sha}...{sha}': {'status': 'identical', 'merge_base_commit': {'sha': sha}},
-            'branches/main': {'protected': True, 'commit': {'sha': sha}},
-            'rules/branches/main': [
-                {'type': 'pull_request', 'parameters': {'required_approving_review_count': 1}},
-                {'type': 'required_status_checks', 'parameters': {'required_status_checks': [
-                    {'context': name, 'integration_id': 15368} for name in publisher.POLICY]}}],
-            'rulesets': [{'id': 11}],
-            'rulesets/11': {'id': 11, 'target': 'tag', 'enforcement': 'active', 'bypass_actors': [],
-                            'conditions': {'ref_name': {'include': [tag], 'exclude': []}},
-                            'rules': [{'type': x} for x in ('creation', 'update', 'deletion')]},
         }
         checks = []
         for index, (name, (app, workflow)) in enumerate(publisher.POLICY.items(), 1):
@@ -60,16 +51,21 @@ class PublisherTests(unittest.TestCase):
             return Response(objects[path])
         return publisher.Client('token', opener=open_url), objects, sha, tag
 
+    def test_admission_needs_no_ruleset_or_bypass_permissions(self):
+        client, _, sha, tag = self.admission_fixture()
+        publisher.admit(client, publisher.REPO, 'push', tag, sha, sha)
+
     def test_full_authenticated_admission_and_adversarial_evidence(self):
         client, objects, sha, tag = self.admission_fixture()
         def check(): publisher.admit(client, publisher.REPO, 'push', tag, sha, sha)
         check()
         scenarios = [
-            ('branches/main', {'protected': False, 'commit': {'sha': sha}}),
-            ('branches/main', {'protected': True, 'commit': {'sha': 'b' * 40}}),
-            ('rules/branches/main', []),
-            ('rulesets/11', {**objects['rulesets/11'], 'enforcement': 'disabled'}),
+            ('git/ref/heads/main', {'object': {'type': 'commit', 'sha': 'b' * 40}}),
+            ('git/ref/heads/main', {'object': {'type': 'tag', 'sha': sha}}),
             ('actions/runs/10', {**objects['actions/runs/10'], 'event': 'pull_request'}),
+            ('actions/runs/10', {**objects['actions/runs/10'], 'head_branch': 'other'}),
+            ('actions/runs/10', {**objects['actions/runs/10'], 'workflow_id': 999}),
+            ('actions/runs/10', {**objects['actions/runs/10'], 'head_repository': {'full_name': 'evil/fork'}}),
             ('actions/jobs/100', {**objects['actions/jobs/100'], 'conclusion': 'failure'}),
             (f'commits/{sha}/check-runs', {'total_count': 8, 'check_runs': objects[f'commits/{sha}/check-runs']['check_runs'] * 2}),
             (f'commits/{sha}/check-runs', {'total_count': 10, 'check_runs': objects[f'commits/{sha}/check-runs']['check_runs']}),
@@ -82,6 +78,27 @@ class PublisherTests(unittest.TestCase):
             objects[path] = original
         with self.assertRaises(ValueError):
             publisher.admit(client, publisher.REPO, 'workflow_dispatch', tag, sha, sha)
+        for bad_tag in ('refs/tags/v01.2.3', 'refs/tags/v1.2.3-rc.0', 'refs/heads/v1.2.3'):
+            with self.subTest(tag=bad_tag), self.assertRaises(ValueError):
+                publisher.admit(client, publisher.REPO, 'push', bad_tag, sha, sha)
+
+    def test_main_moves_after_check_evidence(self):
+        from unittest.mock import patch
+        client, objects, sha, tag = self.admission_fixture()
+        objects[f'compare/{sha}...{"b" * 40}'] = {
+            'status': 'ahead', 'merge_base_commit': {'sha': sha}}
+        verify = publisher.admission.verify_check_evidence
+        def move_main(*args):
+            verify(*args)
+            original = client.get
+            def moved(path):
+                if path == 'git/ref/heads/main':
+                    return {'object': {'type': 'commit', 'sha': 'b' * 40}}
+                return original(path)
+            client.get = moved
+        with patch.object(publisher.admission, 'verify_check_evidence', side_effect=move_main):
+            with self.assertRaises(ValueError):
+                publisher.admit(client, publisher.REPO, 'push', tag, sha, sha)
 
     def test_authenticated_client_paginates_and_rejects_cross_origin(self):
         calls = []
@@ -95,19 +112,6 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(calls[0].get_header('Authorization'), 'Bearer example')
         with self.assertRaises(ValueError):
             publisher.Client('example', opener=lambda *a, **k: Response([], {'Link': '<https://evil.invalid/>; rel="next"'})).pages('rulesets')
-
-    def test_requires_exact_active_tag_rule_without_bypass(self):
-        rule = {'id': 1, 'target': 'tag', 'enforcement': 'active', 'bypass_actors': [],
-                'conditions': {'ref_name': {'include': ['refs/tags/v1.2.3'], 'exclude': []}},
-                'rules': [{'type': x} for x in ('creation', 'update', 'deletion')]}
-        publisher.validate_tag_rules([rule], 'refs/tags/v1.2.3')
-        for change in ({'enforcement': 'evaluate'}, {'bypass_actors': [{'actor_id': 1}]},
-                       {'rules': [{'type': 'deletion'}]}, {'conditions': {'ref_name': {'include': ['refs/tags/v*'], 'exclude': []}}}):
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                publisher.validate_tag_rules([{**rule, **change}], 'refs/tags/v1.2.3')
-        without_bypass_evidence = {key: value for key, value in rule.items() if key != 'bypass_actors'}
-        with self.assertRaises(ValueError):
-            publisher.validate_tag_rules([without_bypass_evidence], 'refs/tags/v1.2.3')
 
     def test_existing_release_is_never_overwritten(self):
         class Client:

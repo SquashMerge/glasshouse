@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
       - name: Test publisher safety contracts
         run: python3 -m unittest discover -s infra/scripts/tests -p test_release_publisher.py -v
-      - name: Admit protected tag and exact main checks
+      - name: Admit version tag and exact main checks
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 infra/scripts/release-publisher.py admit
