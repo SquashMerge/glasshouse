@@ -158,10 +158,7 @@ test("API integration: Bearer OTLP ingestion and revoke/no-write populate organi
 			}),
 		});
 		expect(ingested.status, "Bearer ingestion status").toBe(200);
-		expect(
-			JSON.stringify(ingested.data) === '{"partial_success":{}}',
-			"Bearer ingestion acknowledgement",
-		).toBe(true);
+		expect(ingested.data, "Bearer ingestion acknowledgement").toEqual({});
 
 		const revoked = await request.post(
 			`${API_BASE}/v1/admin/otlp-credentials/${credentialId}/revoke`,
