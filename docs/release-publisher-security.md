@@ -77,8 +77,7 @@ are trusted with its authority. Checksums detect changed bytes, not malicious
 content. Attestations bind bytes to workflow identity; they do not independently
 prove tests meaningful or dependencies safe.
 
-Tests include a reloaded image, image scan/SBOM identity, browser and synthetic
-worker probes, a pinned historical upgrade, and a standalone backup/restore drill.
+Tests include a reloaded image, image scan/SBOM identity, browser probes, API-dispatched Evaluation and Python GEPA jobs with credential-free fake providers in a disposable test-mode stack, a pinned historical upgrade, and a standalone backup/restore drill. Job results are read again after restarting the API; real providers and recovery of an interrupted job are not tested.
 The bundle is tested by extracting its tarball and using the extracted directory;
 the test adds a synthetic environment file only after extraction. A candidate
 workflow's results do not prove that a different release's bytes were tested.
@@ -89,8 +88,7 @@ GitHub transport, with synthetic assets and no write credential. It checks the
 workflow's transfer/attestation input lists and checksum shell gates; it also
 exercises duplicate drafts, ref movement, partial upload failures and corrupted
 readback. The bundle fixture is assembled by the real bundle builder, but its
-image and SBOM are synthetic. The test does not execute the full candidate build,
-artifact transfer or attestation action. In the devcontainer, run:
+image and SBOM are synthetic. Separately, the non-publishing candidate workflow feeds its actual generated archives and manifest to the same Python publisher under the mocked transport and checks byte readback. It checks the configured attestation subject paths, but does not execute the GitHub artifact transfer or attestation action. In the devcontainer, run:
 
 ```sh
 python3 -m unittest discover -s infra/scripts/tests -p 'test_release_publisher*.py' -v
