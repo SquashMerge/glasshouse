@@ -57,8 +57,17 @@ it("candidate CI is non-publishing and reloads the compressed image", () => {
 		'infra/scripts/test-release-upgrade.sh "$bundle" "$project" "$before"',
 	);
 	expect(commands).toContain(
-		'infra/scripts/test-release-recovery.sh "$bundle" "$project"',
+		'infra/scripts/test-release-recovery.sh "$bundle" "$project" "$before"',
 	);
 	expect(commands).toContain("bun apps/web/tests/release-candidate-browser.ts");
+	expect(commands).toContain(
+		"bun apps/web/tests/release-candidate-authenticated.ts",
+	);
+	expect(commands).toContain("foreign-private-data");
+	expect(commands).toContain("GEPA_WORKER_MODE=fake");
+	expect(commands).toContain("GLASSHOUSE_IMAGE=%s");
+	expect(commands).toContain(
+		'docker run --rm --entrypoint /opt/gepa/bin/python "$before"',
+	);
 	expect(commands).not.toMatch(/gh release|docker push|packages: write/);
 });

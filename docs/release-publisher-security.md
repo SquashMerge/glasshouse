@@ -1,66 +1,86 @@
 # Release publisher security and outstanding gates
 
-**Work in progress: no Release publisher is enabled or implemented.** The
-candidate workflow is read-only and does not create tags, Releases, attestations,
-or packages. Its success does not authenticate any future artifact. The
-admission module contains reusable checks, not an independent GitHub client or
-a publication gate. Do not attach publication credentials to it as-is.
+The protected-tag publisher is **disabled by default** (`RELEASE_PUBLISH_ENABLED`
+must be set to `true`). Its workflow has only a version-tag push trigger; PRs and
+manual dispatches have no publishing job. It builds one image archive and one
+bundle archive, loads/extracts those exact files for testing, then transfers the
+same bytes to a separate environment-gated job. That job independently repeats
+admission, verifies the transfer, attests both archives, creates a **draft** GitHub
+Release, uploads the archives and checksum manifest without clobbering, and
+reads each remote asset back to compare its byte count and SHA-256. It does not
+publish to GHCR or turn a draft into a public release. A failed upload can leave
+an incomplete draft: investigate and manually remove it only after establishing
+its identity; reruns intentionally refuse existing drafts/assets.
+
+The definitions and offline tests are not evidence of a successful hosted run,
+a real GitHub Release, or a verified attestation. Current repository settings
+have not been changed by this implementation. Live end-to-end GitHub API behavior,
+permissions, uploaded-byte readback, attestation verification, and the hosted
+candidate gates remain unverified. Do not enable without a separate review and
+an operator-controlled dry run in an appropriately configured repository.
 
 ## Required operator controls before enabling publication
 
-1. Protect `main`: require reviews and the approved CI checks, restrict bypass,
-   protect workflow and release-policy changes with appropriate code ownership,
-   and verify the exact branch rules actually enforced by GitHub.
-2. Protect the explicit release-tag namespace (only `vX.Y.Z` and `vX.Y.Z-rc.N`
-   are intended), including creation, update and deletion. Limit creators and
-   bypass actors; do not let PR authors freely tag arbitrary commits.
-3. Put any Release-writing credential in a **protected environment**, not a
-   repository secret or a write-enabled default workflow token. Restrict its
-   deployment tag patterns, require independent trusted reviewers and prevent
-   self-approval/bypass as the GitHub plan permits. Verify these settings and
-   the effective permissions of the token before each enablement. The credential
-   must have only the repository contents access needed to publish; do not grant
-   package write access. PRs and dispatch runs must never obtain it.
-4. A tag-supplied workflow and its scripts cannot establish their own
-   trustworthiness. An attacker able to create a tag pointing to their own
-   workflow can remove all in-workflow validation. Environment protection,
-   protected tag rules and trustworthy reviewers are external prerequisites,
-   not controls that an untrusted tag can prove. Confirm they apply to the
-   actual job and tag, not merely to another workflow or branch.
-5. Treat administrators, allowed tag creators, environment reviewers,
-   credential holders, GitHub, the hosted runner, pinned actions, build inputs,
-   package sources and any code run in the privileged job as trusted. The
-   configuration must block unreviewed code from reaching that credential.
-   Checks and publication are not atomic with later rule/tag changes; maintain
-   those protections and sole-writer authority throughout the operation.
+1. Protect `main`, require at least one independent approval and the check
+   contexts in `POLICY` in `infra/scripts/release-publisher.py`, and bind each
+   context to the GitHub Actions app. Protect workflow and release-policy changes
+   with code ownership; restrict bypass and verify effective rules in GitHub.
+   Admission requires the release commit to remain the current `main` tip, not
+   merely an ancestor, and verifies each check's workflow ID, app, repository,
+   push event, branch, completed success, exact SHA and uniqueness. Reruns that
+   create duplicate matching checks are denied rather than arbitrarily selected.
+2. Configure active protected tag rules. The current conservative implementation
+   only accepts a ruleset whose sole inclusion is the *exact* `refs/tags/vX.Y.Z`
+   or `refs/tags/vX.Y.Z-rc.N`, no exclusions or bypass actors, and creation,
+   update and deletion rules. Wildcard rules are deliberately not treated as
+   proof of coverage. A creation restriction without bypass can prevent creation
+   of the tag; coordinating protected creation, removal of any temporary bypass,
+   and a rerun requires an explicit operator procedure. A ruleset observed after
+   tag creation does **not** prove the creation was protected. Do not treat the
+   in-workflow check as proof of that historical fact.
+3. Create the `release` GitHub environment before enabling the variable. Restrict
+   deployments to the intended tag patterns, require independent trusted
+   reviewers, disable self-approval and administrator bypass where supported,
+   and verify its enforcement and token permissions. The job's `contents: write`
+   token is environment gated and has no package-write permission. GitHub plans
+   and repository visibility can limit environment protection or attestations;
+   fail closed if the required protections are unavailable. No code can prove
+   that a tag-supplied workflow has not removed its own environment gate.
+4. Confirm tag creators, environment reviewers, GitHub, the hosted runner,
+   pinned actions, checked-out commit, dependencies and build inputs are trusted.
+   Reviewers must verify the actual workflow, tag, commit and rules before
+   approving. A tag-supplied workflow cannot establish its own trustworthiness.
+   Protect all relevant changes, limit bypass, and maintain sole-writer authority
+   and the protections throughout the operation; API checks and writes are not
+   atomic with tag/rule changes. Repository/environment administrators remain
+   trusted. The script rechecks admission before each upload but cannot prevent a
+   race against an authorized concurrent rule, tag or release mutation.
+5. Configure the exact policy values, ruleset/branch visibility and token scopes
+   required to read all pages of checks, workflow runs, jobs and rules. The pinned
+   workflow IDs are repository-specific and must be reviewed if workflows are
+   recreated. Missing or unreadable evidence, ambiguous checks, redirects,
+   malformed responses, 403s and rate limits deny. The rules API's effective
+   coverage and availability must be verified against the actual repository plan.
 
-## Implementation still required
+## Artifact and test limits
 
-The future publisher must independently read the live tag, peel annotated tags,
-verify the event, repository and checkout SHA, and prove that commit is on the
-protected `main`. It must retrieve *all* relevant exact-SHA check evidence and
-verify each required check's approved app, workflow identity, originating
-repository, main-push event, success and completion. Missing, stale, duplicated,
-unreadable or ambiguous evidence must deny. `release-admission.py` supplies
-pure validation primitives, but the GitHub client, fixed policy, pagination and
-wiring are not yet provided. Its inputs are not evidence unless independently
-retrieved over an authenticated trusted channel.
+The publisher's standalone candidate script intentionally mirrors the candidate
+workflow while preserving the versioned image and bundle archives across testing
+and upload. This duplicates test orchestration: changes to either path must be
+reviewed together, or both should be refactored to a shared reusable workflow.
+The candidate executes untrusted-by-default application/dependency code on a
+read-only runner and has no release-write token. It is not a sandbox against the
+candidate code modifying its own tests, checksums or outputs. The privileged job
+runs separately and does not execute downloaded archives, but its checked-out
+publisher code and Actions are trusted with its authority. Checksums detect byte
+changes, not malicious content. Attestations bind bytes to a workflow identity;
+they do not independently prove that tests were meaningful or dependencies safe.
 
-Build once and exercise the actual Docker-load-compatible archive in a clean
-Compose stack before provenance generation, upload or attestation. The current
-candidate adds a real browser signed-out/API probe, a pinned historical API
-upgrade with retained records, and a standalone bundle backup/isolated-restore
-probe, but none has yet passed hosted CI. Coverage still needed includes
-authenticated browser sessions, cross-tenant security, and meaningful worker
-execution. A worker import smoke is not a job execution. The exact bytes that
-pass these gates must be the bytes released; rebuilding later is not equivalent.
-
-After those gates exist, implement secure release notes and provenance, draft
-and prerelease handling, under-2-GiB Docker image archive, checksums, and
-no-overwrite Release asset creation with exact remote readback. Fail closed on
-partial upload, tag movement, unavailable API, conflicting release or asset,
-wrong hash or missing checks. Do not publish to GHCR. The credential must not be
-available to untrusted candidate code on the same runner; process environment
-scrubbing is not a same-user security boundary. A separate privileged job must
-verify independently authenticated artifacts before any write. Test recovery and
-race/failure behavior before activation. Checksums alone are not provenance.
+Tests include a reloaded image, image scan/SBOM identity, browser and synthetic
+worker probes, a pinned historical upgrade, and a standalone backup/restore drill.
+Their definitions have not yet passed on hosted CI for this publisher. The bundle
+is tested by extracting its tarball and using the extracted directory; the test
+adds a synthetic environment file only after extraction, not to the archive.
+Compression and test behavior can change with runner and tool versions. The
+candidate workflow's separate results do not prove that these release bytes were
+tested; only a successful corresponding publisher run can support that claim.

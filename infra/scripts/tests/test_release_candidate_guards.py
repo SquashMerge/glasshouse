@@ -19,6 +19,18 @@ class CandidateSafetyTests(unittest.TestCase):
             with self.subTest(script=script.name):
                 self.assertNotEqual(self.run_script(script).returncode, 0)
 
+    def test_recovery_requires_immutable_candidate_id_before_docker(self):
+        env = {'GITHUB_ACTIONS': 'true', 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1',
+               'RUNNER_TEMP': '/ci-temp'}
+        script = ROOT / 'infra/scripts/test-release-recovery.sh'
+        for candidate in ('', 'glasshouse:v0.0.0-rc.1', 'sha256:' + 'g' * 64):
+            with self.subTest(candidate=candidate):
+                result = self.run_script(script, '/ci-temp/glasshouse-candidate-bundle',
+                                         'release-ci-123-1', candidate, **env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('docker:', result.stderr)
+                self.assertNotIn('mktemp:', result.stderr)
+
     def test_scripts_reject_unrelated_project_or_bundle_before_docker(self):
         env = {'GITHUB_ACTIONS': 'true', 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1',
                'RUNNER_TEMP': '/ci-temp'}

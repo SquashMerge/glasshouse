@@ -6,7 +6,8 @@ umask 077
 [[ "$GITHUB_ACTIONS" == true && "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
 bundle="${1:?bundle required}"
 project="${2:?project required}"
-[[ "$bundle" == "$RUNNER_TEMP/glasshouse-candidate-bundle" && "$project" == "release-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]]
+candidate_id="${3:?candidate image ID required}"
+[[ "$bundle" == "$RUNNER_TEMP/glasshouse-candidate-bundle" && "$project" == "release-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" && "$candidate_id" =~ ^sha256:[0-9a-f]{64}$ ]]
 target_project="${project}-restore"
 target="$(mktemp -d "$RUNNER_TEMP/release-recovery.XXXXXXXX")"
 cp -a "$bundle/." "$target/"
@@ -43,6 +44,7 @@ export RESTORE_TARGET_ENV_FILE="$target/test.env" RESTORE_TARGET_COMPOSE_PROJECT
 [[ "$("${target_compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT payload FROM release_recovery_probe WHERE organization_id='org-ci' AND project_id='project-ci'")" == pg-ci ]]
 [[ "$("${target_compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse_ci --password synthetic-clickhouse-6c70a4ed --database glasshouse_ci --query "SELECT payload FROM release_recovery_probe WHERE organization_id='org-ci' AND project_id='project-ci'")" == ch-ci ]]
 "${target_compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240 api
+test "$(docker inspect --format '{{.Image}}' "$("${target_compose[@]}" ps -q api)")" = "$candidate_id"
 address="$("${target_compose[@]}" port api 3000)"
 curl --fail --silent --show-error --user synthetic-owner:synthetic-ui-9b412e8cfa "http://$address/v1/projects" | python3 -c 'import json,sys; assert any(p["slug"] == "default" for p in json.load(sys.stdin)["items"])'
 printf 'Standalone bundle backup, isolated restore, scoped probes and recovered API passed\n'
