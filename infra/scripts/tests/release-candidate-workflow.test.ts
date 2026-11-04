@@ -13,8 +13,10 @@ it("candidate CI is non-publishing and reloads the compressed image", () => {
 	) as any;
 	expect(Object.keys(workflow.on).sort()).toEqual([
 		"pull_request",
+		"push",
 		"workflow_dispatch",
 	]);
+	expect(workflow.on.push.branches).toEqual(["main"]);
 	expect(workflow.permissions).toEqual({ contents: "read" });
 	const steps = workflow.jobs.candidate.steps as {
 		uses?: string;
@@ -51,5 +53,12 @@ it("candidate CI is non-publishing and reloads the compressed image", () => {
 	);
 	expect(commands).toContain("migrations-before");
 	expect(commands).toContain("/v1/traces/events?project_id=");
+	expect(commands).toContain(
+		'infra/scripts/test-release-upgrade.sh "$bundle" "$project" "$before"',
+	);
+	expect(commands).toContain(
+		'infra/scripts/test-release-recovery.sh "$bundle" "$project"',
+	);
+	expect(commands).toContain("bun apps/web/tests/release-candidate-browser.ts");
 	expect(commands).not.toMatch(/gh release|docker push|packages: write/);
 });
