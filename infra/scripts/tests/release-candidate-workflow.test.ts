@@ -99,10 +99,10 @@ it("runs and re-reads the real GEPA subprocess lifecycle only in the isolated te
 	const script = read("infra/scripts/test-release-candidate-evaluation.sh");
 	const testMode = script.indexOf("NODE_ENV: test");
 	const fake = script.indexOf("GEPA_WORKER_MODE: fake");
-	const first = script.indexOf("bun infra/scripts/release-candidate-gepa.ts");
+	const first = script.indexOf("bun /candidate-scripts/release-candidate-gepa.ts");
 	const restart = script.indexOf('"${compose[@]}" restart api');
 	const readback = script.lastIndexOf(
-		"bun infra/scripts/release-candidate-gepa.ts",
+		"bun /candidate-scripts/release-candidate-gepa.ts",
 	);
 	expect(testMode).toBeGreaterThan(
 		script.indexOf("CANDIDATE_EXPECT_FAKE_DENIAL=true"),
@@ -112,6 +112,26 @@ it("runs and re-reads the real GEPA subprocess lifecycle only in the isolated te
 	expect(restart).toBeGreaterThan(first);
 	expect(readback).toBeGreaterThan(restart);
 	expect(script.slice(restart, readback)).toContain("CANDIDATE_READBACK_FILE");
+});
+
+it("runs the real GEPA path against an isolated HTTP fixture and reads it back", () => {
+	const script = read("infra/scripts/test-release-candidate-evaluation.sh");
+	for (const fragment of [
+		"internal: true",
+		"GEPA_WORKER_MODE: gepa",
+		"OPENAI_API_KEY: synthetic-gepa-key",
+		"OPENAI_API_BASE: http://fixture:8080/v1",
+		"task_seed",
+		"task_candidate",
+		"reflection",
+		"/candidate-state/gepa-real.json",
+	]) expect(script).toContain(fragment);
+	const first = script.indexOf("CANDIDATE_REAL_GEPA=true");
+	const restart = script.indexOf('"${compose[@]}" restart api');
+	const readback = script.lastIndexOf("CANDIDATE_REAL_GEPA=true");
+	expect(first).toBeLessThan(restart);
+	expect(readback).toBeGreaterThan(restart);
+	expect(script.slice(readback)).toContain("CANDIDATE_READBACK_FILE");
 });
 
 it("transfers, attests and checksums the tested SBOM", () => {
