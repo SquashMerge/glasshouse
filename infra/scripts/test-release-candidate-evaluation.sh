@@ -13,6 +13,9 @@ test "$(python3 -c 'import sys; x=[s.strip().split("=",1)[1] for s in open(sys.a
 project="release-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-evaluation"
 override="$RUNNER_TEMP/candidate-evaluation-override.yaml"
 export FIXTURE_PATH="$PWD/infra/scripts/release-candidate-openai-fixture.py"
+export CANDIDATE_SCRIPTS="$PWD/infra/scripts"
+export CANDIDATE_STATE_DIR="$RUNNER_TEMP/candidate-lifecycle-state"
+mkdir -p "$CANDIDATE_STATE_DIR"
 cat > "$override" <<'YAML'
 networks:
   default:
@@ -25,6 +28,9 @@ services:
       - ${FIXTURE_PATH}:/fixture/provider.py:ro
     restart: "no"
   api:
+    volumes:
+      - ${CANDIDATE_SCRIPTS}:/candidate-scripts:ro
+      - ${CANDIDATE_STATE_DIR}:/candidate-state
     environment:
       GLASSHOUSE_EVAL_LLM_PROVIDER: fake
       OPENAI_MODEL: deterministic
@@ -47,8 +53,8 @@ trap cleanup EXIT
 "${compose[@]}" config --quiet
 "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$image"
-address="$("${compose[@]}" port api 3000)"
-CANDIDATE_URL="http://$address" CANDIDATE_EXPECT_FAKE_DENIAL=true bun infra/scripts/release-candidate-evaluation.ts
+probe=(exec -T --user root -e CANDIDATE_URL=http://127.0.0.1:3000)
+"${compose[@]}" "${probe[@]}" -e CANDIDATE_EXPECT_FAKE_DENIAL=true api bun /candidate-scripts/release-candidate-evaluation.ts
 # Only this disposable CI stack is switched to test mode; the bundle stays production-only.
 cat >> "$override" <<'YAML'
       NODE_ENV: test
@@ -56,9 +62,8 @@ cat >> "$override" <<'YAML'
 YAML
 "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240 api
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$image"
-address="$("${compose[@]}" port api 3000)"
-CANDIDATE_URL="http://$address" CANDIDATE_STATE_FILE="$RUNNER_TEMP/candidate-evaluation-state.json" bun infra/scripts/release-candidate-evaluation.ts
-CANDIDATE_URL="http://$address" CANDIDATE_STATE_FILE="$RUNNER_TEMP/candidate-gepa-state.json" bun infra/scripts/release-candidate-gepa.ts
+"${compose[@]}" "${probe[@]}" -e CANDIDATE_STATE_FILE=/candidate-state/evaluation.json api bun /candidate-scripts/release-candidate-evaluation.ts
+"${compose[@]}" "${probe[@]}" -e CANDIDATE_STATE_FILE=/candidate-state/gepa.json api bun /candidate-scripts/release-candidate-gepa.ts
 real_override="$RUNNER_TEMP/candidate-gepa-real-override.yaml"
 cat > "$real_override" <<'YAML'
 services:
@@ -73,13 +78,11 @@ YAML
 compose+=(-f "$real_override")
 "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240 api fixture
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$image"
-address="$("${compose[@]}" port api 3000)"
-CANDIDATE_REAL_GEPA=true CANDIDATE_URL="http://$address" CANDIDATE_STATE_FILE="$RUNNER_TEMP/candidate-gepa-real-state.json" bun infra/scripts/release-candidate-gepa.ts
+"${compose[@]}" "${probe[@]}" -e CANDIDATE_REAL_GEPA=true -e CANDIDATE_STATE_FILE=/candidate-state/gepa-real.json api bun /candidate-scripts/release-candidate-gepa.ts
 "${compose[@]}" exec -T fixture /opt/gepa/bin/python -c 'import json,urllib.request; s=json.load(urllib.request.urlopen("http://localhost:8080/stats")); print("Synthetic provider call counts:", s); assert s["task_seed"] > 0 and s["task_candidate"] > 0 and s["reflection"] > 0 and s["rejected"] == 0'
 "${compose[@]}" restart api
 "${compose[@]}" up -d --no-deps --no-build --pull never --wait --wait-timeout 240 api
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$image"
-address="$("${compose[@]}" port api 3000)"
-CANDIDATE_URL="http://$address" CANDIDATE_READBACK_FILE="$RUNNER_TEMP/candidate-evaluation-state.json" bun infra/scripts/release-candidate-evaluation.ts
-CANDIDATE_URL="http://$address" CANDIDATE_READBACK_FILE="$RUNNER_TEMP/candidate-gepa-state.json" bun infra/scripts/release-candidate-gepa.ts
-CANDIDATE_REAL_GEPA=true CANDIDATE_URL="http://$address" CANDIDATE_READBACK_FILE="$RUNNER_TEMP/candidate-gepa-real-state.json" bun infra/scripts/release-candidate-gepa.ts
+"${compose[@]}" "${probe[@]}" -e CANDIDATE_READBACK_FILE=/candidate-state/evaluation.json api bun /candidate-scripts/release-candidate-evaluation.ts
+"${compose[@]}" "${probe[@]}" -e CANDIDATE_READBACK_FILE=/candidate-state/gepa.json api bun /candidate-scripts/release-candidate-gepa.ts
+"${compose[@]}" "${probe[@]}" -e CANDIDATE_REAL_GEPA=true -e CANDIDATE_READBACK_FILE=/candidate-state/gepa-real.json api bun /candidate-scripts/release-candidate-gepa.ts

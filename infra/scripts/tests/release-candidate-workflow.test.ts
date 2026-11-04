@@ -99,10 +99,10 @@ it("runs and re-reads the real GEPA subprocess lifecycle only in the isolated te
 	const script = read("infra/scripts/test-release-candidate-evaluation.sh");
 	const testMode = script.indexOf("NODE_ENV: test");
 	const fake = script.indexOf("GEPA_WORKER_MODE: fake");
-	const first = script.indexOf("bun infra/scripts/release-candidate-gepa.ts");
+	const first = script.indexOf("bun /candidate-scripts/release-candidate-gepa.ts");
 	const restart = script.indexOf('"${compose[@]}" restart api');
 	const readback = script.lastIndexOf(
-		"bun infra/scripts/release-candidate-gepa.ts",
+		"bun /candidate-scripts/release-candidate-gepa.ts",
 	);
 	expect(testMode).toBeGreaterThan(
 		script.indexOf("CANDIDATE_EXPECT_FAKE_DENIAL=true"),
@@ -124,7 +124,7 @@ it("runs the real GEPA path against an isolated HTTP fixture and reads it back",
 		"task_seed",
 		"task_candidate",
 		"reflection",
-		"candidate-gepa-real-state.json",
+		"/candidate-state/gepa-real.json",
 	]) expect(script).toContain(fragment);
 	const first = script.indexOf("CANDIDATE_REAL_GEPA=true");
 	const restart = script.indexOf('"${compose[@]}" restart api');
