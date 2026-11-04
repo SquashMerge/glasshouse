@@ -63,19 +63,17 @@ it("runs the publisher's exact orchestration on non-publishing candidates", () =
 	expect(script).not.toMatch(/gh release|docker push|packages: write/);
 });
 
-it("runs the fake-provider lifecycle only in the non-publishing candidate workflow", () => {
-	const workflow = load(read(".github/workflows/release-candidate.yml")) as any;
-	const steps = workflow.jobs.candidate.steps as any[];
-	const lifecycle = steps.findIndex((step) =>
-		step.run?.includes("test-release-candidate-evaluation.sh"),
+it("runs the fake-provider lifecycle on the exact reloaded release artifact", () => {
+	const candidate = read("infra/scripts/test-publisher-candidate.sh");
+	const lifecycle = candidate.indexOf(
+		"bash infra/scripts/test-release-candidate-evaluation.sh",
 	);
-	const build = steps.findIndex((step) =>
-		step.run?.includes("test-publisher-candidate.sh"),
+	expect(lifecycle).toBeGreaterThan(candidate.indexOf("docker load"));
+	expect(lifecycle).toBeLessThan(
+		candidate.indexOf(
+			"sha256sum glasshouse-image.tar.gz glasshouse-bundle.tar.gz candidate-sbom.json > SHA256SUMS",
+		),
 	);
-	expect(lifecycle).toBeGreaterThan(build);
-	expect(build).toBeGreaterThanOrEqual(0);
-	const publisher = read(".github/workflows/release-publisher.yml");
-	expect(publisher).not.toContain("test-release-candidate-evaluation.sh");
 	const script = read("infra/scripts/test-release-candidate-evaluation.sh");
 	for (const fragment of [
 		"NODE_ENV: test",

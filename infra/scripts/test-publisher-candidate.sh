@@ -98,4 +98,5 @@ cmp "$RUNNER_TEMP/migrations-before" "$RUNNER_TEMP/migrations-after"
 address="$("${compose[@]}" port api 3000)"
 curl --fail --silent --show-error "http://$address/v1/health" >/dev/null
 bash infra/scripts/test-release-recovery.sh "$bundle" "$project" "$before"
+bash infra/scripts/test-release-candidate-evaluation.sh
 (cd "$RUNNER_TEMP" && sha256sum --check image-before.SHA256SUMS && sha256sum --check bundle-before.SHA256SUMS && sha256sum --check sbom-before.SHA256SUMS && sha256sum glasshouse-image.tar.gz glasshouse-bundle.tar.gz candidate-sbom.json > SHA256SUMS)

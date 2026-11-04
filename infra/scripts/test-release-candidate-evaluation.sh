@@ -3,7 +3,7 @@
 set -euo pipefail
 : "${GITHUB_ACTIONS:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}" "${RUNNER_TEMP:?}" "${VERSION:?}" "${CANDIDATE_SHA:?}"
 [[ "$GITHUB_ACTIONS" == true && "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
-[[ "$VERSION" == v0.0.0-rc.1 && "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ && "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
 bundle="$RUNNER_TEMP/glasshouse-candidate-bundle"
 test -f "$bundle/test.env"
 image="$(docker image inspect --format '{{.Id}}' "glasshouse:$VERSION")"
