@@ -14,6 +14,32 @@ class CandidateSafetyTests(unittest.TestCase):
         return subprocess.run(['bash', str(script), *args], cwd=ROOT,
                               env={**clean, **env}, capture_output=True, text=True)
 
+    def test_upgrade_crosses_real_pending_migrations(self):
+        script = SCRIPTS[0].read_text()
+        self.assertIn('prior=ac2d0848dfc83614f1696e56ed3b90f0ef35400c', script)
+        old_boot, new_boot = script.split('"${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240 api', 1)
+        for name in ('90061_user_action_audit_events', '90062_audit_log_snapshots'):
+            self.assertTrue((ROOT / f'infra/db/migrations/{name}.sql').is_file())
+            self.assertIn(name, old_boot)
+            self.assertIn(name, new_boot)
+        for table in ('user_action_audit_events', 'audit_log_snapshots'):
+            self.assertIn(f"to_regclass('public.{table}') IS NULL", old_boot)
+            self.assertIn(f"to_regclass('public.{table}') IS NOT NULL", new_boot)
+        self.assertIn('== 0', old_boot)
+        self.assertIn('== 2', new_boot)
+
+    def test_recovery_checks_real_scoped_project_and_trace(self):
+        script = SCRIPTS[1].read_text()
+        before, after = script.split('(cd "$bundle" && bash infra/scripts/restore.sh)', 1)
+        self.assertIn('"slug":"release-recovery-project"', before)
+        self.assertIn('release-recovery-project', after)
+        self.assertIn('/v1/traces/', before)
+        self.assertIn('release-recovery-trace', before)
+        self.assertIn('release-recovery-content', before)
+        self.assertIn('project_id=$project_id', before)
+        self.assertIn('\ncheck_trace\n', before)
+        self.assertIn('\ncheck_trace\n', after)
+
     def test_scripts_refuse_execution_outside_actions(self):
         for script in SCRIPTS:
             with self.subTest(script=script.name):

@@ -8,7 +8,7 @@ base_project="${2:?project required}"
 candidate_id="${3:?candidate image ID required}"
 [[ "$bundle" == "$RUNNER_TEMP/glasshouse-candidate-bundle" && "$base_project" == "release-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" && "$candidate_id" =~ ^sha256:[0-9a-f]{64}$ ]]
 project="${base_project}-upgrade"
-prior=0551b652966ea82c018b8413d576efc0ac93c655
+prior=ac2d0848dfc83614f1696e56ed3b90f0ef35400c
 # This immutable main ancestor predates the single-image bundle. Change only in
 # a reviewed PR; a caller-selected image would not establish an upgrade path.
 git merge-base --is-ancestor "$prior" HEAD
@@ -38,12 +38,16 @@ curl --fail --silent --show-error --user synthetic-owner:synthetic-ui-9b412e8cfa
 organization="$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT organization_id FROM projects WHERE slug='default'")"
 project_id="$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT id FROM projects WHERE slug='default'")"
 [[ "$organization" =~ ^[0-9a-f-]{36}$ && "$project_id" =~ ^[0-9a-f-]{36}$ ]]
+[[ "$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT count(*) FROM pgmigrations WHERE name IN ('90061_user_action_audit_events', '90062_audit_log_snapshots')")" == 0 ]]
+[[ "$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT (to_regclass('public.user_action_audit_events') IS NULL AND to_regclass('public.audit_log_snapshots') IS NULL)")" == t ]]
 "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U glasshouse_ci -d glasshouse_ci -c "UPDATE projects SET name='Release upgrade fixture' WHERE id='$project_id' AND organization_id='$organization'"
 "${compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse_ci --password synthetic-clickhouse-6c70a4ed --database glasshouse_ci --query "INSERT INTO traces (trace_id, organization_id, project_id, name, start_time, input_text) VALUES ('43000000000040008000000000000003', '$organization', '$project_id', 'release-upgrade', now64(3), 'prior-version-data')"
 # Replace only the application container. The same datastore volumes and data
 # remain mounted; the next boot executes the candidate migration runners.
 "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240 api
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$candidate_id"
+[[ "$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT count(*) FROM pgmigrations WHERE name IN ('90061_user_action_audit_events', '90062_audit_log_snapshots')")" == 2 ]]
+[[ "$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT (to_regclass('public.user_action_audit_events') IS NOT NULL AND to_regclass('public.audit_log_snapshots') IS NOT NULL)")" == t ]]
 [[ "$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT name FROM projects WHERE id='$project_id' AND organization_id='$organization'")" == 'Release upgrade fixture' ]]
 [[ "$("${compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse_ci --password synthetic-clickhouse-6c70a4ed --database glasshouse_ci --query "SELECT count() FROM traces WHERE trace_id='43000000000040008000000000000003' AND organization_id='$organization' AND project_id='$project_id' AND input_text='prior-version-data'")" == 1 ]]
-printf 'Historical application upgraded to the reloaded candidate with PostgreSQL and ClickHouse data retained\n'
+printf 'Historical application upgraded: two pending PostgreSQL migrations applied and data retained\n'

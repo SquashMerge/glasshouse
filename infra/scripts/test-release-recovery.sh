@@ -26,6 +26,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+address="$("${source_compose[@]}" port api 3000)"
+auth=synthetic-owner:synthetic-ui-9b412e8cfa
+project_id="$(curl --fail --silent --show-error --user "$auth" -H 'Content-Type: application/json' -d '{"name":"Release recovery project","slug":"release-recovery-project"}' "http://$address/v1/projects" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+[[ "$project_id" =~ ^[0-9a-f-]{36}$ ]]
+organization="$("${source_compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc "SELECT organization_id FROM projects WHERE id='$project_id'")"
+[[ "$organization" =~ ^[0-9a-f-]{36}$ ]]
+trace_id=45000000000040008000000000000003
+"${source_compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse_ci --password synthetic-clickhouse-6c70a4ed --database glasshouse_ci --query "INSERT INTO traces (trace_id, organization_id, project_id, name, start_time, input_text) VALUES ('$trace_id', '$organization', '$project_id', 'release-recovery-trace', now64(3), 'release-recovery-content')"
+check_trace() {
+  curl --fail --silent --show-error --user "$auth" "http://$address/v1/traces/$trace_id?project_id=$project_id" | python3 -c 'import json,sys; t=json.load(sys.stdin)["trace"]; assert t["project_id"] == sys.argv[1] and t["trace_id"] == sys.argv[2] and t["name"] == "release-recovery-trace" and t["input_text"] == "release-recovery-content"' "$project_id" "$trace_id"
+}
+check_trace
 # Both probes and all volumes belong exclusively to this run's disposable stack.
 "${source_compose[@]}" stop api
 "${source_compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U glasshouse_ci -d glasshouse_ci -c "CREATE TABLE release_recovery_probe (organization_id text NOT NULL, project_id text NOT NULL, payload text NOT NULL); INSERT INTO release_recovery_probe VALUES ('org-ci', 'project-ci', 'pg-ci');"
@@ -47,4 +59,6 @@ export RESTORE_TARGET_ENV_FILE="$target/test.env" RESTORE_TARGET_COMPOSE_PROJECT
 test "$(docker inspect --format '{{.Image}}' "$("${target_compose[@]}" ps -q api)")" = "$candidate_id"
 address="$("${target_compose[@]}" port api 3000)"
 curl --fail --silent --show-error --user synthetic-owner:synthetic-ui-9b412e8cfa "http://$address/v1/projects" | python3 -c 'import json,sys; assert any(p["slug"] == "default" for p in json.load(sys.stdin)["items"])'
-printf 'Standalone bundle backup, isolated restore, scoped probes and recovered API passed\n'
+curl --fail --silent --show-error --user "$auth" "http://$address/v1/projects/$project_id" | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["id"] == sys.argv[1] and p["slug"] == "release-recovery-project" and p["name"] == "Release recovery project"' "$project_id"
+check_trace
+printf 'Standalone bundle backup, isolated restore, scoped probes, project and trace passed\n'
