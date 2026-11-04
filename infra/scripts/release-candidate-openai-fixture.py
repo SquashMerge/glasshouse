@@ -50,8 +50,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 raise ValueError("unexpected dispatch role")
             self.respond(200, {"id": "chatcmpl-fixture", "object": "chat.completion", "created": 1, "model": request["model"], "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
-        except (ValueError, KeyError, TypeError, StopIteration, json.JSONDecodeError):
+        except Exception as error:
             counts["rejected"] += 1
+            reason = str(error) if type(error) is ValueError and str(error) in {
+                "unexpected request", "invalid request size", "unexpected task", "unexpected dispatch role"
+            } else type(error).__name__
+            print("Fixture rejected request:", reason, flush=True)
             self.respond(400, {"error": {"message": "invalid fixture request"}})
 
 

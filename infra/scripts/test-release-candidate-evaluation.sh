@@ -45,7 +45,11 @@ compose=(docker compose --project-directory "$bundle" --env-file "$bundle/test.e
 cleanup() {
   status=$?
   trap - EXIT
-  if (( status != 0 )); then "${compose[@]}" ps --all || true; "${compose[@]}" logs --no-color --tail=100 || true; fi
+  if (( status != 0 )); then
+    "${compose[@]}" exec -T fixture /opt/gepa/bin/python -c 'import urllib.request; print("Synthetic provider call counts:", urllib.request.urlopen("http://localhost:8080/stats").read().decode())' || true
+    "${compose[@]}" ps --all || true
+    "${compose[@]}" logs --no-color --tail=100 || true
+  fi
   "${compose[@]}" down --volumes --remove-orphans || true
   exit "$status"
 }
