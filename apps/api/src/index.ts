@@ -191,7 +191,10 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	});
 	apiApp.onError((error, c) => {
 		if (c.req.method === "POST" && c.req.path === "/v1/traces")
-			return otlpErrorResponse(c.req.raw, 500);
+			return otlpErrorResponse(
+				c.req.raw,
+				isTransientStorageFailure(error) ? 503 : 500,
+			);
 		if (
 			error instanceof AuthenticationError ||
 			(error instanceof HTTPException &&
@@ -331,6 +334,19 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 
 	apiApp.route("/", openapiApp);
 	return apiApp;
+}
+
+function isTransientStorageFailure(error: unknown): boolean {
+	if (!error || typeof error !== "object" || !("code" in error)) return false;
+	return new Set([
+		"ECONNABORTED",
+		"ECONNREFUSED",
+		"ECONNRESET",
+		"EAI_AGAIN",
+		"EHOSTUNREACH",
+		"ENETUNREACH",
+		"ETIMEDOUT",
+	]).has(String(error.code));
 }
 
 const apiApp = createApiApp();

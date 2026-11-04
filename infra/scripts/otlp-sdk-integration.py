@@ -18,19 +18,18 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.exporter.otlp.proto.http import Compression
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SpanExportResult
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
 
 
-class ResultProcessor:
+class ResultExporter:
     def __init__(self, exporter):
         self.exporter = exporter
         self.results = []
 
-    def on_start(self, span, parent_context=None):
-        pass
-
-    def on_end(self, span):
-        self.results.append(self.exporter.export((span,)))
+    def export(self, spans):
+        result = self.exporter.export(spans)
+        self.results.append(result)
+        return result
 
     def shutdown(self):
         self.exporter.shutdown()
@@ -73,8 +72,15 @@ def export(transport: str, endpoint: str, auth: str | None, project_id: str, mar
             compression=grpc.Compression.Gzip,
         )
     provider = TracerProvider(Resource.create({"service.name": "glasshouse-otlp-sdk-test"}))
-    processor = ResultProcessor(exporter)
-    provider.add_span_processor(processor)
+    result_exporter = ResultExporter(exporter)
+    provider.add_span_processor(
+        BatchSpanProcessor(
+            result_exporter,
+            # Both spans are completed before flush, so each trace is one OTLP export.
+            schedule_delay_millis=60_000,
+            max_export_batch_size=2,
+        )
+    )
     tracer = provider.get_tracer("glasshouse.otlp.integration")
     span_ids = []
     with tracer.start_as_current_span(f"{marker}-root"):
@@ -83,8 +89,10 @@ def export(transport: str, endpoint: str, auth: str | None, project_id: str, mar
         span_ids.append(f"{root.span_id:016x}")
         with tracer.start_as_current_span(f"{marker}-child"):
             span_ids.append(f"{trace.get_current_span().get_span_context().span_id:016x}")
+    if not provider.force_flush():
+        raise AssertionError("SDK exporter did not flush")
     provider.shutdown()
-    return processor.results, trace_id, span_ids
+    return result_exporter.results, trace_id, span_ids
 
 
 def wait_for_names(
@@ -153,16 +161,18 @@ def main() -> None:
     parser.add_argument("--grpc-endpoint", default="http://127.0.0.1:4317")
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
+    parser.add_argument("--ingest-token", required=True)
     parser.add_argument("--project-id", required=True)
     parser.add_argument("--wrong-project-id", required=True)
     parser.add_argument("--result-file", required=True)
     args = parser.parse_args()
 
     auth = authorization(args.username, args.password)
+    ingest_auth = f"Bearer {args.ingest_token}"
     marker = f"sdk-{args.transport}-{uuid.uuid4().hex}"
     endpoint = args.api_endpoint if args.transport == "http" else args.grpc_endpoint
-    results, trace_id, span_ids = export(args.transport, endpoint, auth, args.project_id, marker)
-    if results != [SpanExportResult.SUCCESS, SpanExportResult.SUCCESS]:
+    results, trace_id, span_ids = export(args.transport, endpoint, ingest_auth, args.project_id, marker)
+    if results != [SpanExportResult.SUCCESS]:
         raise AssertionError(f"authenticated exporter result was {results}")
     observation_ids = wait_for_names(
         args.api_endpoint, auth, args.project_id, marker, trace_id, span_ids
@@ -171,7 +181,7 @@ def main() -> None:
     if args.transport == "http":
         json_marker = f"{marker}-json"
         json_trace_id, json_span_ids = export_http_json(
-            args.api_endpoint, auth, args.project_id, json_marker
+            args.api_endpoint, ingest_auth, args.project_id, json_marker
         )
         trace_ids.append(json_trace_id)
         observation_ids.extend(
@@ -203,22 +213,14 @@ def main() -> None:
     ):
         raise AssertionError("unauthenticated OTLP export wrote telemetry")
 
-    # A valid principal cannot use the SDK exporter to write into another project.
+    # This credential is bound to the first Project and cannot target an existing second Project.
     rejected_marker = f"{marker}-wrong"
     wrong_results, wrong_trace, wrong_ids = export(
-        args.transport, endpoint, auth, args.wrong_project_id, rejected_marker
+        args.transport, endpoint, ingest_auth, args.wrong_project_id, rejected_marker
     )
     if any(result == SpanExportResult.SUCCESS for result in wrong_results):
         raise AssertionError("wrong-project exporter unexpectedly succeeded")
     time.sleep(0.5)
-    denied = requests.get(
-        f"{args.api_endpoint}/v1/traces",
-        params={"project_id": args.wrong_project_id},
-        headers={"authorization": auth},
-        timeout=10,
-    )
-    if denied.status_code != 404:
-        raise AssertionError("wrong project was not rejected")
     with open(args.result_file, "w", encoding="utf-8") as result_file:
         json.dump(
             {

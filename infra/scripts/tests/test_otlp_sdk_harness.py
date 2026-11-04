@@ -60,6 +60,8 @@ if "compose" in args:
     parts = compose_parts(args)
     project = project_from(args)
     state["project"] = project
+    context = pathlib.Path(args[args.index("--project-directory") + 1])
+    state["context_has_sentinel"] = (context / "arbitrary-host-secret").exists()
     if parts[-2:] == ["config", "--format"]:
         raise SystemExit("unexpected config syntax")
     if parts[-3:] == ["config", "--format", "json"]:
@@ -185,8 +187,29 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
             (sandbox / "infra/scripts").mkdir(parents=True)
             (sandbox / ".github").mkdir()
             shutil.copy2(HARNESS, sandbox / "infra/scripts/test-otlp-sdk-integration.sh")
+            shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", sandbox / "infra/scripts/stage-build-context.sh")
             shutil.copy2(ROOT / ".github/compose.otlp-sdk-integration.yaml", sandbox / ".github/compose.otlp-sdk-integration.yaml")
             shutil.copy2(ROOT / "infra/otlp-sdk-requirements.txt", sandbox / "infra/otlp-sdk-requirements.txt")
+            shutil.copy2(ROOT / ".dockerignore", sandbox / ".dockerignore")
+            for name in ("package.json", "bun.lock"):
+                shutil.copy2(ROOT / name, sandbox / name)
+            for app in ("api", "web"):
+                (sandbox / "apps" / app).mkdir(parents=True)
+                shutil.copy2(ROOT / "apps" / app / "Dockerfile", sandbox / "apps" / app / "Dockerfile")
+            (sandbox / "infra" / "clickhouse").mkdir()
+            shutil.copy2(ROOT / "infra/clickhouse/backup.xml", sandbox / "infra/clickhouse/backup.xml")
+            (sandbox / "infra" / "db").mkdir()
+            shutil.copy2(ROOT / "infra/db/migrations/0019_organizations.sql", sandbox / "infra/db/0019_organizations.sql")
+            (sandbox / "worker").mkdir()
+            shutil.copy2(ROOT / "worker/__init__.py", sandbox / "worker/__init__.py")
+            subprocess.run(["git", "init", "--quiet"], cwd=sandbox, check=True)
+            subprocess.run(["git", "add", "."], cwd=sandbox, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture"],
+                cwd=sandbox,
+                check=True,
+            )
+            (sandbox / "arbitrary-host-secret").write_text("must-not-reach-build-context\n")
             harness = sandbox / "infra/scripts/test-otlp-sdk-integration.sh"
             if mutate:
                 harness.write_text(mutate(harness.read_text()))
@@ -298,6 +321,15 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
         self.assertIn("./infra/clickhouse/backup.xml:", fixture)
         self.assertTrue((ROOT / "apps/api/Dockerfile").is_file())
         self.assertTrue((ROOT / "infra/clickhouse/backup.xml").is_file())
+
+    def test_harness_stages_only_allowlisted_tracked_build_inputs(self):
+        code, _, _, state = self.run_harness("up_failure")
+        self.assertNotEqual(code, 0)
+        compose_calls = [call for call in state["calls"] if "compose" in call]
+        self.assertTrue(compose_calls)
+        context = pathlib.Path(compose_calls[0][compose_calls[0].index("--project-directory") + 1])
+        self.assertNotEqual(context, ROOT)
+        self.assertFalse(state["context_has_sentinel"])
 
     def test_unsafe_short_id_mutation_fails_red_against_fake_docker(self):
         code, _, _, state = self.run_harness("up_failure", mutate=lambda source: source.replace(" --no-trunc", "", 1))

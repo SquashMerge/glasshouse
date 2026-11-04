@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { createServer } from "node:net";
 import protobufRoot from "@opentelemetry/otlp-proto-exporter-base/build/src/generated/root.js";
+import { createApiApp } from "../../src/index.js";
 import { startOtlpGrpcServer } from "../../src/lib/otlp-grpc.js";
 import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
 
@@ -198,6 +199,40 @@ test("OTLP gRPC maps temporary exporter failures to UNAVAILABLE", async () => {
 	const stop = await startOtlpGrpcServer(
 		() => new Response(null, { status: 503 }),
 	);
+	const client = new grpc.Client(
+		`127.0.0.1:${port}`,
+		grpc.credentials.createInsecure(),
+	);
+	try {
+		const metadata = new grpc.Metadata();
+		metadata.set("authorization", "Bearer synthetic");
+		metadata.set(
+			"x-glasshouse-project-id",
+			"33333333-3333-4333-8333-333333333333",
+		);
+		await expect(
+			unary(client, traceExportPath, Buffer.alloc(0), metadata),
+		).rejects.toMatchObject({ code: grpc.status.UNAVAILABLE });
+	} finally {
+		client.close();
+		await stop?.();
+		if (previousPort === undefined) delete process.env.OTLP_GRPC_PORT;
+		else process.env.OTLP_GRPC_PORT = previousPort;
+	}
+});
+
+test("OTLP gRPC maps transient authentication storage failures to UNAVAILABLE", async () => {
+	const port = await unusedLoopbackPort();
+	const previousPort = process.env.OTLP_GRPC_PORT;
+	process.env.OTLP_GRPC_PORT = String(port);
+	const app = createApiApp({
+		authenticate: () => async () => {
+			throw Object.assign(new Error("PostgreSQL unavailable"), {
+				code: "ECONNREFUSED",
+			});
+		},
+	});
+	const stop = await startOtlpGrpcServer(app.fetch);
 	const client = new grpc.Client(
 		`127.0.0.1:${port}`,
 		grpc.credentials.createInsecure(),

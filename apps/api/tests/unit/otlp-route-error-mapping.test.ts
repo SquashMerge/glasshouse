@@ -67,3 +67,47 @@ test("encodes authentication and pre-auth body limit failures as OTLP JSON statu
 		message: "Trace export exceeds the request limit",
 	});
 });
+
+test("maps transient authentication storage failures to retryable OTLP responses", async () => {
+	process.env.UI_USERNAME ??= "test-user";
+	process.env.UI_PASSWORD ??= "test-password";
+	const { createApiApp } = await import("../../src/index.js");
+	const app = createApiApp({
+		authenticate: () => async () => {
+			throw Object.assign(new Error("PostgreSQL unavailable"), {
+				code: "ECONNREFUSED",
+			});
+		},
+	});
+
+	const response = await app.request("/v1/traces", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: "{}",
+	});
+
+	expect(response.status).toBe(503);
+	expect(await response.json()).toEqual({
+		message: "Trace export temporarily unavailable",
+	});
+});
+
+test("keeps non-transient OTLP failures internal", async () => {
+	process.env.UI_USERNAME ??= "test-user";
+	process.env.UI_PASSWORD ??= "test-password";
+	const { createApiApp } = await import("../../src/index.js");
+	const app = createApiApp({
+		authenticate: () => async () => {
+			throw new Error("Unexpected authentication failure");
+		},
+	});
+
+	const response = await app.request("/v1/traces", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: "{}",
+	});
+
+	expect(response.status).toBe(500);
+	expect(await response.json()).toEqual({ message: "Trace export failed" });
+});

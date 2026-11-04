@@ -21,6 +21,7 @@ project="otlp-sdk-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 ownership_marker="otlp-sdk-ownership-$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 harness_home="$(mktemp -d)"
 venv="$(mktemp -d)"
+build_context="$(mktemp -d)"
 compose_env="$harness_home/compose.env"
 compose_override="$harness_home/ownership.yaml"
 touch "$compose_env"
@@ -33,7 +34,8 @@ docker_safe() {
   env -i PATH="$PATH" HOME="$harness_home" DOCKER_CONFIG="$harness_home/docker" docker "$@"
 }
 
-base_compose=(docker_safe compose --project-directory "$root" --project-name "$project" --env-file "$compose_env" -f "$root/.github/compose.otlp-sdk-integration.yaml")
+bash "$root/infra/scripts/stage-build-context.sh" "$build_context"
+base_compose=(docker_safe compose --project-directory "$build_context" --project-name "$project" --env-file "$compose_env" -f "$build_context/.github/compose.otlp-sdk-integration.yaml")
 services=""
 networks=""
 volumes=""
@@ -185,7 +187,7 @@ cleanup() {
     printf '%s\n' 'OTLP SDK harness cleanup was incomplete; unverified resources were left untouched.' >&2
     status=1
   fi
-  rm -rf -- "$venv" "$harness_home"
+  rm -rf -- "$venv" "$harness_home" "$build_context"
   exit "$status"
 }
 trap cleanup EXIT
@@ -221,7 +223,13 @@ project_id="$("${compose[@]}" exec -T postgres psql -U otlp_test -d glasshouse -
 organization_id="$("${compose[@]}" exec -T postgres psql -U otlp_test -d glasshouse -Atqc "SELECT organization_id FROM projects WHERE id = '${project_id}' LIMIT 1")"
 test -n "$project_id"
 test -n "$organization_id"
-wrong_project_id="00000000-0000-4000-8000-000000000099"
+wrong_project_slug="sdk-denied-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+wrong_project_json="$(curl --fail --silent --show-error --user 'otlp-sdk:otlp-sdk-password' --header 'content-type: application/json' --data "{\"name\":\"SDK denied Project\",\"slug\":\"${wrong_project_slug}\"}" "http://127.0.0.1:${api_port}/v1/projects")"
+wrong_project_id="$(RESULT="$wrong_project_json" python3 -c 'import json, os; print(json.loads(os.environ["RESULT"])["id"])')"
+ingest_credential_json="$(curl --fail --silent --show-error --user 'otlp-sdk:otlp-sdk-password' --header 'content-type: application/json' --data "{\"project_id\":\"${project_id}\",\"name\":\"SDK interoperability\"}" "http://127.0.0.1:${api_port}/v1/admin/otlp-credentials")"
+ingest_token="$(RESULT="$ingest_credential_json" python3 -c 'import json, os; print(json.loads(os.environ["RESULT"])["secret"])')"
+test -n "$wrong_project_id"
+test -n "$ingest_token"
 
 env -i PATH="$PATH" HOME="$harness_home" PIP_CONFIG_FILE=/dev/null \
   python3 -m venv "$venv"
@@ -235,7 +243,7 @@ for transport in http grpc; do
     --transport "$transport" \
     --api-endpoint "http://127.0.0.1:$api_port" \
     --grpc-endpoint "http://127.0.0.1:$grpc_port" \
-    --username otlp-sdk --password otlp-sdk-password \
+    --username otlp-sdk --password otlp-sdk-password --ingest-token "$ingest_token" \
     --project-id "$project_id" --wrong-project-id "$wrong_project_id" \
     --result-file "$result_file"
   read -r trace_ids observation_ids denied_trace_ids denied_observation_ids < <(env -i PATH="$PATH" HOME="$harness_home" python3 - "$result_file" <<'PY'
