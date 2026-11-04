@@ -54,6 +54,12 @@ def telemetry_items(endpoint: str, auth: str, project_id: str, resource: str) ->
     return response.json()["items"]
 
 
+def create_tracer_provider() -> TracerProvider:
+    return TracerProvider(
+        resource=Resource.create({"service.name": "glasshouse-otlp-sdk-test"})
+    )
+
+
 def export(transport: str, endpoint: str, auth: str | None, project_id: str, marker: str):
     headers = {"x-glasshouse-project-id": project_id}
     if auth:
@@ -71,7 +77,7 @@ def export(transport: str, endpoint: str, auth: str | None, project_id: str, mar
             insecure=True,
             compression=grpc.Compression.Gzip,
         )
-    provider = TracerProvider(Resource.create({"service.name": "glasshouse-otlp-sdk-test"}))
+    provider = create_tracer_provider()
     result_exporter = ResultExporter(exporter)
     provider.add_span_processor(
         BatchSpanProcessor(
