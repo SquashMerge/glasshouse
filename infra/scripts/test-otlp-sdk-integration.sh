@@ -4,8 +4,14 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd -- "$root"
 
-if (($#)); then
-  printf '%s\n' 'OTLP SDK harness does not accept arguments.' >&2
+release=false
+if [[ "${1:-}" == --release-candidate && $# == 1 ]]; then
+  release=true
+  [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || {
+    printf '%s\n' 'Release proof is restricted to GitHub Actions.' >&2; exit 2;
+  }
+elif (($#)); then
+  printf '%s\n' 'Usage: test-otlp-sdk-integration.sh [--release-candidate]' >&2
   exit 2
 fi
 if [[ -v OTLP_SDK_PROJECT ]]; then
@@ -35,7 +41,47 @@ docker_safe() {
 }
 
 bash "$root/infra/scripts/stage-build-context.sh" "$build_context"
-base_compose=(docker_safe compose --project-directory "$build_context" --project-name "$project" --env-file "$compose_env" -f "$build_context/.github/compose.otlp-sdk-integration.yaml")
+if "$release"; then
+  # The release archive and image are assembled from the immutable checkout, never published.
+  sha="$(git rev-parse HEAD)"
+  [[ "$sha" == "${GITHUB_SHA:-}" ]] || { printf '%s\n' 'Checkout does not match the workflow SHA.' >&2; exit 1; }
+  image="glasshouse:${project}"
+  test -z "$(docker_safe image ls -q "$image")" || { printf '%s\n' 'Image tag collision.' >&2; exit 1; }
+  python3 infra/scripts/make-release-bundle.py v0.0.0-rc.1 "$harness_home/original"
+  tar -czf "$harness_home/bundle.tar.gz" -C "$harness_home" original
+  mkdir "$harness_home/extracted"
+  tar -xzf "$harness_home/bundle.tar.gz" -C "$harness_home/extracted"
+  bundle="$harness_home/extracted/original"
+  test -f "$bundle/compose.otlp-grpc.yaml"
+  docker_safe build --platform linux/amd64 --label "org.opencontainers.image.revision=$sha" -f "$build_context/apps/api/Dockerfile.single" -t "$image" "$build_context"
+  image_id="$(docker_safe image inspect --format '{{.Id}}' "$image")"
+  env -i PATH="$PATH" HOME="$harness_home" DOCKER_CONFIG="$harness_home/docker" python3 infra/scripts/export-release-image.py "$image" "$harness_home/image.tar.gz"
+  docker_safe image rm "$image"
+  docker_safe load -i "$harness_home/image.tar.gz"
+  test "$(docker_safe image inspect --format '{{.Id}}' "$image")" = "$image_id"
+  test "$(docker_safe image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$sha"
+  cat > "$compose_env" <<EOF
+GLASSHOUSE_IMAGE=$image_id
+POSTGRES_USER=otlp_test
+POSTGRES_PASSWORD=otlp-test-password
+POSTGRES_DB=glasshouse
+CLICKHOUSE_USER=otlp_test
+CLICKHOUSE_PASSWORD=otlp-test-password
+CLICKHOUSE_DB=glasshouse
+VALKEY_PASSWORD=otlp-test-password
+UI_USERNAME=otlp-sdk
+UI_PASSWORD=otlp-sdk-password
+GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=otlp-sdk
+GLASSHOUSE_PUBLIC_ORIGIN=https://127.0.0.1:34443
+GEPA_ALLOWED_MODELS=openai/gpt-4o-mini
+API_PORT=0
+OTLP_GRPC_HOST_PORT=0
+EOF
+  chmod 600 "$compose_env"
+  base_compose=(docker_safe compose --project-directory "$bundle" --project-name "$project" --env-file "$compose_env" -f "$bundle/compose.yaml" -f "$bundle/compose.otlp-grpc.yaml")
+else
+  base_compose=(docker_safe compose --project-directory "$build_context" --project-name "$project" --env-file "$compose_env" -f "$build_context/.github/compose.otlp-sdk-integration.yaml")
+fi
 services=""
 networks=""
 volumes=""
@@ -173,6 +219,11 @@ cleanup() {
     cleanup_failed=true
   fi
   local id labels
+  if (( status != 0 )) && "$release" && ! "$cleanup_failed"; then
+    for id in "${owned_container_ids[@]}"; do
+      docker_safe logs --tail 100 "$id" 2>&1 || true
+    done
+  fi
   for id in "${owned_container_ids[@]}"; do
     labels="$(docker_safe container inspect --format '{{.Id}} {{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "io.glasshouse.otlp-sdk-run"}}' "$id")" || { cleanup_failed=true; continue; }
     [[ "$labels" == "$id $project $ownership_marker" ]] || { cleanup_failed=true; continue; }
@@ -215,7 +266,14 @@ while IFS= read -r volume; do
 done <<< "$volumes"
 
 up_attempted=true
-"${compose[@]}" up --build --detach --wait --wait-timeout 180
+if "$release"; then
+  "${compose[@]}" pull postgres clickhouse valkey
+  "${compose[@]}" up --no-build --pull never --detach --wait --wait-timeout 240
+  test "$(docker_safe inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$image_id"
+  printf 'Running extracted bundle with reloaded image %s at source %s\n' "$image_id" "$sha"
+else
+  "${compose[@]}" up --build --detach --wait --wait-timeout 180
+fi
 
 api_port="$("${compose[@]}" port api 3000 | awk -F: '{print $NF}')"
 grpc_port="$("${compose[@]}" port api 4317 | awk -F: '{print $NF}')"
@@ -237,7 +295,9 @@ env -i PATH="$PATH" HOME="$harness_home" PIP_CONFIG_FILE=/dev/null \
   "$venv/bin/pip" install --disable-pip-version-check --no-input --require-hashes --no-deps -r infra/otlp-sdk-requirements.txt
 env -i PATH="$PATH" HOME="$harness_home" PIP_CONFIG_FILE=/dev/null \
   "$venv/bin/pip" check
-for transport in http grpc; do
+transports=(http grpc)
+if "$release"; then transports=(grpc); fi
+for transport in "${transports[@]}"; do
   result_file="$(mktemp)"
   env -i PATH="$PATH" HOME="$harness_home" "$venv/bin/python" infra/scripts/otlp-sdk-integration.py \
     --transport "$transport" \
@@ -266,5 +326,27 @@ PY
   test "$observation_count" = "$expected_observation_count"
   test "$denied_trace_count" = "0"
   test "$denied_observation_count" = "0"
+  printf '%s exporter: %s authorized traces, %s observations; denied writes: %s/%s\n' "$transport" "$trace_count" "$observation_count" "$denied_trace_count" "$denied_observation_count"
   rm -f -- "$result_file"
 done
+
+if "$release"; then
+  api_id="$("${compose[@]}" ps -q api)"
+  started=$SECONDS
+  docker_safe stop --time 20 "$api_id" >/dev/null
+  elapsed=$((SECONDS - started))
+  exit_code="$(docker_safe inspect --format '{{.State.ExitCode}}' "$api_id")"
+  test "$exit_code" != 137
+  test "$elapsed" -lt 20
+  env -i PATH="$PATH" HOME="$harness_home" python3 - "$api_port" "$grpc_port" <<'PY'
+import socket
+import sys
+for port in map(int, sys.argv[1:]):
+    with socket.socket() as connection:
+        connection.settimeout(2)
+        if connection.connect_ex(("127.0.0.1", port)) == 0:
+            raise SystemExit(f"listener {port} still accepts connections after stop")
+print("Both API and gRPC listener ports closed after container stop")
+PY
+  printf 'Container stopped in %ss, exit code %s (not a proof of graceful draining).\n' "$elapsed" "$exit_code"
+fi

@@ -205,8 +205,8 @@ def main() -> None:
     unauthenticated_results, unauthenticated_trace, unauthenticated_ids = export(
         args.transport, endpoint, None, args.project_id, unauthenticated_marker
     )
-    if any(result == SpanExportResult.SUCCESS for result in unauthenticated_results):
-        raise AssertionError("unauthenticated exporter unexpectedly succeeded")
+    if unauthenticated_results != [SpanExportResult.FAILURE]:
+        raise AssertionError(f"unauthenticated exporter result was {unauthenticated_results}")
     time.sleep(0.5)
     if any(
         name.startswith(unauthenticated_marker)
@@ -224,16 +224,22 @@ def main() -> None:
     wrong_results, wrong_trace, wrong_ids = export(
         args.transport, endpoint, ingest_auth, args.wrong_project_id, rejected_marker
     )
-    if any(result == SpanExportResult.SUCCESS for result in wrong_results):
-        raise AssertionError("wrong-project exporter unexpectedly succeeded")
+    if wrong_results != [SpanExportResult.FAILURE]:
+        raise AssertionError(f"wrong-project exporter result was {wrong_results}")
+    invalid_results, invalid_trace, invalid_ids = export(
+        args.transport, endpoint, "Bearer invalid-synthetic-credential", args.project_id,
+        f"{marker}-invalid",
+    )
+    if invalid_results != [SpanExportResult.FAILURE]:
+        raise AssertionError(f"invalid-credential exporter result was {invalid_results}")
     time.sleep(0.5)
     with open(args.result_file, "w", encoding="utf-8") as result_file:
         json.dump(
             {
                 "trace_ids": trace_ids,
                 "observation_ids": observation_ids,
-                "denied_trace_ids": [unauthenticated_trace, wrong_trace],
-                "denied_observation_ids": unauthenticated_ids + wrong_ids,
+                "denied_trace_ids": [unauthenticated_trace, wrong_trace, invalid_trace],
+                "denied_observation_ids": unauthenticated_ids + wrong_ids + invalid_ids,
             },
             result_file,
         )
