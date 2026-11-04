@@ -32,11 +32,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("invalid request size")
             request = json.loads(self.rfile.read(size))
             messages = request["messages"]
-            key = self.headers.get("Idempotency-Key", "")
-            if ":reflection:" in key:
+            if len(messages) == 1 and messages[0]["role"] == "user":
+                prompt = messages[0]["content"]
+                if not isinstance(prompt, str) or any(s not in prompt for s in (SOURCE, "alpha question", "did not meet")):
+                    raise ValueError("unexpected reflection")
                 counts["reflection"] += 1
                 content = f"```\n{CANDIDATE}\n```"
-            elif ":task:" in key:
+            elif len(messages) == 2 and {m["role"] for m in messages} == {"system", "user"}:
                 system = next(m["content"] for m in messages if m["role"] == "system")
                 question = next(m["content"] for m in messages if m["role"] == "user")
                 if system == SOURCE:
@@ -53,7 +55,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             counts["rejected"] += 1
             reason = str(error) if type(error) is ValueError and str(error) in {
-                "unexpected request", "invalid request size", "unexpected task", "unexpected dispatch role"
+                "unexpected request", "invalid request size", "unexpected task", "unexpected dispatch role", "unexpected reflection"
             } else type(error).__name__
             print("Fixture rejected request:", reason, flush=True)
             self.respond(400, {"error": {"message": "invalid fixture request"}})
