@@ -86,8 +86,8 @@ export const Span = z
 			.optional()
 			.default([]),
 		status: SpanStatus.optional(),
-		events: z.array(z.any()).max(128).optional(),
-		links: z.array(z.any()).max(128).optional(),
+		events: z.array(z.any()).optional(),
+		links: z.array(z.any()).optional(),
 		trace_state: z.string().max(512).optional(),
 	})
 	.openapi("Span");
@@ -105,7 +105,7 @@ export const ScopeSpans = z
 					.optional(),
 			})
 			.optional(),
-		spans: z.array(Span).min(1).max(MAX_OTLP_SPANS_PER_SCOPE),
+		spans: z.array(Span).max(MAX_OTLP_SPANS_PER_SCOPE).default([]),
 	})
 	.openapi("ScopeSpans");
 
@@ -123,8 +123,8 @@ export const ResourceSpans = z
 			.optional(),
 		scope_spans: z
 			.array(ScopeSpans)
-			.min(1)
-			.max(MAX_OTLP_SCOPE_SPANS_PER_RESOURCE),
+			.max(MAX_OTLP_SCOPE_SPANS_PER_RESOURCE)
+			.default([]),
 	})
 	.openapi("ResourceSpans");
 
@@ -149,6 +149,64 @@ export const ExportTraceServiceRequest = z
 			});
 	})
 	.openapi("ExportTraceServiceRequest");
+
+const WireSpan = z.object({
+	traceId: z.string().regex(/^[0-9a-fA-F]{32}$/),
+	spanId: z.string().regex(/^[0-9a-fA-F]{16}$/),
+	parentSpanId: z.string().optional(),
+	name: z.string().min(1).max(256),
+	kind: SpanKind.optional(),
+	startTimeUnixNano: z.union([z.string(), z.number().int()]),
+	endTimeUnixNano: z.union([z.string(), z.number()]).optional(),
+	attributes: z.array(KeyValue).optional(),
+	status: SpanStatus.optional(),
+	events: z.array(z.unknown()).optional(),
+	links: z.array(z.unknown()).optional(),
+	traceState: z.string().optional(),
+});
+
+export const OtlpWireRequest = z
+	.object({
+		resourceSpans: z
+			.array(
+				z.object({
+					resource: z
+						.object({ attributes: z.array(KeyValue).optional() })
+						.optional(),
+					scopeSpans: z
+						.array(
+							z.object({
+								scope: z
+									.object({
+										name: z.string().optional(),
+										version: z.string().optional(),
+										attributes: z.array(KeyValue).optional(),
+									})
+									.optional(),
+								spans: z.array(WireSpan).optional(),
+							}),
+						)
+						.optional(),
+				}),
+			)
+			.optional(),
+	})
+	.openapi("OtlpWireRequest");
+
+export const OtlpWireResponse = z
+	.object({
+		partialSuccess: z
+			.object({
+				rejectedSpans: z.union([z.string(), z.number().int()]).optional(),
+				errorMessage: z.string().optional(),
+			})
+			.optional(),
+	})
+	.openapi("OtlpWireResponse");
+
+export const OtlpError = z
+	.object({ message: z.string().optional() })
+	.openapi("OtlpError");
 
 export const ExportTraceServiceResponse = z
 	.object({

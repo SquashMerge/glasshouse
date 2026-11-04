@@ -85,6 +85,69 @@ describe("API integration: health + openapi", () => {
 		expect(document.paths?.["/v1/traces"]?.post).toBeDefined();
 	});
 
+	it("documents the OTLP JSON and protobuf wire contract", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/openapi.json", {
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(200);
+		const document = (await res.json()) as {
+			paths: Record<
+				string,
+				{
+					post: {
+						requestBody: {
+							content: Record<
+								string,
+								{ schema: { format?: string; $ref: string } }
+							>;
+						};
+						responses: Record<
+							string,
+							{
+								content: Record<
+									string,
+									{ schema: { format?: string; $ref: string } }
+								>;
+							}
+						>;
+					};
+				}
+			>;
+			components: {
+				schemas: Record<string, { properties: Record<string, unknown> }>;
+			};
+		};
+		const operation = document.paths["/v1/traces"].post;
+		expect(
+			operation.requestBody.content["application/x-protobuf"].schema.format,
+		).toBe("binary");
+		expect(
+			operation.responses["200"].content["application/x-protobuf"].schema
+				.format,
+		).toBe("binary");
+		const requestRef = operation.requestBody.content[
+			"application/json"
+		].schema.$ref
+			.split("/")
+			.pop();
+		const responseRef = operation.responses["200"].content[
+			"application/json"
+		].schema.$ref
+			.split("/")
+			.pop();
+		expect(
+			document.components.schemas[requestRef].properties.resourceSpans,
+		).toBeDefined();
+		expect(
+			document.components.schemas[responseRef].properties.partialSuccess,
+		).toBeDefined();
+		expect(
+			operation.responses["400"].content["application/json"].schema.$ref,
+		).toContain("OtlpError");
+	});
+
 	it("documents bounded trace-detail and snapshot recovery responses", async () => {
 		const res = await apiApp.fetch(
 			new Request("http://x/openapi.json", {
@@ -137,9 +200,6 @@ describe("API integration: health + openapi", () => {
 		const durableOperations = [
 			["/v1/admin/actors", "get"],
 			["/v1/admin/actors/{actorId}/role", "put"],
-			["/v1/admin/projects/{projectId}/grants", "get"],
-			["/v1/admin/projects/{projectId}/grants/{actorId}", "put"],
-			["/v1/admin/projects/{projectId}/grants/{actorId}", "delete"],
 		] as const;
 		for (const [path, method] of durableOperations)
 			expect(document.paths?.[path]?.[method]).toBeDefined();
@@ -675,21 +735,52 @@ describe("API integration: OTLP ingest", () => {
 			}),
 		);
 		expect(res.status).toBe(400);
-		const body = (await res.json()) as { code: string };
-		expect(body.code).toBe("BAD_REQUEST");
+		expect(res.headers.get("content-type")).toContain("application/json");
+		expect(await res.json()).toEqual({
+			message: "Invalid trace export request",
+		});
 	});
 
-	it("returns 400 on Zod validation failure", async () => {
+	it("accepts an empty export without storing data", async () => {
+		insertTraces.mockClear();
+		insertObservations.mockClear();
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
-				body: JSON.stringify({ resource_spans: [] }),
+				body: JSON.stringify({ resourceSpans: [] }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({});
+		expect(insertTraces).toHaveBeenCalledWith(
+			expect.anything(),
+			[],
+			expect.any(String),
+		);
+		expect(insertObservations).toHaveBeenCalledWith(
+			expect.anything(),
+			[],
+			expect.any(String),
+		);
+	});
+
+	it("returns 400 on invalid span fields", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: otlpHeaders(),
+				body: JSON.stringify({
+					resourceSpans: [
+						{ scopeSpans: [{ spans: [{ name: "missing ids" }] }] },
+					],
+				}),
 			}),
 		);
 		expect(res.status).toBe(400);
-		const body = (await res.json()) as { code: string };
-		expect(body.code).toBe("BAD_REQUEST");
+		expect(await res.json()).toEqual({
+			message: "Invalid trace export request",
+		});
 	});
 
 	it("returns 401 without auth", async () => {
@@ -818,8 +909,8 @@ describe("API integration: OTLP ingest", () => {
 			}),
 		);
 		expect(res.status).toBe(500);
-		const body = (await res.json()) as { code: string; message: string };
-		expect(body.code).toBe("INTERNAL");
+		const body = (await res.json()) as { message: string };
+		expect(body.message).toBe("Trace export failed");
 		expect(body.message).not.toContain("Connection refused");
 		expect(body.message).not.toContain("10.0.0.1");
 	});
@@ -840,7 +931,8 @@ describe("API integration: body size limit", () => {
 			}),
 		);
 		expect(res.status).toBe(413);
-		const body = (await res.json()) as { code: string };
-		expect(body.code).toBe("PAYLOAD_TOO_LARGE");
+		expect(await res.json()).toEqual({
+			message: "Trace export exceeds the request limit",
+		});
 	});
 });

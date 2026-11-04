@@ -90,13 +90,13 @@ describe("ExportTraceServiceRequest Zod validation", () => {
 		expect(result.success).toBe(false);
 	});
 
-	it("rejects empty spans array inside scope_spans", () => {
+	it("accepts empty spans array inside scope_spans", () => {
 		const result = ExportTraceServiceRequest.safeParse({
 			resource_spans: [
 				{ resource: { attributes: [] }, scope_spans: [{ spans: [] }] },
 			],
 		});
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
 	});
 
 	it("rejects a request whose total span count exceeds the ingestion budget", () => {

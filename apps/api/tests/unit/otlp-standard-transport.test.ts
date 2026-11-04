@@ -9,6 +9,192 @@ const tenant = {
 	projectId: "33333333-3333-4333-8333-333333333333",
 };
 
+test("OTLP accepts empty resource and scope envelopes alongside spans", async () => {
+	let observations = 0;
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async () => undefined,
+		insertObservations: async (_client, rows) => {
+			observations = rows.length;
+		},
+	});
+	const response = await handler(
+		new Request("http://localhost/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				resourceSpans: [
+					{},
+					{
+						scopeSpans: [
+							{},
+							{ spans: [] },
+							{
+								spans: [
+									{
+										traceId: "00112233445566778899aabbccddeeff",
+										spanId: "0011223344556677",
+										name: "retained",
+										startTimeUnixNano: "1700000000000000000",
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		}),
+		tenant,
+	);
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({});
+	expect(observations).toBe(1);
+});
+
+test("OTLP returns partial success for large unsupported events and links", async () => {
+	let observations = 0;
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async () => undefined,
+		insertObservations: async (_client, rows) => {
+			observations = rows.length;
+		},
+	});
+	const span = {
+		traceId: "00112233445566778899aabbccddeeff",
+		spanId: "0011223344556677",
+		name: "span",
+		startTimeUnixNano: "1700000000000000000",
+	};
+	const response = await handler(
+		new Request("http://localhost/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				resourceSpans: [
+					{
+						scopeSpans: [
+							{
+								spans: [
+									span,
+									{
+										...span,
+										spanId: "8899aabbccddeeff",
+										events: Array.from({ length: 129 }, () => ({
+											name: "event",
+										})),
+									},
+									{
+										...span,
+										spanId: "1111222233334444",
+										links: Array.from({ length: 129 }, () => ({})),
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		}),
+		tenant,
+	);
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({
+		partialSuccess: {
+			rejectedSpans: "2",
+			errorMessage: "Spans with events or links are not supported",
+		},
+	});
+	expect(observations).toBe(1);
+});
+
+test("OTLP protobuf handles empty envelopes and large unsupported event lists", async () => {
+	let observations = 0;
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async () => undefined,
+		insertObservations: async (_client, rows) => {
+			observations = rows.length;
+		},
+	});
+	const trace = (
+		protobufRoot as unknown as {
+			opentelemetry: {
+				proto: {
+					collector: {
+						trace: {
+							v1: {
+								ExportTraceServiceRequest: {
+									encode: (value: object) => { finish: () => Uint8Array };
+								};
+								ExportTraceServiceResponse: {
+									decode: (bytes: Uint8Array) => {
+										partialSuccess?: {
+											rejectedSpans: { toString: () => string };
+										};
+									};
+								};
+							};
+						};
+					};
+				};
+			};
+		}
+	).opentelemetry.proto.collector.trace.v1;
+	const span = {
+		traceId: Buffer.from("00112233445566778899aabbccddeeff", "hex"),
+		spanId: Buffer.from("0011223344556677", "hex"),
+		name: "span",
+		startTimeUnixNano: "1700000000000000000",
+	};
+	const response = await handler(
+		new Request("http://localhost/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/x-protobuf" },
+			body: trace.ExportTraceServiceRequest.encode({
+				resourceSpans: [
+					{},
+					{
+						scopeSpans: [
+							{},
+							{
+								spans: [
+									span,
+									{
+										...span,
+										spanId: Buffer.from("8899aabbccddeeff", "hex"),
+										events: Array.from({ length: 129 }, () => ({
+											name: "event",
+										})),
+									},
+								],
+							},
+						],
+					},
+				],
+			}).finish(),
+		}),
+		tenant,
+	);
+	expect(response.status).toBe(200);
+	expect(response.headers.get("content-type")).toBe("application/x-protobuf");
+	expect(
+		trace.ExportTraceServiceResponse.decode(
+			new Uint8Array(await response.arrayBuffer()),
+		).partialSuccess?.rejectedSpans.toString(),
+	).toBe("1");
+	expect(observations).toBe(1);
+});
+
 test("OTLP JSON accepts an empty export and returns an empty OTLP response", async () => {
 	const handler = createOtlpIngestHandler({
 		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
