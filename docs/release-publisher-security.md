@@ -83,6 +83,22 @@ The bundle is tested by extracting its tarball and using the extracted directory
 the test adds a synthetic environment file only after extraction. A candidate
 workflow's results do not prove that a different release's bytes were tested.
 
+The non-publishing `Release publisher offline` CI job exercises the real Python
+publisher admission, upload streaming and byte-readback code against a mocked
+GitHub transport, with synthetic assets and no write credential. It checks the
+workflow's transfer/attestation input lists and checksum shell gates; it also
+exercises duplicate drafts, ref movement, partial upload failures and corrupted
+readback. The bundle fixture is assembled by the real bundle builder, but its
+image and SBOM are synthetic. The test does not execute the full candidate build,
+artifact transfer or attestation action. In the devcontainer, run:
+
+```sh
+python3 -m unittest discover -s infra/scripts/tests -p 'test_release_publisher*.py' -v
+```
+
+The workflow checksum checks require GNU coreutils (the Alpine workspace's
+BusyBox `sha256sum` does not support `--check`).
+
 Offline mocks and workflow definitions are not evidence of a successful hosted
 publisher run, a real GitHub Release, or a verified attestation. Live end-to-end
 GitHub API behavior, uploaded-byte readback, attestation verification, and the

@@ -108,6 +108,20 @@ jobs:
       - name: Run offline admission and publisher safety tests
         run: python3 -m unittest discover -s scripts -p 'test_snapshot*.py' -v
 
+  release-publisher-offline:
+    name: Release publisher offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Exercise publisher against a mocked GitHub transport
+        run: python3 -m unittest discover -s infra/scripts/tests -p 'test_release_publisher*.py' -v
+
   backup-source-routing:
     name: Backup source routing
     runs-on: ubuntu-latest
