@@ -6558,27 +6558,6 @@ components:
         - pass_rate
         - avg_duration_ms
       type: object
-    ExportTraceServiceRequest:
-      properties:
-        resource_spans:
-          items:
-            $ref: '#/components/schemas/ResourceSpans'
-          maxItems: 128
-          minItems: 1
-          type: array
-      required:
-        - resource_spans
-      type: object
-    ExportTraceServiceResponse:
-      properties:
-        partial_success:
-          properties:
-            error_message:
-              type: string
-            rejected_spans:
-              type: integer
-          type: object
-      type: object
     Feedback:
       additionalProperties: false
       properties:
@@ -7154,6 +7133,112 @@ components:
         - totals
         - series
       type: object
+    OtlpError:
+      properties:
+        message:
+          type: string
+      type: object
+    OtlpWireRequest:
+      properties:
+        resourceSpans:
+          items:
+            properties:
+              resource:
+                properties:
+                  attributes:
+                    items:
+                      $ref: '#/components/schemas/KeyValue'
+                    maxItems: 128
+                    type: array
+                type: object
+              scopeSpans:
+                items:
+                  properties:
+                    scope:
+                      properties:
+                        attributes:
+                          items:
+                            $ref: '#/components/schemas/KeyValue'
+                          maxItems: 128
+                          type: array
+                        name:
+                          type: string
+                        version:
+                          type: string
+                      type: object
+                    spans:
+                      items:
+                        properties:
+                          attributes:
+                            items:
+                              $ref: '#/components/schemas/KeyValue'
+                            maxItems: 128
+                            type: array
+                          endTimeUnixNano:
+                            anyOf:
+                              - type: string
+                              - type: number
+                          events:
+                            items: {}
+                            type: array
+                          kind:
+                            $ref: '#/components/schemas/SpanKind'
+                          links:
+                            items: {}
+                            type: array
+                          name:
+                            maxLength: 256
+                            minLength: 1
+                            type: string
+                          parentSpanId:
+                            type: string
+                          spanId:
+                            pattern: ^[0-9a-fA-F]{16}$
+                            type: string
+                          startTimeUnixNano:
+                            anyOf:
+                              - type: string
+                              - type: integer
+                          status:
+                            $ref: '#/components/schemas/SpanStatus'
+                          traceId:
+                            pattern: ^[0-9a-fA-F]{32}$
+                            type: string
+                          traceState:
+                            type: string
+                        required:
+                          - traceId
+                          - spanId
+                          - name
+                          - startTimeUnixNano
+                        type: object
+                      maxItems: 512
+                      type:
+                        - array
+                        - 'null'
+                  type: object
+                maxItems: 128
+                type:
+                  - array
+                  - 'null'
+            type: object
+          maxItems: 128
+          type:
+            - array
+            - 'null'
+      type: object
+    OtlpWireResponse:
+      properties:
+        partialSuccess:
+          properties:
+            errorMessage:
+              type: string
+            rejectedSpans:
+              anyOf:
+                - type: string
+                - type: integer
+          type: object
+      type: object
     Project:
       additionalProperties: false
       properties:
@@ -7724,103 +7809,6 @@ components:
           type: string
       required:
         - confirmation
-      type: object
-    ResourceSpans:
-      properties:
-        resource:
-          properties:
-            attributes:
-              default: []
-              items:
-                $ref: '#/components/schemas/KeyValue'
-              maxItems: 128
-              type: array
-            dropped_attributes_count:
-              type: integer
-          type: object
-        scope_spans:
-          items:
-            $ref: '#/components/schemas/ScopeSpans'
-          maxItems: 128
-          minItems: 1
-          type: array
-      required:
-        - scope_spans
-      type: object
-    ScopeSpans:
-      properties:
-        scope:
-          properties:
-            attributes:
-              items:
-                $ref: '#/components/schemas/KeyValue'
-              maxItems: 128
-              type: array
-            name:
-              type: string
-            version:
-              type: string
-          type: object
-        spans:
-          items:
-            $ref: '#/components/schemas/Span'
-          maxItems: 512
-          minItems: 1
-          type: array
-      required:
-        - spans
-      type: object
-    Span:
-      properties:
-        attributes:
-          default: []
-          items:
-            $ref: '#/components/schemas/KeyValue'
-          maxItems: 128
-          type: array
-        end_time_unix_nano:
-          anyOf:
-            - type: number
-            - type: string
-        events:
-          items: {}
-          maxItems: 128
-          type: array
-        kind:
-          $ref: '#/components/schemas/SpanKind'
-        links:
-          items: {}
-          maxItems: 128
-          type: array
-        name:
-          maxLength: 256
-          minLength: 1
-          type: string
-        parent_span_id:
-          pattern: ^[0-9a-f]{16}$
-          type:
-            - string
-            - 'null'
-        span_id:
-          pattern: ^[0-9a-f]{16}$
-          type: string
-        start_time_unix_nano:
-          anyOf:
-            - type: number
-            - type: string
-        status:
-          $ref: '#/components/schemas/SpanStatus'
-        trace_id:
-          pattern: ^[0-9a-f]{32}$
-          type: string
-        trace_state:
-          maxLength: 512
-          type: string
-      required:
-        - trace_id
-        - span_id
-        - name
-        - start_time_unix_nano
       type: object
     SpanKind:
       anyOf:
@@ -18659,7 +18647,7 @@ paths:
       tags:
         - traces
     post:
-      description: Accepts an ExportTraceServiceRequest (OTLP 1.4.x HTTP/JSON), validates with Zod, normalizes each span (gen_ai.* first, OpenInference fallback), and batch-inserts to ClickHouse `traces` and `observations`. Returns an empty ExportTraceServiceResponse on success.
+      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Spans containing events or links are rejected with a partial-success response; supported spans are stored.
       parameters:
         - description: Project selector, verified against the authenticated organization
           in: header
@@ -18673,33 +18661,93 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ExportTraceServiceRequest'
+              $ref: '#/components/schemas/OtlpWireRequest'
+          application/protobuf:
+            schema:
+              format: binary
+              type: string
+          application/x-protobuf:
+            schema:
+              format: binary
+              type: string
         required: true
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ExportTraceServiceResponse'
-          description: Traces accepted
+                $ref: '#/components/schemas/OtlpWireResponse'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Traces accepted, possibly with partial success
         '400':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-          description: Malformed request body or conflicting project provenance for a trace
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Malformed request or conflicting provenance
         '404':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-          description: The OTLP project selector or resource provenance is unavailable to the authenticated organization
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Project unavailable to the authenticated organization
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Request exceeds the configured limit
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Unsupported media type or content encoding
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Trace export failed
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Trace export temporarily unavailable
       security:
         - csrfHeader: []
           sessionCookie: []
         - basicAuth: []
         - bearerAuth: []
-      summary: OTLP HTTP/JSON trace ingest
+      summary: OTLP HTTP trace ingest
       tags:
         - otlp
   /v1/traces/events:

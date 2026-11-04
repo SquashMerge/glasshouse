@@ -427,8 +427,20 @@ jobs:
             bun --cwd apps/api test tests/integration/authorization-revocation-serialization.test.ts --test-name-pattern "concurrent GEPA starts cannot exceed the project admission cap across requesters"
             bun --cwd apps/api test tests/integration/optimization-requester-capacity.test.ts
             bun --cwd apps/api test tests/integration/durable-feedback.test.ts
-            GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB=1 bun --cwd apps/api test tests/integration/otlp-process-shutdown.test.ts
           '
+
+      - name: Verify combined UI and OTLP startup and signal shutdown
+        run: |
+          docker run --rm --network glasshouse_default \
+            --env-file infra/.env \
+            -e OTLP_SHUTDOWN_DISPOSABLE=1 \
+            -e GLASSHOUSE_CONTAINER_NETWORK=1 \
+            -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
+            -e CLICKHOUSE_HOST=clickhouse -e VALKEY_HOST=valkey \
+            -e GLASSHOUSE_AUTH_BOOTSTRAP_MODE=local \
+            -e GLASSHOUSE_PUBLIC_ORIGIN=http://localhost:5173 \
+            -v "$PWD:/workspace" -w /workspace oven/bun:1.3.14 \
+            bun --cwd apps/api test tests/integration/otlp-process-shutdown.test.ts
 
       - name: Verify idempotent ClickHouse migrations
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml run --build --no-deps --rm --entrypoint sh api -c 'cd apps/api && bun run ch:migrate'

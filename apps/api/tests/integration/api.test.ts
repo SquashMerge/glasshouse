@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, mock } from "bun:test";
+import protobufRoot from "@opentelemetry/otlp-proto-exporter-base/build/src/generated/root.js";
 
 const USER = "glasshouse";
 const PASS = "secret";
@@ -17,6 +18,7 @@ const { TenantScopeError } = await import("../../src/tenancy");
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
+const publishSync = mock(() => undefined);
 const withActiveAuthorizedProjectLock = async <T>(
 	_tenant: unknown,
 	callback: () => Promise<T>,
@@ -41,7 +43,7 @@ const apiApp = createApiApp({
 		defaultClient,
 		insertObservations,
 		insertTraces,
-		publishSync: () => undefined,
+		publishSync,
 		approvedRedaction: async () => null,
 		withActiveAuthorizedProjectLock,
 	}),
@@ -83,6 +85,69 @@ describe("API integration: health + openapi", () => {
 			scheme: "basic",
 		});
 		expect(document.paths?.["/v1/traces"]?.post).toBeDefined();
+	});
+
+	it("documents the OTLP JSON and protobuf wire contract", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/openapi.json", {
+				headers: { authorization: AUTH },
+			}),
+		);
+		expect(res.status).toBe(200);
+		const document = (await res.json()) as {
+			paths: Record<
+				string,
+				{
+					post: {
+						requestBody: {
+							content: Record<
+								string,
+								{ schema: { format?: string; $ref: string } }
+							>;
+						};
+						responses: Record<
+							string,
+							{
+								content: Record<
+									string,
+									{ schema: { format?: string; $ref: string } }
+								>;
+							}
+						>;
+					};
+				}
+			>;
+			components: {
+				schemas: Record<string, { properties: Record<string, unknown> }>;
+			};
+		};
+		const operation = document.paths["/v1/traces"].post;
+		expect(
+			operation.requestBody.content["application/x-protobuf"].schema.format,
+		).toBe("binary");
+		expect(
+			operation.responses["200"].content["application/x-protobuf"].schema
+				.format,
+		).toBe("binary");
+		const requestRef = operation.requestBody.content[
+			"application/json"
+		].schema.$ref
+			.split("/")
+			.pop();
+		const responseRef = operation.responses["200"].content[
+			"application/json"
+		].schema.$ref
+			.split("/")
+			.pop();
+		expect(
+			document.components.schemas[requestRef].properties.resourceSpans,
+		).toBeDefined();
+		expect(
+			document.components.schemas[responseRef].properties.partialSuccess,
+		).toBeDefined();
+		expect(
+			operation.responses["400"].content["application/json"].schema.$ref,
+		).toContain("OtlpError");
 	});
 
 	it("documents bounded trace-detail and snapshot recovery responses", async () => {
@@ -137,9 +202,6 @@ describe("API integration: health + openapi", () => {
 		const durableOperations = [
 			["/v1/admin/actors", "get"],
 			["/v1/admin/actors/{actorId}/role", "put"],
-			["/v1/admin/projects/{projectId}/grants", "get"],
-			["/v1/admin/projects/{projectId}/grants/{actorId}", "put"],
-			["/v1/admin/projects/{projectId}/grants/{actorId}", "delete"],
 		] as const;
 		for (const [path, method] of durableOperations)
 			expect(document.paths?.[path]?.[method]).toBeDefined();
@@ -606,6 +668,78 @@ describe("API integration: OTLP ingest", () => {
 		expect(insertObservations).not.toHaveBeenCalled();
 	});
 
+	it("rejects foreign provenance on empty or unsupported resources before any writes", async () => {
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		const codec = (
+			protobufRoot as unknown as {
+				opentelemetry: {
+					proto: {
+						collector: {
+							trace: {
+								v1: {
+									ExportTraceServiceRequest: {
+										encode: (data: object) => { finish: () => Uint8Array };
+									};
+								};
+							};
+						};
+					};
+				};
+			}
+		).opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
+		for (const binary of [false, true]) {
+			for (const unsupported of [false, true]) {
+				insertTraces.mockClear();
+				insertObservations.mockClear();
+				publishSync.mockClear();
+				const span = {
+					traceId: binary ? Buffer.from(HEX32, "hex") : HEX32,
+					spanId: binary ? Buffer.from(HEX16, "hex") : HEX16,
+					name: "retained",
+					startTimeUnixNano: String(NOW_NS),
+				};
+				const foreign = {
+					resource: {
+						attributes: [
+							{
+								key: "glasshouse.project.id",
+								value: { stringValue: foreignProject },
+							},
+						],
+					},
+					...(unsupported
+						? {
+								scopeSpans: [
+									{ spans: [{ ...span, events: [{ name: "event" }] }] },
+								],
+							}
+						: {}),
+				};
+				const request = {
+					resourceSpans: [foreign, { scopeSpans: [{ spans: [span] }] }],
+				};
+				const res = await apiApp.fetch(
+					new Request("http://x/v1/traces", {
+						method: "POST",
+						headers: {
+							...otlpHeaders(),
+							"content-type": binary
+								? "application/x-protobuf"
+								: "application/json",
+						},
+						body: binary
+							? codec.encode(request).finish()
+							: JSON.stringify(request),
+					}),
+				);
+				expect(res.status).toBe(404);
+				expect(insertTraces).not.toHaveBeenCalled();
+				expect(insertObservations).not.toHaveBeenCalled();
+				expect(publishSync).not.toHaveBeenCalled();
+			}
+		}
+	});
+
 	it("routes valid headed OTLP through its dedicated membership resolver", async () => {
 		insertTraces.mockClear();
 		insertObservations.mockClear();
@@ -675,21 +809,52 @@ describe("API integration: OTLP ingest", () => {
 			}),
 		);
 		expect(res.status).toBe(400);
-		const body = (await res.json()) as { code: string };
-		expect(body.code).toBe("BAD_REQUEST");
+		expect(res.headers.get("content-type")).toContain("application/json");
+		expect(await res.json()).toEqual({
+			message: "Invalid trace export request",
+		});
 	});
 
-	it("returns 400 on Zod validation failure", async () => {
+	it("accepts an empty export without storing data", async () => {
+		insertTraces.mockClear();
+		insertObservations.mockClear();
 		const res = await apiApp.fetch(
 			new Request("http://x/v1/traces", {
 				method: "POST",
 				headers: otlpHeaders(),
-				body: JSON.stringify({ resource_spans: [] }),
+				body: JSON.stringify({ resourceSpans: [] }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({});
+		expect(insertTraces).toHaveBeenCalledWith(
+			expect.anything(),
+			[],
+			expect.any(String),
+		);
+		expect(insertObservations).toHaveBeenCalledWith(
+			expect.anything(),
+			[],
+			expect.any(String),
+		);
+	});
+
+	it("returns 400 on invalid span fields", async () => {
+		const res = await apiApp.fetch(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: otlpHeaders(),
+				body: JSON.stringify({
+					resourceSpans: [
+						{ scopeSpans: [{ spans: [{ name: "missing ids" }] }] },
+					],
+				}),
 			}),
 		);
 		expect(res.status).toBe(400);
-		const body = (await res.json()) as { code: string };
-		expect(body.code).toBe("BAD_REQUEST");
+		expect(await res.json()).toEqual({
+			message: "Invalid trace export request",
+		});
 	});
 
 	it("returns 401 without auth", async () => {
@@ -818,8 +983,8 @@ describe("API integration: OTLP ingest", () => {
 			}),
 		);
 		expect(res.status).toBe(500);
-		const body = (await res.json()) as { code: string; message: string };
-		expect(body.code).toBe("INTERNAL");
+		const body = (await res.json()) as { message: string };
+		expect(body.message).toBe("Trace export failed");
 		expect(body.message).not.toContain("Connection refused");
 		expect(body.message).not.toContain("10.0.0.1");
 	});
@@ -840,7 +1005,8 @@ describe("API integration: body size limit", () => {
 			}),
 		);
 		expect(res.status).toBe(413);
-		const body = (await res.json()) as { code: string };
-		expect(body.code).toBe("PAYLOAD_TOO_LARGE");
+		expect(await res.json()).toEqual({
+			message: "Trace export exceeds the request limit",
+		});
 	});
 });

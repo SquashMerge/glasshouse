@@ -6,10 +6,11 @@ import {
 	otlpErrorResponse,
 	otlpSuccessResponse,
 } from "../lib/otlp-response.js";
-import { ErrorEnvelope } from "../schemas/common.js";
 import {
 	ExportTraceServiceRequest,
-	ExportTraceServiceResponse,
+	OtlpError,
+	OtlpWireRequest,
+	OtlpWireResponse,
 } from "../schemas/otlp.js";
 import { normalizeSpan, resourceProjectId } from "../db/gen-ai-attrs.js";
 import {
@@ -40,16 +41,19 @@ import {
 } from "../db/trace-payload-bounds.js";
 
 const tag = "otlp";
+const protobufWire = z.string().openapi({ type: "string", format: "binary" });
+const otlpErrorContent = {
+	"application/json": { schema: OtlpError },
+	"application/x-protobuf": { schema: protobufWire },
+};
 
 export const otlpIngestRoute = createRoute({
 	method: "post",
 	path: "/v1/traces",
 	tags: [tag],
-	summary: "OTLP HTTP/JSON trace ingest",
+	summary: "OTLP HTTP trace ingest",
 	description:
-		"Accepts an ExportTraceServiceRequest (OTLP 1.4.x HTTP/JSON), validates with Zod, " +
-		"normalizes each span (gen_ai.* first, OpenInference fallback), and batch-inserts " +
-		"to ClickHouse `traces` and `observations`. Returns an empty ExportTraceServiceResponse on success.",
+		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
 	security: [
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
@@ -63,24 +67,42 @@ export const otlpIngestRoute = createRoute({
 			}),
 		}),
 		body: {
-			content: { "application/json": { schema: ExportTraceServiceRequest } },
+			content: {
+				"application/json": { schema: OtlpWireRequest },
+				"application/x-protobuf": { schema: protobufWire },
+				"application/protobuf": { schema: protobufWire },
+			},
 			required: true,
 		},
 	},
 	responses: {
 		200: {
-			description: "Traces accepted",
-			content: { "application/json": { schema: ExportTraceServiceResponse } },
+			description: "Traces accepted, possibly with partial success",
+			content: {
+				"application/json": { schema: OtlpWireResponse },
+				"application/x-protobuf": { schema: protobufWire },
+			},
 		},
 		400: {
-			description:
-				"Malformed request body or conflicting project provenance for a trace",
-			content: { "application/json": { schema: ErrorEnvelope } },
+			description: "Malformed request or conflicting provenance",
+			content: otlpErrorContent,
 		},
 		404: {
-			description:
-				"The OTLP project selector or resource provenance is unavailable to the authenticated organization",
-			content: { "application/json": { schema: ErrorEnvelope } },
+			description: "Project unavailable to the authenticated organization",
+			content: otlpErrorContent,
+		},
+		413: {
+			description: "Request exceeds the configured limit",
+			content: otlpErrorContent,
+		},
+		415: {
+			description: "Unsupported media type or content encoding",
+			content: otlpErrorContent,
+		},
+		500: { description: "Trace export failed", content: otlpErrorContent },
+		503: {
+			description: "Trace export temporarily unavailable",
+			content: otlpErrorContent,
 		},
 	},
 });
@@ -261,7 +283,7 @@ function otlpJsonToLegacy(value: unknown): unknown {
 							)
 								return scopeSpan;
 							const scope = scopeSpan as Record<string, unknown>;
-							const spans = scope.spans;
+							const spans = scope.spans ?? undefined;
 							return {
 								scope: scope.scope,
 								spans: Array.isArray(spans)

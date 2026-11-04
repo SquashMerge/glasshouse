@@ -128,7 +128,7 @@ The tree is a bounded presentation: it renders at most 500 nodes per detail view
 
 ## Ingestion and query bounds
 
-A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit), 128 resource spans/scopes/attributes, and 128 events or links per span. Requests over these structural limits are rejected before normalization and persistence. The HTTP body cap independently defaults to 1 MiB; operators may raise it with `API_MAX_BODY_BYTES`.
+A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit) and 128 resource spans, scopes per resource, or attributes per record. Requests over these structural limits are rejected before normalization and persistence. Spans with events or links are instead reported as rejected in a partial-success response, irrespective of the number of events or links. The HTTP body cap independently defaults to 1 MiB; operators may raise it with `API_MAX_BODY_BYTES`.
 
 OTLP retries reuse table-namespaced ClickHouse insert-deduplication tokens derived from the validated batch and trusted organization/project scope. This avoids duplicate trace rows when an earlier attempt writes `traces` but fails before writing `observations`. Deduplication is deliberately bounded by ClickHouse's 100,000-block history per table, not a permanent uniqueness guarantee; retries after that history has rolled over can insert duplicates.
 

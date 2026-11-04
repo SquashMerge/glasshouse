@@ -1,14 +1,8 @@
-import { expect, test as bunTest } from "bun:test";
+import { expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
-import { createServer } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
-
-// Starting the API runs recovery against the configured database.
-const test =
-	process.env.GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB === "1"
-		? bunTest
-		: bunTest.skip;
 
 async function unusedPort(): Promise<number> {
 	return new Promise((resolve, reject) => {
@@ -23,83 +17,175 @@ async function unusedPort(): Promise<number> {
 	});
 }
 
+function disposableEnvironment(env: NodeJS.ProcessEnv): boolean {
+	return (
+		env.OTLP_SHUTDOWN_DISPOSABLE === "1" &&
+		env.GLASSHOUSE_CONTAINER_NETWORK === "1" &&
+		env.NODE_ENV !== "production" &&
+		env.POSTGRES_HOST === "postgres" &&
+		env.POSTGRES_PORT === "5432" &&
+		env.CLICKHOUSE_HOST === "clickhouse" &&
+		env.VALKEY_HOST === "valkey" &&
+		env.DATABASE_URL === undefined &&
+		env.CLICKHOUSE_URL === undefined &&
+		env.VALKEY_URL === undefined
+	);
+}
+
+function sanitizedChildEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const child = Object.fromEntries(
+		Object.entries(env).filter(([key]) => !key.startsWith("PG")),
+	);
+	const database = new URL("postgresql://postgres:5432");
+	database.username = env.POSTGRES_USER ?? "postgres";
+	database.password = env.POSTGRES_PASSWORD ?? "postgres";
+	database.pathname = `/${encodeURIComponent(env.POSTGRES_DB ?? "postgres")}`;
+	child.DATABASE_URL = database.toString();
+	return child;
+}
+
+test("shutdown test refuses inherited or non-disposable datastore configuration", () => {
+	const safe = {
+		OTLP_SHUTDOWN_DISPOSABLE: "1",
+		GLASSHOUSE_CONTAINER_NETWORK: "1",
+		POSTGRES_HOST: "postgres",
+		POSTGRES_PORT: "5432",
+		CLICKHOUSE_HOST: "clickhouse",
+		VALKEY_HOST: "valkey",
+	};
+	expect(disposableEnvironment(safe)).toBe(true);
+	for (const unsafe of [
+		{ ...safe, OTLP_SHUTDOWN_DISPOSABLE: undefined },
+		{ ...safe, GLASSHOUSE_CONTAINER_NETWORK: undefined },
+		{ ...safe, NODE_ENV: "production" },
+		{ ...safe, POSTGRES_HOST: "localhost" },
+		{ ...safe, POSTGRES_PORT: "6543" },
+		{ ...safe, CLICKHOUSE_HOST: "localhost" },
+		{ ...safe, VALKEY_HOST: "localhost" },
+		{ ...safe, DATABASE_URL: "postgres://example" },
+		{ ...safe, DATABASE_URL: "" },
+		{ ...safe, CLICKHOUSE_URL: "" },
+		{ ...safe, VALKEY_URL: "" },
+		{ ...safe, CLICKHOUSE_URL: "http://example" },
+		{ ...safe, VALKEY_URL: "redis://example" },
+	])
+		expect(disposableEnvironment(unsafe)).toBe(false);
+});
+
+test("explicit shutdown probe opt-in requires a valid disposable environment", () => {
+	if (process.env.OTLP_SHUTDOWN_DISPOSABLE === "1") {
+		expect(disposableEnvironment(process.env)).toBe(true);
+	}
+});
+
+test("shutdown child resolves its PostgreSQL target without inherited PG settings", () => {
+	const env = sanitizedChildEnvironment({
+		...process.env,
+		PGHOST: "unsafe-example.invalid",
+		PGPORT: "6543",
+		DATABASE_URL: undefined,
+		POSTGRES_HOST: "postgres",
+		POSTGRES_PORT: "5432",
+		POSTGRES_DB: "glasshouse?host=unsafe-example.invalid",
+	});
+	const result = Bun.spawnSync(
+		[
+			process.execPath,
+			"--no-env-file",
+			"-e",
+			'import { Client } from "pg"; import { postgresUrl } from "./src/db/postgres.ts"; console.log(new Client({connectionString: postgresUrl()}).connectionParameters.host);',
+		],
+		{ cwd: import.meta.dir + "/../..", env },
+	);
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.toString().trim()).toBe("postgres");
+});
+
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
-	test(`API shuts down HTTP and gRPC on ${signal}`, async () => {
-		const httpPort = await unusedPort();
-		const grpcPort = await unusedPort();
-		const webRoot = await mkdtemp(
-			join(process.cwd(), "node_modules", ".otlp-web-"),
-		);
-		await writeFile(
-			join(webRoot, "index.html"),
-			"<html>Integration shell</html>",
-		);
-		const child = Bun.spawn([process.execPath, "run", "src/index.ts"], {
-			cwd: import.meta.dir + "/../..",
-			env: {
-				...process.env,
-				API_PORT: String(httpPort),
-				OTLP_GRPC_PORT: String(grpcPort),
-				OTLP_GRPC_HOST: "127.0.0.1",
-				GLASSHOUSE_WEB_ROOT: webRoot,
-			},
-			stdout: "ignore",
-			stderr: "ignore",
-		});
-		const grpcClient = new grpc.Client(
-			`127.0.0.1:${grpcPort}`,
-			grpc.credentials.createInsecure(),
-		);
-		try {
-			await new Promise<void>((resolve, reject) =>
-				grpcClient.waitForReady(Date.now() + 15_000, (error) =>
-					error ? reject(error) : resolve(),
-				),
+	test.skipIf(!disposableEnvironment(process.env))(
+		`API shuts down HTTP and gRPC on ${signal}`,
+		async () => {
+			const httpPort = await unusedPort();
+			const grpcPort = await unusedPort();
+			const webRoot = await mkdtemp(
+				join(process.cwd(), "node_modules", ".otlp-web-"),
 			);
-			const response = await fetch(`http://127.0.0.1:${httpPort}/health`);
-			expect(response.status).toBeGreaterThan(0);
-			const shell = await fetch(`http://127.0.0.1:${httpPort}/login`, {
-				headers: { accept: "text/html" },
-			});
-			expect(shell.status).toBe(200);
-			expect(await shell.text()).toContain("Integration shell");
-			const ingest = await fetch(`http://127.0.0.1:${httpPort}/v1/traces`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: "{}",
-			});
-			expect(ingest.status).toBe(401);
-			grpcClient.close();
-			child.kill(signal);
-			const result = await Promise.race([
-				child.exited,
-				Bun.sleep(12_000).then(() => "timeout" as const),
-			]);
-			expect(result).not.toBe("timeout");
-			expect(result).toBe(0);
-			await expect(
-				fetch(`http://127.0.0.1:${httpPort}/health`),
-			).rejects.toThrow();
-			const closedClient = new grpc.Client(
+			await writeFile(
+				join(webRoot, "index.html"),
+				"<html>Integration shell</html>",
+			);
+			const child = Bun.spawn(
+				[process.execPath, "--no-env-file", "run", "src/index.ts"],
+				{
+					cwd: import.meta.dir + "/../..",
+					env: {
+						...sanitizedChildEnvironment(process.env),
+						API_PORT: String(httpPort),
+						OTLP_GRPC_PORT: String(grpcPort),
+						OTLP_GRPC_HOST: "127.0.0.1",
+						GLASSHOUSE_WEB_ROOT: webRoot,
+					},
+					stdout: "ignore",
+					stderr: "ignore",
+				},
+			);
+			const grpcClient = new grpc.Client(
 				`127.0.0.1:${grpcPort}`,
 				grpc.credentials.createInsecure(),
 			);
 			try {
-				await expect(
-					new Promise<void>((resolve, reject) =>
-						closedClient.waitForReady(Date.now() + 1_000, (error) =>
-							error ? reject(error) : resolve(),
-						),
+				await new Promise<void>((resolve, reject) =>
+					grpcClient.waitForReady(Date.now() + 15_000, (error) =>
+						error ? reject(error) : resolve(),
 					),
+				);
+				const response = await fetch(`http://127.0.0.1:${httpPort}/health`);
+				expect(response.status).toBeGreaterThan(0);
+				const shell = await fetch(`http://127.0.0.1:${httpPort}/login`, {
+					headers: { accept: "text/html" },
+				});
+				expect(shell.status).toBe(200);
+				expect(await shell.text()).toContain("Integration shell");
+				const ingest = await fetch(`http://127.0.0.1:${httpPort}/v1/traces`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: "{}",
+				});
+				expect(ingest.status).toBe(401);
+				grpcClient.close();
+				child.kill(signal);
+				const result = await Promise.race([
+					child.exited,
+					Bun.sleep(12_000).then(() => "timeout" as const),
+				]);
+				expect(result).not.toBe("timeout");
+				expect(result).toBe(0);
+				await expect(
+					fetch(`http://127.0.0.1:${httpPort}/health`),
 				).rejects.toThrow();
+				const grpcClosed = await new Promise<boolean>((resolve) => {
+					const socket = createConnection({
+						host: "127.0.0.1",
+						port: grpcPort,
+					});
+					socket.once("connect", () => {
+						socket.destroy();
+						resolve(false);
+					});
+					socket.once("error", () => resolve(true));
+					socket.setTimeout(1000, () => {
+						socket.destroy();
+						resolve(false);
+					});
+				});
+				expect(grpcClosed).toBe(true);
 			} finally {
-				closedClient.close();
+				grpcClient.close();
+				if (child.exitCode === null) child.kill("SIGKILL");
+				await child.exited;
+				await rm(webRoot, { recursive: true, force: true });
 			}
-		} finally {
-			grpcClient.close();
-			if (child.exitCode === null) child.kill("SIGKILL");
-			await child.exited;
-			await rm(webRoot, { recursive: true, force: true });
-		}
-	}, 30_000);
+		},
+		30_000,
+	);
 }

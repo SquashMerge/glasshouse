@@ -2,7 +2,7 @@ name: OTLP release image proof (non-publishing)
 
 on:
   push:
-    branches: [integration/otlp-release-proof-20261104-225913]
+    branches: [integration/otlp-release-proof-20261104-refresh]
 
 permissions:
   contents: read
