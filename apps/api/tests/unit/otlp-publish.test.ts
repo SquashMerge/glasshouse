@@ -754,6 +754,66 @@ describe("OTLP ingest publishes events", () => {
 		expect(insertTraces.mock.calls.at(-1)?.[1]?.[0]?.user_id).toBe("");
 	});
 
+	it("redacts configured keys nested in OTLP arrays and kvlists", async () => {
+		const secret = "NESTED_OTLP_SECRET";
+		const previousRedactKeys = process.env.GLASSHOUSE_REDACT_KEYS;
+		process.env.GLASSHOUSE_REDACT_KEYS = "api_key";
+		const handler = createOtlpIngestHandler({
+			defaultClient,
+			insertObservations,
+			insertTraces,
+			publishSync,
+			approvedRedaction: async () => null,
+			withActiveAuthorizedProjectLock,
+		});
+
+		const res = await handler(
+			new Request("http://x/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(
+					validOtlp([
+						{
+							trace_id: HEX32_A,
+							span_id: HEX16_A,
+							name: "nested-redaction",
+							start_time_unix_nano: String(NOW_NS),
+							attributes: [
+								{
+									key: "payload",
+									value: {
+										arrayValue: {
+											values: [
+												{
+													kvlistValue: {
+														values: [
+															{
+																key: "api_key",
+																value: { stringValue: secret },
+															},
+														],
+													},
+												},
+											],
+										},
+									},
+								},
+							],
+						},
+					]),
+				),
+			}),
+			TENANT,
+		);
+		expect(res.status).toBe(200);
+		expect(
+			JSON.stringify(insertObservations.mock.calls.at(-1)?.[1]),
+		).not.toContain(secret);
+		if (previousRedactKeys === undefined)
+			delete process.env.GLASSHOUSE_REDACT_KEYS;
+		else process.env.GLASSHOUSE_REDACT_KEYS = previousRedactKeys;
+	});
+
 	it("a throwing subscriber does NOT change the HTTP response", async () => {
 		const orig = console.error;
 		console.error = () => undefined;

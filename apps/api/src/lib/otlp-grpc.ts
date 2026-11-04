@@ -169,6 +169,7 @@ function grpcStatus(httpStatus: number): grpc.status {
 	if (httpStatus === 401) return grpc.status.UNAUTHENTICATED;
 	if (httpStatus === 404 || httpStatus === 403)
 		return grpc.status.PERMISSION_DENIED;
+	if (httpStatus === 429 || httpStatus === 503) return grpc.status.UNAVAILABLE;
 	if (httpStatus === 413) return grpc.status.RESOURCE_EXHAUSTED;
 	if (httpStatus >= 400 && httpStatus < 500)
 		return grpc.status.INVALID_ARGUMENT;

@@ -177,7 +177,7 @@ async function parseOtlpHttpRequest(req: {
 	if (contentType !== "application/json") {
 		try {
 			return parseNormalizedOtlpRequest(
-				otlpJsonToLegacy(decodeOtlpTraceExport(body)),
+				otlpJsonToLegacy(normalizeOtlpBytes(decodeOtlpTraceExport(body))),
 			);
 		} catch {
 			return {
@@ -199,7 +199,9 @@ async function parseOtlpHttpRequest(req: {
 		};
 	}
 	try {
-		return parseNormalizedOtlpRequest(otlpJsonToLegacy(bodyJson));
+		return parseNormalizedOtlpRequest(
+			otlpJsonToLegacy(normalizeOtlpBytes(bodyJson)),
+		);
 	} catch {
 		return {
 			success: false,
@@ -279,11 +281,15 @@ function otlpSpanToLegacy(value: unknown): unknown {
 		...span,
 		trace_id: lowerHex(span.traceId ?? span.trace_id),
 		span_id: lowerHex(span.spanId ?? span.span_id),
-		parent_span_id: lowerHex(span.parentSpanId ?? span.parent_span_id),
+		parent_span_id: lowerParentSpanId(span.parentSpanId ?? span.parent_span_id),
 		start_time_unix_nano: span.startTimeUnixNano ?? span.start_time_unix_nano,
 		end_time_unix_nano: span.endTimeUnixNano ?? span.end_time_unix_nano,
 		trace_state: span.traceState ?? span.trace_state,
 	};
+}
+
+function lowerParentSpanId(value: unknown): unknown {
+	return value === "" ? undefined : lowerHex(value);
 }
 
 function lowerHex(value: unknown): unknown {
@@ -291,6 +297,24 @@ function lowerHex(value: unknown): unknown {
 	if (Array.isArray(value) && value.every((byte) => Number.isInteger(byte)))
 		return Buffer.from(value).toString("hex");
 	return value;
+}
+
+function normalizeOtlpBytes(value: unknown, depth = 0): unknown {
+	if (depth > 32 || !value || typeof value !== "object") return value;
+	if (Array.isArray(value))
+		return value.map((item) => normalizeOtlpBytes(item, depth + 1));
+	const object = value as Record<string, unknown>;
+	const normalized: Record<string, unknown> = {};
+	for (const [key, child] of Object.entries(object)) {
+		if (
+			key === "bytesValue" &&
+			Array.isArray(child) &&
+			child.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+		)
+			normalized[key] = Buffer.from(child).toString("base64");
+		else normalized[key] = normalizeOtlpBytes(child, depth + 1);
+	}
+	return normalized;
 }
 
 function isGzipLimitError(cause: unknown): boolean {
@@ -454,7 +478,10 @@ export function createOtlpIngestHandler(
 			if (err instanceof TenantScopeError) throw err;
 			if (err instanceof OtlpConflictError) return otlpErrorResponse(req, 400);
 			logger.error("otlp.persist_failed", err);
-			return otlpErrorResponse(req, 500);
+			return otlpErrorResponse(
+				req,
+				isTransientClickHouseFailure(err) ? 503 : 500,
+			);
 		}
 
 		try {
@@ -503,13 +530,91 @@ function rejectUnsupportedSpans(
 	};
 }
 
+const MAX_OTLP_REDACTION_DEPTH = 32;
+const MAX_OTLP_REDACTION_NODES = 4_096;
+
 function redactAttributes<T extends { key: string }>(
 	attributes: T[],
 	keys: string[],
 ): T[] {
 	if (!keys.length) return attributes;
 	const redacted = new Set(keys);
-	return attributes.filter((attribute) => !redacted.has(attribute.key));
+	const budget = { remaining: MAX_OTLP_REDACTION_NODES };
+	return attributes.flatMap((attribute) => {
+		const value = redactAttribute(attribute, redacted, budget, 0);
+		return value === null ? [] : [value as T];
+	});
+}
+
+function redactAttribute(
+	attribute: { key: string },
+	keys: ReadonlySet<string>,
+	budget: { remaining: number },
+	depth: number,
+): object | null {
+	if (!budget.remaining-- || depth > MAX_OTLP_REDACTION_DEPTH) return null;
+	if (keys.has(attribute.key)) return null;
+	if (!("value" in attribute)) return attribute;
+	const value = redactAttributeValue(
+		(attribute as { value?: unknown }).value,
+		keys,
+		budget,
+		depth + 1,
+	);
+	return value === null ? null : { ...attribute, value };
+}
+
+function redactAttributeValue(
+	value: unknown,
+	keys: ReadonlySet<string>,
+	budget: { remaining: number },
+	depth: number,
+): unknown | null {
+	if (!budget.remaining-- || depth > MAX_OTLP_REDACTION_DEPTH) return null;
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const anyValue = value as Record<string, unknown>;
+	if (Array.isArray((anyValue.arrayValue as { values?: unknown })?.values)) {
+		const arrayValue = anyValue.arrayValue as Record<string, unknown> & {
+			values: unknown[];
+		};
+		const values = arrayValue.values;
+		const redacted = values.flatMap((item) => {
+			const nested = redactAttributeValue(item, keys, budget, depth + 1);
+			return nested === null ? [] : [nested];
+		});
+		return { ...anyValue, arrayValue: { ...arrayValue, values: redacted } };
+	}
+	if (Array.isArray((anyValue.kvlistValue as { values?: unknown })?.values)) {
+		const kvlistValue = anyValue.kvlistValue as Record<string, unknown> & {
+			values: unknown[];
+		};
+		const values = kvlistValue.values;
+		const redacted = values.flatMap((item) => {
+			if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+			const nested = redactAttribute(
+				item as { key: string },
+				keys,
+				budget,
+				depth + 1,
+			);
+			return nested === null ? [] : [nested];
+		});
+		return { ...anyValue, kvlistValue: { ...kvlistValue, values: redacted } };
+	}
+	return value;
+}
+
+function isTransientClickHouseFailure(error: unknown): boolean {
+	if (!error || typeof error !== "object" || !("code" in error)) return false;
+	return new Set([
+		"ECONNABORTED",
+		"ECONNREFUSED",
+		"ECONNRESET",
+		"EAI_AGAIN",
+		"EHOSTUNREACH",
+		"ENETUNREACH",
+		"ETIMEDOUT",
+	]).has(String(error.code));
 }
 
 function aggregateTrace(

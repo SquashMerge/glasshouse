@@ -100,7 +100,7 @@ Ordinary navigation within the protected workspace reuses the verified in-memory
 
 **Goal:** persist or disclose credentials, PII, prompts, tool results, feedback, or customer data beyond its intended scope; poison evidence or manipulate evaluation outcomes.
 
-**Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence and governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
+**Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence, including configured keys nested in OTLP arrays and key-value lists; traversal is depth/node-bounded and drops a branch it cannot safely inspect. Governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
 
 The authenticated user audit-log route reads only an allowlisted projection of
 existing content-free PostgreSQL audit ledgers. Every query binds Organization

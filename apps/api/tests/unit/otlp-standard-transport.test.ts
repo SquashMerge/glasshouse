@@ -77,6 +77,48 @@ test("OTLP JSON accepts lower-camel OTLP fields, uppercase IDs, and gzip", async
 	expect(traces).toBe(1);
 });
 
+test("OTLP JSON accepts an empty parentSpanId for a root span", async () => {
+	let parentObservationId: string | null | undefined;
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async () => undefined,
+		insertObservations: async (_client, rows) => {
+			parentObservationId = rows[0]?.parent_observation_id;
+		},
+	});
+	const response = await handler(
+		new Request("http://localhost/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				resourceSpans: [
+					{
+						scopeSpans: [
+							{
+								spans: [
+									{
+										traceId: "00112233445566778899aabbccddeeff",
+										spanId: "0011223344556677",
+										parentSpanId: "",
+										name: "root",
+										startTimeUnixNano: "1700000000000000000",
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		}),
+		tenant,
+	);
+	expect(response.status).toBe(200);
+	expect(parentObservationId).toBeNull();
+});
+
 test("OTLP protobuf accepts an empty official export and responds in protobuf", async () => {
 	const handler = createOtlpIngestHandler({
 		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
@@ -183,6 +225,109 @@ test("OTLP protobuf persists root and child spans encoded by the official schema
 			parent_observation_id: "0011223344556677",
 		},
 	]);
+});
+
+test("OTLP protobuf normalizes bytesValue without changing trace or span IDs", async () => {
+	let observationMetadata: unknown;
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async () => undefined,
+		insertObservations: async (_client, rows) => {
+			observationMetadata = rows[0]?.metadata;
+		},
+	});
+	const ExportTraceServiceRequest = (
+		protobufRoot as unknown as {
+			opentelemetry: {
+				proto: {
+					collector: { trace: { v1: { ExportTraceServiceRequest: never } } };
+				};
+			};
+		}
+	).opentelemetry.proto.collector.trace.v1
+		.ExportTraceServiceRequest as unknown as {
+		encode: (value: object) => { finish: () => Uint8Array };
+	};
+	const body = ExportTraceServiceRequest.encode({
+		resourceSpans: [
+			{
+				scopeSpans: [
+					{
+						spans: [
+							{
+								traceId: Buffer.from("00112233445566778899aabbccddeeff", "hex"),
+								spanId: Buffer.from("0011223344556677", "hex"),
+								name: "bytes",
+								startTimeUnixNano: "1700000000000000000",
+								attributes: [
+									{
+										key: "binary",
+										value: { bytesValue: Buffer.from("hello") },
+									},
+								],
+							},
+						],
+					},
+				],
+			},
+		],
+	}).finish();
+	const response = await handler(
+		new Request("http://localhost/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/x-protobuf" },
+			body,
+		}),
+		tenant,
+	);
+	expect(response.status).toBe(200);
+	expect(observationMetadata).toMatchObject({
+		attributes: [{ key: "binary", value: { bytesValue: "aGVsbG8=" } }],
+	});
+});
+
+test("OTLP returns retryable service unavailable when ClickHouse persistence fails", async () => {
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async () => {
+			throw Object.assign(new Error("ClickHouse connection reset"), {
+				code: "ECONNRESET",
+			});
+		},
+		insertObservations: async () => undefined,
+	});
+	const response = await handler(
+		new Request("http://localhost/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				resourceSpans: [
+					{
+						scopeSpans: [
+							{
+								spans: [
+									{
+										traceId: "00112233445566778899aabbccddeeff",
+										spanId: "0011223344556677",
+										name: "retry",
+										startTimeUnixNano: "1700000000000000000",
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		}),
+		tenant,
+	);
+	expect(response.status).toBe(503);
 });
 
 test("OTLP JSON rejects null resource spans without attempting persistence", async () => {

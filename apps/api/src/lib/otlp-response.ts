@@ -94,5 +94,6 @@ function errorMessage(status: number): string {
 	if (status === 413) return "Trace export exceeds the request limit";
 	if (status === 415) return "Unsupported trace export media type";
 	if (status === 429) return "Trace export temporarily unavailable";
+	if (status === 503) return "Trace export temporarily unavailable";
 	return "Trace export failed";
 }

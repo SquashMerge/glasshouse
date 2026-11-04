@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { createServer } from "node:net";
+import protobufRoot from "@opentelemetry/otlp-proto-exporter-base/build/src/generated/root.js";
 import { startOtlpGrpcServer } from "../../src/lib/otlp-grpc.js";
+import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
 
 const traceExportPath =
 	"/opentelemetry.proto.collector.trace.v1.TraceService/Export";
@@ -40,16 +42,31 @@ function unary(
 	});
 }
 
-test("OTLP gRPC authenticates and forwards the original protobuf request", async () => {
+test("OTLP gRPC forwards and normalizes the original protobuf request", async () => {
 	const port = await unusedLoopbackPort();
 	const previousPort = process.env.OTLP_GRPC_PORT;
 	const previousHost = process.env.OTLP_GRPC_HOST;
 	process.env.OTLP_GRPC_PORT = String(port);
 	process.env.OTLP_GRPC_HOST = "127.0.0.1";
 	let forwarded: Request | undefined;
+	let observationMetadata: unknown;
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async () => undefined,
+		insertObservations: async (_client, rows) => {
+			observationMetadata = rows[0]?.metadata;
+		},
+	});
 	const stop = await startOtlpGrpcServer(async (request) => {
-		forwarded = request;
-		return new Response(new Uint8Array(), { status: 200 });
+		forwarded = request.clone();
+		return handler(request, {
+			actorId: "11111111-1111-4111-8111-111111111111",
+			organizationId: "22222222-2222-4222-8222-222222222222",
+			projectId: "33333333-3333-4333-8333-333333333333",
+		});
 	});
 	const client = new grpc.Client(
 		`127.0.0.1:${port}`,
@@ -62,7 +79,47 @@ test("OTLP gRPC authenticates and forwards the original protobuf request", async
 			"x-glasshouse-project-id",
 			"33333333-3333-4333-8333-333333333333",
 		);
-		const payload = Buffer.from([10, 0]);
+		const ExportTraceServiceRequest = (
+			protobufRoot as unknown as {
+				opentelemetry: {
+					proto: {
+						collector: { trace: { v1: { ExportTraceServiceRequest: never } } };
+					};
+				};
+			}
+		).opentelemetry.proto.collector.trace.v1
+			.ExportTraceServiceRequest as unknown as {
+			encode: (value: object) => { finish: () => Uint8Array };
+		};
+		const payload = Buffer.from(
+			ExportTraceServiceRequest.encode({
+				resourceSpans: [
+					{
+						scopeSpans: [
+							{
+								spans: [
+									{
+										traceId: Buffer.from(
+											"00112233445566778899aabbccddeeff",
+											"hex",
+										),
+										spanId: Buffer.from("0011223344556677", "hex"),
+										name: "grpc",
+										startTimeUnixNano: "1700000000000000000",
+										attributes: [
+											{
+												key: "binary",
+												value: { bytesValue: Buffer.from("hello") },
+											},
+										],
+									},
+								],
+							},
+						],
+					},
+				],
+			}).finish(),
+		);
 		expect(await unary(client, traceExportPath, payload, metadata)).toEqual(
 			Buffer.alloc(0),
 		);
@@ -70,6 +127,9 @@ test("OTLP gRPC authenticates and forwards the original protobuf request", async
 			"application/x-protobuf",
 		);
 		expect(new Uint8Array(await forwarded!.arrayBuffer())).toEqual(payload);
+		expect(observationMetadata).toMatchObject({
+			attributes: [{ key: "binary", value: { bytesValue: "aGVsbG8=" } }],
+		});
 		expect(await unary(client, healthPath, Buffer.alloc(0))).toEqual(
 			Buffer.from([8, 1]),
 		);
@@ -122,6 +182,35 @@ test("OTLP gRPC preserves a partial-success response", async () => {
 		expect(
 			await unary(client, traceExportPath, Buffer.alloc(0), metadata),
 		).toEqual(partial);
+	} finally {
+		client.close();
+		await stop?.();
+		if (previousPort === undefined) delete process.env.OTLP_GRPC_PORT;
+		else process.env.OTLP_GRPC_PORT = previousPort;
+	}
+});
+
+test("OTLP gRPC maps temporary exporter failures to UNAVAILABLE", async () => {
+	const port = await unusedLoopbackPort();
+	const previousPort = process.env.OTLP_GRPC_PORT;
+	process.env.OTLP_GRPC_PORT = String(port);
+	const stop = await startOtlpGrpcServer(
+		() => new Response(null, { status: 503 }),
+	);
+	const client = new grpc.Client(
+		`127.0.0.1:${port}`,
+		grpc.credentials.createInsecure(),
+	);
+	try {
+		const metadata = new grpc.Metadata();
+		metadata.set("authorization", "Bearer synthetic");
+		metadata.set(
+			"x-glasshouse-project-id",
+			"33333333-3333-4333-8333-333333333333",
+		);
+		await expect(
+			unary(client, traceExportPath, Buffer.alloc(0), metadata),
+		).rejects.toMatchObject({ code: grpc.status.UNAVAILABLE });
 	} finally {
 		client.close();
 		await stop?.();
