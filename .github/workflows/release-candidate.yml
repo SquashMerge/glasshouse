@@ -36,3 +36,7 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           VERSION: v0.0.0-rc.1
         run: bash infra/scripts/test-publisher-candidate.sh
+      - name: Exercise publisher against these exact archives without network
+        shell: bash
+        run: |
+          PUBLISHER_CANDIDATE_DIR="$RUNNER_TEMP" python3 -m unittest discover -s infra/scripts/tests -p test_release_publisher_e2e.py -v

@@ -1,10 +1,12 @@
 """Offline pipeline regression: production publisher, synthetic artifacts, fake GitHub transport."""
+import filecmp
 import hashlib
 import importlib.util
 import io
 import json
 import os
 import socket
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -31,11 +33,14 @@ class Response(io.BytesIO):
 
 class FakeGitHub:
     """Only the HTTP transport is replaced; unrecognized requests fail closed."""
-    def __init__(self, sha, tag):
-        self.sha, self.tag = sha, tag
+    def __init__(self, sha, tag, storage):
+        self.sha, self.tag, self.storage = sha, tag, storage
+        self.storage.mkdir()
         self.draft, self.assets = None, {}
         self.downloads = []
         self.move_after_upload = False
+        self.move_tag_after_upload = False
+        self.lose_response_after = None
         self.corrupt_readback = False
         self.fail_upload_after = None
         self.existing = False
@@ -60,8 +65,8 @@ class FakeGitHub:
         self.objects[f'commits/{sha}/check-runs'] = {'total_count': len(checks), 'check_runs': checks}
 
     def metadata(self):
-        return [{'id': i, 'name': n, 'size': len(data), 'state': 'uploaded'}
-                for i, (n, data) in enumerate(self.assets.items(), 1)]
+        return [{'id': i, 'name': n, 'size': path.stat().st_size, 'state': 'uploaded'}
+                for i, (n, path) in enumerate(self.assets.items(), 1)]
 
     def open(self, request, timeout):
         assert request.full_url.startswith(publisher.BASE)
@@ -83,8 +88,12 @@ class FakeGitHub:
             if path.startswith('releases/assets/'):
                 asset = self.metadata()[int(path.rsplit('/', 1)[1]) - 1]
                 self.downloads.append(asset['name'])
-                data = self.assets[asset['name']]
-                return Response(b'X' + data[1:] if self.corrupt_readback else data)
+                path = self.assets[asset['name']]
+                if self.corrupt_readback:
+                    # Only synthetic negative tests enable corruption.
+                    data = path.read_bytes()
+                    return Response(b'X' + data[1:])
+                return path.open('rb')
         if method == 'POST':
             body = json.loads(request.data)
             if path == 'releases/generate-notes':
@@ -99,27 +108,42 @@ class FakeGitHub:
         fake = self
         class Connection:
             def __init__(self):
-                self.body = b''
+                self.stream = None
+                self.sent = 0
                 self.headers = {}
             def putrequest(self, method, target):
                 assert method == 'POST'
                 url = urlsplit(target)
                 assert url.path == f'/repos/{publisher.REPO}/releases/7/assets'
                 self.name = parse_qs(url.query)['name'][0]
+                assert self.name in (*NAMES, 'SHA256SUMS')
+                assert self.name not in fake.assets
+                self.path = fake.storage / self.name
+                self.stream = self.path.open('xb')
             def putheader(self, key, value): self.headers[key] = value
             def endheaders(self): pass
-            def send(self, block): self.body += block
+            def send(self, block):
+                assert len(block) <= 1024 * 1024
+                self.stream.write(block)
+                self.sent += len(block)
             def getresponse(self):
+                self.stream.close()
                 assert self.headers['Authorization'] == 'Bearer synthetic-token'
-                assert int(self.headers['Content-Length']) == len(self.body)
-                assert self.name not in fake.assets
+                assert int(self.headers['Content-Length']) == self.sent
                 if fake.fail_upload_after == len(fake.assets):
+                    self.path.unlink()
                     return Response({'error': 'synthetic upload failure'}, 500)
-                fake.assets[self.name] = self.body
+                fake.assets[self.name] = self.path
                 if fake.move_after_upload:
                     fake.objects['git/ref/heads/main']['object']['sha'] = 'b' * 40
-                return Response({'name': self.name, 'size': len(self.body), 'state': 'uploaded'}, 201)
-            def close(self): pass
+                if fake.move_tag_after_upload:
+                    fake.objects[f'git/ref/tags/{fake.tag}']['object']['sha'] = 'b' * 40
+                if fake.lose_response_after == len(fake.assets):
+                    raise ConnectionResetError('synthetic accepted upload, lost response')
+                return Response({'name': self.name, 'size': self.sent, 'state': 'uploaded'}, 201)
+            def close(self):
+                if self.stream and not self.stream.closed:
+                    self.stream.close()
         return Connection()
 
 
@@ -132,7 +156,7 @@ class PublisherPipelineTests(unittest.TestCase):
         self.assets.mkdir()
         self.sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
         self.tag = 'v1.2.3-rc.1'
-        self.fake = FakeGitHub(self.sha, self.tag)
+        self.fake = FakeGitHub(self.sha, self.tag, self.root / 'fake-github')
         self.environment = {'GH_TOKEN': 'synthetic-token', 'GITHUB_REPOSITORY': publisher.REPO,
             'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': f'refs/tags/{self.tag}', 'GITHUB_SHA': self.sha}
         self.workflow = (ROOT / '.github/workflows/release-publisher.yml').read_text()
@@ -161,6 +185,8 @@ class PublisherPipelineTests(unittest.TestCase):
              patch.object(publisher, 'build_opener', return_value=Opener()), \
              patch.object(publisher.http.client, 'HTTPSConnection', side_effect=self.fake.connection), \
              patch.object(socket.socket, 'connect', side_effect=AssertionError('network forbidden')), \
+             patch.object(socket.socket, 'connect_ex', side_effect=AssertionError('network forbidden')), \
+             patch.object(socket, 'getaddrinfo', side_effect=AssertionError('network forbidden')), \
              patch('sys.stdout', new_callable=io.StringIO) as output:
             publisher.main()
             return output.getvalue()
@@ -189,6 +215,32 @@ class PublisherPipelineTests(unittest.TestCase):
 
     def test_pipeline_upload_and_readback_real_publisher(self):
         self.prepare()
+        self.assert_pipeline(self.assets)
+
+    def test_candidate_archive_pipeline_with_synthetic_fixture(self):
+        self.tag = 'v0.0.0-rc.1'
+        self.prepare()
+        source = self.root / 'synthetic-candidate'
+        source.mkdir()
+        for name in (*NAMES, 'SHA256SUMS'):
+            shutil.move(self.assets / name, source / name)
+        self.assert_candidate_pipeline(source)
+
+    @unittest.skipUnless(os.environ.get('PUBLISHER_CANDIDATE_DIR'), 'no hosted candidate archives supplied')
+    def test_hosted_candidate_archives_through_mock_publisher(self):
+        # CI supplies the files created by this job, not a rebuilt fixture or a previous artifact.
+        self.assert_candidate_pipeline(Path(os.environ['PUBLISHER_CANDIDATE_DIR']))
+
+    def assert_candidate_pipeline(self, source):
+        self.tag = 'v0.0.0-rc.1'
+        self.environment['GITHUB_REF'] = f'refs/tags/{self.tag}'
+        self.fake = FakeGitHub(self.sha, self.tag, self.root / 'candidate-fake-github')
+        for name in (*NAMES, 'SHA256SUMS'):
+            shutil.copyfile(source / name, self.assets / name)
+        self.manifest = publisher.digest_file(source / 'SHA256SUMS')[1]
+        self.assert_pipeline(source)
+
+    def assert_pipeline(self, original):
         for step in ('Verify transferred artifact and repeat admission', 'Create and verify draft release'):
             result = self.workflow_verify(step)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -217,8 +269,9 @@ class PublisherPipelineTests(unittest.TestCase):
         self.assertTrue(self.fake.draft['prerelease'])
         self.assertEqual(list(self.fake.assets), [*NAMES, 'SHA256SUMS'])
         self.assertEqual(self.fake.downloads, [*NAMES, 'SHA256SUMS'])
-        for name, data in self.fake.assets.items():
-            self.assertEqual(data, (self.assets / name).read_bytes())
+        for name, uploaded in self.fake.assets.items():
+            self.assertTrue(filecmp.cmp(uploaded, original / name, shallow=False), name)
+            self.assertTrue(filecmp.cmp(self.assets / name, original / name, shallow=False), name)
 
     def test_reject_bad_version_and_checksum_before_writes(self):
         self.prepare()
@@ -265,6 +318,27 @@ class PublisherPipelineTests(unittest.TestCase):
         self.assertTrue(self.fake.draft['draft'])
         self.assertEqual(list(self.fake.assets), [NAMES[0]])
         self.assertEqual(self.fake.downloads, [])
+
+    def test_tag_movement_after_upload_leaves_partial_draft(self):
+        self.prepare()
+        self.fake.move_tag_after_upload = True
+        with self.assertRaisesRegex(ValueError, 'event, tag and checkout'):
+            self.publish()
+        self.assertTrue(self.fake.draft['draft'])
+        self.assertEqual(list(self.fake.assets), [NAMES[0]])
+        self.assertEqual(self.fake.downloads, [])
+
+    def test_accepted_upload_with_lost_response_leaves_partial_draft(self):
+        self.prepare()
+        self.fake.lose_response_after = 1
+        with self.assertRaisesRegex(ConnectionResetError, 'lost response'):
+            self.publish()
+        self.assertTrue(self.fake.draft['draft'])
+        self.assertEqual(list(self.fake.assets), [NAMES[0]])
+        self.assertTrue(filecmp.cmp(self.fake.assets[NAMES[0]], self.assets / NAMES[0], shallow=False))
+        with self.assertRaisesRegex(ValueError, 'release already exists'):
+            self.publish()
+        self.assertEqual(list(self.fake.assets), [NAMES[0]])
 
     def test_failed_upload_leaves_partial_draft_and_rerun_refuses_it(self):
         self.prepare()
