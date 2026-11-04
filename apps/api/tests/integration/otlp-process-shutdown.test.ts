@@ -24,7 +24,10 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 		const webRoot = await mkdtemp(
 			join(process.cwd(), "node_modules", ".otlp-web-"),
 		);
-		await writeFile(join(webRoot, "index.html"), "<html>Integration shell</html>");
+		await writeFile(
+			join(webRoot, "index.html"),
+			"<html>Integration shell</html>",
+		);
 		const child = Bun.spawn([process.execPath, "run", "src/index.ts"], {
 			cwd: import.meta.dir + "/../..",
 			env: {
@@ -71,6 +74,21 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 			await expect(
 				fetch(`http://127.0.0.1:${httpPort}/health`),
 			).rejects.toThrow();
+			const closedClient = new grpc.Client(
+				`127.0.0.1:${grpcPort}`,
+				grpc.credentials.createInsecure(),
+			);
+			try {
+				await expect(
+					new Promise<void>((resolve, reject) =>
+						closedClient.waitForReady(Date.now() + 1_000, (error) =>
+							error ? reject(error) : resolve(),
+						),
+					),
+				).rejects.toThrow();
+			} finally {
+				closedClient.close();
+			}
 		} finally {
 			grpcClient.close();
 			if (child.exitCode === null) child.kill("SIGKILL");
