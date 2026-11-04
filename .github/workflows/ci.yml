@@ -427,7 +427,7 @@ jobs:
             bun --cwd apps/api test tests/integration/authorization-revocation-serialization.test.ts --test-name-pattern "concurrent GEPA starts cannot exceed the project admission cap across requesters"
             bun --cwd apps/api test tests/integration/optimization-requester-capacity.test.ts
             bun --cwd apps/api test tests/integration/durable-feedback.test.ts
-            bun --cwd apps/api test tests/integration/otlp-process-shutdown.test.ts
+            GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB=1 bun --cwd apps/api test tests/integration/otlp-process-shutdown.test.ts
           '
 
       - name: Verify idempotent ClickHouse migrations

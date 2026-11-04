@@ -4,6 +4,12 @@ import { createServer } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+if (process.env.GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB !== "1") {
+	throw new Error(
+		"This test starts recovery and requires a disposable database; set GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB=1 only for an isolated test stack",
+	);
+}
+
 async function unusedPort(): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const server = createServer();
