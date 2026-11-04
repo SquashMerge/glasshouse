@@ -114,6 +114,26 @@ it("runs and re-reads the real GEPA subprocess lifecycle only in the isolated te
 	expect(script.slice(restart, readback)).toContain("CANDIDATE_READBACK_FILE");
 });
 
+it("runs the real GEPA path against an isolated HTTP fixture and reads it back", () => {
+	const script = read("infra/scripts/test-release-candidate-evaluation.sh");
+	for (const fragment of [
+		"internal: true",
+		"GEPA_WORKER_MODE: gepa",
+		"OPENAI_API_KEY: synthetic-gepa-key",
+		"OPENAI_API_BASE: http://fixture:8080/v1",
+		"task_seed",
+		"task_candidate",
+		"reflection",
+		"candidate-gepa-real-state.json",
+	]) expect(script).toContain(fragment);
+	const first = script.indexOf("CANDIDATE_REAL_GEPA=true");
+	const restart = script.indexOf('"${compose[@]}" restart api');
+	const readback = script.lastIndexOf("CANDIDATE_REAL_GEPA=true");
+	expect(first).toBeLessThan(restart);
+	expect(readback).toBeGreaterThan(restart);
+	expect(script.slice(readback)).toContain("CANDIDATE_READBACK_FILE");
+});
+
 it("transfers, attests and checksums the tested SBOM", () => {
 	const workflow = load(read(".github/workflows/release-publisher.yml")) as any;
 	const build = workflow.jobs["build-and-test"].steps as any[];

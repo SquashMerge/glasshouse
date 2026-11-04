@@ -77,7 +77,7 @@ are trusted with its authority. Checksums detect changed bytes, not malicious
 content. Attestations bind bytes to workflow identity; they do not independently
 prove tests meaningful or dependencies safe.
 
-Tests include a reloaded image, image scan/SBOM identity, browser probes, API-dispatched Evaluation and Python GEPA jobs with credential-free fake providers in a disposable test-mode stack, a pinned historical upgrade, and a standalone backup/restore drill. Job results are read again after restarting the API; real providers and recovery of an interrupted job are not tested.
+Tests include a reloaded image, image scan/SBOM identity, browser probes, API-dispatched Evaluation and Python GEPA jobs in a disposable test-mode stack, a pinned historical upgrade, and a standalone backup/restore drill. GEPA coverage includes its fake worker and the real optimizer against a synthetic OpenAI-compatible HTTP fixture on an internal-only network; no real provider credentials are used. Job results are read again after restarting the API; external providers and recovery of an interrupted job are not tested.
 The bundle is tested by extracting its tarball and using the extracted directory;
 the test adds a synthetic environment file only after extraction. A candidate
 workflow's results do not prove that a different release's bytes were tested.

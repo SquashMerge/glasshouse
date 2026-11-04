@@ -9,7 +9,10 @@ assert(
 );
 const authorization = `Basic ${Buffer.from("synthetic-owner:synthetic-ui-9b412e8cfa").toString("base64")}`;
 const source = "Summarize tasks";
-const candidate = `${source}\n\nOptimize for clear, accurate answers.`;
+const real = process.env.CANDIDATE_REAL_GEPA === "true";
+const candidate = real
+	? "Summarize tasks accurately and answer the question."
+	: `${source}\n\nOptimize for clear, accurate answers.`;
 
 async function api(path: string, body?: unknown, expected = 200): Promise<any> {
 	const response = await fetch(`${base}${path}`, {
@@ -38,7 +41,8 @@ function check(job: any, id: string, slug: string) {
 		`optimization ended as ${job.status}: ${job.error_message}`,
 	);
 	assert.equal(job.candidate_content, candidate);
-	assert.equal(job.metric_calls_used, 0);
+	if (real) assert(job.metric_calls_used > 0 && job.metric_calls_used <= 5);
+	else assert.equal(job.metric_calls_used, 0);
 	assert.equal(job.promotion_status, "review_required");
 	assert.equal(job.evidence.metric, "default_adapter.expected_answer_contains");
 	assert.equal(job.evidence.training.sample_count, 1);
@@ -99,14 +103,14 @@ const started = await api(
 			task_lm: "openai/gpt-4o-mini",
 			reflection_lm: "openai/gpt-4o-mini",
 		},
-		budget: { max_metric_calls: 2 },
+		budget: { max_metric_calls: real ? 5 : 2 },
 	},
 	202,
 );
 assert(started.id);
 const path = `/v1/prompt-optimizations/${started.id}?project_id=${project.id}`;
 let job: any;
-const deadline = Date.now() + 60000;
+const deadline = Date.now() + 120000;
 do {
 	job = await api(path);
 	if (["completed", "failed", "stopped"].includes(job.status)) break;
@@ -119,5 +123,5 @@ await Bun.write(
 	JSON.stringify({ project: project.id, id: started.id, slug: prompt.id }),
 );
 console.log(
-	`Optimization ${started.id}: Python fake worker completed and persisted its candidate`,
+	`Optimization ${started.id}: Python ${real ? "GEPA" : "fake"} worker completed and persisted its candidate`,
 );
