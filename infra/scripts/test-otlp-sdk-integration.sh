@@ -5,8 +5,12 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd -- "$root"
 
 release=false
+db_password=otlp-test-password
+ui_password=otlp-sdk-password
 if [[ "${1:-}" == --release-candidate && $# == 1 ]]; then
   release=true
+  db_password=synthetic-otlp-store-a1b2c3d4
+  ui_password=synthetic-otlp-ui-e5f6a7b8
   [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]] || {
     printf '%s\n' 'Release proof is restricted to GitHub Actions.' >&2; exit 2;
   }
@@ -63,14 +67,14 @@ if "$release"; then
   cat > "$compose_env" <<EOF
 GLASSHOUSE_IMAGE=$image_id
 POSTGRES_USER=otlp_test
-POSTGRES_PASSWORD=otlp-test-password
+POSTGRES_PASSWORD=$db_password
 POSTGRES_DB=glasshouse
 CLICKHOUSE_USER=otlp_test
-CLICKHOUSE_PASSWORD=otlp-test-password
+CLICKHOUSE_PASSWORD=$db_password
 CLICKHOUSE_DB=glasshouse
-VALKEY_PASSWORD=otlp-test-password
+VALKEY_PASSWORD=$db_password
 UI_USERNAME=otlp-sdk
-UI_PASSWORD=otlp-sdk-password
+UI_PASSWORD=$ui_password
 GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=otlp-sdk
 GLASSHOUSE_PUBLIC_ORIGIN=https://127.0.0.1:34443
 GEPA_ALLOWED_MODELS=openai/gpt-4o-mini
@@ -282,9 +286,9 @@ organization_id="$("${compose[@]}" exec -T postgres psql -U otlp_test -d glassho
 test -n "$project_id"
 test -n "$organization_id"
 wrong_project_slug="sdk-denied-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
-wrong_project_json="$(curl --fail --silent --show-error --user 'otlp-sdk:otlp-sdk-password' --header 'content-type: application/json' --data "{\"name\":\"SDK denied Project\",\"slug\":\"${wrong_project_slug}\"}" "http://127.0.0.1:${api_port}/v1/projects")"
+wrong_project_json="$(curl --fail --silent --show-error --user "otlp-sdk:$ui_password" --header 'content-type: application/json' --data "{\"name\":\"SDK denied Project\",\"slug\":\"${wrong_project_slug}\"}" "http://127.0.0.1:${api_port}/v1/projects")"
 wrong_project_id="$(RESULT="$wrong_project_json" python3 -c 'import json, os; print(json.loads(os.environ["RESULT"])["id"])')"
-ingest_credential_json="$(curl --fail --silent --show-error --user 'otlp-sdk:otlp-sdk-password' --header 'content-type: application/json' --data "{\"project_id\":\"${project_id}\",\"name\":\"SDK interoperability\"}" "http://127.0.0.1:${api_port}/v1/admin/otlp-credentials")"
+ingest_credential_json="$(curl --fail --silent --show-error --user "otlp-sdk:$ui_password" --header 'content-type: application/json' --data "{\"project_id\":\"${project_id}\",\"name\":\"SDK interoperability\"}" "http://127.0.0.1:${api_port}/v1/admin/otlp-credentials")"
 ingest_token="$(RESULT="$ingest_credential_json" python3 -c 'import json, os; print(json.loads(os.environ["RESULT"])["secret"])')"
 test -n "$wrong_project_id"
 test -n "$ingest_token"
@@ -303,7 +307,7 @@ for transport in "${transports[@]}"; do
     --transport "$transport" \
     --api-endpoint "http://127.0.0.1:$api_port" \
     --grpc-endpoint "http://127.0.0.1:$grpc_port" \
-    --username otlp-sdk --password otlp-sdk-password --ingest-token "$ingest_token" \
+    --username otlp-sdk --password "$ui_password" --ingest-token "$ingest_token" \
     --project-id "$project_id" --wrong-project-id "$wrong_project_id" \
     --result-file "$result_file"
   read -r trace_ids observation_ids denied_trace_ids denied_observation_ids < <(env -i PATH="$PATH" HOME="$harness_home" python3 - "$result_file" <<'PY'
@@ -312,10 +316,10 @@ result = json.load(open(sys.argv[1]))
 print(*("','".join(result[key]) for key in ("trace_ids", "observation_ids", "denied_trace_ids", "denied_observation_ids")))
 PY
 )
-  trace_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password otlp-test-password --database glasshouse --query "SELECT count() FROM traces WHERE organization_id = '${organization_id}' AND project_id = '${project_id}' AND trace_id IN ('${trace_ids}')")"
-  observation_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password otlp-test-password --database glasshouse --query "SELECT count() FROM observations WHERE organization_id = '${organization_id}' AND project_id = '${project_id}' AND observation_id IN ('${observation_ids}')")"
-  denied_trace_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password otlp-test-password --database glasshouse --query "SELECT count() FROM traces WHERE trace_id IN ('${denied_trace_ids}')")"
-  denied_observation_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password otlp-test-password --database glasshouse --query "SELECT count() FROM observations WHERE observation_id IN ('${denied_observation_ids}')")"
+  trace_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password "$db_password" --database glasshouse --query "SELECT count() FROM traces WHERE organization_id = '${organization_id}' AND project_id = '${project_id}' AND trace_id IN ('${trace_ids}')")"
+  observation_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password "$db_password" --database glasshouse --query "SELECT count() FROM observations WHERE organization_id = '${organization_id}' AND project_id = '${project_id}' AND observation_id IN ('${observation_ids}')")"
+  denied_trace_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password "$db_password" --database glasshouse --query "SELECT count() FROM traces WHERE trace_id IN ('${denied_trace_ids}')")"
+  denied_observation_count="$("${compose[@]}" exec -T clickhouse clickhouse-client --user otlp_test --password "$db_password" --database glasshouse --query "SELECT count() FROM observations WHERE observation_id IN ('${denied_observation_ids}')")"
   expected_trace_count="1"
   expected_observation_count="2"
   if [[ "$transport" == "http" ]]; then
