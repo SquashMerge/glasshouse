@@ -124,6 +124,25 @@ describe("OTLP ingest publishes events", () => {
 		}
 	});
 
+	it("maps exhausted database serialization and deadlock retries to 503", async () => {
+		for (const code of ["40P01", "40001"]) {
+			const handler = createOtlpIngestHandler({
+				withActiveAuthorizedProjectLock: async () => {
+					throw Object.assign(new Error("transaction aborted"), { code });
+				},
+			});
+			const response = await handler(
+				new Request("http://x/v1/traces", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ resource_spans: [] }),
+				}),
+				TENANT,
+			);
+			expect(response.status).toBe(503);
+		}
+	});
+
 	it("uses the checked-out authorization client for the redaction read", async () => {
 		const transaction = { query: async () => ({ rows: [] }) };
 		let usedTransaction = false;

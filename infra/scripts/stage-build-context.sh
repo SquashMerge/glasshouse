@@ -20,7 +20,7 @@ readonly -a allowlisted_paths=(
 [[ -z "$(ls -A -- "$destination")" ]] || { printf '%s\n' 'Build context destination must be empty.' >&2; exit 2; }
 
 cd -- "$root"
-git diff --quiet HEAD -- || {
+git diff --quiet HEAD -- && git diff --cached --quiet HEAD -- || {
   printf '%s\n' 'Refusing build context with tracked changes.' >&2
   exit 1
 }

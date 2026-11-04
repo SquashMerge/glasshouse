@@ -86,6 +86,7 @@ class DockerBuildContextTests(unittest.TestCase):
             )
             dockerfile.write_text("FROM staged-working-tree\n")
             subprocess.run(["git", "add", dockerfile], cwd=source, check=True)
+            dockerfile.write_text("FROM scratch\n")
             context.mkdir()
             result = subprocess.run(
                 ["bash", source / "infra/scripts/stage-build-context.sh", context],

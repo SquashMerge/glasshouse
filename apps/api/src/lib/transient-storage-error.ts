@@ -1,4 +1,6 @@
 const transientStorageCodes = new Set([
+	"40001",
+	"40P01",
 	"53300",
 	"57P01",
 	"57P03",
