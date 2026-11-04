@@ -30,6 +30,7 @@ import type { ProjectOperation } from "./authorization-policy.js";
 import { logger } from "./lib/logger.js";
 import { AuthenticationError } from "./db/local-sessions.js";
 import { assertProductionConfiguration } from "./lib/production-config.js";
+import { createSingleImageFetch } from "./lib/single-image-web.js";
 
 if (process.env.NODE_ENV === "production") assertProductionConfiguration();
 const PORT = Number(process.env.API_PORT ?? 3000);
@@ -379,8 +380,12 @@ logger.info("api.routes_ready", {
 	otlp_ingest: "/v1/otel/v1/traces",
 });
 
+export function createServerFetch(webRoot: string | undefined) {
+	return webRoot ? createSingleImageFetch(webRoot, apiApp.fetch) : apiApp.fetch;
+}
+
 export default {
 	port: PORT,
 	hostname: "0.0.0.0",
-	fetch: apiApp.fetch,
+	fetch: createServerFetch(process.env.GLASSHOUSE_WEB_ROOT),
 };
