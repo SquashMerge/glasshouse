@@ -4,11 +4,9 @@ import { createServer } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-if (process.env.GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB !== "1") {
-	throw new Error(
-		"This test starts recovery and requires a disposable database; set GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB=1 only for an isolated test stack",
-	);
-}
+// Starting the API runs recovery against the configured database.
+const recoveryTest =
+	process.env.GLASSHOUSE_TEST_DISPOSABLE_RECOVERY_DB === "1" ? test : test.skip;
 
 async function unusedPort(): Promise<number> {
 	return new Promise((resolve, reject) => {
@@ -24,7 +22,7 @@ async function unusedPort(): Promise<number> {
 }
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
-	test(`API shuts down HTTP and gRPC on ${signal}`, async () => {
+	recoveryTest(`API shuts down HTTP and gRPC on ${signal}`, async () => {
 		const httpPort = await unusedPort();
 		const grpcPort = await unusedPort();
 		const webRoot = await mkdtemp(
