@@ -63,6 +63,40 @@ it("runs the publisher's exact orchestration on non-publishing candidates", () =
 	expect(script).not.toMatch(/gh release|docker push|packages: write/);
 });
 
+it("runs the fake-provider lifecycle only in the non-publishing candidate workflow", () => {
+	const workflow = load(read(".github/workflows/release-candidate.yml")) as any;
+	const steps = workflow.jobs.candidate.steps as any[];
+	const lifecycle = steps.findIndex((step) =>
+		step.run?.includes("test-release-candidate-evaluation.sh"),
+	);
+	const build = steps.findIndex((step) =>
+		step.run?.includes("test-publisher-candidate.sh"),
+	);
+	expect(lifecycle).toBeGreaterThan(build);
+	expect(build).toBeGreaterThanOrEqual(0);
+	const publisher = read(".github/workflows/release-publisher.yml");
+	expect(publisher).not.toContain("test-release-candidate-evaluation.sh");
+	const script = read("infra/scripts/test-release-candidate-evaluation.sh");
+	for (const fragment of [
+		"NODE_ENV: test",
+		"GLASSHOUSE_EVAL_LLM_PROVIDER: fake",
+		"EVALUATION_ALLOWED_MODELS: fake/deterministic",
+		'OPENAI_API_KEY: ""',
+		"--no-build --pull never",
+		"release-candidate-evaluation.ts",
+		"CANDIDATE_READBACK_FILE",
+		"restart api",
+		"{{.Image}}",
+	])
+		expect(script).toContain(fragment);
+	expect(script.indexOf("CANDIDATE_EXPECT_FAKE_DENIAL=true")).toBeLessThan(
+		script.indexOf("NODE_ENV: test"),
+	);
+	expect(script).toContain("org.opencontainers.image.revision");
+	expect(script).not.toContain("NODE_ENV: production");
+	expect(read("deploy/release/compose.yaml")).toContain("NODE_ENV: production");
+});
+
 it("transfers, attests and checksums the tested SBOM", () => {
 	const workflow = load(read(".github/workflows/release-publisher.yml")) as any;
 	const build = workflow.jobs["build-and-test"].steps as any[];

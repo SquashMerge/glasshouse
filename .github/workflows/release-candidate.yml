@@ -36,3 +36,9 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           VERSION: v0.0.0-rc.1
         run: bash infra/scripts/test-publisher-candidate.sh
+      - name: Exercise evaluation worker on the reloaded candidate (test mode)
+        shell: bash
+        env:
+          VERSION: v0.0.0-rc.1
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash infra/scripts/test-release-candidate-evaluation.sh

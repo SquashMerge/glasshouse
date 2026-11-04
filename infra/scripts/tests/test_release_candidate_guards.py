@@ -45,6 +45,12 @@ class CandidateSafetyTests(unittest.TestCase):
             with self.subTest(script=script.name):
                 self.assertNotEqual(self.run_script(script).returncode, 0)
 
+    def test_evaluation_probe_refuses_execution_outside_actions(self):
+        script = ROOT / 'infra/scripts/test-release-candidate-evaluation.sh'
+        result = self.run_script(script, VERSION='v0.0.0-rc.1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('docker:', result.stderr)
+
     def test_recovery_requires_immutable_candidate_id_before_docker(self):
         env = {'GITHUB_ACTIONS': 'true', 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1',
                'RUNNER_TEMP': '/ci-temp'}
