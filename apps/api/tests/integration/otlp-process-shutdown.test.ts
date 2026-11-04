@@ -21,6 +21,7 @@ function disposableEnvironment(env: NodeJS.ProcessEnv): boolean {
 		env.GLASSHOUSE_CONTAINER_NETWORK === "1" &&
 		env.NODE_ENV !== "production" &&
 		env.POSTGRES_HOST === "postgres" &&
+		env.POSTGRES_PORT === "5432" &&
 		env.CLICKHOUSE_HOST === "clickhouse" &&
 		env.VALKEY_HOST === "valkey" &&
 		env.DATABASE_URL === undefined &&
@@ -30,9 +31,15 @@ function disposableEnvironment(env: NodeJS.ProcessEnv): boolean {
 }
 
 function sanitizedChildEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	return Object.fromEntries(
+	const child = Object.fromEntries(
 		Object.entries(env).filter(([key]) => !key.startsWith("PG")),
 	);
+	const database = new URL("postgresql://postgres:5432");
+	database.username = env.POSTGRES_USER ?? "postgres";
+	database.password = env.POSTGRES_PASSWORD ?? "postgres";
+	database.pathname = `/${encodeURIComponent(env.POSTGRES_DB ?? "postgres")}`;
+	child.DATABASE_URL = database.toString();
+	return child;
 }
 
 test("shutdown test refuses inherited or non-disposable datastore configuration", () => {
@@ -40,6 +47,7 @@ test("shutdown test refuses inherited or non-disposable datastore configuration"
 		OTLP_SHUTDOWN_DISPOSABLE: "1",
 		GLASSHOUSE_CONTAINER_NETWORK: "1",
 		POSTGRES_HOST: "postgres",
+		POSTGRES_PORT: "5432",
 		CLICKHOUSE_HOST: "clickhouse",
 		VALKEY_HOST: "valkey",
 	};
@@ -49,6 +57,7 @@ test("shutdown test refuses inherited or non-disposable datastore configuration"
 		{ ...safe, GLASSHOUSE_CONTAINER_NETWORK: undefined },
 		{ ...safe, NODE_ENV: "production" },
 		{ ...safe, POSTGRES_HOST: "localhost" },
+		{ ...safe, POSTGRES_PORT: "6543" },
 		{ ...safe, CLICKHOUSE_HOST: "localhost" },
 		{ ...safe, VALKEY_HOST: "localhost" },
 		{ ...safe, DATABASE_URL: "postgres://example" },
@@ -69,6 +78,7 @@ test("shutdown child resolves its PostgreSQL target without inherited PG setting
 		DATABASE_URL: undefined,
 		POSTGRES_HOST: "postgres",
 		POSTGRES_PORT: "5432",
+		POSTGRES_DB: "glasshouse?host=unsafe-example.invalid",
 	});
 	const result = Bun.spawnSync(
 		[
