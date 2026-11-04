@@ -28,15 +28,27 @@ it("candidate CI is non-publishing and reloads the compressed image", () => {
 	expect(commands).toContain("check-release-asset.py");
 	expect(commands).toContain("docker load");
 	expect(commands).toContain("python3 scripts/install_snapshot_trivy.py");
-	expect(commands).toContain('python3 infra/scripts/release-image-scan.py "$image" "$before"');
+	expect(commands).toContain(
+		'python3 infra/scripts/release-image-scan.py "$image" "$before"',
+	);
 	expect(commands.indexOf("docker load")).toBeLessThan(
 		commands.indexOf("python3 infra/scripts/release-image-scan.py"),
 	);
-	expect(commands.indexOf("python3 infra/scripts/release-image-scan.py")).toBeLessThan(
-		commands.indexOf('"${compose[@]}" up -d --no-build'),
-	);
-	expect(commands.match(/sha256sum --check candidate\.SHA256SUMS/g)).toHaveLength(2);
+	expect(
+		commands.indexOf("python3 infra/scripts/release-image-scan.py"),
+	).toBeLessThan(commands.indexOf('"${compose[@]}" up -d --no-build'));
+	expect(
+		commands.match(/sha256sum --check candidate\.SHA256SUMS/g),
+	).toHaveLength(2);
 	expect(commands).toContain("synthetic-owner:synthetic-ui-9b412e8cfa");
+	expect(workflow.jobs.candidate.steps[0].with.ref).toBe(
+		"${{ github.event.pull_request.head.sha || github.sha }}",
+	);
+	expect(commands).toContain('test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"');
+	const afterRestart = commands.split('"${compose[@]}" restart api')[1];
+	expect(afterRestart).toMatch(
+		/address=.*port api 3000[\s\S]*curl.*\$address\/v1\/health/,
+	);
 	expect(commands).toContain("migrations-before");
 	expect(commands).toContain("/v1/traces/events?project_id=");
 	expect(commands).not.toMatch(/gh release|docker push|packages: write/);

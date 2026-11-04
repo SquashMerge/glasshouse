@@ -16,19 +16,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Install checksum-pinned image scanner
         run: python3 scripts/install_snapshot_trivy.py
       - name: Build, export, reload and smoke test candidate
         shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           image=glasshouse:v0.0.0-rc.1
           asset="$RUNNER_TEMP/glasshouse-candidate.tar.gz"
           bundle="$RUNNER_TEMP/glasshouse-candidate-bundle"
           project="release-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           python3 infra/scripts/make-release-bundle.py v0.0.0-rc.1 "$bundle"
-          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" -f apps/api/Dockerfile.single -t "$image" .
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$CANDIDATE_SHA" -f apps/api/Dockerfile.single -t "$image" .
           before="$(docker image inspect --format '{{.Id}}' "$image")"
           python3 infra/scripts/export-release-image.py "$image" "$asset"
           python3 infra/scripts/check-release-asset.py "$asset" > "$RUNNER_TEMP/candidate.SHA256SUMS"
@@ -36,7 +39,7 @@ jobs:
           docker image rm "$image"
           docker load -i "$asset"
           test "$(docker image inspect --format '{{.Id}}' "$image")" = "$before"
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$CANDIDATE_SHA"
           python3 infra/scripts/release-image-scan.py "$image" "$before" "$RUNNER_TEMP/candidate-sbom.json"
           docker run --rm --entrypoint /opt/gepa/bin/python "$image" /app/worker/gepa_worker.py --smoke
           cat > "$bundle/test.env" <<'EOF'
@@ -102,5 +105,6 @@ jobs:
           "${compose[@]}" up -d --no-deps --no-build --pull never --wait --wait-timeout 240 api
           migrations > "$RUNNER_TEMP/migrations-after"
           cmp "$RUNNER_TEMP/migrations-before" "$RUNNER_TEMP/migrations-after"
+          address="$("${compose[@]}" port api 3000)"
           curl --fail --silent --show-error "http://$address/v1/health" >/dev/null
           (cd "$RUNNER_TEMP" && sha256sum --check candidate.SHA256SUMS)
