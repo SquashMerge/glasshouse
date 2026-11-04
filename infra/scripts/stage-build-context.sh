@@ -24,7 +24,7 @@ while IFS=$' \t' read -r mode _ _ path; do
   [[ "$mode" != 120000 ]] || { printf 'Refusing symlinked build input: %s\n' "$path" >&2; exit 1; }
 done < <(git ls-files -s -- "${allowlisted_paths[@]}")
 
-if git diff --quiet -- "${allowlisted_paths[@]}" && [[ -z "$(git ls-files --others --exclude-standard -- "${allowlisted_paths[@]}")" ]]; then
+if git diff --quiet -- "${allowlisted_paths[@]}" && git diff --cached --quiet -- "${allowlisted_paths[@]}" && [[ -z "$(git ls-files --others --exclude-standard -- "${allowlisted_paths[@]}")" ]]; then
   git archive --format=tar HEAD -- "${allowlisted_paths[@]}" | tar -x -C "$destination"
 else
   while IFS= read -r -d '' path; do

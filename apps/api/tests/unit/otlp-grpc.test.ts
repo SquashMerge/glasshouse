@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
 import { createServer } from "node:net";
 import protobufRoot from "@opentelemetry/otlp-proto-exporter-base/build/src/generated/root.js";
-import { createApiApp } from "../../src/index.js";
 import { startOtlpGrpcServer } from "../../src/lib/otlp-grpc.js";
 import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
 
@@ -221,39 +220,50 @@ test("OTLP gRPC maps temporary exporter failures to UNAVAILABLE", async () => {
 	}
 });
 
-test("OTLP gRPC maps transient authentication storage failures to UNAVAILABLE", async () => {
-	const port = await unusedLoopbackPort();
-	const previousPort = process.env.OTLP_GRPC_PORT;
-	process.env.OTLP_GRPC_PORT = String(port);
-	const app = createApiApp({
-		authenticate: () => async () => {
-			throw Object.assign(new Error("PostgreSQL unavailable"), {
-				code: "ECONNREFUSED",
-			});
-		},
-	});
-	const stop = await startOtlpGrpcServer(app.fetch);
-	const client = new grpc.Client(
-		`127.0.0.1:${port}`,
-		grpc.credentials.createInsecure(),
-	);
-	try {
-		const metadata = new grpc.Metadata();
-		metadata.set("authorization", "Bearer synthetic");
-		metadata.set(
-			"x-glasshouse-project-id",
-			"33333333-3333-4333-8333-333333333333",
+for (const code of ["57P01", "57P03", "53300"]) {
+	test(`OTLP gRPC maps PostgreSQL ${code} authentication failures to UNAVAILABLE`, async () => {
+		const port = await unusedLoopbackPort();
+		const previousPort = process.env.OTLP_GRPC_PORT;
+		const previousUsername = process.env.UI_USERNAME;
+		const previousPassword = process.env.UI_PASSWORD;
+		process.env.OTLP_GRPC_PORT = String(port);
+		process.env.UI_USERNAME = "test-user";
+		process.env.UI_PASSWORD = "test-password";
+		const { createApiApp } = await import("../../src/index.js");
+		const app = createApiApp({
+			authenticate: () => async () => {
+				throw Object.assign(new Error("PostgreSQL unavailable"), {
+					code,
+				});
+			},
+		});
+		const stop = await startOtlpGrpcServer(app.fetch);
+		const client = new grpc.Client(
+			`127.0.0.1:${port}`,
+			grpc.credentials.createInsecure(),
 		);
-		await expect(
-			unary(client, traceExportPath, Buffer.alloc(0), metadata),
-		).rejects.toMatchObject({ code: grpc.status.UNAVAILABLE });
-	} finally {
-		client.close();
-		await stop?.();
-		if (previousPort === undefined) delete process.env.OTLP_GRPC_PORT;
-		else process.env.OTLP_GRPC_PORT = previousPort;
-	}
-});
+		try {
+			const metadata = new grpc.Metadata();
+			metadata.set("authorization", "Bearer synthetic");
+			metadata.set(
+				"x-glasshouse-project-id",
+				"33333333-3333-4333-8333-333333333333",
+			);
+			await expect(
+				unary(client, traceExportPath, Buffer.alloc(0), metadata),
+			).rejects.toMatchObject({ code: grpc.status.UNAVAILABLE });
+		} finally {
+			client.close();
+			await stop?.();
+			if (previousPort === undefined) delete process.env.OTLP_GRPC_PORT;
+			else process.env.OTLP_GRPC_PORT = previousPort;
+			if (previousUsername === undefined) delete process.env.UI_USERNAME;
+			else process.env.UI_USERNAME = previousUsername;
+			if (previousPassword === undefined) delete process.env.UI_PASSWORD;
+			else process.env.UI_PASSWORD = previousPassword;
+		}
+	});
+}
 
 test("OTLP gRPC health validates requested service names", async () => {
 	const port = await unusedLoopbackPort();

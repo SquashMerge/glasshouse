@@ -56,6 +56,48 @@ class DockerBuildContextTests(unittest.TestCase):
             self.assertTrue((context / "apps/api/Dockerfile").is_file())
             self.assertFalse((context / sentinel.name).exists())
 
+    def test_staged_allowlisted_changes_use_working_tree_contents(self):
+        with tempfile.TemporaryDirectory(prefix="glasshouse-staged-context-") as directory:
+            source = Path(directory) / "source"
+            context = Path(directory) / "context"
+            (source / "infra/scripts").mkdir(parents=True)
+            (source / "apps/api").mkdir(parents=True)
+            (source / "apps/web").mkdir(parents=True)
+            (source / ".github").mkdir()
+            (source / "infra/clickhouse").mkdir(parents=True)
+            (source / "infra/db").mkdir(parents=True)
+            (source / "worker").mkdir()
+            shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", source / "infra/scripts")
+            dockerfile = source / "apps/api/Dockerfile"
+            dockerfile.write_text("FROM scratch\n")
+            (source / "apps/web/placeholder").write_text("fixture\n")
+            (source / ".github/compose.otlp-sdk-integration.yaml").write_text("services: {}\n")
+            (source / "infra/clickhouse/backup.xml").write_text("<clickhouse/>\n")
+            (source / "infra/db/placeholder").write_text("fixture\n")
+            (source / "worker/placeholder").write_text("fixture\n")
+            for name in (".dockerignore", "package.json", "bun.lock"):
+                shutil.copy2(ROOT / name, source / name)
+            subprocess.run(["git", "init", "--quiet"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "fixture"],
+                cwd=source,
+                check=True,
+            )
+            dockerfile.write_text("FROM staged-working-tree\n")
+            subprocess.run(["git", "add", dockerfile], cwd=source, check=True)
+            context.mkdir()
+            subprocess.run(
+                ["bash", source / "infra/scripts/stage-build-context.sh", context],
+                cwd=source,
+                check=True,
+                timeout=30,
+            )
+            self.assertEqual(
+                (context / "apps/api/Dockerfile").read_text(),
+                "FROM staged-working-tree\n",
+            )
+
     def test_app_dockerfiles_share_the_root_ignore_policy(self):
         self.assertTrue((ROOT / ".dockerignore").is_file())
         for app in ("api", "web"):

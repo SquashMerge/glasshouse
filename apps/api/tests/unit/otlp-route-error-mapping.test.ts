@@ -68,29 +68,31 @@ test("encodes authentication and pre-auth body limit failures as OTLP JSON statu
 	});
 });
 
-test("maps transient authentication storage failures to retryable OTLP responses", async () => {
-	process.env.UI_USERNAME ??= "test-user";
-	process.env.UI_PASSWORD ??= "test-password";
-	const { createApiApp } = await import("../../src/index.js");
-	const app = createApiApp({
-		authenticate: () => async () => {
-			throw Object.assign(new Error("PostgreSQL unavailable"), {
-				code: "ECONNREFUSED",
-			});
-		},
-	});
+for (const code of ["57P01", "57P03", "53300"]) {
+	test(`maps PostgreSQL ${code} authentication failures to retryable OTLP responses`, async () => {
+		process.env.UI_USERNAME ??= "test-user";
+		process.env.UI_PASSWORD ??= "test-password";
+		const { createApiApp } = await import("../../src/index.js");
+		const app = createApiApp({
+			authenticate: () => async () => {
+				throw Object.assign(new Error("PostgreSQL unavailable"), {
+					code,
+				});
+			},
+		});
 
-	const response = await app.request("/v1/traces", {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: "{}",
-	});
+		const response = await app.request("/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		});
 
-	expect(response.status).toBe(503);
-	expect(await response.json()).toEqual({
-		message: "Trace export temporarily unavailable",
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({
+			message: "Trace export temporarily unavailable",
+		});
 	});
-});
+}
 
 test("keeps non-transient OTLP failures internal", async () => {
 	process.env.UI_USERNAME ??= "test-user";

@@ -339,6 +339,9 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 function isTransientStorageFailure(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) return false;
 	return new Set([
+		"53300",
+		"57P01",
+		"57P03",
 		"ECONNABORTED",
 		"ECONNREFUSED",
 		"ECONNRESET",
