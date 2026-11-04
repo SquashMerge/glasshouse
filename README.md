@@ -179,6 +179,16 @@ For concurrent AI-assisted development, Glasshouse provides a Compose-based devc
 | http://localhost:3000/health | Backend health check (public; no auth) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (auth-gated) |
 
+### Optional OTLP/gRPC receiver
+
+Set `OTLP_GRPC_PORT` to enable the native OTLP TraceService endpoint at
+`opentelemetry.proto.collector.trace.v1.TraceService/Export`. It defaults to a
+loopback bind and accepts only loopback or private addresses. The listener is
+plaintext, so expose it only through a TLS-terminating gRPC proxy or an
+operator-controlled private network. Add the same `authorization` and
+`x-glasshouse-project-id` metadata used by HTTP exporters. Metrics and logs
+are not implemented and return `UNIMPLEMENTED`.
+
 ### Local credential foundation
 
 PostgreSQL local credential storage now supports organization-scoped ASCII usernames,

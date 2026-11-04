@@ -580,8 +580,7 @@ describe("API integration: OTLP ingest", () => {
 			}),
 		);
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { partial_success: unknown };
-		expect(body.partial_success).toEqual({});
+		expect(await res.json()).toEqual({});
 		expect(insertTraces).toHaveBeenCalledTimes(1);
 		expect(insertObservations).toHaveBeenCalledTimes(1);
 		expect(

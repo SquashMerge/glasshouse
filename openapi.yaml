@@ -2669,14 +2669,16 @@ components:
           required:
             - doubleValue
           type: object
-        - items:
-            properties:
-              stringValue:
-                type: string
-            required:
-              - stringValue
-            type: object
-          type: array
+        - properties:
+            arrayValue:
+              properties:
+                values:
+                  items: {}
+                  type: array
+              type: object
+          required:
+            - arrayValue
+          type: object
         - properties:
             kvlistValue:
               $ref: '#/components/schemas/KvlistValue'

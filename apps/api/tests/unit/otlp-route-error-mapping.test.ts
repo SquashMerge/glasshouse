@@ -34,8 +34,36 @@ test("maps a revocation race during OTLP ingest to project unavailable", async (
 	});
 
 	expect(response.status).toBe(404);
-	expect(await response.json()).toEqual({
-		code: "NOT_FOUND",
-		message: "Project is not available",
+	expect(response.headers.get("content-type")).toBe("application/json");
+	expect(await response.json()).toEqual({ message: "Trace export rejected" });
+});
+
+test("encodes authentication and pre-auth body limit failures as OTLP JSON status", async () => {
+	process.env.UI_USERNAME ??= "test-user";
+	process.env.UI_PASSWORD ??= "test-password";
+	const { createApiApp } = await import("../../src/index.js");
+	const app = createApiApp();
+	const unauthenticated = await app.request("/v1/otel/v1/traces", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: "{}",
+	});
+	expect(unauthenticated.status).toBe(401);
+	expect(unauthenticated.headers.get("content-type")).toBe("application/json");
+	expect(await unauthenticated.json()).toEqual({
+		message: "Authentication required",
+	});
+
+	const tooLarge = await app.request("/v1/otel/v1/traces", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+			"content-length": "1048577",
+		},
+		body: "{}",
+	});
+	expect(tooLarge.status).toBe(413);
+	expect(await tooLarge.json()).toEqual({
+		message: "Trace export exceeds the request limit",
 	});
 });

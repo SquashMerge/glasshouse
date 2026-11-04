@@ -143,7 +143,11 @@ Both flags default to off (dev-friendly). In production we recommend `GLASSHOUSE
 
 ## What gets captured
 
-Glasshouse accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normalized into:
+Glasshouse accepts standard OTLP HTTP JSON (lower-camel field names) and protobuf trace exports at the same endpoint. It accepts `Content-Encoding: gzip` with a decompressed body limit equal to `API_MAX_BODY_BYTES`, so compressed input cannot bypass the request budget. A successful export returns the protocol's empty response (`{}` for JSON, empty protobuf for protobuf). OTLP errors use a `google.rpc.Status` response in the request encoding, with generic messages that do not disclose tenant or credential state.
+
+An optional native gRPC TraceService listener is disabled by default. Set `OTLP_GRPC_PORT` to enable it; `OTLP_GRPC_HOST` defaults to `127.0.0.1` and only loopback/private bind addresses are accepted. Place it behind an operator-managed TLS edge. gRPC metadata must include exactly one `authorization` value and exactly one `x-glasshouse-project-id`; it uses the same Basic/Bearer authentication, Project authorization, provenance checks, redaction, and ingest lock as HTTP. Metrics and logs services are not registered and return `UNIMPLEMENTED`.
+
+Each span is normalized into:
 
 | Glasshouse column | Source |
 |---|---|
@@ -161,7 +165,9 @@ Glasshouse accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is norma
 
 ## Viewing trace metadata
 
-On the Observability trace-detail page, structured Observation attributes, events, and links are shown as expandable JSON trees. The metadata tree opens fully expanded; use its compact **Collapse all** / **Expand all** control to fold or reveal the whole tree, or use individual node controls. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
+On the Observability trace-detail page, structured Observation attributes are shown as expandable JSON trees. The metadata tree opens fully expanded; use its compact **Collapse all** / **Expand all** control to fold or reveal the whole tree, or use individual node controls. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
+
+Span events and links are not retained by the current storage model. A span containing either is rejected and the export returns OTLP partial success with its `rejectedSpans` count; other spans in the batch are retained. Exporters must not retry a partial-success response.
 
 The tree is a bounded presentation: it renders at most 500 nodes per detail view, up to 100 children per object or array, and 12 nested levels. When any limit is reached, the UI identifies how many entries were omitted. These display limits do not change stored telemetry; omitted entries remain part of the retained metadata when available through the API. A limited tree is not evidence that ingestion or storage dropped the omitted data.
 

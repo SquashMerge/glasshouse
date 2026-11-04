@@ -366,8 +366,7 @@ describe("OTLP ingest publishes events", () => {
 
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({
-			code: "BAD_REQUEST",
-			message: "Trace contains conflicting project provenance",
+			message: "Invalid trace export request",
 		});
 		expect(defaultClient).not.toHaveBeenCalled();
 		expect(insertTraces).not.toHaveBeenCalled();
@@ -784,8 +783,7 @@ describe("OTLP ingest publishes events", () => {
 			}),
 		);
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { partial_success: unknown };
-		expect(body.partial_success).toEqual({});
+		expect(await res.json()).toEqual({});
 		console.error = orig;
 	});
 

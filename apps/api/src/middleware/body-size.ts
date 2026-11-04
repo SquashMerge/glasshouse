@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import { otlpErrorResponse } from "../lib/otlp-response.js";
 
 export const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
@@ -13,18 +14,20 @@ export function bodySizeLimit(
 	maxBytes: number = DEFAULT_MAX_BODY_BYTES,
 ): MiddlewareHandler {
 	return async (c, next) => {
+		const rejectTooLarge = () =>
+			c.req.path === "/v1/otel/v1/traces"
+				? otlpErrorResponse(c.req.raw, 413)
+				: c.json(
+						{
+							code: "PAYLOAD_TOO_LARGE",
+							message: `Request body exceeds ${maxBytes} bytes`,
+						},
+						413,
+					);
 		const contentLength = c.req.header("content-length");
 		if (contentLength) {
 			const len = Number(contentLength);
-			if (Number.isFinite(len) && len > maxBytes) {
-				return c.json(
-					{
-						code: "PAYLOAD_TOO_LARGE",
-						message: `Request body exceeds ${maxBytes} bytes`,
-					},
-					413,
-				);
-			}
+			if (Number.isFinite(len) && len > maxBytes) return rejectTooLarge();
 		}
 
 		const incoming = c.req.raw.body;
@@ -50,13 +53,7 @@ export function bodySizeLimit(
 					} catch {
 						/* noop */
 					}
-					return c.json(
-						{
-							code: "PAYLOAD_TOO_LARGE",
-							message: `Request body exceeds ${maxBytes} bytes`,
-						},
-						413,
-					);
+					return rejectTooLarge();
 				}
 				chunks.push(value);
 			}

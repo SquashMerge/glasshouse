@@ -1,5 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createHash } from "node:crypto";
+import { gunzipSync } from "node:zlib";
+import { decodeOtlpTraceExport } from "../lib/otlp-protobuf.js";
+import {
+	otlpErrorResponse,
+	otlpSuccessResponse,
+} from "../lib/otlp-response.js";
 import { ErrorEnvelope } from "../schemas/common.js";
 import {
 	ExportTraceServiceRequest,
@@ -98,14 +104,7 @@ export type OtlpIngestDependencies = {
 export async function resourceProjectIds(
 	req: Request,
 ): Promise<ReadonlySet<string>> {
-	let bodyJson: unknown;
-	try {
-		bodyJson = await req.clone().json();
-	} catch {
-		return new Set();
-	}
-
-	const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
+	const parsed = await parseOtlpHttpRequest(req.clone());
 	if (!parsed.success) return new Set();
 
 	return new Set(
@@ -114,6 +113,191 @@ export async function resourceProjectIds(
 				resourceProjectId(resourceSpan.resource?.attributes ?? []),
 			)
 			.filter(Boolean),
+	);
+}
+
+const configuredOtlpBodyLimit = Number(process.env.API_MAX_BODY_BYTES);
+const MAX_OTLP_DECOMPRESSED_BYTES =
+	Number.isSafeInteger(configuredOtlpBodyLimit) && configuredOtlpBodyLimit > 0
+		? configuredOtlpBodyLimit
+		: 1_048_576;
+
+type ParsedOtlpRequest =
+	| { success: true; data: z.infer<typeof ExportTraceServiceRequest> }
+	| { success: false; status: 400 | 413 | 415; message: string };
+
+async function parseOtlpHttpRequest(req: {
+	headers: {
+		get: (name: string) => string | null;
+		has: (name: string) => boolean;
+	};
+	arrayBuffer: () => Promise<ArrayBuffer>;
+}): Promise<ParsedOtlpRequest> {
+	const contentType =
+		req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ??
+		"application/json";
+	if (
+		contentType !== "application/json" &&
+		contentType !== "application/x-protobuf" &&
+		contentType !== "application/protobuf"
+	)
+		return {
+			success: false,
+			status: 415,
+			message: "OTLP trace export requires application/json",
+		};
+
+	let body: Uint8Array;
+	try {
+		body = new Uint8Array(await req.arrayBuffer());
+		if (req.headers.get("content-encoding")?.toLowerCase() === "gzip")
+			body = gunzipSync(body, { maxOutputLength: MAX_OTLP_DECOMPRESSED_BYTES });
+		else if (req.headers.has("content-encoding"))
+			return {
+				success: false,
+				status: 415,
+				message: "Unsupported content encoding",
+			};
+	} catch (cause) {
+		return {
+			success: false,
+			status: isGzipLimitError(cause) ? 413 : 400,
+			message: isGzipLimitError(cause)
+				? "OTLP request exceeds the decompressed body limit"
+				: "Request body is not valid OTLP JSON",
+		};
+	}
+	if (body.byteLength > MAX_OTLP_DECOMPRESSED_BYTES)
+		return {
+			success: false,
+			status: 413,
+			message: "OTLP request exceeds the decompressed body limit",
+		};
+
+	if (contentType !== "application/json") {
+		try {
+			return parseNormalizedOtlpRequest(
+				otlpJsonToLegacy(decodeOtlpTraceExport(body)),
+			);
+		} catch {
+			return {
+				success: false,
+				status: 400,
+				message: "Request body is not valid OTLP protobuf",
+			};
+		}
+	}
+
+	let bodyJson: unknown;
+	try {
+		bodyJson = JSON.parse(new TextDecoder().decode(body));
+	} catch {
+		return {
+			success: false,
+			status: 400,
+			message: "Request body is not valid OTLP JSON",
+		};
+	}
+	try {
+		return parseNormalizedOtlpRequest(otlpJsonToLegacy(bodyJson));
+	} catch {
+		return {
+			success: false,
+			status: 400,
+			message: "Invalid ExportTraceServiceRequest",
+		};
+	}
+}
+
+function parseNormalizedOtlpRequest(normalized: unknown): ParsedOtlpRequest {
+	if (
+		normalized &&
+		typeof normalized === "object" &&
+		Array.isArray(
+			(normalized as { resource_spans?: unknown }).resource_spans,
+		) &&
+		(normalized as { resource_spans: unknown[] }).resource_spans.length === 0
+	)
+		return {
+			success: true,
+			data: { resource_spans: [] } as z.infer<typeof ExportTraceServiceRequest>,
+		};
+	const parsed = ExportTraceServiceRequest.safeParse(normalized);
+	return parsed.success
+		? { success: true, data: parsed.data }
+		: {
+				success: false,
+				status: 400,
+				message: "Invalid ExportTraceServiceRequest",
+			};
+}
+
+function otlpJsonToLegacy(value: unknown): unknown {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const request = value as Record<string, unknown>;
+	const resourceSpans = request.resourceSpans ?? request.resource_spans ?? [];
+	if (!Array.isArray(resourceSpans)) return value;
+	return {
+		resource_spans: resourceSpans.map((resourceSpan) => {
+			if (
+				!resourceSpan ||
+				typeof resourceSpan !== "object" ||
+				Array.isArray(resourceSpan)
+			)
+				return resourceSpan;
+			const resource = resourceSpan as Record<string, unknown>;
+			const scopeSpans = resource.scopeSpans ?? resource.scope_spans;
+			return {
+				resource: resource.resource,
+				scope_spans: Array.isArray(scopeSpans)
+					? scopeSpans.map((scopeSpan) => {
+							if (
+								!scopeSpan ||
+								typeof scopeSpan !== "object" ||
+								Array.isArray(scopeSpan)
+							)
+								return scopeSpan;
+							const scope = scopeSpan as Record<string, unknown>;
+							const spans = scope.spans;
+							return {
+								scope: scope.scope,
+								spans: Array.isArray(spans)
+									? spans.map((span) => otlpSpanToLegacy(span))
+									: spans,
+							};
+						})
+					: scopeSpans,
+			};
+		}),
+	};
+}
+
+function otlpSpanToLegacy(value: unknown): unknown {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const span = value as Record<string, unknown>;
+	return {
+		...span,
+		trace_id: lowerHex(span.traceId ?? span.trace_id),
+		span_id: lowerHex(span.spanId ?? span.span_id),
+		parent_span_id: lowerHex(span.parentSpanId ?? span.parent_span_id),
+		start_time_unix_nano: span.startTimeUnixNano ?? span.start_time_unix_nano,
+		end_time_unix_nano: span.endTimeUnixNano ?? span.end_time_unix_nano,
+		trace_state: span.traceState ?? span.trace_state,
+	};
+}
+
+function lowerHex(value: unknown): unknown {
+	if (typeof value === "string") return value.toLowerCase();
+	if (Array.isArray(value) && value.every((byte) => Number.isInteger(byte)))
+		return Buffer.from(value).toString("hex");
+	return value;
+}
+
+function isGzipLimitError(cause: unknown): boolean {
+	return (
+		cause instanceof Error &&
+		"code" in cause &&
+		cause.code === "ERR_BUFFER_TOO_LARGE"
 	);
 }
 
@@ -165,24 +349,12 @@ export function createOtlpIngestHandler(
 		tenant: OtlpIngestTenantScope,
 		fallbackProjectId = tenant.projectId,
 	): Promise<Response> {
-		let bodyJson: unknown;
-		try {
-			bodyJson = await req.json();
-		} catch (err) {
-			logger.warn("otlp.body_parse_failed", err, {});
-			return jsonError(400, "BAD_REQUEST", "Request body is not valid JSON");
-		}
-
-		const parsed = ExportTraceServiceRequest.safeParse(bodyJson);
+		const parsed = await parseOtlpHttpRequest(req);
 		if (!parsed.success) {
-			return jsonError(
-				400,
-				"BAD_REQUEST",
-				`Invalid ExportTraceServiceRequest: ${parsed.error.message}`,
-			);
+			return otlpErrorResponse(req, parsed.status);
 		}
 
-		const request = parsed.data;
+		const { request, rejectedSpans } = rejectUnsupportedSpans(parsed.data);
 		const deduplicationTokens = otlpDeduplicationTokens(request, tenant);
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];
@@ -280,14 +452,9 @@ export function createOtlpIngestHandler(
 			);
 		} catch (err) {
 			if (err instanceof TenantScopeError) throw err;
-			if (err instanceof OtlpConflictError)
-				return jsonError(400, "BAD_REQUEST", err.message);
+			if (err instanceof OtlpConflictError) return otlpErrorResponse(req, 400);
 			logger.error("otlp.persist_failed", err);
-			return jsonError(
-				500,
-				"INTERNAL",
-				"Failed to persist traces; check server logs",
-			);
+			return otlpErrorResponse(req, 500);
 		}
 
 		try {
@@ -301,10 +468,38 @@ export function createOtlpIngestHandler(
 			logger.warn("otlp.event_publish_failed", err, {});
 		}
 
-		return new Response(JSON.stringify({ partial_success: {} }), {
-			status: 200,
-			headers: { "content-type": "application/json" },
-		});
+		return otlpSuccessResponse(req, rejectedSpans);
+	};
+}
+
+function rejectUnsupportedSpans(
+	request: z.infer<typeof ExportTraceServiceRequest>,
+): {
+	request: z.infer<typeof ExportTraceServiceRequest>;
+	rejectedSpans: number;
+} {
+	let rejectedSpans = 0;
+	return {
+		request: {
+			...request,
+			resource_spans: request.resource_spans
+				.map((resourceSpan) => ({
+					...resourceSpan,
+					scope_spans: resourceSpan.scope_spans
+						.map((scopeSpan) => ({
+							...scopeSpan,
+							spans: scopeSpan.spans.filter((span) => {
+								const unsupported =
+									Boolean(span.events?.length) || Boolean(span.links?.length);
+								if (unsupported) rejectedSpans += 1;
+								return !unsupported;
+							}),
+						}))
+						.filter((scopeSpan) => scopeSpan.spans.length > 0),
+				}))
+				.filter((resourceSpan) => resourceSpan.scope_spans.length > 0),
+		} as z.infer<typeof ExportTraceServiceRequest>,
+		rejectedSpans,
 	};
 }
 
@@ -359,10 +554,3 @@ function latestTime(left: string | null, right: string | null): string | null {
 }
 
 export const handleOtlpIngest = createOtlpIngestHandler();
-
-function jsonError(code: number, errorCode: string, message: string): Response {
-	return new Response(JSON.stringify({ code: errorCode, message }), {
-		status: code,
-		headers: { "content-type": "application/json" },
-	});
-}

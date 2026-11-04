@@ -30,6 +30,8 @@ import type { ProjectOperation } from "./authorization-policy.js";
 import { logger } from "./lib/logger.js";
 import { AuthenticationError } from "./db/local-sessions.js";
 import { assertProductionConfiguration } from "./lib/production-config.js";
+import { startOtlpGrpcServer } from "./lib/otlp-grpc.js";
+import { otlpErrorResponse } from "./lib/otlp-response.js";
 
 if (process.env.NODE_ENV === "production") assertProductionConfiguration();
 const PORT = Number(process.env.API_PORT ?? 3000);
@@ -188,6 +190,8 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		}
 	});
 	apiApp.onError((error, c) => {
+		if (c.req.path === "/v1/otel/v1/traces")
+			return otlpErrorResponse(c.req.raw, 500);
 		if (
 			error instanceof AuthenticationError ||
 			(error instanceof HTTPException &&
@@ -319,10 +323,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 			);
 		} catch (cause) {
 			if (cause instanceof TenantScopeError) {
-				return c.json(
-					{ code: "NOT_FOUND", message: "Project is not available" },
-					404,
-				);
+				return otlpErrorResponse(c.req.raw, 404);
 			}
 			throw cause;
 		}
@@ -365,22 +366,43 @@ if (import.meta.main) {
 		},
 		log: logger.info,
 	});
+	const stopGrpc = await startOtlpGrpcServer(apiApp.fetch);
+	const server = Bun.serve({
+		port: PORT,
+		hostname: "0.0.0.0",
+		fetch: apiApp.fetch,
+	});
+	let shuttingDown = false;
+	const shutdown = () => {
+		if (shuttingDown) return;
+		shuttingDown = true;
+		const deadline = setTimeout(() => {
+			void server.stop(true);
+			process.exit(1);
+		}, 10_000);
+		void Promise.all([server.stop(), stopGrpc?.()]).then(
+			() => {
+				clearTimeout(deadline);
+				process.exit(0);
+			},
+			(cause) => {
+				logger.error("api.shutdown_failed", cause);
+				process.exit(1);
+			},
+		);
+	};
+	process.once("SIGTERM", shutdown);
+	process.once("SIGINT", shutdown);
+
+	logger.info("api.started", {
+		port: PORT,
+		host: "0.0.0.0",
+		log_level: process.env.LOG_LEVEL ?? "info",
+	});
+	logger.info("api.routes_ready", {
+		openapi: `/openapi.json`,
+		reference: `/reference`,
+		health: `/health`,
+		otlp_ingest: "/v1/otel/v1/traces",
+	});
 }
-
-logger.info("api.started", {
-	port: PORT,
-	host: "0.0.0.0",
-	log_level: process.env.LOG_LEVEL ?? "info",
-});
-logger.info("api.routes_ready", {
-	openapi: `/openapi.json`,
-	reference: `/reference`,
-	health: `/health`,
-	otlp_ingest: "/v1/otel/v1/traces",
-});
-
-export default {
-	port: PORT,
-	hostname: "0.0.0.0",
-	fetch: apiApp.fetch,
-};
