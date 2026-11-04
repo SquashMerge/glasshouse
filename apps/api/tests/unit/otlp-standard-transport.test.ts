@@ -32,6 +32,7 @@ test("OTLP accepts empty resource and scope envelopes alongside spans", async ()
 						scopeSpans: [
 							{},
 							{ spans: [] },
+							{ spans: null },
 							{
 								spans: [
 									{

@@ -53,7 +53,7 @@ export const otlpIngestRoute = createRoute({
 	tags: [tag],
 	summary: "OTLP HTTP trace ingest",
 	description:
-		"Accepts OTLP JSON or protobuf trace exports. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
+		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
 	security: [
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
@@ -283,7 +283,7 @@ function otlpJsonToLegacy(value: unknown): unknown {
 							)
 								return scopeSpan;
 							const scope = scopeSpan as Record<string, unknown>;
-							const spans = scope.spans;
+							const spans = scope.spans ?? undefined;
 							return {
 								scope: scope.scope,
 								spans: Array.isArray(spans)

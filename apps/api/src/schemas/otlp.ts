@@ -158,7 +158,7 @@ const WireSpan = z.object({
 	kind: SpanKind.optional(),
 	startTimeUnixNano: z.union([z.string(), z.number().int()]),
 	endTimeUnixNano: z.union([z.string(), z.number()]).optional(),
-	attributes: z.array(KeyValue).optional(),
+	attributes: z.array(KeyValue).max(MAX_OTLP_ATTRIBUTES_PER_RECORD).optional(),
 	status: SpanStatus.optional(),
 	events: z.array(z.unknown()).optional(),
 	links: z.array(z.unknown()).optional(),
@@ -171,7 +171,12 @@ export const OtlpWireRequest = z
 			.array(
 				z.object({
 					resource: z
-						.object({ attributes: z.array(KeyValue).optional() })
+						.object({
+							attributes: z
+								.array(KeyValue)
+								.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+								.optional(),
+						})
 						.optional(),
 					scopeSpans: z
 						.array(
@@ -180,15 +185,26 @@ export const OtlpWireRequest = z
 									.object({
 										name: z.string().optional(),
 										version: z.string().optional(),
-										attributes: z.array(KeyValue).optional(),
+										attributes: z
+											.array(KeyValue)
+											.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+											.optional(),
 									})
 									.optional(),
-								spans: z.array(WireSpan).optional(),
+								spans: z
+									.array(WireSpan)
+									.max(MAX_OTLP_SPANS_PER_SCOPE)
+									.nullable()
+									.optional(),
 							}),
 						)
+						.max(MAX_OTLP_SCOPE_SPANS_PER_RESOURCE)
+						.nullable()
 						.optional(),
 				}),
 			)
+			.max(MAX_OTLP_RESOURCE_SPANS)
+			.nullable()
 			.optional(),
 	})
 	.openapi("OtlpWireRequest");

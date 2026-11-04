@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, mock } from "bun:test";
+import protobufRoot from "@opentelemetry/otlp-proto-exporter-base/build/src/generated/root.js";
 
 const USER = "glasshouse";
 const PASS = "secret";
@@ -17,6 +18,7 @@ const { TenantScopeError } = await import("../../src/tenancy");
 const insertTraces = mock(() => Promise.resolve());
 const insertObservations = mock(() => Promise.resolve());
 const defaultClient = mock(() => ({}));
+const publishSync = mock(() => undefined);
 const withActiveAuthorizedProjectLock = async <T>(
 	_tenant: unknown,
 	callback: () => Promise<T>,
@@ -41,7 +43,7 @@ const apiApp = createApiApp({
 		defaultClient,
 		insertObservations,
 		insertTraces,
-		publishSync: () => undefined,
+		publishSync,
 		approvedRedaction: async () => null,
 		withActiveAuthorizedProjectLock,
 	}),
@@ -664,6 +666,78 @@ describe("API integration: OTLP ingest", () => {
 		expect(res.status).toBe(404);
 		expect(insertTraces).not.toHaveBeenCalled();
 		expect(insertObservations).not.toHaveBeenCalled();
+	});
+
+	it("rejects foreign provenance on empty or unsupported resources before any writes", async () => {
+		const foreignProject = "00000000-0000-4000-8000-000000000099";
+		const codec = (
+			protobufRoot as unknown as {
+				opentelemetry: {
+					proto: {
+						collector: {
+							trace: {
+								v1: {
+									ExportTraceServiceRequest: {
+										encode: (data: object) => { finish: () => Uint8Array };
+									};
+								};
+							};
+						};
+					};
+				};
+			}
+		).opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
+		for (const binary of [false, true]) {
+			for (const unsupported of [false, true]) {
+				insertTraces.mockClear();
+				insertObservations.mockClear();
+				publishSync.mockClear();
+				const span = {
+					traceId: binary ? Buffer.from(HEX32, "hex") : HEX32,
+					spanId: binary ? Buffer.from(HEX16, "hex") : HEX16,
+					name: "retained",
+					startTimeUnixNano: String(NOW_NS),
+				};
+				const foreign = {
+					resource: {
+						attributes: [
+							{
+								key: "glasshouse.project.id",
+								value: { stringValue: foreignProject },
+							},
+						],
+					},
+					...(unsupported
+						? {
+								scopeSpans: [
+									{ spans: [{ ...span, events: [{ name: "event" }] }] },
+								],
+							}
+						: {}),
+				};
+				const request = {
+					resourceSpans: [foreign, { scopeSpans: [{ spans: [span] }] }],
+				};
+				const res = await apiApp.fetch(
+					new Request("http://x/v1/traces", {
+						method: "POST",
+						headers: {
+							...otlpHeaders(),
+							"content-type": binary
+								? "application/x-protobuf"
+								: "application/json",
+						},
+						body: binary
+							? codec.encode(request).finish()
+							: JSON.stringify(request),
+					}),
+				);
+				expect(res.status).toBe(404);
+				expect(insertTraces).not.toHaveBeenCalled();
+				expect(insertObservations).not.toHaveBeenCalled();
+				expect(publishSync).not.toHaveBeenCalled();
+			}
+		}
 	});
 
 	it("routes valid headed OTLP through its dedicated membership resolver", async () => {

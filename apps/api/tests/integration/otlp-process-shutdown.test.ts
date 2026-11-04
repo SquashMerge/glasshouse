@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import * as grpc from "@grpc/grpc-js";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 
 async function unusedPort(): Promise<number> {
 	return new Promise((resolve, reject) => {
@@ -23,9 +23,15 @@ function disposableEnvironment(env: NodeJS.ProcessEnv): boolean {
 		env.POSTGRES_HOST === "postgres" &&
 		env.CLICKHOUSE_HOST === "clickhouse" &&
 		env.VALKEY_HOST === "valkey" &&
-		!env.DATABASE_URL &&
-		!env.CLICKHOUSE_URL &&
-		!env.VALKEY_URL
+		env.DATABASE_URL === undefined &&
+		env.CLICKHOUSE_URL === undefined &&
+		env.VALKEY_URL === undefined
+	);
+}
+
+function sanitizedChildEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	return Object.fromEntries(
+		Object.entries(env).filter(([key]) => !key.startsWith("PG")),
 	);
 }
 
@@ -46,10 +52,35 @@ test("shutdown test refuses inherited or non-disposable datastore configuration"
 		{ ...safe, CLICKHOUSE_HOST: "localhost" },
 		{ ...safe, VALKEY_HOST: "localhost" },
 		{ ...safe, DATABASE_URL: "postgres://example" },
+		{ ...safe, DATABASE_URL: "" },
+		{ ...safe, CLICKHOUSE_URL: "" },
+		{ ...safe, VALKEY_URL: "" },
 		{ ...safe, CLICKHOUSE_URL: "http://example" },
 		{ ...safe, VALKEY_URL: "redis://example" },
 	])
 		expect(disposableEnvironment(unsafe)).toBe(false);
+});
+
+test("shutdown child resolves its PostgreSQL target without inherited PG settings", () => {
+	const env = sanitizedChildEnvironment({
+		...process.env,
+		PGHOST: "unsafe-example.invalid",
+		PGPORT: "6543",
+		DATABASE_URL: undefined,
+		POSTGRES_HOST: "postgres",
+		POSTGRES_PORT: "5432",
+	});
+	const result = Bun.spawnSync(
+		[
+			process.execPath,
+			"--no-env-file",
+			"-e",
+			'import { Client } from "pg"; import { postgresUrl } from "./src/db/postgres.ts"; console.log(new Client({connectionString: postgresUrl()}).connectionParameters.host);',
+		],
+		{ cwd: import.meta.dir + "/../..", env },
+	);
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.toString().trim()).toBe("postgres");
 });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
@@ -58,17 +89,20 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 		async () => {
 			const httpPort = await unusedPort();
 			const grpcPort = await unusedPort();
-			const child = Bun.spawn([process.execPath, "run", "src/index.ts"], {
-				cwd: import.meta.dir + "/../..",
-				env: {
-					...process.env,
-					API_PORT: String(httpPort),
-					OTLP_GRPC_PORT: String(grpcPort),
-					OTLP_GRPC_HOST: "127.0.0.1",
+			const child = Bun.spawn(
+				[process.execPath, "--no-env-file", "run", "src/index.ts"],
+				{
+					cwd: import.meta.dir + "/../..",
+					env: {
+						...sanitizedChildEnvironment(process.env),
+						API_PORT: String(httpPort),
+						OTLP_GRPC_PORT: String(grpcPort),
+						OTLP_GRPC_HOST: "127.0.0.1",
+					},
+					stdout: "ignore",
+					stderr: "ignore",
 				},
-				stdout: "ignore",
-				stderr: "ignore",
-			});
+			);
 			const grpcClient = new grpc.Client(
 				`127.0.0.1:${grpcPort}`,
 				grpc.credentials.createInsecure(),
@@ -92,6 +126,22 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 				await expect(
 					fetch(`http://127.0.0.1:${httpPort}/health`),
 				).rejects.toThrow();
+				const grpcClosed = await new Promise<boolean>((resolve) => {
+					const socket = createConnection({
+						host: "127.0.0.1",
+						port: grpcPort,
+					});
+					socket.once("connect", () => {
+						socket.destroy();
+						resolve(false);
+					});
+					socket.once("error", () => resolve(true));
+					socket.setTimeout(1000, () => {
+						socket.destroy();
+						resolve(false);
+					});
+				});
+				expect(grpcClosed).toBe(true);
 			} finally {
 				grpcClient.close();
 				if (child.exitCode === null) child.kill("SIGKILL");
