@@ -1,0 +1,102 @@
+name: Release candidate (non-publishing)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build, export, reload and smoke test candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          image=glasshouse:v0.0.0-rc.1
+          asset="$RUNNER_TEMP/glasshouse-candidate.tar.gz"
+          bundle="$RUNNER_TEMP/glasshouse-candidate-bundle"
+          project="release-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python3 infra/scripts/make-release-bundle.py v0.0.0-rc.1 "$bundle"
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" -f apps/api/Dockerfile.single -t "$image" .
+          before="$(docker image inspect --format '{{.Id}}' "$image")"
+          python3 infra/scripts/export-release-image.py "$image" "$asset"
+          python3 infra/scripts/check-release-asset.py "$asset" > "$RUNNER_TEMP/candidate.SHA256SUMS"
+          (cd "$RUNNER_TEMP" && sha256sum --check candidate.SHA256SUMS)
+          docker image rm "$image"
+          docker load -i "$asset"
+          test "$(docker image inspect --format '{{.Id}}' "$image")" = "$before"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
+          docker run --rm --entrypoint /opt/gepa/bin/python "$image" /app/worker/gepa_worker.py --smoke
+          cat > "$bundle/test.env" <<'EOF'
+          GLASSHOUSE_IMAGE=glasshouse:v0.0.0-rc.1
+          POSTGRES_USER=glasshouse_ci
+          POSTGRES_PASSWORD=synthetic-postgres-4f61cba90d
+          POSTGRES_DB=glasshouse_ci
+          CLICKHOUSE_USER=glasshouse_ci
+          CLICKHOUSE_PASSWORD=synthetic-clickhouse-6c70a4ed
+          CLICKHOUSE_DB=glasshouse_ci
+          VALKEY_PASSWORD=synthetic-valkey-8f71b2c0ad
+          UI_USERNAME=synthetic-owner
+          UI_PASSWORD=synthetic-ui-9b412e8cfa
+          GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=synthetic-owner
+          GLASSHOUSE_PUBLIC_ORIGIN=https://glasshouse.example.invalid
+          GEPA_ALLOWED_MODELS=openai/gpt-4o-mini
+          API_PORT=0
+          EOF
+          chmod 600 "$bundle/test.env"
+          compose=(docker compose --project-directory "$bundle" --env-file "$bundle/test.env" --project-name "$project" -f "$bundle/compose.yaml")
+          cleanup() {
+            status=$?
+            trap - EXIT
+            if (( status != 0 )); then
+              "${compose[@]}" ps --all || true
+              "${compose[@]}" logs --no-color --tail=100 || true
+            fi
+            # The random run-scoped project is disposable and contains no user data.
+            "${compose[@]}" down --volumes --remove-orphans || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+          "${compose[@]}" config --quiet
+          "${compose[@]}" pull postgres clickhouse valkey
+          "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 240
+          test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q api)")" = "$before"
+          address="$("${compose[@]}" port api 3000)"
+          curl --fail --silent --show-error "http://$address/" > "$RUNNER_TEMP/candidate-index.html"
+          grep -qi '<!doctype html' "$RUNNER_TEMP/candidate-index.html"
+          grep -q '<div id="root"></div>' "$RUNNER_TEMP/candidate-index.html"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://$address/v1/projects")" = 401
+          curl --fail --silent --show-error --user synthetic-owner:synthetic-ui-9b412e8cfa "http://$address/v1/projects" > "$RUNNER_TEMP/projects.json"
+          project_id="$(python3 -c 'import json,sys; p=[x["id"] for x in json.load(open(sys.argv[1]))["items"] if x["slug"] == "default"]; assert len(p) == 1; print(p[0])' "$RUNNER_TEMP/projects.json")"
+          [[ "$project_id" =~ ^[0-9a-f-]{36}$ ]]
+          set +e
+          curl --fail --silent --show-error --no-buffer --max-time 8 --user synthetic-owner:synthetic-ui-9b412e8cfa "http://$address/v1/traces/events?project_id=$project_id" > "$RUNNER_TEMP/candidate-stream"
+          stream_status=$?
+          set -e
+          test "$stream_status" = 28
+          grep -q ':ok' "$RUNNER_TEMP/candidate-stream"
+          expected_pg="$(find infra/db/migrations -maxdepth 1 -name '*.sql' -type f | wc -l | tr -d ' ')"
+          expected_ch="$(find infra/db/clickhouse -maxdepth 1 -name '*.sql' -type f | wc -l | tr -d ' ')"
+          migrations() {
+            pg="$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc 'SELECT count(*) FROM pgmigrations')"
+            ch="$("${compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse_ci --password synthetic-clickhouse-6c70a4ed --database glasshouse_ci --query 'SELECT count() FROM glasshouse_schema_migrations')"
+            test "$pg" = "$expected_pg"
+            test "$ch" = "$expected_ch"
+            "${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc 'SELECT name FROM pgmigrations ORDER BY name'
+            "${compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse_ci --password synthetic-clickhouse-6c70a4ed --database glasshouse_ci --query 'SELECT * FROM glasshouse_schema_migrations ORDER BY 1 FORMAT TabSeparated'
+          }
+          migrations > "$RUNNER_TEMP/migrations-before"
+          "${compose[@]}" restart api
+          "${compose[@]}" up -d --no-deps --no-build --pull never --wait --wait-timeout 240 api
+          migrations > "$RUNNER_TEMP/migrations-after"
+          cmp "$RUNNER_TEMP/migrations-before" "$RUNNER_TEMP/migrations-after"
+          curl --fail --silent --show-error "http://$address/v1/health" >/dev/null
