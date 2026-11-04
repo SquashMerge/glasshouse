@@ -16,6 +16,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install checksum-pinned image scanner
+        run: python3 scripts/install_snapshot_trivy.py
       - name: Build, export, reload and smoke test candidate
         shell: bash
         run: |
@@ -35,6 +37,7 @@ jobs:
           docker load -i "$asset"
           test "$(docker image inspect --format '{{.Id}}' "$image")" = "$before"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
+          python3 infra/scripts/release-image-scan.py "$image" "$before" "$RUNNER_TEMP/candidate-sbom.json"
           docker run --rm --entrypoint /opt/gepa/bin/python "$image" /app/worker/gepa_worker.py --smoke
           cat > "$bundle/test.env" <<'EOF'
           GLASSHOUSE_IMAGE=glasshouse:v0.0.0-rc.1
@@ -100,3 +103,4 @@ jobs:
           migrations > "$RUNNER_TEMP/migrations-after"
           cmp "$RUNNER_TEMP/migrations-before" "$RUNNER_TEMP/migrations-after"
           curl --fail --silent --show-error "http://$address/v1/health" >/dev/null
+          (cd "$RUNNER_TEMP" && sha256sum --check candidate.SHA256SUMS)
