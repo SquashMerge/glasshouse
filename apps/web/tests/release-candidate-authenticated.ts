@@ -70,9 +70,36 @@ try {
 				password: "synthetic-browser-93b1e75a",
 			}),
 		});
-		return { anonymous: anonymous.status, enrolled: enrolled.status };
+		const adminCreated = await fetch("/v1/admin/local-accounts", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				Authorization: `Basic ${btoa("synthetic-owner:synthetic-ui-9b412e8cfa")}`,
+			},
+			body: JSON.stringify({ username: "candidate.admin", role: "admin" }),
+		});
+		if (adminCreated.status !== 200)
+			throw new Error(`Admin provision failed: ${adminCreated.status}`);
+		const adminAccount = await adminCreated.json();
+		const adminEnrolled = await fetch("/v1/auth/invitations/accept", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				token: adminAccount.code,
+				password: "synthetic-admin-a2b3c4d5",
+			}),
+		});
+		return {
+			anonymous: anonymous.status,
+			enrolled: enrolled.status,
+			adminEnrolled: adminEnrolled.status,
+		};
 	});
-	expect(provisioned).toEqual({ anonymous: 401, enrolled: 200 });
+	expect(provisioned).toEqual({
+		anonymous: 401,
+		enrolled: 200,
+		adminEnrolled: 200,
+	});
 	await page.getByLabel("Username", { exact: true }).fill("candidate.reader");
 	await page
 		.getByLabel("Password", { exact: true })
@@ -100,6 +127,7 @@ try {
 		);
 		if (!local) throw new Error("Default project unavailable");
 		const localTrace = await fetch(`/v1/traces?project_id=${local.id}`);
+		const localTraceBody = await localTrace.text();
 		const foreignRead = await fetch(`/v1/projects/${foreign}`);
 		const foreignTrace = await fetch(`/v1/traces?project_id=${foreign}`);
 		const foreignSse = await fetch(`/v1/traces/events?project_id=${foreign}`);
@@ -133,6 +161,7 @@ try {
 			kind: sessionBody.authentication,
 			projects: projects.status,
 			localTrace: localTrace.status,
+			localTraceBody,
 			foreignListed: items.some((item: { id: string }) => item.id === foreign),
 			foreignRead: foreignRead.status,
 			foreignTrace: foreignTrace.status,
@@ -147,6 +176,8 @@ try {
 	expect(result.kind).toBe("local_session");
 	expect(result.projects).toBe(200);
 	expect(result.localTrace).toBe(200);
+	expect(result.localTraceBody).not.toContain("foreign-private-data");
+	expect(result.localTraceBody).not.toContain("foreign-secret-trace");
 	expect(result.foreignListed).toBe(false);
 	for (const status of [
 		result.foreignRead,
@@ -164,6 +195,52 @@ try {
 	).toBeVisible();
 	expect(errors).toEqual([]);
 	await context.close();
+	// A read-only denial cannot establish a tenant boundary. Use a separate admin
+	// session and prove that the same mutation succeeds within its own project.
+	const adminContext = await browser.newContext({ ignoreHTTPSErrors: true });
+	const adminPage = await adminContext.newPage();
+	await adminPage.goto(origin, { waitUntil: "domcontentloaded" });
+	await adminPage
+		.getByLabel("Username", { exact: true })
+		.fill("candidate.admin");
+	await adminPage
+		.getByLabel("Password", { exact: true })
+		.fill("synthetic-admin-a2b3c4d5");
+	await adminPage.getByRole("button", { name: "Sign in", exact: true }).click();
+	await expect(
+		adminPage.getByRole("heading", { name: "Organization overview" }),
+	).toBeVisible();
+	const adminResult = await adminPage.evaluate(async (foreign) => {
+		const session = await (await fetch("/v1/auth/session")).json();
+		const projects = await (await fetch("/v1/projects")).json();
+		const local = projects.items.find(
+			(item: { slug: string }) => item.slug === "default",
+		);
+		if (!local) throw new Error("Admin default project unavailable");
+		const mutate = (id: string, name: string) =>
+			fetch(`/v1/projects/${id}`, {
+				method: "PATCH",
+				headers: {
+					"content-type": "application/json",
+					"x-glasshouse-csrf": session.csrf_token,
+				},
+				body: JSON.stringify({ name }),
+			});
+		const localWrite = await mutate(local.id, "Candidate local control");
+		const foreignWrite = await mutate(foreign, "Cross-tenant mutation");
+		const localRead = await fetch(`/v1/projects/${local.id}`);
+		return {
+			localWrite: localWrite.status,
+			foreignWrite: foreignWrite.status,
+			localRead: await localRead.text(),
+			localReadStatus: localRead.status,
+		};
+	}, foreignProject);
+	expect(adminResult.localWrite).toBe(200);
+	expect(adminResult.localReadStatus).toBe(200);
+	expect(adminResult.localRead).toContain("Candidate local control");
+	expect([403, 404]).toContain(adminResult.foreignWrite);
+	await adminContext.close();
 } finally {
 	await browser?.close();
 	await new Promise<void>((resolve) => proxy.close(() => resolve()));

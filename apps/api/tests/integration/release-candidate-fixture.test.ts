@@ -20,7 +20,7 @@ test("release candidate foreign organization fixture satisfies the migrated sche
 		const workflow = await readFile(
 			resolve(
 				import.meta.dir,
-				"../../../../.github/workflows/release-candidate.yml",
+				"../../../../infra/scripts/test-publisher-candidate.sh",
 			),
 			"utf8",
 		);

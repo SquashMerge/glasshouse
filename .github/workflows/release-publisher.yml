@@ -69,6 +69,7 @@ jobs:
           path: |
             ${{ runner.temp }}/glasshouse-image.tar.gz
             ${{ runner.temp }}/glasshouse-bundle.tar.gz
+            ${{ runner.temp }}/candidate-sbom.json
             ${{ runner.temp }}/SHA256SUMS
           if-no-files-found: error
           retention-days: 1
@@ -118,6 +119,7 @@ jobs:
           subject-path: |
             ${{ runner.temp }}/release-assets/glasshouse-image.tar.gz
             ${{ runner.temp }}/release-assets/glasshouse-bundle.tar.gz
+            ${{ runner.temp }}/release-assets/candidate-sbom.json
           push-to-registry: false
       - name: Create and verify draft release
         env:

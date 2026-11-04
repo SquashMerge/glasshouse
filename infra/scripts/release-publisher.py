@@ -280,11 +280,11 @@ def main():
         return
     if args.asset_dir is None:
         raise ValueError('asset directory required')
-    names = ('glasshouse-image.tar.gz', 'glasshouse-bundle.tar.gz', 'SHA256SUMS')
+    names = ('glasshouse-image.tar.gz', 'glasshouse-bundle.tar.gz', 'candidate-sbom.json', 'SHA256SUMS')
     paths = [args.asset_dir / name for name in names]
     expected = {path.name: digest_file(path) for path in paths}
-    sums = paths[2].read_text()
-    expected_sums = ''.join(f'{expected[name][1]}  {name}\n' for name in names[:2])
+    sums = paths[-1].read_text()
+    expected_sums = ''.join(f'{expected[name][1]}  {name}\n' for name in names[:-1])
     if sums != expected_sums:
         raise ValueError('checksum manifest mismatch')
     require_no_release(client, tag)

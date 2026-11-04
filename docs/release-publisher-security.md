@@ -5,8 +5,8 @@ must be set to `true`). Its workflow has only a version-tag push trigger; PRs an
 manual dispatches have no publishing job. It builds one image archive and one
 bundle archive, loads/extracts those exact files for testing, then transfers the
 same bytes to a separate environment-gated job. That job independently repeats
-admission, verifies the transfer, attests both archives, creates a **draft** GitHub
-Release, uploads the archives and checksum manifest without clobbering, and
+admission, verifies the transfer, attests both archives and the image SBOM, creates a **draft** GitHub
+Release, uploads the archives, SBOM and checksum manifest without clobbering, and
 reads each remote asset back to compare its byte count and SHA-256. It does not
 publish to GHCR or turn a draft into a public release. A failed upload can leave
 an incomplete draft: investigate and manually remove it only after establishing
@@ -18,6 +18,16 @@ have not been changed by this implementation. Live end-to-end GitHub API behavio
 permissions, uploaded-byte readback, attestation verification, and the hosted
 candidate gates remain unverified. Do not enable without a separate review and
 an operator-controlled dry run in an appropriately configured repository.
+
+**Known admission blocker:** GitHub's [ruleset API](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)
+only returns `bypass_actors` to a caller with write access to the ruleset. The
+workflow's `GITHUB_TOKEN` does not have that access, so an otherwise valid
+ruleset is expected to be rejected as missing evidence. The publisher is not
+operational as configured. Do not treat a missing field as an empty array or
+grant broad administration privileges to the build/publish jobs to work around
+this. A future separately reviewed solution needs independently trustworthy,
+current no-bypass evidence without exposing ruleset-write authority to candidate
+code, and must be verified against the actual GitHub plan and inherited rulesets.
 
 ## Required operator controls before enabling publication
 
@@ -64,10 +74,9 @@ an operator-controlled dry run in an appropriately configured repository.
 
 ## Artifact and test limits
 
-The publisher's standalone candidate script intentionally mirrors the candidate
-workflow while preserving the versioned image and bundle archives across testing
-and upload. This duplicates test orchestration: changes to either path must be
-reviewed together, or both should be refactored to a shared reusable workflow.
+The non-publishing candidate workflow and publisher invoke the same candidate
+script. The publisher uses its actual version and transfers its own tested bytes;
+the candidate uses `v0.0.0-rc.1` and never publishes.
 The candidate executes untrusted-by-default application/dependency code on a
 read-only runner and has no release-write token. It is not a sandbox against the
 candidate code modifying its own tests, checksums or outputs. The privileged job

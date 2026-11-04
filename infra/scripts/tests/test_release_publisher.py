@@ -105,6 +105,9 @@ class PublisherTests(unittest.TestCase):
                        {'rules': [{'type': 'deletion'}]}, {'conditions': {'ref_name': {'include': ['refs/tags/v*'], 'exclude': []}}}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 publisher.validate_tag_rules([{**rule, **change}], 'refs/tags/v1.2.3')
+        without_bypass_evidence = {key: value for key, value in rule.items() if key != 'bypass_actors'}
+        with self.assertRaises(ValueError):
+            publisher.validate_tag_rules([without_bypass_evidence], 'refs/tags/v1.2.3')
 
     def test_existing_release_is_never_overwritten(self):
         class Client:
@@ -210,9 +213,9 @@ class PublisherTests(unittest.TestCase):
         client = Client()
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
-            for name in ('glasshouse-image.tar.gz', 'glasshouse-bundle.tar.gz'):
+            for name in ('glasshouse-image.tar.gz', 'glasshouse-bundle.tar.gz', 'candidate-sbom.json'):
                 (directory / name).write_bytes(name.encode())
-            names = ('glasshouse-image.tar.gz', 'glasshouse-bundle.tar.gz')
+            names = ('glasshouse-image.tar.gz', 'glasshouse-bundle.tar.gz', 'candidate-sbom.json')
             (directory / 'SHA256SUMS').write_text(''.join(f'{hashlib.sha256((directory / n).read_bytes()).hexdigest()}  {n}\n' for n in names))
             environment = {'GH_TOKEN': 'token', 'GITHUB_REPOSITORY': publisher.REPO,
                            'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/tags/v1.2.3', 'GITHUB_SHA': sha}
@@ -222,10 +225,20 @@ class PublisherTests(unittest.TestCase):
                 from contextlib import redirect_stdout
                 with redirect_stdout(io.StringIO()):
                     publisher.main()
-            self.assertEqual(client.uploads, 3)
+            self.assertEqual(client.uploads, 4)
+            self.assertEqual(set(client.assets), {*names, 'SHA256SUMS'})
             self.assertTrue(client.draft['draft'])
             self.assertFalse(client.draft['prerelease'])
-            self.assertEqual(admit.call_count, 6)
+            self.assertEqual(admit.call_count, 7)
+            (directory / 'candidate-sbom.json').write_bytes(b'tampered')
+            untouched = Client()
+            with patch.dict(os.environ, environment, clear=True), patch.object(publisher, 'Client', return_value=untouched), \
+                 patch.object(publisher, 'admit'), patch('subprocess.check_output', return_value=sha + '\n'), \
+                 patch('sys.argv', ['publisher', 'publish', '--asset-dir', tmp]):
+                with self.assertRaisesRegex(ValueError, 'checksum manifest mismatch'):
+                    publisher.main()
+            self.assertIsNone(untouched.draft)
+            self.assertEqual(untouched.uploads, 0)
 
     def test_readback_compares_remote_bytes_and_sizes(self):
         class Client:
