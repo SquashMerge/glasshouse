@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { releaseWeb } from "../../src/middleware/release-web";
-import { createApiApp } from "../../src/index";
 
 let directory: string;
 const app = new Hono();
@@ -22,6 +21,9 @@ afterAll(async () => {
 
 describe("single image web", () => {
 	it("integrates web serving without weakening the actual API authentication", async () => {
+		process.env.UI_USERNAME ??= "test-user";
+		process.env.UI_PASSWORD ??= "test-password";
+		const { createApiApp } = await import("../../src/index");
 		const api = createApiApp({ webDirectory: directory });
 		const ui = await api.request("/setup");
 		expect(ui.status).toBe(200);
