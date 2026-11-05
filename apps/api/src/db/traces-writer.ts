@@ -1,5 +1,5 @@
 import type { ClickHouseClient } from "@clickhouse/client";
-import { ch } from "./clickhouse.js";
+import { ch, CLICKHOUSE_REQUEST_TIMEOUT_MS } from "./clickhouse.js";
 import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
 import { observationToInsertRow } from "./observation-row.js";
 import { boundText } from "./trace-payload-bounds.js";
@@ -51,10 +51,12 @@ export async function insertTraces(
 	client: ClickHouseClient,
 	traces: TenantScopedTrace[],
 	deduplicationToken: string,
+	timeoutMs = CLICKHOUSE_REQUEST_TIMEOUT_MS,
 ): Promise<void> {
 	if (traces.length === 0) return;
-	await client
-		.insert({
+	await insertWithDeadline(
+		client,
+		{
 			table: "traces",
 			values: traces.map(traceToRow),
 			format: "JSONEachRow",
@@ -62,18 +64,21 @@ export async function insertTraces(
 				insert_deduplicate: 1,
 				insert_deduplication_token: deduplicationToken,
 			},
-		})
-		.catch(rethrowClickHouseInsertFailure);
+		},
+		timeoutMs,
+	);
 }
 
 export async function insertObservations(
 	client: ClickHouseClient,
 	observations: TenantScopedObservation[],
 	deduplicationToken: string,
+	timeoutMs = CLICKHOUSE_REQUEST_TIMEOUT_MS,
 ): Promise<void> {
 	if (observations.length === 0) return;
-	await client
-		.insert({
+	await insertWithDeadline(
+		client,
+		{
 			table: "observations",
 			values: observations.map(observationToInsertRow),
 			format: "JSONEachRow",
@@ -81,8 +86,32 @@ export async function insertObservations(
 				insert_deduplicate: 1,
 				insert_deduplication_token: deduplicationToken,
 			},
-		})
-		.catch(rethrowClickHouseInsertFailure);
+		},
+		timeoutMs,
+	);
+}
+
+async function insertWithDeadline(
+	client: ClickHouseClient,
+	params: Parameters<ClickHouseClient["insert"]>[0],
+	timeoutMs: number,
+): Promise<void> {
+	const controller = new AbortController();
+	// Bun can abort the socket without settling the client's socket-timeout path.
+	// Its supported signal also rejects the insert, including response-body drains.
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		await client.insert({ ...params, abort_signal: controller.signal });
+		controller.signal.throwIfAborted();
+	} catch (error) {
+		if (controller.signal.aborted)
+			throw Object.assign(new Error("ClickHouse insert timed out"), {
+				code: "ETIMEDOUT",
+			});
+		rethrowClickHouseInsertFailure(error);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 function rethrowClickHouseInsertFailure(error: unknown): never {

@@ -423,7 +423,7 @@ const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 };
 
 function otlpDeduplicationTokens(
-	request: unknown,
+	batch: unknown,
 	tenant: OtlpIngestTenantScope,
 ) {
 	const digest = createHash("sha256")
@@ -431,7 +431,7 @@ function otlpDeduplicationTokens(
 			JSON.stringify({
 				organization_id: tenant.organizationId,
 				project_id: tenant.projectId,
-				request,
+				batch,
 			}),
 		)
 		.digest("hex");
@@ -459,7 +459,6 @@ export function createOtlpIngestHandler(
 		}
 
 		const { request, rejectedSpans } = rejectUnsupportedSpans(parsed.data);
-		const deduplicationTokens = otlpDeduplicationTokens(request, tenant);
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];
 
@@ -541,10 +540,16 @@ export function createOtlpIngestHandler(
 							}
 						}
 					}
+					const traceRows = [...traces.values()].map(({ trace }) => trace);
+					// Only serialize redacted, bounded rows, never unbounded extensions.
+					const deduplicationTokens = otlpDeduplicationTokens(
+						{ traces: traceRows, observations },
+						tenant,
+					);
 					const writer = resolvedDependencies.defaultClient();
 					await resolvedDependencies.insertTraces(
 						writer,
-						[...traces.values()].map(({ trace }) => trace),
+						traceRows,
 						deduplicationTokens.traces,
 					);
 					await resolvedDependencies.insertObservations(

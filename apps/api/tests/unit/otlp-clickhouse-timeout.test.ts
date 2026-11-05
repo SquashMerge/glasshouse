@@ -3,6 +3,25 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+test("production Bun aborts real ClickHouse inserts over HTTP and gRPC", async () => {
+	const child = Bun.spawn(
+		[
+			process.execPath,
+			"test",
+			new URL("../fixtures/otlp-clickhouse-bun.test.ts", import.meta.url)
+				.pathname,
+		],
+		{ stdout: "pipe", stderr: "pipe", timeout: 25_000 },
+	);
+	const [stdout, stderr, code] = await Promise.all([
+		new Response(child.stdout).text(),
+		new Response(child.stderr).text(),
+		child.exited,
+	]);
+	expect(code, `${stdout}\n${stderr}`).toBe(0);
+	expect(stderr).toContain("13 pass");
+}, 30_000);
+
 test("real ClickHouse timeout responses under native Node", async () => {
 	const directory = await mkdtemp(
 		join(tmpdir(), "glasshouse-clickhouse-timeout-"),
