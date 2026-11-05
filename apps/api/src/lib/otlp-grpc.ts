@@ -120,7 +120,7 @@ export async function startOtlpGrpcServer(fetch: Fetch) {
 	try {
 		await new Promise<void>((resolve, reject) => {
 			server.bindAsync(
-				`${host}:${port}`,
+				`${isIP(host) === 6 ? `[${host}]` : host}:${port}`,
 				grpc.ServerCredentials.createInsecure(),
 				(error) => (error ? reject(error) : resolve()),
 			);

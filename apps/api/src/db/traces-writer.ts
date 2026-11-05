@@ -53,15 +53,17 @@ export async function insertTraces(
 	deduplicationToken: string,
 ): Promise<void> {
 	if (traces.length === 0) return;
-	await client.insert({
-		table: "traces",
-		values: traces.map(traceToRow),
-		format: "JSONEachRow",
-		clickhouse_settings: {
-			insert_deduplicate: 1,
-			insert_deduplication_token: deduplicationToken,
-		},
-	});
+	await client
+		.insert({
+			table: "traces",
+			values: traces.map(traceToRow),
+			format: "JSONEachRow",
+			clickhouse_settings: {
+				insert_deduplicate: 1,
+				insert_deduplication_token: deduplicationToken,
+			},
+		})
+		.catch(rethrowClickHouseInsertFailure);
 }
 
 export async function insertObservations(
@@ -70,15 +72,30 @@ export async function insertObservations(
 	deduplicationToken: string,
 ): Promise<void> {
 	if (observations.length === 0) return;
-	await client.insert({
-		table: "observations",
-		values: observations.map(observationToInsertRow),
-		format: "JSONEachRow",
-		clickhouse_settings: {
-			insert_deduplicate: 1,
-			insert_deduplication_token: deduplicationToken,
-		},
-	});
+	await client
+		.insert({
+			table: "observations",
+			values: observations.map(observationToInsertRow),
+			format: "JSONEachRow",
+			clickhouse_settings: {
+				insert_deduplicate: 1,
+				insert_deduplication_token: deduplicationToken,
+			},
+		})
+		.catch(rethrowClickHouseInsertFailure);
+}
+
+function rethrowClickHouseInsertFailure(error: unknown): never {
+	// @clickhouse/client 1.24.1 emits this uncoded error for a socket timeout.
+	// Recognize it only at the insert boundary, never in generic error handling.
+	if (
+		error instanceof Error &&
+		error.name === "Error" &&
+		error.message === "Timeout error." &&
+		!("code" in error)
+	)
+		throw Object.assign(error, { code: "ETIMEDOUT" });
+	throw error;
 }
 
 export function defaultClient(): ClickHouseClient {

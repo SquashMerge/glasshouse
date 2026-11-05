@@ -53,7 +53,7 @@ export const otlpIngestRoute = createRoute({
 	tags: [tag],
 	summary: "OTLP HTTP trace ingest",
 	description:
-		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
+		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
 	security: [
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
@@ -200,7 +200,7 @@ async function parseOtlpHttpRequest(req: {
 	if (contentType !== "application/json") {
 		try {
 			return parseNormalizedOtlpRequest(
-				otlpJsonToLegacy(normalizeOtlpBytes(decodeOtlpTraceExport(body))),
+				otlpJsonToLegacy(normalizeOtlpFields(decodeOtlpTraceExport(body))),
 			);
 		} catch {
 			return {
@@ -223,7 +223,7 @@ async function parseOtlpHttpRequest(req: {
 	}
 	try {
 		return parseNormalizedOtlpRequest(
-			otlpJsonToLegacy(normalizeOtlpBytes(bodyJson)),
+			otlpJsonToLegacy(normalizeOtlpFields(bodyJson)),
 		);
 	} catch {
 		return {
@@ -324,20 +324,60 @@ function lowerHex(value: unknown): unknown {
 	return value;
 }
 
-function normalizeOtlpBytes(value: unknown, depth = 0): unknown {
+type OtlpAttributeMessage =
+	| "attribute"
+	| "value"
+	| "arrayValue"
+	| "kvlistValue";
+
+function normalizeOtlpFields(
+	value: unknown,
+	depth = 0,
+	attributeMessage?: OtlpAttributeMessage,
+): unknown {
 	if (depth > 32 || !value || typeof value !== "object") return value;
 	if (Array.isArray(value))
-		return value.map((item) => normalizeOtlpBytes(item, depth + 1));
+		return value.map((item) => {
+			if (item === null) throw new Error("Invalid null repeated element");
+			return normalizeOtlpFields(item, depth + 1, attributeMessage);
+		});
 	const object = value as Record<string, unknown>;
 	const normalized: Record<string, unknown> = {};
 	for (const [key, child] of Object.entries(object)) {
+		// Preserve unknown nested fields for fail-closed attribute redaction.
+		const knownField =
+			attributeMessage === undefined ||
+			(attributeMessage === "attribute"
+				? key === "key" || key === "value"
+				: attributeMessage === "value"
+					? OTLP_ANY_VALUE_KEYS.has(key)
+					: key === "values");
+		if (child === null && knownField) continue;
 		if (
 			key === "bytesValue" &&
 			Array.isArray(child) &&
 			child.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
 		)
 			normalized[key] = Buffer.from(child).toString("base64");
-		else normalized[key] = normalizeOtlpBytes(child, depth + 1);
+		else {
+			let childMessage: OtlpAttributeMessage | undefined;
+			if (
+				key === "attributes" ||
+				(attributeMessage === "kvlistValue" && key === "values")
+			)
+				childMessage = "attribute";
+			else if (
+				(attributeMessage === "attribute" && key === "value") ||
+				(attributeMessage === "arrayValue" && key === "values")
+			)
+				childMessage = "value";
+			else if (
+				attributeMessage === "value" &&
+				(key === "arrayValue" || key === "kvlistValue")
+			)
+				childMessage = key;
+			normalized[key] = normalizeOtlpFields(child, depth + 1, childMessage);
+		}
 	}
 	return normalized;
 }

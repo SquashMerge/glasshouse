@@ -2641,56 +2641,6 @@ components:
         - omissions
         - events
       type: object
-    AnyValue:
-      anyOf:
-        - properties:
-            stringValue:
-              type: string
-          required:
-            - stringValue
-          type: object
-        - properties:
-            boolValue:
-              type: boolean
-          required:
-            - boolValue
-          type: object
-        - properties:
-            intValue:
-              anyOf:
-                - type: integer
-                - type: string
-          required:
-            - intValue
-          type: object
-        - properties:
-            doubleValue:
-              type: number
-          required:
-            - doubleValue
-          type: object
-        - properties:
-            arrayValue:
-              properties:
-                values:
-                  items: {}
-                  type: array
-              type: object
-          required:
-            - arrayValue
-          type: object
-        - properties:
-            kvlistValue:
-              $ref: '#/components/schemas/KvlistValue'
-          required:
-            - kvlistValue
-          type: object
-        - properties:
-            bytesValue:
-              type: string
-          required:
-            - bytesValue
-          type: object
     AuditEvent:
       additionalProperties: false
       properties:
@@ -6769,23 +6719,6 @@ components:
         - status
         - checks
       type: object
-    KeyValue:
-      properties:
-        key:
-          maxLength: 256
-          minLength: 1
-          type: string
-        value:
-          $ref: '#/components/schemas/AnyValue'
-      required:
-        - key
-      type: object
-    KvlistValue:
-      properties:
-        values:
-          items: {}
-          type: array
-      type: object
     LocalAccount:
       additionalProperties: false
       properties:
@@ -7138,6 +7071,61 @@ components:
         message:
           type: string
       type: object
+    OtlpWireKeyValue:
+      properties:
+        key:
+          maxLength: 256
+          minLength: 1
+          type: string
+        value:
+          properties:
+            arrayValue:
+              properties:
+                values:
+                  items: {}
+                  type:
+                    - array
+                    - 'null'
+              type:
+                - object
+                - 'null'
+            boolValue:
+              type:
+                - boolean
+                - 'null'
+            bytesValue:
+              type:
+                - string
+                - 'null'
+            doubleValue:
+              type:
+                - number
+                - 'null'
+            intValue:
+              anyOf:
+                - type: integer
+                - type: string
+                - type: 'null'
+            kvlistValue:
+              properties:
+                values:
+                  items: {}
+                  type:
+                    - array
+                    - 'null'
+              type:
+                - object
+                - 'null'
+            stringValue:
+              type:
+                - string
+                - 'null'
+          type:
+            - object
+            - 'null'
+      required:
+        - key
+      type: object
     OtlpWireRequest:
       properties:
         resourceSpans:
@@ -7147,10 +7135,18 @@ components:
                 properties:
                   attributes:
                     items:
-                      $ref: '#/components/schemas/KeyValue'
+                      $ref: '#/components/schemas/OtlpWireKeyValue'
                     maxItems: 128
-                    type: array
-                type: object
+                    type:
+                      - array
+                      - 'null'
+                  droppedAttributesCount:
+                    type:
+                      - integer
+                      - 'null'
+                type:
+                  - object
+                  - 'null'
               scopeSpans:
                 items:
                   properties:
@@ -7158,40 +7154,61 @@ components:
                       properties:
                         attributes:
                           items:
-                            $ref: '#/components/schemas/KeyValue'
+                            $ref: '#/components/schemas/OtlpWireKeyValue'
                           maxItems: 128
-                          type: array
+                          type:
+                            - array
+                            - 'null'
                         name:
-                          type: string
+                          type:
+                            - string
+                            - 'null'
                         version:
-                          type: string
-                      type: object
+                          type:
+                            - string
+                            - 'null'
+                      type:
+                        - object
+                        - 'null'
                     spans:
                       items:
                         properties:
                           attributes:
                             items:
-                              $ref: '#/components/schemas/KeyValue'
+                              $ref: '#/components/schemas/OtlpWireKeyValue'
                             maxItems: 128
-                            type: array
+                            type:
+                              - array
+                              - 'null'
                           endTimeUnixNano:
                             anyOf:
                               - type: string
                               - type: number
+                              - type: 'null'
                           events:
                             items: {}
-                            type: array
+                            type:
+                              - array
+                              - 'null'
                           kind:
-                            $ref: '#/components/schemas/SpanKind'
+                            maximum: 5
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
                           links:
                             items: {}
-                            type: array
+                            type:
+                              - array
+                              - 'null'
                           name:
                             maxLength: 256
                             minLength: 1
                             type: string
                           parentSpanId:
-                            type: string
+                            type:
+                              - string
+                              - 'null'
                           spanId:
                             pattern: ^[0-9a-fA-F]{16}$
                             type: string
@@ -7200,12 +7217,33 @@ components:
                               - type: string
                               - type: integer
                           status:
-                            $ref: '#/components/schemas/SpanStatus'
+                            properties:
+                              code:
+                                anyOf:
+                                  - enum:
+                                      - 0
+                                    type: number
+                                  - enum:
+                                      - 1
+                                    type: number
+                                  - enum:
+                                      - 2
+                                    type: number
+                                  - type: 'null'
+                              message:
+                                type:
+                                  - string
+                                  - 'null'
+                            type:
+                              - object
+                              - 'null'
                           traceId:
                             pattern: ^[0-9a-fA-F]{32}$
                             type: string
                           traceState:
-                            type: string
+                            type:
+                              - string
+                              - 'null'
                         required:
                           - traceId
                           - spanId
@@ -7809,42 +7847,6 @@ components:
           type: string
       required:
         - confirmation
-      type: object
-    SpanKind:
-      anyOf:
-        - enum:
-            - 0
-          type: number
-        - enum:
-            - 1
-          type: number
-        - enum:
-            - 2
-          type: number
-        - enum:
-            - 3
-          type: number
-        - enum:
-            - 4
-          type: number
-        - enum:
-            - 5
-          type: number
-    SpanStatus:
-      properties:
-        code:
-          anyOf:
-            - enum:
-                - 0
-              type: number
-            - enum:
-                - 1
-              type: number
-            - enum:
-                - 2
-              type: number
-        message:
-          type: string
       type: object
     StoredAgentIntrospectionReportV1:
       additionalProperties: false
@@ -18647,7 +18649,7 @@ paths:
       tags:
         - traces
     post:
-      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Spans containing events or links are rejected with a partial-success response; supported spans are stored.
+      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.
       parameters:
         - description: Project selector, verified against the authenticated organization
           in: header

@@ -9,11 +9,11 @@ const traceExportPath =
 	"/opentelemetry.proto.collector.trace.v1.TraceService/Export";
 const healthPath = "/grpc.health.v1.Health/Check";
 
-async function unusedLoopbackPort(): Promise<number> {
+async function unusedLoopbackPort(host = "127.0.0.1"): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const server = createServer();
 		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => {
+		server.listen(0, host, () => {
 			const address = server.address();
 			if (!address || typeof address === "string") {
 				reject(new Error("Could not allocate a loopback port"));
@@ -23,6 +23,33 @@ async function unusedLoopbackPort(): Promise<number> {
 		});
 	});
 }
+
+test("OTLP gRPC binds IPv6 loopback and serves a real health request", async () => {
+	const port = await unusedLoopbackPort("::1");
+	const previousPort = process.env.OTLP_GRPC_PORT;
+	const previousHost = process.env.OTLP_GRPC_HOST;
+	process.env.OTLP_GRPC_PORT = String(port);
+	process.env.OTLP_GRPC_HOST = "::1";
+	let stop: Awaited<ReturnType<typeof startOtlpGrpcServer>> = null;
+	let client: grpc.Client | undefined;
+	try {
+		stop = await startOtlpGrpcServer(() => new Response());
+		client = new grpc.Client(
+			`[::1]:${port}`,
+			grpc.credentials.createInsecure(),
+		);
+		expect(await unary(client, healthPath, Buffer.alloc(0))).toEqual(
+			Buffer.from([8, 1]),
+		);
+	} finally {
+		client?.close();
+		await stop?.();
+		if (previousPort === undefined) delete process.env.OTLP_GRPC_PORT;
+		else process.env.OTLP_GRPC_PORT = previousPort;
+		if (previousHost === undefined) delete process.env.OTLP_GRPC_HOST;
+		else process.env.OTLP_GRPC_HOST = previousHost;
+	}
+});
 
 function unary(
 	client: grpc.Client,
@@ -37,6 +64,7 @@ function unary(
 			(value: Buffer) => value,
 			payload,
 			metadata,
+			{ deadline: Date.now() + 2_000 },
 			(error, response) => (error ? reject(error) : resolve(response)),
 		);
 	});

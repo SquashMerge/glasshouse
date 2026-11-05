@@ -29,6 +29,7 @@ const KvlistValue = z
 
 const AnyValue = z
 	.union([
+		z.strictObject({}),
 		z.object({ stringValue: z.string() }),
 		z.object({ boolValue: z.boolean() }),
 		z.object({ intValue: z.union([z.number().int(), z.string()]) }),
@@ -150,19 +151,56 @@ export const ExportTraceServiceRequest = z
 	})
 	.openapi("ExportTraceServiceRequest");
 
+const WireKeyValue = z
+	.object({
+		key: KeyValue.shape.key,
+		value: z
+			.object({
+				stringValue: z.string().nullable().optional(),
+				boolValue: z.boolean().nullable().optional(),
+				intValue: z.union([z.number().int(), z.string()]).nullable().optional(),
+				doubleValue: z.number().nullable().optional(),
+				bytesValue: z.string().nullable().optional(),
+				arrayValue: z
+					.object({ values: z.array(z.any()).nullable().optional() })
+					.nullable()
+					.optional(),
+				kvlistValue: z
+					.object({ values: z.array(z.any()).nullable().optional() })
+					.nullable()
+					.optional(),
+			})
+			.nullable()
+			.optional(),
+	})
+	.openapi("OtlpWireKeyValue");
+
 const WireSpan = z.object({
 	traceId: z.string().regex(/^[0-9a-fA-F]{32}$/),
 	spanId: z.string().regex(/^[0-9a-fA-F]{16}$/),
-	parentSpanId: z.string().optional(),
+	parentSpanId: z.string().nullable().optional(),
 	name: z.string().min(1).max(256),
-	kind: SpanKind.optional(),
+	kind: z.number().int().min(0).max(5).nullable().optional(),
 	startTimeUnixNano: z.union([z.string(), z.number().int()]),
-	endTimeUnixNano: z.union([z.string(), z.number()]).optional(),
-	attributes: z.array(KeyValue).max(MAX_OTLP_ATTRIBUTES_PER_RECORD).optional(),
-	status: SpanStatus.optional(),
-	events: z.array(z.unknown()).optional(),
-	links: z.array(z.unknown()).optional(),
-	traceState: z.string().optional(),
+	endTimeUnixNano: z.union([z.string(), z.number()]).nullable().optional(),
+	attributes: z
+		.array(WireKeyValue)
+		.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+		.nullable()
+		.optional(),
+	status: z
+		.object({
+			code: z
+				.union([z.literal(0), z.literal(1), z.literal(2)])
+				.nullable()
+				.optional(),
+			message: z.string().nullable().optional(),
+		})
+		.nullable()
+		.optional(),
+	events: z.array(z.unknown()).nullable().optional(),
+	links: z.array(z.unknown()).nullable().optional(),
+	traceState: z.string().nullable().optional(),
 });
 
 export const OtlpWireRequest = z
@@ -173,23 +211,28 @@ export const OtlpWireRequest = z
 					resource: z
 						.object({
 							attributes: z
-								.array(KeyValue)
+								.array(WireKeyValue)
 								.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+								.nullable()
 								.optional(),
+							droppedAttributesCount: z.number().int().nullable().optional(),
 						})
+						.nullable()
 						.optional(),
 					scopeSpans: z
 						.array(
 							z.object({
 								scope: z
 									.object({
-										name: z.string().optional(),
-										version: z.string().optional(),
+										name: z.string().nullable().optional(),
+										version: z.string().nullable().optional(),
 										attributes: z
-											.array(KeyValue)
+											.array(WireKeyValue)
 											.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
+											.nullable()
 											.optional(),
 									})
+									.nullable()
 									.optional(),
 								spans: z
 									.array(WireSpan)
