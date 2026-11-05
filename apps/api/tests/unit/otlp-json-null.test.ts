@@ -142,6 +142,58 @@ for (const [name, leaf, status] of [
 	});
 }
 
+test("OTLP handler accepts deeply nested unknown extensions without retaining them", async () => {
+	const body = JSON.stringify(
+		payload(
+			{},
+			{},
+			{
+				attributes: [
+					{
+						key: "payload",
+						value: { stringValue: "also-drop", futureExtension: "PLACEHOLDER" },
+					},
+				],
+			},
+		),
+	).replace(
+		'"PLACEHOLDER"',
+		'{"values":['.repeat(20_000) + '"never-retain"' + "]}".repeat(20_000),
+	);
+	const rows: unknown[] = [];
+	const tokens: string[] = [];
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+			callback({} as never),
+		approvedRedaction: async () => ({ mode: "none", keys: ["secret"] }),
+		defaultClient: () => ({}) as never,
+		insertTraces: async (_client, _rows, token) => {
+			tokens.push(token);
+		},
+		insertObservations: async (_client, values, token) => {
+			rows.push(...values);
+			tokens.push(token);
+		},
+		publishSync: () => undefined,
+	});
+	for (let i = 0; i < 2; i++) {
+		const response = await handler(
+			new Request("http://localhost/v1/traces", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body,
+			}),
+			tenant,
+		);
+		expect(response.status).toBe(200);
+	}
+	expect(rows).toHaveLength(2);
+	expect(JSON.stringify(rows)).not.toContain("never-retain");
+	expect(JSON.stringify(rows)).not.toContain("also-drop");
+	expect(tokens[0]).toBe(tokens[2]);
+	expect(tokens[1]).toBe(tokens[3]);
+});
+
 test("OTLP handler ignores deeply nested extension data but redacts it fail closed", async () => {
 	let extension: unknown = {
 		key: "secret",
