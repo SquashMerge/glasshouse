@@ -6791,10 +6791,22 @@ components:
       properties:
         duration_ms:
           type:
-            - integer
+            - number
+            - 'null'
+        duration_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
             - 'null'
         end_time:
           format: date-time
+          type:
+            - string
+            - 'null'
+        end_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
           type:
             - string
             - 'null'
@@ -6817,6 +6829,8 @@ components:
           type: string
         observation_id:
           type: string
+        otlp:
+          $ref: '#/components/schemas/OtlpDetail'
         output_excerpt_truncated:
           type: boolean
         output_retained_truncated:
@@ -6833,6 +6847,12 @@ components:
         start_time:
           format: date-time
           type: string
+        start_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
+            - 'null'
         status:
           $ref: '#/components/schemas/TraceStatus'
         trace_id:
@@ -7066,6 +7086,160 @@ components:
         - totals
         - series
       type: object
+    OtlpDetail:
+      additionalProperties: {}
+      description: Redacted OTLP resource/scope, schema URLs, attributes, kind, flags, trace_state, status, events, links and dropped counts. Event times are exact decimal nanosecond strings. Bounded to 32 KiB; truncated signals omitted or shortened content, distinct from source dropped counts. Only returned in trace detail/SSE, not lists.
+      properties:
+        attributes:
+          items:
+            properties:
+              key:
+                type: string
+              value:
+                additionalProperties: {}
+                type: object
+            type: object
+          type: array
+        dropped_attributes_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        dropped_events_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        dropped_links_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        events:
+          items:
+            properties:
+              attributes:
+                items:
+                  properties:
+                    key:
+                      type: string
+                    value:
+                      additionalProperties: {}
+                      type: object
+                  type: object
+                type: array
+              dropped_attributes_count:
+                maximum: 4294967295
+                minimum: 0
+                type: integer
+              name:
+                type: string
+              time_unix_nano:
+                description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+                pattern: ^\d{1,20}$
+                type:
+                  - string
+                  - 'null'
+            type: object
+          type: array
+        flags:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        kind:
+          maximum: 5
+          minimum: 0
+          type: integer
+        links:
+          items:
+            properties:
+              attributes:
+                items:
+                  properties:
+                    key:
+                      type: string
+                    value:
+                      additionalProperties: {}
+                      type: object
+                  type: object
+                type: array
+              dropped_attributes_count:
+                maximum: 4294967295
+                minimum: 0
+                type: integer
+              flags:
+                maximum: 4294967295
+                minimum: 0
+                type: integer
+              span_id:
+                type: string
+              trace_id:
+                type: string
+              trace_state:
+                type: string
+            type: object
+          type: array
+        resource:
+          properties:
+            attributes:
+              items:
+                properties:
+                  key:
+                    type: string
+                  value:
+                    additionalProperties: {}
+                    type: object
+                type: object
+              type: array
+            dropped_attributes_count:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+          type: object
+        resource_schema_url:
+          type: string
+        schema_version:
+          enum:
+            - 1
+          type: number
+        scope:
+          properties:
+            attributes:
+              items:
+                properties:
+                  key:
+                    type: string
+                  value:
+                    additionalProperties: {}
+                    type: object
+                type: object
+              type: array
+            dropped_attributes_count:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+            name:
+              type: string
+            version:
+              type: string
+          type: object
+        scope_schema_url:
+          type: string
+        status:
+          properties:
+            code:
+              maximum: 2
+              minimum: 0
+              type: integer
+            message:
+              type: string
+          type: object
+        trace_state:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - schema_version
+      type:
+        - object
+        - 'null'
     OtlpError:
       properties:
         message:
@@ -7095,12 +7269,23 @@ components:
             - string
             - 'null'
         doubleValue:
-          type:
-            - number
-            - 'null'
+          anyOf:
+            - type: number
+            - enum:
+                - NaN
+              type: string
+            - enum:
+                - Infinity
+              type: string
+            - enum:
+                - -Infinity
+              type: string
+            - type: 'null'
         intValue:
           anyOf:
-            - type: integer
+            - maximum: 9007199254740991
+              minimum: -9007199254740991
+              type: integer
             - type: string
             - type: 'null'
         kvlistValue:
@@ -7149,15 +7334,25 @@ components:
                       - array
                       - 'null'
                   droppedAttributesCount:
+                    maximum: 4294967295
+                    minimum: 0
                     type:
                       - integer
                       - 'null'
                 type:
                   - object
                   - 'null'
+              schemaUrl:
+                type:
+                  - string
+                  - 'null'
               scopeSpans:
                 items:
                   properties:
+                    schemaUrl:
+                      type:
+                        - string
+                        - 'null'
                     scope:
                       properties:
                         attributes:
@@ -7166,6 +7361,12 @@ components:
                           maxItems: 128
                           type:
                             - array
+                            - 'null'
+                        droppedAttributesCount:
+                          maximum: 4294967295
+                          minimum: 0
+                          type:
+                            - integer
                             - 'null'
                         name:
                           type:
@@ -7188,10 +7389,31 @@ components:
                             type:
                               - array
                               - 'null'
+                          droppedAttributesCount:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
+                          droppedEventsCount:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
+                          droppedLinksCount:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
                           endTimeUnixNano:
                             anyOf:
-                              - type: string
-                              - type: integer
+                              - pattern: ^\d{1,20}$
+                                type: string
+                              - maximum: 9007199254740991
+                                minimum: 0
+                                type: integer
                               - type: 'null'
                           events:
                             items:
@@ -7199,12 +7421,38 @@ components:
                                 attributes:
                                   items:
                                     $ref: '#/components/schemas/OtlpWireKeyValue'
+                                  maxItems: 128
                                   type:
                                     - array
                                     - 'null'
+                                droppedAttributesCount:
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type:
+                                    - integer
+                                    - 'null'
+                                name:
+                                  type:
+                                    - string
+                                    - 'null'
+                                timeUnixNano:
+                                  anyOf:
+                                    - pattern: ^\d{1,20}$
+                                      type: string
+                                    - maximum: 9007199254740991
+                                      minimum: 0
+                                      type: integer
+                                    - type: 'null'
                               type: object
+                            maxItems: 512
                             type:
                               - array
+                              - 'null'
+                          flags:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
                               - 'null'
                           kind:
                             maximum: 5
@@ -7218,10 +7466,38 @@ components:
                                 attributes:
                                   items:
                                     $ref: '#/components/schemas/OtlpWireKeyValue'
+                                  maxItems: 128
                                   type:
                                     - array
                                     - 'null'
+                                droppedAttributesCount:
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type:
+                                    - integer
+                                    - 'null'
+                                flags:
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type:
+                                    - integer
+                                    - 'null'
+                                spanId:
+                                  pattern: ^[0-9a-fA-F]{16}$
+                                  type: string
+                                traceId:
+                                  pattern: ^[0-9a-fA-F]{32}$
+                                  type: string
+                                traceState:
+                                  maxLength: 512
+                                  type:
+                                    - string
+                                    - 'null'
+                              required:
+                                - traceId
+                                - spanId
                               type: object
+                            maxItems: 512
                             type:
                               - array
                               - 'null'
@@ -7238,8 +7514,11 @@ components:
                             type: string
                           startTimeUnixNano:
                             anyOf:
-                              - type: string
-                              - type: integer
+                              - pattern: ^\d{1,20}$
+                                type: string
+                              - maximum: 9007199254740991
+                                minimum: 0
+                                type: integer
                           status:
                             properties:
                               code:
@@ -7958,10 +8237,22 @@ components:
           type: string
         duration_ms:
           type:
-            - integer
+            - number
+            - 'null'
+        duration_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
             - 'null'
         end_time:
           format: date-time
+          type:
+            - string
+            - 'null'
+        end_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
           type:
             - string
             - 'null'
@@ -7991,6 +8282,12 @@ components:
         start_time:
           format: date-time
           type: string
+        start_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
+            - 'null'
         status:
           $ref: '#/components/schemas/TraceStatus'
         tags:
@@ -18673,7 +18970,7 @@ paths:
       tags:
         - traces
     post:
-      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.
+      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request and 512 events/links per span. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Spans require valid IDs, a name, and an exact uint64 start time (unsafe JSON numbers are rejected; use decimal strings). Events, links and resource/scope/status context are redacted and retained in bounded OTLP detail (32 KiB per span, 8 MiB per export); truncation is explicit on readback.
       parameters:
         - description: Project selector, verified against the authenticated organization
           in: header

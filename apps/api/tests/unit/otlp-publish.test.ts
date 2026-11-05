@@ -697,7 +697,8 @@ describe("OTLP ingest publishes events", () => {
 		expect(inserted[0]).toMatchObject({
 			name: "root request",
 			status: "error",
-			duration_ms: 9,
+			duration_ms: 10,
+			duration_nano: "10000000",
 		});
 	});
 

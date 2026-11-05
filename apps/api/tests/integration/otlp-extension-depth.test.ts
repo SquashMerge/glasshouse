@@ -274,7 +274,10 @@ for (const [depth, location] of [
 			const retained = JSON.stringify(rows);
 			expect(retained).not.toContain(secret);
 			expect(retained).not.toContain("drop-unknown-branch");
-			if (table === "observations") expect(retained).toContain("retained-safe");
+			if (table === "observations") {
+				expect(retained).not.toContain("retained-safe");
+				expect(retained).toContain("[REDACTED]");
+			}
 		}
 		expect(JSON.stringify(events)).not.toContain(secret);
 		expect(JSON.stringify(events)).not.toContain("drop-unknown-branch");

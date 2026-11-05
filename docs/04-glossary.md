@@ -31,6 +31,12 @@ The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. F
 ### Trace cursor
 An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and is not transferable to another endpoint. Trace and Observation list cursors are Project-scoped (`start_time, id`); Trace-detail and detail-SSE cursors are both Project- and trace-scoped (`start_time, observation_id`).
 
+### OTLP detail
+The redacted, bounded `Observation.otlp` envelope exposed by authenticated trace detail/SSE and the inspector's Events, Links, Resource and Context tabs. Retains resource/scope context, schema URLs, attributes, status/message, kind, trace state, flags, source dropped counts, span events and links. Span events are embedded evidence, not extra Observation rows. `truncated` reports retention omissions independently of source dropped counts.
+
+### Exact trace times
+`start_time_unix_nano`, `end_time_unix_nano`, and `duration_nano`: nullable decimal-string nanoseconds retained alongside compatible millisecond fields. Unknown legacy/internal precision remains null; BigInt comparisons/subtraction preserve source precision. Event `time_unix_nano` is also a decimal string. See `docs/03-otel-ingest.md` for bounds.
+
 ## Organization usage dashboard
 
 - `/` — authenticated organization homepage. It summarizes retained Trace and Observation rows for all active and archived Projects, with `24h`, `7d`, `30d`, and `90d` UTC ranges. Counts are grouped by `start_time` and are storage-row counts, not unique events or billing values.

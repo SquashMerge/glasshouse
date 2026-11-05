@@ -2,6 +2,7 @@
 // gen_ai.* (OTel GenAI semantic conventions) wins; OpenInference is the fallback.
 
 import type { Span } from "../schemas/otlp.js";
+import type { OtlpDetail } from "./otlp-detail.js";
 import {
 	observationMetadata,
 	promptProvenanceFromAttributes,
@@ -54,6 +55,9 @@ function attrNumber(attrs: Attribute[], key: string): number | undefined {
 }
 
 export interface NormalizedTrace {
+	start_time_unix_nano?: string | null;
+	end_time_unix_nano?: string | null;
+	duration_nano?: string | null;
 	trace_id: string;
 	project_id: string;
 	name: string;
@@ -75,6 +79,10 @@ export interface NormalizedTrace {
 }
 
 export interface NormalizedObservation {
+	start_time_unix_nano?: string | null;
+	end_time_unix_nano?: string | null;
+	duration_nano?: string | null;
+	otlp?: OtlpDetail;
 	observation_id: string;
 	trace_id: string;
 	project_id: string;
@@ -93,11 +101,11 @@ export interface NormalizedObservation {
 	metadata: ObservationMetadata;
 }
 
-function isoFromUnixNano(nano: number): string {
+function isoFromUnixNano(nano: string): string {
 	// OTLP timestamps are nanoseconds since epoch; JS Date is milliseconds.
 	// Format as `YYYY-MM-DD HH:MM:SS.fff` (UTC) — ClickHouse's JSONEachRow parser
 	// doesn't accept the ISO `T`/`Z` form for DateTime64.
-	const d = new Date(Math.floor(nano / 1_000_000));
+	const d = new Date(Number(BigInt(nano) / 1_000_000n));
 	const pad = (n: number, w = 2) => String(n).padStart(w, "0");
 	return (
 		`${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
@@ -106,11 +114,17 @@ function isoFromUnixNano(nano: number): string {
 }
 
 function durationMs(
-	startNano: number | undefined,
-	endNano: number | undefined,
+	startNano: string | undefined,
+	endNano: string | undefined,
 ): number | null {
 	if (startNano === undefined || endNano === undefined) return null;
-	return Math.max(0, Math.round((endNano - startNano) / 1_000_000));
+	return (
+		Number(
+			BigInt(endNano) > BigInt(startNano)
+				? BigInt(endNano) - BigInt(startNano)
+				: 0n,
+		) / 1_000_000
+	);
 }
 
 function scorePairsAsCsv(pairs: Array<[string, number]>): string {
@@ -204,18 +218,25 @@ export function normalizeSpan(
 	if (oiKind) tags.push(`openinference.span.kind:${oiKind}`);
 
 	const trace: NormalizedTrace = {
+		start_time_unix_nano: span.start_time_unix_nano,
+		end_time_unix_nano: span.end_time_unix_nano ?? null,
+		duration_nano:
+			span.end_time_unix_nano === undefined
+				? null
+				: (BigInt(span.end_time_unix_nano) > BigInt(span.start_time_unix_nano)
+						? BigInt(span.end_time_unix_nano) -
+							BigInt(span.start_time_unix_nano)
+						: 0n
+					).toString(),
 		trace_id: span.trace_id,
 		project_id: projectId,
 		name: span.name,
-		start_time: isoFromUnixNano(span.start_time_unix_nano as unknown as number),
+		start_time: isoFromUnixNano(span.start_time_unix_nano),
 		end_time:
 			span.end_time_unix_nano !== undefined
-				? isoFromUnixNano(span.end_time_unix_nano as unknown as number)
+				? isoFromUnixNano(span.end_time_unix_nano)
 				: null,
-		duration_ms: durationMs(
-			span.start_time_unix_nano as unknown as number,
-			span.end_time_unix_nano as unknown as number,
-		),
+		duration_ms: durationMs(span.start_time_unix_nano, span.end_time_unix_nano),
 		status,
 		user_id: userId,
 		session_id: sessionId,
@@ -230,6 +251,9 @@ export function normalizeSpan(
 
 	const type = classifySpanType(attrs);
 	const observation: NormalizedObservation = {
+		start_time_unix_nano: trace.start_time_unix_nano,
+		end_time_unix_nano: trace.end_time_unix_nano,
+		duration_nano: trace.duration_nano,
 		observation_id: span.span_id,
 		trace_id: span.trace_id,
 		project_id: projectId,

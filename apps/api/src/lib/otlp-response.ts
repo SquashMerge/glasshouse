@@ -64,7 +64,7 @@ export function otlpSuccessResponse(
 			headers: { "content-type": type },
 		});
 
-	const message = "Spans with events or links are not supported";
+	const message = "Some spans were rejected";
 	if (type === "application/json")
 		return new Response(
 			JSON.stringify({

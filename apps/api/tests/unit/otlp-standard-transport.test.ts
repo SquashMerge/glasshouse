@@ -55,7 +55,7 @@ test("OTLP accepts empty resource and scope envelopes alongside spans", async ()
 	expect(observations).toBe(1);
 });
 
-test("OTLP returns partial success for large unsupported events and links", async () => {
+test("OTLP retains bounded large event and link lists without rejecting spans", async () => {
 	let observations = 0;
 	const handler = createOtlpIngestHandler({
 		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
@@ -94,7 +94,10 @@ test("OTLP returns partial success for large unsupported events and links", asyn
 									{
 										...span,
 										spanId: "1111222233334444",
-										links: Array.from({ length: 129 }, () => ({})),
+										links: Array.from({ length: 129 }, () => ({
+											traceId: span.traceId,
+											spanId: span.spanId,
+										})),
 									},
 								],
 							},
@@ -106,16 +109,11 @@ test("OTLP returns partial success for large unsupported events and links", asyn
 		tenant,
 	);
 	expect(response.status).toBe(200);
-	expect(await response.json()).toEqual({
-		partialSuccess: {
-			rejectedSpans: "2",
-			errorMessage: "Spans with events or links are not supported",
-		},
-	});
-	expect(observations).toBe(1);
+	expect(await response.json()).toEqual({});
+	expect(observations).toBe(3);
 });
 
-test("OTLP protobuf handles empty envelopes and large unsupported event lists", async () => {
+test("OTLP protobuf handles empty envelopes and retains large event lists", async () => {
 	let observations = 0;
 	const handler = createOtlpIngestHandler({
 		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
@@ -192,8 +190,8 @@ test("OTLP protobuf handles empty envelopes and large unsupported event lists", 
 		trace.ExportTraceServiceResponse.decode(
 			new Uint8Array(await response.arrayBuffer()),
 		).partialSuccess?.rejectedSpans.toString(),
-	).toBe("1");
-	expect(observations).toBe(1);
+	).toBeUndefined();
+	expect(observations).toBe(2);
 });
 
 test("OTLP JSON accepts an empty export and returns an empty OTLP response", async () => {
@@ -584,17 +582,17 @@ test("OTLP errors use google.rpc.Status in the request encoding", async () => {
 	);
 });
 
-test("OTLP returns partial success instead of silently dropping event and link spans", async () => {
+test("OTLP retains event-bearing spans with full success", async () => {
 	let persisted: string[] = [];
 	const handler = createOtlpIngestHandler({
 		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
 			callback({} as never),
 		approvedRedaction: async () => null,
 		defaultClient: () => ({}) as never,
-		insertTraces: async (_client, rows) => {
+		insertObservations: async (_client, rows) => {
 			persisted = rows.map((row) => row.name);
 		},
-		insertObservations: async () => undefined,
+		insertTraces: async () => undefined,
 	});
 	const response = await handler(
 		new Request("http://localhost/v1/traces", {
@@ -629,11 +627,6 @@ test("OTLP returns partial success instead of silently dropping event and link s
 		tenant,
 	);
 	expect(response.status).toBe(200);
-	expect(await response.json()).toEqual({
-		partialSuccess: {
-			rejectedSpans: "1",
-			errorMessage: "Spans with events or links are not supported",
-		},
-	});
-	expect(persisted).toEqual(["retained"]);
+	expect(await response.json()).toEqual({});
+	expect(persisted).toEqual(["retained", "rejected"]);
 });

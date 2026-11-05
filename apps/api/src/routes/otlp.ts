@@ -38,7 +38,13 @@ import { isTransientStorageFailure } from "../lib/transient-storage-error.js";
 import {
 	boundObservationMetadata,
 	boundText,
+	utf8ByteLength,
 } from "../db/trace-payload-bounds.js";
+import {
+	boundOtlpDetail,
+	MAX_OTLP_REQUEST_DETAIL_BYTES,
+	MAX_OTLP_DETAIL_BYTES,
+} from "../db/otlp-detail.js";
 
 const tag = "otlp";
 const protobufWire = z.string().openapi({ type: "string", format: "binary" });
@@ -53,7 +59,7 @@ export const otlpIngestRoute = createRoute({
 	tags: [tag],
 	summary: "OTLP HTTP trace ingest",
 	description:
-		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
+		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request and 512 events/links per span. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Spans require valid IDs, a name, and an exact uint64 start time (unsafe JSON numbers are rejected; use decimal strings). Events, links and resource/scope/status context are redacted and retained in bounded OTLP detail (32 KiB per span, 8 MiB per export); truncation is explicit on readback.",
 	security: [
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
@@ -288,7 +294,8 @@ function otlpJsonToLegacy(value: unknown): unknown {
 			const resource = resourceSpan as Record<string, unknown>;
 			const scopeSpans = resource.scopeSpans ?? resource.scope_spans;
 			return {
-				resource: resource.resource,
+				resource: otlpContextToLegacy(resource.resource),
+				schema_url: resource.schemaUrl ?? resource.schema_url,
 				scope_spans: Array.isArray(scopeSpans)
 					? scopeSpans.map((scopeSpan) => {
 							if (
@@ -300,7 +307,8 @@ function otlpJsonToLegacy(value: unknown): unknown {
 							const scope = scopeSpan as Record<string, unknown>;
 							const spans = scope.spans ?? undefined;
 							return {
-								scope: scope.scope,
+								scope: otlpContextToLegacy(scope.scope),
+								schema_url: scope.schemaUrl ?? scope.schema_url,
 								spans: Array.isArray(spans)
 									? spans.map((span) => otlpSpanToLegacy(span))
 									: spans,
@@ -323,6 +331,37 @@ function otlpSpanToLegacy(value: unknown): unknown {
 		start_time_unix_nano: span.startTimeUnixNano ?? span.start_time_unix_nano,
 		end_time_unix_nano: span.endTimeUnixNano ?? span.end_time_unix_nano,
 		trace_state: span.traceState ?? span.trace_state,
+		dropped_attributes_count:
+			span.droppedAttributesCount ?? span.dropped_attributes_count,
+		dropped_events_count: span.droppedEventsCount ?? span.dropped_events_count,
+		dropped_links_count: span.droppedLinksCount ?? span.dropped_links_count,
+		events: Array.isArray(span.events)
+			? span.events.map((event) => {
+					const e = otlpContextToLegacy(event) as Record<string, unknown>;
+					return { ...e, time_unix_nano: e.timeUnixNano ?? e.time_unix_nano };
+				})
+			: span.events,
+		links: Array.isArray(span.links)
+			? span.links.map((link) => {
+					const l = otlpContextToLegacy(link) as Record<string, unknown>;
+					return {
+						...l,
+						trace_id: lowerHex(l.traceId ?? l.trace_id),
+						span_id: lowerHex(l.spanId ?? l.span_id),
+						trace_state: l.traceState ?? l.trace_state,
+					};
+				})
+			: span.links,
+	};
+}
+
+function otlpContextToLegacy(value: unknown): unknown {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const context = value as Record<string, unknown>;
+	return {
+		...context,
+		dropped_attributes_count:
+			context.droppedAttributesCount ?? context.dropped_attributes_count,
 	};
 }
 
@@ -476,7 +515,14 @@ export function createOtlpIngestHandler(
 			return otlpErrorResponse(req, parsed.status);
 		}
 
-		const { request, rejectedSpans } = rejectUnsupportedSpans(parsed.data);
+		const request = parsed.data;
+		const spanCount = request.resource_spans.reduce(
+			(total, rs) =>
+				total +
+				rs.scope_spans.reduce((count, ss) => count + ss.spans.length, 0),
+			0,
+		);
+		let remainingDetailBytes = MAX_OTLP_REQUEST_DETAIL_BYTES - spanCount * 64;
 		const traces = new Map<string, AggregatedTrace>();
 		const observations: TenantScopedObservation[] = [];
 
@@ -499,14 +545,18 @@ export function createOtlpIngestHandler(
 						const resourceAttributes = redactAttributes(
 							rs.resource?.attributes ?? [],
 							redaction.redactKeys,
+							redaction.redactInput,
 						);
 						for (const ss of rs.scope_spans) {
 							for (const sourceSpan of ss.spans) {
 								const span = {
 									...sourceSpan,
+									name: redactTraceText(sourceSpan.name, redaction),
 									attributes: redactAttributes(
 										sourceSpan.attributes ?? [],
 										redaction.redactKeys,
+										redaction.redactInput,
+										true,
 									),
 								};
 								const normalized = normalizeSpan(
@@ -522,6 +572,64 @@ export function createOtlpIngestHandler(
 									...normalized.observation,
 									organization_id: tenant.organizationId,
 								};
+								const text = (value: string | undefined) =>
+									value === undefined
+										? undefined
+										: redactTraceText(value, redaction);
+								const attributes = (
+									value: typeof span.attributes | undefined,
+								) =>
+									redactAttributes(
+										value ?? [],
+										redaction.redactKeys,
+										redaction.redactInput,
+									);
+								observation.otlp = boundOtlpDetail(
+									{
+										resource: rs.resource
+											? { ...rs.resource, attributes: resourceAttributes }
+											: undefined,
+										resource_schema_url: text(rs.schema_url),
+										scope: ss.scope
+											? {
+													...ss.scope,
+													name: text(ss.scope.name),
+													version: text(ss.scope.version),
+													attributes: attributes(ss.scope.attributes),
+												}
+											: undefined,
+										scope_schema_url: text(ss.schema_url),
+										kind: span.kind,
+										flags: span.flags,
+										trace_state: text(span.trace_state),
+										dropped_attributes_count: span.dropped_attributes_count,
+										dropped_events_count: span.dropped_events_count,
+										dropped_links_count: span.dropped_links_count,
+										status: span.status
+											? { ...span.status, message: text(span.status.message) }
+											: undefined,
+										attributes: observation.metadata.attributes,
+										events: span.events?.map((event) => ({
+											...event,
+											name: text(event.name),
+											attributes: attributes(event.attributes),
+										})),
+										links: span.links?.map((link) => ({
+											...link,
+											trace_state: text(link.trace_state),
+											attributes: attributes(link.attributes),
+										})),
+									},
+									Math.min(MAX_OTLP_DETAIL_BYTES, 64 + remainingDetailBytes),
+								);
+								remainingDetailBytes = Math.max(
+									0,
+									remainingDetailBytes -
+										Math.max(
+											0,
+											utf8ByteLength(JSON.stringify(observation.otlp)) - 64,
+										),
+								);
 								const existingTrace = traces.get(trace.trace_id);
 								if (
 									existingTrace &&
@@ -595,38 +703,7 @@ export function createOtlpIngestHandler(
 			logger.warn("otlp.event_publish_failed", err, {});
 		}
 
-		return otlpSuccessResponse(req, rejectedSpans);
-	};
-}
-
-function rejectUnsupportedSpans(
-	request: z.infer<typeof ExportTraceServiceRequest>,
-): {
-	request: z.infer<typeof ExportTraceServiceRequest>;
-	rejectedSpans: number;
-} {
-	let rejectedSpans = 0;
-	return {
-		request: {
-			...request,
-			resource_spans: request.resource_spans
-				.map((resourceSpan) => ({
-					...resourceSpan,
-					scope_spans: resourceSpan.scope_spans
-						.map((scopeSpan) => ({
-							...scopeSpan,
-							spans: scopeSpan.spans.filter((span) => {
-								const unsupported =
-									Boolean(span.events?.length) || Boolean(span.links?.length);
-								if (unsupported) rejectedSpans += 1;
-								return !unsupported;
-							}),
-						}))
-						.filter((scopeSpan) => scopeSpan.spans.length > 0),
-				}))
-				.filter((resourceSpan) => resourceSpan.scope_spans.length > 0),
-		} as z.infer<typeof ExportTraceServiceRequest>,
-		rejectedSpans,
+		return otlpSuccessResponse(req, 0);
 	};
 }
 
@@ -645,12 +722,16 @@ const OTLP_ANY_VALUE_KEYS = new Set([
 function redactAttributes<T extends { key: string }>(
 	attributes: T[],
 	keys: string[],
+	allText = false,
+	preservePromptProvenance = false,
 ): T[] {
-	if (!keys.length) return attributes;
 	const redacted = new Set(keys);
-	const budget = { remaining: MAX_OTLP_REDACTION_NODES };
+	const budget = {
+		remaining: MAX_OTLP_REDACTION_NODES,
+		preservePromptProvenance,
+	};
 	return attributes.flatMap((attribute) => {
-		const value = redactAttribute(attribute, redacted, budget, 0);
+		const value = redactAttribute(attribute, redacted, budget, 0, allText);
 		return value === null ? [] : [value as T];
 	});
 }
@@ -658,8 +739,9 @@ function redactAttributes<T extends { key: string }>(
 function redactAttribute(
 	attribute: { key: string },
 	keys: ReadonlySet<string>,
-	budget: { remaining: number },
+	budget: { remaining: number; preservePromptProvenance?: boolean },
 	depth: number,
+	allText: boolean,
 ): object | null {
 	if (budget.remaining <= 0 || depth > MAX_OTLP_REDACTION_DEPTH) return null;
 	budget.remaining -= 1;
@@ -671,9 +753,20 @@ function redactAttribute(
 		Object.keys(source).some((key) => key !== "key" && key !== "value")
 	)
 		return null;
-	if (keys.has(attribute.key)) return null;
+	if (
+		keys.has(attribute.key) ||
+		(attribute.key.startsWith("glasshouse.prompt.") &&
+			!(depth === 0 && budget.preservePromptProvenance))
+	)
+		return null;
 	if (!("value" in source)) return { key: attribute.key };
-	const value = redactAttributeValue(source.value, keys, budget, depth + 1);
+	const value = redactAttributeValue(
+		source.value,
+		keys,
+		budget,
+		depth + 1,
+		allText,
+	);
 	return value === null ? null : { key: attribute.key, value };
 }
 
@@ -682,19 +775,26 @@ function redactAttributeValue(
 	keys: ReadonlySet<string>,
 	budget: { remaining: number },
 	depth: number,
+	allText: boolean,
 ): unknown | null {
 	if (budget.remaining <= 0 || depth > MAX_OTLP_REDACTION_DEPTH) return null;
 	budget.remaining -= 1;
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	const anyValue = value as Record<string, unknown>;
 	const valueKeys = Object.keys(anyValue);
+	if (valueKeys.length === 0) return {};
 	if (valueKeys.length !== 1 || !OTLP_ANY_VALUE_KEYS.has(valueKeys[0] ?? ""))
 		return null;
 
 	switch (valueKeys[0]) {
 		case "stringValue":
 			return typeof anyValue.stringValue === "string"
-				? { stringValue: anyValue.stringValue }
+				? {
+						stringValue:
+							allText && anyValue.stringValue
+								? "[REDACTED]"
+								: anyValue.stringValue,
+					}
 				: null;
 		case "boolValue":
 			return typeof anyValue.boolValue === "boolean"
@@ -707,12 +807,20 @@ function redactAttributeValue(
 				? { intValue: anyValue.intValue }
 				: null;
 		case "doubleValue":
-			return typeof anyValue.doubleValue === "number"
+			return typeof anyValue.doubleValue === "number" ||
+				["NaN", "Infinity", "-Infinity"].includes(
+					anyValue.doubleValue as string,
+				)
 				? { doubleValue: anyValue.doubleValue }
 				: null;
 		case "bytesValue":
 			return typeof anyValue.bytesValue === "string"
-				? { bytesValue: anyValue.bytesValue }
+				? {
+						bytesValue:
+							allText && anyValue.bytesValue
+								? "[REDACTED]"
+								: anyValue.bytesValue,
+					}
 				: null;
 		case "arrayValue":
 			return redactAnyValueCollection(
@@ -721,6 +829,7 @@ function redactAttributeValue(
 				budget,
 				depth,
 				"arrayValue",
+				allText,
 			);
 		case "kvlistValue":
 			return redactAnyValueCollection(
@@ -729,6 +838,7 @@ function redactAttributeValue(
 				budget,
 				depth,
 				"kvlistValue",
+				allText,
 			);
 		default:
 			return null;
@@ -741,6 +851,7 @@ function redactAnyValueCollection(
 	budget: { remaining: number },
 	depth: number,
 	type: "arrayValue" | "kvlistValue",
+	allText: boolean,
 ): object | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	const collection = value as Record<string, unknown>;
@@ -750,8 +861,14 @@ function redactAnyValueCollection(
 	const values = collection.values.flatMap((item) => {
 		const nested =
 			type === "arrayValue"
-				? redactAttributeValue(item, keys, budget, depth + 1)
-				: redactAttribute(item as { key: string }, keys, budget, depth + 1);
+				? redactAttributeValue(item, keys, budget, depth + 1, allText)
+				: redactAttribute(
+						item as { key: string },
+						keys,
+						budget,
+						depth + 1,
+						allText,
+					);
 		return nested === null ? [] : [nested];
 	});
 	return { [type]: { values } };
@@ -771,19 +888,30 @@ function aggregateTrace(
 			? existing.trace.start_time
 			: next.start_time;
 	const end_time = latestTime(existing.trace.end_time, next.end_time);
+	const starts = [
+		existing.trace.start_time_unix_nano,
+		next.start_time_unix_nano,
+	]
+		.filter((value): value is string => value != null)
+		.map(BigInt);
+	const ends = [existing.trace.end_time_unix_nano, next.end_time_unix_nano]
+		.filter((value): value is string => value != null)
+		.map(BigInt);
+	const startNano = starts.reduce((a, b) => (a < b ? a : b));
+	const endNano = ends.length ? ends.reduce((a, b) => (a > b ? a : b)) : null;
+	const durationNano =
+		endNano === null ? null : endNano > startNano ? endNano - startNano : 0n;
 	return {
 		isRoot: existing.isRoot || nextIsRoot,
 		trace: {
 			...identity,
 			start_time,
 			end_time,
+			start_time_unix_nano: startNano.toString(),
+			end_time_unix_nano: endNano?.toString() ?? null,
+			duration_nano: durationNano?.toString() ?? null,
 			duration_ms:
-				end_time === null
-					? null
-					: Math.max(
-							0,
-							new Date(end_time).getTime() - new Date(start_time).getTime(),
-						),
+				durationNano === null ? null : Number(durationNano) / 1_000_000,
 			status:
 				existing.trace.status === "error" || next.status === "error"
 					? "error"

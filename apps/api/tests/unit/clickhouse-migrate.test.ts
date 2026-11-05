@@ -45,7 +45,7 @@ describe("ClickHouse migrations", () => {
 				!query.includes("glasshouse_schema_migrations") &&
 				!query.startsWith("INSERT INTO"),
 		);
-		expect(migrationStatements).toHaveLength(18);
+		expect(migrationStatements).toHaveLength(20);
 		expect(migrationStatements.every((query) => query.length > 0)).toBe(true);
 		expect(migrationStatements[0]).toContain(
 			"CREATE TABLE IF NOT EXISTS traces",
@@ -160,8 +160,8 @@ describe("ClickHouse migrations", () => {
 			applyClickHouseMigrations(client, serializedMigrationLock),
 		]);
 
-		expect(inserted).toBe(7);
-		expect(applied).toHaveLength(7);
+		expect(inserted).toBe(8);
+		expect(applied).toHaveLength(8);
 	});
 
 	it("holds a PostgreSQL advisory lock for the full ClickHouse migration run", async () => {

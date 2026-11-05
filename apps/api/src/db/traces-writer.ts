@@ -28,7 +28,14 @@ function traceToRow(t: TenantScopedTrace): ClickHouseRow {
 		name: t.name,
 		start_time: t.start_time,
 		end_time: t.end_time,
-		duration_ms: t.duration_ms,
+		duration_ms:
+			t.duration_ms === null
+				? null
+				: Math.min(4_294_967_295, Math.round(t.duration_ms)),
+		precise_duration_ms: t.duration_ms,
+		start_time_unix_nano: t.start_time_unix_nano ?? null,
+		end_time_unix_nano: t.end_time_unix_nano ?? null,
+		duration_nano: t.duration_nano ?? null,
 		status: t.status,
 		user_id: t.user_id,
 		session_id: t.session_id,

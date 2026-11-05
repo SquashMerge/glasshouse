@@ -56,7 +56,10 @@ def telemetry_items(endpoint: str, auth: str, project_id: str, resource: str) ->
 
 def create_tracer_provider() -> TracerProvider:
     return TracerProvider(
-        resource=Resource.create({"service.name": "glasshouse-otlp-sdk-test"})
+        resource=Resource.create(
+            {"service.name": "glasshouse-otlp-sdk-test", "created.ns": 1700000000000999999},
+            schema_url="https://example.test/resource/1",
+        )
     )
 
 
@@ -87,14 +90,20 @@ def export(transport: str, endpoint: str, auth: str | None, project_id: str, mar
             max_export_batch_size=2,
         )
     )
-    tracer = provider.get_tracer("glasshouse.otlp.integration")
+    tracer = provider.get_tracer("glasshouse.otlp.integration", "1.0", schema_url="https://example.test/scope/1")
     span_ids = []
-    with tracer.start_as_current_span(f"{marker}-root"):
+    start = 1700000000000999999
+    linked = trace.SpanContext(0x112233445566778899AABBCCDDEEFF00, 0x1122334455667788, True, trace.TraceFlags(1), trace.TraceState([("vendor", "state")]))
+    with tracer.start_as_current_span(f"{marker}-root", start_time=start, end_on_exit=False, links=[trace.Link(linked)]) as root_span:
         root = trace.get_current_span().get_span_context()
         trace_id = f"{root.trace_id:032x}"
         span_ids.append(f"{root.span_id:016x}")
-        with tracer.start_as_current_span(f"{marker}-child"):
+        with tracer.start_as_current_span(f"{marker}-child", start_time=start + 1, end_on_exit=False) as child_span:
             span_ids.append(f"{trace.get_current_span().get_span_context().span_id:016x}")
+            child_span.end(end_time=start + 2)
+        root_span.record_exception(ValueError("synthetic-sdk-exception"), timestamp=start + 1)
+        root_span.set_status(trace.Status(trace.StatusCode.ERROR, "synthetic-sdk-status"))
+        root_span.end(end_time=start + 2)
     if not provider.force_flush():
         raise AssertionError("SDK exporter did not flush")
     provider.shutdown()
@@ -108,6 +117,7 @@ def wait_for_names(
     marker: str,
     trace_id: str,
     span_ids: list[str],
+    fidelity: bool = False,
 ) -> list[str]:
     expected = {f"{marker}-root", f"{marker}-child"}
     for _ in range(20):
@@ -123,6 +133,25 @@ def wait_for_names(
                 and child.get("observation_id") == span_ids[1]
                 and child.get("parent_observation_id") == span_ids[0]
             ):
+                if fidelity:
+                    response = requests.get(
+                        f"{endpoint}/v1/traces/{trace_id}", params={"project_id": project_id},
+                        headers={"authorization": auth}, timeout=10,
+                    )
+                    response.raise_for_status()
+                    detail = response.json()
+                    retained = next(o for o in detail["observations"] if o["observation_id"] == span_ids[0])
+                    assert retained["start_time_unix_nano"] == "1700000000000999999"
+                    assert retained["end_time_unix_nano"] == "1700000000001000001"
+                    assert retained["duration_nano"] == "2"
+                    assert retained["duration_ms"] == 0.000002
+                    assert retained["otlp"]["events"][0]["time_unix_nano"] == "1700000000001000000"
+                    assert retained["otlp"]["events"][0]["name"] == "exception"
+                    assert retained["otlp"]["links"][0]["trace_id"] == "112233445566778899aabbccddeeff00"
+                    assert "flags" in retained["otlp"]["links"][0]
+                    assert retained["otlp"]["status"]["message"] == "synthetic-sdk-status"
+                    assert retained["otlp"]["resource_schema_url"] == "https://example.test/resource/1"
+                    assert retained["otlp"]["scope_schema_url"] == "https://example.test/scope/1"
                 return [root["observation_id"], child["observation_id"]]
         time.sleep(0.25)
     raise AssertionError(f"{marker}: root and child were not persisted")
@@ -181,7 +210,7 @@ def main() -> None:
     if results != [SpanExportResult.SUCCESS]:
         raise AssertionError(f"authenticated exporter result was {results}")
     observation_ids = wait_for_names(
-        args.api_endpoint, auth, args.project_id, marker, trace_id, span_ids
+        args.api_endpoint, auth, args.project_id, marker, trace_id, span_ids, fidelity=True
     )
     trace_ids = [trace_id]
     if args.transport == "http":

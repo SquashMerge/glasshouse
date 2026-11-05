@@ -2398,6 +2398,9 @@ export async function getPromptProvenance(input: {
 }
 
 export interface TraceRow {
+	start_time_unix_nano?: string | null;
+	end_time_unix_nano?: string | null;
+	duration_nano?: string | null;
 	trace_id: string;
 	project_id: string;
 	name: string;
@@ -2538,6 +2541,12 @@ function sanitizeMetadataAttributes(
 
 /** Canonical observation row from REST and SSE endpoints. */
 export interface ObservationRow {
+	start_time_unix_nano?: string | null;
+	end_time_unix_nano?: string | null;
+	duration_nano?: string | null;
+	otlp?:
+		| ({ schema_version: 1; truncated?: boolean } & Record<string, unknown>)
+		| null;
 	observation_id: string;
 	trace_id: string;
 	project_id: string;
