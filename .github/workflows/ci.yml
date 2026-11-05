@@ -28,7 +28,7 @@ jobs:
           - check: typecheck
             command: bun run typecheck
           - check: test
-            command: bun run test && bun --cwd apps/api test tests/integration/otlp-process-shutdown.test.ts
+            command: bun run test
           - check: supply-chain
             command: bun run test:supply-chain
           - check: infra-security
@@ -100,7 +100,7 @@ jobs:
           python-version: "3.12"
       - name: Verify official SDK provider construction and export offline
         run: bash infra/scripts/test-otlp-sdk-offline.sh
-      - name: Exercise HTTP/protobuf gzip and gRPC exporters against disposable stores
+      - name: Exercise SDK exporters, deep public ingestion, and real shutdown signals against disposable stores
         run: bash infra/scripts/test-otlp-sdk-integration.sh
 
   image-compose-integration:

@@ -144,6 +144,8 @@ require_empty_inventory() {
 
 capture_owned_resources() {
   local kind ids id labels
+  owned_container_ids=()
+  owned_network_ids=()
   local -a captured_container_ids=()
   local -a captured_network_ids=()
   for kind in containers networks; do
@@ -163,6 +165,41 @@ capture_owned_resources() {
   done
   owned_container_ids=("${captured_container_ids[@]}")
   owned_network_ids=("${captured_network_ids[@]}")
+}
+
+require_private_test_stack() {
+  capture_owned_resources || return 1
+  [[ "${#owned_network_ids[@]}" == 1 ]] || return 1
+  local service id target
+  for service in postgres clickhouse valkey api otlp-tests; do
+    id="$("${compose[@]}" ps -q "$service")" || return 1
+    [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
+    target="$(docker_safe container inspect --format '{{.Id}} {{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "io.glasshouse.otlp-sdk-run"}} {{index .Config.Labels "com.docker.compose.service"}} {{range $name, $network := .NetworkSettings.Networks}}{{$name}}:{{$network.NetworkID}}{{end}}' "$id")" || return 1
+    [[ "$target" == "$id $project $ownership_marker $service ${project}_default:${owned_network_ids[0]}" ]] || return 1
+  done
+}
+
+run_required_regressions() {
+  local suite
+  for suite in extension-depth process-shutdown; do
+    if ! require_private_test_stack; then
+      printf '%s\n' 'OTLP SDK harness test stack ownership or network is unproven; refusing test execution.' >&2
+      return 1
+    fi
+    "${compose[@]}" exec -T otlp-tests env -i \
+      PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp NODE_ENV=test \
+      GLASSHOUSE_CONTAINER_NETWORK=1 OTLP_SHUTDOWN_DISPOSABLE=1 \
+      POSTGRES_HOST=postgres POSTGRES_PORT=5432 POSTGRES_USER=otlp_test \
+      POSTGRES_PASSWORD=otlp-test-password POSTGRES_DB=glasshouse \
+      CLICKHOUSE_HOST=clickhouse CLICKHOUSE_HTTP_PORT=8123 CLICKHOUSE_USER=otlp_test \
+      CLICKHOUSE_PASSWORD=otlp-test-password CLICKHOUSE_DB=glasshouse \
+      VALKEY_HOST=valkey VALKEY_PORT=6379 VALKEY_PASSWORD=otlp-test-password \
+      UI_USERNAME=otlp-sdk UI_PASSWORD=otlp-sdk-password GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=otlp-sdk \
+      bun --no-env-file --cwd apps/api test "./tests/integration/otlp-${suite}.test.ts" \
+      --reporter=junit "--reporter-outfile=/tmp/otlp-${suite}.xml"
+    "${compose[@]}" cp "otlp-tests:/tmp/otlp-${suite}.xml" "$harness_home/${suite}.xml"
+    env -i PATH="$PATH" python3 "$build_context/infra/scripts/verify-otlp-ci-report.py" "$suite" "$harness_home/${suite}.xml"
+  done
 }
 
 cleanup() {
@@ -216,6 +253,7 @@ done <<< "$volumes"
 
 up_attempted=true
 "${compose[@]}" up --build --detach --wait --wait-timeout 180
+run_required_regressions
 
 api_port="$("${compose[@]}" port api 3000 | awk -F: '{print $NF}')"
 grpc_port="$("${compose[@]}" port api 4317 | awk -F: '{print $NF}')"

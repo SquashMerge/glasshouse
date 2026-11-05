@@ -21,6 +21,7 @@ import pathlib
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 state_path = pathlib.Path(__file__).with_name("state.json")
 state = json.loads(state_path.read_text())
@@ -100,6 +101,13 @@ if "compose" in args:
         marker = marker_from(args)
         state["resources"].append(resource("a" * 64, "container", project, marker, f"{project}-api-1"))
         state["resources"].append(resource("b" * 64, "network", project, marker, f"{project}_default"))
+        if scenario.startswith("required_"):
+            for digit, service in enumerate(("postgres", "clickhouse", "valkey", "otlp-tests"), 1):
+                state["resources"].append(resource(str(digit) * 64, "container", project, marker, f"{project}-{service}-1"))
+            if scenario == "required_foreign_owner":
+                state["resources"][-1]["marker"] = "foreign-marker"
+            save()
+            raise SystemExit(0)
         if scenario in {"foreign_after_preflight", "partial_up_failure", "marker_mismatch"}:
             foreign_marker = "wrong-marker" if scenario == "marker_mismatch" else "foreign-marker"
             state["resources"].append(resource("c" * 64, "container", project, foreign_marker, f"{project}-foreign-1"))
@@ -108,11 +116,50 @@ if "compose" in args:
             time.sleep(30)
         raise SystemExit(23)
 
+    if "ps" in parts:
+        service = parts[-1]
+        print(next(item["id"] for item in state["resources"] if item["name"] == f"{project}-{service}-1"))
+        save()
+        raise SystemExit(0)
+
+    if "exec" in parts and "otlp-tests" in parts:
+        if scenario == "required_late_foreign":
+            state["resources"].append(resource("c" * 64, "container", project, "foreign-marker", f"{project}-foreign-1"))
+        save()
+        raise SystemExit(31 if scenario == "required_test_exit" else 0)
+
+    if "cp" in parts:
+        source, destination = parts[-2:]
+        deep = "extension-depth" in source
+        names = ([f"public ingest redacts unknown {location} fields ({depth} wrappers, 123 bytes)"
+                  for depth, location in ((100, "value"), (16000, "value"), (20000, "attribute"), (20000, "value"), (32000, "value"), (80000, "value"))]
+                 + ["deep extensions cannot bypass public authentication, tenant provenance, or body bounds"] if deep else
+                 [f"API shuts down HTTP and gRPC on {signal}" for signal in ("SIGTERM", "SIGINT")])
+        suite = ET.Element("testsuite")
+        for name in names:
+            tag = "deep" if deep else ("term" if name.endswith("SIGTERM") else "int")
+            if (scenario == f"required_absent_{tag}" and (not deep or "80000 wrappers" in name)) or (deep and scenario == "required_empty_deep"):
+                continue
+            case = ET.SubElement(suite, "testcase", name=name)
+            if scenario == f"required_skip_{tag}":
+                ET.SubElement(case, "skipped")
+            if scenario == "required_failure_report":
+                ET.SubElement(case, "failure")
+        if scenario != "required_no_report":
+            pathlib.Path(destination).write_text("invalid XML" if scenario == "required_malformed_report" else ET.tostring(suite, encoding="unicode"))
+        save()
+        raise SystemExit(0)
+
+    if "port" in parts:
+        # Stop after the required regressions, before the unrelated SDK exporter setup.
+        save()
+        raise SystemExit(32)
+
 if args[:2] == ["ps", "-aq"]:
     if "--no-trunc" not in args:
         save()
         raise SystemExit(96)
-    if scenario == "containers_inventory_error":
+    if scenario == "containers_inventory_error" or (scenario == "required_cleanup_inventory_error" and sum("exec" in call and "otlp-tests" in call for call in state["calls"]) == 2):
         save()
         raise SystemExit(24)
     project = next(value.removeprefix("label=com.docker.compose.project=") for value in args if value.startswith("label=com.docker.compose.project="))
@@ -163,7 +210,12 @@ if len(args) >= 4 and args[1] == "inspect":
     if not item:
         save()
         raise SystemExit(27)
-    print(f'{item["id"]} {item["project"]} {item["marker"]}')
+    labels = f'{item["id"]} {item["project"]} {item["marker"]}'
+    if ".NetworkSettings.Networks" in args[-2]:
+        service = item["name"].removeprefix(item["project"] + "-").removesuffix("-1")
+        network = "foreign_network:foreign-id" if scenario == f"required_wrong_network_{service}" else f'{item["project"]}_default:{"b" * 64}'
+        labels += f" {service} {network}"
+    print(labels)
     save()
     raise SystemExit(0)
 
@@ -190,6 +242,9 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
             (sandbox / ".github").mkdir()
             shutil.copy2(HARNESS, sandbox / "infra/scripts/test-otlp-sdk-integration.sh")
             shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", sandbox / "infra/scripts/stage-build-context.sh")
+            verifier = ROOT / "infra/scripts/verify-otlp-ci-report.py"
+            if verifier.exists():
+                shutil.copy2(verifier, sandbox / "infra/scripts/verify-otlp-ci-report.py")
             shutil.copy2(ROOT / ".github/compose.otlp-sdk-integration.yaml", sandbox / ".github/compose.otlp-sdk-integration.yaml")
             shutil.copy2(ROOT / "infra/otlp-sdk-requirements.txt", sandbox / "infra/otlp-sdk-requirements.txt")
             shutil.copy2(ROOT / ".dockerignore", sandbox / ".dockerignore")
@@ -344,6 +399,70 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertTrue(any(call[:2] == ["ps", "-aq"] and "--no-trunc" not in call for call in state["calls"]))
         self.assert_no_mutations(state)
+
+    def required_test_calls(self, state):
+        return [call for call in state["calls"] if "exec" in call and "otlp-tests" in call]
+
+    def test_required_regressions_run_on_verified_stack_with_allowlisted_environment(self):
+        code, stdout, _, state = self.run_harness("required_success", environment={
+            "PGHOST": "hostile", "PGOPTIONS": "-c search_path=hostile",
+            "DATABASE_URL": "postgres://hostile/db", "CLICKHOUSE_URL": "http://hostile",
+            "VALKEY_URL": "redis://hostile", "VALKEY_PUBSUB_URL": "redis://hostile",
+            "NODE_ENV": "production", "BUN_OPTIONS": "--preload=hostile.ts",
+        })
+        self.assertEqual(code, 32)  # Fake Docker deliberately stops at the later SDK port lookup.
+        calls = self.required_test_calls(state)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("Verified required OTLP extension-depth cases", stdout)
+        self.assertIn("Verified required OTLP process-shutdown cases", stdout)
+        for call in calls:
+            environment = call[call.index("env") + 1:call.index("bun")]
+            self.assertEqual(environment[0], "-i")
+            values = dict(value.split("=", 1) for value in environment[1:])
+            self.assertEqual(values["OTLP_SHUTDOWN_DISPOSABLE"], "1")
+            self.assertEqual(values["GLASSHOUSE_CONTAINER_NETWORK"], "1")
+            for service, port in (("POSTGRES", "5432"), ("CLICKHOUSE", "8123"), ("VALKEY", "6379")):
+                self.assertEqual(values[f"{service}_HOST"], service.lower())
+                self.assertEqual(values[f"{service}_{'HTTP_PORT' if service == 'CLICKHOUSE' else 'PORT'}"], port)
+            self.assertEqual(values["NODE_ENV"], "test")
+            self.assertFalse(any(key.startswith("PG") or key.endswith("_URL") or key == "BUN_OPTIONS" for key in values))
+            self.assertIn("--no-env-file", call)
+            self.assertIn("--reporter=junit", call)
+        self.assert_docker_environment_is_scrubbed(state)
+
+    def test_required_regressions_refuse_unproven_owner_or_network_before_execution(self):
+        scenarios = ["required_foreign_owner"] + [
+            f"required_wrong_network_{service}" for service in ("postgres", "clickhouse", "valkey", "api", "otlp-tests")
+        ]
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                code, _, stderr, state = self.run_harness(scenario)
+                self.assertNotEqual(code, 0)
+                self.assertIn("test stack ownership or network is unproven", stderr)
+                self.assertEqual(self.required_test_calls(state), [])
+                self.assertFalse(any("port" in call for call in state["calls"]))
+                if scenario == "required_foreign_owner":
+                    self.assert_no_mutations(state)
+
+    def test_required_cases_cannot_be_absent_skipped_failed_or_unreported(self):
+        for scenario in ("required_absent_term", "required_absent_int", "required_absent_deep",
+                         "required_skip_term", "required_skip_int", "required_skip_deep",
+                         "required_empty_deep", "required_malformed_report", "required_no_report",
+                         "required_failure_report", "required_test_exit"):
+            with self.subTest(scenario=scenario):
+                code, _, _, state = self.run_harness(scenario)
+                self.assertNotEqual(code, 0)
+                self.assertTrue(self.required_test_calls(state), "must actually reach the requested tests")
+                self.assertFalse(any("port" in call for call in state["calls"]), "must fail before later SDK work")
+
+    def test_failed_fresh_inventory_never_reuses_pre_test_cleanup_ownership(self):
+        for scenario in ("required_late_foreign", "required_cleanup_inventory_error"):
+            with self.subTest(scenario=scenario):
+                code, _, stderr, state = self.run_harness(scenario)
+                self.assertNotEqual(code, 0)
+                self.assertTrue(self.required_test_calls(state))
+                self.assertIn("ownership is unproven; refusing cleanup", stderr)
+                self.assert_no_mutations(state)
 
 
 if __name__ == "__main__":
