@@ -151,29 +151,44 @@ export const ExportTraceServiceRequest = z
 	})
 	.openapi("ExportTraceServiceRequest");
 
-const WireKeyValue = z
+const WireAnyValue: z.ZodType<Record<string, unknown>> = z
 	.object({
-		key: KeyValue.shape.key,
-		value: z
+		stringValue: z.string().nullable().optional(),
+		boolValue: z.boolean().nullable().optional(),
+		intValue: z.union([z.number().int(), z.string()]).nullable().optional(),
+		doubleValue: z.number().nullable().optional(),
+		bytesValue: z.string().nullable().optional(),
+		arrayValue: z
 			.object({
-				stringValue: z.string().nullable().optional(),
-				boolValue: z.boolean().nullable().optional(),
-				intValue: z.union([z.number().int(), z.string()]).nullable().optional(),
-				doubleValue: z.number().nullable().optional(),
-				bytesValue: z.string().nullable().optional(),
-				arrayValue: z
-					.object({ values: z.array(z.any()).nullable().optional() })
+				values: z
+					.array(z.lazy(() => WireAnyValue))
 					.nullable()
 					.optional(),
-				kvlistValue: z
-					.object({ values: z.array(z.any()).nullable().optional() })
+			})
+			.nullable()
+			.optional(),
+		kvlistValue: z
+			.object({
+				values: z
+					.array(z.lazy(() => WireKeyValue))
 					.nullable()
 					.optional(),
 			})
 			.nullable()
 			.optional(),
 	})
+	.openapi("OtlpWireAnyValue");
+
+const WireKeyValue = z
+	.object({
+		key: KeyValue.shape.key,
+		value: z.union([WireAnyValue, z.null()]).optional(),
+	})
 	.openapi("OtlpWireKeyValue");
+
+const WireUnsupportedMessage = z.object({
+	attributes: z.array(WireKeyValue).nullable().optional(),
+});
 
 const WireSpan = z.object({
 	traceId: z.string().regex(/^[0-9a-fA-F]{32}$/),
@@ -182,7 +197,10 @@ const WireSpan = z.object({
 	name: z.string().min(1).max(256),
 	kind: z.number().int().min(0).max(5).nullable().optional(),
 	startTimeUnixNano: z.union([z.string(), z.number().int()]),
-	endTimeUnixNano: z.union([z.string(), z.number()]).nullable().optional(),
+	endTimeUnixNano: z
+		.union([z.string(), z.number().int()])
+		.nullable()
+		.optional(),
 	attributes: z
 		.array(WireKeyValue)
 		.max(MAX_OTLP_ATTRIBUTES_PER_RECORD)
@@ -198,8 +216,8 @@ const WireSpan = z.object({
 		})
 		.nullable()
 		.optional(),
-	events: z.array(z.unknown()).nullable().optional(),
-	links: z.array(z.unknown()).nullable().optional(),
+	events: z.array(WireUnsupportedMessage).nullable().optional(),
+	links: z.array(WireUnsupportedMessage).nullable().optional(),
 	traceState: z.string().nullable().optional(),
 });
 

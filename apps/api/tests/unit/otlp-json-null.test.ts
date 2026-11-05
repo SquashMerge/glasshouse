@@ -53,6 +53,50 @@ function request(body: unknown) {
 }
 
 for (const [name, body] of [
+	["request", { ...payload(), futureExtension: [null] }],
+	["resource spans", payload({ futureExtension: [null] })],
+	["resource", payload({ resource: { futureExtension: [null] } })],
+	["scope spans", payload({}, { futureExtension: [null] })],
+	["scope", payload({}, { scope: { futureExtension: [null] } })],
+	["span", payload({}, {}, { futureExtension: [null] })],
+	[
+		"extension subtree",
+		payload({}, {}, { futureExtension: { spans: [null] } }),
+	],
+	["inherited property name", payload({}, {}, { toString: [null] })],
+	["status", payload({}, {}, { status: { futureExtension: [null] } })],
+	["field from another message", payload({}, {}, { resourceSpans: [null] })],
+] as const) {
+	test(`OTLP JSON ignores unknown ${name} fields containing null arrays`, async () => {
+		let stored: unknown;
+		const handler = createOtlpIngestHandler({
+			withActiveAuthorizedProjectLock: async (_tenant, callback) =>
+				callback({} as never),
+			approvedRedaction: async () => null,
+			defaultClient: () => ({}) as never,
+			insertTraces: async () => undefined,
+			insertObservations: async (_client, rows) => {
+				stored = rows;
+			},
+			publishSync: () => undefined,
+		});
+		const response = await handler(request(body), tenant);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({});
+		expect(stored).toMatchObject([
+			{
+				observation_id: span.spanId,
+				project_id: tenant.projectId,
+				organization_id: tenant.organizationId,
+			},
+		]);
+		expect(JSON.stringify(stored)).not.toContain("futureExtension");
+		expect(OtlpWireRequest.safeParse(body).success).toBe(true);
+		expect(validateWire(body), JSON.stringify(validateWire.errors)).toBe(true);
+	});
+}
+
+for (const [name, body] of [
 	["resource", payload({ resource: null })],
 	[
 		"resource attributes",
@@ -295,7 +339,8 @@ test("OTLP JSON null normalization does not repair unknown nested attribute fiel
 					value: {
 						arrayValue: {
 							values: [
-								{ stringValue: "drop-unknown-anyvalue", unknown: null },
+								{ stringValue: "drop-unknown-anyvalue", unknown: [null] },
+								{ stringValue: "drop-unknown-null-anyvalue", unknown: null },
 								{
 									kvlistValue: {
 										unknown: null,
@@ -331,11 +376,21 @@ test("OTLP JSON null normalization does not repair unknown nested attribute fiel
 	expect(retained).not.toContain("drop-unknown");
 });
 
-for (const [name, body] of [
+const invalidBodies = [
 	["resource element", { resourceSpans: [null] }],
 	["scope element", { resourceSpans: [{ scopeSpans: [null] }] }],
 	["span element", { resourceSpans: [{ scopeSpans: [{ spans: [null] }] }] }],
 	["attribute element", payload({}, {}, { attributes: [null] })],
+	["event element", payload({}, {}, { events: [null] })],
+	["link element", payload({}, {}, { links: [null] })],
+	[
+		"event attribute element",
+		payload({}, {}, { events: [{ attributes: [null] }] }),
+	],
+	[
+		"link attribute element",
+		payload({}, {}, { links: [{ attributes: [null] }] }),
+	],
 	[
 		"nested AnyValue element",
 		payload(
@@ -344,6 +399,36 @@ for (const [name, body] of [
 			{
 				attributes: [
 					{ key: "nested", value: { arrayValue: { values: [null] } } },
+				],
+			},
+		),
+	],
+	[
+		"deeply nested AnyValue element",
+		payload(
+			{},
+			{},
+			{
+				attributes: [
+					{
+						key: "nested",
+						value: {
+							arrayValue: {
+								values: [
+									{
+										kvlistValue: {
+											values: [
+												{
+													key: "deeper",
+													value: { arrayValue: { values: [null] } },
+												},
+											],
+										},
+									},
+								],
+							},
+						},
+					},
 				],
 			},
 		),
@@ -366,7 +451,10 @@ for (const [name, body] of [
 	["malformed resource", payload({ resource: 7 })],
 	["malformed status", payload({}, {}, { status: false })],
 	["malformed scalar", payload({}, {}, { kind: "invalid" })],
-] as const) {
+	["fractional end time", payload({}, {}, { endTimeUnixNano: 0.5 })],
+] as const;
+
+for (const [name, body] of invalidBodies) {
 	test(`OTLP JSON still rejects null or malformed ${name} before authorization or persistence`, async () => {
 		let admitted = false;
 		const handler = createOtlpIngestHandler({
@@ -381,5 +469,11 @@ for (const [name, body] of [
 			message: "Invalid trace export request",
 		});
 		expect(admitted).toBe(false);
+	});
+	test(`OTLP wire Zod schema rejects null or malformed ${name}`, () => {
+		expect(OtlpWireRequest.safeParse(body).success).toBe(false);
+	});
+	test(`OTLP wire OpenAPI/AJV schema rejects null or malformed ${name}`, () => {
+		expect(validateWire(body), JSON.stringify(validateWire.errors)).toBe(false);
 	});
 }

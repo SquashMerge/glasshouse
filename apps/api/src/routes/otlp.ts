@@ -324,59 +324,73 @@ function lowerHex(value: unknown): unknown {
 	return value;
 }
 
-type OtlpAttributeMessage =
-	| "attribute"
-	| "value"
-	| "arrayValue"
-	| "kvlistValue";
+const OTLP_MESSAGE_FIELDS = {
+	request: { resourceSpans: "resourceSpan", resource_spans: "resourceSpan" },
+	resourceSpan: {
+		resource: "resource",
+		scopeSpans: "scopeSpan",
+		scope_spans: "scopeSpan",
+	},
+	resource: { attributes: "attribute" },
+	scopeSpan: { scope: "scope", spans: "span" },
+	scope: { attributes: "attribute" },
+	span: {
+		attributes: "attribute",
+		status: "status",
+		events: "event",
+		links: "link",
+	},
+	status: {},
+	event: { attributes: "attribute" },
+	link: { attributes: "attribute" },
+	attribute: { value: "value" },
+	value: { arrayValue: "arrayValue", kvlistValue: "kvlistValue" },
+	arrayValue: { values: "value" },
+	kvlistValue: { values: "attribute" },
+} as const;
+type OtlpMessage = keyof typeof OTLP_MESSAGE_FIELDS;
 
 function normalizeOtlpFields(
 	value: unknown,
 	depth = 0,
-	attributeMessage?: OtlpAttributeMessage,
+	message: OtlpMessage = "request",
 ): unknown {
 	if (depth > 32 || !value || typeof value !== "object") return value;
 	if (Array.isArray(value))
 		return value.map((item) => {
 			if (item === null) throw new Error("Invalid null repeated element");
-			return normalizeOtlpFields(item, depth + 1, attributeMessage);
+			return normalizeOtlpFields(item, depth + 1, message);
 		});
 	const object = value as Record<string, unknown>;
 	const normalized: Record<string, unknown> = {};
 	for (const [key, child] of Object.entries(object)) {
 		// Preserve unknown nested fields for fail-closed attribute redaction.
 		const knownField =
-			attributeMessage === undefined ||
-			(attributeMessage === "attribute"
+			(message !== "attribute" &&
+				message !== "value" &&
+				message !== "arrayValue" &&
+				message !== "kvlistValue") ||
+			(message === "attribute"
 				? key === "key" || key === "value"
-				: attributeMessage === "value"
+				: message === "value"
 					? OTLP_ANY_VALUE_KEYS.has(key)
 					: key === "values");
 		if (child === null && knownField) continue;
 		if (
+			message === "value" &&
 			key === "bytesValue" &&
 			Array.isArray(child) &&
 			child.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
 		)
 			normalized[key] = Buffer.from(child).toString("base64");
 		else {
-			let childMessage: OtlpAttributeMessage | undefined;
-			if (
-				key === "attributes" ||
-				(attributeMessage === "kvlistValue" && key === "values")
-			)
-				childMessage = "attribute";
-			else if (
-				(attributeMessage === "attribute" && key === "value") ||
-				(attributeMessage === "arrayValue" && key === "values")
-			)
-				childMessage = "value";
-			else if (
-				attributeMessage === "value" &&
-				(key === "arrayValue" || key === "kvlistValue")
-			)
-				childMessage = key;
-			normalized[key] = normalizeOtlpFields(child, depth + 1, childMessage);
+			const fields = OTLP_MESSAGE_FIELDS[message] as Readonly<
+				Record<string, OtlpMessage>
+			>;
+			const childMessage = Object.hasOwn(fields, key) ? fields[key] : undefined;
+			normalized[key] = childMessage
+				? normalizeOtlpFields(child, depth + 1, childMessage)
+				: child;
 		}
 	}
 	return normalized;

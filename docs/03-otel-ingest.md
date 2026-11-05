@@ -66,7 +66,7 @@ For a multi-organization deployment, configure `GLASSHOUSE_BASIC_AUTH_CREDENTIAL
 
 Use a sender that emits OTLP JSON with `Content-Type: application/json`, the authorization header, and the Project selector. The repository's `infra/scripts/seed_traces.py` is an example sender. OTLP/HTTP protobuf senders use the same endpoint with `Content-Type: application/x-protobuf`.
 
-JSON field values of `null` are treated as unset, following ProtoJSON. For example, `resource: null`, `status: null`, `attributes: null`, and nested AnyValue fields with `null` have the same meaning as omitted fields. An unset AnyValue is an empty value, not a literal JSON null. Null elements inside repeated fields (including nested attribute collections) are invalid. Retained spans still require valid trace/span IDs, a nonempty name, and a start time; setting a required field to null does not bypass that validation.
+JSON field values of `null` are treated as unset, following ProtoJSON. For example, `resource: null`, `status: null`, `attributes: null`, and nested AnyValue fields with `null` have the same meaning as omitted fields. An unset AnyValue is an empty value, not a literal JSON null. Null elements inside known repeated fields (including nested attribute collections, events, and links) are invalid. Unknown message fields are ignored; their contents do not make an otherwise valid export malformed. Unknown nested attribute fields remain subject to fail-closed redaction. Retained spans still require valid trace/span IDs, a nonempty name, and a start time; setting a required field to null does not bypass that validation. Numeric start/end nanosecond timestamps must be integers.
 
 ## Prompt provenance and sensitive data
 

@@ -7071,6 +7071,52 @@ components:
         message:
           type: string
       type: object
+    OtlpWireAnyValue:
+      properties:
+        arrayValue:
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/OtlpWireAnyValue'
+              type:
+                - array
+                - 'null'
+          type:
+            - object
+            - 'null'
+        boolValue:
+          type:
+            - boolean
+            - 'null'
+        bytesValue:
+          type:
+            - string
+            - 'null'
+        doubleValue:
+          type:
+            - number
+            - 'null'
+        intValue:
+          anyOf:
+            - type: integer
+            - type: string
+            - type: 'null'
+        kvlistValue:
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/OtlpWireKeyValue'
+              type:
+                - array
+                - 'null'
+          type:
+            - object
+            - 'null'
+        stringValue:
+          type:
+            - string
+            - 'null'
+      type: object
     OtlpWireKeyValue:
       properties:
         key:
@@ -7078,51 +7124,9 @@ components:
           minLength: 1
           type: string
         value:
-          properties:
-            arrayValue:
-              properties:
-                values:
-                  items: {}
-                  type:
-                    - array
-                    - 'null'
-              type:
-                - object
-                - 'null'
-            boolValue:
-              type:
-                - boolean
-                - 'null'
-            bytesValue:
-              type:
-                - string
-                - 'null'
-            doubleValue:
-              type:
-                - number
-                - 'null'
-            intValue:
-              anyOf:
-                - type: integer
-                - type: string
-                - type: 'null'
-            kvlistValue:
-              properties:
-                values:
-                  items: {}
-                  type:
-                    - array
-                    - 'null'
-              type:
-                - object
-                - 'null'
-            stringValue:
-              type:
-                - string
-                - 'null'
-          type:
-            - object
-            - 'null'
+          anyOf:
+            - $ref: '#/components/schemas/OtlpWireAnyValue'
+            - type: 'null'
       required:
         - key
       type: object
@@ -7183,10 +7187,18 @@ components:
                           endTimeUnixNano:
                             anyOf:
                               - type: string
-                              - type: number
+                              - type: integer
                               - type: 'null'
                           events:
-                            items: {}
+                            items:
+                              properties:
+                                attributes:
+                                  items:
+                                    $ref: '#/components/schemas/OtlpWireKeyValue'
+                                  type:
+                                    - array
+                                    - 'null'
+                              type: object
                             type:
                               - array
                               - 'null'
@@ -7197,7 +7209,15 @@ components:
                               - integer
                               - 'null'
                           links:
-                            items: {}
+                            items:
+                              properties:
+                                attributes:
+                                  items:
+                                    $ref: '#/components/schemas/OtlpWireKeyValue'
+                                  type:
+                                    - array
+                                    - 'null'
+                              type: object
                             type:
                               - array
                               - 'null'

@@ -16,7 +16,7 @@ The `opencode-devcontainers` plugin clones the branch, copies the ignored `infra
 
 ## Inside the devcontainer
 
-The image includes Bun plus native Alpine Node `22.12+` and full ICU locale data. Vitest/jsdom workers use native Node; Bun's fallback `node` shim is insufficient. Image construction checks the runtime version and ICU availability. Rebuild an older workspace image to receive these packages while preserving its data volumes.
+The image includes Bun plus native Alpine Node and full ICU locale data. Vitest/jsdom workers require native Node matching `^22.22.2 || ^24.15.0 || >=26.0.0`, as required by the pinned jsdom dependency; Bun's fallback `node` shim is insufficient. Image construction checks that supported range and ICU availability. Rebuild an older workspace image to receive these packages while preserving its data volumes.
 
 `postCreateCommand` installs the frozen Bun workspace dependencies and the isolated GEPA Python environment. `GLASSHOUSE_CONTAINER_NETWORK=1` intentionally overrides any host-local database URL settings from `infra/.env`, so the normal local-runtime commands connect to the private Compose service DNS names automatically:
 

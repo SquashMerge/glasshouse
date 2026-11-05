@@ -26,10 +26,17 @@ test("real ClickHouse timeout responses under native Node", async () => {
 		const buildError = await new Response(build.stderr).text();
 		expect(await build.exited, buildError).toBe(0);
 		const child = Bun.spawn(
-			["sh", "-c", 'ulimit -c 0; exec node "$1"', "sh", output],
+			[
+				"sh",
+				"-c",
+				'ulimit -c 0; exec node --test-reporter=tap "$1"',
+				"sh",
+				output,
+			],
 			{
 				stdout: "pipe",
 				stderr: "pipe",
+				env: { ...process.env, NODE_OPTIONS: "" },
 				timeout: 10_000,
 			},
 		);
