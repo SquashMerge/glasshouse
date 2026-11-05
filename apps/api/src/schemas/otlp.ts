@@ -23,27 +23,10 @@ export const SpanId = hexBytes(16);
 export type SpanId = z.infer<typeof SpanId>;
 export const ParentSpanId = SpanId.nullable().optional();
 
-const KvlistValue = z
-	.object({ values: z.array(z.any()).optional() })
-	.openapi("KvlistValue");
-
-const AnyValue = z
-	.union([
-		z.strictObject({}),
-		z.object({ stringValue: z.string() }),
-		z.object({ boolValue: z.boolean() }),
-		z.object({ intValue: z.union([z.number().int(), z.string()]) }),
-		z.object({ doubleValue: z.number() }),
-		z.object({ arrayValue: z.object({ values: z.array(z.any()).optional() }) }),
-		z.object({ kvlistValue: KvlistValue }).optional(),
-		z.object({ bytesValue: z.string() }),
-	])
-	.openapi("AnyValue");
-
 const KeyValue = z
-	.object({
+	.looseObject({
 		key: z.string().min(1).max(256),
-		value: AnyValue.optional(),
+		value: z.lazy(() => WireAnyValue).optional(),
 	})
 	.openapi("KeyValue");
 
@@ -152,14 +135,14 @@ export const ExportTraceServiceRequest = z
 	.openapi("ExportTraceServiceRequest");
 
 const WireAnyValue: z.ZodType<Record<string, unknown>> = z
-	.object({
+	.looseObject({
 		stringValue: z.string().nullable().optional(),
 		boolValue: z.boolean().nullable().optional(),
 		intValue: z.union([z.number().int(), z.string()]).nullable().optional(),
 		doubleValue: z.number().nullable().optional(),
 		bytesValue: z.string().nullable().optional(),
 		arrayValue: z
-			.object({
+			.looseObject({
 				values: z
 					.array(z.lazy(() => WireAnyValue))
 					.nullable()
@@ -168,7 +151,7 @@ const WireAnyValue: z.ZodType<Record<string, unknown>> = z
 			.nullable()
 			.optional(),
 		kvlistValue: z
-			.object({
+			.looseObject({
 				values: z
 					.array(z.lazy(() => WireKeyValue))
 					.nullable()
@@ -180,7 +163,7 @@ const WireAnyValue: z.ZodType<Record<string, unknown>> = z
 	.openapi("OtlpWireAnyValue");
 
 const WireKeyValue = z
-	.object({
+	.looseObject({
 		key: KeyValue.shape.key,
 		value: z.union([WireAnyValue, z.null()]).optional(),
 	})

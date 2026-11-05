@@ -7072,8 +7072,10 @@ components:
           type: string
       type: object
     OtlpWireAnyValue:
+      additionalProperties: {}
       properties:
         arrayValue:
+          additionalProperties: {}
           properties:
             values:
               items:
@@ -7102,6 +7104,7 @@ components:
             - type: string
             - type: 'null'
         kvlistValue:
+          additionalProperties: {}
           properties:
             values:
               items:
@@ -7118,6 +7121,7 @@ components:
             - 'null'
       type: object
     OtlpWireKeyValue:
+      additionalProperties: {}
       properties:
         key:
           maxLength: 256
@@ -18669,7 +18673,7 @@ paths:
       tags:
         - traces
     post:
-      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.
+      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.
       parameters:
         - description: Project selector, verified against the authenticated organization
           in: header

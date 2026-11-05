@@ -52,6 +52,143 @@ function request(body: unknown) {
 	});
 }
 
+async function captureExport(body: unknown, redactKeys?: string[]) {
+	let admitted = false;
+	const traces: unknown[] = [];
+	const observations: unknown[] = [];
+	const handler = createOtlpIngestHandler({
+		withActiveAuthorizedProjectLock: async (_tenant, callback) => {
+			admitted = true;
+			return callback({} as never);
+		},
+		approvedRedaction: async () =>
+			redactKeys ? { mode: "none", keys: redactKeys } : null,
+		defaultClient: () => ({}) as never,
+		insertTraces: async (_client, rows) => {
+			traces.push(...rows);
+		},
+		insertObservations: async (_client, rows) => {
+			observations.push(...rows);
+		},
+		publishSync: () => undefined,
+	});
+	const response = await handler(request(body), tenant);
+	return { status: response.status, admitted, traces, observations };
+}
+
+test("OTLP handler rejects nested scalar types rejected by its wire schemas", async () => {
+	const body = payload(
+		{},
+		{},
+		{
+			attributes: [
+				{
+					key: "payload",
+					value: { arrayValue: { values: [{ stringValue: 7 }] } },
+				},
+			],
+		},
+	);
+	expect(OtlpWireRequest.safeParse(body).success).toBe(false);
+	expect(validateWire(body)).toBe(false);
+	const result = await captureExport(body);
+	expect(result, JSON.stringify(result)).toEqual({
+		status: 400,
+		admitted: false,
+		traces: [],
+		observations: [],
+	});
+});
+
+for (const value of [
+	{ futureExtension: [null] },
+	{ stringValue: null, futureExtension: [null] },
+]) {
+	test(`OTLP handler ignores extension-only AnyValue ${JSON.stringify(value)}`, async () => {
+		const body = payload(
+			{},
+			{},
+			{
+				attributes: [{ key: "extension", value }],
+			},
+		);
+		expect(OtlpWireRequest.safeParse(body).success).toBe(true);
+		expect(validateWire(body)).toBe(true);
+		const result = await captureExport(body);
+		expect(result.status, JSON.stringify(result)).toBe(200);
+		expect(result.observations).toHaveLength(1);
+		const redacted = await captureExport(body, ["secret"]);
+		expect(redacted.status).toBe(200);
+		expect(redacted.observations).toHaveLength(1);
+		expect(JSON.stringify(redacted.observations)).not.toContain(
+			"futureExtension",
+		);
+	});
+}
+
+for (const [name, leaf, status] of [
+	["below", { arrayValue: {} }, 200],
+	["at", { arrayValue: { values: [] } }, 200],
+	["above", { arrayValue: { values: [{}] } }, 400],
+] as const) {
+	test(`OTLP handler bounds known nesting ${name} depth 32`, async () => {
+		let value: unknown = leaf;
+		for (let i = 0; i < 7; i++) value = { arrayValue: { values: [value] } };
+		const body = payload({}, {}, { attributes: [{ key: "payload", value }] });
+		const result = await captureExport(body);
+		expect(result.status).toBe(status);
+		expect(result.admitted).toBe(status === 200);
+		expect(result.observations).toHaveLength(status === 200 ? 1 : 0);
+	});
+}
+
+test("OTLP handler ignores deeply nested extension data but redacts it fail closed", async () => {
+	let extension: unknown = {
+		key: "secret",
+		value: { stringValue: "never-retain" },
+	};
+	for (let i = 0; i < 100; i++) extension = { values: [extension] };
+	const body = payload(
+		{},
+		{},
+		{
+			attributes: [
+				{
+					key: "payload",
+					value: { stringValue: "also-drop", futureExtension: extension },
+				},
+			],
+		},
+	);
+	const result = await captureExport(body, ["secret"]);
+	expect(result.status).toBe(200);
+	expect(result.observations).toHaveLength(1);
+	expect(JSON.stringify(result.observations)).not.toContain("never-retain");
+	expect(JSON.stringify(result.observations)).not.toContain("also-drop");
+});
+
+for (const [levels, repeatedDepth] of [
+	[7, 29],
+	[8, 32],
+	[9, 35],
+] as const) {
+	test(`OTLP handler rejects null repeated elements at normalization depth ${repeatedDepth}`, async () => {
+		let value: unknown = null;
+		for (let i = 0; i < levels; i++)
+			value = { arrayValue: { values: [value] } };
+		const body = payload({}, {}, { attributes: [{ key: "payload", value }] });
+		expect(OtlpWireRequest.safeParse(body).success).toBe(false);
+		expect(validateWire(body)).toBe(false);
+		const result = await captureExport(body);
+		expect(result, JSON.stringify(result)).toEqual({
+			status: 400,
+			admitted: false,
+			traces: [],
+			observations: [],
+		});
+	});
+}
+
 for (const [name, body] of [
 	["request", { ...payload(), futureExtension: [null] }],
 	["resource spans", payload({ futureExtension: [null] })],

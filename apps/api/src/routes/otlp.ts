@@ -53,7 +53,7 @@ export const otlpIngestRoute = createRoute({
 	tags: [tag],
 	summary: "OTLP HTTP trace ingest",
 	description:
-		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
+		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Retained spans still require valid IDs, a name, and a start time. Spans containing events or links are rejected with a partial-success response; supported spans are stored.",
 	security: [
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
@@ -355,7 +355,8 @@ function normalizeOtlpFields(
 	depth = 0,
 	message: OtlpMessage = "request",
 ): unknown {
-	if (depth > 32 || !value || typeof value !== "object") return value;
+	if (depth > 32) throw new Error("OTLP message nesting limit exceeded");
+	if (!value || typeof value !== "object") return value;
 	if (Array.isArray(value))
 		return value.map((item) => {
 			if (item === null) throw new Error("Invalid null repeated element");
