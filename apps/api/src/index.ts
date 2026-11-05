@@ -7,6 +7,7 @@ import {
 	PUBLIC_API_ROUTES,
 } from "./middleware/auth.js";
 import { securityHeaders } from "./middleware/security-headers.js";
+import { releaseWeb } from "./middleware/release-web.js";
 import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { authenticationPool, pgPool } from "./db/postgres.js";
@@ -38,6 +39,7 @@ const AGENT_INTROSPECTION_PATH =
 	"/v1/evaluation-runs/:run_id/tasks/:task_id/agent-introspection/:invocation_id";
 
 export type ApiDependencies = {
+	webDirectory?: string;
 	handleHealth: typeof handleHealth;
 	handleOtlpIngest: typeof handleOtlpIngest;
 	pgPool: typeof pgPool;
@@ -205,6 +207,9 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		return c.json({ code: "INTERNAL", message: "Internal server error" }, 500);
 	});
 
+	const webDirectory =
+		dependencies.webDirectory ?? process.env.GLASSHOUSE_WEB_DIST;
+	if (webDirectory) apiApp.use(releaseWeb(webDirectory));
 	apiApp.use(securityHeaders());
 	apiApp.use(AGENT_INTROSPECTION_PATH, async (c, next) => {
 		c.header("Cache-Control", "no-store");

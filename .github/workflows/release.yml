@@ -1,0 +1,86 @@
+name: Release image
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Build and test release image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Run release regression tests
+        run: |
+          bun install --frozen-lockfile
+          bun test infra/scripts/tests/release-compose.test.ts infra/scripts/tests/release-workflow.test.ts apps/api/tests/unit/release-web.test.ts
+          python3 -m unittest infra.scripts.tests.test_release_tag infra.scripts.tests.test_release_image_harness -v
+      - name: Set image version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == push ]]; then
+            bash infra/scripts/validate-release-tag.sh "$REF_NAME"
+            git merge-base --is-ancestor HEAD origin/main
+            version="$REF_NAME"
+          else
+            version="pr-$GITHUB_SHA"
+          fi
+          printf 'RELEASE_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
+      - name: Build and export once
+        run: |
+          set -euo pipefail
+          mkdir -p release-output bundle
+          image="glasshouse:$RELEASE_VERSION"
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" -f deploy/release/Dockerfile -t "$image" .
+          docker save "$image" -o release-output/glasshouse-image.tar
+          docker image rm "$image"
+          docker load -i release-output/glasshouse-image.tar
+          cp -R deploy/release/. bundle/
+          rm bundle/Dockerfile
+          printf '\nGLASSHOUSE_IMAGE=%s\n' "$image" >> bundle/production.env.example
+          tar -czf release-output/glasshouse-compose.tar.gz -C bundle .
+      - name: Test exported image with the released bundle
+        run: bash infra/scripts/test-release-image.sh release-output/glasshouse-image.tar release-output/glasshouse-compose.tar.gz "glasshouse:$RELEASE_VERSION"
+      - name: Calculate checksums
+        run: |
+          cd release-output
+          sha256sum glasshouse-image.tar glasshouse-compose.tar.gz > SHA256SUMS
+      - name: Save tested files for draft
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: tested-release-files
+          path: release-output/
+          if-no-files-found: error
+  publish:
+    needs: [build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: tested-release-files
+          path: release-output
+      - name: Verify downloaded files and create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd release-output
+          sha256sum -c SHA256SUMS
+          gh release create "$TAG" glasshouse-image.tar glasshouse-compose.tar.gz SHA256SUMS --verify-tag --draft --generate-notes
