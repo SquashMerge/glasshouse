@@ -30,7 +30,9 @@ state["calls"].append(args)
 state["environments"].append({key: os.environ.get(key) for key in ("HOST_DOCKER_SECRET", "COMPOSE_FILE", "DOCKER_HOST")})
 
 def save():
-    state_path.write_text(json.dumps(state))
+    tmp = state_path.with_name(f"state.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state))
+    os.replace(tmp, state_path)
 
 def project_from(values):
     return values[values.index("--project-name") + 1]

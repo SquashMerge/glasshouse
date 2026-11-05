@@ -28,7 +28,7 @@ jobs:
           - check: typecheck
             command: bun run typecheck
           - check: test
-            command: bun run test && bun --cwd apps/api test tests/integration/api.test.ts tests/integration/otlp-process-shutdown.test.ts
+            command: bun run test && bun --cwd apps/api test tests/integration/otlp-process-shutdown.test.ts
           - check: supply-chain
             command: bun run test:supply-chain
           - check: infra-security
@@ -447,6 +447,13 @@ jobs:
           GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE="$RUNNER_TEMP/e2e-bootstrap.token" \
             bun run infra/scripts/setup-e2e-local-auth.ts
           "${compose[@]}" exec -T -e GLASSHOUSE_AUTH_BOOTSTRAP_MODE=basic api bun run --cwd apps/api src/db/bootstrap-authorization.ts
+
+      - name: Run API integration against the migrated disposable database
+        run: |
+          bash infra/scripts/with-local-env.sh bash -euo pipefail -c '
+            export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-glasshouse}"
+            GLASSHOUSE_AUTH_BOOTSTRAP_MODE=basic bun --cwd apps/api test tests/integration/api.test.ts
+          '
 
       - name: Seed E2E projects and memberships
         run: docker compose --project-directory . --env-file infra/.env -f infra/compose.yaml exec -T postgres psql -U glasshouse -d glasshouse -c "INSERT INTO projects (id, name, slug, organization_id) VALUES ('00000000-0000-4000-8000-000000000001', 'E2E Project', 'e2e-project', '00000000-0000-4000-8000-000000000001'), ('00000000-0000-4000-8000-000000000002', 'E2E Other Project', 'e2e-other-project', '00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING; INSERT INTO project_memberships (project_id, organization_id, actor_subject, role) SELECT id, organization_id, 'glasshouse', 'manager' FROM projects WHERE id IN ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002') ON CONFLICT (project_id, actor_subject) DO UPDATE SET role = EXCLUDED.role, updated_at = now();"
