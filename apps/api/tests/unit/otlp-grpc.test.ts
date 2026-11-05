@@ -78,23 +78,27 @@ test("OTLP gRPC forwards and normalizes the original protobuf request", async ()
 	process.env.OTLP_GRPC_HOST = "127.0.0.1";
 	let forwarded: Request | undefined;
 	let observationMetadata: unknown;
+	const traceTokens: string[] = [];
+	const tenant = {
+		actorId: "11111111-1111-4111-8111-111111111111",
+		organizationId: "22222222-2222-4222-8222-222222222222",
+		projectId: "33333333-3333-4333-8333-333333333333",
+	};
 	const handler = createOtlpIngestHandler({
 		withActiveAuthorizedProjectLock: async (_tenant, callback) =>
 			callback({} as never),
 		approvedRedaction: async () => null,
 		defaultClient: () => ({}) as never,
-		insertTraces: async () => undefined,
+		insertTraces: async (_client, _rows, token) => {
+			traceTokens.push(token);
+		},
 		insertObservations: async (_client, rows) => {
 			observationMetadata = rows[0]?.metadata;
 		},
 	});
 	const stop = await startOtlpGrpcServer(async (request) => {
 		forwarded = request.clone();
-		return handler(request, {
-			actorId: "11111111-1111-4111-8111-111111111111",
-			organizationId: "22222222-2222-4222-8222-222222222222",
-			projectId: "33333333-3333-4333-8333-333333333333",
-		});
+		return handler(request, tenant);
 	});
 	const client = new grpc.Client(
 		`127.0.0.1:${port}`,
@@ -156,6 +160,20 @@ test("OTLP gRPC forwards and normalizes the original protobuf request", async ()
 			"application/x-protobuf",
 		);
 		expect(new Uint8Array(await forwarded!.arrayBuffer())).toEqual(payload);
+		expect(
+			(
+				await handler(
+					new Request("http://localhost/v1/traces", {
+						method: "POST",
+						headers: { "content-type": "application/protobuf" },
+						body: payload,
+					}),
+					tenant,
+				)
+			).status,
+		).toBe(200);
+		expect(traceTokens).toHaveLength(2);
+		expect(traceTokens[0]).toBe(traceTokens[1]);
 		expect(observationMetadata).toMatchObject({
 			attributes: [{ key: "binary", value: { bytesValue: "aGVsbG8=" } }],
 		});

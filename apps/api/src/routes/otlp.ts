@@ -146,7 +146,11 @@ const MAX_OTLP_DECOMPRESSED_BYTES =
 		: 1_048_576;
 
 type ParsedOtlpRequest =
-	| { success: true; data: z.infer<typeof ExportTraceServiceRequest> }
+	| {
+			success: true;
+			data: z.infer<typeof ExportTraceServiceRequest>;
+			wireDigest: string;
+	  }
 	| { success: false; status: 400 | 413 | 415; message: string };
 
 async function parseOtlpHttpRequest(req: {
@@ -197,10 +201,16 @@ async function parseOtlpHttpRequest(req: {
 			message: "OTLP request exceeds the decompressed body limit",
 		};
 
+	// Hash bounded, decompressed bytes, never recursively serialize unknown JSON.
+	const wireDigest = createHash("sha256")
+		.update(contentType === "application/json" ? "json\0" : "protobuf\0")
+		.update(body)
+		.digest("hex");
 	if (contentType !== "application/json") {
 		try {
 			return parseNormalizedOtlpRequest(
 				otlpJsonToLegacy(normalizeOtlpFields(decodeOtlpTraceExport(body))),
+				wireDigest,
 			);
 		} catch {
 			return {
@@ -224,6 +234,7 @@ async function parseOtlpHttpRequest(req: {
 	try {
 		return parseNormalizedOtlpRequest(
 			otlpJsonToLegacy(normalizeOtlpFields(bodyJson)),
+			wireDigest,
 		);
 	} catch {
 		return {
@@ -234,7 +245,10 @@ async function parseOtlpHttpRequest(req: {
 	}
 }
 
-function parseNormalizedOtlpRequest(normalized: unknown): ParsedOtlpRequest {
+function parseNormalizedOtlpRequest(
+	normalized: unknown,
+	wireDigest: string,
+): ParsedOtlpRequest {
 	if (
 		normalized &&
 		typeof normalized === "object" &&
@@ -246,10 +260,11 @@ function parseNormalizedOtlpRequest(normalized: unknown): ParsedOtlpRequest {
 		return {
 			success: true,
 			data: { resource_spans: [] } as z.infer<typeof ExportTraceServiceRequest>,
+			wireDigest,
 		};
 	const parsed = ExportTraceServiceRequest.safeParse(normalized);
 	return parsed.success
-		? { success: true, data: parsed.data }
+		? { success: true, data: parsed.data, wireDigest }
 		: {
 				success: false,
 				status: 400,
@@ -423,15 +438,18 @@ const productionOtlpIngestDependencies: OtlpIngestDependencies = {
 };
 
 function otlpDeduplicationTokens(
-	batch: unknown,
+	wireDigest: string,
 	tenant: OtlpIngestTenantScope,
+	fallbackProjectId: string,
 ) {
 	const digest = createHash("sha256")
 		.update(
 			JSON.stringify({
+				identity: "otlp-wire-v1",
 				organization_id: tenant.organizationId,
 				project_id: tenant.projectId,
-				batch,
+				fallback_project_id: fallbackProjectId,
+				wire_digest: wireDigest,
 			}),
 		)
 		.digest("hex");
@@ -541,10 +559,10 @@ export function createOtlpIngestHandler(
 						}
 					}
 					const traceRows = [...traces.values()].map(({ trace }) => trace);
-					// Only serialize redacted, bounded rows, never unbounded extensions.
 					const deduplicationTokens = otlpDeduplicationTokens(
-						{ traces: traceRows, observations },
+						parsed.wireDigest,
 						tenant,
+						fallbackProjectId,
 					);
 					const writer = resolvedDependencies.defaultClient();
 					await resolvedDependencies.insertTraces(

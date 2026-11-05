@@ -3,10 +3,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { type ClickHouseClient, createClient } from "@clickhouse/client";
 import { Pool } from "pg";
 import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization.js";
-import { clickhouseUrl } from "../../src/db/clickhouse.js";
 import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate.js";
 import { migrate } from "../../src/db/migrate.js";
-import { postgresUrl } from "../../src/db/postgres.js";
+import { otlpDisposableDatastores } from "../helpers/otlp-disposable-datastores.js";
 import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
 import {
 	type TenantScope,
@@ -40,35 +39,31 @@ const events: unknown[] = [];
 const ingestErrors: Error[] = [];
 
 beforeAll(async () => {
-	const pgUrl = new URL(postgresUrl());
-	const chUrl = new URL(clickhouseUrl());
-	if (
-		process.env.GLASSHOUSE_CONTAINER_NETWORK !== "1" ||
-		pgUrl.hostname !== "postgres" ||
-		(pgUrl.port || "5432") !== "5432" ||
-		chUrl.hostname !== "clickhouse" ||
-		(chUrl.port || "8123") !== "8123"
-	)
-		throw new Error("Private devcontainer datastores are required");
-	admin = new Pool({ connectionString: pgUrl.toString() });
+	const config = otlpDisposableDatastores(process.env, database);
+	admin = new Pool({ connectionString: config.postgresAdminUrl });
 	await admin.query(`CREATE DATABASE ${database}`);
 	createdPostgres = true;
-	pgUrl.pathname = `/${database}`;
-	pool = new Pool({ connectionString: pgUrl.toString(), max: 10 });
-	await migrate({ DATABASE_URL: pgUrl.toString() });
-	const chOptions = {
-		url: chUrl.toString(),
-		username: process.env.CLICKHOUSE_USER ?? "glasshouse",
-		password: process.env.CLICKHOUSE_PASSWORD ?? "",
-	};
-	clickhouseAdmin = createClient(chOptions);
+	pool = new Pool({ connectionString: config.postgresUrl, max: 10 });
+	expect(
+		(await pool.query("SELECT current_database() AS database")).rows[0]
+			?.database,
+	).toBe(database);
+	await migrate({ DATABASE_URL: config.postgresUrl });
+	clickhouseAdmin = createClient(config.clickhouseAdminOptions);
 	await clickhouseAdmin.command({ query: `CREATE DATABASE ${database}` });
 	createdClickhouse = true;
+	clickhouse = createClient(config.clickhouseOptions);
+	const selectedDatabase = await clickhouse.query({
+		query: "SELECT currentDatabase() AS database",
+		format: "JSONEachRow",
+	});
+	expect(
+		(await selectedDatabase.json<{ database: string }>())[0]?.database,
+	).toBe(database);
 	await applyClickHouseMigrations(
-		createClient({ ...chOptions, database }),
+		createClient(config.clickhouseOptions),
 		async (run) => run(),
 	);
-	clickhouse = createClient({ ...chOptions, database });
 	await pool.query(
 		`WITH o AS (
 			INSERT INTO organizations (id, name, slug, default_project_id)
@@ -97,7 +92,7 @@ beforeAll(async () => {
 	process.env.API_MAX_BODY_BYTES = String(bodyLimit);
 	await bootstrapAuthorization({
 		...process.env,
-		DATABASE_URL: pgUrl.toString(),
+		DATABASE_URL: config.postgresUrl,
 		GLASSHOUSE_AUTH_BOOTSTRAP_MODE: "basic",
 		GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: credential.username,
 	});
