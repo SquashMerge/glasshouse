@@ -23,10 +23,13 @@ function disposableEnvironment(env: NodeJS.ProcessEnv): boolean {
 		env.POSTGRES_HOST === "postgres" &&
 		env.POSTGRES_PORT === "5432" &&
 		env.CLICKHOUSE_HOST === "clickhouse" &&
+		(env.CLICKHOUSE_HTTP_PORT ?? "8123") === "8123" &&
 		env.VALKEY_HOST === "valkey" &&
+		(env.VALKEY_PORT ?? "6379") === "6379" &&
 		env.DATABASE_URL === undefined &&
 		env.CLICKHOUSE_URL === undefined &&
-		env.VALKEY_URL === undefined
+		env.VALKEY_URL === undefined &&
+		env.VALKEY_PUBSUB_URL === undefined
 	);
 }
 
@@ -39,6 +42,9 @@ function sanitizedChildEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	database.password = env.POSTGRES_PASSWORD ?? "postgres";
 	database.pathname = `/${encodeURIComponent(env.POSTGRES_DB ?? "postgres")}`;
 	child.DATABASE_URL = database.toString();
+	const valkey = new URL("redis://valkey:6379");
+	valkey.password = env.VALKEY_PASSWORD ?? "";
+	child.VALKEY_URL = valkey.toString();
 	return child;
 }
 
@@ -60,6 +66,9 @@ test("shutdown test refuses inherited or non-disposable datastore configuration"
 		{ ...safe, POSTGRES_PORT: "6543" },
 		{ ...safe, CLICKHOUSE_HOST: "localhost" },
 		{ ...safe, VALKEY_HOST: "localhost" },
+		{ ...safe, CLICKHOUSE_HTTP_PORT: "8123@unsafe-example.invalid:8123" },
+		{ ...safe, VALKEY_PORT: "6379@unsafe-example.invalid:6379" },
+		{ ...safe, VALKEY_PUBSUB_URL: "redis://unsafe-example.invalid:6379" },
 		{ ...safe, DATABASE_URL: "postgres://example" },
 		{ ...safe, DATABASE_URL: "" },
 		{ ...safe, CLICKHOUSE_URL: "" },
@@ -91,6 +100,25 @@ test("shutdown child resolves its PostgreSQL target without inherited PG setting
 	);
 	expect(result.exitCode).toBe(0);
 	expect(result.stdout.toString().trim()).toBe("postgres");
+});
+
+test("shutdown child pins Valkey despite a URL-like password", () => {
+	const env = sanitizedChildEnvironment({
+		VALKEY_PASSWORD: "x@unsafe-example.invalid:6379/#",
+		VALKEY_HOST: "valkey",
+		VALKEY_PORT: "6379",
+	});
+	const result = Bun.spawnSync(
+		[
+			process.execPath,
+			"--no-env-file",
+			"-e",
+			'import Redis from "ioredis"; import { valkeyUrl } from "./src/db/valkey.ts"; const client = new Redis(valkeyUrl(), { lazyConnect: true }); console.log(client.options.host); client.disconnect();',
+		],
+		{ cwd: import.meta.dir + "/../..", env },
+	);
+	expect(result.exitCode).toBe(0);
+	expect(result.stdout.toString().trim()).toBe("valkey");
 });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {

@@ -28,7 +28,7 @@ jobs:
           - check: typecheck
             command: bun run typecheck
           - check: test
-            command: bun run test
+            command: bun run test && bun --cwd apps/api test tests/integration/api.test.ts tests/integration/otlp-process-shutdown.test.ts
           - check: supply-chain
             command: bun run test:supply-chain
           - check: infra-security
