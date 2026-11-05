@@ -13,6 +13,7 @@ import {
 	OtlpWireResponse,
 } from "../schemas/otlp.js";
 import { normalizeSpan, resourceProjectId } from "../db/gen-ai-attrs.js";
+import { promptProvenanceFromAttributes } from "../db/observation-metadata.js";
 import {
 	policyRedactionOptions,
 	redactMetadata,
@@ -59,7 +60,7 @@ export const otlpIngestRoute = createRoute({
 	tags: [tag],
 	summary: "OTLP HTTP trace ingest",
 	description:
-		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request and 512 events/links per span. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Spans require valid IDs, a name, and an exact uint64 start time (unsafe JSON numbers are rejected; use decimal strings). Events, links and resource/scope/status context are redacted and retained in bounded OTLP detail (32 KiB per span, 8 MiB per export); truncation is explicit on readback.",
+		"Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request and 512 events/links per span. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Resource glasshouse.project.id must occur at most once, contain only a UUID string value with no unknown fields, and match the authorized Project header; missing resource selectors inherit that Project. Spans require valid IDs, a name, and an exact uint64 start time (unsafe JSON numbers are rejected; use decimal strings). Events, links and resource/scope/status context are redacted and retained in bounded OTLP detail (32 KiB per span, 8 MiB per export); truncation is explicit on readback.",
 	security: [
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
@@ -269,6 +270,9 @@ function parseNormalizedOtlpRequest(
 			wireDigest,
 		};
 	const parsed = ExportTraceServiceRequest.safeParse(normalized);
+	if (parsed.success)
+		for (const rs of parsed.data.resource_spans)
+			resourceProjectId(rs.resource?.attributes ?? []);
 	return parsed.success
 		? { success: true, data: parsed.data, wireDigest }
 		: {
@@ -527,6 +531,14 @@ export function createOtlpIngestHandler(
 		const observations: TenantScopedObservation[] = [];
 
 		try {
+			if (
+				fallbackProjectId !== tenant.projectId ||
+				request.resource_spans.some((rs) => {
+					const projectId = resourceProjectId(rs.resource?.attributes ?? []);
+					return projectId !== "" && projectId !== tenant.projectId;
+				})
+			)
+				throw new OtlpConflictError("Conflicting Project selectors");
 			await resolvedDependencies.withActiveAuthorizedProjectLock(
 				tenant,
 				async (client) => {
@@ -559,11 +571,7 @@ export function createOtlpIngestHandler(
 										true,
 									),
 								};
-								const normalized = normalizeSpan(
-									span,
-									resourceAttributes,
-									fallbackProjectId,
-								);
+								const normalized = normalizeSpan(span, [], tenant.projectId);
 								const trace: TenantScopedTrace = {
 									...normalized.trace,
 									organization_id: tenant.organizationId,
@@ -572,6 +580,14 @@ export function createOtlpIngestHandler(
 									...normalized.observation,
 									organization_id: tenant.organizationId,
 								};
+								observation.metadata.prompt_provenance =
+									promptProvenanceFromAttributes(
+										(sourceSpan.attributes ?? []).filter(
+											(attribute) =>
+												!redaction.redactKeys.includes(attribute.key),
+										),
+										observation.type === "generation",
+									);
 								const text = (value: string | undefined) =>
 									value === undefined
 										? undefined
@@ -718,17 +734,26 @@ const OTLP_ANY_VALUE_KEYS = new Set([
 	"kvlistValue",
 	"bytesValue",
 ]);
+const OPENINFERENCE_KINDS = new Set([
+	"llm",
+	"chain",
+	"agent",
+	"tool",
+	"retriever",
+	"embedding",
+	"reranker",
+]);
 
 function redactAttributes<T extends { key: string }>(
 	attributes: T[],
 	keys: string[],
 	allText = false,
-	preservePromptProvenance = false,
+	spanStructure = false,
 ): T[] {
 	const redacted = new Set(keys);
 	const budget = {
 		remaining: MAX_OTLP_REDACTION_NODES,
-		preservePromptProvenance,
+		spanStructure,
 	};
 	return attributes.flatMap((attribute) => {
 		const value = redactAttribute(attribute, redacted, budget, 0, allText);
@@ -739,7 +764,7 @@ function redactAttributes<T extends { key: string }>(
 function redactAttribute(
 	attribute: { key: string },
 	keys: ReadonlySet<string>,
-	budget: { remaining: number; preservePromptProvenance?: boolean },
+	budget: { remaining: number; spanStructure?: boolean },
 	depth: number,
 	allText: boolean,
 ): object | null {
@@ -753,19 +778,23 @@ function redactAttribute(
 		Object.keys(source).some((key) => key !== "key" && key !== "value")
 	)
 		return null;
-	if (
-		keys.has(attribute.key) ||
-		(attribute.key.startsWith("glasshouse.prompt.") &&
-			!(depth === 0 && budget.preservePromptProvenance))
-	)
+	if (keys.has(attribute.key) || attribute.key.startsWith("glasshouse.prompt."))
 		return null;
 	if (!("value" in source)) return { key: attribute.key };
+	const kind = (source.value as { stringValue?: unknown } | undefined)
+		?.stringValue;
+	const structuralKind =
+		depth === 0 &&
+		budget.spanStructure &&
+		attribute.key === "openinference.span.kind" &&
+		typeof kind === "string" &&
+		OPENINFERENCE_KINDS.has(kind.toLowerCase());
 	const value = redactAttributeValue(
 		source.value,
 		keys,
 		budget,
 		depth + 1,
-		allText,
+		allText && !structuralKind,
 	);
 	return value === null ? null : { key: attribute.key, value };
 }

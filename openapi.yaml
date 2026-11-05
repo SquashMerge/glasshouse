@@ -18970,7 +18970,7 @@ paths:
       tags:
         - traces
     post:
-      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request and 512 events/links per span. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Spans require valid IDs, a name, and an exact uint64 start time (unsafe JSON numbers are rejected; use decimal strings). Events, links and resource/scope/status context are redacted and retained in bounded OTLP detail (32 KiB per span, 8 MiB per export); truncation is explicit on readback.
+      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request and 512 events/links per span. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Resource glasshouse.project.id must occur at most once, contain only a UUID string value with no unknown fields, and match the authorized Project header; missing resource selectors inherit that Project. Spans require valid IDs, a name, and an exact uint64 start time (unsafe JSON numbers are rejected; use decimal strings). Events, links and resource/scope/status context are redacted and retained in bounded OTLP detail (32 KiB per span, 8 MiB per export); truncation is explicit on readback.
       parameters:
         - description: Project selector, verified against the authenticated organization
           in: header
@@ -19186,7 +19186,7 @@ paths:
   /v1/traces/{id}/events:
     get:
       description: |-
-        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
+        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`. If even one detailed row cannot fit, the snapshot uses list projections with `detail_omitted: true`. Oversized live rows likewise use the list projection with `detail_omitted: true`; fetch full retained detail from the first Project-scoped REST trace page and follow its cursors. It forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
         data: {"status":"complete"}` and closes the stream.
       parameters:
         - in: path

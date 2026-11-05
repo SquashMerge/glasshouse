@@ -18,6 +18,29 @@ const observation = (
 });
 
 describe("trace timeline", () => {
+	it("uses a single relative interval for mixed precise and legacy rows", () => {
+		const timeline = createTraceTimeline([
+			observation("precise", {
+				start_time: "2023-11-14T22:13:20.000Z",
+				start_time_unix_nano: "1700000000000999999",
+				duration_nano: "2",
+				duration_ms: 0.000002,
+			}),
+			observation("legacy", {
+				start_time: "2023-11-14T22:13:20.001Z",
+				duration_ms: 1,
+			}),
+		]);
+		expect(timeline).toHaveProperty("durationMs", 1.000001);
+		expect(timeline.bars[1]?.leftPercent).toBeCloseTo(
+			(0.000001 / 1.000001) * 100,
+			12,
+		);
+		expect(timeline.bars[1]?.widthPercent).toBeCloseTo(
+			(1 / 1.000001) * 100,
+			12,
+		);
+	});
 	it("positions nanosecond bars using relative BigInt offsets without epoch Number rounding", () => {
 		const timeline = createTraceTimeline([
 			observation("root", {

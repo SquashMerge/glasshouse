@@ -26,6 +26,8 @@ One unit of work inside a Trace — one row per OTel span. Schema: `apps/api/src
 
 The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. Forward-compat: store one row shape, render off `type` later.
 
+Recognized top-level OpenInference kind enum values survive `all_text` for classification; explicit key redaction still takes precedence. Arbitrary kind strings have no structural exemption.
+
 > **Don't say "span" when you mean "observation".** "Span" is reserved for the UI label (the "Spans" tab) and for `observation.type === "span"` specifically.
 
 ### Trace cursor
@@ -33,6 +35,9 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 
 ### OTLP detail
 The redacted, bounded `Observation.otlp` envelope exposed by authenticated trace detail/SSE and the inspector's Events, Links, Resource and Context tabs. Retains resource/scope context, schema URLs, attributes, status/message, kind, trace state, flags, source dropped counts, span events and links. Span events are embedded evidence, not extra Observation rows. `truncated` reports retention omissions independently of source dropped counts.
+
+### Compact trace SSE fallback
+`detail_omitted: true` on a trace-detail snapshot or live Observation means full detail exceeded its SSE frame budget and list projections were sent instead. Full retained detail is available from the first authorized Project-scoped REST trace page and its continuations; **Load full trace details** starts that traversal. This is separate from storage truncation and `snapshot_truncated` pagination.
 
 ### Exact trace times
 `start_time_unix_nano`, `end_time_unix_nano`, and `duration_nano`: nullable decimal-string nanoseconds retained alongside compatible millisecond fields. Unknown legacy/internal precision remains null; BigInt comparisons/subtraction preserve source precision. Event `time_unix_nano` is also a decimal string. See `docs/03-otel-ingest.md` for bounds.
@@ -49,7 +54,7 @@ The redacted, bounded `Observation.otlp` envelope exposed by authenticated trace
 - `observabilityTabFocus` — browser history state recording the selected tab's focus intent so keyboard selection survives a protected-page remount during URL navigation. It carries no credentials or telemetry.
 - **Observability filters** — URL-backed Trace and Span filters. Debounced changes retain the current textbox and caret while rows reload; browser Back/Forward restores the saved filter values.
 - `/observability/traces/$id` — Trace detail: tree of observations + detail panel. Trace and Observation feedback use thumbs-up/down icon buttons with accessible labels and hover titles.
-- **Trace timing** — observation start/end times displayed in UTC. Timelines accept public API ISO timestamps ending in `Z` and zone-less ClickHouse UTC timestamps; invalid calendar values remain unavailable rather than being inferred.
+- **Trace timing** — observation start/end times displayed in UTC. Timelines accept public API ISO timestamps ending in `Z` and zone-less ClickHouse UTC timestamps; invalid calendar values remain unavailable rather than being inferred. Bars, elapsed ruler and summary use one relative interval, combining exact source nanoseconds with existing legacy millisecond coordinates without subtracting rounded epoch numbers.
 
 ## Prompt UI
 

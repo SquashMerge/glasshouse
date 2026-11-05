@@ -47,7 +47,7 @@ const TENANT = {
 };
 const handleOtlpIngest = (request: Request, tenant = TENANT) =>
 	rawHandleOtlpIngest(request, tenant);
-const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const PROJECT_ID = TENANT.projectId;
 const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 beforeAll(() => {
@@ -322,7 +322,7 @@ describe("OTLP ingest publishes events", () => {
 		expect(observations[0]?.project_id).toBe(PROJECT_ID);
 	});
 
-	it("falls back to the resolved project when resource project IDs are missing or malformed", async () => {
+	it("rejects malformed resource project IDs even alongside a missing selector", async () => {
 		const res = await handleOtlpIngest(
 			new Request("http://x/v1/traces", {
 				method: "POST",
@@ -364,24 +364,12 @@ describe("OTLP ingest publishes events", () => {
 				}),
 			}),
 		);
-		expect(res.status).toBe(200);
-		const traces = insertTraces.mock.calls[0]?.[1] as Array<{
-			project_id: string;
-		}>;
-		const observations = insertObservations.mock.calls[0]?.[1] as Array<{
-			project_id: string;
-		}>;
-		expect(traces.map((trace) => trace.project_id)).toEqual([
-			TENANT.projectId,
-			TENANT.projectId,
-		]);
-		expect(observations.map((observation) => observation.project_id)).toEqual([
-			TENANT.projectId,
-			TENANT.projectId,
-		]);
+		expect(res.status).toBe(400);
+		expect(insertTraces).not.toHaveBeenCalled();
+		expect(insertObservations).not.toHaveBeenCalled();
 	});
 
-	it("rejects a trace split across scoped and unscoped resource spans before writes or events", async () => {
+	it("binds scoped and missing resource selectors to the same authenticated Project", async () => {
 		const traces: unknown[] = [];
 		const observations: unknown[] = [];
 		subscribe("trace.created", (message) => traces.push(message));
@@ -424,15 +412,16 @@ describe("OTLP ingest publishes events", () => {
 			}),
 		);
 
-		expect(res.status).toBe(400);
-		expect(await res.json()).toEqual({
-			message: "Invalid trace export request",
-		});
-		expect(defaultClient).not.toHaveBeenCalled();
-		expect(insertTraces).not.toHaveBeenCalled();
-		expect(insertObservations).not.toHaveBeenCalled();
-		expect(traces).toHaveLength(0);
-		expect(observations).toHaveLength(0);
+		expect(res.status).toBe(200);
+		expect(insertTraces.mock.calls[0]?.[1]).toMatchObject([
+			{ project_id: TENANT.projectId },
+		]);
+		expect(insertObservations.mock.calls[0]?.[1]).toMatchObject([
+			{ project_id: TENANT.projectId },
+			{ project_id: TENANT.projectId },
+		]);
+		expect(traces).toHaveLength(1);
+		expect(observations).toHaveLength(2);
 	});
 
 	it("rejects a trace split across two scoped projects before writes or events", async () => {

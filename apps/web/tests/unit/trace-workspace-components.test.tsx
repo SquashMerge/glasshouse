@@ -30,6 +30,43 @@ function observation(
 }
 
 describe("TraceHeader", () => {
+	it("uses the same 2 ns interval for bars, ruler and summary across a millisecond boundary", () => {
+		const observations = [
+			observation({
+				start_time: "2023-11-14T22:13:20.000Z",
+				end_time: "2023-11-14T22:13:20.001Z",
+				start_time_unix_nano: "1700000000000999999",
+				duration_nano: "2",
+				duration_ms: 0.000002,
+			}),
+			observation({
+				observation_id: "child",
+				parent_observation_id: "root",
+				start_time: "2023-11-14T22:13:20.001Z",
+				start_time_unix_nano: "1700000000001000000",
+				duration_nano: "1",
+				duration_ms: 0.000001,
+			}),
+		];
+		render(
+			<>
+				<TraceHeader traceId={TRACE_ID} observations={observations} />
+				<TraceWorkspace
+					observations={observations}
+					selectedObservationId="root"
+					onSelectObservation={vi.fn()}
+				/>
+			</>,
+		);
+		expect(screen.getAllByTestId("waterfall-bar")[1]).toHaveStyle({
+			left: "50%",
+			width: "50%",
+		});
+		expect(screen.getByTestId("timeline-ruler")).toHaveTextContent(
+			"0.000002ms",
+		);
+		expect(screen.getByTestId("trace-header")).toHaveTextContent("0.000002 ms");
+	});
 	it("summarizes the trace and exposes raw JSON without exposing the full id visually", () => {
 		render(
 			<TraceHeader

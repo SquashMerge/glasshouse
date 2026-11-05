@@ -7,6 +7,7 @@ import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate.js";
 import { migrate } from "../../src/db/migrate.js";
 import { otlpDisposableDatastores } from "../helpers/otlp-disposable-datastores.js";
 import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
+import { publishSync } from "../../src/lib/event-bus.js";
 import {
 	type TenantScope,
 	withActiveAuthorizedProjectLock,
@@ -23,6 +24,12 @@ const envKeys = [
 	"GLASSHOUSE_REDACT_INPUT",
 	"GLASSHOUSE_REDACT_KEYS",
 	"API_MAX_BODY_BYTES",
+	"DATABASE_URL",
+	"CLICKHOUSE_URL",
+	"CLICKHOUSE_DB",
+	"CLICKHOUSE_USER",
+	"CLICKHOUSE_PASSWORD",
+	"VALKEY_PUBSUB_URL",
 ] as const;
 const originalEnv = Object.fromEntries(
 	envKeys.map((key) => [key, process.env[key]]),
@@ -90,6 +97,7 @@ beforeAll(async () => {
 	process.env.GLASSHOUSE_REDACT_KEYS = "secret,enduser.id";
 	process.env.GLASSHOUSE_REDACT_INPUT = "true";
 	process.env.API_MAX_BODY_BYTES = String(bodyLimit);
+	delete process.env.VALKEY_PUBSUB_URL;
 	await bootstrapAuthorization({
 		...process.env,
 		DATABASE_URL: config.postgresUrl,
@@ -97,12 +105,20 @@ beforeAll(async () => {
 		GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME: credential.username,
 	});
 	authorization = `Basic ${Buffer.from(`${credential.username}:${credential.password}`).toString("base64")}`;
+	process.env.DATABASE_URL = config.postgresUrl;
+	process.env.CLICKHOUSE_URL = config.clickhouseOptions.url;
+	process.env.CLICKHOUSE_DB = database;
+	process.env.CLICKHOUSE_USER = config.clickhouseOptions.username;
+	process.env.CLICKHOUSE_PASSWORD = config.clickhouseOptions.password;
 	const { createApiApp } = await import("../../src/index.js");
 	const ingest = createOtlpIngestHandler({
 		defaultClient: () => clickhouse,
 		withActiveAuthorizedProjectLock: (tenant, callback) =>
 			withActiveAuthorizedProjectLock(pool, tenant as TenantScope, callback),
-		publishSync: (event, payload) => events.push({ event, payload }),
+		publishSync: (event, payload) => {
+			events.push({ event, payload });
+			publishSync(event, payload);
+		},
 	});
 	server = Bun.serve({
 		hostname: "127.0.0.1",
@@ -124,6 +140,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	server?.stop(true);
+	const { closeClickHouseClient } = await import("../../src/db/clickhouse.js");
+	const { pgPool, authenticationPool } = await import(
+		"../../src/db/postgres.js"
+	);
+	await closeClickHouseClient();
+	await pgPool().end();
+	await authenticationPool().end();
 	await clickhouse?.close();
 	await pool?.end();
 	try {
@@ -213,6 +236,122 @@ function exportBody(depth: number, location = "value", provenance = projectId) {
 	return { body, traceId };
 }
 
+test("oversized retained OTLP detail opens SSE, stays live and remains complete only on authorized scoped REST reads", async () => {
+	process.env.GLASSHOUSE_REDACT_INPUT = "false";
+	const { body, traceId } = exportBody(0);
+	const payload = JSON.parse(body);
+	const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+	const text = "\u0001".repeat(8_192);
+	span.attributes = ["input.value", "output.value"].map((key) => ({
+		key,
+		value: { stringValue: text },
+	}));
+	span.events = Array.from({ length: 4 }, () => ({
+		name: "retained-event",
+		attributes: [{ key: "detail", value: { stringValue: "x".repeat(8_192) } }],
+	}));
+	try {
+		expect((await post(JSON.stringify(payload))).status).toBe(200);
+		const path = `/v1/traces/${traceId}?project_id=${projectId}`;
+		const read = (path: string, auth = authorization) =>
+			fetch(new URL(path, server.url), { headers: { authorization: auth } });
+		expect((await read(path, "")).status).toBe(401);
+		expect(
+			(await read(`/v1/traces/${traceId}?project_id=${otherProjectId}`)).status,
+		).toBe(404);
+		const full = await read(path);
+		expect(full.status).toBe(200);
+		const detail = (await full.json()) as {
+			observations: Array<{
+				input_text: string;
+				output_text: string;
+				otlp: unknown;
+			}>;
+		};
+		expect(detail.observations[0]?.input_text).toBe(text);
+		expect(detail.observations[0]?.output_text).toBe(text);
+		expect(JSON.stringify(detail.observations[0]?.otlp)).toContain(
+			"retained-event",
+		);
+		const stream = await read(
+			`/v1/traces/${traceId}/events?project_id=${projectId}`,
+		);
+		expect(stream.status).toBe(200);
+		const reader = stream.body!.getReader();
+		let buffer = "";
+		const decoder = new TextDecoder();
+		const next = async (event: string) => {
+			for (;;) {
+				let boundary: number;
+				while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+					const frame = buffer.slice(0, boundary + 2);
+					buffer = buffer.slice(boundary + 2);
+					if (frame.startsWith(`event: ${event}\n`)) {
+						expect(Buffer.byteLength(frame)).toBeLessThanOrEqual(65_536);
+						return JSON.parse(frame.split("\ndata: ")[1]!);
+					}
+				}
+				const chunk = await reader.read();
+				if (chunk.done) throw new Error("SSE closed before expected event");
+				buffer += decoder.decode(chunk.value, { stream: true });
+			}
+		};
+		try {
+			expect((await next("snapshot")).detail_omitted).toBe(true);
+			span.spanId = "0011223344556678";
+			expect((await post(JSON.stringify(payload))).status).toBe(200);
+			const live = await next("observation");
+			expect(live.detail_omitted).toBe(true);
+			expect(live.observation.observation_id).toBe(span.spanId);
+			expect(
+				((await (await read(path)).json()) as { observations: unknown[] })
+					.observations,
+			).toHaveLength(2);
+		} finally {
+			await reader.cancel();
+		}
+	} finally {
+		process.env.GLASSHOUSE_REDACT_INPUT = "true";
+	}
+});
+
+test("public all_text ingestion retains only validated typed provenance and structural classification", async () => {
+	const { body, traceId } = exportBody(0);
+	const payload = JSON.parse(body);
+	const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+	span.attributes.push(
+		{ key: "openinference.span.kind", value: { stringValue: "LLM" } },
+		{ key: "glasshouse.prompt.id", value: { stringValue: "support-agent" } },
+		{ key: "glasshouse.prompt.version", value: { intValue: "7" } },
+		{
+			key: "glasshouse.prompt.content_hash",
+			value: { stringValue: "a".repeat(64) },
+		},
+		{ key: "glasshouse.prompt.source", value: { stringValue: secret } },
+	);
+	expect((await post(JSON.stringify(payload))).status).toBe(200);
+	const response = await fetch(
+		new URL(`/v1/traces/${traceId}?project_id=${projectId}`, server.url),
+		{ headers: { authorization } },
+	);
+	expect(response.status).toBe(200);
+	const retained = await response.text();
+	expect(retained).not.toContain(secret);
+	expect(retained).not.toContain("glasshouse.prompt.");
+	expect(JSON.parse(retained).observations[0]).toMatchObject({
+		type: "generation",
+		metadata: {
+			prompt_provenance: {
+				id: "support-agent",
+				version: 7,
+				content_hash: "a".repeat(64),
+			},
+		},
+	});
+	expect(JSON.stringify(events)).not.toContain(secret);
+	expect(JSON.stringify(events)).not.toContain("glasshouse.prompt.");
+});
+
 async function post(body: string, project = projectId, auth = authorization) {
 	return fetch(new URL("/v1/traces", server.url), {
 		method: "POST",
@@ -296,3 +435,52 @@ test("deep extensions cannot bypass public authentication, tenant provenance, or
 			.status,
 	).toBe(413);
 });
+
+for (const variant of [
+	"attribute-extension-switch",
+	"value-extension-switch",
+	"duplicate-identical",
+	"malformed-id",
+	"attribute-extension-only",
+	"value-extension-only",
+	"null-extension",
+	"conflicting-values",
+] as const) {
+	test(`public ingest rejects ${variant} Project selectors before persistence or publication`, async () => {
+		const { body, traceId } = exportBody(0);
+		const payload = JSON.parse(body);
+		const selector = payload.resourceSpans[0].resource.attributes[0];
+		const selectors = [selector];
+		if (variant.startsWith("attribute-extension"))
+			selector.futureExtension = { secret };
+		if (variant.startsWith("value-extension"))
+			selector.value.futureExtension = { secret };
+		if (variant === "null-extension") selector.value.futureExtension = null;
+		if (variant === "conflicting-values") selector.value.boolValue = true;
+		if (variant === "malformed-id") selector.value.stringValue = "invalid";
+		if (variant.endsWith("switch") || variant === "duplicate-identical")
+			selectors.push({
+				key: "glasshouse.project.id",
+				value: {
+					stringValue:
+						variant === "duplicate-identical" ? projectId : otherProjectId,
+				},
+			});
+		payload.resourceSpans[0].resource.attributes = selectors;
+		const bytes = JSON.stringify(payload);
+		expect((await post(bytes, projectId, "")).status).toBe(401);
+		const beforeEvents = events.length;
+		const response = await post(bytes);
+		for (const table of ["traces", "observations"]) {
+			const result = await clickhouse.query({
+				query: `SELECT project_id FROM ${table} WHERE trace_id = {traceId:String}`,
+				query_params: { traceId },
+				format: "JSONEachRow",
+			});
+			expect(await result.json()).toEqual([]);
+		}
+		expect(events.length).toBe(beforeEvents);
+		expect(response.status).toBe(400);
+		expect(await response.text()).not.toContain(secret);
+	});
+}

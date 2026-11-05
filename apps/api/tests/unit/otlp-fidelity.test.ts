@@ -212,6 +212,89 @@ test("all_text and recursive key redaction cover every retained telemetry string
 	expect(stored).toContain(start);
 });
 
+for (const modelAttribute of [false, true]) {
+	test(`all_text retains safe typed provenance and OpenInference classification (model attribute=${modelAttribute})`, async () => {
+		const h = harness({ mode: "all_text", keys: [] });
+		const payload = body();
+		const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+		(span.attributes as unknown[]) = [
+			attr("openinference.span.kind", "LLM"),
+			...(modelAttribute ? [attr("gen_ai.request.model", "secret-model")] : []),
+			attr("glasshouse.prompt.id", "support-agent"),
+			{ key: "glasshouse.prompt.version", value: { intValue: "7" } },
+			attr("glasshouse.prompt.content_hash", "a".repeat(64)),
+			attr("glasshouse.prompt.source", "never-retain-source"),
+			attr("input.value", "never-retain-input"),
+		];
+		expect((await h.post(payload)).status).toBe(200);
+		expect(h.observations[0]?.type).toBe("generation");
+		expect(h.observations[0]?.metadata.prompt_provenance).toEqual({
+			id: "support-agent",
+			version: 7,
+			content_hash: "a".repeat(64),
+		});
+		for (const secret of ["never-retain", "secret-model", "glasshouse.prompt."])
+			expect(JSON.stringify([h.traces, h.observations])).not.toContain(secret);
+	});
+}
+
+test("all_text structural exemptions honor configured keys and fail closed on malformed or duplicate provenance", async () => {
+	for (const variant of [
+		"key",
+		"extension",
+		"value-extension",
+		"duplicate",
+		"invalid",
+		"unknown-kind",
+	] as const) {
+		const h = harness({
+			mode: "all_text",
+			keys:
+				variant === "key"
+					? ["glasshouse.prompt.id", "openinference.span.kind"]
+					: [],
+		});
+		const payload = body();
+		const attributes: unknown[] = [
+			attr(
+				"openinference.span.kind",
+				variant === "unknown-kind" ? "never-retain-kind" : "LLM",
+			),
+			attr("glasshouse.prompt.id", "support-agent"),
+			{ key: "glasshouse.prompt.version", value: { intValue: "7" } },
+			attr("glasshouse.prompt.content_hash", "a".repeat(64)),
+		];
+		if (variant === "extension" || variant === "duplicate") {
+			const malformed = {
+				...attr("glasshouse.prompt.id", "never-retain-id"),
+				futureExtension: "never-retain-extension",
+			};
+			if (variant === "extension") attributes[1] = malformed;
+			else attributes.push(malformed);
+		}
+		if (variant === "invalid")
+			attributes[1] = attr("glasshouse.prompt.id", "never-retain invalid id");
+		if (variant === "value-extension")
+			attributes[1] = {
+				key: "glasshouse.prompt.id",
+				value: {
+					stringValue: "support-agent",
+					futureExtension: "never-retain-extension",
+				},
+			};
+		(payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!
+			.attributes as unknown[]) = attributes;
+		expect((await h.post(payload)).status).toBe(200);
+		expect(h.observations[0]?.metadata.prompt_provenance).toBeNull();
+		expect(h.observations[0]?.type).toBe(
+			variant === "key" || variant === "unknown-kind" ? "span" : "generation",
+		);
+		expect(JSON.stringify([h.traces, h.observations])).not.toContain(
+			"never-retain",
+		);
+	}
+});
+
 test("oversized detail truncates honestly without dropping the span", async () => {
 	const h = harness();
 	const payload = body();

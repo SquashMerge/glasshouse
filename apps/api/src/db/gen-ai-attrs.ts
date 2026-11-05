@@ -30,18 +30,26 @@ function attrString(attrs: Attribute[], key: string): string | undefined {
 }
 
 export function resourceProjectId(attrs: OtlpAttribute[]): string {
-	const value = attrs.find(
+	const selectors = attrs.filter(
 		(attribute) => attribute.key === "glasshouse.project.id",
-	)?.value;
+	);
+	if (selectors.length === 0) return "";
+	const selector = selectors[0]!;
+	const value = selector.value;
 	if (
+		selectors.length !== 1 ||
+		Object.keys(selector).some((key) => key !== "key" && key !== "value") ||
 		typeof value !== "object" ||
 		value === null ||
 		Array.isArray(value) ||
+		Object.keys(value).length !== 1 ||
 		typeof (value as { stringValue?: unknown }).stringValue !== "string"
 	)
-		return "";
+		throw new Error("Invalid Project selector");
 	const projectId = (value as { stringValue: string }).stringValue;
-	return projectIdPattern.test(projectId) ? projectId.toLowerCase() : "";
+	if (!projectIdPattern.test(projectId))
+		throw new Error("Invalid Project selector");
+	return projectId.toLowerCase();
 }
 
 function attrNumber(attrs: Attribute[], key: string): number | undefined {
