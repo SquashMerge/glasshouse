@@ -10,7 +10,7 @@ image, then extract the bundle:
 
 ```sh
 sha256sum -c SHA256SUMS
-docker load -i glasshouse-image.tar
+gzip -dc glasshouse-image.tar.gz | docker load
 mkdir glasshouse && tar -xzf glasshouse-compose.tar.gz -C glasshouse
 cd glasshouse
 cp production.env.example production.env
@@ -26,6 +26,33 @@ proxy in front of it; forward Authorization and preserve streaming with proxy
 buffering disabled for SSE. The API and UI share the same origin. Never expose
 database services publicly. Protect environment files and rotate credentials.
 The database URL requires URL-unreserved PostgreSQL credentials and identifiers.
+
+## First browser Admin
+
+For a fresh installation, the bundle defaults to local bootstrap. The `UI_USERNAME`
+/ `UI_PASSWORD` pair is a separate Basic recovery identity, not browser login
+credentials; keep its owner username equal to `GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME`.
+Before opening setup, provision a single-use secret in an operator-only file:
+
+```sh
+umask 077
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > glasshouse-setup.token
+docker compose --env-file production.env -f compose.yaml exec -T app sh -c '
+  set -eu; umask 077
+  trap "rm -f /tmp/glasshouse-setup.token" EXIT
+  cat > /tmp/glasshouse-setup.token
+  cd /app/apps/api
+  GLASSHOUSE_LOCAL_BOOTSTRAP_TOKEN_FILE=/tmp/glasshouse-setup.token bun run auth:provision-bootstrap
+' < glasshouse-setup.token
+```
+
+Through the configured HTTPS origin, open the UI, enter the setup secret and choose
+a distinct local Admin username and password, then sign in. Remove the operator
+file after setup; it expires after 24 hours and is single-use. Setup is permanently
+closed once an Admin exists; changing bootstrap mode cannot reopen an existing
+installation. Follow the matching source revision's local-credentials runbook
+for token replacement and recovery. Do not switch existing installations to Basic
+bootstrap merely to obtain a browser login.
 
 Keep the Compose project name and named data volumes stable across upgrades.
 Back up and verify PostgreSQL and ClickHouse before upgrading. Application

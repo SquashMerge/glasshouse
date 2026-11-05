@@ -78,9 +78,9 @@ Licensed under the [Business Source License 1.1](LICENSE) (SPDX identifier: `BUS
 
 ## GitHub Releases
 
-Release assets support Linux amd64 and Docker Compose v2. Download the image
+Release assets support Linux amd64 and Docker Compose v2. Download the compressed image
 archive, Compose bundle, and `SHA256SUMS` from a trusted GitHub Release. Verify
-`sha256sum -c SHA256SUMS`, run `docker load -i glasshouse-image.tar`, and unpack
+`sha256sum -c SHA256SUMS`, run `gzip -dc glasshouse-image.tar.gz | docker load`, and unpack
 `glasshouse-compose.tar.gz`; follow its README to configure secrets, HTTPS, and
 start the stack. The checksums detect corruption, not malicious release authors.
 PostgreSQL, ClickHouse, and Valkey remain separate services with persistent data.

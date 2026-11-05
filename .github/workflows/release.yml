@@ -5,6 +5,9 @@ on:
     tags: ['v*']
 permissions:
   contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
     name: Build and test release image
@@ -22,7 +25,9 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun test infra/scripts/tests/release-compose.test.ts infra/scripts/tests/release-workflow.test.ts apps/api/tests/unit/release-web.test.ts
-          python3 -m unittest infra.scripts.tests.test_release_tag infra.scripts.tests.test_release_image_harness -v
+          python3 -m unittest infra.scripts.tests.test_release_tag infra.scripts.tests.test_release_image_harness infra.scripts.tests.test_create_draft_release -v
+      - name: Install Chromium for release onboarding
+        run: cd apps/web && bunx --no-install playwright install --with-deps chromium
       - name: Set image version
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -43,19 +48,24 @@ jobs:
           mkdir -p release-output bundle
           image="glasshouse:$RELEASE_VERSION"
           docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" -f deploy/release/Dockerfile -t "$image" .
-          docker save "$image" -o release-output/glasshouse-image.tar
+          docker save "$image" | gzip -n > release-output/glasshouse-image.tar.gz
+          image_size="$(stat --format=%s release-output/glasshouse-image.tar.gz)"
+          max_github_asset_size=$((2 * 1024 * 1024 * 1024))
+          if (( image_size >= max_github_asset_size )); then
+            printf "compressed image archive must be less than GitHub's 2 GiB release asset limit (got %s bytes)\n" "$image_size" >&2
+            exit 1
+          fi
           docker image rm "$image"
-          docker load -i release-output/glasshouse-image.tar
           cp -R deploy/release/. bundle/
           rm bundle/Dockerfile
           printf '\nGLASSHOUSE_IMAGE=%s\n' "$image" >> bundle/production.env.example
           tar -czf release-output/glasshouse-compose.tar.gz -C bundle .
       - name: Test exported image with the released bundle
-        run: bash infra/scripts/test-release-image.sh release-output/glasshouse-image.tar release-output/glasshouse-compose.tar.gz "glasshouse:$RELEASE_VERSION"
+        run: bash infra/scripts/test-release-image.sh release-output/glasshouse-image.tar.gz release-output/glasshouse-compose.tar.gz "glasshouse:$RELEASE_VERSION"
       - name: Calculate checksums
         run: |
           cd release-output
-          sha256sum glasshouse-image.tar glasshouse-compose.tar.gz > SHA256SUMS
+          sha256sum glasshouse-image.tar.gz glasshouse-compose.tar.gz > SHA256SUMS
       - name: Save tested files for draft
         if: github.event_name == 'push'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -70,6 +80,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tested-release-files
@@ -83,4 +96,4 @@ jobs:
           set -euo pipefail
           cd release-output
           sha256sum -c SHA256SUMS
-          gh release create "$TAG" glasshouse-image.tar glasshouse-compose.tar.gz SHA256SUMS --verify-tag --draft --generate-notes
+          bash ../infra/scripts/create-draft-release.sh "$TAG"

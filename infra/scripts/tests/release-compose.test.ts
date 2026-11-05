@@ -22,6 +22,13 @@ describe("release deployment bundle", () => {
 		for (const service of Object.values(config.services))
 			expect(service.build).toBeUndefined();
 	});
+	test("fresh releases select local bootstrap for browser onboarding", () => {
+		const compose = readFileSync(
+			new URL("deploy/release/compose.yaml", root),
+			"utf8",
+		);
+		expect(compose).toContain("${GLASSHOUSE_AUTH_BOOTSTRAP_MODE:-local}");
+	});
 	test("the single image includes the built web app and runs the existing API startup", () => {
 		const dockerfile = readFileSync(
 			new URL("deploy/release/Dockerfile", root),
