@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import protobufRoot from "@opentelemetry/otlp-proto-exporter-base/build/src/gene
 import { Pool } from "pg";
 import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization.js";
 import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate.js";
+import * as clickhouseModule from "../../src/db/clickhouse.js";
 import { closeClickHouseClient } from "../../src/db/clickhouse.js";
 import { LocalCredentialStore } from "../../src/db/local-credentials.js";
 import { csrfForSession } from "../../src/db/local-sessions.js";
@@ -292,9 +293,13 @@ async function jsonPost(
 	});
 }
 
-async function project() {
+async function project(headers: HeadersInit = {}) {
 	const name = `logs-${randomUUID()}`;
-	const response = await jsonPost("/v1/projects", { name, slug: name });
+	const response = await jsonPost(
+		"/v1/projects",
+		{ name, slug: name },
+		headers,
+	);
 	expect(response.status).toBe(201);
 	const created = (await response.json()) as { id: string; name: string };
 	expect(created.id).toMatch(/^[0-9a-f-]{36}$/);
@@ -406,6 +411,25 @@ async function stored(projectId: string) {
 		format: "JSONEachRow",
 	});
 	return result.json<Record<string, unknown>>();
+}
+
+async function copyPhysicalLogs(projectId: string, copies: number) {
+	const selected = await clickhouse.query({
+		query:
+			"SELECT * FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+		query_params: { organizationId, projectId },
+		clickhouse_settings: { output_format_json_quote_64bit_integers: 1 },
+		format: "JSONEachRow",
+	});
+	const originals = await selected.json<Record<string, unknown>>();
+	await clickhouse.insert({
+		table: "logs",
+		format: "JSONEachRow",
+		values: Array.from({ length: copies }, () =>
+			originals.map((row) => ({ ...row, physical_row_id: randomUUID() })),
+		).flat(),
+		clickhouse_settings: { insert_deduplicate: 0 },
+	});
 }
 
 function metadata(auth: string | null, projectId: string | null) {
@@ -957,12 +981,7 @@ test("public physical-duplicate pagination is bounded and reauthorizes every Pro
 			)
 		).status,
 	).toBe(200);
-	await clickhouse.command({
-		query:
-			"INSERT INTO logs SELECT * FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
-		query_params: { organizationId, projectId: target.id },
-		clickhouse_settings: { insert_deduplicate: 0 },
-	});
+	await copyPhysicalLogs(target.id, 1);
 	const first = await request(`/v1/logs?project_id=${target.id}&limit=1`);
 	expect(first.status).toBe(200);
 	const page = (await first.json()) as {
@@ -2119,6 +2138,165 @@ test("governance previews count logs and retention deletes only a bounded expire
 	]);
 }, 30_000);
 
+for (const [previewCase, runCase] of [
+	["upper", "lower"],
+	["lower", "mixed"],
+	["mixed", "upper"],
+] as const) {
+	test(`governance uses canonical Project UUIDs for logs and metrics with ${previewCase} preview and ${runCase} run selectors`, async () => {
+		const targetId = `abcdefab${randomUUID().slice(8)}`;
+		await pool.query(
+			"INSERT INTO projects (id, organization_id, name, slug) VALUES ($1::uuid, $2, 'Canonical retention', $1::uuid::text)",
+			[targetId, organizationId],
+		);
+		const survivor = await project();
+		const foreign = await project({ authorization: basic(outsider) });
+		const versionId = await policy(
+			targetId,
+			{ mode: "none", keys: [] },
+			{ logs: 1, metrics: 1 },
+		);
+		const recent = (BigInt(Date.now()) * 1_000_000n).toString();
+		const marker = `canonical-retention-${randomUUID()}`;
+		const logs = envelope([
+			record(`${marker}-expired-1`),
+			record(`${marker}-expired-2`),
+			record(`${marker}-recent`, { timeUnixNano: recent }),
+		]);
+		const metrics = {
+			resourceMetrics: [
+				{
+					scopeMetrics: [
+						{
+							metrics: [
+								{
+									name: marker,
+									gauge: {
+										dataPoints: [timestamp, observedTimestamp, recent].map(
+											(timeUnixNano) => ({ timeUnixNano, asInt: "1" }),
+										),
+									},
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		for (const [id, authorization] of [
+			[targetId, basic(owner)],
+			[survivor.id, basic(owner)],
+			[foreign.id, basic(outsider)],
+		] as const) {
+			expect((await ingest(id, logs, { authorization })).status).toBe(200);
+			expect(
+				(
+					await jsonPost("/v1/metrics", metrics, {
+						authorization,
+						"x-glasshouse-project-id": id,
+					})
+				).status,
+			).toBe(200);
+		}
+		const metricRows = async (org: string, id: string) => {
+			const result = await clickhouse.query({
+				query:
+					"SELECT * FROM metrics WHERE organization_id = {org:String} AND project_id = {id:String} ORDER BY time_unix_nano, point_id",
+				query_params: { org, id },
+				format: "JSONEachRow",
+				clickhouse_settings: { output_format_json_quote_64bit_integers: 1 },
+			});
+			return result.json<Record<string, unknown>>();
+		};
+		const canonical = (rows: Array<Record<string, unknown>>) =>
+			rows.map((row) => JSON.stringify(row)).sort();
+		const before = (
+			await Promise.all([
+				stored(survivor.id),
+				stored(foreign.id),
+				metricRows(organizationId, survivor.id),
+				metricRows(otherOrganizationId, foreign.id),
+			])
+		).map(canonical);
+		expect(before.map((rows) => rows.length)).toEqual([3, 3, 3, 3]);
+		const spelling = (kind: "lower" | "upper" | "mixed") =>
+			kind === "upper"
+				? targetId.toUpperCase()
+				: kind === "mixed"
+					? targetId.replace(/[a-f]/g, (letter, index) =>
+							index % 2 ? letter : letter.toUpperCase(),
+						)
+					: targetId;
+		const preview = await jsonPost("/v1/governance/retention/preview", {
+			project_id: spelling(previewCase),
+		});
+		expect(preview.status).toBe(200);
+		const planned = (await preview.json()) as { preview_id: string };
+		expect(planned).toMatchObject({
+			policy_version_id: versionId,
+			counts: { logs: 2, metrics: 2 },
+		});
+		expect(
+			(
+				await jsonPost("/v1/governance/retention/preview", {
+					project_id: foreign.id.toUpperCase(),
+				})
+			).status,
+		).toBe(404);
+		const input = {
+			project_id: spelling(runCase),
+			policy_version_id: versionId,
+			preview_id: planned.preview_id,
+			batch_size: 1,
+		};
+		expect(
+			(
+				await jsonPost("/v1/governance/retention/runs", {
+					...input,
+					project_id: foreign.id.toUpperCase(),
+				})
+			).status,
+		).toBe(404);
+		const run = await jsonPost("/v1/governance/retention/runs", input);
+		expect(run.status).toBe(200);
+		const completed = (await run.json()) as { run_id: string };
+		expect(completed).toMatchObject({
+			status: "completed",
+			counts: { logs: 1, metrics: 1 },
+		});
+		const persisted = await pool.query(
+			"SELECT project_id, counts FROM governance_retention_runs WHERE id = $1 AND organization_id = $2",
+			[completed.run_id, organizationId],
+		);
+		expect(persisted.rows).toEqual([
+			{ project_id: targetId, counts: { logs: 1, metrics: 1 } },
+		]);
+		const retainedLogs = await stored(targetId);
+		expect(retainedLogs).toHaveLength(2);
+		expect(retainedLogs.some((log) => log.time_unix_nano === recent)).toBe(
+			true,
+		);
+		const retainedMetrics = await metricRows(organizationId, targetId);
+		expect(retainedMetrics).toHaveLength(2);
+		expect(
+			retainedMetrics.some((metric) => metric.time_unix_nano === recent),
+		).toBe(true);
+		expect(
+			(
+				await Promise.all([
+					stored(survivor.id),
+					stored(foreign.id),
+					metricRows(organizationId, survivor.id),
+					metricRows(otherOrganizationId, foreign.id),
+				])
+			).map(canonical),
+		).toEqual(before);
+		expect(
+			(await jsonPost("/v1/governance/retention/runs", input)).status,
+		).toBe(409);
+	}, 30_000);
+}
+
 test("log retention counts duplicate physical rows against its batch ceiling", async () => {
 	const target = await project();
 	const policyId = await policy(target.id, { mode: "none", keys: [] });
@@ -2127,12 +2305,7 @@ test("log retention counts duplicate physical rows against its batch ceiling", a
 		envelope([record("expired-duplicate-1"), record("expired-duplicate-2")]),
 	);
 	expect(ingested.status).toBe(200);
-	await clickhouse.command({
-		query:
-			"INSERT INTO logs SELECT * FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
-		query_params: { organizationId, projectId: target.id },
-		clickhouse_settings: { insert_deduplicate: 0 },
-	});
+	await copyPhysicalLogs(target.id, 1);
 	const rows = await stored(target.id);
 	expect(rows).toHaveLength(4);
 	expect(new Set(rows.map((row) => row.log_id)).size).toBe(2);
@@ -2179,12 +2352,7 @@ test("log retention makes honest bounded progress through a duplicate group abov
 	const expired = envelope([record("oversized-duplicate-group")]);
 	for (const projectId of [target.id, survivor.id])
 		expect((await ingest(projectId, expired)).status).toBe(200);
-	await clickhouse.command({
-		query:
-			"INSERT INTO logs SELECT logs.* FROM logs CROSS JOIN numbers(500) AS copies WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
-		query_params: { organizationId, projectId: target.id },
-		clickhouse_settings: { insert_deduplicate: 0 },
-	});
+	await copyPhysicalLogs(target.id, 500);
 	const recent = record("recent-survives-large-duplicate-group", {
 		timeUnixNano: (BigInt(Date.now()) * 1_000_000n).toString(),
 	});
@@ -2232,6 +2400,228 @@ test("log retention makes honest bounded progress through a duplicate group abov
 		);
 		expect(await stored(survivor.id)).toHaveLength(1);
 	}
+}, 30_000);
+
+for (const fault of [
+	"merge",
+	"before-delete",
+	"after-delete",
+	"partial-delete",
+	"readback",
+] as const) {
+	test(`log retention holds the Project fence and reports only scoped removals through ${fault} and retry`, async () => {
+		const target = await project();
+		const survivor = await project();
+		const foreign = await project({ authorization: basic(outsider) });
+		const policyId = await policy(target.id, { mode: "none", keys: [] });
+		const expired = envelope([
+			record("old-1"),
+			record("old-2"),
+			record("old-3"),
+		]);
+		expect((await ingest(target.id, expired)).status).toBe(200);
+		expect((await ingest(survivor.id, expired)).status).toBe(200);
+		expect(
+			(
+				await ingest(foreign.id, expired, {
+					authorization: basic(outsider),
+				})
+			).status,
+		).toBe(200);
+		const recent = record("recent-fence-survivor", {
+			timeUnixNano: (BigInt(Date.now()) * 1_000_000n).toString(),
+		});
+		expect((await ingest(target.id, envelope([recent]))).status).toBe(200);
+		const canonical = (rows: Array<Record<string, unknown>>) =>
+			rows.map((row) => JSON.stringify(row)).sort();
+		const survivorBefore = await stored(survivor.id);
+		const foreignBefore = await stored(foreign.id);
+		const original = await stored(target.id);
+		const preview = async () => {
+			const response = await jsonPost("/v1/governance/retention/preview", {
+				project_id: target.id,
+			});
+			expect(response.status).toBe(200);
+			return response.json() as Promise<{
+				preview_id: string;
+				counts: { logs: number };
+			}>;
+		};
+		const planned = await preview();
+		expect(planned.counts.logs).toBe(3);
+		const input = {
+			project_id: target.id,
+			policy_version_id: policyId,
+			preview_id: planned.preview_id,
+			batch_size: 2,
+		};
+		const probe = await pool.connect();
+		const assertLocked = async () => {
+			await expect(
+				probe.query("SELECT id FROM projects WHERE id = $1 FOR UPDATE NOWAIT", [
+					target.id,
+				]),
+			).rejects.toMatchObject({ code: "55P03" });
+			expect(
+				(
+					await probe.query(
+						"SELECT id FROM projects WHERE id = $1 FOR UPDATE NOWAIT",
+						[survivor.id],
+					)
+				).rows,
+			).toEqual([{ id: survivor.id }]);
+		};
+		const provider = spyOn(clickhouseModule, "ch").mockReturnValue(clickhouse);
+		const command = clickhouse.command.bind(clickhouse);
+		const query = clickhouse.query.bind(clickhouse);
+		let mutated = false;
+		let checkingReadback = false;
+		let lockChecks = 0;
+		const querySpy = spyOn(clickhouse, "query").mockImplementation(
+			async (request) => {
+				if (
+					request.query_params?.projectId === target.id &&
+					request.query.includes("FROM logs")
+				) {
+					await assertLocked();
+					lockChecks++;
+					if (fault === "readback" && mutated && !checkingReadback) {
+						checkingReadback = true;
+						throw new Error("synthetic log readback failure");
+					}
+				}
+				return query(request);
+			},
+		);
+		const commandSpy = spyOn(clickhouse, "command").mockImplementation(
+			async (request) => {
+				if (
+					request.query.startsWith("ALTER TABLE logs DELETE") &&
+					request.query_params?.projectId === target.id
+				) {
+					await assertLocked();
+					if (fault === "before-delete")
+						throw new Error("synthetic pre-effect failure");
+					if (fault === "partial-delete") {
+						await command({
+							query:
+								"ALTER TABLE logs DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND log_id = {logId:String} SETTINGS mutations_sync = 1",
+							query_params: {
+								organizationId,
+								projectId: target.id,
+								logId: String(
+									original.find((row) => row.time_unix_nano === timestamp)!
+										.log_id,
+								),
+							},
+						});
+						throw new Error("synthetic partial-effect failure");
+					}
+					await command({
+						query:
+							"OPTIMIZE TABLE logs FINAL SETTINGS optimize_skip_merged_partitions = 0",
+					});
+					const result = await command(request);
+					mutated = true;
+					if (fault === "after-delete")
+						throw new Error("synthetic lost mutation acknowledgement");
+					return result;
+				}
+				return command(request);
+			},
+		);
+		try {
+			const response = await jsonPost("/v1/governance/retention/runs", input);
+			expect(response.status).toBe(fault === "merge" ? 200 : 500);
+			expect(lockChecks).toBeGreaterThan(0);
+		} finally {
+			commandSpy.mockRestore();
+			querySpy.mockRestore();
+			provider.mockRestore();
+			probe.release();
+		}
+		const removed = original.length - (await stored(target.id)).length;
+		expect(removed).toBe(
+			fault === "before-delete" ? 0 : fault === "partial-delete" ? 1 : 2,
+		);
+		const report = await pool.query(
+			"SELECT status, counts FROM governance_retention_runs WHERE project_id = $1",
+			[target.id],
+		);
+		expect(report.rows).toHaveLength(1);
+		expect(report.rows[0].status).toBe(
+			fault === "merge" ? "completed" : "failed",
+		);
+		const reported = Number(report.rows[0].counts.logs ?? 0);
+		expect(reported).toBeLessThanOrEqual(removed);
+		if (fault === "merge") expect(reported).toBe(removed);
+		expect(
+			(await jsonPost("/v1/governance/retention/runs", input)).status,
+		).toBe(409);
+		const next = await preview();
+		expect(next.counts.logs).toBe(3 - removed);
+		const beforeRetry = (await stored(target.id)).length;
+		const retry = await jsonPost("/v1/governance/retention/runs", {
+			...input,
+			preview_id: next.preview_id,
+		});
+		expect(retry.status).toBe(200);
+		const completed = (await retry.json()) as { counts: { logs: number } };
+		expect(completed.counts.logs).toBe(Math.min(2, next.counts.logs));
+		expect(beforeRetry - (await stored(target.id)).length).toBe(
+			completed.counts.logs,
+		);
+		expect(JSON.stringify(await stored(target.id))).toContain(
+			"recent-fence-survivor",
+		);
+		expect(canonical(await stored(survivor.id))).toEqual(
+			canonical(survivorBefore),
+		);
+		expect(canonical(await stored(foreign.id))).toEqual(
+			canonical(foreignBefore),
+		);
+	}, 30_000);
+}
+
+test("malformed administrative copies of one physical UUID fail closed instead of exceeding retention's budget", async () => {
+	const target = await project();
+	const policyId = await policy(target.id, { mode: "none", keys: [] });
+	expect(
+		(await ingest(target.id, envelope([record("copied-physical-uuid")])))
+			.status,
+	).toBe(200);
+	// Deliberately malformed: normal fixtures use fresh UUIDs for every copy.
+	await clickhouse.command({
+		query:
+			"INSERT INTO logs SELECT logs.* FROM logs CROSS JOIN numbers(500) AS copies WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+		query_params: { organizationId, projectId: target.id },
+		clickhouse_settings: { insert_deduplicate: 0 },
+	});
+	expect(await stored(target.id)).toHaveLength(501);
+	const read = await request(`/v1/logs?project_id=${target.id}&limit=1`);
+	expect(read.status).toBe(500);
+	const preview = await jsonPost("/v1/governance/retention/preview", {
+		project_id: target.id,
+	});
+	expect(preview.status).toBe(200);
+	const planned = (await preview.json()) as {
+		preview_id: string;
+		counts: { logs: number };
+	};
+	expect(planned.counts.logs).toBe(501);
+	const run = await jsonPost("/v1/governance/retention/runs", {
+		project_id: target.id,
+		policy_version_id: policyId,
+		preview_id: planned.preview_id,
+		batch_size: 1,
+	});
+	expect(run.status).toBe(500);
+	expect(await stored(target.id)).toHaveLength(501);
+	const report = await pool.query(
+		"SELECT status, counts FROM governance_retention_runs WHERE project_id = $1",
+		[target.id],
+	);
+	expect(report.rows).toEqual([{ status: "failed", counts: {} }]);
 }, 30_000);
 
 test("permanent Project deletion removes physical logs without touching another Project or tenant", async () => {

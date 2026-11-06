@@ -2,7 +2,7 @@ import type { ClickHouseClient } from "@clickhouse/client";
 import type { z } from "@hono/zod-openapi";
 import type { LogListQuery, LogRecord } from "../schemas/logs.js";
 import { LogNano } from "../schemas/logs.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ch, CLICKHOUSE_REQUEST_TIMEOUT_MS } from "./clickhouse.js";
 import { insertWithDeadline } from "./traces-writer.js";
 
@@ -12,6 +12,9 @@ export type ScopedLog = Omit<LogRecord, "effective_time_unix_nano"> & {
 export const MAX_LOG_RECORD_BYTES = 65_536;
 export const MAX_LOG_EXPORT_BYTES = 4 * 1024 * 1024;
 export const MAX_LOG_RESPONSE_BYTES = 262_144;
+export const LOG_PHYSICAL_ID_BYTES = Buffer.byteLength(
+	',"physical_row_id":"00000000-0000-4000-8000-000000000000"',
+);
 
 export function logInsertRow(log: ScopedLog) {
 	return {
@@ -34,7 +37,10 @@ export async function insertLogs(
 		{
 			table: "logs",
 			format: "JSONEachRow",
-			values: logs.map(logInsertRow),
+			values: logs.map((log) => ({
+				...logInsertRow(log),
+				physical_row_id: randomUUID(),
+			})),
 			clickhouse_settings: {
 				insert_deduplicate: 1,
 				insert_deduplication_token: token,
@@ -52,11 +58,12 @@ type StoredLog = Omit<
 	attributes: string;
 	resource: string;
 	scope: string;
-	row_block_number: string;
-	row_block_offset: string;
+	physical_row_id: string;
 };
+const physicalRowId =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const columns =
-	"log_id, project_id, time_unix_nano, observed_time_unix_nano, ingested_time_unix_nano, effective_time_unix_nano, severity_number, severity_text, trace_id, span_id, flags, dropped_attributes_count, event_name, body, attributes, resource, scope, resource_schema_url, scope_schema_url, _block_number AS row_block_number, _block_offset AS row_block_offset";
+	"log_id, project_id, time_unix_nano, observed_time_unix_nano, ingested_time_unix_nano, effective_time_unix_nano, severity_number, severity_text, trace_id, span_id, flags, dropped_attributes_count, event_name, body, attributes, resource, scope, resource_schema_url, scope_schema_url, physical_row_id";
 export class InvalidLogCursor extends Error {}
 
 export async function deleteLogRetentionBatch(
@@ -76,23 +83,43 @@ export async function deleteLogRetentionBatch(
 	};
 	const result = await client.query({
 		query:
-			"SELECT _block_number AS block_number, _block_offset AS block_offset FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND effective_time_unix_nano < {cutoff:UInt64} ORDER BY effective_time_unix_nano, log_id, _block_number, _block_offset LIMIT {batchSize:UInt32}",
+			"SELECT physical_row_id FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND effective_time_unix_nano < {cutoff:UInt64} ORDER BY effective_time_unix_nano, log_id, physical_row_id LIMIT {batchSize:UInt32}",
 		query_params: params,
 		format: "JSONEachRow",
 		clickhouse_settings: { output_format_json_quote_64bit_integers: 1 },
 	});
-	const selected = await result.json<{
-		block_number: string;
-		block_offset: string;
-	}>();
+	const selected = await result.json<{ physical_row_id: string }>();
 	if (!selected.length) return 0;
+	const ids = selected.map((row) => row.physical_row_id);
+	if (
+		selected.length > batchSize ||
+		ids.some((id) => !physicalRowId.test(id)) ||
+		new Set(ids).size !== selected.length
+	)
+		throw new Error("Invalid physical log identity in retention selection");
 	const selectedParams = {
 		...params,
-		blocks: selected.map((row) => row.block_number),
-		offsets: selected.map((row) => row.block_offset),
+		ids,
 	};
-	const predicate =
-		"organization_id = {organizationId:String} AND project_id = {projectId:String} AND effective_time_unix_nano < {cutoff:UInt64} AND (_block_number, _block_offset) IN (SELECT arrayJoin(arrayZip(CAST({blocks:Array(String)}, 'Array(UInt64)'), CAST({offsets:Array(String)}, 'Array(UInt64)'))))";
+	const identityPredicate =
+		"organization_id = {organizationId:String} AND project_id = {projectId:String} AND physical_row_id IN {ids:Array(UUID)}";
+	// Include nonexpired copies too: an administrative duplicate must never widen
+	// a bounded physical-row selection into a larger deletion.
+	const identity = await client.query({
+		query: `SELECT count() AS total, uniqExact(physical_row_id) AS distinct_ids FROM logs WHERE ${identityPredicate}`,
+		query_params: selectedParams,
+		format: "JSONEachRow",
+	});
+	const [verified] = await identity.json<{
+		total: string;
+		distinct_ids: string;
+	}>();
+	if (
+		Number(verified?.total) !== selected.length ||
+		Number(verified?.distinct_ids) !== selected.length
+	)
+		throw new Error("Log retention requires unique scoped physical UUIDs");
+	const predicate = `${identityPredicate} AND effective_time_unix_nano < {cutoff:UInt64}`;
 	await client.command({
 		query: `ALTER TABLE logs DELETE WHERE ${predicate} SETTINGS mutations_sync = 1`,
 		query_params: selectedParams,
@@ -163,32 +190,42 @@ export async function listLogs(
 				Buffer.from(query.cursor, "base64url").toString("utf8"),
 			);
 			if (
-				cursor.version !== 2 ||
+				cursor.version !== 3 ||
+				Object.keys(cursor).sort().join(",") !== "id,row,scope,time,version" ||
 				cursor.scope !== scope ||
 				!LogNano.safeParse(cursor.time).success ||
-				!LogNano.safeParse(cursor.block).success ||
-				!LogNano.safeParse(cursor.row).success ||
+				typeof cursor.row !== "string" ||
+				!physicalRowId.test(cursor.row) ||
 				typeof cursor.id !== "string" ||
 				!/^[a-f0-9]{64}$/.test(cursor.id)
 			)
 				throw new InvalidLogCursor();
 			params.cursorTime = cursor.time;
 			params.cursorId = cursor.id;
-			params.cursorBlock = cursor.block;
 			params.cursorRow = cursor.row;
 			continuation =
-				" AND (effective_time_unix_nano, log_id, _block_number, _block_offset) < ({cursorTime:UInt64}, {cursorId:String}, {cursorBlock:UInt64}, {cursorRow:UInt64})";
+				" AND (effective_time_unix_nano, log_id, physical_row_id) < ({cursorTime:UInt64}, {cursorId:String}, {cursorRow:UUID})";
 		} catch {
 			throw new InvalidLogCursor();
 		}
 	}
 	const result = await client.query({
-		query: `SELECT ${columns} FROM logs WHERE ${predicate}${continuation} ORDER BY effective_time_unix_nano DESC, log_id DESC, _block_number DESC, _block_offset DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
+		query: `SELECT ${columns} FROM logs WHERE ${predicate}${continuation} ORDER BY effective_time_unix_nano DESC, log_id DESC, physical_row_id DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
 		query_params: params,
 		format: "JSONEachRow",
 		clickhouse_settings: { output_format_json_quote_64bit_integers: 1 },
 	});
 	const rows = await result.json<StoredLog>();
+	if (rows.length) {
+		const ids = rows.map((row) => row.physical_row_id);
+		if (
+			ids.some((id) => !physicalRowId.test(id)) ||
+			new Set(ids).size !== rows.length
+		)
+			throw new Error(
+				"Log reads require valid, unique page and lookahead UUIDs",
+			);
+	}
 	const count = await client.query({
 		query: `SELECT count() AS total FROM logs WHERE ${predicate}`,
 		query_params: params,
@@ -198,11 +235,7 @@ export async function listLogs(
 	const items: LogRecord[] = [];
 	let bytes = 1024;
 	for (const row of rows.slice(0, query.limit)) {
-		const {
-			row_block_number: _block,
-			row_block_offset: _offset,
-			...publicRow
-		} = row;
+		const { physical_row_id: _physicalId, ...publicRow } = row;
 		const item: LogRecord = {
 			...publicRow,
 			body: JSON.parse(row.body),
@@ -228,12 +261,11 @@ export async function listLogs(
 			? {
 					next_cursor: Buffer.from(
 						JSON.stringify({
-							version: 2,
+							version: 3,
 							scope,
 							time: last.effective_time_unix_nano,
 							id: last.log_id,
-							block: last.row_block_number,
-							row: last.row_block_offset,
+							row: last.physical_row_id,
 						}),
 					).toString("base64url"),
 				}

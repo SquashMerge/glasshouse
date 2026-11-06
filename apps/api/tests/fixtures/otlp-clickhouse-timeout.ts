@@ -187,7 +187,7 @@ for (const table of ["traces", "observations"] as const) {
 					});
 					await assert.rejects(result, {
 						code: grpc.status.UNAVAILABLE,
-						details: "Telemetry export rejected",
+						details: "Trace export rejected",
 					});
 				}
 				assert.equal(fixture.requests(), 1);

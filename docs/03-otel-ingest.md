@@ -185,22 +185,105 @@ New public `log_id` values use a domain-separated HMAC of the original-wire dige
 
 Lists and totals count physical rows, including duplicates retained outside the
 insert-deduplication window; neither `log_id` nor equal retained payloads imply
-uniqueness. Ordering breaks equal effective-time/`log_id` ties with ClickHouse's
-persisted `_block_number, _block_offset`. Additive migration
-`0011_logs_physical_row_identity.sql` enables their persistence through merges and
-mutations, including legacy parts, without rewriting/deduplicating payloads.
-Version-2 cursors contain this complete position; older cursors return 400 and
-require a fresh list. This is live keyset traversal, not a snapshot of concurrent
-inserts/deletes. Restart traversal after restoring/reinserting data, which may
-assign different insert coordinates. The detail view selects the clicked
-physical payload rather than assuming `log_id` is unique.
+uniqueness. `total` is the exact count of all rows matching the authorized
+Organization/Project and filters, independent of limit, offset or cursor. This
+count can scan Project history while the Project fence is held; pagination does
+not bound its scan cost. Ordering breaks equal effective-time/`log_id` ties with
+a stored `physical_row_id UUID`. The trusted writer generates a fresh random UUIDv4 for
+each occurrence on each insert attempt, overriding any copied input field.
+The original-wire deduplication token is unchanged: a deduplicated retry keeps
+the originally stored UUIDs, while a later accepted insert gets new identities.
+UUID bytes count toward retained-record/export budgets. UUIDs survive merges,
+mutations and physical backup/restore; payloads and public IDs are not collapsed
+or rewritten. Version-3 cursors contain only `version`, scope digest, exact
+`time`, public `id`, and UUID `row`; no table-wide block counters are exposed.
+The UUID is omitted from public items and is never authorization proof. Older
+cursors return 400 and require a fresh list. Reads validate UUIDv4 format and
+uniqueness only within the fetched filtered page plus one lookahead row, before
+response-byte truncation; invalid or duplicated UUIDs in that set fail closed.
+There is no additional history-wide UUID read: copies outside filters, the
+keyset/offset range or the fetched candidate set can go undetected. Global UUID
+uniqueness is not continuously enforced; keyset correctness relies on unique
+stored identities from the trusted writer and migration validation. This is live
+keyset traversal, not a snapshot of concurrent inserts/deletes. Restart traversal
+after recovery because the retained set may differ. The detail view selects the
+clicked physical payload rather than assuming `log_id` is unique.
+
+### Physical UUID schema upgrade and maintenance gate
+
+Additive `0012_logs_physical_uuid.sql` preserves applied `0009` and `0011`
+checksums. Its first ALTER adds a zero-sentinel UUID column and a UUIDv4 CHECK
+guard together; subsequent UUID-less/zero/non-v4 inserts fail. The runner waits
+for unfinished `logs` mutations before deciding whether another backfill is
+needed. Only zero-sentinel rows or a populated active part missing physical
+column storage trigger an asynchronous rewrite. It polls `system.mutations`
+until `is_done`, then validates UUID format, scoped uniqueness and physical
+materialization before recording completion. Compact parts require a stored
+column entry plus populated shared data/marks; Wide parts require nonzero
+column bytes. A fully completed backfill with a lost acknowledgement is checked
+and ledgered without another rewrite. Partial replay generates UUIDs only for
+zero sentinels and preserves every existing nonzero UUID, including malformed
+administrative values that make validation fail. It does not use a lazy random
+DEFAULT or replay a blanket random MATERIALIZE.
+
+The whole 0012 stage (waiting, DDL, probes, validation and ledger write) has an
+explicit wall-clock abort deadline of **300,000 ms**. A one-shot migration
+process may set `GLASSHOUSE_LOG_UUID_TIMEOUT_MS` to an integer from 1 through
+3,600,000 ms (one hour) when large validation scans need more time. The default
+migration client uses the same request timeout rather than its library's
+30-second default; the explicit deadline also bounds progress-producing
+requests under Bun. Polling is once per second. Deadline expiry fails startup
+but deliberately does **not** kill durable background mutations. A restarted
+runner waits for existing work and rechecks data/parts instead of blindly
+submitting another mutation. A failed unfinished mutation stops the upgrade:
+inspect `system.mutations` and repair it under maintenance before retrying.
+Validation still scans the table, including exact scoped uniqueness, and can
+require substantial I/O and memory; the deadline does not cap that resource use.
+
+**This is a maintenance upgrade, not a rolling upgrade.** An installation with
+`0009` already recorded (even an empty log table) fails startup before applying
+0012 unless `GLASSHOUSE_LOG_UUID_MAINTENANCE=1` is supplied to the migration
+process. The flag is an operator acknowledgement, not proof or automatic
+enforcement that old processes have stopped:
+
+1. Stop ingress and **all** old API replicas, direct log writers, retention and
+   administrative mutations. Drain in-flight ClickHouse inserts, including
+   asynchronous insert queues, and keep them stopped through completion.
+2. Take an authenticated backup and run the new image's `ch:migrate` once with
+   that flag explicitly injected into the process. In an isolated devcontainer,
+   use `GLASSHOUSE_LOG_UUID_MAINTENANCE=1 make devcontainer-ch-schema` only after
+   stopping its writers. A fresh uninterrupted install needs no acknowledgement.
+3. On interruption, keep maintenance in force and rerun with the acknowledgement;
+   do not drop the column, remove checks, edit applied migrations or replace
+   already assigned IDs. A timeout may leave a mutation running: rerun the
+   migration to wait/recover it and require successful checks/ledger validation
+   before reopening traffic. Do not repeatedly kill or manually requeue a healthy
+   long-running mutation. Remove the flag after the one-time run.
+4. Start only UUID-aware binaries after successful schema/ledger validation.
+   Old binaries are incompatible: their UUID-less inserts now fail closed.
+
+The PostgreSQL migration advisory lock serializes migration runners only; it
+cannot drain older writers or make a falsely acknowledged online upgrade safe.
+The storage guard blocks later old-writer inserts, not a pre-ALTER admitted
+effect. Do not bypass the maintenance gate or assume a zero-row observation
+establishes writer quiescence. Native restores preserve UUIDs. An administrative
+row-level restore must explicitly preserve them and tenant scope into an empty
+target; copying a row as a **new occurrence** must assign a fresh UUID. ClickHouse
+does not enforce uniqueness with an index. Product reads detect invalid UUIDs or
+reuse only within the fetched page plus lookahead; retention separately verifies
+selected UUIDs across the entire authorized Organization/Project, including
+nonexpired copies, before deletion. Corrupt identities are not silently
+renumbered or collapsed, and no continuous global uniqueness audit is implied.
 
 Repeated `project_id` values fail query validation with 400. Any `filter[project_id]` selectors, including repeated values, must agree with `project_id`; conflicts return 404. The **Body** search field uses `filter[q]` in the API and `logs.q` in the UI URL. Body previews mark clipping after 200 Unicode code points with an ellipsis; the detail view shows the full retained record and is discarded on a Project change or query error.
 
 Approved governance policies may add `retention.logs` (1–3650 days). Existing baselines/policies are preserved; omission means no log retention deletion. Preview counts expired physical log rows by effective time. Runs select a bounded physical-row batch under the existing manager/policy/lease fence and await ClickHouse mutations; permanent Project deletion always removes scoped logs before finalizing, including retries of older deletion jobs. Whole-database backup/restore includes logs; the restore fixture checks exact times and nested int64 bodies alongside migration-ledger replay. See [governance](09-governance-runbook.md) and [backup/restore](backup-restore.md).
 
 Log retention selects at most the requested batch (maximum 500) by physical insert
-coordinates, then deletes only those expired Organization/Project-scoped rows.
+UUIDs under the Project write fence, then deletes only those expired
+Organization/Project-scoped rows. It checks UUIDv4 format and verifies each
+selected UUID identifies exactly one scoped row, including nonexpired rows,
+before mutation; duplicate administrative IDs fail without deletion.
 Duplicate groups larger than 500 progress across successive runs instead of
 being skipped forever. Completion counts are recorded only after synchronous
 mutation settlement and a readback confirming the selected rows are absent.
@@ -208,7 +291,7 @@ An uncertain/failed mutation can already have deleted rows; PostgreSQL evidence
 and ClickHouse deletion are not atomic. A completed run means one bounded batch,
 not that every eligible row was removed; preview again for remaining work.
 
-Verification entry points: `apps/api/tests/integration/otlp-logs.test.ts` (real HTTP/gRPC, authentication, storage, keyed IDs, retained budgets and lifecycle), `apps/api/tests/integration/otlp-logs-readback.test.ts` (physical pagination), and `apps/api/tests/fixtures/otlp-logs-sdk.py` (official SDK, using `infra/otlp-sdk-requirements.txt`). Run the integration files separately; the hosted OTLP SDK harness enforces both reports. The existing isolated restore drill also verifies that restored Project keys reproduce the seeded log identity across separate fixture processes and migration replay.
+Verification entry points: `apps/api/tests/unit/logs-physical-identity.test.ts` (trusted per-attempt UUID assignment), `apps/api/tests/unit/logs-read-identity.test.ts` (page-plus-lookahead validity/uniqueness, two-query reads and exact filtered totals), `apps/api/tests/integration/otlp-logs.test.ts` (real HTTP/gRPC, authentication, storage, keyed IDs, budgets, lifecycle and retention fault/retry fencing), `apps/api/tests/integration/otlp-logs-readback.test.ts` (scoped read-corruption detection, exact totals, physical pagination, rewrites and scoped physical restore), `apps/api/tests/integration/otlp-logs-physical-upgrade.test.ts` (populated interrupted/replayed backfills and the maintenance/old-writer guards), and `apps/api/tests/fixtures/otlp-logs-sdk.py` (official SDK, using `infra/otlp-sdk-requirements.txt`). Run the integration files separately; the hosted OTLP SDK harness requires all three log reports. The existing isolated restore drill also checks the exact physical UUID and that restored Project keys reproduce the seeded public log identity across separate fixture processes and migration replay.
 
 ## Organization usage dashboard
 

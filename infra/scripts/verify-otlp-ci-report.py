@@ -15,6 +15,11 @@ REQUIRED_NAMES = {
     ],
     "logs": [
         "standard JSON logs persist with trusted scope, resource/scope metadata, and exact nanoseconds",
+        "public physical-duplicate pagination is bounded and reauthorizes every Project-scoped cursor read",
+        "log retention makes honest bounded progress through a duplicate group above 500",
+        *[f"log retention holds the Project fence and reports only scoped removals through {fault} and retry"
+          for fault in ("merge", "before-delete", "after-delete", "partial-delete", "readback")],
+        "malformed administrative copies of one physical UUID fail closed instead of exceeding retention's budget",
         *[f"official SDK {transport} {suffix}" for transport in ("http", "grpc") for suffix in (
             "log exporter writes real correlated logs",
             "rejects anonymous and cross-Project log exports without writes",
@@ -23,7 +28,15 @@ REQUIRED_NAMES = {
     "logs-readback": [
         "log keysets sort UInt64 numerically across decimal widths and reject scope/filter reuse",
         "typed log pages honor their UTF-8 budget and continue without losing retained bodies",
+        "readable log cursors expose only a scoped UUIDv4 position and reject coordinate-era or non-v4 positions",
+        "fresh physical UUIDs do not defeat token deduplication and remain stored across part rewrites",
+        "an administrative scoped physical restore preserves UUIDs without importing another tenant",
         "ClickHouse rejects physically unscoped logs",
+    ],
+    "logs-physical-upgrade": [
+        "0012 refuses an existing installation without drained-writer maintenance acknowledgement",
+        *[f"0012 preserves populated preview rows and stored UUIDs after {interruption} interruption, replay and startup"
+          for interruption in ("after-add", "partial-backfill", "before-ledger")],
     ],
     "metrics": [
         "metrics has real tenant-bearing ClickHouse storage after the normal migrations",

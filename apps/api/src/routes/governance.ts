@@ -30,7 +30,7 @@ import {
 	RetentionRunHistory,
 } from "../schemas/governance.js";
 import {
-	assertTenantProjectAccess,
+	resolveAuthorizedProjectScope,
 	TenantScopeError,
 	trustedTenant,
 } from "../tenancy.js";
@@ -162,12 +162,16 @@ async function actorUsername(
 async function manager(c: Context, projectId: string) {
 	const tenant = trustedTenant(c);
 	try {
-		await assertTenantProjectAccess(pgPool(), tenant, projectId, "governed");
+		return await resolveAuthorizedProjectScope(
+			pgPool(),
+			tenant,
+			projectId,
+			"governed",
+		);
 	} catch (cause) {
 		if (cause instanceof TenantScopeError) throw new Error("Not found");
 		throw cause;
 	}
-	return tenant;
 }
 async function versions(
 	projectId: string,
@@ -409,15 +413,16 @@ export async function handleApprovePolicy(c: Context) {
 async function approved(c: Context, projectId: string) {
 	const tenant = await manager(c, projectId);
 	const version = (
-		await versions(projectId, tenant.organizationId, tenant.actorId)
+		await versions(tenant.projectId, tenant.organizationId, tenant.actorId)
 	).rows.find((row) => row.approved_at);
 	if (!version) throw new Error("No approved policy exists");
 	return { tenant, version };
 }
 export async function handlePreviewRetention(c: Context) {
 	try {
-		const { project_id } = (c.req as any).valid("json");
-		const { tenant, version } = await approved(c, project_id);
+		const { project_id: requestedProjectId } = (c.req as any).valid("json");
+		const { tenant, version } = await approved(c, requestedProjectId);
+		const project_id = tenant.projectId;
 		const counts = await retentionCounts(
 			pgPool(),
 			tenant.organizationId,
@@ -501,10 +506,14 @@ export async function handleListRetentionRuns(c: Context) {
 }
 export async function handleRunRetention(c: Context) {
 	try {
-		const { project_id, policy_version_id, preview_id, batch_size } = (
-			c.req as any
-		).valid("json");
-		const tenant = await manager(c, project_id);
+		const {
+			project_id: requestedProjectId,
+			policy_version_id,
+			preview_id,
+			batch_size,
+		} = (c.req as any).valid("json");
+		const tenant = await manager(c, requestedProjectId);
+		const project_id = tenant.projectId;
 		const started = performance.now();
 		const db = pgPool();
 		const client = await db.connect();

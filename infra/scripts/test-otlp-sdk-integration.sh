@@ -182,7 +182,7 @@ require_private_test_stack() {
 
 run_required_regressions() {
   local suite
-  for suite in extension-depth process-shutdown fidelity logs logs-readback metrics; do
+  for suite in extension-depth process-shutdown fidelity logs logs-readback logs-physical-upgrade metrics; do
     if ! require_private_test_stack; then
       printf '%s\n' 'OTLP SDK harness test stack ownership or network is unproven; refusing test execution.' >&2
       return 1

@@ -14,6 +14,7 @@ assert.ok(mode === "seed" || mode === "verify");
 const organizationId = "00000000-0000-4000-8000-000000000001";
 const projectId = "43000000-0000-4000-8000-000000000002";
 const traceId = "43000000000040008000000000000003";
+const physicalLogId = "43000000-0000-4000-8000-000000000005";
 const logBody = {
 	kvlistValue: {
 		values: [
@@ -98,6 +99,7 @@ try {
 			values: [
 				{
 					log_id: await logIdentity(),
+					physical_row_id: physicalLogId,
 					organization_id: organizationId,
 					project_id: projectId,
 					time_unix_nano: "1793318400123456789",
@@ -135,16 +137,18 @@ try {
 		const logId = await logIdentity();
 		const logs = await ch().query({
 			query:
-				"SELECT toString(time_unix_nano) AS time, toString(observed_time_unix_nano) AS observed, body FROM logs WHERE organization_id = {org:String} AND project_id = {project:String} AND log_id = {logId:String}",
+				"SELECT toString(physical_row_id) AS physical_row_id, toString(time_unix_nano) AS time, toString(observed_time_unix_nano) AS observed, body FROM logs WHERE organization_id = {org:String} AND project_id = {project:String} AND log_id = {logId:String}",
 			query_params: { org: organizationId, project: projectId, logId },
 			format: "JSONEachRow",
 		});
 		const restored = await logs.json<{
+			physical_row_id: string;
 			time: string;
 			observed: string;
 			body: string;
 		}>();
 		assert.equal(restored.length, 1);
+		assert.equal(restored[0].physical_row_id, physicalLogId);
 		assert.equal(restored[0].time, "1793318400123456789");
 		assert.equal(restored[0].observed, "1793318400987654321");
 		assert.deepEqual(JSON.parse(restored[0].body), {

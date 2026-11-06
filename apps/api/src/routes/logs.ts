@@ -25,6 +25,7 @@ import {
 	InvalidLogCursor,
 	listLogs,
 	logInsertRow,
+	LOG_PHYSICAL_ID_BYTES,
 	MAX_LOG_EXPORT_BYTES,
 	MAX_LOG_RECORD_BYTES,
 	type ScopedLog,
@@ -247,11 +248,16 @@ export async function handleIngestLogs(c: Context): Promise<Response> {
 								resource_schema_url: resource.schemaUrl,
 								scope_schema_url: group.schemaUrl,
 							};
-							if (Buffer.byteLength(JSON.stringify(row)) > MAX_LOG_RECORD_BYTES)
+							if (
+								Buffer.byteLength(JSON.stringify(row)) + LOG_PHYSICAL_ID_BYTES >
+								MAX_LOG_RECORD_BYTES
+							)
 								throw new LogExportTooLarge();
 							// Count escaped JSON String columns and the JSONEachRow newline.
 							retainedBytes +=
-								Buffer.byteLength(JSON.stringify(logInsertRow(row))) + 1;
+								Buffer.byteLength(JSON.stringify(logInsertRow(row))) +
+								LOG_PHYSICAL_ID_BYTES +
+								1;
 							if (retainedBytes > MAX_LOG_EXPORT_BYTES)
 								throw new LogExportTooLarge();
 							rows.push(row);
@@ -282,7 +288,7 @@ export const listLogsRoute = createRoute({
 	tags: ["logs"],
 	summary: "List Project logs",
 	description:
-		"Typed AnyValue physical log rows, ordered by effective nanosecond time DESC, log_id DESC, then merge-stable insert coordinates DESC. Duplicate IDs and independent payloads remain separate rows. Effective time uses event time, then observed time, then receipt time; original times remain unchanged. Pages are capped at 256 KiB and carry a scope/filter-bound keyset continuation. Bearer ingestion credentials cannot read logs.",
+		"Typed AnyValue physical log rows, ordered by effective nanosecond time DESC, log_id DESC, then stored physical UUID DESC. Duplicate public IDs and independent payloads remain separate rows. Effective time uses event time, then observed time, then receipt time; original times remain unchanged. Pages are capped at 256 KiB and carry a scope/filter-bound version-3 keyset continuation containing a random UUIDv4 position, never table-wide insert counters. Older cursors require a fresh traversal. Physical UUIDs are omitted from items; invalid or duplicate UUIDs fail the read only when found within the fetched page plus one lookahead row. Copies outside that set are not detected, and global UUID uniqueness is not continuously enforced. The exact filtered physical-row total ignores pagination and may scan Project history under the Project fence. Bearer ingestion credentials cannot read logs.",
 	request: { query: LogListQuery },
 	responses: {
 		200: {

@@ -129,17 +129,27 @@ key, not linkability or online guessing by actors able to both ingest and read.
 Log reads reject conflicting repeated Project query selectors. Log cursors bind
 Organization/Project/filters but are not authentication tokens;
 every read independently reauthorizes under Project and principal fences. The
-version-2 keyset includes persisted insert block/row coordinates, so equal
-timestamps and log IDs cannot hide a physical row at a page boundary. All rows
-and independent payloads remain retained; coordinates survive merges/mutations
-but are not a cross-restore identity or a concurrent-read snapshot. Old cursors
-fail validation and require fresh traversal. Logs protobuf decoding uses pinned
-upstream v1.11.1 wire definitions, including field-12 event names, on a private
+version-3 keyset uses a stored random UUIDv4 position, generated at the trusted
+writer per occurrence on every actual insert attempt and never accepted from
+caller/copied input. Wire retry tokens stay stable and a deduplicated retry
+preserves already committed UUIDs. Cursors expose no table-wide block counters;
+physical UUIDs are omitted from product items, not authorization proof. All rows
+and independent payloads remain retained; UUIDs survive merges, mutations and
+physical restore but do not establish a concurrent-read snapshot. Reads fail
+closed on invalid UUIDs or duplicates only within the fetched filtered page plus
+one lookahead row, checked before response-byte truncation. Copies outside that
+set can go undetected; no history-wide read-integrity scan or continuous global
+UUID uniqueness enforcement is performed. The exact filtered physical-row total
+ignores pagination and can still scan Project history under the Project fence.
+Old cursors fail validation and require fresh traversal. Logs protobuf decoding
+uses pinned upstream v1.11.1 wire definitions, including field-12 event names, on a private
 protobufjs root rather than the legacy trace exporter's generated schema. The
 Logs UI derives its detail only from the current Project query, discarding it
 on Project changes/errors. Log retention is explicitly opt-in in approved
-policies and selects at most 500 expired physical coordinates under scoped
-predicates, including within larger duplicate groups. Counts require synchronous
+policies and selects at most 500 expired physical UUIDs under scoped predicates,
+including within larger public-ID duplicate groups. Under the Project write
+fence it verifies selected UUID format/uniqueness across the entire scoped set,
+including nonexpired copies, before deletion. Counts require synchronous
 mutation settlement and absence readback; a failed/uncertain effect can already
 have deleted rows without atomic PostgreSQL progress. Project deletion always replays
 scoped log cleanup before finalization, including older deletion-job checkpoints.
@@ -147,6 +157,31 @@ Whole-database backups include sensitive log bodies; restore can reinstate them
 and previously valid credentials. Byte-identity deduplication has the same
 bounded/uncertain-outcome limits as trace ingestion. No log SSE, metrics receiver,
 or organization-wide log usage aggregate is implied by this slice.
+
+Additive ClickHouse 0012 backfills only zero-sentinel physical UUIDs and preserves
+preexisting materialized values on partial replay. Every active populated part
+must physically store the column before the runner records success. Existing
+unfinished log mutations are polled before submission/recovery; completed data
+is validated without another rewrite. The 0012 stage has a five-minute explicit
+abort deadline (operator-configurable up to one hour), including checks and the
+ledger write. Timeout fails startup while durable mutations can continue;
+restart recovery does not cancel them or replace stored UUIDs. Failed pending
+mutations require operator repair, and exact uniqueness validation still has
+table-wide I/O/memory cost. Existing
+installations fail startup unless an operator explicitly acknowledges drained
+writers with `GLASSHOUSE_LOG_UUID_MAINTENANCE=1`. This is an offline maintenance
+precondition, not an automatically proven state: the migration lock serializes
+runners but cannot drain old binaries, direct writers or already admitted
+ClickHouse effects. Operators must stop/drain all writers and asynchronous
+inserts through completion; falsely acknowledging maintenance is unsafe.
+The UUIDv4 storage CHECK rejects subsequent UUID-less/zero/non-v4 inserts by old
+binaries. No unique index prevents privileged administrative UUID duplication:
+reads detect it only within page plus lookahead, while retention verifies each
+selected UUID across the entire authorized Organization/Project before deletion.
+These are scoped detection controls, not continuous global uniqueness enforcement;
+direct operator writes can race the application fence. Physical restores must
+retain UUIDs into an empty target; new occurrences require new UUIDs. No control here
+protects against a malicious database administrator.
 
 The authenticated user audit-log route reads only an allowlisted projection of
 existing content-free PostgreSQL audit ledgers. Every query binds Organization
@@ -252,7 +287,7 @@ The disabled publisher runs archived candidate integration code as the publisher
 
 The hosted OTLP SDK interoperability job uses generated high-entropy Compose project names, rejects all caller/Compose project overrides, checks project-labeled containers, networks, and volumes are absent before startup, and removes no volumes. Its cleanup requires a fresh inventory and matching project labels on every candidate container/network; an inventory or ownership failure leaves resources untouched. Before Compose builds, the job archives only allowlisted immutable `HEAD` source paths, refusing any tracked or assume-unchanged change and symlinked build input; working-tree paths, including a substituted symlink parent, cannot reach the Docker build context. The job uses synthetic credentials plus scrubbed child environments and a temporary Docker configuration to avoid carrying runner Compose/Docker/OTel overrides into the fixture. These controls reduce accidental interference with other Docker projects, but Docker-label inspection is not proof against a compromised Docker daemon or a concurrent actor able to create resources bearing the newly generated label. Docker-backed SDK execution is hosted-CI evidence, not a devcontainer guarantee.
 
-The same disposable job runs the real deep-extension public-authentication/persistence suite, both API signal-shutdown cases, trace fidelity, logs, logs readback and metrics sequentially in its existing full-dependency test service. A dedicated image target extends the API build stage with a hash-locked Python SDK interpreter; required official HTTP/protobuf and gRPC exporter cases cannot be skipped. Before each suite, the harness rechecks per-run/project/service identity and that the runner, API, PostgreSQL, ClickHouse, and Valkey containers each attach only to the same owned default network. A fixed allowlisted test environment disables dotenv loading and supplies only synthetic private-service configuration; it does not enable recovery-capable tests on an existing devcontainer stack. Every suite's JUnit verification fails closed on missing required cases/reports, duplicates, failures/errors, or skips, including either SIGTERM or SIGINT. The fidelity fixture additionally replaces inherited pub/sub configuration with an owned loopback TCP probe before setup, scrubs the override before creating the app, and resets bus clients/restores its environment on cleanup. This is CI coverage enforcement and fixture isolation, not additional application authorization or protection from a compromised daemon/concurrent same-authority runner actor.
+The same disposable job runs the real deep-extension public-authentication/persistence suite, both API signal-shutdown cases, trace fidelity, logs, logs readback, populated physical-UUID upgrade/replay and metrics sequentially in its existing full-dependency test service. A dedicated image target extends the API build stage with a hash-locked Python SDK interpreter; required official HTTP/protobuf and gRPC exporter cases cannot be skipped. Before each suite, the harness rechecks per-run/project/service identity and that the runner, API, PostgreSQL, ClickHouse, and Valkey containers each attach only to the same owned default network. A fixed allowlisted test environment disables dotenv loading and supplies only synthetic private-service configuration; it does not enable recovery-capable tests on an existing devcontainer stack. Every suite's JUnit verification fails closed on missing required cases/reports, duplicates, failures/errors, or skips, including either SIGTERM or SIGINT and the UUID/backfill/maintenance and retention-fault cases. The fidelity fixture additionally replaces inherited pub/sub configuration with an owned loopback TCP probe before setup, scrubs the override before creating the app, and resets bus clients/restores its environment on cleanup. This is CI coverage enforcement and fixture isolation, not additional application authorization or protection from a compromised daemon/concurrent same-authority runner actor.
 
 **Attacker:** malicious PR/dependency, compromised action/package/repository credential, unsafe self-hosted runner, or operator/deployment host compromise.
 
