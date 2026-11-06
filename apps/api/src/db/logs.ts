@@ -10,7 +10,18 @@ export type ScopedLog = Omit<LogRecord, "effective_time_unix_nano"> & {
 	organization_id: string;
 };
 export const MAX_LOG_RECORD_BYTES = 65_536;
+export const MAX_LOG_EXPORT_BYTES = 4 * 1024 * 1024;
 export const MAX_LOG_RESPONSE_BYTES = 262_144;
+
+export function logInsertRow(log: ScopedLog) {
+	return {
+		...log,
+		body: JSON.stringify(log.body),
+		attributes: JSON.stringify(log.attributes),
+		resource: JSON.stringify(log.resource),
+		scope: JSON.stringify(log.scope),
+	};
+}
 
 export async function insertLogs(
 	client: ClickHouseClient,
@@ -23,13 +34,7 @@ export async function insertLogs(
 		{
 			table: "logs",
 			format: "JSONEachRow",
-			values: logs.map((log) => ({
-				...log,
-				body: JSON.stringify(log.body),
-				attributes: JSON.stringify(log.attributes),
-				resource: JSON.stringify(log.resource),
-				scope: JSON.stringify(log.scope),
-			})),
+			values: logs.map(logInsertRow),
 			clickhouse_settings: {
 				insert_deduplicate: 1,
 				insert_deduplication_token: token,

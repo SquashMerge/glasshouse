@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash, createHmac } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { ch, closeClickHouseClient } from "../../src/db/clickhouse";
 import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate";
 import { migrate } from "../../src/db/migrate";
+import { metricIdentityKey } from "../../src/db/metric-identity";
 import { pgPool } from "../../src/db/postgres";
 
 // Only invoked explicitly by the disposable CI restore projects, never a unit test.
@@ -12,6 +14,45 @@ assert.ok(mode === "seed" || mode === "verify");
 const organizationId = "00000000-0000-4000-8000-000000000001";
 const projectId = "43000000-0000-4000-8000-000000000002";
 const traceId = "43000000000040008000000000000003";
+const logBody = {
+	kvlistValue: {
+		values: [
+			{
+				key: "restore-fixture",
+				value: { intValue: "9223372036854775807" },
+			},
+		],
+	},
+};
+
+async function logIdentity() {
+	const client = await pgPool().connect();
+	try {
+		const key = await metricIdentityKey(client, organizationId, projectId);
+		const wire = JSON.stringify({
+			resourceLogs: [
+				{
+					scopeLogs: [
+						{
+							logRecords: [
+								{ timeUnixNano: "1793318400123456789", body: logBody },
+							],
+						},
+					],
+				},
+			],
+		});
+		const digest = createHash("sha256")
+			.update(`otlp-logs-wire-v1\0${organizationId}\0${projectId}\0json\0`)
+			.update(wire)
+			.digest("hex");
+		return createHmac("sha256", key)
+			.update(`logs-record-v2:${digest}:0`)
+			.digest("hex");
+	} finally {
+		client.release();
+	}
+}
 
 try {
 	await Promise.all([migrate(), applyClickHouseMigrations()]);
@@ -56,7 +97,7 @@ try {
 			format: "JSONEachRow",
 			values: [
 				{
-					log_id: "4300000000000005",
+					log_id: await logIdentity(),
 					organization_id: organizationId,
 					project_id: projectId,
 					time_unix_nano: "1793318400123456789",
@@ -66,7 +107,7 @@ try {
 					span_id: "4300000000000004",
 					severity_number: 13,
 					severity_text: "WARN",
-					body: '{"kvlistValue":{"values":[{"key":"restore-fixture","value":{"intValue":"9223372036854775807"}}]}}',
+					body: JSON.stringify(logBody),
 				},
 			],
 		});
@@ -91,10 +132,11 @@ try {
 				1,
 			);
 		}
+		const logId = await logIdentity();
 		const logs = await ch().query({
 			query:
-				"SELECT toString(time_unix_nano) AS time, toString(observed_time_unix_nano) AS observed, body FROM logs WHERE organization_id = {org:String} AND project_id = {project:String} AND log_id = '4300000000000005'",
-			query_params: { org: organizationId, project: projectId },
+				"SELECT toString(time_unix_nano) AS time, toString(observed_time_unix_nano) AS observed, body FROM logs WHERE organization_id = {org:String} AND project_id = {project:String} AND log_id = {logId:String}",
+			query_params: { org: organizationId, project: projectId, logId },
 			format: "JSONEachRow",
 		});
 		const restored = await logs.json<{
@@ -117,6 +159,7 @@ try {
 		});
 		// Re-run both production runners with restored ledgers/checksums in place.
 		await Promise.all([migrate(), applyClickHouseMigrations()]);
+		assert.equal(await logIdentity(), logId);
 		const postgresCount = await pgPool().query(
 			"SELECT count(*) FROM pgmigrations",
 		);

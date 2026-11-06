@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { ExportLogsRequest, LogList, LogListQuery } from "../schemas/logs.js";
 import { OtlpError } from "../schemas/otlp.js";
@@ -24,10 +24,13 @@ import {
 	insertLogs,
 	InvalidLogCursor,
 	listLogs,
+	logInsertRow,
+	MAX_LOG_EXPORT_BYTES,
 	MAX_LOG_RECORD_BYTES,
 	type ScopedLog,
 } from "../db/logs.js";
 import { pgPool } from "../db/postgres.js";
+import { metricIdentityKey } from "../db/metric-identity.js";
 import {
 	resolveTenantProject,
 	TenantScopeError,
@@ -50,7 +53,7 @@ export const ingestLogsRoute = createRoute({
 	tags: ["otlp"],
 	summary: "OTLP HTTP log ingest",
 	description:
-		"Accepts JSON/protobuf, optionally gzip. Exports are atomic on validation, limited to 2,000 records, 512 per scope, 128 attributes per record, 32 known-message nesting levels and 64 KiB per retained record. Decimal nanosecond timestamps and AnyValue types are preserved. Requires an explicit Project header; payload provenance cannot override it.",
+		"Accepts JSON/protobuf, optionally gzip. Exports are atomic on validation, limited to 2,000 records, 512 per scope, 128 attributes per record, 32 known-message nesting levels, 64 KiB per retained record and 4 MiB per serialized retained export after redaction. Decimal nanosecond timestamps and AnyValue types are preserved. Requires an explicit Project header; payload provenance cannot override it.",
 	security: [
 		{ sessionCookie: [], csrfHeader: [] },
 		{ basicAuth: [] },
@@ -188,15 +191,21 @@ export async function handleIngestLogs(c: Context): Promise<Response> {
 				const redaction = policyRedactionOptions(
 					policy ?? { mode: "none", keys: [] },
 				);
+				const key = await metricIdentityKey(
+					client,
+					tenant.organizationId,
+					projectId,
+				);
 				const keys = new Set(redaction.redactKeys);
 				const rows: ScopedLog[] = [];
+				let retainedBytes = 0;
 				const ingested = (BigInt(Date.now()) * 1_000_000n).toString();
 				for (const resource of request.resourceLogs)
 					for (const group of resource.scopeLogs)
 						for (const record of group.logRecords) {
 							const row: ScopedLog = {
-								log_id: createHash("sha256")
-									.update(`${digest}:${rows.length}`)
+								log_id: createHmac("sha256", key)
+									.update(`logs-record-v2:${digest}:${rows.length}`)
 									.digest("hex"),
 								organization_id: tenant.organizationId,
 								project_id: projectId,
@@ -239,7 +248,12 @@ export async function handleIngestLogs(c: Context): Promise<Response> {
 								scope_schema_url: group.schemaUrl,
 							};
 							if (Buffer.byteLength(JSON.stringify(row)) > MAX_LOG_RECORD_BYTES)
-								throw new LogRecordTooLarge();
+								throw new LogExportTooLarge();
+							// Count escaped JSON String columns and the JSONEachRow newline.
+							retainedBytes +=
+								Buffer.byteLength(JSON.stringify(logInsertRow(row))) + 1;
+							if (retainedBytes > MAX_LOG_EXPORT_BYTES)
+								throw new LogExportTooLarge();
 							rows.push(row);
 						}
 				await insertLogs(ch(), rows, `glasshouse:otlp:logs:${digest}`);
@@ -255,12 +269,12 @@ export async function handleIngestLogs(c: Context): Promise<Response> {
 		)
 			return otlpErrorResponse(req, 401);
 		if (error instanceof TenantScopeError) return otlpErrorResponse(req, 404);
-		if (error instanceof LogRecordTooLarge) return otlpErrorResponse(req, 413);
+		if (error instanceof LogExportTooLarge) return otlpErrorResponse(req, 413);
 		logger.error("otlp.logs_persist_failed", error);
 		return otlpErrorResponse(req, isTransientStorageFailure(error) ? 503 : 500);
 	}
 }
-class LogRecordTooLarge extends Error {}
+class LogExportTooLarge extends Error {}
 
 export const listLogsRoute = createRoute({
 	method: "get",

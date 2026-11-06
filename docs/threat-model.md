@@ -112,7 +112,20 @@ authentication plus the explicit Project header; every resource Project claim
 must agree. Current Actor and credential authority are fenced through write
 settlement. Body, record, resource and scope redaction uses bounded traversal and
 drops unknown/uninspectable branches; all-text mode replaces the whole body.
-The per-record retained ceiling is 64 KiB and product list pages stop at 256 KiB.
+The per-record retained ceiling is 64 KiB. A separate 4 MiB serialized retained
+export budget is accumulated after redaction, including expanded resource/scope
+copies, nested JSON-string escaping and row delimiters; either limit rejects
+the entire export before inserts with HTTP 413 / gRPC `RESOURCE_EXHAUSTED`.
+Only a bounded prefix of retained rows is accumulated before rejection. Product
+list pages stop at 256 KiB. New public log IDs HMAC the original-wire digest and
+record position using the authorized Project's durable PostgreSQL identity key
+from migration 90063, in a domain separate from metric series/point IDs. The
+unkeyed digest stays in the internal retry token and neither it nor the key is
+exposed by product reads/cursors, errors or application logs. Identical-wire
+retry tokens remain policy-independent and gzip/plain equivalent. Keys survive
+API restarts and must accompany ClickHouse backups on restore; earlier unkeyed
+log IDs are not rewritten. This prevents offline payload comparison without the
+key, not linkability or online guessing by actors able to both ingest and read.
 Log reads reject conflicting repeated Project query selectors. Log cursors bind
 Organization/Project/filters but are not authentication tokens;
 every read independently reauthorizes under Project and principal fences. The
@@ -184,8 +197,9 @@ Project; malformed tokens are rejected before authorization rather than repaired
 
 Metric series IDs HMAC canonical original attributes before redaction to prevent
 label collapse; exposed point IDs also use a domain-separated HMAC. A random
-per-Project key is backfilled/provisioned by PostgreSQL migration 90063, retained
-in PostgreSQL only and cascade-deleted with its Project. Exposed IDs do not allow
+per-Project key (also used for separately domain-separated public log IDs) is
+backfilled/provisioned by PostgreSQL migration 90063, retained in PostgreSQL only
+and cascade-deleted with its Project. Exposed IDs do not allow
 offline dictionary comparison without the key, but retain linkability and allow
 online guessing by an actor who can both ingest and read in that Project. This
 is not anonymization; database operators and PostgreSQL backups are trusted with

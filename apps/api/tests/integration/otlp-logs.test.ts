@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -12,9 +12,15 @@ import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate.js";
 import { closeClickHouseClient } from "../../src/db/clickhouse.js";
 import { LocalCredentialStore } from "../../src/db/local-credentials.js";
 import { csrfForSession } from "../../src/db/local-sessions.js";
+import {
+	MAX_LOG_EXPORT_BYTES,
+	MAX_LOG_RECORD_BYTES,
+} from "../../src/db/logs.js";
+import { metricIdentityKey } from "../../src/db/metric-identity.js";
 import { migrate } from "../../src/db/migrate.js";
 import { authenticationPool, pgPool } from "../../src/db/postgres.js";
 import { startOtlpGrpcServer } from "../../src/lib/otlp-grpc.js";
+import { METRIC_LIMITS } from "../../src/lib/otlp-metrics.js";
 import { durableActorId } from "../../src/middleware/auth.js";
 import { otlpDisposableDatastores } from "../helpers/otlp-disposable-datastores.js";
 
@@ -1424,6 +1430,345 @@ test("the retained-record byte ceiling rejects an entire export and applies only
 		});
 	}
 }, 20_000);
+
+for (const transport of [
+	"HTTP JSON",
+	"HTTP protobuf",
+	"gRPC protobuf",
+] as const) {
+	test(`logs reject a 2,000-record resource-amplified ${transport} export above the 4 MiB retained budget before any write`, async () => {
+		const target = await project();
+		const redacted = await project();
+		const sharedKey = "test.shared-resource-text";
+		const body = envelope(
+			[],
+			[
+				{
+					key: sharedKey,
+					value: { stringValue: "synthetic".repeat(256) },
+				},
+			],
+		);
+		const entry: LogRecord = {
+			timeUnixNano: timestamp,
+			body: { stringValue: "synthetic-expansion-body" },
+		};
+		body.resourceLogs[0]!.scopeLogs = Array.from({ length: 4 }, (_, index) => ({
+			scope: {
+				name: `glasshouse.logs.expansion.${index}`,
+				version: "1.0",
+				attributes: [],
+			},
+			logRecords: Array.from({ length: 500 }, () => entry),
+		}));
+		const recordCount = body.resourceLogs[0]!.scopeLogs.reduce(
+			(total, group) => total + group.logRecords.length,
+			0,
+		);
+		expect(recordCount).toBe(2_000);
+		for (const group of body.resourceLogs[0]!.scopeLogs)
+			expect(group.logRecords).toHaveLength(500);
+		const resourceBytes = Buffer.byteLength(
+			JSON.stringify(body.resourceLogs[0]!.resource),
+		);
+		// Repeated resource bytes alone exceed metrics' existing 4 MiB batch budget.
+		// Keep this lower bound below 8 MiB, far from a memory-exhaustion fixture.
+		const expandedResourceBytes = recordCount * resourceBytes;
+		expect(expandedResourceBytes).toBeGreaterThan(METRIC_LIMITS.batchBytes);
+		expect(expandedResourceBytes).toBeLessThan(METRIC_LIMITS.batchBytes * 2);
+		const sampleBytes =
+			resourceBytes + Buffer.byteLength(JSON.stringify(entry));
+		expect(sampleBytes).toBeLessThan(MAX_LOG_RECORD_BYTES / 4);
+		const json = Buffer.from(JSON.stringify(body));
+		const binary = protobuf(body);
+		expect(json.byteLength).toBeLessThan(bodyLimit / 4);
+		expect(binary.byteLength).toBeLessThan(bodyLimit / 4);
+		const send = async (projectId: string) => {
+			if (transport === "gRPC protobuf")
+				return unary(binary, metadata(basic(owner), projectId)).then(
+					(payload) => ({ status: grpc.status.OK, payload }),
+					(error: grpc.ServiceError) => ({
+						status: error.code,
+						payload: Buffer.from(error.details),
+					}),
+				);
+			const response = await request("/v1/logs", {
+				method: "POST",
+				headers: {
+					"content-type":
+						transport === "HTTP JSON"
+							? "application/json"
+							: "application/x-protobuf",
+					"x-glasshouse-project-id": projectId,
+				},
+				body: transport === "HTTP JSON" ? json : binary,
+			});
+			return {
+				status: response.status,
+				payload: Buffer.from(await response.arrayBuffer()),
+			};
+		};
+		// The identical wire export fits after body redaction and explicit removal
+		// of the shared resource key; the budget must apply after that policy.
+		await policy(redacted.id, { mode: "all_text", keys: [sharedKey] });
+		const accepted = await send(redacted.id);
+		expect(accepted.status).toBe(
+			transport === "gRPC protobuf" ? grpc.status.OK : 200,
+		);
+		const retained = await stored(redacted.id);
+		expect(retained).toHaveLength(recordCount);
+		for (const row of retained) {
+			expect(JSON.parse(row.body as string)).toEqual({
+				stringValue: "[REDACTED]",
+			});
+			expect(JSON.parse(row.resource as string).attributes).toEqual([]);
+		}
+		expect(
+			retained.reduce(
+				(total, row) => total + Buffer.byteLength(JSON.stringify(row)),
+				0,
+			),
+		).toBeLessThan(METRIC_LIMITS.batchBytes);
+		const publicRows = await list(redacted.id);
+		expect(publicRows.total).toBe(recordCount);
+		expect(publicRows.items.length).toBeGreaterThan(0);
+		for (const row of publicRows.items) {
+			expect(row.body).toEqual({ stringValue: "[REDACTED]" });
+			expect(row.resource.attributes).toEqual([]);
+		}
+		const rejected = await send(target.id);
+		const result = await clickhouse.query({
+			query:
+				"SELECT count() AS count FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+			query_params: { organizationId, projectId: target.id },
+			format: "JSONEachRow",
+		});
+		const counts = await result.json<{ count: string }>();
+		const storedRows = Number(counts[0]?.count);
+		expect(rejected.payload.byteLength).toBeLessThan(1024);
+		expect(rejected.payload.toString()).not.toContain("synthetic");
+		expect({ status: rejected.status, storedRows }).toEqual({
+			status:
+				transport === "gRPC protobuf" ? grpc.status.RESOURCE_EXHAUSTED : 413,
+			storedRows: 0,
+		});
+	}, 30_000);
+}
+
+for (const encoding of ["json", "protobuf"] as const) {
+	test(`public log IDs resist an offline four-digit body dictionary for ${encoding} while preserving scoped retry identity`, async () => {
+		const first = await project();
+		const second = await project();
+		const reader = await localAccount("read_only");
+		for (const target of [first, second])
+			await policy(target.id, { mode: "all_text", keys: [] });
+		const candidateExport = (pin: string) =>
+			envelope([
+				record("public-id-dictionary", { body: { stringValue: pin } }),
+				record("public-id-dictionary", { body: { stringValue: pin } }),
+			]);
+		const candidateWire = (pin: string) => {
+			const body = candidateExport(pin);
+			return encoding === "json"
+				? Buffer.from(JSON.stringify(body))
+				: protobuf(body);
+		};
+		const wire = candidateWire("0427");
+		const contentType =
+			encoding === "json" ? "application/json" : "application/x-protobuf";
+		const send = (projectId: string, compressed = false) =>
+			request("/v1/logs", {
+				method: "POST",
+				headers: {
+					"content-type": contentType,
+					"x-glasshouse-project-id": projectId,
+					...(compressed ? { "content-encoding": "gzip" } : {}),
+				},
+				body: compressed ? gzipSync(wire) : wire,
+			});
+		expect((await send(first.id)).status).toBe(200);
+		const initial = await list(first.id, reader.headers);
+		expect(initial.total).toBe(2);
+		expect(initial.items).toHaveLength(2);
+		const initialIds = initial.items.map((row) => row.log_id).sort();
+		expect(new Set(initialIds).size).toBe(2);
+		for (const id of initialIds) expect(id).toMatch(/^[a-f0-9]{64}$/);
+		const denied = await request("/v1/logs", {
+			method: "POST",
+			headers: {
+				...reader.headers,
+				"content-type": contentType,
+				"x-glasshouse-project-id": first.id,
+			},
+			body: wire,
+		});
+		expect(denied.status).toBe(404);
+		expect((await send(first.id, true)).status).toBe(200);
+		await policy(first.id, { mode: "none", keys: [] });
+		expect((await send(first.id)).status).toBe(200);
+		expect((await send(second.id)).status).toBe(200);
+		const publicProjects: { projectId: string; ids: string[] }[] = [];
+		for (const target of [first, second]) {
+			const readback = await list(target.id, reader.headers);
+			expect(readback.total).toBe(2);
+			expect(readback.items).toHaveLength(2);
+			const ids = readback.items.map((row) => row.log_id).sort();
+			expect(new Set(ids).size).toBe(2);
+			if (target.id === first.id) expect(ids).toEqual(initialIds);
+			else expect(ids.filter((id) => initialIds.includes(id))).toEqual([]);
+			const physical = await stored(target.id);
+			expect(physical).toHaveLength(2);
+			expect(physical.map((row) => row.log_id).sort()).toEqual(ids);
+			for (const row of physical) {
+				expect(row).toMatchObject({
+					organization_id: organizationId,
+					project_id: target.id,
+				});
+				expect(JSON.parse(row.body as string)).toEqual({
+					stringValue: "[REDACTED]",
+				});
+			}
+			for (const row of readback.items)
+				expect(row.body).toEqual({ stringValue: "[REDACTED]" });
+			publicProjects.push({ projectId: target.id, ids });
+		}
+		// Attacker input is only public scope/IDs, the known wire template and
+		// 10,000 possible bodies. No storage, secret key or ingestion oracle is used.
+		const recovered: { projectId: string; recordIndex: number; pin: string }[] =
+			[];
+		for (let guess = 0; guess < 10_000; guess++) {
+			const pin = String(guess).padStart(4, "0");
+			const candidate = candidateWire(pin);
+			for (const { projectId, ids } of publicProjects) {
+				const digest = createHash("sha256")
+					.update(
+						`otlp-logs-wire-v1\0${organizationId}\0${projectId}\0${encoding}\0`,
+					)
+					.update(candidate)
+					.digest("hex");
+				for (let recordIndex = 0; recordIndex < 2; recordIndex++) {
+					const guessedId = createHash("sha256")
+						.update(`${digest}:${recordIndex}`)
+						.digest("hex");
+					if (ids.includes(guessedId))
+						recovered.push({ projectId, recordIndex, pin });
+				}
+			}
+		}
+		expect(
+			recovered,
+			"A Read-only actor must not recover a redacted body from public log_id values offline",
+		).toEqual([]);
+	}, 30_000);
+}
+
+test("the retained log export budget includes JSON string escaping and repeated scope data", async () => {
+	const probe = await project();
+	const target = await project();
+	const entry = {
+		timeUnixNano: timestamp,
+		body: { stringValue: "scope-budget" },
+	};
+	const body = envelope(
+		[entry],
+		[],
+		[
+			{
+				key: "test.scope.expansion",
+				value: { stringValue: '"\\'.repeat(256) },
+			},
+		],
+	);
+	expect((await ingest(probe.id, body)).status).toBe(200);
+	const [sample] = await stored(probe.id);
+	const { effective_time_unix_nano: _effective, ...serialized } = sample!;
+	const logical = {
+		...serialized,
+		body: JSON.parse(serialized.body as string),
+		attributes: JSON.parse(serialized.attributes as string),
+		resource: JSON.parse(serialized.resource as string),
+		scope: JSON.parse(serialized.scope as string),
+	};
+	const count = 2_000;
+	expect(count * Buffer.byteLength(JSON.stringify(logical))).toBeLessThan(
+		MAX_LOG_EXPORT_BYTES,
+	);
+	expect(
+		count * (Buffer.byteLength(JSON.stringify(serialized)) + 1),
+	).toBeGreaterThan(MAX_LOG_EXPORT_BYTES);
+	const group = body.resourceLogs[0]!.scopeLogs[0]!;
+	body.resourceLogs[0]!.scopeLogs = Array.from({ length: 4 }, () => ({
+		...group,
+		logRecords: Array.from({ length: 500 }, () => entry),
+	}));
+	expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThan(bodyLimit);
+	const rejected = await ingest(target.id, body);
+	expect(rejected.status).toBe(413);
+	expect(await stored(target.id)).toHaveLength(0);
+	await policy(target.id, { mode: "none", keys: ["test.scope.expansion"] });
+	expect((await ingest(target.id, body)).status).toBe(200);
+	expect(await stored(target.id)).toHaveLength(count);
+}, 30_000);
+
+test("public log IDs use the durable authorized tenant/Project key in a separate domain without exposing wire identity", async () => {
+	const first = await project();
+	const foreignName = `logs-key-${randomUUID()}`;
+	const foreignResponse = await jsonPost(
+		"/v1/projects",
+		{ name: foreignName, slug: foreignName },
+		{ authorization: basic(outsider) },
+	);
+	expect(foreignResponse.status).toBe(201);
+	const foreign = (await foreignResponse.json()) as { id: string };
+	const wire = JSON.stringify(
+		envelope([record("durable-key-log"), record("durable-key-log")]),
+	);
+	const client = await pool.connect();
+	try {
+		await expect(
+			metricIdentityKey(client, otherOrganizationId, first.id),
+		).rejects.toThrow("Metric identity key unavailable");
+		const ids: string[][] = [];
+		for (const [org, projectId, principal] of [
+			[organizationId, first.id, owner],
+			[otherOrganizationId, foreign.id, outsider],
+		] as const) {
+			const key = await metricIdentityKey(client, org, projectId);
+			const digest = createHash("sha256")
+				.update(`otlp-logs-wire-v1\0${org}\0${projectId}\0json\0`)
+				.update(wire)
+				.digest("hex");
+			const headers = { authorization: basic(principal) };
+			expect((await ingest(projectId, JSON.parse(wire), headers)).status).toBe(
+				200,
+			);
+			const readback = await list(projectId, headers);
+			const expected = [0, 1].map((index) =>
+				createHmac("sha256", key)
+					.update(`logs-record-v2:${digest}:${index}`)
+					.digest("hex"),
+			);
+			expect(readback.items.map((row) => row.log_id).sort()).toEqual(
+				expected.sort(),
+			);
+			for (const [index, row] of readback.items.entries()) {
+				expect(row.log_id).not.toBe(
+					createHmac("sha256", key)
+						.update(`metrics-point-v2:${digest}:${index}`)
+						.digest("hex"),
+				);
+			}
+			const exposed = JSON.stringify([readback, await stored(projectId)]);
+			expect(exposed).not.toContain(digest);
+			expect(exposed).not.toContain(key.toString("hex"));
+			expect(exposed).not.toContain(key.toString("base64"));
+			ids.push(expected);
+		}
+		expect(new Set(ids.flat()).size).toBe(4);
+	} finally {
+		client.release();
+	}
+});
 
 test("identical byte retries deduplicate logs without collapsing distinct records or tenant scopes", async () => {
 	const first = await project();

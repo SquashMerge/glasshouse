@@ -18,12 +18,16 @@ cutover. An older artifact predating metrics receives the empty table through
 additive migration `0010_otlp_metrics.sql` during normal startup. Retention and
 Project deletion affect live stores, not already-created backup artifacts.
 
-PostgreSQL backups also contain the secret per-Project Metric identity keys from
+PostgreSQL backups also contain the secret per-Project identity keys for metrics
+and public log IDs from
 `90063_metric_identity_keys.sql`. Preserve those keys with the corresponding
-ClickHouse data to keep new points in the same series after recovery. Restoring
-ClickHouse alone or replacing keys splits future identities; neither action
-rewrites old IDs. Treat the PostgreSQL dump as secret-bearing: possession of a
-key permits offline guesses against that Project's pre-redaction identities.
+ClickHouse data to keep new points in the same series and reproduce log IDs
+after recovery. Restoring ClickHouse alone or replacing keys splits future
+identities; neither action rewrites old IDs. The application restore fixture
+recomputes its seeded log ID using the restored Project key in a fresh process
+and after migration replay. Treat the PostgreSQL dump as secret-bearing:
+possession of a key permits offline guesses against that Project's pre-redaction
+identities.
 
 Install the client/runtime prerequisites used by the operator host: Bash, Docker Compose v2, `python3`, `sha256sum`, and a running stack; other examples use GNU Make. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
 

@@ -16295,7 +16295,7 @@ paths:
       tags:
         - logs
     post:
-      description: Accepts JSON/protobuf, optionally gzip. Exports are atomic on validation, limited to 2,000 records, 512 per scope, 128 attributes per record, 32 known-message nesting levels and 64 KiB per retained record. Decimal nanosecond timestamps and AnyValue types are preserved. Requires an explicit Project header; payload provenance cannot override it.
+      description: Accepts JSON/protobuf, optionally gzip. Exports are atomic on validation, limited to 2,000 records, 512 per scope, 128 attributes per record, 32 known-message nesting levels, 64 KiB per retained record and 4 MiB per serialized retained export after redaction. Decimal nanosecond timestamps and AnyValue types are preserved. Requires an explicit Project header; payload provenance cannot override it.
       parameters:
         - in: header
           name: x-glasshouse-project-id
