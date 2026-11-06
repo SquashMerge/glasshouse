@@ -3,6 +3,10 @@ const protobufContentTypes = new Set([
 	"application/protobuf",
 ]);
 
+export function isOtlpIngestRequest(method: string, path: string): boolean {
+	return method === "POST" && (path === "/v1/traces" || path === "/v1/logs");
+}
+
 function contentType(
 	request: Request,
 ): "application/json" | "application/x-protobuf" {
@@ -37,7 +41,12 @@ function googleRpcStatus(message: string): Uint8Array {
 }
 
 export function otlpErrorResponse(request: Request, status: number): Response {
-	const message = errorMessage(status);
+	const message =
+		new URL(request.url).pathname === "/v1/logs"
+			? errorMessage(status)
+					.replaceAll("trace", "log")
+					.replaceAll("Trace", "Log")
+			: errorMessage(status);
 	const type = contentType(request);
 	return new Response(
 		type === "application/json"

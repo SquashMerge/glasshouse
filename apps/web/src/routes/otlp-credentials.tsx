@@ -152,7 +152,7 @@ export function OtlpCredentialsPage() {
 		<div className="space-y-6">
 			<PageHeader
 				title="OTLP credentials"
-				description="Create Project-bound secrets for sending traces. Credentials cannot access the dashboard or read telemetry."
+				description="Create Project-bound secrets for sending traces and logs. Credentials cannot access the dashboard or read telemetry."
 			/>
 			{!selectedProjectId ? (
 				<Card>
@@ -166,7 +166,7 @@ export function OtlpCredentialsPage() {
 						<CardHeader>
 							<CardTitle>Create credential</CardTitle>
 							<CardDescription>
-								Each secret can send OTLP traces only to{" "}
+								Each secret can send OTLP traces and logs only to{" "}
 								{selectedProject?.name ?? "the selected Project"}. Copy it now;
 								it will not be shown again.
 							</CardDescription>

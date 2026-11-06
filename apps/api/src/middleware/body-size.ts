@@ -1,5 +1,8 @@
 import type { MiddlewareHandler } from "hono";
-import { otlpErrorResponse } from "../lib/otlp-response.js";
+import {
+	isOtlpIngestRequest,
+	otlpErrorResponse,
+} from "../lib/otlp-response.js";
 
 export const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
@@ -15,7 +18,7 @@ export function bodySizeLimit(
 ): MiddlewareHandler {
 	return async (c, next) => {
 		const rejectTooLarge = () =>
-			c.req.method === "POST" && c.req.path === "/v1/traces"
+			isOtlpIngestRequest(c.req.method, c.req.path)
 				? otlpErrorResponse(c.req.raw, 413)
 				: c.json(
 						{

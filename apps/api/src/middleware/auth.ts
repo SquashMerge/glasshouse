@@ -1,5 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { otlpErrorResponse } from "../lib/otlp-response.js";
+import {
+	isOtlpIngestRequest,
+	otlpErrorResponse,
+} from "../lib/otlp-response.js";
 import { authenticateOtlpCredential } from "../db/otlp-credentials.js";
 import {
 	BASIC_AUTH_PROVIDER_NAMESPACE,
@@ -345,7 +348,7 @@ export function authenticationMiddleware(
 					actorId: basicCredential.actorId,
 					organizationId: basicCredential.organizationId,
 				};
-			else if (c.req.method === "POST" && c.req.path === "/v1/traces") {
+			else if (isOtlpIngestRequest(c.req.method, c.req.path)) {
 				const header = c.req.header("authorization");
 				const match =
 					header && header.length <= 256
@@ -376,7 +379,7 @@ export function authenticationMiddleware(
 		}
 		if (!principal) {
 			c.header("WWW-Authenticate", 'Basic realm="glasshouse", charset="UTF-8"');
-			if (c.req.method === "POST" && c.req.path === "/v1/traces")
+			if (isOtlpIngestRequest(c.req.method, c.req.path))
 				return otlpErrorResponse(c.req.raw, 401);
 			return c.json(
 				{ code: "UNAUTHORIZED", message: "Authentication required" },
@@ -389,7 +392,7 @@ export function authenticationMiddleware(
 				(token !== undefined &&
 					!validSessionCsrf(token, c.req.header(CSRF_HEADER))))
 		) {
-			if (c.req.method === "POST" && c.req.path === "/v1/traces")
+			if (isOtlpIngestRequest(c.req.method, c.req.path))
 				return otlpErrorResponse(c.req.raw, 403);
 			return c.json(
 				{ code: "FORBIDDEN", message: "Request origin verification failed" },
@@ -428,7 +431,7 @@ export function authenticationMiddleware(
 		} catch (cause) {
 			await client.query("ROLLBACK");
 			if (cause instanceof AuthenticationError) {
-				if (c.req.method === "POST" && c.req.path === "/v1/traces")
+				if (isOtlpIngestRequest(c.req.method, c.req.path))
 					return otlpErrorResponse(c.req.raw, 401);
 				return c.json(
 					{ code: "UNAUTHORIZED", message: "Authentication required" },

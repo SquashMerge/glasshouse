@@ -9,6 +9,7 @@ import {
 import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
+import { handleIngestLogs } from "./routes/logs.js";
 import { authenticationPool, pgPool } from "./db/postgres.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
 import { cancelInterruptedExecutionAdmissions } from "./db/execution-admissions.js";
@@ -31,7 +32,7 @@ import { logger } from "./lib/logger.js";
 import { AuthenticationError } from "./db/local-sessions.js";
 import { assertProductionConfiguration } from "./lib/production-config.js";
 import { startOtlpGrpcServer } from "./lib/otlp-grpc.js";
-import { otlpErrorResponse } from "./lib/otlp-response.js";
+import { isOtlpIngestRequest, otlpErrorResponse } from "./lib/otlp-response.js";
 import { isTransientStorageFailure } from "./lib/transient-storage-error.js";
 
 if (process.env.NODE_ENV === "production") assertProductionConfiguration();
@@ -191,7 +192,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		}
 	});
 	apiApp.onError((error, c) => {
-		if (c.req.method === "POST" && c.req.path === "/v1/traces")
+		if (isOtlpIngestRequest(c.req.method, c.req.path))
 			return otlpErrorResponse(
 				c.req.raw,
 				isTransientStorageFailure(error) ? 503 : 500,
@@ -253,7 +254,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 				c.req.path === "/v1/me" ||
 				c.req.path.startsWith("/v1/auth/") ||
 				PUBLIC_API_ROUTES.has(`${c.req.method} ${c.req.path}`) ||
-				(c.req.method === "POST" && c.req.path === "/v1/traces") ||
+				isOtlpIngestRequest(c.req.method, c.req.path) ||
 				c.req.path === "/v1/audit-events" ||
 				c.req.path.startsWith("/v1/projects") ||
 				c.req.path.startsWith("/v1/admin/") ||
@@ -333,6 +334,7 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 		}
 	});
 
+	apiApp.post("/v1/logs", handleIngestLogs);
 	apiApp.route("/", openapiApp);
 	return apiApp;
 }

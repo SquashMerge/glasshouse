@@ -3,7 +3,12 @@ import type { Pool, PoolClient } from "pg";
 import { ch } from "./clickhouse.js";
 import { lockProjectAuditProvenance } from "./project-authorization.js";
 
-export const RETENTION_CLASSES = ["traces", "datasets", "feedback"] as const;
+export const RETENTION_CLASSES = [
+	"traces",
+	"datasets",
+	"feedback",
+	"logs",
+] as const;
 export type RetentionClass = (typeof RETENTION_CLASSES)[number];
 export type GovernanceRedaction = {
 	mode: "none" | "all_text";
@@ -85,6 +90,21 @@ export async function retentionCounts(
 				[projectId, cutoff],
 			);
 			counts.feedback = Number(result.rows[0]?.count ?? 0);
+		}
+		if (dataClass === "logs") {
+			const result = await ch().query({
+				query:
+					"SELECT count() AS count FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND effective_time_unix_nano < {cutoff:UInt64}",
+				query_params: {
+					organizationId,
+					projectId,
+					cutoff: (BigInt(cutoff.getTime()) * 1_000_000n).toString(),
+				},
+				format: "JSONEachRow",
+			});
+			counts.logs = Number(
+				(await result.json<{ count: string }>())[0]?.count ?? 0,
+			);
 		}
 		if (dataClass === "traces") {
 			const result = await ch().query({

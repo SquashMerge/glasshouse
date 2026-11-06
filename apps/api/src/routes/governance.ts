@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { deleteLogRetentionBatch } from "../db/logs.js";
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -679,6 +680,29 @@ export async function handleRunRetention(c: Context) {
 					counts,
 				);
 			}
+			if (version.retention.logs) {
+				const cutoff = new Date(
+					Date.now() - version.retention.logs * 86_400_000,
+				);
+				await destructiveStage(
+					db,
+					tenant,
+					project_id,
+					version,
+					runId,
+					ownerToken,
+					"logs_deleted",
+					async () => {
+						counts.logs = await deleteLogRetentionBatch(
+							tenant.organizationId,
+							project_id,
+							cutoff,
+							batch_size,
+						);
+					},
+					counts,
+				);
+			}
 			const duration = Math.round(performance.now() - started);
 			const terminal = await terminalizeRun(
 				db,
@@ -823,7 +847,7 @@ async function persistRunProgress(
 	stage: string,
 ) {
 	const result = await client.query(
-		"UPDATE governance_retention_runs SET counts = $3::jsonb, cursor = jsonb_build_object('stage', $4, 'counts', $3::jsonb), heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING id",
+		"UPDATE governance_retention_runs SET counts = $3::jsonb, cursor = jsonb_build_object('stage', $4::text, 'counts', $3::jsonb), heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING id",
 		[runId, ownerToken, JSON.stringify(counts), stage],
 	);
 	if (!result.rows[0]) throw new Error("Retention run ownership was lost");
@@ -854,7 +878,7 @@ async function terminalizeRun(
 			status: "completed" | "failed";
 			counts: Record<string, number>;
 		}>(
-			"WITH changed AS (UPDATE governance_retention_runs SET status = $3, counts = $4::jsonb, cursor = jsonb_build_object('stage', $3, 'counts', $4::jsonb), completed_at = now(), lease_expires_at = NULL WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING organization_id, project_id, policy_version_id, requested_by, status, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, CASE WHEN status = 'completed' THEN 'retention_completed' ELSE 'retention_failed' END, counts, $5 FROM changed) SELECT status, counts FROM changed",
+			"WITH changed AS (UPDATE governance_retention_runs SET status = $3::text, counts = $4::jsonb, cursor = jsonb_build_object('stage', $3::text, 'counts', $4::jsonb), completed_at = now(), lease_expires_at = NULL WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING organization_id, project_id, policy_version_id, requested_by, status, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, CASE WHEN status = 'completed' THEN 'retention_completed' ELSE 'retention_failed' END, counts, $5::integer FROM changed) SELECT status, counts FROM changed",
 			[runId, ownerToken, status, JSON.stringify(counts), duration],
 		);
 		if (transitioned.rows[0]) return transitioned.rows[0];

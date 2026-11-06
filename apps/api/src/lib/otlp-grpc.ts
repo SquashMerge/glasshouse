@@ -8,6 +8,7 @@ const TRACE_SERVICE_PATH =
 const HEALTH_SERVICE_PATH = "/grpc.health.v1.Health/Check";
 const TRACE_SERVICE_NAME =
 	"opentelemetry.proto.collector.trace.v1.TraceService";
+const LOGS_SERVICE_NAME = "opentelemetry.proto.collector.logs.v1.LogsService";
 
 type Fetch = (request: Request) => Response | Promise<Response>;
 
@@ -26,63 +27,70 @@ export async function startOtlpGrpcServer(fetch: Fetch) {
 		"grpc.max_receive_message_length": maxReceiveBytes,
 		"grpc.max_send_message_length": 1024,
 	});
-	server.addService(
-		{
-			Export: {
-				path: TRACE_SERVICE_PATH,
-				requestStream: false,
-				responseStream: false,
-				requestSerialize: (value: Buffer) => value,
-				requestDeserialize: (value: Buffer) => value,
-				responseSerialize: (value: Buffer) => value,
-				responseDeserialize: (value: Buffer) => value,
+	for (const [path, endpoint] of [
+		[TRACE_SERVICE_PATH, "/v1/traces"],
+		[`/${LOGS_SERVICE_NAME}/Export`, "/v1/logs"],
+	] as const)
+		server.addService(
+			{
+				Export: {
+					path,
+					requestStream: false,
+					responseStream: false,
+					requestSerialize: (value: Buffer) => value,
+					requestDeserialize: (value: Buffer) => value,
+					responseSerialize: (value: Buffer) => value,
+					responseDeserialize: (value: Buffer) => value,
+				},
 			},
-		},
-		{
-			Export: async (
-				call: grpc.ServerUnaryCall<Buffer, Buffer>,
-				callback: grpc.sendUnaryData<Buffer>,
-			) => {
-				const authorization = oneMetadataValue(call.metadata, "authorization");
-				const projectId = oneMetadataValue(
-					call.metadata,
-					"x-glasshouse-project-id",
-				);
-				if (!authorization || !projectId) {
-					callback({
-						code: grpc.status.UNAUTHENTICATED,
-						message: "Authentication required",
-					});
-					return;
-				}
-				try {
-					const response = await fetch(
-						new Request("http://otlp-grpc.internal/v1/traces", {
-							method: "POST",
-							headers: {
-								authorization,
-								"x-glasshouse-project-id": projectId,
-								"content-type": "application/x-protobuf",
-							},
-							body: call.request,
-						}),
+			{
+				Export: async (
+					call: grpc.ServerUnaryCall<Buffer, Buffer>,
+					callback: grpc.sendUnaryData<Buffer>,
+				) => {
+					const authorization = oneMetadataValue(
+						call.metadata,
+						"authorization",
 					);
-					if (response.ok)
-						return callback(null, Buffer.from(await response.arrayBuffer()));
-					callback({
-						code: grpcStatus(response.status),
-						message: "Trace export rejected",
-					});
-				} catch (cause) {
-					logger.error("otlp.grpc_export_failed", cause);
-					callback({
-						code: grpc.status.INTERNAL,
-						message: "Trace export failed",
-					});
-				}
+					const projectId = oneMetadataValue(
+						call.metadata,
+						"x-glasshouse-project-id",
+					);
+					if (!authorization || !projectId) {
+						callback({
+							code: grpc.status.UNAUTHENTICATED,
+							message: "Authentication required",
+						});
+						return;
+					}
+					try {
+						const response = await fetch(
+							new Request(`http://otlp-grpc.internal${endpoint}`, {
+								method: "POST",
+								headers: {
+									authorization,
+									"x-glasshouse-project-id": projectId,
+									"content-type": "application/x-protobuf",
+								},
+								body: call.request,
+							}),
+						);
+						if (response.ok)
+							return callback(null, Buffer.from(await response.arrayBuffer()));
+						callback({
+							code: grpcStatus(response.status),
+							message: "Telemetry export rejected",
+						});
+					} catch (cause) {
+						logger.error("otlp.grpc_export_failed", cause);
+						callback({
+							code: grpc.status.INTERNAL,
+							message: "Telemetry export failed",
+						});
+					}
+				},
 			},
-		},
-	);
+		);
 	server.addService(
 		{
 			Check: {
@@ -102,7 +110,11 @@ export async function startOtlpGrpcServer(fetch: Fetch) {
 			) => {
 				try {
 					const service = decodeHealthService(call.request);
-					if (service === "" || service === TRACE_SERVICE_NAME)
+					if (
+						service === "" ||
+						service === TRACE_SERVICE_NAME ||
+						service === LOGS_SERVICE_NAME
+					)
 						return callback(null, Buffer.from([8, 1]));
 					return callback({
 						code: grpc.status.NOT_FOUND,
@@ -160,7 +172,9 @@ function decodeHealthService(bytes: Buffer): string {
 
 function oneMetadataValue(metadata: grpc.Metadata, key: string): string | null {
 	const values = metadata.get(key);
-	return values.length === 1 && typeof values[0] === "string"
+	return values.length === 1 &&
+		typeof values[0] === "string" &&
+		!values[0].includes(",")
 		? values[0]
 		: null;
 }

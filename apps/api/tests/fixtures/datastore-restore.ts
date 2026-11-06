@@ -51,6 +51,25 @@ try {
 				},
 			],
 		});
+		await ch().insert({
+			table: "logs",
+			format: "JSONEachRow",
+			values: [
+				{
+					log_id: "4300000000000005",
+					organization_id: organizationId,
+					project_id: projectId,
+					time_unix_nano: "1793318400123456789",
+					observed_time_unix_nano: "1793318400987654321",
+					ingested_time_unix_nano: "1793318401000000000",
+					trace_id: traceId,
+					span_id: "4300000000000004",
+					severity_number: 13,
+					severity_text: "WARN",
+					body: '{"kvlistValue":{"values":[{"key":"restore-fixture","value":{"intValue":"9223372036854775807"}}]}}',
+				},
+			],
+		});
 	} else {
 		const project = await pgPool().query(
 			"SELECT name FROM projects WHERE id = $1 AND organization_id = $2",
@@ -72,6 +91,30 @@ try {
 				1,
 			);
 		}
+		const logs = await ch().query({
+			query:
+				"SELECT toString(time_unix_nano) AS time, toString(observed_time_unix_nano) AS observed, body FROM logs WHERE organization_id = {org:String} AND project_id = {project:String} AND log_id = '4300000000000005'",
+			query_params: { org: organizationId, project: projectId },
+			format: "JSONEachRow",
+		});
+		const restored = await logs.json<{
+			time: string;
+			observed: string;
+			body: string;
+		}>();
+		assert.equal(restored.length, 1);
+		assert.equal(restored[0].time, "1793318400123456789");
+		assert.equal(restored[0].observed, "1793318400987654321");
+		assert.deepEqual(JSON.parse(restored[0].body), {
+			kvlistValue: {
+				values: [
+					{
+						key: "restore-fixture",
+						value: { intValue: "9223372036854775807" },
+					},
+				],
+			},
+		});
 		// Re-run both production runners with restored ledgers/checksums in place.
 		await Promise.all([migrate(), applyClickHouseMigrations()]);
 		const postgresCount = await pgPool().query(

@@ -172,22 +172,26 @@ For concurrent AI-assisted development, Glasshouse provides a Compose-based devc
 | http://localhost:5173/enroll | First password or re-enrollment using an Admin-provided code |
 | http://localhost:5173/access | Admin local accounts, existing roles and Project grants |
 | http://localhost:5173 | Dashboard (auth-gated; fresh setup or sign-in redirect) |
-| http://localhost:5173/observability | Trace and observation lists (auth-gated) |
+| http://localhost:5173/observability | Trace, observation, and log lists (auth-gated) |
 | http://localhost:5173/observability/traces/:id | Trace detail with observation tree (auth-gated) |
 | http://localhost:3000/v1/traces | OTLP HTTP/JSON trace ingest (POST; auth-gated) and product trace list (GET) |
+| http://localhost:3000/v1/logs | OTLP HTTP JSON/protobuf log ingest (POST; auth-gated) and typed product log list (GET) |
 | http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (auth-gated) |
 | http://localhost:3000/health | Backend health check (public; no auth) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (auth-gated) |
 
 ### Optional OTLP/gRPC receiver
 
-Set `OTLP_GRPC_PORT` to enable the native OTLP TraceService endpoint at
-`opentelemetry.proto.collector.trace.v1.TraceService/Export`. It defaults to a
+Set `OTLP_GRPC_PORT` to enable the native OTLP endpoints at
+`opentelemetry.proto.collector.trace.v1.TraceService/Export` and
+`opentelemetry.proto.collector.logs.v1.LogsService/Export`. It defaults to a
 loopback bind and accepts only loopback or private addresses. The listener is
 plaintext, so expose it only through a TLS-terminating gRPC proxy or an
 operator-controlled private network. Add the same `authorization` and
-`x-glasshouse-project-id` metadata used by HTTP exporters. Metrics and logs
-are not implemented and return `UNIMPLEMENTED`.
+`x-glasshouse-project-id` metadata used by HTTP exporters. Metrics remain
+unimplemented and return `UNIMPLEMENTED`. Logs preserve typed bodies and exact
+nanoseconds; see [OTLP logs](docs/03-otel-ingest.md#logs) for limits, readback,
+opt-in governance retention, and the separate Logs tab.
 
 For production or an image-only snapshot, add `-f infra/compose.otlp-grpc.yaml`
 or `-f deploy/snapshot/compose.otlp-grpc.yaml` to the relevant Compose command.

@@ -6,8 +6,8 @@ Governance is project-scoped. Every Project is provisioned with an immutable, au
 
 The first policy contract is deliberately narrow:
 
-- Retention supports `traces`, `datasets`, and `feedback`, each with a whole-day interval from 1 to 3650 days.
-- Ingress redaction supports `all_text` for trace input/output and literal metadata attribute key replacement. Attribute keys are validated, sorted, and deduplicated.
+- Retention supports `traces`, `datasets`, `feedback`, and optional `logs`, each with a whole-day interval from 1 to 3650 days. Existing baselines/policies are preserved; logs are excluded until an approved policy explicitly includes `retention.logs`.
+- Ingress redaction supports `all_text` for trace input/output and complete log bodies, plus literal metadata attribute keys. Log body/resource/scope/record AnyValues receive bounded recursive key removal before persistence. Attribute keys are validated, sorted, and deduplicated.
 - Redaction is applied during OTLP normalization before ClickHouse persistence, logging, events, SSE, and audit data. Existing `glasshouse.prompt.*` stripping remains in force.
 - No retroactive rewrite, arbitrary patterns, ML redaction, or RBAC changes are provided. The only automated approval is the audited baseline provisioned for Projects without an approved policy.
 
@@ -33,4 +33,6 @@ Retention commits its `running` run and start audit record before any external m
 
 ## Inventory
 
-The governed inventory currently covers ClickHouse traces/observations and PostgreSQL datasets/dataset items and feedback review records. Prompt, experiment, benchmark, and score retention remain excluded until their dependency ordering and recovery contracts are explicitly designed; no implicit deletion occurs for them.
+The governed inventory currently covers ClickHouse traces/observations, opt-in logs, and PostgreSQL datasets/dataset items and feedback review records. Logs expire by exact effective event/observed/receipt time and each batch is bounded by physical row count (including duplicate IDs), under the same manager/policy/lease fence. Project deletion replays scoped log cleanup before finalizing even for older deletion-job checkpoints. Prompt, experiment, benchmark, and score retention remain excluded until their dependency ordering and recovery contracts are explicitly designed; no implicit deletion occurs for them.
+
+Duplicate log IDs are selected as whole groups: a group larger than the requested batch is skipped, and the sum of selected groups' physical rows must fit the batch. A consumed preview cannot be replayed, even after a zero-deletion batch; request a fresh preview for another batch. ClickHouse deletion and PostgreSQL progress are not atomic: a failed run may already have deleted rows, so inspect persisted evidence and preview the remaining rows before starting a new run.

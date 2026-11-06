@@ -67,7 +67,7 @@ function app() {
 	return api;
 }
 
-test("bearer ingestion credentials authenticate only the OTLP trace POST and never expose the secret", async () => {
+test("bearer ingestion credentials authenticate trace POST and deny product and retired paths", async () => {
 	credentialLookup.length = 0;
 	const api = app();
 	const accepted = await api.request("/v1/traces", {
@@ -104,7 +104,7 @@ test("accepts case-insensitive HTTP Bearer authentication schemes", async () => 
 	expect(response.status).toBe(200);
 });
 
-test("documents the credential auth choices on the OTLP trace operation", () => {
+test("documents credential auth on both signal POSTs and excludes it from product reads", () => {
 	const document = openapiApp.getOpenAPI31Document({
 		openapi: "3.1.0",
 		info: { title: "OTLP auth contract", version: "test" },
@@ -114,15 +114,17 @@ test("documents the credential auth choices on the OTLP trace operation", () => 
 		type: "http",
 		scheme: "bearer",
 		description:
-			"Project-scoped OTLP ingest credential, accepted only for POST /v1/traces.",
+			"Project-scoped OTLP ingest credential, accepted only for POST /v1/traces and POST /v1/logs.",
 	});
-	expect(document.paths?.["/v1/traces"]?.post?.security).toEqual([
-		{ sessionCookie: [], csrfHeader: [] },
-		{ basicAuth: [] },
-		{ bearerAuth: [] },
-	]);
-	expect(document.paths?.["/v1/traces"]?.get?.security).not.toContainEqual({
-		bearerAuth: [],
-	});
+	for (const path of ["/v1/traces", "/v1/logs"]) {
+		expect(document.paths?.[path]?.post?.security).toEqual([
+			{ sessionCookie: [], csrfHeader: [] },
+			{ basicAuth: [] },
+			{ bearerAuth: [] },
+		]);
+		expect(document.paths?.[path]?.get?.security).not.toContainEqual({
+			bearerAuth: [],
+		});
+	}
 	expect(document.paths?.["/v1/otel/v1/traces"]?.post).toBeUndefined();
 });

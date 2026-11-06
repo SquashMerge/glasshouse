@@ -6508,6 +6508,126 @@ components:
         - pass_rate
         - avg_duration_ms
       type: object
+    ExportLogsServiceRequest:
+      properties:
+        resourceLogs:
+          default: []
+          items:
+            properties:
+              resource:
+                properties:
+                  attributes:
+                    default: []
+                    items:
+                      $ref: '#/components/schemas/LogAttribute'
+                    maxItems: 128
+                    type: array
+                  droppedAttributesCount:
+                    default: 0
+                    maximum: 4294967295
+                    minimum: 0
+                    type: integer
+                type: object
+              schemaUrl:
+                default: ''
+                maxLength: 2048
+                type: string
+              scopeLogs:
+                default: []
+                items:
+                  properties:
+                    logRecords:
+                      default: []
+                      items:
+                        properties:
+                          attributes:
+                            default: []
+                            items:
+                              $ref: '#/components/schemas/LogAttribute'
+                            maxItems: 128
+                            type: array
+                          body:
+                            $ref: '#/components/schemas/LogAnyValue'
+                          droppedAttributesCount:
+                            default: 0
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          eventName:
+                            default: ''
+                            maxLength: 1024
+                            type: string
+                          flags:
+                            default: 0
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          observedTimeUnixNano:
+                            anyOf:
+                              - maxLength: 21
+                                type: string
+                              - type: number
+                            default: '0'
+                          severityNumber:
+                            default: 0
+                            maximum: 24
+                            minimum: 0
+                            type: integer
+                          severityText:
+                            default: ''
+                            maxLength: 1024
+                            type: string
+                          spanId:
+                            pattern: ^(?:[0-9a-fA-F]{16})?$
+                            type: string
+                          timeUnixNano:
+                            anyOf:
+                              - maxLength: 21
+                                type: string
+                              - type: number
+                            default: '0'
+                          traceId:
+                            pattern: ^(?:[0-9a-fA-F]{32})?$
+                            type: string
+                        type: object
+                      maxItems: 512
+                      type: array
+                    schemaUrl:
+                      default: ''
+                      maxLength: 2048
+                      type: string
+                    scope:
+                      properties:
+                        attributes:
+                          default: []
+                          items:
+                            $ref: '#/components/schemas/LogAttribute'
+                          maxItems: 128
+                          type: array
+                        droppedAttributesCount:
+                          default: 0
+                          maximum: 4294967295
+                          minimum: 0
+                          type: integer
+                        name:
+                          default: ''
+                          maxLength: 1024
+                          type: string
+                        version:
+                          default: ''
+                          maxLength: 1024
+                          type: string
+                      type: object
+                  type: object
+                maxItems: 128
+                type: array
+            type: object
+          maxItems: 128
+          type: array
+      type: object
+    ExportLogsServiceResponse:
+      properties: {}
+      type: object
     Feedback:
       additionalProperties: false
       properties:
@@ -6777,6 +6897,175 @@ components:
         - status
         - created_at
         - expires_at
+      type: object
+    LogAnyValue:
+      additionalProperties: {}
+      properties:
+        arrayValue:
+          additionalProperties: {}
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/LogAnyValue'
+              type: array
+          type: object
+        boolValue:
+          type: boolean
+        bytesValue:
+          pattern: ^[A-Za-z0-9+/_-]*={0,2}$
+          type: string
+        doubleValue:
+          anyOf:
+            - type: number
+            - enum:
+                - NaN
+                - Infinity
+                - -Infinity
+              type: string
+        intValue:
+          anyOf:
+            - maxLength: 21
+              type: string
+            - type: number
+        kvlistValue:
+          additionalProperties: {}
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/LogAttribute'
+              type: array
+          type: object
+        stringValue:
+          type: string
+      type: object
+    LogAttribute:
+      additionalProperties: {}
+      properties:
+        key:
+          maxLength: 256
+          type: string
+        value:
+          $ref: '#/components/schemas/LogAnyValue'
+      required:
+        - key
+      type: object
+    LogList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/LogRecord'
+          type: array
+        next_cursor:
+          type: string
+        response_truncated:
+          type: boolean
+        total:
+          type: integer
+      required:
+        - items
+        - total
+      type: object
+    LogRecord:
+      properties:
+        attributes:
+          items:
+            $ref: '#/components/schemas/LogAttribute'
+          type: array
+        body:
+          $ref: '#/components/schemas/LogAnyValue'
+        dropped_attributes_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        effective_time_unix_nano:
+          type: string
+        event_name:
+          type: string
+        flags:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        ingested_time_unix_nano:
+          type: string
+        log_id:
+          type: string
+        observed_time_unix_nano:
+          type: string
+        project_id:
+          format: uuid
+          type: string
+        resource:
+          properties:
+            attributes:
+              items:
+                $ref: '#/components/schemas/LogAttribute'
+              type: array
+            droppedAttributesCount:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+          required:
+            - attributes
+            - droppedAttributesCount
+          type: object
+        resource_schema_url:
+          type: string
+        scope:
+          properties:
+            attributes:
+              items:
+                $ref: '#/components/schemas/LogAttribute'
+              type: array
+            droppedAttributesCount:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+            name:
+              type: string
+            version:
+              type: string
+          required:
+            - name
+            - version
+            - attributes
+            - droppedAttributesCount
+          type: object
+        scope_schema_url:
+          type: string
+        severity_number:
+          type: integer
+        severity_text:
+          type: string
+        span_id:
+          type:
+            - string
+            - 'null'
+        time_unix_nano:
+          type: string
+        trace_id:
+          type:
+            - string
+            - 'null'
+      required:
+        - log_id
+        - project_id
+        - time_unix_nano
+        - observed_time_unix_nano
+        - ingested_time_unix_nano
+        - effective_time_unix_nano
+        - severity_number
+        - severity_text
+        - trace_id
+        - span_id
+        - flags
+        - dropped_attributes_count
+        - event_name
+        - body
+        - attributes
+        - resource
+        - scope
+        - resource_schema_url
+        - scope_schema_url
       type: object
     NotImplementedError:
       allOf:
@@ -8334,7 +8623,7 @@ components:
       scheme: basic
       type: http
     bearerAuth:
-      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/traces.
+      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/traces and POST /v1/logs.
       scheme: bearer
       type: http
     csrfHeader:
@@ -15005,6 +15294,10 @@ paths:
                             maximum: 3650
                             minimum: 1
                             type: integer
+                          logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
                           traces:
                             maximum: 3650
                             minimum: 1
@@ -15104,6 +15397,10 @@ paths:
                       maximum: 3650
                       minimum: 1
                       type: integer
+                    logs:
+                      maximum: 3650
+                      minimum: 1
+                      type: integer
                     traces:
                       maximum: 3650
                       minimum: 1
@@ -15170,6 +15467,10 @@ paths:
                             minimum: 1
                             type: integer
                           feedback:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          logs:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -15250,6 +15551,10 @@ paths:
                             minimum: 1
                             type: integer
                           feedback:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          logs:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -15377,6 +15682,10 @@ paths:
                               minimum: 1
                               type: integer
                             feedback:
+                              maximum: 3650
+                              minimum: 1
+                              type: integer
+                            logs:
                               maximum: 3650
                               minimum: 1
                               type: integer
@@ -15509,6 +15818,10 @@ paths:
                             minimum: 1
                             type: integer
                           feedback:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          logs:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -15853,6 +16166,232 @@ paths:
       summary: Health check (Postgres + ClickHouse + Valkey)
       tags:
         - health
+  /v1/logs:
+    get:
+      description: Typed AnyValue log records, ordered by effective nanosecond time DESC then log_id DESC. Effective time uses event time, then observed time, then receipt time; original times remain unchanged. Pages are capped at 256 KiB and carry a scope/filter-bound keyset continuation. Bearer ingestion credentials cannot read logs.
+      parameters:
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 200
+            minimum: 1
+            type: integer
+        - in: query
+          name: offset
+          required: false
+          schema:
+            default: 0
+            maximum: 1000000
+            minimum: 0
+            type:
+              - integer
+              - 'null'
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            type: string
+        - in: query
+          name: filter[severity_number]
+          required: false
+          schema:
+            maximum: 24
+            minimum: 0
+            type:
+              - integer
+              - 'null'
+        - in: query
+          name: filter[severity_text]
+          required: false
+          schema:
+            maxLength: 1024
+            type: string
+        - in: query
+          name: filter[trace_id]
+          required: false
+          schema:
+            pattern: ^[0-9a-fA-F]{32}$
+            type: string
+        - in: query
+          name: filter[q]
+          required: false
+          schema:
+            maxLength: 256
+            type: string
+        - in: query
+          name: filter[time.from]
+          required: false
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: filter[time.to]
+          required: false
+          schema:
+            format: date-time
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogList'
+          description: Project logs
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid filters or cursor
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Project unavailable
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Query failed
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: List Project logs
+      tags:
+        - logs
+    post:
+      description: Accepts JSON/protobuf, optionally gzip. Exports are atomic on validation, limited to 2,000 records, 512 per scope, 128 attributes per record, 32 known-message nesting levels and 64 KiB per retained record. Decimal nanosecond timestamps and AnyValue types are preserved. Requires an explicit Project header; payload provenance cannot override it.
+      parameters:
+        - in: header
+          name: x-glasshouse-project-id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportLogsServiceRequest'
+          application/protobuf:
+            schema:
+              format: binary
+              type: string
+          application/x-protobuf:
+            schema:
+              format: binary
+              type: string
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportLogsServiceResponse'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Logs accepted
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Invalid log export
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Origin or CSRF rejected
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Project unavailable
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Export exceeds byte limit
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Unsupported media or encoding
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Log export failed
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Log export temporarily unavailable
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+        - bearerAuth: []
+      summary: OTLP HTTP log ingest
+      tags:
+        - otlp
   /v1/me:
     get:
       responses:

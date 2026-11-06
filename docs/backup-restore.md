@@ -4,6 +4,8 @@ These commands are repository-supported operator tooling for the durable Glassho
 
 ClickHouse's local `File()` backup backend requires both `backups.allowed_disk` and `backups.allowed_path`. The development Compose files mount `infra/clickhouse/backup.xml`, which confines backup files to `/var/lib/clickhouse/backup/` inside the ClickHouse data volume. Custom Compose deployments must mount equivalent ClickHouse server configuration before starting the service; restarting ClickHouse is required for a changed server config to take effect.
 
+Whole-database ClickHouse backups include OTLP `logs` and migration `0009` bookkeeping alongside traces/observations. The application restore fixture checks log Organization/Project scope, exact event/observed nanoseconds and nested int64 AnyValue bodies before replaying the migration runners. This fixture must be run through the existing isolated restore drill to establish actual backup/restore evidence; seeding and verifying a single database alone is not a restore drill.
+
 ## Backup
 
 Install the client/runtime prerequisites used by the operator host: Bash, Docker Compose v2, `python3`, `sha256sum`, and a running stack; other examples use GNU Make. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.

@@ -657,6 +657,13 @@ export async function handleDeleteProject(c: Context) {
 			client.release();
 		}
 		try {
+			// Always replay this idempotent cleanup, including jobs whose trace
+			// checkpoints predate the logs table. Finalization follows settlement.
+			await ch().command({
+				query:
+					"ALTER TABLE logs DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} SETTINGS mutations_sync = 1",
+				query_params: { organizationId: tenant.organizationId, projectId: id },
+			});
 			if (!job.traces_cleaned_at) {
 				await ch().command({
 					query:

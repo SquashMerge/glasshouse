@@ -1696,7 +1696,9 @@ export async function reviewFeedback(input: {
 export interface GovernancePolicyVersion {
 	id: string;
 	version: number;
-	retention: Partial<Record<"traces" | "datasets" | "feedback", number>>;
+	retention: Partial<
+		Record<"traces" | "datasets" | "feedback" | "logs", number>
+	>;
 	redaction: { mode: "none" | "all_text"; keys: string[] };
 	content_hash: string;
 	created_by: string;
@@ -2651,6 +2653,78 @@ export interface ListTracesParams {
 	input_text?: string;
 	time_from?: string;
 	time_to?: string;
+}
+
+export interface LogAnyValue {
+	stringValue?: string;
+	boolValue?: boolean;
+	intValue?: string;
+	doubleValue?: number | "NaN" | "Infinity" | "-Infinity";
+	bytesValue?: string;
+	arrayValue?: { values?: LogAnyValue[] };
+	kvlistValue?: { values?: LogAttribute[] };
+}
+export interface LogAttribute {
+	key: string;
+	value?: LogAnyValue;
+}
+export interface LogRecord {
+	log_id: string;
+	project_id: string;
+	time_unix_nano: string;
+	observed_time_unix_nano: string;
+	ingested_time_unix_nano: string;
+	effective_time_unix_nano: string;
+	severity_number: number;
+	severity_text: string;
+	trace_id: string | null;
+	span_id: string | null;
+	flags: number;
+	dropped_attributes_count: number;
+	event_name: string;
+	body: LogAnyValue;
+	attributes: LogAttribute[];
+	resource: { attributes: LogAttribute[]; droppedAttributesCount: number };
+	scope: {
+		name: string;
+		version: string;
+		attributes: LogAttribute[];
+		droppedAttributesCount: number;
+	};
+	resource_schema_url: string;
+	scope_schema_url: string;
+}
+export interface ListLogsParams {
+	project_id: string;
+	cursor?: string;
+	limit?: number;
+	severity_number?: number;
+	severity_text?: string;
+	trace_id?: string;
+	q?: string;
+	time_from?: string;
+	time_to?: string;
+}
+export async function listLogs(
+	params: ListLogsParams,
+): Promise<{
+	items: LogRecord[];
+	total: number;
+	next_cursor?: string;
+	response_truncated?: boolean;
+}> {
+	const qs = buildQs({
+		project_id: params.project_id,
+		cursor: params.cursor,
+		limit: params.limit,
+		"filter[severity_number]": params.severity_number,
+		"filter[severity_text]": params.severity_text,
+		"filter[trace_id]": params.trace_id,
+		"filter[q]": params.q,
+		"filter[time.from]": params.time_from,
+		"filter[time.to]": params.time_to,
+	});
+	return responseJson(await authedFetch(`/v1/logs${qs}`), "List logs");
 }
 
 export async function listTraces(

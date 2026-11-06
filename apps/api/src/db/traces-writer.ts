@@ -98,7 +98,7 @@ export async function insertObservations(
 	);
 }
 
-async function insertWithDeadline(
+export async function insertWithDeadline(
 	client: ClickHouseClient,
 	params: Parameters<ClickHouseClient["insert"]>[0],
 	timeoutMs: number,
