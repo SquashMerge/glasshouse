@@ -6,6 +6,7 @@ import {
 	type Page,
 } from "@playwright/test";
 import { LOCAL_USER, fillLocalPassword } from "./local-auth";
+import { buildFeedbackTracePayload, hex } from "../fixtures/otlp-traces";
 
 const USER = process.env.UI_USERNAME ?? "glasshouse";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
@@ -39,14 +40,6 @@ function authorization() {
 
 function unique(prefix: string) {
 	return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function hex(bytes: number) {
-	const characters = "0123456789abcdef";
-	let value = "";
-	for (let index = 0; index < bytes * 2; index += 1)
-		value += characters[Math.floor(Math.random() * characters.length)];
-	return value;
 }
 
 async function apiJson<T>(response: APIResponse, status = 200): Promise<T> {
@@ -165,57 +158,20 @@ async function ingestProjectTrace(
 ) {
 	const traceId = hex(16);
 	const observationId = hex(8);
-	const timestamp = Date.now() * 1_000_000;
 	const response = await request.post(`${API_BASE}/v1/traces`, {
 		headers: {
 			authorization: authorization(),
 			"content-type": "application/json",
 			"x-glasshouse-project-id": projectId,
 		},
-		data: {
-			resource_spans: [
-				{
-					resource: {
-						attributes: [
-							{ key: "service.name", value: { stringValue: "first-pass-e2e" } },
-							{
-								key: "glasshouse.project.id",
-								value: { stringValue: projectId },
-							},
-						],
-					},
-					scope_spans: [
-						{
-							spans: [
-								{
-									trace_id: traceId,
-									span_id: observationId,
-									name: unique("first-pass-trace"),
-									kind: 1,
-									start_time_unix_nano: timestamp,
-									end_time_unix_nano: timestamp + 1_000_000,
-									status: { code: 1 },
-									attributes: [
-										{
-											key: "gen_ai.request.model",
-											value: { stringValue: "e2e-model" },
-										},
-										{
-											key: "gen_ai.prompt.0.content",
-											value: { stringValue: JSON.stringify(input) },
-										},
-										{
-											key: "gen_ai.completion.0.content",
-											value: { stringValue: JSON.stringify(output) },
-										},
-									],
-								},
-							],
-						},
-					],
-				},
-			],
-		},
+		data: buildFeedbackTracePayload({
+			projectId,
+			traceId,
+			spanId: observationId,
+			name: unique("first-pass-trace"),
+			input,
+			output,
+		}),
 	});
 	expect(response.status(), "OTLP ingest status").toBe(200);
 

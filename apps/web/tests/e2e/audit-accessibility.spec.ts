@@ -79,7 +79,7 @@ async function mockWorkspace(page: Page, recovery = false) {
 			return route.fulfill({ json: { items: [] } });
 		if (path === "/v1/admin/actors" || path === "/v1/admin/local-accounts")
 			return route.fulfill({ json: { items: [] } });
-		if (path === "/v1/traces" || path === "/v1/observations")
+		if (["/v1/traces", "/v1/observations", "/v1/logs"].includes(path))
 			return route.fulfill({ json: { items: [], total: 0 } });
 		if (path.endsWith("/events"))
 			return route.fulfill({
@@ -188,24 +188,44 @@ test.describe("Observability tabs in the real browser", () => {
 	}) => {
 		const traces = page.getByRole("tab", { name: "Traces", exact: true });
 		const spans = page.getByRole("tab", { name: "Spans", exact: true });
+		const logs = page.getByRole("tab", { name: "Logs", exact: true });
+		await expect(page.getByRole("tablist").getByRole("tab")).toHaveText([
+			"Traces",
+			"Spans",
+			"Logs",
+		]);
 		await traces.focus();
 		for (const [key, selected, label] of [
 			["ArrowRight", spans, "Spans"],
+			["ArrowRight", logs, "Logs"],
 			["ArrowRight", traces, "Traces"],
+			["ArrowLeft", logs, "Logs"],
 			["ArrowLeft", spans, "Spans"],
 			["Home", traces, "Traces"],
-			["End", spans, "Spans"],
+			["End", logs, "Logs"],
 		] as const) {
 			await page.keyboard.press(key);
 			await expect(selected).toBeFocused();
 			await expect(selected).toHaveAttribute("aria-selected", "true");
-			await expect(page.getByRole("tabpanel", { name: label })).toBeVisible();
+			for (const other of [traces, spans, logs].filter(
+				(tab) => tab !== selected,
+			)) {
+				await expect(other).toHaveAttribute("aria-selected", "false");
+				await expect(other).toHaveAttribute("tabindex", "-1");
+			}
+			await expect(selected).toHaveAttribute("tabindex", "0");
+			const panel = page.getByRole("tabpanel", { name: label, exact: true });
+			await expect(panel).toBeVisible();
+			await expect(panel).toHaveAttribute(
+				"id",
+				(await selected.getAttribute("aria-controls"))!,
+			);
 			await expect(page).toHaveURL(new RegExp(`tab=${label.toLowerCase()}`));
+			await page.keyboard.press("Tab");
+			await expect(panel).toBeFocused();
+			await page.keyboard.press("Shift+Tab");
+			await expect(selected).toBeFocused();
 		}
-		await page.keyboard.press("Tab");
-		await expect(page.getByRole("tabpanel", { name: "Spans" })).toBeFocused();
-		await page.keyboard.press("Shift+Tab");
-		await expect(spans).toBeFocused();
 	});
 
 	test("does not replay tab autofocus when returning to a history entry", async ({

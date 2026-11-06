@@ -2,11 +2,16 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { type ClickHouseClient, createClient } from "@clickhouse/client";
 import { Pool } from "pg";
+import {
+	buildFeedbackTracePayload,
+	buildTracePayload,
+} from "../../../web/tests/fixtures/otlp-traces.js";
 import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization.js";
 import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate.js";
 import { migrate } from "../../src/db/migrate.js";
 import { otlpDisposableDatastores } from "../helpers/otlp-disposable-datastores.js";
 import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
+import { OtlpWireRequest } from "../../src/schemas/otlp.js";
 import { publishSync } from "../../src/lib/event-bus.js";
 import {
 	type TenantScope,
@@ -361,6 +366,142 @@ async function post(body: string, project = projectId, auth = authorization) {
 			"x-glasshouse-project-id": project,
 		},
 		body,
+	});
+}
+
+for (const fixture of ["dataset-feedback-first-pass", "sse-live"] as const) {
+	test(`public ingest accepts the actual ${fixture} browser trace fixture`, async () => {
+		const traceId = randomBytes(16).toString("hex");
+		const spanId = randomBytes(8).toString("hex");
+		const payload =
+			fixture === "dataset-feedback-first-pass"
+				? buildFeedbackTracePayload({
+						projectId,
+						traceId,
+						spanId,
+						name: "browser-feedback-regression",
+						input: { prompt: "browser input" },
+						output: { completion: "browser output" },
+					})
+				: buildTracePayload(
+						projectId,
+						traceId,
+						spanId,
+						10,
+						"browser-sse-regression",
+					);
+		const spans = payload.resourceSpans.flatMap((resource) =>
+			resource.scopeSpans.flatMap((scope) => scope.spans),
+		);
+		expect(OtlpWireRequest.safeParse(payload).success).toBe(true);
+		const body = JSON.stringify(payload);
+		expect((await post(body, projectId, "")).status).toBe(401);
+		expect((await post(body, otherProjectId)).status).toBe(404);
+		const beforeEvents = events.length;
+		for (const field of ["startTimeUnixNano", "endTimeUnixNano"]) {
+			const unsafeBody = JSON.stringify(payload, (key, value) =>
+				key === field ? Number(value) : value,
+			);
+			expect(OtlpWireRequest.safeParse(JSON.parse(unsafeBody)).success).toBe(
+				false,
+			);
+			expect((await post(unsafeBody)).status).toBe(400);
+		}
+		for (const table of ["traces", "observations"]) {
+			const result = await clickhouse.query({
+				query: `SELECT count() AS count FROM ${table} WHERE trace_id = {traceId:String}`,
+				query_params: { traceId },
+				format: "JSONEachRow",
+			});
+			expect(Number((await result.json<{ count: string }>())[0]?.count)).toBe(
+				0,
+			);
+		}
+		expect(events.length).toBe(beforeEvents);
+		const response = await post(body);
+		expect({ status: response.status, body: await response.text() }).toEqual({
+			status: 200,
+			body: "{}",
+		});
+		const read = await fetch(
+			new URL(`/v1/traces/${traceId}?project_id=${projectId}`, server.url),
+			{ headers: { authorization } },
+		);
+		expect(read.status).toBe(200);
+		const detail = (await read.json()) as {
+			trace: { project_id: string };
+			next_cursor?: string;
+			observations: Array<{
+				observation_id: string;
+				parent_observation_id: string | null;
+				project_id: string;
+				start_time_unix_nano: string;
+				end_time_unix_nano: string;
+			}>;
+		};
+		let cursor = detail.next_cursor;
+		const seenCursors = new Set<string>();
+		while (cursor) {
+			expect(seenCursors.has(cursor)).toBe(false);
+			seenCursors.add(cursor);
+			const next = await fetch(
+				new URL(
+					`/v1/traces/${traceId}?project_id=${projectId}&cursor=${encodeURIComponent(cursor)}`,
+					server.url,
+				),
+				{ headers: { authorization } },
+			);
+			expect(next.status).toBe(200);
+			const page = (await next.json()) as typeof detail;
+			detail.observations.push(...page.observations);
+			cursor = page.next_cursor;
+		}
+		expect(detail.trace.project_id).toBe(projectId);
+		expect(detail.observations).toHaveLength(spans.length);
+		for (const span of spans) {
+			expect(BigInt(span.startTimeUnixNano)).toBeGreaterThan(
+				BigInt(Number.MAX_SAFE_INTEGER),
+			);
+			expect(detail.observations).toContainEqual(
+				expect.objectContaining({
+					observation_id: span.spanId,
+					project_id: projectId,
+					start_time_unix_nano: span.startTimeUnixNano,
+					end_time_unix_nano: span.endTimeUnixNano,
+				}),
+			);
+		}
+		if (fixture === "sse-live") {
+			expect(
+				detail.observations.filter(
+					(span) => span.parent_observation_id === spanId,
+				),
+			).toHaveLength(9);
+			const childPayload = buildTracePayload(
+				projectId,
+				traceId,
+				spanId,
+				1,
+				"browser-sse-regression",
+				1,
+			);
+			const child = childPayload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+			expect(child.parentSpanId).toBe(spanId);
+			const beforeChildEvents = events.length;
+			expect((await post(JSON.stringify(childPayload))).status).toBe(200);
+			expect(events.slice(beforeChildEvents)).toContainEqual(
+				expect.objectContaining({
+					event: "observation.created",
+					payload: expect.objectContaining({
+						observation: expect.objectContaining({
+							observation_id: child.spanId,
+							parent_observation_id: spanId,
+							project_id: projectId,
+						}),
+					}),
+				}),
+			);
+		}
 	});
 }
 
