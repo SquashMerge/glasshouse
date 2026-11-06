@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { deleteLogRetentionBatch } from "../db/logs.js";
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -7,6 +8,7 @@ import {
 	lockProjectAuditProvenance,
 } from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
+import { deleteMetricRetentionBatch } from "../db/metrics-retention.js";
 import {
 	policyHash,
 	deleteSafeDatasetRetentionBatch,
@@ -28,7 +30,7 @@ import {
 	RetentionRunHistory,
 } from "../schemas/governance.js";
 import {
-	assertTenantProjectAccess,
+	resolveAuthorizedProjectScope,
 	TenantScopeError,
 	trustedTenant,
 } from "../tenancy.js";
@@ -160,12 +162,16 @@ async function actorUsername(
 async function manager(c: Context, projectId: string) {
 	const tenant = trustedTenant(c);
 	try {
-		await assertTenantProjectAccess(pgPool(), tenant, projectId, "governed");
+		return await resolveAuthorizedProjectScope(
+			pgPool(),
+			tenant,
+			projectId,
+			"governed",
+		);
 	} catch (cause) {
 		if (cause instanceof TenantScopeError) throw new Error("Not found");
 		throw cause;
 	}
-	return tenant;
 }
 async function versions(
 	projectId: string,
@@ -407,15 +413,16 @@ export async function handleApprovePolicy(c: Context) {
 async function approved(c: Context, projectId: string) {
 	const tenant = await manager(c, projectId);
 	const version = (
-		await versions(projectId, tenant.organizationId, tenant.actorId)
+		await versions(tenant.projectId, tenant.organizationId, tenant.actorId)
 	).rows.find((row) => row.approved_at);
 	if (!version) throw new Error("No approved policy exists");
 	return { tenant, version };
 }
 export async function handlePreviewRetention(c: Context) {
 	try {
-		const { project_id } = (c.req as any).valid("json");
-		const { tenant, version } = await approved(c, project_id);
+		const { project_id: requestedProjectId } = (c.req as any).valid("json");
+		const { tenant, version } = await approved(c, requestedProjectId);
+		const project_id = tenant.projectId;
 		const counts = await retentionCounts(
 			pgPool(),
 			tenant.organizationId,
@@ -499,10 +506,14 @@ export async function handleListRetentionRuns(c: Context) {
 }
 export async function handleRunRetention(c: Context) {
 	try {
-		const { project_id, policy_version_id, preview_id, batch_size } = (
-			c.req as any
-		).valid("json");
-		const tenant = await manager(c, project_id);
+		const {
+			project_id: requestedProjectId,
+			policy_version_id,
+			preview_id,
+			batch_size,
+		} = (c.req as any).valid("json");
+		const tenant = await manager(c, requestedProjectId);
+		const project_id = tenant.projectId;
 		const started = performance.now();
 		const db = pgPool();
 		const client = await db.connect();
@@ -616,6 +627,29 @@ export async function handleRunRetention(c: Context) {
 				counts.datasets = result.deleted;
 				counts.datasets_skipped = result.skipped;
 			}
+			if (version.retention.metrics) {
+				const cutoff = new Date(
+					Date.now() - version.retention.metrics * 86_400_000,
+				);
+				await destructiveStage(
+					db,
+					tenant,
+					project_id,
+					version,
+					runId,
+					ownerToken,
+					"metrics_deleted",
+					async () => {
+						counts.metrics = await deleteMetricRetentionBatch(
+							tenant.organizationId,
+							project_id,
+							cutoff,
+							batch_size,
+						);
+					},
+					counts,
+				);
+			}
 			if (version.retention.traces) {
 				const cutoff = new Date(
 					Date.now() - version.retention.traces * 86_400_000,
@@ -675,6 +709,29 @@ export async function handleRunRetention(c: Context) {
 							selected.traceIds,
 						);
 						counts.traces = selected.traceIds.length;
+					},
+					counts,
+				);
+			}
+			if (version.retention.logs) {
+				const cutoff = new Date(
+					Date.now() - version.retention.logs * 86_400_000,
+				);
+				await destructiveStage(
+					db,
+					tenant,
+					project_id,
+					version,
+					runId,
+					ownerToken,
+					"logs_deleted",
+					async () => {
+						counts.logs = await deleteLogRetentionBatch(
+							tenant.organizationId,
+							project_id,
+							cutoff,
+							batch_size,
+						);
 					},
 					counts,
 				);
@@ -823,7 +880,7 @@ async function persistRunProgress(
 	stage: string,
 ) {
 	const result = await client.query(
-		"UPDATE governance_retention_runs SET counts = $3::jsonb, cursor = jsonb_build_object('stage', $4, 'counts', $3::jsonb), heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING id",
+		"UPDATE governance_retention_runs SET counts = $3::jsonb, cursor = jsonb_build_object('stage', $4::text, 'counts', $3::jsonb), heartbeat_at = now(), lease_expires_at = now() + interval '5 minutes' WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING id",
 		[runId, ownerToken, JSON.stringify(counts), stage],
 	);
 	if (!result.rows[0]) throw new Error("Retention run ownership was lost");
@@ -854,7 +911,7 @@ async function terminalizeRun(
 			status: "completed" | "failed";
 			counts: Record<string, number>;
 		}>(
-			"WITH changed AS (UPDATE governance_retention_runs SET status = $3, counts = $4::jsonb, cursor = jsonb_build_object('stage', $3, 'counts', $4::jsonb), completed_at = now(), lease_expires_at = NULL WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING organization_id, project_id, policy_version_id, requested_by, status, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, CASE WHEN status = 'completed' THEN 'retention_completed' ELSE 'retention_failed' END, counts, $5 FROM changed) SELECT status, counts FROM changed",
+			"WITH changed AS (UPDATE governance_retention_runs SET status = $3::text, counts = $4::jsonb, cursor = jsonb_build_object('stage', $3::text, 'counts', $4::jsonb), completed_at = now(), lease_expires_at = NULL WHERE id = $1 AND owner_token = $2::uuid AND status = 'running' RETURNING organization_id, project_id, policy_version_id, requested_by, status, counts, started_at), audit AS (INSERT INTO governance_audit_events (organization_id, project_id, policy_version_id, actor_subject, event_type, counts, duration_ms) SELECT organization_id, project_id, policy_version_id, requested_by, CASE WHEN status = 'completed' THEN 'retention_completed' ELSE 'retention_failed' END, counts, $5::integer FROM changed) SELECT status, counts FROM changed",
 			[runId, ownerToken, status, JSON.stringify(counts), duration],
 		);
 		if (transitioned.rows[0]) return transitioned.rows[0];

@@ -1,24 +1,30 @@
 # OTel Ingest (Glasshouse)
 
-This page explains how to point an OpenTelemetry-instrumented agent at Glasshouse's `/v1/otel/v1/traces` endpoint.
+Glasshouse accepts OTLP JSON/protobuf traces at `POST /v1/traces`, logs at `POST /v1/logs`, and metrics at `POST /v1/metrics`, with optional OTLP/gRPC TraceService, LogsService and MetricsService exports. Each path's `GET` operation is a separately authorized product read; trace detail and SSE routes remain product reads. Bearer ingestion credentials cannot read telemetry. See [metrics ingestion, limits and readback](otlp-metrics.md).
 
-## TL;DR — set these five env vars on your agent
+This endpoint change is a breaking cutover: `POST /v1/otel/v1/traces` is removed. Update clients and proxies configured with the old URL. The old custom path was permitted by OTLP; this migration is a Glasshouse product decision, not a specification requirement.
+
+The gRPC receiver is disabled by default and needs a private network or a TLS-terminating proxy. See the listener settings and limitations below before exposing it.
+
+For production or the image-only snapshot bundle, the optional `infra/compose.otlp-grpc.yaml` overlay publishes gRPC only on the host loopback interface and binds the API listener to Docker's private `api` service address. Set `OTLP_GRPC_HOST_PORT` to change only the host-facing port; the container listener remains `4317`. Start it alongside the relevant production Compose file, then put an operator-managed TLS proxy in front of that loopback port if remote exporters need access. The snapshot copy is `deploy/snapshot/compose.otlp-grpc.yaml` and is intentionally identical.
+
+## Endpoint configuration
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel" # receiver mount; no trailing /v1/traces
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000" # base URL, no /v1/traces suffix
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'glasshouse:YOUR_PASSWORD' | base64),x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-`OTEL_EXPORTER_OTLP_ENDPOINT` should point at Glasshouse's **receiver mount** (`/v1/otel`), without the final `/v1/traces` suffix. The OTel SDK appends `/v1/traces` by default, producing Glasshouse's `POST /v1/otel/v1/traces` endpoint. If your SDK uses a non-standard path, see [Custom path](#custom-path) below.
+For an OTLP/HTTP sender, the base endpoint resolves traces to `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used as-is and must include the complete path. Configure the sender for HTTP/protobuf or HTTP/JSON; a gRPC exporter instead needs the separately configured gRPC listener.
 
 ## Authentication
 
-OTLP trace ingestion accepts either the existing HTTP Basic Auth credentials or a dedicated Project-scoped bearer credential. Basic Auth remains suitable for existing integrations; a dedicated credential is safer for unattended agents because it cannot sign into the dashboard or read telemetry.
+OTLP trace, log and metric ingestion accepts either the existing HTTP Basic Auth credentials or a dedicated Project-scoped bearer credential. Basic Auth remains suitable for existing integrations; a dedicated credential is safer for unattended agents because it cannot sign into the dashboard or read telemetry. Cookie sessions also work with the normal Origin and CSRF checks; a presented cookie takes precedence over authorization headers.
 
-An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces only to their bound Project and are accepted only by `POST /v1/otel/v1/traces`.
+An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces, logs and metrics only to their bound Project and are accepted only by `POST /v1/traces`, `POST /v1/logs`, and `POST /v1/metrics`.
 
 Rotation and revocation require current organization Admin authority; they are not restricted to the credential's creator. Any current Admin in that organization can rotate an active credential for an active Project or revoke a credential for an active or archived Project. `created_by_actor_id` records the creator and supplies the actor used to authorize bearer ingestion; it is not a creator-only management permission.
 
@@ -29,7 +35,7 @@ For a dedicated credential, put the literal secret in a protected environment va
 ```sh
 export GLASSHOUSE_OTLP_INGEST_TOKEN="gh_ing_<secret-from-admin-ui>"
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
-export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer $GLASSHOUSE_OTLP_INGEST_TOKEN,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
@@ -44,11 +50,13 @@ export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
-The Basic credentials are the same ones you'd use to log in at `http://localhost:5173/login`. Basic Auth retains its existing project authorization behavior; an ingestion credential is deliberately limited to trace POSTs.
+Basic Auth retains its existing Project authorization behavior; an ingestion credential is deliberately limited to the three signal-ingestion POSTs. Browser sign-in uses local cookie sessions.
 
 ## Organization and project routing
 
 Every Basic-auth credential resolves to a server-configured organization. OTLP payload attributes cannot select or override it. The exporter must select a project with `x-glasshouse-project-id`; Glasshouse verifies that project belongs to the credential's organization before accepting the batch.
+
+The optional resource attribute `glasshouse.project.id` must match that authorized Project. Each resource may contain it at most once, even when duplicate values agree. A selector must contain only `key` and `value`, with exactly one UUID `stringValue`; malformed IDs, unknown attribute/AnyValue extensions (including null extensions), and multiple value alternatives reject the export with `400` before writes or publication. A well-formed resource selector for another Project is rejected. Missing resource selectors inherit the authorized header Project; span attributes cannot override it. Persistence and redaction policy both use the trusted authorized Project, independently of redacted payload attributes.
 
 ```sh
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
@@ -56,62 +64,11 @@ export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-projec
 
 For a multi-organization deployment, configure `GLASSHOUSE_BASIC_AUTH_CREDENTIALS` on the API as JSON objects with `username`, `password`, and `organization_id`. The organization and selected project must already exist in Postgres; credentials are authentication configuration, not caller-controlled tenant metadata.
 
-## Python example
+## Sending JSON
 
-```python
-import os
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+Use a sender that emits OTLP JSON with `Content-Type: application/json`, the authorization header, and the Project selector. The repository's `infra/scripts/seed_traces.py` is an example sender. OTLP/HTTP protobuf senders use the same endpoint with `Content-Type: application/x-protobuf`.
 
-resource = Resource.create({
-    "service.name": os.environ["OTEL_SERVICE_NAME"],
-    "deployment.environment": "production",
-})
-
-provider = TracerProvider(resource=resource)
-exporter = OTLPSpanExporter(
-    endpoint=os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] + "/v1/traces",
-)
-provider.add_span_processor(BatchSpanProcessor(exporter))
-trace.set_tracer_provider(provider)
-
-# Any spans created with this tracer go to Glasshouse.
-tracer = trace.get_tracer(__name__)
-with tracer.start_as_current_span("hello") as span:
-    span.set_attribute("gen_ai.system", "openai")
-    span.set_attribute("gen_ai.request.model", "gpt-4o")
-    span.set_attribute("gen_ai.usage.input_tokens", 12)
-    span.set_attribute("gen_ai.usage.output_tokens", 18)
-```
-
-`OTLPSpanExporter` reads `OTEL_EXPORTER_OTLP_HEADERS` from the env and applies them to every export request.
-
-## Node.js / TypeScript example
-
-```ts
-import { NodeSDK } from "@opentelemetry/sdk-node";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
-import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
-
-const sdk = new NodeSDK({
-  resource: new Resource({
-    [SemanticResourceAttributes.SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? "my-agent",
-  }),
-  traceExporter: new OTLPTraceExporter({
-    // @opentelemetry/exporter-trace-otlp-http appends /v1/traces by default.
-    url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces`,
-    headers: parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS),
-  }),
-});
-
-sdk.start();
-```
-
-Where `parseOtlpHeaders` is a small helper that splits the `k=v,k2=v2` string into a `Record<string, string>`.
+JSON field values of `null` are treated as unset, following ProtoJSON. For example, `resource: null`, `status: null`, `attributes: null`, and nested AnyValue fields with `null` have the same meaning as omitted fields. An unset AnyValue is an empty value, not a literal JSON null. Null elements inside known repeated fields (including nested attribute collections, events, and links) are invalid. Unknown message fields are ignored; their contents do not make an otherwise valid export malformed. Unknown nested attribute fields remain subject to fail-closed redaction. Retained spans still require valid trace/span IDs, a nonempty name, and a start time; setting a required field to null does not bypass that validation. Send uint64 timestamps and int64 attributes as decimal strings. Numeric forms must be safe JavaScript integers; unsafe numbers, negative uint64s, fractions, overflow and non-decimal timestamp strings reject the export before writes. Span calendar times must fit ClickHouse's existing millisecond index (1970 through 2299); event timestamps retain the full uint64 range. ProtoJSON special double strings (`NaN`, `Infinity`, `-Infinity`) are supported.
 
 ## Prompt provenance and sensitive data
 
@@ -125,6 +82,8 @@ Generation spans may identify the exact managed prompt version that produced the
 
 The tuple is atomic: a missing, duplicate, or malformed member means no provenance is recorded. Glasshouse accepts it only for observations classified as `generation`.
 
+`all_text` preserves the validated typed tuple and recognized top-level `openinference.span.kind` enum values used for classification (`llm`, `chain`, `agent`, `tool`, `retriever`, `embedding`, `reranker`, case-insensitive). Explicit configured-key redaction still removes those fields and can suppress the tuple/classification. Tuple validation examines the original attributes: unknown attribute/value fields or duplicate members cannot become valid merely because another branch is dropped by redaction. These are client-reported structural identifiers, not authorization or proof of execution; never encode secrets in prompt slugs, hashes or enum fields. Other reserved prompt attributes remain stripped, and other telemetry strings/bytes remain redacted.
+
 Glasshouse removes every incoming `glasshouse.prompt.*` attribute before it stores metadata or publishes events, including invalid and unknown keys. Do not send template source, rendered prompts or outputs, variables, or settings under that namespace: they are intentionally unavailable after ingest. Stored observation metadata is a versioned envelope containing sanitized attributes and, when valid, the typed provenance tuple.
 
 ## Redacting sensitive data
@@ -132,7 +91,7 @@ Glasshouse removes every incoming `glasshouse.prompt.*` attribute before it stor
 Glasshouse stores `input_text`, `output_text`, and sanitized OTLP attributes in a `metadata` JSON column. If your agents send PII or other sensitive data through the trace pipeline, configure redaction on the server side (set in the api container's env / compose env / .env):
 
 ```sh
-# Replace input_text + output_text with "[REDACTED]" before persistence
+# Redact input/output and all retained telemetry text values before persistence
 GLASSHOUSE_REDACT_INPUT=true
 
 # Strip these keys from the metadata column entirely (e.g. user emails, IPs)
@@ -143,7 +102,15 @@ Both flags default to off (dev-friendly). In production we recommend `GLASSHOUSE
 
 ## What gets captured
 
-Glasshouse accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is normalized into:
+Glasshouse accepts standard OTLP HTTP JSON (lower-camel field names) and protobuf trace exports at the same endpoint. It accepts `Content-Encoding: gzip` with a decompressed body limit equal to `API_MAX_BODY_BYTES`, so compressed input cannot bypass the request budget. A successful export returns the protocol's empty response (`{}` for JSON, empty protobuf for protobuf). OTLP errors use a `google.rpc.Status` response in the request encoding, with generic messages that do not disclose tenant or credential state.
+
+An optional native gRPC TraceService/LogsService/MetricsService listener is disabled by default. Set `OTLP_GRPC_PORT` to enable it; `OTLP_GRPC_HOST` defaults to `127.0.0.1` and only loopback/private bind addresses are accepted. Place it behind an operator-managed TLS edge. gRPC metadata must include exactly one `authorization` value and exactly one `x-glasshouse-project-id`, without comma-joined ambiguity; it uses the same Basic/Bearer authentication, Project authorization, provenance checks, redaction, and ingest lock as HTTP. Health checks recognize all three registered signal services.
+
+For IPv6 loopback, set `OTLP_GRPC_HOST=::1` without brackets; the receiver brackets the literal when constructing its gRPC bind target. The host must have that address available.
+
+The CI interoperability regression first installs the version- and hash-locked Python dependency closure in `infra/otlp-sdk-requirements.txt` and performs an offline real-SDK provider construction/export check with an in-memory exporter. It then uses `.github/compose.otlp-sdk-integration.yaml`, with no explicit container, port, or volume names and dynamically allocated loopback ports. The harness rejects caller/Compose project overrides, validates the rendered Compose model for fixed names, external resources, fixed published ports, and only the predicted generated network/volume names, generates an unpredictable project and ownership marker, and fails preflight if either project-labeled resources or predicted resource names already exist. It stops/removes only exact container and network IDs that are atomically verified to carry both the generated marker and project label, and never removes volumes. Mocked fake-Docker tests cover collision, inventory, ownership, partial-startup, signal, and ID-truncation failures without a Docker daemon. Docker-backed fixture/path resolution and exporter execution remain hosted-CI verification; they are not claimed from a devcontainer without Docker.
+
+Each span is normalized into:
 
 | Glasshouse column | Source |
 |---|---|
@@ -161,19 +128,170 @@ Glasshouse accepts OTLP HTTP/JSON trace exports (OTLP 1.4.x). Each span is norma
 
 ## Viewing trace metadata
 
-On the Observability trace-detail page, structured Observation attributes, events, and links are shown as expandable JSON trees. The metadata tree opens fully expanded; use its compact **Collapse all** / **Expand all** control to fold or reveal the whole tree, or use individual node controls. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
+On the Observability trace-detail page, structured Observation attributes are shown as expandable JSON trees. The metadata tree opens fully expanded; use its compact **Collapse all** / **Expand all** control to fold or reveal the whole tree, or use individual node controls. Use **Copy value** to copy a node's JSON value or **Copy path** to copy its JSON path. Input and output remain text fields.
+
+Event/link-bearing spans are retained. Each detailed Observation has an `otlp` envelope (`schema_version: 1`) containing resource and instrumentation scope attributes, both schema URLs, kind, trace state, flags, source dropped counts, full status (including message), span attributes, events (including exception attributes and times), and links (including IDs, flags, trace state and attributes). Links are context, not authorization or automatically followed cross-tenant reads. The inspector's **Events**, **Links**, **Resource**, and **Context** tabs expose this retained data using bounded JSON trees and copy controls. `otlp.truncated: true` explicitly reports retention omissions/shortening; it is distinct from SDK-reported dropped counts. List endpoints omit the detail envelope.
+
+`start_time_unix_nano`, `end_time_unix_nano`, and `duration_nano` are nullable decimal strings alongside compatible UTC millisecond timestamps and numeric `duration_ms` (now permitting fractions). Ingest uses BigInt for timestamps, comparisons and subtraction, converting only the millisecond quotient for calendar indexing and the duration difference for compatible display. An end preceding its start rejects the export before writes rather than inventing a zero duration; missing/null ends remain in-flight. The inspector shows exact values; waterfall percentages subtract BigInt offsets before converting to display numbers. Resource timestamp attributes encoded as `intValue` remain decimal strings. Legacy/internal rows without source precision return null rather than fabricated nanos. Migration `0008_otlp_trace_fidelity.sql` adds nullable UInt64 columns, a precise duration companion, and the bounded Observation detail column without rewriting historical rows.
 
 The tree is a bounded presentation: it renders at most 500 nodes per detail view, up to 100 children per object or array, and 12 nested levels. When any limit is reached, the UI identifies how many entries were omitted. These display limits do not change stored telemetry; omitted entries remain part of the retained metadata when available through the API. A limited tree is not evidence that ingestion or storage dropped the omitted data.
 
+Waterfall bars, the elapsed-time ruler and trace summary use one shared relative interval. Exact rows contribute their source nanoseconds; legacy rows contribute only their existing millisecond start/duration. Elapsed display subtracts these coordinates before conversion to numbers, so a 2 ns span crossing a millisecond boundary remains 0.000002 ms rather than 1 ms. Absolute calendar labels remain millisecond precision; legacy source precision is never invented.
+
 ## Ingestion and query bounds
 
-A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit), 128 resource spans/scopes/attributes, and 128 events or links per span. Requests over these structural limits are rejected before normalization and persistence. The HTTP body cap independently defaults to 1 MiB; operators may raise it with `API_MAX_BODY_BYTES`.
+A single OTLP request accepts at most 2,000 spans (with a 512-span per scope limit), 512 events and 512 links per span, and 128 resource spans, scopes per resource, or attributes per record (including event/link/resource/scope attributes). Requests over these structural limits are rejected before persistence. Supported event/link spans receive ordinary full success. The HTTP body cap independently defaults to 1 MiB; operators may raise it with `API_MAX_BODY_BYTES`, and must also configure `OTLP_GRPC_MAX_RECEIVE_BYTES` for larger gRPC messages. Gzip cannot bypass the decompressed body limit.
 
-OTLP retries reuse table-namespaced ClickHouse insert-deduplication tokens derived from the validated batch and trusted organization/project scope. This avoids duplicate trace rows when an earlier attempt writes `traces` but fails before writing `observations`. Deduplication is deliberately bounded by ClickHouse's 100,000-block history per table, not a permanent uniqueness guarantee; retries after that history has rolled over can insert duplicates.
+The OTLP detail envelope is capped at 32 KiB serialized UTF-8 per Observation and 8 MiB across an export (including repeated resource context), with an 8 KiB string limit, depth 32 and 4,096 traversal values per envelope. Oversized content is shortened/omitted with `truncated: true`; the span itself remains retained. ClickHouse enforces the per-row detail byte ceiling. Detail shares its Observation's retention/deletion lifecycle. Recursive configured-key filtering applies to resource, scope, span, event and link attributes, including arrays/kvlists; fail-closed traversal drops uninspectable branches. `all_text` / `GLASSHOUSE_REDACT_INPUT` additionally redacts telemetry string/byte values, names, schema URLs, trace state and status/exception messages before retention. IDs, numeric values, attribute keys and source times remain structural data; do not encode secrets in them. The reserved `glasshouse.prompt.*` stripping contract also applies to the detail envelope. Redaction is not retroactive.
+
+Known message objects and repeated-field arrays may nest at most 32 levels below the request root (depth 0). Exceeding that limit rejects the export with HTTP `400`/gRPC `INVALID_ARGUMENT` before persistence, rather than accepting an unvalidated subtree. Unknown extension contents do not count toward this traversal limit and remain subject to fail-closed attribute redaction. Known nested AnyValue fields are type-checked using the same recursive schema as the wire contract.
+
+OTLP retries reuse table-namespaced ClickHouse insert-deduplication tokens derived from the original bounded, decompressed request bytes, their JSON/protobuf encoding, and trusted organization/project scope (including the resolved fallback Project). Hashing bytes never recursively serializes unknown extension trees. An identical request keeps its identity even if redaction policy or deployment redaction settings change between a committed Trace insert and a failed Observation insert. Every attempt still applies current authorization and redaction; deduplication does not rewrite an already committed row, and redaction changes are not retroactive.
+
+Compression is transport-only for this identity: gzip and uncompressed exports with identical decompressed bytes share tokens. The two protobuf HTTP media aliases and the gRPC bridge use the same protobuf identity; JSON and protobuf remain separate. Different original bytes, including JSON whitespace/key order, ignored extensions, protobuf unknown fields, redacted values, or text beyond retention limits, get different identities even if they produce identical retained rows. Exporters should retry the original bytes rather than reserialize the request. Only the digest is passed to the writer; the raw body is not added to stored rows, events, responses, or logs. Digests are not a secrecy mechanism against guessing known/low-entropy payloads.
+
+Deduplication is deliberately bounded by ClickHouse's 100,000-block history per table, not a permanent uniqueness guarantee; retries after that history has rolled over can insert duplicates. The wire-based token algorithm differs from earlier row-based tokens: an in-flight retry crossing that upgrade can insert a duplicate. There is no cross-version token compatibility or exactly-once guarantee.
+
+Each Trace and Observation insert has a 30-second wall-clock deadline, in addition to the ClickHouse client's socket timeout. The writer passes an explicit `AbortSignal` to the pinned client and awaits cancellation, including while draining a stalled response body; it does not abandon a background insert with `Promise.race`. Deadline timers are cleared when the insert settles. This bounds each insert, not the entire ingest request or its authorization/lock acquisition.
+
+Recognized transient storage failures, including this insert deadline and the pinned ClickHouse client's native insert timeout, return HTTP `503` or gRPC `UNAVAILABLE` with a generic message. A timeout can occur after a write has reached storage; aborting local I/O does not roll back a remote write, and these responses do not prove that no rows were written. Exporter retries retain the bounded deduplication behavior above; the writer does not automatically retry. Other internal failures remain HTTP `500`/gRPC `INTERNAL`.
 
 Trace and Observation text is redacted before retention accounting, then safely clipped to 8 KiB UTF-8 per input/output field. The stored `input_retained_truncated` and `output_retained_truncated` flags report source clipping; legacy pre-bound rows are clipped safely at read time and report the same flags without rewriting history. REST and list-SSE excerpts are independently limited to 200 Unicode code points and carry `input_excerpt_truncated` or `output_excerpt_truncated` when presentation clips a field. In `GET /v1/traces/{id}`, the embedded `trace.input_text` and `trace.output_text` are those 200-code-point excerpts, while each detailed Observation input/output is its full retained field. Sanitized Observation metadata is retained as valid JSON up to 16 KiB; a `truncated: true` metadata marker identifies a clipped envelope. Observation lists and list-SSE events expose at most a 2 KiB metadata envelope and set `metadata_truncated: true` when it is omitted. ClickHouse enforces the same ceilings for new writes.
 
 Trace and Observation list `limit` defaults to 50, accepts zero, and clamps a larger value to 200. Malformed, fractional, or negative limits return 400. The v1 `offset` parameter remains supported (including `offset=0`); new clients should use the opaque keyset `next_cursor` and must not combine it with a positive offset. `trace` and `observation` list-SSE event data uses the same Project-scoped row projection as its REST list, including the excerpts and truncation markers above. REST list/detail payloads stop at a 256 KiB raw UTF-8 JSON-body ceiling. A trace-detail SSE snapshot is capped by the smaller of that response budget and `SSE_MAX_PENDING_BYTES` after its complete `event`/`data` frame is serialized, so it can pass the authenticated frame-delivery queue. Partial REST and SSE pages expose `response_truncated` or `snapshot_truncated` with `next_cursor`. Trace and Observation list cursors are Project-scoped for stable `start_time, id` traversal. Trace-detail cursors are additionally trace-scoped, use ascending `start_time, observation_id` order, and fetch at most seven bounded Observations per page; detail SSE cursors have the same trace binding and can load later REST pages. The authenticated organization is not a client row field: Trace and Observation responses carry `project_id`, while the server derives organization scope from credentials.
+
+If even one full Observation cannot fit the detail-SSE snapshot budget, the snapshot falls back to list projections (200-code-point text excerpts, bounded metadata, no `otlp`) and sets `detail_omitted: true`. Oversized live Observation frames use the same marked projection, including when buffered during snapshot acquisition. This is a transport omission, not lost retained data. The UI offers **Load full trace details**: it starts a separately authenticated `GET /v1/traces/{id}?project_id=...` at the first page, then offers **Load remaining observations** for its REST cursors. Start from the first REST page when `detail_omitted` is present, even if the compact snapshot also supplies a cursor. Every read and SSE frame keeps its normal current-authorization checks. A configured budget too small even for a compact snapshot, or a high-rate pending queue overflow, still fails closed.
+
+## Logs
+
+An HTTP exporter using `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com` resolves logs to `/v1/logs`. A signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` must contain that complete URL. Use `http/protobuf` or `http/json` and the same authorization/Project headers as traces. A gRPC exporter instead uses the configured listener and `opentelemetry.proto.collector.logs.v1.LogsService/Export`.
+
+Log exports accept standard `resourceLogs → scopeLogs → logRecords` envelopes, including empty exports, resource/scope attributes and dropped counts, schema URLs, severity (0–24), flags, event name, and optional trace/span correlation. Empty/all-zero IDs are uncorrelated; malformed nonempty IDs reject the export. Records do not create traces or observations. Every resource `glasshouse.project.id` attribute must agree with the explicit Project header; organization payload attributes never establish authority. Missing/conflicting/foreign Project selection, archived/deleting Projects, and unauthorized writers are rejected before persistence. The writer rechecks current Actor/credential authority under the existing PostgreSQL fences, so a winning rotation/revocation prevents a pending write. A ClickHouse effect that already won its fence cannot be undone by later revocation.
+
+Protobuf logs use the vendored upstream OpenTelemetry proto v1.11.1 definitions,
+including `LogRecord.event_name` (field 12), through an isolated protobufjs root.
+The older trace exporter's generated schema is not used for log decoding.
+Already-dropped event names cannot be reconstructed from stored rows.
+
+`timeUnixNano` and `observedTimeUnixNano` retain their exact unsigned 64-bit values as decimal strings. JSON numeric 64-bit values must be safe integers; send decimal strings for larger values. AnyValue bodies/attributes preserve empty values, signed 64-bit integers as strings, canonical base64 bytes, booleans, doubles (including ProtoJSON `NaN`/`Infinity`/`-Infinity` strings), arrays, and key-value lists. Multiple known AnyValue alternatives reject the whole export. Ordering uses the nonzero event time, then nonzero observed time, then server receipt time; both original fields remain unchanged, including zero. Timestamp precision does not pass through a JavaScript Number or millisecond Date for storage or ordering.
+
+Logs use the same HTTP body/gzip and known-message depth limits as traces: 128 resources/scopes/attributes, 512 records per scope, 2,000 records per export, and depth 32. Before persistence, literal deployment/policy key redaction traverses body, record, resource, and scope AnyValues with depth 32 and 4,096-node budgets per field. Unknown/uninspectable branches are dropped even when the key list is empty. `GLASSHOUSE_REDACT_INPUT=true` or approved `all_text` replaces the entire body with `[REDACTED]`; deployment controls remain a floor. Redaction is not retroactive. A retained record above 64 KiB UTF-8 or a serialized retained export above 4 MiB rejects the entire export before any insert with HTTP 413 / gRPC `RESOURCE_EXHAUSTED`, rather than silently clipping its typed values. The export budget is accumulated after redaction, counting each expanded row's resource/scope copies, JSON-string escaping of stored typed fields, and JSONEachRow newline. Small wire exports can exceed this expanded budget; the same bytes can fit after configured key/body redaction.
+
+The additive ClickHouse migration `0009_otlp_logs.sql` creates tenant-constrained `logs` storage with UInt64 times and serialized typed AnyValue JSON. Inserts reuse the aborting 30-second writer deadline. Tokens hash original decompressed bytes, encoding, and trusted Organization/Project; identical-byte gzip/plain retries deduplicate within a 100,000-block history, and HTTP protobuf aliases and gRPC share identity. Tokens remain independent of current redaction policy and public IDs. Duplicate records within an export retain distinct index-derived `log_id` values. This remains bounded deduplication, not permanent uniqueness or exactly-once delivery. Validation is whole-export; a storage failure can have an uncertain outcome and returns sanitized 500 or retryable 503.
+
+New public `log_id` values use a domain-separated HMAC of the original-wire digest and record index, with the authorized Project's durable 32-byte key from PostgreSQL `project_metric_identity_keys` (migration `90063_metric_identity_keys.sql`). The log domain is separate from metric series/point identity. The original digest is confined to the internal insert token; neither it nor the key is returned in product rows/cursors, errors or logs. Keys survive API restarts and must be restored with ClickHouse data; no additional migration or environment secret is required. IDs remain linkable, and actors able to both ingest and read can still guess online. Earlier unkeyed IDs are not rewritten or retrospectively protected.
+
+`GET /v1/logs?project_id=<uuid>` returns typed `items`, `total`, and optional `next_cursor`. Defaults: `limit=50`, allowed 1–200; offset 0–1,000,000 is supported but cannot be combined with a cursor. Pages stop at 256 KiB and provide continuation when byte-limited. Cursors bind Organization, Project and filters; they are traversal positions, not authorization. Current product-read authorization is fenced independently on every request. Filters include `filter[severity_number]`, exact `filter[severity_text]`, `filter[trace_id]`, retained-body substring `filter[q]`, and UTC ISO `filter[time.from]`/`filter[time.to]` (inclusive, up to nine fractional digits). The UI's **Observability → Logs** tab supports filters, refresh, pagination, exact UTC nanosecond display, full retained-record inspection and correlated trace links. Logs currently use manual refresh rather than SSE, and organization usage aggregates still count traces/observations only.
+
+Lists and totals count physical rows, including duplicates retained outside the
+insert-deduplication window; neither `log_id` nor equal retained payloads imply
+uniqueness. `total` is the exact count of all rows matching the authorized
+Organization/Project and filters, independent of limit, offset or cursor. This
+count can scan Project history while the Project fence is held; pagination does
+not bound its scan cost. Ordering breaks equal effective-time/`log_id` ties with
+a stored `physical_row_id UUID`. The trusted writer generates a fresh random UUIDv4 for
+each occurrence on each insert attempt, overriding any copied input field.
+The original-wire deduplication token is unchanged: a deduplicated retry keeps
+the originally stored UUIDs, while a later accepted insert gets new identities.
+UUID bytes count toward retained-record/export budgets. UUIDs survive merges,
+mutations and physical backup/restore; payloads and public IDs are not collapsed
+or rewritten. Version-3 cursors contain only `version`, scope digest, exact
+`time`, public `id`, and UUID `row`; no table-wide block counters are exposed.
+The UUID is omitted from public items and is never authorization proof. Older
+cursors return 400 and require a fresh list. Reads validate UUIDv4 format and
+uniqueness only within the fetched filtered page plus one lookahead row, before
+response-byte truncation; invalid or duplicated UUIDs in that set fail closed.
+There is no additional history-wide UUID read: copies outside filters, the
+keyset/offset range or the fetched candidate set can go undetected. Global UUID
+uniqueness is not continuously enforced; keyset correctness relies on unique
+stored identities from the trusted writer and migration validation. This is live
+keyset traversal, not a snapshot of concurrent inserts/deletes. Restart traversal
+after recovery because the retained set may differ. The detail view selects the
+clicked physical payload rather than assuming `log_id` is unique.
+
+### Physical UUID schema upgrade and maintenance gate
+
+Additive `0012_logs_physical_uuid.sql` preserves applied `0009` and `0011`
+checksums. Its first ALTER adds a zero-sentinel UUID column and a UUIDv4 CHECK
+guard together; subsequent UUID-less/zero/non-v4 inserts fail. The runner waits
+for unfinished `logs` mutations before deciding whether another backfill is
+needed. Only zero-sentinel rows or a populated active part missing physical
+column storage trigger an asynchronous rewrite. It polls `system.mutations`
+until `is_done`, then validates UUID format, scoped uniqueness and physical
+materialization before recording completion. Compact parts require a stored
+column entry plus populated shared data/marks; Wide parts require nonzero
+column bytes. A fully completed backfill with a lost acknowledgement is checked
+and ledgered without another rewrite. Partial replay generates UUIDs only for
+zero sentinels and preserves every existing nonzero UUID, including malformed
+administrative values that make validation fail. It does not use a lazy random
+DEFAULT or replay a blanket random MATERIALIZE.
+
+The whole 0012 stage (waiting, DDL, probes, validation and ledger write) has an
+explicit wall-clock abort deadline of **300,000 ms**. A one-shot migration
+process may set `GLASSHOUSE_LOG_UUID_TIMEOUT_MS` to an integer from 1 through
+3,600,000 ms (one hour) when large validation scans need more time. The default
+migration client uses the same request timeout rather than its library's
+30-second default; the explicit deadline also bounds progress-producing
+requests under Bun. Polling is once per second. Deadline expiry fails startup
+but deliberately does **not** kill durable background mutations. A restarted
+runner waits for existing work and rechecks data/parts instead of blindly
+submitting another mutation. A failed unfinished mutation stops the upgrade:
+inspect `system.mutations` and repair it under maintenance before retrying.
+Validation still scans the table, including exact scoped uniqueness, and can
+require substantial I/O and memory; the deadline does not cap that resource use.
+
+**This is a maintenance upgrade, not a rolling upgrade.** An installation with
+`0009` already recorded (even an empty log table) fails startup before applying
+0012 unless `GLASSHOUSE_LOG_UUID_MAINTENANCE=1` is supplied to the migration
+process. The flag is an operator acknowledgement, not proof or automatic
+enforcement that old processes have stopped:
+
+1. Stop ingress and **all** old API replicas, direct log writers, retention and
+   administrative mutations. Drain in-flight ClickHouse inserts, including
+   asynchronous insert queues, and keep them stopped through completion.
+2. Take an authenticated backup and run the new image's `ch:migrate` once with
+   that flag explicitly injected into the process. In an isolated devcontainer,
+   use `GLASSHOUSE_LOG_UUID_MAINTENANCE=1 make devcontainer-ch-schema` only after
+   stopping its writers. A fresh uninterrupted install needs no acknowledgement.
+3. On interruption, keep maintenance in force and rerun with the acknowledgement;
+   do not drop the column, remove checks, edit applied migrations or replace
+   already assigned IDs. A timeout may leave a mutation running: rerun the
+   migration to wait/recover it and require successful checks/ledger validation
+   before reopening traffic. Do not repeatedly kill or manually requeue a healthy
+   long-running mutation. Remove the flag after the one-time run.
+4. Start only UUID-aware binaries after successful schema/ledger validation.
+   Old binaries are incompatible: their UUID-less inserts now fail closed.
+
+The PostgreSQL migration advisory lock serializes migration runners only; it
+cannot drain older writers or make a falsely acknowledged online upgrade safe.
+The storage guard blocks later old-writer inserts, not a pre-ALTER admitted
+effect. Do not bypass the maintenance gate or assume a zero-row observation
+establishes writer quiescence. Native restores preserve UUIDs. An administrative
+row-level restore must explicitly preserve them and tenant scope into an empty
+target; copying a row as a **new occurrence** must assign a fresh UUID. ClickHouse
+does not enforce uniqueness with an index. Product reads detect invalid UUIDs or
+reuse only within the fetched page plus lookahead; retention separately verifies
+selected UUIDs across the entire authorized Organization/Project, including
+nonexpired copies, before deletion. Corrupt identities are not silently
+renumbered or collapsed, and no continuous global uniqueness audit is implied.
+
+Repeated `project_id` values fail query validation with 400. Any `filter[project_id]` selectors, including repeated values, must agree with `project_id`; conflicts return 404. The **Body** search field uses `filter[q]` in the API and `logs.q` in the UI URL. Body previews mark clipping after 200 Unicode code points with an ellipsis; the detail view shows the full retained record and is discarded on a Project change or query error.
+
+Approved governance policies may add `retention.logs` (1–3650 days). Existing baselines/policies are preserved; omission means no log retention deletion. Preview counts expired physical log rows by effective time. Runs select a bounded physical-row batch under the existing manager/policy/lease fence and await ClickHouse mutations; permanent Project deletion always removes scoped logs before finalizing, including retries of older deletion jobs. Whole-database backup/restore includes logs; the restore fixture checks exact times and nested int64 bodies alongside migration-ledger replay. See [governance](09-governance-runbook.md) and [backup/restore](backup-restore.md).
+
+Log retention selects at most the requested batch (maximum 500) by physical insert
+UUIDs under the Project write fence, then deletes only those expired
+Organization/Project-scoped rows. It checks UUIDv4 format and verifies each
+selected UUID identifies exactly one scoped row, including nonexpired rows,
+before mutation; duplicate administrative IDs fail without deletion.
+Duplicate groups larger than 500 progress across successive runs instead of
+being skipped forever. Completion counts are recorded only after synchronous
+mutation settlement and a readback confirming the selected rows are absent.
+An uncertain/failed mutation can already have deleted rows; PostgreSQL evidence
+and ClickHouse deletion are not atomic. A completed run means one bounded batch,
+not that every eligible row was removed; preview again for remaining work.
+
+Verification entry points: `apps/api/tests/unit/logs-physical-identity.test.ts` (trusted per-attempt UUID assignment), `apps/api/tests/unit/logs-read-identity.test.ts` (page-plus-lookahead validity/uniqueness, two-query reads and exact filtered totals), `apps/api/tests/integration/otlp-logs.test.ts` (real HTTP/gRPC, authentication, storage, keyed IDs, budgets, lifecycle and retention fault/retry fencing), `apps/api/tests/integration/otlp-logs-readback.test.ts` (scoped read-corruption detection, exact totals, physical pagination, rewrites and scoped physical restore), `apps/api/tests/integration/otlp-logs-physical-upgrade.test.ts` (populated interrupted/replayed backfills and the maintenance/old-writer guards), and `apps/api/tests/fixtures/otlp-logs-sdk.py` (official SDK, using `infra/otlp-sdk-requirements.txt`). Run the integration files separately; the hosted OTLP SDK harness requires all three log reports. The existing isolated restore drill also checks the exact physical UUID and that restored Project keys reproduce the seeded public log identity across separate fixture processes and migration replay.
 
 ## Organization usage dashboard
 
@@ -189,7 +307,7 @@ The compact service-health card reports Postgres, ClickHouse, and Valkey depende
 
 ## Custom path
 
-If your OTel SDK needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or the SDK's equivalent) to the complete receiver URL, for example `https://api.example.com/v1/otel/v1/traces`.
+If your compatible sender needs an explicit full trace URL, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (or its equivalent) to the complete receiver URL, for example `https://api.example.com/v1/traces`.
 
 If you're sending spans to Glasshouse behind a reverse proxy with a different receiver mount, set `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` to that proxy's complete trace URL.
 
@@ -200,6 +318,6 @@ Traces appear in the dashboard at `http://localhost:5173/observability`. Click a
 ## Production hardening (post-MVP)
 
 - Replace Basic Auth with mTLS or signed JWT (the OTel SDKs support custom exporters / headers).
-- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com/v1/otel`).
+- Use TLS at the edge proxy (set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com`).
 - Configure tenant routing with server-managed Basic credentials and select an authorized project with `x-glasshouse-project-id`.
 - Enable trace sampling at the agent side for high-volume services (see OTel SDK samplers).

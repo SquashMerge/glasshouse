@@ -32,6 +32,8 @@ export function GovernancePage() {
 	selectedProjectIdRef.current = selectedProjectId;
 	const queryClient = useQueryClient();
 	const [traces, setTraces] = React.useState("30");
+	const [logs, setLogs] = React.useState("");
+	const [metrics, setMetrics] = React.useState("");
 	const [datasets, setDatasets] = React.useState("90");
 	const [feedback, setFeedback] = React.useState("90");
 	const [mode, setMode] = React.useState<"none" | "all_text">("none");
@@ -148,6 +150,7 @@ export function GovernancePage() {
 	}, [previewExpiresAt]);
 	React.useEffect(() => {
 		setPreview(null);
+		setMetrics("");
 		setPreviewedPolicyId(null);
 		setPreviewId(null);
 		setPreviewExpiresAt(null);
@@ -370,6 +373,8 @@ export function GovernancePage() {
 								project_id: selectedProjectId,
 								retention: {
 									traces: Number(traces),
+									...(logs ? { logs: Number(logs) } : {}),
+									...(metrics === "" ? {} : { metrics: Number(metrics) }),
 									datasets: Number(datasets),
 									feedback: Number(feedback),
 								},
@@ -393,6 +398,32 @@ export function GovernancePage() {
 							value={datasets}
 							setValue={setDatasets}
 						/>
+						<div className="grid gap-2">
+							<Label htmlFor="log-retention">
+								Log retention (days, optional)
+							</Label>
+							<Input
+								id="log-retention"
+								type="number"
+								min={1}
+								max={3650}
+								value={logs}
+								onChange={(event) => setLogs(event.target.value)}
+								aria-describedby="log-retention-help"
+							/>
+							<p
+								id="log-retention-help"
+								className="text-xs text-muted-foreground"
+							>
+								Leave empty to omit logs from this policy’s retention runs.
+							</p>
+						</div>
+						<Field
+							label="Metric retention (days, blank to disable)"
+							value={metrics}
+							setValue={setMetrics}
+							optional
+						/>
 						<Field
 							label="Feedback retention (days)"
 							value={feedback}
@@ -407,9 +438,9 @@ export function GovernancePage() {
 									setMode(event.target.value as "none" | "all_text")
 								}
 							>
-								<option value="none">Keep trace input/output text</option>
+								<option value="none">Keep telemetry text</option>
 								<option value="all_text">
-									Replace all trace input/output text
+									Redact trace text, log bodies and metric string/byte values
 								</option>
 							</Select>
 						</div>
@@ -612,10 +643,12 @@ function Field({
 	label,
 	value,
 	setValue,
+	optional = false,
 }: {
 	label: string;
 	value: string;
 	setValue: (value: string) => void;
+	optional?: boolean;
 }) {
 	const id = label.toLowerCase().replaceAll(" ", "-");
 	return (
@@ -626,7 +659,7 @@ function Field({
 				type="number"
 				min="1"
 				max="3650"
-				required
+				required={!optional}
 				value={value}
 				onChange={(event) => setValue(event.target.value)}
 			/>
@@ -635,14 +668,16 @@ function Field({
 }
 
 function retentionSummary(
-	retention: Partial<Record<"traces" | "datasets" | "feedback", number>>,
+	retention: Partial<
+		Record<"traces" | "metrics" | "datasets" | "feedback" | "logs", number>
+	>,
 ): string {
-	const values = (["traces", "datasets", "feedback"] as const).flatMap(
-		(name) => {
-			const days = retention[name];
-			return days === undefined ? [] : [`${name} ${days} days`];
-		},
-	);
+	const values = (
+		["traces", "metrics", "datasets", "feedback", "logs"] as const
+	).flatMap((name) => {
+		const days = retention[name];
+		return days === undefined ? [] : [`${name} ${days} days`];
+	});
 	return values.join(", ") || "No automated retention";
 }
 
@@ -652,8 +687,8 @@ function redactionSummary(redaction: {
 }): string {
 	const mode =
 		redaction.mode === "all_text"
-			? "All trace input/output text"
-			: "Trace input/output text retained";
+			? "Trace text, log bodies and metric string/byte values redacted"
+			: "Telemetry text retained";
 	return redaction.keys.length
 		? `${mode}; ${redaction.keys.length} attribute ${redaction.keys.length === 1 ? "key" : "keys"}`
 		: mode;

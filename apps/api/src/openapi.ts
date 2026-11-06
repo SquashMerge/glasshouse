@@ -11,6 +11,17 @@ import {
 import { authRoutes } from "./routes/auth.js";
 import { localAccountRoutes } from "./routes/local-accounts.js";
 import { otlpIngestRoute, handleOtlpIngest } from "./routes/otlp.js";
+import {
+	ingestLogsRoute,
+	handleIngestLogs,
+	listLogsRoute,
+	handleListLogs,
+} from "./routes/logs.js";
+import {
+	ingestMetrics,
+	listMetrics,
+	handleListMetrics,
+} from "./routes/metrics.js";
 
 import {
 	createExperiment,
@@ -349,7 +360,7 @@ openapiApp.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
 	type: "http",
 	scheme: "bearer",
 	description:
-		"Project-scoped OTLP ingest credential, accepted only for POST /v1/otel/v1/traces.",
+		"Project-scoped OTLP ingest credential, accepted only for POST /v1/traces, POST /v1/logs, and POST /v1/metrics.",
 });
 openapiApp.openAPIRegistry.registerComponent(
 	"securitySchemes",
@@ -402,6 +413,11 @@ openapiApp.use("/v1/prompt-optimizations/*", async (c, next) => {
 register(healthRoute, handleHealth);
 
 for (const [route, handler] of authRoutes) register(route, handler);
+register(ingestLogsRoute, handleIngestLogs);
+register(listLogsRoute, handleListLogs);
+// Raw OTLP ingestion runs through createApiApp's authentication and Project fences.
+openapiApp.openAPIRegistry.registerPath(ingestMetrics);
+register(listMetrics, handleListMetrics);
 register(otlpIngestRoute, async (c: Context) => {
 	try {
 		const scope = await resolveTenantProject(

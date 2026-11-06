@@ -1,9 +1,16 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { ch } from "./clickhouse.js";
+import { clickHouseDateTime } from "./clickhouse-datetime.js";
 import { lockProjectAuditProvenance } from "./project-authorization.js";
 
-export const RETENTION_CLASSES = ["traces", "datasets", "feedback"] as const;
+export const RETENTION_CLASSES = [
+	"traces",
+	"metrics",
+	"datasets",
+	"feedback",
+	"logs",
+] as const;
 export type RetentionClass = (typeof RETENTION_CLASSES)[number];
 export type GovernanceRedaction = {
 	mode: "none" | "all_text";
@@ -71,6 +78,21 @@ export async function retentionCounts(
 	const counts: Record<string, number> = {};
 	for (const [dataClass, days] of Object.entries(retention)) {
 		const cutoff = new Date(Date.now() - days! * 86_400_000);
+		if (dataClass === "metrics") {
+			const result = await ch().query({
+				query:
+					"SELECT count() AS count FROM metrics WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND time_unix_nano < {cutoff:UInt64}",
+				query_params: {
+					organizationId,
+					projectId,
+					cutoff: (BigInt(cutoff.getTime()) * 1_000_000n).toString(),
+				},
+				format: "JSONEachRow",
+			});
+			counts.metrics = Number(
+				(await result.json<{ count: string }>())[0]?.count ?? 0,
+			);
+		}
 		if (dataClass === "datasets") {
 			const result = await pool.query<{ eligible: string; skipped: string }>(
 				"SELECT count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM dataset_versions v WHERE v.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id) AND NOT EXISTS (SELECT 1 FROM dataset_retention_holds h WHERE h.project_id = d.project_id AND h.dataset_id = d.id AND h.released_at IS NULL))::text AS eligible, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM dataset_versions v WHERE v.dataset_id = d.id) OR EXISTS (SELECT 1 FROM experiments e WHERE e.dataset_id = d.id) OR EXISTS (SELECT 1 FROM benchmark_suites b WHERE b.dataset_id = d.id) OR EXISTS (SELECT 1 FROM feedback_reviews f WHERE f.dataset_id = d.id) OR EXISTS (SELECT 1 FROM dataset_retention_holds h WHERE h.project_id = d.project_id AND h.dataset_id = d.id AND h.released_at IS NULL))::text AS skipped FROM datasets d WHERE d.project_id = $1 AND d.created_at < $2",
@@ -86,6 +108,21 @@ export async function retentionCounts(
 			);
 			counts.feedback = Number(result.rows[0]?.count ?? 0);
 		}
+		if (dataClass === "logs") {
+			const result = await ch().query({
+				query:
+					"SELECT count() AS count FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND effective_time_unix_nano < {cutoff:UInt64}",
+				query_params: {
+					organizationId,
+					projectId,
+					cutoff: (BigInt(cutoff.getTime()) * 1_000_000n).toString(),
+				},
+				format: "JSONEachRow",
+			});
+			counts.logs = Number(
+				(await result.json<{ count: string }>())[0]?.count ?? 0,
+			);
+		}
 		if (dataClass === "traces") {
 			const result = await ch().query({
 				query:
@@ -93,7 +130,7 @@ export async function retentionCounts(
 				query_params: {
 					organizationId,
 					projectId,
-					cutoff: cutoff.toISOString(),
+					cutoff: clickHouseDateTime(cutoff.toISOString()),
 				},
 				format: "JSONEachRow",
 			});
@@ -146,7 +183,7 @@ export async function selectTraceRetentionBatch(
 		query_params: {
 			organizationId,
 			projectId,
-			cutoff: cutoff.toISOString(),
+			cutoff: clickHouseDateTime(cutoff.toISOString()),
 			batchSize,
 		},
 		format: "JSONEachRow",
@@ -176,7 +213,7 @@ export async function deleteTraceObservations(
 		organizationId,
 		projectId,
 		traceIds,
-		cutoff: cutoff.toISOString(),
+		cutoff: clickHouseDateTime(cutoff.toISOString()),
 	};
 	await client.command({
 		query:
@@ -197,7 +234,7 @@ export async function deleteTraces(
 		organizationId,
 		projectId,
 		traceIds,
-		cutoff: cutoff.toISOString(),
+		cutoff: clickHouseDateTime(cutoff.toISOString()),
 	};
 	await client.command({
 		query:

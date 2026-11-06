@@ -24,7 +24,7 @@ test("maps a revocation race during OTLP ingest to project unavailable", async (
 		},
 	});
 
-	const response = await app.request("/v1/otel/v1/traces", {
+	const response = await app.request("/v1/traces", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
@@ -34,8 +34,82 @@ test("maps a revocation race during OTLP ingest to project unavailable", async (
 	});
 
 	expect(response.status).toBe(404);
-	expect(await response.json()).toEqual({
-		code: "NOT_FOUND",
-		message: "Project is not available",
+	expect(response.headers.get("content-type")).toBe("application/json");
+	expect(await response.json()).toEqual({ message: "Trace export rejected" });
+});
+
+test("encodes authentication and pre-auth body limit failures as OTLP JSON status", async () => {
+	process.env.UI_USERNAME ??= "test-user";
+	process.env.UI_PASSWORD ??= "test-password";
+	const { createApiApp } = await import("../../src/index.js");
+	const app = createApiApp();
+	const unauthenticated = await app.request("/v1/traces", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: "{}",
 	});
+	expect(unauthenticated.status).toBe(401);
+	expect(unauthenticated.headers.get("content-type")).toBe("application/json");
+	expect(await unauthenticated.json()).toEqual({
+		message: "Authentication required",
+	});
+
+	const tooLarge = await app.request("/v1/traces", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+			"content-length": "1048577",
+		},
+		body: "{}",
+	});
+	expect(tooLarge.status).toBe(413);
+	expect(await tooLarge.json()).toEqual({
+		message: "Trace export exceeds the request limit",
+	});
+});
+
+for (const code of ["57P01", "57P03", "53300"]) {
+	test(`maps PostgreSQL ${code} authentication failures to retryable OTLP responses`, async () => {
+		process.env.UI_USERNAME ??= "test-user";
+		process.env.UI_PASSWORD ??= "test-password";
+		const { createApiApp } = await import("../../src/index.js");
+		const app = createApiApp({
+			authenticate: () => async () => {
+				throw Object.assign(new Error("PostgreSQL unavailable"), {
+					code,
+				});
+			},
+		});
+
+		const response = await app.request("/v1/traces", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "{}",
+		});
+
+		expect(response.status).toBe(503);
+		expect(await response.json()).toEqual({
+			message: "Trace export temporarily unavailable",
+		});
+	});
+}
+
+test("keeps non-transient OTLP failures internal", async () => {
+	process.env.UI_USERNAME ??= "test-user";
+	process.env.UI_PASSWORD ??= "test-password";
+	const { createApiApp } = await import("../../src/index.js");
+	const app = createApiApp({
+		authenticate: () => async () => {
+			throw new Error("Unexpected authentication failure");
+		},
+	});
+
+	const response = await app.request("/v1/traces", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: "{}",
+	});
+
+	expect(response.status).toBe(500);
+	expect(await response.json()).toEqual({ message: "Trace export failed" });
 });

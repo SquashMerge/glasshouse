@@ -26,6 +26,7 @@ import {
 	streamTraceEvents,
 } from "../../src/routes/trace-events";
 import { MAX_TRACE_RESPONSE_BYTES } from "../../src/db/trace-payload-bounds";
+import { boundOtlpDetail } from "../../src/db/otlp-detail";
 
 // ---------------------------------------------------------------------------
 // Mocked ClickHouse + an env-tunable SSE setup BEFORE importing the app.
@@ -834,6 +835,60 @@ describe("GET /v1/observations/events (spans SSE)", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/traces/{id}/events (detail SSE)", () => {
+	it("opens a bounded snapshot and delivers oversized live OTLP rows with explicit REST detail fallback", async () => {
+		const text = '"'.repeat(8_192);
+		const large = {
+			...fakeObservation,
+			input_text: text,
+			output_text: text,
+			metadata: JSON.stringify({
+				schema_version: 1,
+				attributes: [{ key: "large", value: { stringValue: text } }],
+			}),
+			otlp: boundOtlpDetail({
+				events: Array.from({ length: 4 }, () => ({ name: "x".repeat(8_192) })),
+			}),
+		};
+		getTraceMock.mockImplementationOnce(async () => {
+			publishSync("observation.created", {
+				observation: { ...large, observation_id: "buffered-large" },
+			});
+			return { trace: fakeTrace, observations: [large] };
+		});
+		const response = await apiApp.fetch(
+			new Request(
+				`http://x/v1/traces/${VALID_TRACE_ID}/events?project_id=${PROJECT_ID}`,
+				{ headers: { authorization: AUTH } },
+			),
+		);
+		expect(response.status).toBe(200);
+		const reader = response.body!.getReader();
+		await reader.read();
+		const snapshot = await reader.read();
+		expect(snapshot.value!.byteLength).toBeLessThanOrEqual(65_536);
+		const snapshotData = JSON.parse(
+			parseFrame(decoder.decode(snapshot.value)).data,
+		);
+		expect(snapshotData.detail_omitted).toBe(true);
+		expect(snapshotData.observations[0].observation_id).toBe(OBS_ID);
+		const buffered = await reader.read();
+		expect(buffered.value!.byteLength).toBeLessThanOrEqual(65_536);
+		const bufferedData = JSON.parse(
+			parseFrame(decoder.decode(buffered.value)).data,
+		);
+		expect(bufferedData.detail_omitted).toBe(true);
+		expect(bufferedData.observation.observation_id).toBe("buffered-large");
+		publishSync("observation.created", {
+			observation: { ...large, observation_id: "live-large" },
+		});
+		const live = await reader.read();
+		expect(live.value!.byteLength).toBeLessThanOrEqual(65_536);
+		const liveData = JSON.parse(parseFrame(decoder.decode(live.value)).data);
+		expect(liveData.detail_omitted).toBe(true);
+		expect(liveData.observation.observation_id).toBe("live-large");
+		await reader.cancel();
+	});
+
 	it("keeps a multibyte snapshot's raw SSE frame within its pending-byte ceiling with its cursor", async () => {
 		const maxPendingBytes = 4_096;
 		const presentedMetadata = {
@@ -1141,7 +1196,7 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 		publishSync("observation.created", {
 			observation: {
 				...fakeObservation,
-				output_text: "x".repeat(2_048),
+				output_text: "界".repeat(2_048),
 			},
 		});
 
@@ -1245,7 +1300,11 @@ describe("GET /v1/traces/{id}/events (detail SSE)", () => {
 			trace: TraceRow;
 			observations: ObservationRow[];
 		};
-		expect(parsed.trace).toEqual(fakeTrace);
+		const { organization_id: _, ...publicTrace } = fakeTrace;
+		expect(parsed.trace).toEqual({
+			...publicTrace,
+			start_time: "2024-01-01T00:00:00.000Z",
+		});
 		expect(parsed.observations).toHaveLength(2);
 		expect(parsed.observations[0]?.observation_id).toBe(OBS_ID);
 		expect(parsed.observations[1]?.observation_id).toBe(OBS_ID_2);

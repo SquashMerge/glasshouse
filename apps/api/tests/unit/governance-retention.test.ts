@@ -34,7 +34,10 @@ describe("governance retention", () => {
 			query: expect.stringMatching(
 				/HAVING newest < \{cutoff:DateTime64\(3\)\} AND physical_rows <= \{batchSize:UInt64\}[\s\S]*cumulative_rows <= \{batchSize:UInt64\}/,
 			),
-			query_params: expect.objectContaining({ batchSize: 2 }),
+			query_params: expect.objectContaining({
+				batchSize: 2,
+				cutoff: "2026-01-01 00:00:00.000",
+			}),
 		});
 		await deleteTraceObservations(
 			"organization",
@@ -53,7 +56,7 @@ describe("governance retention", () => {
 			expect(request.query).toContain("trace_id IN {traceIds:Array(String)}");
 			expect(request.query).toContain("start_time < {cutoff:DateTime64(3)}");
 			expect(request.query_params.traceIds).toEqual(["trace-1", "trace-2"]);
-			expect(request.query_params.cutoff).toBe("2026-01-01T00:00:00.000Z");
+			expect(request.query_params.cutoff).toBe("2026-01-01 00:00:00.000");
 		}
 	});
 

@@ -49,10 +49,12 @@ export interface TraceStreamSnapshot {
 	observations: ObservationRowLike[];
 	snapshot_truncated?: boolean;
 	next_cursor?: string;
+	detail_omitted?: boolean;
 }
 
 export interface TraceStreamObservation {
 	observation: ObservationRowLike;
+	detail_omitted?: boolean;
 }
 
 export interface TraceStreamStatusComplete {

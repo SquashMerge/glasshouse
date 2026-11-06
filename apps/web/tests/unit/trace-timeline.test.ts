@@ -18,6 +18,46 @@ const observation = (
 });
 
 describe("trace timeline", () => {
+	it("uses a single relative interval for mixed precise and legacy rows", () => {
+		const timeline = createTraceTimeline([
+			observation("precise", {
+				start_time: "2023-11-14T22:13:20.000Z",
+				start_time_unix_nano: "1700000000000999999",
+				duration_nano: "2",
+				duration_ms: 0.000002,
+			}),
+			observation("legacy", {
+				start_time: "2023-11-14T22:13:20.001Z",
+				duration_ms: 1,
+			}),
+		]);
+		expect(timeline).toHaveProperty("durationMs", 1.000001);
+		expect(timeline.bars[1]?.leftPercent).toBeCloseTo(
+			(0.000001 / 1.000001) * 100,
+			12,
+		);
+		expect(timeline.bars[1]?.widthPercent).toBeCloseTo(
+			(1 / 1.000001) * 100,
+			12,
+		);
+	});
+	it("positions nanosecond bars using relative BigInt offsets without epoch Number rounding", () => {
+		const timeline = createTraceTimeline([
+			observation("root", {
+				start_time_unix_nano: "1700000000000999999",
+				duration_nano: "2",
+				duration_ms: 0.000002,
+			}),
+			observation("child", {
+				start_time_unix_nano: "1700000000001000000",
+				duration_nano: "1",
+				duration_ms: 0.000001,
+			}),
+		]);
+		expect(timeline.bars[0]?.widthPercent).toBe(100);
+		expect(timeline.bars[1]?.leftPercent).toBe(50);
+		expect(timeline.bars[1]?.widthPercent).toBe(50);
+	});
 	it("parses ClickHouse zone-less timestamps explicitly as UTC", () => {
 		expect(parseClickHouseUtc("2026-01-01 00:00:00.123")).toBe(
 			Date.UTC(2026, 0, 1, 0, 0, 0, 123),

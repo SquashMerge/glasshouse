@@ -21,6 +21,12 @@ COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY . .
 RUN bun --filter "@glasshouse/api" build
 
+FROM build AS otlp-tests
+RUN apk add --no-cache python3 py3-pip && python3 -m venv /opt/otlp-sdk
+RUN env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp PIP_CONFIG_FILE=/dev/null \
+    /opt/otlp-sdk/bin/pip install --disable-pip-version-check --no-input --require-hashes --no-deps -r infra/otlp-sdk-requirements.txt \
+    && /opt/otlp-sdk/bin/pip check
+
 FROM oven/bun:1.3.14-alpine AS prod
 WORKDIR /app
 RUN apk upgrade --no-cache && apk add --no-cache libpq python3 py3-pip util-linux wget && python3 -m venv /opt/gepa
