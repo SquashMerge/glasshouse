@@ -53,7 +53,10 @@ tenant-constrained `metrics` MergeTree table. Each row is one data point, with:
   and sum/min/max retain NaN and infinities as ProtoJSON special strings and
   negative zero as the quoted numeric string `"-0"`, avoiding JSON's lossy
   `null`/zero conversion. Finite doubles, including quoted numeric inputs,
-  preserve their numeric values. Distribution bounds/quantiles must be finite.
+  preserve their binary64 numeric values. Distribution bounds, exponential zero
+  thresholds, and summary quantiles/values accept numeric or quoted finite doubles,
+  including exponent notation; their finiteness, ordering and range checks remain
+  identical for both encodings. These distribution fields reject negative zero.
 - Explicit and exponential bucket distributions, count/sum/min/max, zero count
   and threshold, quantiles, flags, and exemplar times, values, attributes and
   optional hex trace/span references. Exemplar references do not grant trace
@@ -150,10 +153,19 @@ Existing default policies remain unchanged: metric retention is disabled until
 an Admin approves a policy containing it. Previews count expired physical points
 by exact point time; each governed run deletes at most its physical-row budget
 with a synchronous tenant-scoped mutation under the active Project/policy fence.
-Repeated physical copies of one point ID are selected as a whole group; groups
-larger than the batch are skipped. Choose a larger permitted batch or investigate
-such repeated rows. Single-use previews, run leases and failure evidence follow
-the existing [governance runbook](09-governance-runbook.md).
+Selection uses immutable ClickHouse part/offset pairs, so even more than 500
+identical copies of one point ID can be removed over successive runs. The Project
+write fence covers selection, mutation settlement and before/after expired-row
+counts; reports count observed removals, not selected IDs. A merge can rename a
+selected part, in which case its stale pairs match nothing. At most three
+selection/mutation attempts are made before failing on zero progress; partial
+progress is reported as-is within the original budget. Retry with a new preview
+if sustained merges prevent progress. The row budget bounds removed rows, not
+ClickHouse scanning or part rewrite I/O. Direct operator writes bypass the
+application fence; uncertain
+storage responses or a crash between ClickHouse deletion and PostgreSQL progress
+commit still require reconciliation. Single-use previews, run leases and failure
+evidence follow the existing [governance runbook](09-governance-runbook.md).
 
 Permanent Project deletion repeats synchronous metrics cleanup before finalizing
 the existing deletion job, including when retrying older trace/Observation

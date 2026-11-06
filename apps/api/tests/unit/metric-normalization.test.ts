@@ -234,6 +234,98 @@ test("summary rejects negative quantile values as required by the wire contract"
 	expect(() => normalizeMetricExport(metricExport([metric]))).toThrow();
 });
 
+test("finite distribution fields keep strict numeric validation for quoted inputs", () => {
+	const cases: [
+		number,
+		(point: Record<string, unknown>, value: unknown) => void,
+	][] = [
+		[
+			2,
+			(point, value) => {
+				point.explicitBounds = [value, 2];
+			},
+		],
+		[
+			3,
+			(point, value) => {
+				point.zeroThreshold = value;
+			},
+		],
+		[
+			4,
+			(point, value) => {
+				point.quantileValues = [{ quantile: value, value: 1 }];
+			},
+		],
+		[
+			4,
+			(point, value) => {
+				point.quantileValues = [{ quantile: 0.5, value }];
+			},
+		],
+	];
+	for (const [index, set] of cases) {
+		for (const value of [
+			"",
+			" ",
+			"0x1",
+			"1junk",
+			"1e9999",
+			"NaN",
+			"Infinity",
+			"-Infinity",
+			"-0",
+			"-0.0e2",
+			"1".repeat(129),
+			true,
+			{},
+			[],
+			-0,
+			NaN,
+			Infinity,
+			-Infinity,
+		]) {
+			const metric = metricKinds("finite")[index]!;
+			const data =
+				metric.histogram ?? metric.exponentialHistogram ?? metric.summary!;
+			set(data.dataPoints[0]!, value);
+			expect(() => normalizeMetricExport(metricExport([metric]))).toThrow();
+		}
+	}
+	for (const [index, mutate] of [
+		[
+			2,
+			(point: Record<string, unknown>) => {
+				point.explicitBounds = ["1", "1.0"];
+			},
+		],
+		[
+			3,
+			(point: Record<string, unknown>) => {
+				point.zeroThreshold = "-1";
+			},
+		],
+		[
+			4,
+			(point: Record<string, unknown>) => {
+				point.quantileValues = [{ quantile: "1.01", value: "1" }];
+			},
+		],
+		[
+			4,
+			(point: Record<string, unknown>) => {
+				point.quantileValues = [{ quantile: "0.5", value: "-1" }];
+			},
+		],
+	] as const) {
+		const metric = metricKinds("invalid")[index]!;
+		const data =
+			metric.histogram ?? metric.exponentialHistogram ?? metric.summary!;
+		mutate(data.dataPoints[0]!);
+		expect(() => normalizeMetricExport(metricExport([metric]))).toThrow();
+	}
+});
+
 test("OTLP special floating-point measurements keep a JSON-safe exact representation", () => {
 	for (const [input, expected] of [
 		[NaN, "NaN"],

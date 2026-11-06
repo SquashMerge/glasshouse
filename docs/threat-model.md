@@ -181,11 +181,19 @@ Exemplar IDs are untrusted references, never proof of trace ownership. Retry
 identity uses bounded original wire bytes and trusted scope with a finite
 ClickHouse deduplication window; it is not an exactly-once ledger. Revocation
 cannot undo an already admitted remote write, and ClickHouse writes are not
-atomic with PostgreSQL. Metric retention is opt-in under an approved policy;
-Project deletion synchronously clears metric rows before finalization, including
-on retries. Native database backups retain metrics and may resurrect deleted
-points and old credentials on restore. Network rate limits, lifetime cardinality
-quotas and storage capacity remain deployment responsibilities. See
+atomic with PostgreSQL. Metric retention is opt-in under an approved policy.
+It selects bounded physical part/offset pairs under the Project write fence,
+repeats both tenant keys and the expiry predicate in synchronous deletion, and
+reports the observed expired-row decrease. Identical point IDs may be split
+across runs. Merged-away parts match nothing; three zero-progress attempts fail
+without claiming selected rows as deleted. The fence excludes concurrent
+application writes, not direct operator mutations, and the row budget does not
+bound scan/rewrite I/O. An uncertain ClickHouse response or a crash before the
+PostgreSQL progress commit can still leave removals unrecorded and requires
+reconciliation. Project deletion synchronously clears metric rows before
+finalization, including on retries. Native database backups retain metrics and
+may resurrect deleted points and old credentials on restore. Network rate limits,
+lifetime cardinality quotas and storage capacity remain deployment responsibilities. See
 [metric limits and residual behavior](otlp-metrics.md).
 
 ### E. Ingestion, expensive work, and availability abuse (medium/high impact)

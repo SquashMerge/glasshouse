@@ -1,3 +1,4 @@
+import { TupleParam } from "@clickhouse/client";
 import { ch } from "./clickhouse.js";
 
 export async function deleteMetricRetentionBatch(
@@ -13,26 +14,48 @@ export async function deleteMetricRetentionBatch(
 		cutoff: (BigInt(cutoff.getTime()) * 1_000_000n).toString(),
 		batchSize,
 	};
-	// A retry after the deduplication window can create several physical rows for
-	// one point ID. Select whole groups under the physical-row budget.
-	const selected = await client.query({
-		query:
-			"WITH grouped AS (SELECT point_id, min(time_unix_nano) AS time, count() AS physical_rows FROM metrics WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND time_unix_nano < {cutoff:UInt64} GROUP BY point_id HAVING physical_rows <= {batchSize:UInt64}), bounded AS (SELECT point_id, physical_rows, time, sum(physical_rows) OVER (ORDER BY time, point_id) AS cumulative FROM grouped) SELECT point_id, physical_rows FROM bounded WHERE cumulative <= {batchSize:UInt64} ORDER BY time, point_id",
-		query_params,
-		format: "JSONEachRow",
-	});
-	const rows = await selected.json<{
-		point_id: string;
-		physical_rows: string;
-	}>();
-	if (!rows.length) return 0;
-	await client.command({
-		query:
-			"ALTER TABLE metrics DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND point_id IN {pointIds:Array(String)} AND time_unix_nano < {cutoff:UInt64} SETTINGS mutations_sync = 1",
-		query_params: {
-			...query_params,
-			pointIds: rows.map((row) => row.point_id),
-		},
-	});
-	return rows.reduce((count, row) => count + Number(row.physical_rows), 0);
+	const scope =
+		"organization_id = {organizationId:String} AND project_id = {projectId:String} AND time_unix_nano < {cutoff:UInt64}";
+	const remaining = async () => {
+		const result = await client.query({
+			query: `SELECT toString(count()) AS count FROM metrics WHERE ${scope}`,
+			query_params,
+			format: "JSONEachRow",
+			clickhouse_settings: { use_query_cache: 0 },
+		});
+		return BigInt((await result.json<{ count: string }>())[0]!.count);
+	};
+	// The caller holds the Project write fence through selection, mutation and
+	// counting. Part/offset pairs bound physical copies even with identical IDs.
+	const before = await remaining();
+	if (before === 0n) return 0;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const selected = await client.query({
+			query: `SELECT _part AS part, toString(_part_offset) AS offset FROM metrics WHERE ${scope} ORDER BY time_unix_nano, point_id, _part, _part_offset LIMIT {batchSize:UInt64}`,
+			query_params,
+			format: "JSONEachRow",
+			clickhouse_settings: { use_query_cache: 0 },
+		});
+		const rows = await selected.json<{ part: string; offset: string }>();
+		await client.command({
+			query: `ALTER TABLE metrics DELETE WHERE ${scope} AND (_part, _part_offset) IN {positions:Array(Tuple(String, UInt64))} SETTINGS mutations_sync = 1`,
+			query_params: {
+				...query_params,
+				positions: rows.map(
+					(row) => new TupleParam([row.part, BigInt(row.offset)]),
+				),
+			},
+		});
+		const deleted = before - (await remaining());
+		if (deleted < 0n || deleted > BigInt(rows.length))
+			throw new Error(
+				"Metric retention row count changed outside the Project fence",
+			);
+		if (deleted > 0n) return Number(deleted);
+		// Merges rename immutable parts. Stale pairs match nothing; reselect with
+		// a bounded retry rather than report selected rows as deleted.
+	}
+	throw new Error(
+		"Metric retention could not make progress after part changes",
+	);
 }

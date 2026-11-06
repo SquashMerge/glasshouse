@@ -91,13 +91,9 @@ function integer(
 	return value;
 }
 function finite(value: unknown): number {
-	if (
-		typeof value !== "number" ||
-		!Number.isFinite(value) ||
-		Object.is(value, -0)
-	)
-		return invalid();
-	return value;
+	const parsed = double(value);
+	if (typeof parsed !== "number" || !Number.isFinite(parsed)) return invalid();
+	return parsed;
 }
 function double(value: unknown): number | string {
 	if (value === "NaN" || value === "Infinity" || value === "-Infinity")

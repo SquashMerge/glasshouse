@@ -347,6 +347,36 @@ async function newProject() {
 	return id;
 }
 
+async function approveMetricRetention(id: string) {
+	const draft = await product("/v1/governance/policy/drafts", "POST", {
+		project_id: id,
+		retention: { metrics: 1 },
+		redaction: { mode: "none", keys: [] },
+	});
+	expect(draft.status).toBe(201);
+	const { policy } = (await draft.json()) as { policy: { id: string } };
+	expect(
+		(
+			await product(
+				`/v1/governance/policy/${policy.id}/approve?project_id=${id}`,
+				"POST",
+			)
+		).status,
+	).toBe(200);
+}
+
+async function metricRetentionPreview(id: string) {
+	const preview = await product("/v1/governance/retention/preview", "POST", {
+		project_id: id,
+	});
+	expect(preview.status).toBe(200);
+	return preview.json() as Promise<{
+		preview_id: string;
+		policy_version_id: string;
+		counts: { metrics: number };
+	}>;
+}
+
 function rpc(
 	payload: Buffer,
 	authorization = auth(),
@@ -726,6 +756,69 @@ for (const transport of ["json", "protobuf"] as const) {
 				.map((row) => row.data_point.asDouble)
 				.sort(),
 		).toEqual(["NaN", "Infinity", "-Infinity", "-0"].sort());
+	});
+}
+
+for (const kind of ["histogram", "exponentialHistogram", "summary"] as const) {
+	test(`ProtoJSON quoted finite ${kind} doubles match numeric JSON and protobuf readback`, async () => {
+		const name = marker();
+		const metric =
+			metricKinds(name)[
+				kind === "histogram" ? 2 : kind === "exponentialHistogram" ? 3 : 4
+			]!;
+		const point = metric[kind]!.dataPoints[0]!;
+		if (kind === "histogram") {
+			point.explicitBounds = [0.10000000000000002, 1e100];
+			point.sum = 3e100;
+			point.max = 2e100;
+		} else if (kind === "exponentialHistogram") point.zeroThreshold = 5e-324;
+		else {
+			point.sum = 1.7976931348623157e308;
+			point.quantileValues = [
+				{ quantile: 0.10000000000000002, value: 5e-324 },
+				{ quantile: 1, value: 1.7976931348623157e308 },
+			];
+		}
+		const payload = metricExport([metric]);
+		const protobuf = await fetch(new URL("/v1/metrics", server.url), {
+			method: "POST",
+			headers: {
+				authorization: auth(),
+				"x-glasshouse-project-id": projectId,
+				"content-type": "application/x-protobuf",
+			},
+			body: metricsProtobuf(payload),
+		});
+		expect(protobuf.status).toBe(200);
+		expect((await post(payload)).status).toBe(200);
+		const numericRows = await read(name);
+		expect(numericRows).toHaveLength(2);
+		const field =
+			kind === "histogram"
+				? "explicitBounds"
+				: kind === "exponentialHistogram"
+					? "zeroThreshold"
+					: "quantileValues";
+		expect(numericRows[0]!.data_point[field]).toEqual(point[field]);
+		expect(numericRows[0]!.data_point).toEqual(numericRows[1]!.data_point);
+		const quoted = structuredClone(payload);
+		const quotedPoint =
+			quoted.resourceMetrics[0]!.scopeMetrics[0]!.metrics[0]![kind]!
+				.dataPoints[0]!;
+		if (kind === "histogram")
+			quotedPoint.explicitBounds = ["0.10000000000000002", "1E+100"];
+		else if (kind === "exponentialHistogram")
+			quotedPoint.zeroThreshold = "5e-324";
+		else
+			quotedPoint.quantileValues = [
+				{ quantile: "0.10000000000000002", value: "5e-324" },
+				{ quantile: "1e0", value: "1.7976931348623157e308" },
+			];
+		expect((await post(quoted)).status).toBe(200);
+		const rows = await read(name);
+		expect(rows).toHaveLength(3);
+		for (const row of rows)
+			expect(row.data_point).toEqual(numericRows[0]!.data_point);
 	});
 }
 
@@ -1823,6 +1916,263 @@ test("governance metrics retention is approved, bounded, Project-scoped and phys
 	expect(await stored(name)).toHaveLength(4);
 	expect(await read(name, id)).toHaveLength(1);
 }, 30_000);
+
+test("metrics retention makes bounded forward progress through 501 identical physical rows with honest reports", async () => {
+	const id = await newProject();
+	const name = marker();
+	const old = (BigInt(Date.now() - 10 * 86_400_000) * 1_000_000n).toString();
+	const fresh = (BigInt(Date.now()) * 1_000_000n).toString();
+	const payload = metricExport([
+		{
+			name,
+			gauge: { dataPoints: [{ timeUnixNano: old, asInt: "1" }] },
+		},
+	]);
+	expect((await post(payload, id)).status).toBe(200);
+	const result = await clickhouse.query({
+		query:
+			"SELECT * FROM metrics WHERE project_id = {id:String} AND name = {name:String}",
+		query_params: { id, name },
+		format: "JSONEachRow",
+	});
+	const [row] = await result.json<Record<string, unknown>>();
+	expect(row).toBeDefined();
+	await clickhouse.insert({
+		table: "metrics",
+		format: "JSONEachRow",
+		values: [
+			...Array.from({ length: 500 }, () => ({ ...row })),
+			{
+				...row,
+				time_unix_nano: fresh,
+				data_point: JSON.stringify({ timeUnixNano: fresh, asInt: "1" }),
+			},
+			{ ...row, organization_id: otherOrganizationId },
+			{ ...row, project_id: projectId },
+			{
+				...row,
+				organization_id: otherOrganizationId,
+				project_id: otherProjectId,
+			},
+		],
+	});
+	await clickhouse.command({ query: "OPTIMIZE TABLE metrics FINAL" });
+	const count = async () => {
+		const result = await clickhouse.query({
+			query:
+				"SELECT organization_id, project_id, toString(time_unix_nano) AS time, toString(count()) AS count FROM metrics WHERE name = {name:String} GROUP BY organization_id, project_id, time_unix_nano ORDER BY organization_id, project_id, time_unix_nano",
+			query_params: { name },
+			format: "JSONEachRow",
+		});
+		return result.json<{
+			organization_id: string;
+			project_id: string;
+			time: string;
+			count: string;
+		}>();
+	};
+	const initial = await count();
+	const expired = (rows: Awaited<ReturnType<typeof count>>) =>
+		Number(
+			rows.find(
+				(r) =>
+					r.organization_id === organizationId &&
+					r.project_id === id &&
+					r.time === old,
+			)?.count ?? 0,
+		);
+	const sentinels = (rows: Awaited<ReturnType<typeof count>>) =>
+		rows.filter(
+			(r) =>
+				!(
+					r.organization_id === organizationId &&
+					r.project_id === id &&
+					r.time === old
+				),
+		);
+	expect(initial).toContainEqual({
+		organization_id: organizationId,
+		project_id: id,
+		time: old,
+		count: "501",
+	});
+	expect(expired(initial)).toBe(501);
+	await approveMetricRetention(id);
+	for (const expected of [500, 1, 0]) {
+		const before = await count();
+		const admission = await metricRetentionPreview(id);
+		expect(admission.counts.metrics).toBe(expired(before));
+		const run = await product("/v1/governance/retention/runs", "POST", {
+			project_id: id,
+			preview_id: admission.preview_id,
+			policy_version_id: admission.policy_version_id,
+			batch_size: 500,
+		});
+		expect(run.status).toBe(200);
+		const report = (await run.json()) as {
+			run_id: string;
+			status: string;
+			counts: { metrics: number };
+		};
+		expect(report).toMatchObject({
+			status: "completed",
+			counts: { metrics: expected },
+		});
+		const after = await count();
+		expect(expired(before) - expired(after)).toBe(report.counts.metrics);
+		expect(sentinels(after)).toEqual(sentinels(initial));
+		const evidence = await pool.query(
+			"SELECT status, counts FROM governance_retention_runs WHERE id = $1",
+			[report.run_id],
+		);
+		expect(evidence.rows).toEqual([
+			{ status: "completed", counts: { metrics: expected } },
+		]);
+		const audit = await pool.query(
+			"SELECT counts FROM governance_audit_events WHERE project_id = $1 AND event_type = 'retention_completed' ORDER BY created_at DESC LIMIT 1",
+			[id],
+		);
+		expect(audit.rows).toEqual([{ counts: { metrics: expected } }]);
+	}
+}, 30_000);
+
+for (const { mergeAttempts, partial } of [
+	{ mergeAttempts: 1, partial: false },
+	{ mergeAttempts: 3, partial: false },
+	{ mergeAttempts: 1, partial: true },
+]) {
+	test(`metrics retention holds the Project fence and reports real progress after ${mergeAttempts} part changes (partial=${partial})`, async () => {
+		const id = await newProject();
+		const name = marker();
+		const old = (BigInt(Date.now() - 10 * 86_400_000) * 1_000_000n).toString();
+		const older = (
+			BigInt(Date.now() - 40 * 86_400_000) * 1_000_000n
+		).toString();
+		expect(
+			(
+				await post(
+					metricExport([
+						{
+							name,
+							gauge: {
+								dataPoints: Array.from({ length: 3 }, (_, i) => ({
+									timeUnixNano: partial && i === 0 ? older : old,
+									asInt: "1",
+								})),
+							},
+						},
+					]),
+					id,
+				)
+			).status,
+		).toBe(200);
+		await approveMetricRetention(id);
+		const admission = await metricRetentionPreview(id);
+		expect(admission.counts.metrics).toBe(3);
+		const body = {
+			project_id: id,
+			preview_id: admission.preview_id,
+			policy_version_id: admission.policy_version_id,
+			batch_size: 2,
+		};
+		const probe = await pool.connect();
+		const assertProjectLocked = async () => {
+			await expect(
+				probe.query("SELECT id FROM projects WHERE id = $1 FOR UPDATE NOWAIT", [
+					id,
+				]),
+			).rejects.toMatchObject({ code: "55P03" });
+			expect(
+				(
+					await probe.query(
+						"SELECT id FROM projects WHERE id = $1 FOR UPDATE NOWAIT",
+						[otherProjectId],
+					)
+				).rows,
+			).toEqual([{ id: otherProjectId }]);
+		};
+		const realQuery = clickhouse.query.bind(clickhouse);
+		let selections = 0;
+		const query = spyOn(clickhouse, "query").mockImplementation(
+			async (params) => {
+				if (
+					(params.query.startsWith("SELECT _part AS part") ||
+						params.query.startsWith("SELECT toString(count()) AS count")) &&
+					params.query_params?.projectId === id
+				) {
+					if (params.query.startsWith("SELECT _part AS part")) selections++;
+					await assertProjectLocked();
+				}
+				return realQuery(params);
+			},
+		);
+		const realCommand = clickhouse.command.bind(clickhouse);
+		let mutations = 0;
+		const command = spyOn(clickhouse, "command").mockImplementation(
+			async (params) => {
+				if (
+					params.query.startsWith("ALTER TABLE metrics DELETE") &&
+					params.query_params?.projectId === id
+				) {
+					mutations++;
+					await assertProjectLocked();
+					if (mutations <= mergeAttempts) {
+						// Rewrite only this suite's owned disposable table, never a shared store.
+						await realCommand({
+							query: `OPTIMIZE TABLE metrics ${partial ? "PARTITION {partition:UInt64}" : ""} FINAL SETTINGS optimize_skip_merged_partitions = 0`,
+							query_params: {
+								partition: (BigInt(old) / 2_592_000_000_000_000n).toString(),
+							},
+						});
+						const response = await realCommand(params);
+						expect(await stored(name, id)).toHaveLength(partial ? 2 : 3);
+						return response;
+					}
+				}
+				return realCommand(params);
+			},
+		);
+		try {
+			const response = await product(
+				"/v1/governance/retention/runs",
+				"POST",
+				body,
+			);
+			expect(response.status).toBe(mergeAttempts === 1 ? 200 : 500);
+			expect(selections).toBe(partial ? 1 : mergeAttempts === 1 ? 2 : 3);
+			expect(mutations).toBe(selections);
+			const report = await pool.query(
+				"SELECT status, counts FROM governance_retention_runs WHERE project_id = $1",
+				[id],
+			);
+			expect(report.rows).toEqual(
+				mergeAttempts === 1
+					? [{ status: "completed", counts: { metrics: partial ? 1 : 2 } }]
+					: [{ status: "failed", counts: {} }],
+			);
+			expect(await stored(name, id)).toHaveLength(
+				partial ? 2 : mergeAttempts === 1 ? 1 : 3,
+			);
+		} finally {
+			command.mockRestore();
+			query.mockRestore();
+			probe.release();
+		}
+		if (mergeAttempts === 3) {
+			const next = await metricRetentionPreview(id);
+			const retry = await product("/v1/governance/retention/runs", "POST", {
+				...body,
+				preview_id: next.preview_id,
+			});
+			expect(retry.status).toBe(200);
+			expect(await retry.json()).toMatchObject({
+				status: "completed",
+				counts: { metrics: 2 },
+			});
+			expect(await stored(name, id)).toHaveLength(1);
+		}
+	}, 30_000);
+}
 
 test("Project deletion removes physical metrics and rejects credential replay while preserving another tenant", async () => {
 	const id = await newProject();
