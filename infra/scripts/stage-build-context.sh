@@ -11,6 +11,7 @@ readonly -a allowlisted_paths=(
   bun.lock
   infra/clickhouse/backup.xml
   infra/db
+  infra/otlp-sdk-requirements.txt
   infra/scripts
   package.json
   worker

@@ -1,7 +1,7 @@
-import { createRoute, z } from "@hono/zod-openapi";
-import type { Context } from "hono";
 import { createHash, createHmac } from "node:crypto";
 import { gunzipSync } from "node:zlib";
+import { createRoute, z } from "@hono/zod-openapi";
+import type { Context } from "hono";
 import { ch } from "../db/clickhouse.js";
 import { approvedRedaction } from "../db/governance.js";
 import { metricIdentityKey } from "../db/metric-identity.js";
@@ -10,8 +10,8 @@ import { policyRedactionOptions } from "../db/redact.js";
 import { insertWithDeadline } from "../db/traces-writer.js";
 import { logger } from "../lib/logger.js";
 import {
-	METRIC_LIMITS,
 	InvalidMetricExport,
+	METRIC_LIMITS,
 	MetricProjectConflict,
 	metricSeriesId,
 	normalizeMetricExport,
@@ -25,11 +25,11 @@ import {
 import { isTransientStorageFailure } from "../lib/transient-storage-error.js";
 import { parseBodySizeLimit } from "../middleware/body-size.js";
 import {
+	type ActiveAuthorizedProjectScope,
 	resolveTenantProject,
 	TenantScopeError,
 	trustedTenant,
 	withActiveAuthorizedProjectLock,
-	type ActiveAuthorizedProjectScope,
 } from "../tenancy.js";
 
 const binary = z.string().openapi({ type: "string", format: "binary" });
@@ -289,7 +289,7 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 				if (
 					!cursor ||
 					cursor.organization !== tenant.organizationId ||
-					cursor.project !== projectId ||
+					cursor.project !== tenant.projectId ||
 					cursor.name !== (name ?? null) ||
 					typeof cursor.time !== "string" ||
 					typeof cursor.id !== "string" ||
@@ -316,7 +316,7 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 						query: `SELECT * FROM metrics WHERE organization_id = {organization:String} AND project_id = {project:String}${name === undefined ? "" : " AND name = {name:String}"}${cursor ? " AND (time_unix_nano, point_id) < ({time:UInt64}, {id:String})" : ""} ORDER BY time_unix_nano DESC, point_id DESC LIMIT {limit:UInt32}`,
 						query_params: {
 							organization: tenant.organizationId,
-							project: projectId,
+							project: tenant.projectId,
 							name,
 							time: cursor?.time,
 							id: cursor?.id,
@@ -357,7 +357,7 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 							? Buffer.from(
 									JSON.stringify({
 										organization: tenant.organizationId,
-										project: projectId,
+										project: tenant.projectId,
 										name: name ?? null,
 										time: last.time_unix_nano,
 										id: last.point_id,

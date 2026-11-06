@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ulimit -c 0
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd -- "$root"
@@ -181,7 +182,7 @@ require_private_test_stack() {
 
 run_required_regressions() {
   local suite
-  for suite in extension-depth process-shutdown; do
+  for suite in extension-depth process-shutdown fidelity logs logs-readback metrics; do
     if ! require_private_test_stack; then
       printf '%s\n' 'OTLP SDK harness test stack ownership or network is unproven; refusing test execution.' >&2
       return 1
@@ -189,6 +190,8 @@ run_required_regressions() {
     "${compose[@]}" exec -T otlp-tests env -i \
       PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp NODE_ENV=test \
       GLASSHOUSE_CONTAINER_NETWORK=1 OTLP_SHUTDOWN_DISPOSABLE=1 \
+      OTLP_SDK_PYTHON=/opt/otlp-sdk/bin/python OTLP_LOGS_TEST_PYTHON=/opt/otlp-sdk/bin/python \
+      OTLP_METRICS_SDK_PYTHON=/opt/otlp-sdk/bin/python PYTHONNOUSERSITE=1 \
       POSTGRES_HOST=postgres POSTGRES_PORT=5432 POSTGRES_USER=otlp_test \
       POSTGRES_PASSWORD=otlp-test-password POSTGRES_DB=glasshouse \
       CLICKHOUSE_HOST=clickhouse CLICKHOUSE_HTTP_PORT=8123 CLICKHOUSE_USER=otlp_test \
@@ -272,7 +275,7 @@ test -n "$ingest_token"
 env -i PATH="$PATH" HOME="$harness_home" PIP_CONFIG_FILE=/dev/null \
   python3 -m venv "$venv"
 env -i PATH="$PATH" HOME="$harness_home" PIP_CONFIG_FILE=/dev/null \
-  "$venv/bin/pip" install --disable-pip-version-check --no-input --require-hashes --no-deps -r infra/otlp-sdk-requirements.txt
+  "$venv/bin/pip" install --disable-pip-version-check --no-input --require-hashes --no-deps -r "$build_context/infra/otlp-sdk-requirements.txt"
 env -i PATH="$PATH" HOME="$harness_home" PIP_CONFIG_FILE=/dev/null \
   "$venv/bin/pip" check
 for transport in http grpc; do

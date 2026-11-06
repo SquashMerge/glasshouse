@@ -13,6 +13,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 HARNESS = ROOT / "infra/scripts/test-otlp-sdk-integration.sh"
+SUITES = ("extension-depth", "process-shutdown", "fidelity", "logs", "logs-readback", "metrics")
 
 FAKE_DOCKER = r'''#!/usr/bin/env python3
 import json
@@ -65,6 +66,7 @@ if "compose" in args:
     state["project"] = project
     context = pathlib.Path(args[args.index("--project-directory") + 1])
     state["context_has_sentinel"] = (context / "arbitrary-host-secret").exists()
+    state["context_has_sdk_lock"] = (context / "infra/otlp-sdk-requirements.txt").is_file()
     if parts[-2:] == ["config", "--format"]:
         raise SystemExit("unexpected config syntax")
     if parts[-3:] == ["config", "--format", "json"]:
@@ -130,22 +132,51 @@ if "compose" in args:
 
     if "cp" in parts:
         source, destination = parts[-2:]
+        suite_name = source.removeprefix("otlp-tests:/tmp/otlp-").removesuffix(".xml")
         deep = "extension-depth" in source
         names = ([f"public ingest redacts unknown {location} fields ({depth} wrappers, 123 bytes)"
                   for depth, location in ((100, "value"), (16000, "value"), (20000, "attribute"), (20000, "value"), (32000, "value"), (80000, "value"))]
                  + ["deep extensions cannot bypass public authentication, tenant provenance, or body bounds"] if deep else
                  [f"API shuts down HTTP and gRPC on {signal}" for signal in ("SIGTERM", "SIGINT")])
+        extra_cases = {
+            "fidelity": ["fidelity fixture never connects to an inherited Valkey pub/sub sink",
+                         "ClickHouse upgrade/replay preserves legacy rows without invented nanos; fresh schema matches",
+                         *[f"official {transport} SDK fidelity, exact nanos, redaction={redaction}, retry and authenticated tenant denial"
+                           for transport in ("http", "grpc") for redaction in ("false", "true")],
+                         "bounded JSON detail preserves counts, precision and every continuation page",
+                         "revoked ingestion credential cannot persist event/link spans"],
+            "logs": ["standard JSON logs persist with trusted scope, resource/scope metadata, and exact nanoseconds",
+                     *[f"official SDK {transport} {suffix}" for transport in ("http", "grpc") for suffix in
+                       ("log exporter writes real correlated logs", "rejects anonymous and cross-Project log exports without writes")]],
+            "logs-readback": ["log keysets sort UInt64 numerically across decimal widths and reject scope/filter reuse",
+                              "typed log pages honor their UTF-8 budget and continue without losing retained bodies",
+                              "ClickHouse rejects physically unscoped logs"],
+            "metrics": ["metrics has real tenant-bearing ClickHouse storage after the normal migrations",
+                        "metrics pagination bounds every page and rejects cursors from another Project or filter",
+                        "metrics reads and cursors use the authorized canonical Project UUID across valid spellings",
+                        "official protobuf metadata is retained/redacted through HTTP and gRPC rather than silently dropped",
+                        *[f"official Python SDK {transport} exporter succeeds only after metrics are stored and readable"
+                          for transport in ("http", "grpc")]],
+        }
+        names = extra_cases.get(suite_name, names)
+        for transport in ("http", "grpc"):
+            if scenario == f"required_absent_{suite_name}_sdk_{transport}":
+                names = [name for name in names if not ("official" in name and transport in name)]
+        if scenario == f"required_absent_{suite_name}":
+            names = []
         suite = ET.Element("testsuite")
         for name in names:
             tag = "deep" if deep else ("term" if name.endswith("SIGTERM") else "int")
             if (scenario == f"required_absent_{tag}" and (not deep or "80000 wrappers" in name)) or (deep and scenario == "required_empty_deep"):
                 continue
             case = ET.SubElement(suite, "testcase", name=name)
-            if scenario == f"required_skip_{tag}":
+            if scenario in (f"required_skip_{tag}", f"required_skip_{suite_name}"):
                 ET.SubElement(case, "skipped")
+            if scenario == f"required_duplicate_{suite_name}":
+                ET.SubElement(suite, "testcase", name=name)
             if scenario == "required_failure_report":
                 ET.SubElement(case, "failure")
-        if scenario != "required_no_report":
+        if scenario not in ("required_no_report", f"required_no_report_{suite_name}"):
             pathlib.Path(destination).write_text("invalid XML" if scenario == "required_malformed_report" else ET.tostring(suite, encoding="unicode"))
         save()
         raise SystemExit(0)
@@ -159,7 +190,7 @@ if args[:2] == ["ps", "-aq"]:
     if "--no-trunc" not in args:
         save()
         raise SystemExit(96)
-    if scenario == "containers_inventory_error" or (scenario == "required_cleanup_inventory_error" and sum("exec" in call and "otlp-tests" in call for call in state["calls"]) == 2):
+    if scenario == "containers_inventory_error" or (scenario == "required_cleanup_inventory_error" and any("port" in call for call in state["calls"])):
         save()
         raise SystemExit(24)
     project = next(value.removeprefix("label=com.docker.compose.project=") for value in args if value.startswith("label=com.docker.compose.project="))
@@ -301,7 +332,7 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
                 else:
                     self.fail("fake Docker never observed compose up before SIGTERM")
                 os.killpg(process.pid, signal.SIGTERM)
-            stdout, stderr = process.communicate(timeout=10)
+            stdout, stderr = process.communicate(timeout=20)
             return process.returncode, stdout, stderr, json.loads(state_path.read_text())
 
     def assert_no_mutations(self, state):
@@ -393,6 +424,7 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
         context = pathlib.Path(compose_calls[0][compose_calls[0].index("--project-directory") + 1])
         self.assertNotEqual(context, ROOT)
         self.assertFalse(state["context_has_sentinel"])
+        self.assertTrue(state["context_has_sdk_lock"])
 
     def test_unsafe_short_id_mutation_fails_red_against_fake_docker(self):
         code, _, _, state = self.run_harness("up_failure", mutate=lambda source: source.replace(" --no-trunc", "", 1))
@@ -409,12 +441,15 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
             "DATABASE_URL": "postgres://hostile/db", "CLICKHOUSE_URL": "http://hostile",
             "VALKEY_URL": "redis://hostile", "VALKEY_PUBSUB_URL": "redis://hostile",
             "NODE_ENV": "production", "BUN_OPTIONS": "--preload=hostile.ts",
+            "OTLP_SDK_PYTHON": "/hostile/python", "OTLP_LOGS_TEST_PYTHON": "/hostile/python",
+            "OTLP_METRICS_SDK_PYTHON": "/hostile/python", "PYTHONPATH": "/hostile/modules",
         })
         self.assertEqual(code, 32)  # Fake Docker deliberately stops at the later SDK port lookup.
         calls = self.required_test_calls(state)
-        self.assertEqual(len(calls), 2)
-        self.assertIn("Verified required OTLP extension-depth cases", stdout)
-        self.assertIn("Verified required OTLP process-shutdown cases", stdout)
+        self.assertEqual(len(calls), len(SUITES))
+        for suite, call in zip(SUITES, calls):
+            self.assertIn(f"./tests/integration/otlp-{suite}.test.ts", call)
+            self.assertIn(f"Verified required OTLP {suite} cases", stdout)
         for call in calls:
             environment = call[call.index("env") + 1:call.index("bun")]
             self.assertEqual(environment[0], "-i")
@@ -425,10 +460,46 @@ class OtlpSdkHarnessSafetyTest(unittest.TestCase):
                 self.assertEqual(values[f"{service}_HOST"], service.lower())
                 self.assertEqual(values[f"{service}_{'HTTP_PORT' if service == 'CLICKHOUSE' else 'PORT'}"], port)
             self.assertEqual(values["NODE_ENV"], "test")
+            for variable in ("OTLP_SDK_PYTHON", "OTLP_LOGS_TEST_PYTHON", "OTLP_METRICS_SDK_PYTHON"):
+                self.assertEqual(values[variable], "/opt/otlp-sdk/bin/python")
+            self.assertEqual(values["PYTHONNOUSERSITE"], "1")
+            self.assertNotIn("PYTHONPATH", values)
             self.assertFalse(any(key.startswith("PG") or key.endswith("_URL") or key == "BUN_OPTIONS" for key in values))
             self.assertIn("--no-env-file", call)
             self.assertIn("--reporter=junit", call)
         self.assert_docker_environment_is_scrubbed(state)
+
+    def test_new_suites_fail_closed_on_absence_skips_duplicates_or_missing_reports_and_clean_owned_resources(self):
+        for suite in SUITES[2:]:
+            for failure in ("absent", "skip", "duplicate", "no_report"):
+                with self.subTest(suite=suite, failure=failure):
+                    code, _, _, state = self.run_harness(f"required_{failure}_{suite}")
+                    self.assertNotEqual(code, 0)
+                    calls = self.required_test_calls(state)
+                    self.assertTrue(any(f"./tests/integration/otlp-{suite}.test.ts" in call for call in calls))
+                    self.assertFalse(any("port" in call for call in state["calls"]), "must reject before later SDK work")
+                    self.assertEqual(state["resources"], [], "all and only owned resources must be cleaned")
+                    self.assertFalse(any(call[:2] == ["volume", "rm"] for call in state["calls"]))
+
+    def test_runner_installs_hashlocked_official_exporters_in_the_existing_service(self):
+        fixture = (ROOT / ".github/compose.otlp-sdk-integration.yaml").read_text()
+        self.assertIn("target: otlp-tests", fixture)
+        dockerfile = (ROOT / "apps/api/Dockerfile").read_text()
+        self.assertIn("FROM build AS otlp-tests", dockerfile)
+        self.assertIn("/opt/otlp-sdk/bin/pip install", dockerfile)
+        self.assertIn("--require-hashes --no-deps -r infra/otlp-sdk-requirements.txt", dockerfile)
+        self.assertIn("/opt/otlp-sdk/bin/pip check", dockerfile)
+        self.assertIn("infra/otlp-sdk-requirements.txt", (ROOT / "infra/scripts/stage-build-context.sh").read_text())
+
+    def test_each_official_exporter_is_required_even_when_other_cases_pass(self):
+        for suite in ("fidelity", "logs", "metrics"):
+            for transport in ("http", "grpc"):
+                with self.subTest(suite=suite, transport=transport):
+                    code, _, stderr, state = self.run_harness(f"required_absent_{suite}_sdk_{transport}")
+                    self.assertNotEqual(code, 0)
+                    self.assertIn("required case absent or duplicated", stderr)
+                    self.assertFalse(any("port" in call for call in state["calls"]))
+                    self.assertEqual(state["resources"], [])
 
     def test_required_regressions_refuse_unproven_owner_or_network_before_execution(self):
         scenarios = ["required_foreign_owner"] + [

@@ -29,7 +29,7 @@ test("CI requires the disposable OTLP harness and its safety regressions", () =>
 	);
 });
 
-test("OTLP runner uses the existing build stage and private fixture without URL overrides", () => {
+test("OTLP runner extends the existing build stage with hashlocked SDK dependencies on the private fixture", () => {
 	const fixture = load(
 		readFileSync(
 			new URL(".github/compose.otlp-sdk-integration.yaml", root),
@@ -41,7 +41,7 @@ test("OTLP runner uses the existing build stage and private fixture without URL 
 	expect(runner.build).toEqual({
 		context: ".",
 		dockerfile: "apps/api/Dockerfile",
-		target: "build",
+		target: "otlp-tests",
 	});
 	for (const key of ["environment", "env_file", "volumes", "ports", "networks"])
 		expect(runner[key]).toBeUndefined();

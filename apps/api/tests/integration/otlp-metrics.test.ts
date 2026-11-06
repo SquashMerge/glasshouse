@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
-import { type ClickHouseClient, createClient } from "@clickhouse/client";
-import * as grpc from "@grpc/grpc-js";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
+import { type ClickHouseClient, createClient } from "@clickhouse/client";
+import * as grpc from "@grpc/grpc-js";
 import { Pool } from "pg";
 import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization.js";
 import * as clickhouseModule from "../../src/db/clickhouse.js";
@@ -32,6 +32,7 @@ import {
 	exemplarTrace,
 	gauge,
 	histogram,
+	type Metric,
 	metricExport,
 	metricKinds,
 	metricStart,
@@ -39,7 +40,6 @@ import {
 	metricTime,
 	numberPoint,
 	stringAttribute,
-	type Metric,
 } from "../fixtures/otlp-metrics.js";
 import { otlpDisposableDatastores } from "../helpers/otlp-disposable-datastores.js";
 
@@ -550,6 +550,84 @@ test("metrics pagination bounds every page and rejects cursors from another Proj
 			).status,
 		).toBe(400);
 	}
+});
+
+test("metrics reads and cursors use the authorized canonical Project UUID across valid spellings", async () => {
+	const name = marker();
+	expect(
+		(
+			await post(
+				metricExport([
+					{
+						name,
+						gauge: {
+							dataPoints: Array.from({ length: 3 }, (_, i) => ({
+								...numberPoint(),
+								timeUnixNano: (BigInt(metricTime) + BigInt(i)).toString(),
+							})),
+						},
+					},
+				]),
+			)
+		).status,
+	).toBe(200);
+	expect(await stored(name)).toHaveLength(3);
+	const spellings = [
+		projectId.toUpperCase(),
+		projectId,
+		projectId.replace(/[a-f]/g, (letter, index) =>
+			index % 2 ? letter : letter.toUpperCase(),
+		),
+	];
+	const page = async (
+		project: string,
+		cursor?: string,
+		authorization = auth(),
+		filter = name,
+	) => {
+		const query = new URLSearchParams({
+			project_id: project,
+			name: filter,
+			limit: "1",
+		});
+		if (cursor) query.set("cursor", cursor);
+		return product(`/v1/metrics?${query}`, "GET", undefined, authorization);
+	};
+	for (const spelling of spellings) {
+		const first = await page(spelling);
+		expect(first.status).toBe(200);
+		const body = (await first.json()) as {
+			items: { point_id: string; project_id: string }[];
+			next_cursor: string;
+		};
+		expect(body.items).toHaveLength(1);
+		expect(body.items[0]!.project_id).toBe(projectId);
+		expect(
+			JSON.parse(Buffer.from(body.next_cursor, "base64url").toString()).project,
+		).toBe(projectId);
+		for (const continuation of spellings) {
+			const next = await page(continuation, body.next_cursor);
+			expect(next.status).toBe(200);
+			const second = (await next.json()) as typeof body;
+			expect(second.items).toHaveLength(1);
+			expect(second.items[0]!.point_id).not.toBe(body.items[0]!.point_id);
+		}
+		expect((await page(otherProjectId, body.next_cursor, auth(3))).status).toBe(
+			400,
+		);
+		expect(
+			(await page(projectId, body.next_cursor, auth(), `${name}.other`)).status,
+		).toBe(400);
+		expect((await page(projectId, body.next_cursor, auth(3))).status).toBe(404);
+	}
+	for (const invalid of [
+		` ${projectId}`,
+		`${projectId} `,
+		`{${projectId}}`,
+		projectId.replaceAll("-", ""),
+		`${projectId}x`,
+	])
+		expect((await page(invalid)).status).toBe(400);
 });
 
 test("known-depth, node and series limits reject atomically through real HTTP and protobuf boundaries", async () => {

@@ -30,6 +30,7 @@ class DockerBuildContextTests(unittest.TestCase):
             (source / "worker").mkdir()
             shutil.copy2(ROOT / "infra/scripts/stage-build-context.sh", source / "infra/scripts")
             shutil.copy2(ROOT / "apps/api/Dockerfile", source / "apps/api")
+            shutil.copy2(ROOT / "infra/otlp-sdk-requirements.txt", source / "infra")
             (source / "apps/web/placeholder").write_text("fixture\n")
             (source / ".github/compose.otlp-sdk-integration.yaml").write_text("services: {}\n")
             (source / "infra/clickhouse/backup.xml").write_text("<clickhouse/>\n")
@@ -54,6 +55,10 @@ class DockerBuildContextTests(unittest.TestCase):
                 timeout=30,
             )
             self.assertTrue((context / "apps/api/Dockerfile").is_file())
+            self.assertEqual(
+                (context / "infra/otlp-sdk-requirements.txt").read_bytes(),
+                (ROOT / "infra/otlp-sdk-requirements.txt").read_bytes(),
+            )
             self.assertFalse((context / sentinel.name).exists())
 
     def test_staged_allowlisted_changes_are_refused(self):

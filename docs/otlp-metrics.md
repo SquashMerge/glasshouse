@@ -148,6 +148,11 @@ aggregation query language, charting or automatic exemplar trace navigation is
 provided by this slice. The organization usage dashboard still counts traces
 and Observations only.
 
+Valid uppercase, lowercase and mixed-case Project UUID selectors resolve to the
+same authorized Project. Storage predicates and cursor scope use that Project's
+canonical UUID, so continuations remain reusable across valid spellings.
+Malformed UUID tokens are rejected rather than trimmed or repaired.
+
 Governance accepts optional `retention.metrics` from 1 through 3650 whole days.
 Existing default policies remain unchanged: metric retention is disabled until
 an Admin approves a policy containing it. Previews count expired physical points
@@ -185,6 +190,14 @@ and real official Python HTTP/gRPC exporters. Additional parser regressions live
 in `apps/api/tests/unit/metric-normalization.test.ts`. The real suite requires
 the proven isolated private service network and the hash-locked Python SDK from
 `infra/otlp-sdk-requirements.txt`; it creates only its disposable databases.
+The existing hosted `test-otlp-sdk-integration.sh` harness runs extension-depth,
+process-shutdown, trace fidelity, logs, logs readback and metrics sequentially on
+its ownership-checked disposable stack. Its existing test service extends the API
+build stage with `/opt/otlp-sdk/bin/python`, installed from that hash lock. Each
+suite runs with an allowlisted environment and requires a valid JUnit report;
+missing required cases, duplicate required cases, failures, errors and any skips
+fail the job. Official HTTP/protobuf and gRPC exporters are required for traces,
+logs and metrics. The harness does not remove volumes.
 Run these plus normal format/lint/typecheck/build and API/web checks in the exact
 isolated container. Regenerate/check `openapi.yaml` through the existing snapshot
 commands and regenerate ignored clients there. No runtime verification is implied

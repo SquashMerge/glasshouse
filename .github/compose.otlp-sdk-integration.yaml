@@ -36,8 +36,10 @@ services:
       timeout: 2s
       retries: 30
   otlp-tests:
-    build: { context: ., dockerfile: apps/api/Dockerfile, target: build }
+    build: { context: ., dockerfile: apps/api/Dockerfile, target: otlp-tests }
     command: ["sleep", "infinity"]
+    ulimits:
+      core: 0
   api:
     build: { context: ., dockerfile: apps/api/Dockerfile }
     environment:

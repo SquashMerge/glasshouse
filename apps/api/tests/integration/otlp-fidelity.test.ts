@@ -1,14 +1,16 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { createClient, type ClickHouseClient } from "@clickhouse/client";
+import { type ClickHouseClient, createClient } from "@clickhouse/client";
 import { Pool } from "pg";
-import { otlpDisposableDatastores } from "../helpers/otlp-disposable-datastores.js";
-import { migrate } from "../../src/db/migrate.js";
-import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate.js";
 import { bootstrapAuthorization } from "../../src/db/bootstrap-authorization.js";
+import { applyClickHouseMigrations } from "../../src/db/clickhouse-migrate.js";
+import { migrate } from "../../src/db/migrate.js";
+import { _resetForTests as resetPubSub } from "../../src/db/valkey-pubsub.js";
+import { _resetForTests as resetEventBus } from "../../src/lib/event-bus.js";
 import { startOtlpGrpcServer } from "../../src/lib/otlp-grpc.js";
+import { otlpDisposableDatastores } from "../helpers/otlp-disposable-datastores.js";
 
 const enabled = !!process.env.OTLP_SDK_PYTHON;
 const integration = test.skipIf(!enabled);
@@ -32,6 +34,11 @@ let otherAuth: string;
 let ingestAuth: string;
 let grpcPort: number;
 let credentialId: string;
+let pubSubConnections = 0;
+const pubSubProbe = createServer((socket) => {
+	pubSubConnections++;
+	socket.destroy();
+});
 const directory = new URL("../../../../infra/db/clickhouse/", import.meta.url);
 
 async function statements(client: ClickHouseClient, file: string) {
@@ -52,6 +59,11 @@ async function freePort(): Promise<number> {
 
 beforeAll(async () => {
 	if (!enabled) return;
+	// Replace any inherited sink with an owned connection-only probe before setup.
+	await new Promise<void>((resolve) =>
+		pubSubProbe.listen(0, "127.0.0.1", resolve),
+	);
+	process.env.VALKEY_PUBSUB_URL = `redis://127.0.0.1:${(pubSubProbe.address() as { port: number }).port}`;
 	const config = otlpDisposableDatastores(process.env, database);
 	admin = new Pool({ connectionString: config.postgresAdminUrl });
 	await admin.query(`CREATE DATABASE ${database}`);
@@ -112,6 +124,7 @@ beforeAll(async () => {
 	process.env.GLASSHOUSE_BASIC_AUTH_CREDENTIALS = JSON.stringify(credentials);
 	process.env.GLASSHOUSE_REDACT_KEYS = "secret";
 	process.env.GLASSHOUSE_REDACT_INPUT = "false";
+	delete process.env.VALKEY_PUBSUB_URL;
 	for (const credential of credentials)
 		await bootstrapAuthorization({
 			...process.env,
@@ -148,26 +161,76 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	if (!enabled) return;
-	await closeGrpc?.();
-	server?.stop(true);
-	const { closeClickHouseClient } = await import("../../src/db/clickhouse.js");
-	const { pgPool, authenticationPool } = await import(
-		"../../src/db/postgres.js"
-	);
-	await closeClickHouseClient();
-	await pgPool().end();
-	await authenticationPool().end();
-	await ch?.close();
-	await pool?.end();
-	for (const db of createdCh)
-		await chAdmin.command({ query: `DROP DATABASE ${db} SYNC` });
-	await chAdmin?.close();
-	if (createdPg) await admin.query(`DROP DATABASE ${database}`);
-	await admin?.end();
-	for (const key of Object.keys(process.env))
-		if (!(key in originalEnv)) delete process.env[key];
-	Object.assign(process.env, originalEnv);
+	try {
+		await closeGrpc?.();
+		server?.stop(true);
+		const { closeClickHouseClient } = await import(
+			"../../src/db/clickhouse.js"
+		);
+		const { pgPool, authenticationPool } = await import(
+			"../../src/db/postgres.js"
+		);
+		await closeClickHouseClient();
+		await pgPool().end();
+		await authenticationPool().end();
+		await ch?.close();
+		await pool?.end();
+		for (const db of createdCh)
+			await chAdmin.command({ query: `DROP DATABASE ${db} SYNC` });
+		await chAdmin?.close();
+		if (createdPg) await admin.query(`DROP DATABASE ${database}`);
+		await admin?.end();
+	} finally {
+		resetEventBus();
+		resetPubSub();
+		try {
+			if (pubSubProbe.listening)
+				await new Promise<void>((resolve, reject) =>
+					pubSubProbe.close((error) => (error ? reject(error) : resolve())),
+				);
+		} finally {
+			for (const key of Object.keys(process.env))
+				if (!(key in originalEnv)) delete process.env[key];
+			Object.assign(process.env, originalEnv);
+		}
+	}
 });
+
+integration(
+	"fidelity fixture never connects to an inherited Valkey pub/sub sink",
+	async () => {
+		const response = await fetch(new URL("/v1/traces", server.url), {
+			method: "POST",
+			headers: {
+				authorization: ingestAuth,
+				"x-glasshouse-project-id": project,
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				resourceSpans: [
+					{
+						scopeSpans: [
+							{
+								spans: [
+									{
+										traceId: randomBytes(16).toString("hex"),
+										spanId: randomBytes(8).toString("hex"),
+										name: "pubsub-isolation",
+										startTimeUnixNano: "1700000000000000001",
+										endTimeUnixNano: "1700000000000000002",
+									},
+								],
+							},
+						],
+					},
+				],
+			}),
+		});
+		expect(response.status).toBe(200);
+		await Bun.sleep(250);
+		expect(pubSubConnections).toBe(0);
+	},
+);
 
 integration(
 	"ClickHouse upgrade/replay preserves legacy rows without invented nanos; fresh schema matches",
