@@ -1,4 +1,6 @@
 import protobuf from "protobufjs";
+import root from "@opentelemetry/otlp-proto-exporter-base/build/src/generated/root.js";
+import { Reader } from "protobufjs/minimal.js";
 
 // Trace wire fields from opentelemetry-proto trace/v1 (including flags 16/6).
 // The older exporter-base generated descriptor silently discards these flags.
@@ -56,4 +58,87 @@ export function decodeOtlpTraceExport(bytes: Uint8Array): unknown {
 		longs: String,
 		json: true,
 	});
+}
+
+const ExportMetricsServiceRequest = (
+	root as unknown as {
+		opentelemetry: {
+			proto: {
+				collector: {
+					metrics: {
+						v1: {
+							ExportMetricsServiceRequest: {
+								decode: (bytes: Uint8Array) => unknown;
+								toObject: (message: unknown, options: object) => unknown;
+							};
+						};
+					};
+				};
+			};
+		};
+	}
+).opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest;
+
+export function decodeOtlpMetricExport(bytes: Uint8Array): unknown {
+	const options = { arrays: true, bytes: Array, enums: Number, longs: String };
+	const output = ExportMetricsServiceRequest.toObject(
+		ExportMetricsServiceRequest.decode(bytes),
+		options,
+	) as {
+		resourceMetrics: {
+			scopeMetrics: { metrics: { metadata?: unknown[] }[] }[];
+		}[];
+	};
+	// The pinned generated schema predates Metric.metadata (OTLP field 12).
+	// Recover only that field using its generated common.KeyValue codec.
+	const keyValue = (
+		root as unknown as {
+			opentelemetry: {
+				proto: {
+					common: {
+						v1: {
+							KeyValue: {
+								decode: (bytes: Uint8Array) => unknown;
+								toObject: (value: unknown, options: object) => unknown;
+							};
+						};
+					};
+				};
+			};
+		}
+	).opentelemetry.proto.common.v1.KeyValue;
+	let r = 0;
+	for (const resource of messageFields(bytes, 1)) {
+		let s = 0;
+		for (const scope of messageFields(resource, 2)) {
+			let m = 0;
+			for (const metric of messageFields(scope, 2)) {
+				output.resourceMetrics[r]!.scopeMetrics[s]!.metrics[m]!.metadata =
+					Array.from(messageFields(metric, 12), (value) =>
+						keyValue.toObject(keyValue.decode(value), options),
+					);
+				m++;
+			}
+			s++;
+		}
+		r++;
+	}
+	return output;
+}
+
+function* messageFields(
+	bytes: Uint8Array,
+	field: number,
+): Generator<Uint8Array> {
+	const reader = Reader.create(bytes);
+	while (reader.pos < reader.len) {
+		const tag = reader.uint32();
+		if (tag >>> 3 === field && (tag & 7) === 2) {
+			const length = reader.uint32();
+			const end = reader.pos + length;
+			if (end > reader.len) throw new Error("Invalid protobuf message length");
+			yield bytes.subarray(reader.pos, end);
+			reader.pos = end;
+		} else reader.skipType(tag & 7);
+	}
 }

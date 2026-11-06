@@ -42,6 +42,9 @@ The redacted, bounded `Observation.otlp` envelope exposed by authenticated trace
 ### Exact trace times
 `start_time_unix_nano`, `end_time_unix_nano`, and `duration_nano`: nullable decimal-string nanoseconds retained alongside compatible millisecond fields. Unknown legacy/internal precision remains null; BigInt comparisons/subtraction preserve source precision. Event `time_unix_nano` is also a decimal string. See `docs/03-otel-ingest.md` for bounds.
 
+### Metric point and series
+A Metric point is one retained typed OTLP Gauge, Sum, Histogram, ExponentialHistogram or Summary data point in ClickHouse `metrics`; it is separate from evaluation scores and Trace/Observation rows. `time_unix_nano` and OTLP-JSON `data_point` preserve exact 64-bit values. `series_id` HMACs trusted scope and canonical original typed resource/scope/point identity before redaction; it is linkable and not anonymization. `point_id` HMACs an original-wire export position for bounded retry/retention handling using a separate domain. A **Metric identity key** is the random per-Project secret in PostgreSQL `project_metric_identity_keys`, provisioned for existing/new Projects by migration 90063 and never returned by product APIs. It prevents offline dictionary comparison without the key, not online guessing by actors able to ingest and read. `GET /v1/metrics` is a product read; `POST /v1/metrics` is SDK ingestion; the authenticated `/metrics` page inspects points. Optional approved `retention.metrics` governs physical expired points. See [metrics](otlp-metrics.md).
+
 ## Organization usage dashboard
 
 - `/` — authenticated organization homepage. It summarizes retained Trace and Observation rows for all active and archived Projects, with `24h`, `7d`, `30d`, and `90d` UTC ranges. Counts are grouped by `start_time` and are storage-row counts, not unique events or billing values.

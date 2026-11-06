@@ -8,6 +8,7 @@ import {
 	lockProjectAuditProvenance,
 } from "../db/project-authorization.js";
 import { pgPool } from "../db/postgres.js";
+import { deleteMetricRetentionBatch } from "../db/metrics-retention.js";
 import {
 	policyHash,
 	deleteSafeDatasetRetentionBatch,
@@ -616,6 +617,29 @@ export async function handleRunRetention(c: Context) {
 				)) as { deleted: number; skipped: number };
 				counts.datasets = result.deleted;
 				counts.datasets_skipped = result.skipped;
+			}
+			if (version.retention.metrics) {
+				const cutoff = new Date(
+					Date.now() - version.retention.metrics * 86_400_000,
+				);
+				await destructiveStage(
+					db,
+					tenant,
+					project_id,
+					version,
+					runId,
+					ownerToken,
+					"metrics_deleted",
+					async () => {
+						counts.metrics = await deleteMetricRetentionBatch(
+							tenant.organizationId,
+							project_id,
+							cutoff,
+							batch_size,
+						);
+					},
+					counts,
+				);
 			}
 			if (version.retention.traces) {
 				const cutoff = new Date(

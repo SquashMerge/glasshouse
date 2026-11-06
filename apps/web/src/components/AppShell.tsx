@@ -263,6 +263,13 @@ export function AppShell({ children, currentPath }: AppShellProps) {
 						collapsed={collapsed}
 					/>
 					<SidebarLink
+						to="/metrics"
+						label="Metrics"
+						icon={<LuChartLine className="h-4 w-4" />}
+						active={isActive("/metrics")}
+						collapsed={collapsed}
+					/>
+					<SidebarLink
 						to="/datasets"
 						label="Datasets"
 						icon={<LuDatabase className="h-4 w-4" />}
@@ -598,6 +605,7 @@ function SidebarLink({
 	to:
 		| "/"
 		| "/observability"
+		| "/metrics"
 		| "/prompts"
 		| "/datasets"
 		| "/evaluations"

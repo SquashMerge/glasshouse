@@ -17,6 +17,7 @@ import {
 } from "../lib/otlp-response.js";
 import { parseBodySizeLimit } from "../middleware/body-size.js";
 import { approvedRedaction } from "../db/governance.js";
+import { resourceProjectId } from "../db/gen-ai-attrs.js";
 import { policyRedactionOptions, REDACTED } from "../db/redact.js";
 import { ch } from "../db/clickhouse.js";
 import {
@@ -159,17 +160,15 @@ export async function handleIngestLogs(c: Context): Promise<Response> {
 					type !== "application/json",
 				),
 			);
+			for (const resource of request.resourceLogs)
+				resourceProjectId(resource.resource?.attributes ?? []);
 		} catch {
 			return otlpErrorResponse(req, 400);
 		}
 		for (const resource of request.resourceLogs) {
-			for (const attribute of resource.resource?.attributes ?? []) {
-				if (
-					attribute.key === "glasshouse.project.id" &&
-					attribute.value?.stringValue?.toLowerCase() !== projectId
-				)
-					throw new TenantScopeError("Project unavailable");
-			}
+			const selected = resourceProjectId(resource.resource?.attributes ?? []);
+			if (selected && selected !== projectId)
+				throw new TenantScopeError("Project unavailable");
 		}
 		const digest = createHash("sha256")
 			.update(

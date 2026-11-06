@@ -4,6 +4,7 @@ import { ErrorEnvelope } from "./common.js";
 const Retention = z
 	.object({
 		traces: z.number().int().min(1).max(3650).optional(),
+		metrics: z.number().int().min(1).max(3650).optional(),
 		datasets: z.number().int().min(1).max(3650).optional(),
 		feedback: z.number().int().min(1).max(3650).optional(),
 		logs: z.number().int().min(1).max(3650).optional(),

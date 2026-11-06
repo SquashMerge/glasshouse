@@ -1697,7 +1697,7 @@ export interface GovernancePolicyVersion {
 	id: string;
 	version: number;
 	retention: Partial<
-		Record<"traces" | "datasets" | "feedback" | "logs", number>
+		Record<"traces" | "metrics" | "datasets" | "feedback" | "logs", number>
 	>;
 	redaction: { mode: "none" | "all_text"; keys: string[] };
 	content_hash: string;
@@ -2705,9 +2705,7 @@ export interface ListLogsParams {
 	time_from?: string;
 	time_to?: string;
 }
-export async function listLogs(
-	params: ListLogsParams,
-): Promise<{
+export async function listLogs(params: ListLogsParams): Promise<{
 	items: LogRecord[];
 	total: number;
 	next_cursor?: string;

@@ -4,7 +4,10 @@ const protobufContentTypes = new Set([
 ]);
 
 export function isOtlpIngestRequest(method: string, path: string): boolean {
-	return method === "POST" && (path === "/v1/traces" || path === "/v1/logs");
+	return (
+		method === "POST" &&
+		(path === "/v1/traces" || path === "/v1/logs" || path === "/v1/metrics")
+	);
 }
 
 function contentType(
@@ -46,7 +49,11 @@ export function otlpErrorResponse(request: Request, status: number): Response {
 			? errorMessage(status)
 					.replaceAll("trace", "log")
 					.replaceAll("Trace", "Log")
-			: errorMessage(status);
+			: new URL(request.url).pathname === "/v1/metrics"
+				? errorMessage(status)
+						.replaceAll("trace", "metrics")
+						.replaceAll("Trace", "Metrics")
+				: errorMessage(status);
 	const type = contentType(request);
 	return new Response(
 		type === "application/json"

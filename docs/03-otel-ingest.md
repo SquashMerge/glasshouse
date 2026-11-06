@@ -1,6 +1,6 @@
 # OTel Ingest (Glasshouse)
 
-Glasshouse accepts OTLP trace JSON/protobuf at `POST /v1/traces` and log JSON/protobuf at `POST /v1/logs`, with optional OTLP/gRPC TraceService and LogsService exports. Their `GET` operations are separately authorized product lists; bearer ingestion credentials cannot read telemetry.
+Glasshouse accepts OTLP JSON/protobuf traces at `POST /v1/traces`, logs at `POST /v1/logs`, and metrics at `POST /v1/metrics`, with optional OTLP/gRPC TraceService, LogsService and MetricsService exports. Each path's `GET` operation is a separately authorized product read; trace detail and SSE routes remain product reads. Bearer ingestion credentials cannot read telemetry. See [metrics ingestion, limits and readback](otlp-metrics.md).
 
 This endpoint change is a breaking cutover: `POST /v1/otel/v1/traces` is removed. Update clients and proxies configured with the old URL. The old custom path was permitted by OTLP; this migration is a Glasshouse product decision, not a specification requirement.
 
@@ -22,9 +22,9 @@ For an OTLP/HTTP sender, the base endpoint resolves traces to `/v1/traces`. A si
 
 ## Authentication
 
-OTLP trace and log ingestion accepts either the existing HTTP Basic Auth credentials or a dedicated Project-scoped bearer credential. Basic Auth remains suitable for existing integrations; a dedicated credential is safer for unattended agents because it cannot sign into the dashboard or read telemetry. Cookie sessions also work with the normal Origin and CSRF checks; a presented cookie takes precedence over authorization headers.
+OTLP trace, log and metric ingestion accepts either the existing HTTP Basic Auth credentials or a dedicated Project-scoped bearer credential. Basic Auth remains suitable for existing integrations; a dedicated credential is safer for unattended agents because it cannot sign into the dashboard or read telemetry. Cookie sessions also work with the normal Origin and CSRF checks; a presented cookie takes precedence over authorization headers.
 
-An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces and logs only to their bound Project and are accepted only by `POST /v1/traces` and `POST /v1/logs`.
+An organization Admin can manage credentials from **Settings → Ingestion credentials**. Select the target Project, create a named credential, and copy its secret immediately. Glasshouse shows the secret only in the create/rotate response; list views show only a short prefix and metadata. Store the secret in your deployment secret manager. Rotation immediately replaces the old secret; revocation disables it. Credentials can send traces, logs and metrics only to their bound Project and are accepted only by `POST /v1/traces`, `POST /v1/logs`, and `POST /v1/metrics`.
 
 Rotation and revocation require current organization Admin authority; they are not restricted to the credential's creator. Any current Admin in that organization can rotate an active credential for an active Project or revoke a credential for an active or archived Project. `created_by_actor_id` records the creator and supplies the actor used to authorize bearer ingestion; it is not a creator-only management permission.
 
@@ -50,7 +50,7 @@ export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 ```
 
-Basic Auth retains its existing Project authorization behavior; an ingestion credential is deliberately limited to the two signal-ingestion POSTs. Browser sign-in uses local cookie sessions.
+Basic Auth retains its existing Project authorization behavior; an ingestion credential is deliberately limited to the three signal-ingestion POSTs. Browser sign-in uses local cookie sessions.
 
 ## Organization and project routing
 
@@ -104,7 +104,7 @@ Both flags default to off (dev-friendly). In production we recommend `GLASSHOUSE
 
 Glasshouse accepts standard OTLP HTTP JSON (lower-camel field names) and protobuf trace exports at the same endpoint. It accepts `Content-Encoding: gzip` with a decompressed body limit equal to `API_MAX_BODY_BYTES`, so compressed input cannot bypass the request budget. A successful export returns the protocol's empty response (`{}` for JSON, empty protobuf for protobuf). OTLP errors use a `google.rpc.Status` response in the request encoding, with generic messages that do not disclose tenant or credential state.
 
-An optional native gRPC TraceService/LogsService listener is disabled by default. Set `OTLP_GRPC_PORT` to enable it; `OTLP_GRPC_HOST` defaults to `127.0.0.1` and only loopback/private bind addresses are accepted. Place it behind an operator-managed TLS edge. gRPC metadata must include exactly one `authorization` value and exactly one `x-glasshouse-project-id`; it uses the same Basic/Bearer authentication, Project authorization, provenance checks, redaction, and ingest lock as HTTP. MetricsService is not registered and returns `UNIMPLEMENTED`. Health checks recognize both registered signal services.
+An optional native gRPC TraceService/LogsService/MetricsService listener is disabled by default. Set `OTLP_GRPC_PORT` to enable it; `OTLP_GRPC_HOST` defaults to `127.0.0.1` and only loopback/private bind addresses are accepted. Place it behind an operator-managed TLS edge. gRPC metadata must include exactly one `authorization` value and exactly one `x-glasshouse-project-id`, without comma-joined ambiguity; it uses the same Basic/Bearer authentication, Project authorization, provenance checks, redaction, and ingest lock as HTTP. Health checks recognize all three registered signal services.
 
 For IPv6 loopback, set `OTLP_GRPC_HOST=::1` without brackets; the receiver brackets the literal when constructing its gRPC bind target. The host must have that address available.
 

@@ -10,6 +10,7 @@ import { securityHeaders } from "./middleware/security-headers.js";
 import { bodySizeLimit, parseBodySizeLimit } from "./middleware/body-size.js";
 import { handleOtlpIngest, resourceProjectIds } from "./routes/otlp.js";
 import { handleIngestLogs } from "./routes/logs.js";
+import { handleMetricExport } from "./routes/metrics.js";
 import { authenticationPool, pgPool } from "./db/postgres.js";
 import { listRecoverableExperiments } from "./db/experiments.js";
 import { cancelInterruptedExecutionAdmissions } from "./db/execution-admissions.js";
@@ -134,6 +135,7 @@ function projectOperationForRequest(
 async function requestedProjectIds(c: {
 	req: {
 		header: (name: string) => string | undefined;
+		method: string;
 		path: string;
 		query: (name: string) => string | undefined;
 		raw: Request;
@@ -147,7 +149,7 @@ async function requestedProjectIds(c: {
 	addProjectId(c.req.query("project_id"));
 	addProjectId(c.req.query("filter[project_id]"));
 	if (
-		(c.req.raw.method === "POST" && c.req.path === "/v1/traces") ||
+		isOtlpIngestRequest(c.req.method, c.req.path) ||
 		!isJsonContentType(c.req.header("content-type"))
 	)
 		return projectIds;
@@ -302,8 +304,13 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 			if (!header || !isUuid(header))
 				throw new TenantScopeError("Project target is required");
 			if (
-				tenant.ingestCredential &&
-				tenant.ingestCredential.projectId.toLowerCase() !== header.toLowerCase()
+				(tenant.ingestCredential &&
+					tenant.ingestCredential.projectId.toLowerCase() !==
+						header.toLowerCase()) ||
+				[
+					...new URL(c.req.url).searchParams.getAll("project_id"),
+					...new URL(c.req.url).searchParams.getAll("filter[project_id]"),
+				].some((value) => value.toLowerCase() !== header.toLowerCase())
 			)
 				throw new TenantScopeError("Project is not available");
 			const requestedProjectId = header;
@@ -335,6 +342,36 @@ export function createApiApp(dependencies: Partial<ApiDependencies> = {}) {
 	});
 
 	apiApp.post("/v1/logs", handleIngestLogs);
+	apiApp.post("/v1/metrics", async (c) => {
+		try {
+			const tenant = trustedTenant(c);
+			const header = c.req.header("x-glasshouse-project-id");
+			if (
+				!header ||
+				!isUuid(header) ||
+				(tenant.ingestCredential &&
+					tenant.ingestCredential.projectId.toLowerCase() !==
+						header.toLowerCase()) ||
+				[
+					...new URL(c.req.url).searchParams.getAll("project_id"),
+					...new URL(c.req.url).searchParams.getAll("filter[project_id]"),
+				].some((value) => value.toLowerCase() !== header.toLowerCase())
+			)
+				throw new TenantScopeError("Project is not available");
+			const scope = await resolvedDependencies.resolveTenantProject(
+				resolvedDependencies.pgPool(),
+				tenant,
+				header,
+				"ingest",
+			);
+			return await handleMetricExport(c.req.raw, scope);
+		} catch (cause) {
+			if (cause instanceof TenantScopeError)
+				return otlpErrorResponse(c.req.raw, 404);
+			throw cause;
+		}
+	});
+
 	apiApp.route("/", openapiApp);
 	return apiApp;
 }

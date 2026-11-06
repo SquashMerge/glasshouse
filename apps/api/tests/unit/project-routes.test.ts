@@ -452,7 +452,7 @@ describe("project authorization routes", () => {
 		expect(
 			query.mock.calls.some(([sql]) => sql.startsWith("DELETE FROM projects")),
 		).toBe(true);
-		expect(command).toHaveBeenCalledTimes(2);
+		expect(command).toHaveBeenCalledTimes(4);
 		for (const [input] of command.mock.calls)
 			expect(input.query).toContain("SETTINGS mutations_sync = 1");
 		expect(
@@ -702,8 +702,10 @@ describe("project authorization routes", () => {
 			index("UPDATE project_deletion_jobs SET status = 'completed'"),
 		).toBeGreaterThan(index("DELETE FROM projects"));
 		expect(command.mock.calls.map(([input]) => input.query)).toEqual([
+			expect.stringContaining("ALTER TABLE logs DELETE"),
 			expect.stringContaining("ALTER TABLE traces DELETE"),
 			expect.stringContaining("ALTER TABLE observations DELETE"),
+			expect.stringContaining("ALTER TABLE metrics DELETE"),
 		]);
 	});
 	it("rejects members from creating projects or changing organization roles", async () => {
@@ -1040,7 +1042,7 @@ describe("project authorization routes", () => {
 			retriedDeletion: 204,
 		});
 		expect(createdLegacyCallerMembership).toBe(false);
-		expect(command).toHaveBeenCalledTimes(3);
+		expect(command).toHaveBeenCalledTimes(5);
 	});
 
 	it("lets a durable Admin update a project without a legacy manager projection", async () => {

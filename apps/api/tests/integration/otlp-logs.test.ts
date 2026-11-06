@@ -814,6 +814,84 @@ test("trusted Project selection rejects missing, conflicting, foreign, and paylo
 	});
 });
 
+for (const variant of [
+	"attribute-extension-switch",
+	"value-extension-switch",
+	"duplicate-identical",
+	"malformed-id",
+	"attribute-extension-only",
+	"value-extension-only",
+	"null-extension",
+	"conflicting-values",
+] as const) {
+	test(`logs reject ${variant} Project selectors before redaction or storage`, async () => {
+		const target = await project();
+		const value: Record<string, unknown> = { stringValue: target.id };
+		const selector: Record<string, unknown> = {
+			key: "glasshouse.project.id",
+			value,
+		};
+		if (variant.startsWith("attribute-extension")) selector.future = null;
+		if (variant.startsWith("value-extension"))
+			value.future = { secret: syntheticSecret };
+		if (variant === "null-extension") value.future = null;
+		if (variant === "conflicting-values") value.boolValue = true;
+		if (variant === "malformed-id") value.stringValue = "invalid";
+		const selectors = [selector];
+		if (variant.endsWith("switch") || variant === "duplicate-identical")
+			selectors.push({
+				key: "glasshouse.project.id",
+				value: {
+					stringValue:
+						variant === "duplicate-identical"
+							? target.id
+							: otherDefaultProjectId,
+				},
+			});
+		const payload = envelope([record(syntheticSecret)]);
+		Object.assign(payload.resourceLogs[0]!.resource, { attributes: selectors });
+		expect(
+			(await ingest(target.id, payload, { authorization: "" })).status,
+		).toBe(401);
+		const rejected = await ingest(target.id, payload);
+		expect(rejected.status).toBe(400);
+		expect(await rejected.text()).not.toContain(syntheticSecret);
+		if (variant === "duplicate-identical" || variant === "malformed-id") {
+			const bytes = protobuf(payload);
+			expect(
+				(
+					await request("/v1/logs", {
+						method: "POST",
+						headers: {
+							"content-type": "application/x-protobuf",
+							"x-glasshouse-project-id": target.id,
+						},
+						body: bytes,
+					})
+				).status,
+			).toBe(400);
+			await expect(
+				unary(bytes, metadata(basic(owner), target.id)),
+			).rejects.toMatchObject({ code: grpc.status.INVALID_ARGUMENT });
+		}
+		expect(await stored(target.id)).toHaveLength(0);
+		expect(await stored(otherDefaultProjectId)).toHaveLength(0);
+	});
+}
+
+test("log ingestion checks every repeated query Project selector against the trusted header", async () => {
+	const target = await project();
+	for (const key of ["project_id", "filter[project_id]"]) {
+		const response = await jsonPost(
+			`/v1/logs?${key}=${target.id}&${key}=${otherDefaultProjectId}`,
+			envelope([record("query-conflict")]),
+			{ "x-glasshouse-project-id": target.id },
+		);
+		expect(response.status).toBe(404);
+	}
+	expect(await stored(target.id)).toHaveLength(0);
+});
+
 test("log reads require current Organization authority and cannot be used by ingestion bearer credentials", async () => {
 	const target = await project();
 	const token = await credential(target.id);
@@ -1446,9 +1524,21 @@ test("gRPC LogsService health and metadata enforce the same exact secure routing
 		unary(
 			Buffer.alloc(0),
 			metadata(basic(owner), target.id),
-			"/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
+			"/opentelemetry.proto.collector.unknown.v1.UnknownService/Export",
 		),
 	).rejects.toMatchObject({ code: grpc.status.UNIMPLEMENTED });
+	const metricsPath =
+		"/opentelemetry.proto.collector.metrics.v1.MetricsService/Export";
+	expect(
+		await unary(
+			Buffer.alloc(0),
+			metadata(basic(owner), target.id),
+			metricsPath,
+		),
+	).toEqual(Buffer.alloc(0));
+	await expect(
+		unary(Buffer.alloc(0), metadata(null, target.id), metricsPath),
+	).rejects.toMatchObject({ code: grpc.status.UNAUTHENTICATED });
 	expect(await stored(target.id)).toHaveLength(0);
 	expect(await stored(otherDefaultProjectId)).toHaveLength(0);
 });

@@ -104,7 +104,7 @@ test("accepts case-insensitive HTTP Bearer authentication schemes", async () => 
 	expect(response.status).toBe(200);
 });
 
-test("documents credential auth on both signal POSTs and excludes it from product reads", () => {
+test("documents credential auth on all three signal POSTs and excludes it from product reads", () => {
 	const document = openapiApp.getOpenAPI31Document({
 		openapi: "3.1.0",
 		info: { title: "OTLP auth contract", version: "test" },
@@ -114,9 +114,9 @@ test("documents credential auth on both signal POSTs and excludes it from produc
 		type: "http",
 		scheme: "bearer",
 		description:
-			"Project-scoped OTLP ingest credential, accepted only for POST /v1/traces and POST /v1/logs.",
+			"Project-scoped OTLP ingest credential, accepted only for POST /v1/traces, POST /v1/logs, and POST /v1/metrics.",
 	});
-	for (const path of ["/v1/traces", "/v1/logs"]) {
+	for (const path of ["/v1/traces", "/v1/logs", "/v1/metrics"]) {
 		expect(document.paths?.[path]?.post?.security).toEqual([
 			{ sessionCookie: [], csrfHeader: [] },
 			{ basicAuth: [] },

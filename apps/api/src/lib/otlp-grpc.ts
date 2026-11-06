@@ -9,6 +9,8 @@ const HEALTH_SERVICE_PATH = "/grpc.health.v1.Health/Check";
 const TRACE_SERVICE_NAME =
 	"opentelemetry.proto.collector.trace.v1.TraceService";
 const LOGS_SERVICE_NAME = "opentelemetry.proto.collector.logs.v1.LogsService";
+const METRICS_SERVICE_NAME =
+	"opentelemetry.proto.collector.metrics.v1.MetricsService";
 
 type Fetch = (request: Request) => Response | Promise<Response>;
 
@@ -30,6 +32,7 @@ export async function startOtlpGrpcServer(fetch: Fetch) {
 	for (const [path, endpoint] of [
 		[TRACE_SERVICE_PATH, "/v1/traces"],
 		[`/${LOGS_SERVICE_NAME}/Export`, "/v1/logs"],
+		[`/${METRICS_SERVICE_NAME}/Export`, "/v1/metrics"],
 	] as const)
 		server.addService(
 			{
@@ -79,13 +82,19 @@ export async function startOtlpGrpcServer(fetch: Fetch) {
 							return callback(null, Buffer.from(await response.arrayBuffer()));
 						callback({
 							code: grpcStatus(response.status),
-							message: "Telemetry export rejected",
+							message:
+								endpoint === "/v1/traces"
+									? "Trace export rejected"
+									: "Telemetry export rejected",
 						});
 					} catch (cause) {
 						logger.error("otlp.grpc_export_failed", cause);
 						callback({
 							code: grpc.status.INTERNAL,
-							message: "Telemetry export failed",
+							message:
+								endpoint === "/v1/traces"
+									? "Trace export failed"
+									: "Telemetry export failed",
 						});
 					}
 				},
@@ -113,7 +122,8 @@ export async function startOtlpGrpcServer(fetch: Fetch) {
 					if (
 						service === "" ||
 						service === TRACE_SERVICE_NAME ||
-						service === LOGS_SERVICE_NAME
+						service === LOGS_SERVICE_NAME ||
+						service === METRICS_SERVICE_NAME
 					)
 						return callback(null, Buffer.from([8, 1]));
 					return callback({

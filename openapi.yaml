@@ -8623,7 +8623,7 @@ components:
       scheme: basic
       type: http
     bearerAuth:
-      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/traces and POST /v1/logs.
+      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/traces, POST /v1/logs, and POST /v1/metrics.
       scheme: bearer
       type: http
     csrfHeader:
@@ -15298,6 +15298,10 @@ paths:
                             maximum: 3650
                             minimum: 1
                             type: integer
+                          metrics:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
                           traces:
                             maximum: 3650
                             minimum: 1
@@ -15401,6 +15405,10 @@ paths:
                       maximum: 3650
                       minimum: 1
                       type: integer
+                    metrics:
+                      maximum: 3650
+                      minimum: 1
+                      type: integer
                     traces:
                       maximum: 3650
                       minimum: 1
@@ -15471,6 +15479,10 @@ paths:
                             minimum: 1
                             type: integer
                           logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          metrics:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -15555,6 +15567,10 @@ paths:
                             minimum: 1
                             type: integer
                           logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          metrics:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -15686,6 +15702,10 @@ paths:
                               minimum: 1
                               type: integer
                             logs:
+                              maximum: 3650
+                              minimum: 1
+                              type: integer
+                            metrics:
                               maximum: 3650
                               minimum: 1
                               type: integer
@@ -15822,6 +15842,10 @@ paths:
                             minimum: 1
                             type: integer
                           logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          metrics:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -16442,6 +16466,135 @@ paths:
         - basicAuth: []
       tags:
         - projects
+  /v1/metrics:
+    get:
+      description: Project-authorized product read, newest nanosecond timestamp first. Attributes and data_point are typed OTLP JSON; integers are decimal strings. Pages are capped at 200 points and 256 KiB; follow next_cursor. No aggregation or temporality conversion is performed.
+      parameters:
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 200
+            minimum: 1
+            type: integer
+        - in: query
+          name: name
+          required: false
+          schema:
+            maxLength: 1024
+            type: string
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  items:
+                    items:
+                      additionalProperties: {}
+                      type: object
+                    type: array
+                  next_cursor:
+                    type:
+                      - string
+                      - 'null'
+                required:
+                  - items
+                  - next_cursor
+                type: object
+          description: Retained points
+        '400':
+          description: Invalid query
+        '401':
+          description: Authentication required
+        '404':
+          description: Project unavailable
+        '500':
+          description: Read failed
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: List retained metric points
+      tags:
+        - metrics
+    post:
+      description: 'OTLP JSON or protobuf, optionally gzip. Gauge, Sum, Histogram, ExponentialHistogram and Summary are validated atomically before persistence. Decimal strings preserve 64-bit values and nanoseconds. Limits: 2,000 metrics/points per export, 128 attributes per record, 4,096 buckets, 32 exemplars, 1,024 quantiles per point, 32 nesting levels and 100,000 inspected nodes. Oversized or invalid distributions reject the whole export; no truncation or synthetic aggregation.'
+      parameters:
+        - in: header
+          name: x-glasshouse-project-id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                resourceMetrics:
+                  items:
+                    additionalProperties: {}
+                    type: object
+                  type:
+                    - array
+                    - 'null'
+              type: object
+          application/protobuf:
+            schema:
+              format: binary
+              type: string
+          application/x-protobuf:
+            schema:
+              format: binary
+              type: string
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties: {}
+                type: object
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: All points stored (or identical-byte retry deduplicated)
+        '400':
+          description: Invalid metrics export
+        '401':
+          description: Authentication required
+        '404':
+          description: Project unavailable or resource provenance conflicts
+        '413':
+          description: Export exceeds limits
+        '415':
+          description: Unsupported encoding
+        '500':
+          description: Storage failure
+        '503':
+          description: Retryable storage failure
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+        - bearerAuth: []
+      summary: OTLP metrics export
+      tags:
+        - metrics
   /v1/observations:
     get:
       description: Returns a project-scoped page sorted by start_time DESC, observation_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.

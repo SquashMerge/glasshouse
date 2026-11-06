@@ -168,11 +168,16 @@ cascades Project-owned relational rows, and preserves only content-free lifecycl
 
 ## OTLP
 
-Every direct request to `POST /v1/traces` or `POST /v1/logs` needs one
+Every direct request to `POST /v1/traces`, `POST /v1/logs`, or `POST /v1/metrics` needs one
 `x-glasshouse-project-id` header for an active Project the authenticated Actor can ingest into.
 Resource attributes may match that target but never select it. Missing, conflicting,
 archived, or inaccessible IDs are rejected without disclosing cross-workspace data.
-Project-bound bearer credentials authenticate only these two exact POST paths,
-including when bridged from gRPC TraceService/LogsService. They cannot read either
-signal. Log writes and product reads recheck current authority under the existing
+Project-bound bearer credentials authenticate only these three exact POST paths,
+including when bridged from gRPC TraceService/LogsService/MetricsService. They cannot read any
+signal. Signal writes and product reads recheck current authority under the existing
 principal/Project fences; rotation/revocation is checked again before writes.
+
+Resource `glasshouse.project.id` is optional but must be one unextended UUID string
+matching the header, including in empty resource envelopes. Duplicate/malformed or
+extended selectors reject before normalization/redaction can hide them. Every query
+Project selector must agree with the authorized ingestion header.

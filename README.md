@@ -8,6 +8,11 @@
 
 See the [supported datastore contract](docs/datastore-upgrades.md) for version sources and verification. Backup/restore supports the current versions; legacy datastore migration and cross-version restore are unsupported.
 
+OTLP metrics support HTTP JSON/protobuf/gzip and the optional gRPC MetricsService,
+all five metric kinds, exact timestamps/integers, authenticated point readback and
+opt-in governed retention. See [metrics ingestion and limits](docs/otlp-metrics.md)
+and the authenticated **Metrics** page.
+
 For the separate self-hosted production path, use [`docs/self-hosted-production.md`](docs/self-hosted-production.md) and `infra/compose.production.yaml`. The other Compose files and `make dev` are development-only.
 
 The Compose files use Glasshouse logical volume keys while keeping the established physical data-volume IDs for PostgreSQL, ClickHouse, and Valkey, so this branding change does not orphan existing stores.

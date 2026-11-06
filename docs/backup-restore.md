@@ -8,6 +8,23 @@ Whole-database ClickHouse backups include OTLP `logs` and migration `0009` bookk
 
 ## Backup
 
+The native `BACKUP DATABASE` includes the `metrics` table and ClickHouse migration
+bookkeeping alongside traces and Observations. Metric integers/nanoseconds and
+typed histogram/exemplar data are restored from their original stored values;
+there is no separate metrics artifact. Pause HTTP/gRPC metric exporters along
+with trace ingestion when establishing a recovery point. After isolated restore,
+check scoped metric counts and exact typed values with `GET /v1/metrics` before
+cutover. An older artifact predating metrics receives the empty table through
+additive migration `0010_otlp_metrics.sql` during normal startup. Retention and
+Project deletion affect live stores, not already-created backup artifacts.
+
+PostgreSQL backups also contain the secret per-Project Metric identity keys from
+`90063_metric_identity_keys.sql`. Preserve those keys with the corresponding
+ClickHouse data to keep new points in the same series after recovery. Restoring
+ClickHouse alone or replacing keys splits future identities; neither action
+rewrites old IDs. Treat the PostgreSQL dump as secret-bearing: possession of a
+key permits offline guesses against that Project's pre-redaction identities.
+
 Install the client/runtime prerequisites used by the operator host: Bash, Docker Compose v2, `python3`, `sha256sum`, and a running stack; other examples use GNU Make. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
 
 Choose a destination with restrictive permissions. The destination can be a local disk, an encrypted mounted filesystem, or an operator-managed object-storage sync target. The script itself writes only to a local filesystem path.
