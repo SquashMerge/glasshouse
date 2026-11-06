@@ -116,9 +116,19 @@ The per-record retained ceiling is 64 KiB and product list pages stop at 256 KiB
 Log reads reject conflicting repeated Project query selectors. Log cursors bind
 Organization/Project/filters but are not authentication tokens;
 every read independently reauthorizes under Project and principal fences. The
+version-2 keyset includes persisted insert block/row coordinates, so equal
+timestamps and log IDs cannot hide a physical row at a page boundary. All rows
+and independent payloads remain retained; coordinates survive merges/mutations
+but are not a cross-restore identity or a concurrent-read snapshot. Old cursors
+fail validation and require fresh traversal. Logs protobuf decoding uses pinned
+upstream v1.11.1 wire definitions, including field-12 event names, on a private
+protobufjs root rather than the legacy trace exporter's generated schema. The
 Logs UI derives its detail only from the current Project query, discarding it
 on Project changes/errors. Log retention is explicitly opt-in in approved
-policies and uses bounded physical-row batches. Project deletion always replays
+policies and selects at most 500 expired physical coordinates under scoped
+predicates, including within larger duplicate groups. Counts require synchronous
+mutation settlement and absence readback; a failed/uncertain effect can already
+have deleted rows without atomic PostgreSQL progress. Project deletion always replays
 scoped log cleanup before finalization, including older deletion-job checkpoints.
 Whole-database backups include sensitive log bodies; restore can reinstate them
 and previously valid credentials. Byte-identity deduplication has the same

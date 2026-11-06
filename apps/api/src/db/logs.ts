@@ -47,9 +47,11 @@ type StoredLog = Omit<
 	attributes: string;
 	resource: string;
 	scope: string;
+	row_block_number: string;
+	row_block_offset: string;
 };
 const columns =
-	"log_id, project_id, time_unix_nano, observed_time_unix_nano, ingested_time_unix_nano, effective_time_unix_nano, severity_number, severity_text, trace_id, span_id, flags, dropped_attributes_count, event_name, body, attributes, resource, scope, resource_schema_url, scope_schema_url";
+	"log_id, project_id, time_unix_nano, observed_time_unix_nano, ingested_time_unix_nano, effective_time_unix_nano, severity_number, severity_text, trace_id, span_id, flags, dropped_attributes_count, event_name, body, attributes, resource, scope, resource_schema_url, scope_schema_url, _block_number AS row_block_number, _block_offset AS row_block_offset";
 export class InvalidLogCursor extends Error {}
 
 export async function deleteLogRetentionBatch(
@@ -58,6 +60,8 @@ export async function deleteLogRetentionBatch(
 	cutoff: Date,
 	batchSize: number,
 ): Promise<number> {
+	if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 500)
+		throw new RangeError("Invalid log retention batch size");
 	const client = ch();
 	const params = {
 		organizationId,
@@ -67,22 +71,35 @@ export async function deleteLogRetentionBatch(
 	};
 	const result = await client.query({
 		query:
-			"WITH grouped AS (SELECT log_id, min(effective_time_unix_nano) AS oldest, max(effective_time_unix_nano) AS newest, count() AS physical_rows FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} GROUP BY log_id HAVING newest < {cutoff:UInt64} AND physical_rows <= {batchSize:UInt64}), bounded AS (SELECT log_id, physical_rows, oldest, sum(physical_rows) OVER (ORDER BY oldest, log_id) AS cumulative_rows FROM grouped) SELECT log_id, physical_rows FROM bounded WHERE cumulative_rows <= {batchSize:UInt64} ORDER BY oldest, log_id",
+			"SELECT _block_number AS block_number, _block_offset AS block_offset FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND effective_time_unix_nano < {cutoff:UInt64} ORDER BY effective_time_unix_nano, log_id, _block_number, _block_offset LIMIT {batchSize:UInt32}",
 		query_params: params,
 		format: "JSONEachRow",
 		clickhouse_settings: { output_format_json_quote_64bit_integers: 1 },
 	});
 	const selected = await result.json<{
-		log_id: string;
-		physical_rows: string;
+		block_number: string;
+		block_offset: string;
 	}>();
 	if (!selected.length) return 0;
+	const selectedParams = {
+		...params,
+		blocks: selected.map((row) => row.block_number),
+		offsets: selected.map((row) => row.block_offset),
+	};
+	const predicate =
+		"organization_id = {organizationId:String} AND project_id = {projectId:String} AND effective_time_unix_nano < {cutoff:UInt64} AND (_block_number, _block_offset) IN (SELECT arrayJoin(arrayZip(CAST({blocks:Array(String)}, 'Array(UInt64)'), CAST({offsets:Array(String)}, 'Array(UInt64)'))))";
 	await client.command({
-		query:
-			"ALTER TABLE logs DELETE WHERE organization_id = {organizationId:String} AND project_id = {projectId:String} AND log_id IN {ids:Array(String)} AND effective_time_unix_nano < {cutoff:UInt64} SETTINGS mutations_sync = 1",
-		query_params: { ...params, ids: selected.map((row) => row.log_id) },
+		query: `ALTER TABLE logs DELETE WHERE ${predicate} SETTINGS mutations_sync = 1`,
+		query_params: selectedParams,
 	});
-	return selected.reduce((total, row) => total + Number(row.physical_rows), 0);
+	const remaining = await client.query({
+		query: `SELECT count() AS total FROM logs WHERE ${predicate}`,
+		query_params: selectedParams,
+		format: "JSONEachRow",
+	});
+	if (Number((await remaining.json<{ total: string }>())[0]?.total) !== 0)
+		throw new Error("Log retention did not remove the selected rows");
+	return selected.length;
 }
 
 export async function listLogs(
@@ -141,22 +158,27 @@ export async function listLogs(
 				Buffer.from(query.cursor, "base64url").toString("utf8"),
 			);
 			if (
+				cursor.version !== 2 ||
 				cursor.scope !== scope ||
 				!LogNano.safeParse(cursor.time).success ||
+				!LogNano.safeParse(cursor.block).success ||
+				!LogNano.safeParse(cursor.row).success ||
 				typeof cursor.id !== "string" ||
 				!/^[a-f0-9]{64}$/.test(cursor.id)
 			)
 				throw new InvalidLogCursor();
 			params.cursorTime = cursor.time;
 			params.cursorId = cursor.id;
+			params.cursorBlock = cursor.block;
+			params.cursorRow = cursor.row;
 			continuation =
-				" AND (effective_time_unix_nano, log_id) < ({cursorTime:UInt64}, {cursorId:String})";
+				" AND (effective_time_unix_nano, log_id, _block_number, _block_offset) < ({cursorTime:UInt64}, {cursorId:String}, {cursorBlock:UInt64}, {cursorRow:UInt64})";
 		} catch {
 			throw new InvalidLogCursor();
 		}
 	}
 	const result = await client.query({
-		query: `SELECT ${columns} FROM logs WHERE ${predicate}${continuation} ORDER BY effective_time_unix_nano DESC, log_id DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
+		query: `SELECT ${columns} FROM logs WHERE ${predicate}${continuation} ORDER BY effective_time_unix_nano DESC, log_id DESC, _block_number DESC, _block_offset DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`,
 		query_params: params,
 		format: "JSONEachRow",
 		clickhouse_settings: { output_format_json_quote_64bit_integers: 1 },
@@ -171,8 +193,13 @@ export async function listLogs(
 	const items: LogRecord[] = [];
 	let bytes = 1024;
 	for (const row of rows.slice(0, query.limit)) {
+		const {
+			row_block_number: _block,
+			row_block_offset: _offset,
+			...publicRow
+		} = row;
 		const item: LogRecord = {
-			...row,
+			...publicRow,
 			body: JSON.parse(row.body),
 			attributes: JSON.parse(row.attributes),
 			resource: JSON.parse(row.resource),
@@ -185,7 +212,7 @@ export async function listLogs(
 	}
 	if (rows.length && !items.length)
 		throw new Error("Stored log exceeds response budget");
-	const last = items.at(-1);
+	const last = rows[items.length - 1];
 	return {
 		items,
 		total,
@@ -196,9 +223,12 @@ export async function listLogs(
 			? {
 					next_cursor: Buffer.from(
 						JSON.stringify({
+							version: 2,
 							scope,
 							time: last.effective_time_unix_nano,
 							id: last.log_id,
+							block: last.row_block_number,
+							row: last.row_block_offset,
 						}),
 					).toString("base64url"),
 				}

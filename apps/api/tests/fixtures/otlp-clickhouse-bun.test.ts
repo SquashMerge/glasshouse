@@ -345,7 +345,7 @@ for (const table of ["traces", "observations"] as const) {
 								}
 							: {
 									code: grpc.status.UNAVAILABLE,
-									details: "Trace export rejected",
+									details: "Telemetry export rejected",
 								},
 					);
 					expect(events).toEqual([]);

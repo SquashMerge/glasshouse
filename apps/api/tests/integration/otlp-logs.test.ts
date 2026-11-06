@@ -617,6 +617,54 @@ test("standard JSON logs persist with trusted scope, resource/scope metadata, an
 });
 
 for (const transport of ["http", "grpc"] as const) {
+	test(`official-schema field 12 event_name persists through real ${transport} ingestion and product readback`, async () => {
+		const child = Bun.spawn(
+			[
+				process.env.OTLP_LOGS_TEST_PYTHON ?? "python3",
+				fileURLToPath(
+					new URL("../fixtures/otlp-logs-event-name.py", import.meta.url),
+				),
+			],
+			{
+				stdout: "pipe",
+				stderr: "pipe",
+				env: { PATH: process.env.PATH, PYTHONNOUSERSITE: "1" },
+			},
+		);
+		const [stdout, , code] = await Promise.all([
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+			child.exited,
+		]);
+		expect(code).toBe(0);
+		const { hex } = JSON.parse(stdout) as { hex: string };
+		expect(hex).toBe("0a09120712056203657674");
+		const target = await project();
+		const wire = Buffer.from(hex, "hex");
+		if (transport === "http") {
+			const response = await request("/v1/logs", {
+				method: "POST",
+				headers: {
+					"content-type": "application/x-protobuf",
+					"x-glasshouse-project-id": target.id,
+				},
+				body: wire,
+			});
+			expect(response.status).toBe(200);
+			expect(new Uint8Array(await response.arrayBuffer())).toHaveLength(0);
+		} else {
+			expect(await unary(wire, metadata(basic(owner), target.id))).toHaveLength(
+				0,
+			);
+		}
+		const rows = await stored(target.id);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.event_name).toBe("evt");
+		const readback = await list(target.id);
+		expect(readback.total).toBe(1);
+		expect(readback.items[0]).toMatchObject({ event_name: "evt" });
+	});
+
 	test(`official SDK ${transport} log exporter writes real correlated logs`, async () => {
 		const target = await project();
 		const token = await credential(target.id);
@@ -890,6 +938,64 @@ test("log ingestion checks every repeated query Project selector against the tru
 		expect(response.status).toBe(404);
 	}
 	expect(await stored(target.id)).toHaveLength(0);
+});
+
+test("public physical-duplicate pagination is bounded and reauthorizes every Project-scoped cursor read", async () => {
+	const target = await project();
+	const other = await project();
+	expect(
+		(
+			await ingest(
+				target.id,
+				envelope([record("private-duplicate-pagination")]),
+			)
+		).status,
+	).toBe(200);
+	await clickhouse.command({
+		query:
+			"INSERT INTO logs SELECT * FROM logs WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+		query_params: { organizationId, projectId: target.id },
+		clickhouse_settings: { insert_deduplicate: 0 },
+	});
+	const first = await request(`/v1/logs?project_id=${target.id}&limit=1`);
+	expect(first.status).toBe(200);
+	const page = (await first.json()) as {
+		items: LogRow[];
+		total: number;
+		next_cursor: string;
+	};
+	expect(page.total).toBe(2);
+	expect(page.items).toHaveLength(1);
+	expect(page.next_cursor).toBeDefined();
+	const cursor = encodeURIComponent(page.next_cursor);
+	const issued = await credential(target.id);
+	for (const [projectId, suffix, headers, status] of [
+		[other.id, "", {}, 400],
+		[target.id, "&filter[severity_text]=ERROR", {}, 400],
+		[target.id, "", { authorization: basic(outsider) }, 404],
+		[target.id, "", { authorization: `Bearer ${issued.secret}` }, 401],
+	] as const) {
+		const denied = await request(
+			`/v1/logs?project_id=${projectId}&limit=1&cursor=${cursor}${suffix}`,
+			{ headers },
+		);
+		expect(denied.status).toBe(status);
+		expect(await denied.text()).not.toContain("private-duplicate-pagination");
+	}
+	await clickhouse.command({ query: "OPTIMIZE TABLE logs FINAL" });
+	const next = await request(
+		`/v1/logs?project_id=${target.id}&limit=1&cursor=${cursor}`,
+	);
+	expect(next.status).toBe(200);
+	const last = (await next.json()) as {
+		items: LogRow[];
+		total: number;
+		next_cursor?: string;
+	};
+	expect(last.total).toBe(2);
+	expect(last.items).toEqual(page.items);
+	expect(last.next_cursor).toBeUndefined();
+	expect(JSON.stringify(last)).not.toContain("row_block_");
 });
 
 test("log reads require current Organization authority and cannot be used by ingestion bearer credentials", async () => {
@@ -1687,9 +1793,9 @@ test("log retention counts duplicate physical rows against its batch ceiling", a
 	expect(new Set(rows.map((row) => row.log_id)).size).toBe(2);
 	let remaining = rows.length;
 	for (const [batchSize, expectedDeleted] of [
-		[1, 0],
-		[3, 2],
-		[2, 2],
+		[1, 1],
+		[3, 3],
+		[2, 0],
 	] as const) {
 		const preview = await jsonPost("/v1/governance/retention/preview", {
 			project_id: target.id,
@@ -1718,6 +1824,68 @@ test("log retention counts duplicate physical rows against its batch ceiling", a
 			(await jsonPost("/v1/governance/retention/runs", input)).status,
 		).toBe(409);
 		expect(await stored(target.id)).toHaveLength(remaining);
+	}
+}, 30_000);
+
+test("log retention makes honest bounded progress through a duplicate group above 500", async () => {
+	const target = await project();
+	const survivor = await project();
+	const policyId = await policy(target.id, { mode: "none", keys: [] });
+	const expired = envelope([record("oversized-duplicate-group")]);
+	for (const projectId of [target.id, survivor.id])
+		expect((await ingest(projectId, expired)).status).toBe(200);
+	await clickhouse.command({
+		query:
+			"INSERT INTO logs SELECT logs.* FROM logs CROSS JOIN numbers(500) AS copies WHERE organization_id = {organizationId:String} AND project_id = {projectId:String}",
+		query_params: { organizationId, projectId: target.id },
+		clickhouse_settings: { insert_deduplicate: 0 },
+	});
+	const recent = record("recent-survives-large-duplicate-group", {
+		timeUnixNano: (BigInt(Date.now()) * 1_000_000n).toString(),
+	});
+	expect((await ingest(target.id, envelope([recent]))).status).toBe(200);
+	expect(await stored(target.id)).toHaveLength(502);
+	for (const [remaining, expectedDeleted] of [
+		[501, 500],
+		[1, 1],
+		[0, 0],
+	] as const) {
+		const preview = await jsonPost("/v1/governance/retention/preview", {
+			project_id: target.id,
+		});
+		expect(preview.status).toBe(200);
+		const planned = (await preview.json()) as {
+			preview_id: string;
+			counts: { logs: number };
+		};
+		expect(planned.counts.logs).toBe(remaining);
+		const run = await jsonPost("/v1/governance/retention/runs", {
+			project_id: target.id,
+			policy_version_id: policyId,
+			preview_id: planned.preview_id,
+			batch_size: 500,
+		});
+		expect(run.status).toBe(200);
+		const completed = (await run.json()) as { run_id: string };
+		expect(completed).toMatchObject({
+			status: "completed",
+			counts: { logs: expectedDeleted },
+		});
+		const evidence = await pool.query(
+			"SELECT status, counts FROM governance_retention_runs WHERE id = $1",
+			[completed.run_id],
+		);
+		expect(evidence.rows[0]).toEqual({
+			status: "completed",
+			counts: { logs: expectedDeleted },
+		});
+		expect(await stored(target.id)).toHaveLength(
+			remaining - expectedDeleted + 1,
+		);
+		expect(JSON.stringify(await stored(target.id))).toContain(
+			"recent-survives-large-duplicate-group",
+		);
+		expect(await stored(survivor.id)).toHaveLength(1);
 	}
 }, 30_000);
 

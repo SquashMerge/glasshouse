@@ -180,3 +180,46 @@ it("discards an open detail after a refresh fails and does not reopen it on reco
 	);
 	expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+it("inspects the clicked physical payload when log IDs repeat across pages", async () => {
+	const first = { ...row, body: { stringValue: "first physical payload" } };
+	const second = { ...row, body: { stringValue: "second physical payload" } };
+	state.list.mockImplementation(async ({ cursor }) =>
+		cursor
+			? { items: [second], total: 2 }
+			: { items: [first], total: 2, next_cursor: "physical-row-cursor" },
+	);
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false, gcTime: 0 } },
+	});
+	const errors = vi.spyOn(console, "error");
+	let enterViewport = () => {};
+	vi.stubGlobal(
+		"IntersectionObserver",
+		class {
+			constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+				enterViewport = () => callback([{ isIntersecting: true }]);
+			}
+			observe() {}
+			disconnect() {}
+		},
+	);
+	try {
+		render(view(client));
+		await screen.findByText("first physical payload");
+		await act(async () => enterViewport());
+		fireEvent.click(await screen.findByText("second physical payload"));
+		expect(screen.getByLabelText("Full retained log record")).toHaveTextContent(
+			"second physical payload",
+		);
+		expect(
+			screen.getByLabelText("Full retained log record"),
+		).not.toHaveTextContent("first physical payload");
+		expect(errors.mock.calls.flat().join(" ")).not.toMatch(
+			/same key|unique.*key/i,
+		);
+	} finally {
+		errors.mockRestore();
+		vi.unstubAllGlobals();
+	}
+});

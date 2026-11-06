@@ -122,7 +122,9 @@ function ProjectLogs({ projectId }: { projectId: string | null | undefined }) {
 	);
 	const [filters, setFilters] = React.useState(initial.filters);
 	const [range, setRange] = React.useState<TimeRange>(initial.timeRange);
-	const [selectedId, setSelectedId] = React.useState<string | null>(null);
+	const [selectedRecord, setSelectedRecord] = React.useState<LogRecord | null>(
+		null,
+	);
 	const params: ListLogsParams = React.useMemo(() => {
 		const time = toApiParams(range);
 		return {
@@ -146,15 +148,17 @@ function ProjectLogs({ projectId }: { projectId: string | null | undefined }) {
 	});
 	const items = query.data?.pages.flatMap((page) => page.items) ?? [];
 	const selected =
-		!query.isError && items.find((log) => log.log_id === selectedId);
+		!query.isError && selectedRecord && items.includes(selectedRecord)
+			? selectedRecord
+			: null;
 	React.useEffect(() => {
-		if (query.isError) setSelectedId(null);
+		if (query.isError) setSelectedRecord(null);
 	}, [query.isError]);
 	const onFiltersChange = React.useCallback(
 		(next: Record<string, string>, timeRange: TimeRange) => {
 			setFilters(next);
 			setRange(timeRange);
-			setSelectedId(null);
+			setSelectedRecord(null);
 			const current = window.location.search;
 			const updated = serializeObservabilitySearch(current, "logs", {
 				filters: next,
@@ -207,12 +211,12 @@ function ProjectLogs({ projectId }: { projectId: string | null | undefined }) {
 						void query.fetchNextPage();
 				}}
 				onRetry={() => void query.refetch()}
-				rowKey={(log) => log.log_id}
-				onRowClick={(log) => setSelectedId(log.log_id)}
+				rowKey={(log) => `${log.log_id}:${items.indexOf(log)}`}
+				onRowClick={setSelectedRecord}
 				onFiltersChange={onFiltersChange}
 			/>
 			{selected && (
-				<DialogOverlay onEscape={() => setSelectedId(null)}>
+				<DialogOverlay onEscape={() => setSelectedRecord(null)}>
 					<DialogContent
 						role="dialog"
 						aria-modal="true"
@@ -226,7 +230,7 @@ function ProjectLogs({ projectId }: { projectId: string | null | undefined }) {
 							<Button
 								type="button"
 								variant="outline"
-								onClick={() => setSelectedId(null)}
+								onClick={() => setSelectedRecord(null)}
 							>
 								Close
 							</Button>

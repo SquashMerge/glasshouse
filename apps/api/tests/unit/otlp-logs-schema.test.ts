@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { ExportLogsRequest, type LogAnyValue } from "../../src/schemas/logs.js";
-import { normalizeLogFields, redactLogValue } from "../../src/lib/otlp-logs.js";
+import {
+	decodeLogExport,
+	normalizeLogFields,
+	redactLogValue,
+} from "../../src/lib/otlp-logs.js";
 import { logFilterNano } from "../../src/db/logs.js";
 
 const envelope = (
@@ -8,6 +12,18 @@ const envelope = (
 	timeUnixNano: unknown = "18446744073709551615",
 ) => ({
 	resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano, body }] }] }],
+});
+
+test("official-schema LogRecord field 12 event_name survives protobuf decoding", () => {
+	// opentelemetry-proto logs/v1/logs.proto: event_name = 12. This fixture is
+	// independently reproduced by the hash-locked Python protobuf integration.
+	const bytes = Buffer.from("0a09120712056203657674", "hex");
+	const parsed = ExportLogsRequest.parse(
+		normalizeLogFields(decodeLogExport(bytes), "request", 0, true),
+	);
+	expect(parsed.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.eventName).toBe(
+		"evt",
+	);
 });
 
 test("logs retain the full uint64 timestamp and signed int64 body domain without Number rounding", () => {

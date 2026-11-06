@@ -35,6 +35,16 @@ Retention commits its `running` run and start audit record before any external m
 
 The governed inventory currently covers ClickHouse traces/observations, opt-in logs, and PostgreSQL datasets/dataset items and feedback review records. Logs expire by exact effective event/observed/receipt time and each batch is bounded by physical row count (including duplicate IDs), under the same manager/policy/lease fence. Project deletion replays scoped log cleanup before finalizing even for older deletion-job checkpoints. Prompt, experiment, benchmark, and score retention remain excluded until their dependency ordering and recovery contracts are explicitly designed; no implicit deletion occurs for them.
 
-Duplicate log IDs are selected as whole groups: a group larger than the requested batch is skipped, and the sum of selected groups' physical rows must fit the batch. A consumed preview cannot be replayed, even after a zero-deletion batch; request a fresh preview for another batch. ClickHouse deletion and PostgreSQL progress are not atomic: a failed run may already have deleted rows, so inspect persisted evidence and preview the remaining rows before starting a new run.
+Log retention selects individual physical rows by merge-stable insert coordinates,
+not whole `log_id` groups. At most the requested batch (maximum 500) is deleted;
+even groups larger than 500 progress across runs. The mutation repeats the trusted
+Organization/Project and cutoff predicates and waits for settlement; a readback
+must confirm the selected rows are absent before their count is recorded. Recent
+rows sharing an ID remain ineligible. A consumed preview cannot be replayed,
+even after a zero-deletion batch; request a fresh preview for another batch.
+Completion means that batch finished, not that all eligible rows were removed.
+ClickHouse deletion and PostgreSQL progress are not atomic: a failed run may
+already have deleted rows, so inspect persisted evidence and preview the
+remaining rows before starting a new run.
 
 The inventory also covers opt-in ClickHouse metrics. Metric previews count expired physical points using exact nanosecond time; synchronous tenant-scoped mutations select physical part/offset pairs within the run's row budget, including partial repeated-ID groups. The Project fence covers selection, deletion and observed row-count reporting; zero-progress merge races have a bounded retry. See [metrics limits and recovery](otlp-metrics.md). Permanent Project deletion also clears metrics before finalization, including on retries.

@@ -45,7 +45,7 @@ describe("ClickHouse migrations", () => {
 				!query.includes("glasshouse_schema_migrations") &&
 				!query.startsWith("INSERT INTO"),
 		);
-		expect(migrationStatements).toHaveLength(22);
+		expect(migrationStatements).toHaveLength(23);
 		expect(migrationStatements.every((query) => query.length > 0)).toBe(true);
 		expect(migrationStatements[0]).toContain(
 			"CREATE TABLE IF NOT EXISTS traces",
@@ -117,6 +117,10 @@ describe("ClickHouse migrations", () => {
 			"metrics_retained_payload_bounds",
 		);
 		expect(applied.has("0010_otlp_metrics.sql")).toBe(true);
+		expect(migrationStatements.at(-1)).toBe(
+			"ALTER TABLE logs MODIFY SETTING enable_block_number_column = 1, enable_block_offset_column = 1",
+		);
+		expect(applied.has("0011_logs_physical_row_identity.sql")).toBe(true);
 
 		const commandsAfterFirstStartup = commands.length;
 		await applyClickHouseMigrations(client, withoutMigrationLock);
@@ -176,8 +180,8 @@ describe("ClickHouse migrations", () => {
 			applyClickHouseMigrations(client, serializedMigrationLock),
 		]);
 
-		expect(inserted).toBe(10);
-		expect(applied).toHaveLength(10);
+		expect(inserted).toBe(11);
+		expect(applied).toHaveLength(11);
 	});
 
 	it("holds a PostgreSQL advisory lock for the full ClickHouse migration run", async () => {

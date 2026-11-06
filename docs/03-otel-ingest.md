@@ -168,6 +168,11 @@ An HTTP exporter using `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.example.com` res
 
 Log exports accept standard `resourceLogs → scopeLogs → logRecords` envelopes, including empty exports, resource/scope attributes and dropped counts, schema URLs, severity (0–24), flags, event name, and optional trace/span correlation. Empty/all-zero IDs are uncorrelated; malformed nonempty IDs reject the export. Records do not create traces or observations. Every resource `glasshouse.project.id` attribute must agree with the explicit Project header; organization payload attributes never establish authority. Missing/conflicting/foreign Project selection, archived/deleting Projects, and unauthorized writers are rejected before persistence. The writer rechecks current Actor/credential authority under the existing PostgreSQL fences, so a winning rotation/revocation prevents a pending write. A ClickHouse effect that already won its fence cannot be undone by later revocation.
 
+Protobuf logs use the vendored upstream OpenTelemetry proto v1.11.1 definitions,
+including `LogRecord.event_name` (field 12), through an isolated protobufjs root.
+The older trace exporter's generated schema is not used for log decoding.
+Already-dropped event names cannot be reconstructed from stored rows.
+
 `timeUnixNano` and `observedTimeUnixNano` retain their exact unsigned 64-bit values as decimal strings. JSON numeric 64-bit values must be safe integers; send decimal strings for larger values. AnyValue bodies/attributes preserve empty values, signed 64-bit integers as strings, canonical base64 bytes, booleans, doubles (including ProtoJSON `NaN`/`Infinity`/`-Infinity` strings), arrays, and key-value lists. Multiple known AnyValue alternatives reject the whole export. Ordering uses the nonzero event time, then nonzero observed time, then server receipt time; both original fields remain unchanged, including zero. Timestamp precision does not pass through a JavaScript Number or millisecond Date for storage or ordering.
 
 Logs use the same HTTP body/gzip and known-message depth limits as traces: 128 resources/scopes/attributes, 512 records per scope, 2,000 records per export, and depth 32. Before persistence, literal deployment/policy key redaction traverses body, record, resource, and scope AnyValues with depth 32 and 4,096-node budgets per field. Unknown/uninspectable branches are dropped even when the key list is empty. `GLASSHOUSE_REDACT_INPUT=true` or approved `all_text` replaces the entire body with `[REDACTED]`; deployment controls remain a floor. Redaction is not retroactive. A retained record above 64 KiB UTF-8 rejects the entire export with 413 rather than silently clipping its typed values.
@@ -176,9 +181,30 @@ The additive ClickHouse migration `0009_otlp_logs.sql` creates tenant-constraine
 
 `GET /v1/logs?project_id=<uuid>` returns typed `items`, `total`, and optional `next_cursor`. Defaults: `limit=50`, allowed 1–200; offset 0–1,000,000 is supported but cannot be combined with a cursor. Pages stop at 256 KiB and provide continuation when byte-limited. Cursors bind Organization, Project and filters; they are traversal positions, not authorization. Current product-read authorization is fenced independently on every request. Filters include `filter[severity_number]`, exact `filter[severity_text]`, `filter[trace_id]`, retained-body substring `filter[q]`, and UTC ISO `filter[time.from]`/`filter[time.to]` (inclusive, up to nine fractional digits). The UI's **Observability → Logs** tab supports filters, refresh, pagination, exact UTC nanosecond display, full retained-record inspection and correlated trace links. Logs currently use manual refresh rather than SSE, and organization usage aggregates still count traces/observations only.
 
+Lists and totals count physical rows, including duplicates retained outside the
+insert-deduplication window; neither `log_id` nor equal retained payloads imply
+uniqueness. Ordering breaks equal effective-time/`log_id` ties with ClickHouse's
+persisted `_block_number, _block_offset`. Additive migration
+`0011_logs_physical_row_identity.sql` enables their persistence through merges and
+mutations, including legacy parts, without rewriting/deduplicating payloads.
+Version-2 cursors contain this complete position; older cursors return 400 and
+require a fresh list. This is live keyset traversal, not a snapshot of concurrent
+inserts/deletes. Restart traversal after restoring/reinserting data, which may
+assign different insert coordinates. The detail view selects the clicked
+physical payload rather than assuming `log_id` is unique.
+
 Repeated `project_id` values fail query validation with 400. Any `filter[project_id]` selectors, including repeated values, must agree with `project_id`; conflicts return 404. The **Body** search field uses `filter[q]` in the API and `logs.q` in the UI URL. Body previews mark clipping after 200 Unicode code points with an ellipsis; the detail view shows the full retained record and is discarded on a Project change or query error.
 
 Approved governance policies may add `retention.logs` (1–3650 days). Existing baselines/policies are preserved; omission means no log retention deletion. Preview counts expired physical log rows by effective time. Runs select a bounded physical-row batch under the existing manager/policy/lease fence and await ClickHouse mutations; permanent Project deletion always removes scoped logs before finalizing, including retries of older deletion jobs. Whole-database backup/restore includes logs; the restore fixture checks exact times and nested int64 bodies alongside migration-ledger replay. See [governance](09-governance-runbook.md) and [backup/restore](backup-restore.md).
+
+Log retention selects at most the requested batch (maximum 500) by physical insert
+coordinates, then deletes only those expired Organization/Project-scoped rows.
+Duplicate groups larger than 500 progress across successive runs instead of
+being skipped forever. Completion counts are recorded only after synchronous
+mutation settlement and a readback confirming the selected rows are absent.
+An uncertain/failed mutation can already have deleted rows; PostgreSQL evidence
+and ClickHouse deletion are not atomic. A completed run means one bounded batch,
+not that every eligible row was removed; preview again for remaining work.
 
 Verification entry points: `apps/api/tests/integration/otlp-logs.test.ts` (real HTTP/gRPC, authentication, storage and lifecycle) and `apps/api/tests/fixtures/otlp-logs-sdk.py` (official SDK, using `infra/otlp-sdk-requirements.txt`). The new logs suite is a separate invocation; the existing hosted trace SDK harness does not yet enforce its report.
 

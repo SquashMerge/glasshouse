@@ -268,7 +268,7 @@ export const listLogsRoute = createRoute({
 	tags: ["logs"],
 	summary: "List Project logs",
 	description:
-		"Typed AnyValue log records, ordered by effective nanosecond time DESC then log_id DESC. Effective time uses event time, then observed time, then receipt time; original times remain unchanged. Pages are capped at 256 KiB and carry a scope/filter-bound keyset continuation. Bearer ingestion credentials cannot read logs.",
+		"Typed AnyValue physical log rows, ordered by effective nanosecond time DESC, log_id DESC, then merge-stable insert coordinates DESC. Duplicate IDs and independent payloads remain separate rows. Effective time uses event time, then observed time, then receipt time; original times remain unchanged. Pages are capped at 256 KiB and carry a scope/filter-bound keyset continuation. Bearer ingestion credentials cannot read logs.",
 	request: { query: LogListQuery },
 	responses: {
 		200: {

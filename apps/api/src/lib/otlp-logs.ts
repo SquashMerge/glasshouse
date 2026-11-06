@@ -1,28 +1,19 @@
-import root from "@opentelemetry/otlp-proto-exporter-base/build/src/generated/root.js";
+import { parse, Root } from "protobufjs";
+import common from "./otlp-proto/common.proto" with { type: "text" };
+import resource from "./otlp-proto/resource.proto" with { type: "text" };
+import logs from "./otlp-proto/logs.proto" with { type: "text" };
+import service from "./otlp-proto/logs_service.proto" with { type: "text" };
 import {
 	LOG_VALUE_KEYS,
 	type LogAnyValue,
 	type LogAttribute,
 } from "../schemas/logs.js";
 
-const proto = (
-	root as unknown as {
-		opentelemetry: {
-			proto: {
-				collector: {
-					logs: {
-						v1: {
-							ExportLogsServiceRequest: {
-								decode(bytes: Uint8Array): unknown;
-								toObject(message: unknown, options: object): unknown;
-							};
-						};
-					};
-				};
-			};
-		};
-	}
-).opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest;
+const root = new Root();
+for (const source of [common, resource, logs, service]) parse(source, root);
+const proto = root
+	.resolveAll()
+	.lookupType("opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest");
 
 export function decodeLogExport(bytes: Uint8Array): unknown {
 	return proto.toObject(proto.decode(bytes), {
