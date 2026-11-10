@@ -18,7 +18,7 @@ POSTGRES_DB=glasshouse_ci
 CLICKHOUSE_USER=glasshouse_ci
 CLICKHOUSE_PASSWORD=synthetic-clickhouse-pass
 CLICKHOUSE_DB=glasshouse_ci
-VALKEY_PASSWORD=synthetic-valkey-pass
+VALKEY_PASSWORD='synthetic-valkey-#?/%@-pass'
 UI_USERNAME=synthetic-owner
 UI_PASSWORD=synthetic-owner-pass
 GLASSHOUSE_BOOTSTRAP_OWNER_USERNAME=synthetic-owner
@@ -54,6 +54,7 @@ image_id="$(docker image inspect --format '{{.Id}}' "$image")"
 "${compose[@]}" pull postgres clickhouse valkey
 "${compose[@]}" up --detach --no-build --pull never --wait --wait-timeout 240
 test "$(docker inspect --format '{{.Image}}' "$("${compose[@]}" ps -q app)")" = "$image_id"
+"${compose[@]}" exec -T app bun -e 'import { valkey } from "/app/apps/api/src/db/valkey.ts"; const client = valkey(); await client.connect(); if (await client.ping() !== "PONG") process.exitCode = 1; client.disconnect();'
 check_migrations() {
   pg="$("${compose[@]}" exec -T postgres psql -U glasshouse_ci -d glasshouse_ci -Atqc 'SELECT count(*) FROM pgmigrations')"
   ch="$("${compose[@]}" exec -T clickhouse clickhouse-client --user glasshouse_ci --password synthetic-clickhouse-pass --database glasshouse_ci --query 'SELECT count() FROM glasshouse_schema_migrations')"

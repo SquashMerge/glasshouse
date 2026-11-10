@@ -26,6 +26,10 @@ proxy in front of it; forward Authorization and preserve streaming with proxy
 buffering disabled for SSE. The API and UI share the same origin. Never expose
 database services publicly. Protect environment files and rotate credentials.
 The database URL requires URL-unreserved PostgreSQL credentials and identifiers.
+Valkey's password is passed separately, not embedded in a URL. Quote values in
+the Compose environment file as needed, especially values containing `#`, spaces,
+or `$`; Compose single-quoted values are literal. Production secret-strength
+requirements still apply.
 
 ## First browser Admin
 
