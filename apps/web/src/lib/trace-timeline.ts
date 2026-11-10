@@ -26,6 +26,7 @@ export interface TimelineBar {
 export interface TraceTimeline {
 	startMs: number | null;
 	endMs: number | null;
+	durationMs: number | null;
 	bars: readonly TimelineBar[];
 	invalidObservationIds: readonly string[];
 }
@@ -133,6 +134,12 @@ export function clampPercent(value: number): number {
 	return Math.min(100, Math.max(0, value));
 }
 
+function exactNano(value: unknown): bigint | null {
+	if (typeof value !== "string" || !/^\d{1,20}$/.test(value)) return null;
+	const nano = BigInt(value);
+	return nano <= 18446744073709551615n ? nano : null;
+}
+
 export function createTraceTimeline(
 	observations: readonly CanonicalObservation[],
 ): TraceTimeline {
@@ -155,19 +162,50 @@ export function createTraceTimeline(
 		.filter((entry) => !entry.timing.isRenderable)
 		.map((entry) => entry.observation.observation_id);
 	if (renderable.length === 0) {
-		return { startMs: null, endMs: null, bars: [], invalidObservationIds };
+		return {
+			startMs: null,
+			endMs: null,
+			durationMs: null,
+			bars: [],
+			invalidObservationIds,
+		};
 	}
 
-	const startMs = Math.min(...renderable.map((entry) => entry.timing.startMs));
-	const maximumEnd = Math.max(...renderable.map((entry) => entry.timing.endMs));
-	const endMs = maximumEnd > startMs ? maximumEnd : startMs + 1;
-	const range = endMs - startMs;
-	const bars = renderable.map(({ observation, timing }) => ({
+	const coordinates = renderable.map(({ observation, timing }) => {
+		const start =
+			exactNano(observation.start_time_unix_nano) ??
+			BigInt(Math.round(timing.startMs)) * 1_000_000n;
+		const duration =
+			exactNano(observation.duration_nano) ??
+			BigInt(Math.round(timing.durationMs! * 1_000_000));
+		return { start, end: start + duration };
+	});
+	const origin = coordinates.reduce(
+		(min, point) => (point.start < min ? point.start : min),
+		coordinates[0]!.start,
+	);
+	const maximum = coordinates.reduce(
+		(max, point) => (point.end > max ? point.end : max),
+		origin,
+	);
+	// Calendar milliseconds are lossy; display elapsed time from the same
+	// relative interval used for bars, never by subtracting epoch Numbers.
+	const startMs = Number(origin / 1_000_000n);
+	const endMs = Number(maximum / 1_000_000n);
+	const durationMs = Number(maximum - origin) / 1_000_000;
+	const range = maximum > origin ? maximum - origin : 1_000_000n;
+	const bars = renderable.map(({ observation }, index) => ({
 		observationId: observation.observation_id,
-		startMs: timing.startMs,
-		endMs: timing.endMs,
-		leftPercent: clampPercent(((timing.startMs - startMs) / range) * 100),
-		widthPercent: clampPercent(((timing.endMs - timing.startMs) / range) * 100),
+		startMs: Number(coordinates[index]!.start / 1_000_000n),
+		endMs: Number(coordinates[index]!.end / 1_000_000n),
+		leftPercent: clampPercent(
+			(Number(coordinates[index]!.start - origin) / Number(range)) * 100,
+		),
+		widthPercent: clampPercent(
+			(Number(coordinates[index]!.end - coordinates[index]!.start) /
+				Number(range)) *
+				100,
+		),
 	}));
-	return { startMs, endMs, bars, invalidObservationIds };
+	return { startMs, endMs, durationMs, bars, invalidObservationIds };
 }

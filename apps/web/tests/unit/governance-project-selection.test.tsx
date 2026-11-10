@@ -125,8 +125,8 @@ describe("GovernancePage project-scoped mutations", () => {
 				.getAllByRole("option")
 				.map((option) => option.textContent),
 		).toEqual([
-			"Keep trace input/output text",
-			"Replace all trace input/output text",
+			"Keep telemetry text",
+			"Redact trace text, log bodies and metric string/byte values",
 		]);
 
 		fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
@@ -140,6 +140,109 @@ describe("GovernancePage project-scoped mutations", () => {
 				expect.anything(),
 			);
 		});
+	});
+
+	it("enables metric retention only when the draft explicitly includes an interval", async () => {
+		renderPage();
+		await screen.findByTestId("active-policy-card");
+		const metricDays = screen.getByLabelText(
+			"Metric retention (days, blank to disable)",
+		);
+		expect(metricDays).toHaveValue(null);
+		fireEvent.change(metricDays, { target: { value: "7" } });
+		fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+		await waitFor(() =>
+			expect(api.createGovernancePolicyDraft).toHaveBeenCalledWith(
+				expect.objectContaining({
+					retention: { traces: 30, metrics: 7, datasets: 90, feedback: 90 },
+				}),
+				expect.anything(),
+			),
+		);
+	});
+
+	it("can opt logs and metrics into one policy without changing the baseline classes", async () => {
+		renderPage();
+		await screen.findByTestId("active-policy-card");
+		const logDays = screen.getByLabelText("Log retention (days, optional)");
+		expect(logDays).toHaveValue(null);
+		fireEvent.change(logDays, { target: { value: "14" } });
+		fireEvent.change(
+			screen.getByLabelText("Metric retention (days, blank to disable)"),
+			{ target: { value: "7" } },
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+		await waitFor(() =>
+			expect(api.createGovernancePolicyDraft).toHaveBeenCalledWith(
+				expect.objectContaining({
+					retention: {
+						traces: 30,
+						logs: 14,
+						metrics: 7,
+						datasets: 90,
+						feedback: 90,
+					},
+				}),
+				expect.anything(),
+			),
+		);
+	});
+
+	it("does not carry draft settings into another project's submission", async () => {
+		api.createGovernancePolicyDraft.mockResolvedValue({ created: true });
+		const page = renderPage();
+		await screen.findByTestId("active-policy-card");
+
+		fireEvent.change(screen.getByLabelText("Log retention (days, optional)"), {
+			target: { value: "14" },
+		});
+		fireEvent.change(
+			screen.getByLabelText("Metric retention (days, blank to disable)"),
+			{
+				target: { value: "7" },
+			},
+		);
+		fireEvent.change(screen.getByLabelText("Trace retention (days)"), {
+			target: { value: "15" },
+		});
+		fireEvent.change(screen.getByLabelText("Dataset retention (days)"), {
+			target: { value: "45" },
+		});
+		fireEvent.change(screen.getByLabelText("Feedback retention (days)"), {
+			target: { value: "60" },
+		});
+		fireEvent.change(screen.getByLabelText("Ingress redaction"), {
+			target: { value: "all_text" },
+		});
+		fireEvent.change(screen.getByLabelText("Attribute keys to redact"), {
+			target: { value: "secret" },
+		});
+
+		selection.projectId = PROJECT_B;
+		page.rerender(
+			<QueryClientProvider
+				client={
+					new QueryClient({ defaultOptions: { queries: { retry: false } } })
+				}
+			>
+				<GovernancePage />
+			</QueryClientProvider>,
+		);
+		await screen.findByTestId("active-policy-card");
+		fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+		await waitFor(() =>
+			expect(api.createGovernancePolicyDraft.mock.calls[0]?.[0]).toEqual({
+				project_id: PROJECT_B,
+				retention: { traces: 30, datasets: 90, feedback: 90 },
+				redaction: { mode: "none", keys: [] },
+			}),
+		);
+		expect(screen.getByLabelText("Log retention (days, optional)")).toHaveValue(
+			null,
+		);
+		expect(
+			screen.getByLabelText("Metric retention (days, blank to disable)"),
+		).toHaveValue(null);
 	});
 
 	it("reports an equivalent policy as a no-op rather than claiming a draft was created", async () => {

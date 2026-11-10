@@ -74,6 +74,15 @@ const observabilityTraceDetailRoute = createRoute({
 	),
 });
 
+const metricsRoute = createRoute({
+	getParentRoute: () => protectedRoute,
+	path: "/metrics",
+	component: lazyRouteComponent(
+		() => import("./routes/metrics"),
+		"MetricsPage",
+	),
+});
+
 const promptsRoute = createRoute({
 	getParentRoute: () => protectedRoute,
 	path: "/prompts",
@@ -223,6 +232,7 @@ const router = createRouter({
 			indexRoute,
 			observabilityRoute,
 			observabilityTraceDetailRoute,
+			metricsRoute,
 			promptsRoute,
 			newPromptRoute,
 			promptDetailRoute,

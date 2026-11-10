@@ -33,6 +33,7 @@ import {
 	presentListObservation,
 	presentListTrace,
 	presentObservation,
+	presentTrace,
 } from "../db/trace-presentation.js";
 
 // Read tunables once at module load so per-event work is allocation-free.
@@ -127,7 +128,8 @@ export const streamTraceDetailEvents = createRoute({
 		"subscribes to `observation.created` BEFORE writing the snapshot (so any " +
 		"observation created in the gap is delivered as a live event), writes an " +
 		"`event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); " +
-		"a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards " +
+		"a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`. " +
+		"If even one detailed row cannot fit, the snapshot uses list projections with `detail_omitted: true`. Oversized live rows likewise use the list projection with `detail_omitted: true`; fetch full retained detail from the first Project-scoped REST trace page and follow its cursors. It forwards " +
 		"matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` " +
 		"frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` " +
 		"default-30s timer; on the timer's fire the server writes " +
@@ -430,13 +432,23 @@ export function createTraceEventHandlers(
 				observation.project_id !== expectedProjectId
 			)
 				return;
-			const data = JSON.stringify({
+			let data = JSON.stringify({
 				observation: presentObservation(
 					observation,
 					presentObservationMetadata,
 				),
 			});
-			const frame = sseEventFrame("observation", data);
+			let frame = sseEventFrame("observation", data);
+			if (utf8ByteLength(frame) > d.maxPendingBytes) {
+				data = JSON.stringify({
+					observation: presentListObservation(
+						observation,
+						presentObservationMetadata,
+					),
+					detail_omitted: true,
+				});
+				frame = sseEventFrame("observation", data);
+			}
 			if (forwardObservation) {
 				forwardObservation(frame);
 				return;
@@ -525,11 +537,11 @@ export function createTraceEventHandlers(
 			bufferedObservations.length = 0;
 			return notFoundResponse(traceId);
 		}
-		const snapshotTrace = snapshotResult.trace;
+		let snapshotTrace = presentTrace(snapshotResult.trace);
+		let detailOmitted = false;
 
-		const snapshotObservations = snapshotResult.observations.map(
-			(observation) =>
-				presentObservation(observation, presentObservationMetadata),
+		let snapshotObservations = snapshotResult.observations.map((observation) =>
+			presentObservation(observation, presentObservationMetadata),
 		);
 		const snapshotDataFor = (
 			observations: ReadonlyArray<(typeof snapshotObservations)[number]>,
@@ -541,6 +553,7 @@ export function createTraceEventHandlers(
 			return JSON.stringify({
 				trace: snapshotTrace,
 				observations,
+				...(detailOmitted ? { detail_omitted: true } : {}),
 				...(snapshotTruncated ? { snapshot_truncated: true } : {}),
 				...(last && snapshotTruncated
 					? {
@@ -561,12 +574,27 @@ export function createTraceEventHandlers(
 			MAX_TRACE_RESPONSE_BYTES,
 			d.maxPendingBytes,
 		);
-		const boundedSnapshot = fitResponseItems(
-			snapshotObservations,
-			(observations) =>
-				sseEventFrame("snapshot", snapshotDataFor(observations)),
-			maxSnapshotBytes,
-		);
+		const fitSnapshot = () =>
+			fitResponseItems(
+				snapshotObservations,
+				(observations) =>
+					sseEventFrame("snapshot", snapshotDataFor(observations)),
+				maxSnapshotBytes,
+			);
+		let boundedSnapshot = fitSnapshot();
+		if (
+			utf8ByteLength(
+				sseEventFrame("snapshot", snapshotDataFor(boundedSnapshot.items)),
+			) > maxSnapshotBytes ||
+			(snapshotObservations.length > 0 && boundedSnapshot.items.length === 0)
+		) {
+			detailOmitted = true;
+			snapshotTrace = presentListTrace(snapshotResult.trace);
+			snapshotObservations = snapshotResult.observations.map((observation) =>
+				presentListObservation(observation, presentObservationMetadata),
+			);
+			boundedSnapshot = fitSnapshot();
+		}
 		const snapshotData = snapshotDataFor(boundedSnapshot.items);
 		const snapshotFrame = sseEventFrame("snapshot", snapshotData);
 		if (

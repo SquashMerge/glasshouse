@@ -60,8 +60,12 @@ interface MockTraceStreamHandle {
 			observations: Array<Record<string, unknown>>;
 			snapshot_truncated?: boolean;
 			next_cursor?: string;
+			detail_omitted?: boolean;
 		}) => void;
-		onObservation: (msg: { observation: Record<string, unknown> }) => void;
+		onObservation: (msg: {
+			observation: Record<string, unknown>;
+			detail_omitted?: boolean;
+		}) => void;
 		onStatus: (status: "complete" | "not_found") => void;
 	} | null;
 	setPaused: (p: boolean) => void;
@@ -465,6 +469,94 @@ describe("TraceDetailPage — snapshot + live observations", () => {
 		expect(
 			screen.getByRole("button", { name: "Load remaining observations" }),
 		).toBeInTheDocument();
+	});
+
+	for (const source of ["snapshot", "live"] as const) {
+		it(`loads full retained detail through Project-scoped REST after a compact ${source}`, async () => {
+			selectedProjectId = PROJECT_ID;
+			const full = {
+				...makeObservation(),
+				otlp: { schema_version: 1, events: [{ name: "full-retained-event" }] },
+			} as unknown as ObservationRow;
+			mockedGetTraceDetail.mockResolvedValueOnce({
+				trace: { trace_id: VALID_ID } as TraceRow,
+				observations: [full],
+				next_cursor: "rest-continuation",
+			});
+			renderAt(VALID_ID);
+			await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+			await act(async () => {
+				const callbacks = handleByTraceId.get(VALID_ID)!.callbacks!;
+				callbacks.onSnapshot({
+					observations: [makeObservation()],
+					detail_omitted: source === "snapshot",
+				});
+				if (source === "live")
+					callbacks.onObservation({
+						observation: makeObservation(),
+						detail_omitted: true,
+					});
+			});
+			fireEvent.click(
+				screen.getByRole("button", { name: "Load full trace details" }),
+			);
+			await waitFor(() =>
+				expect(mockedGetTraceDetail).toHaveBeenCalledWith(VALID_ID, {
+					project_id: PROJECT_ID,
+					cursor: undefined,
+				}),
+			);
+			fireEvent.click(screen.getByRole("tab", { name: "Events" }));
+			await waitFor(() =>
+				expect(screen.getByTestId("detail-events")).toHaveTextContent(
+					"full-retained-event",
+				),
+			);
+			expect(
+				screen.getByRole("button", { name: "Load remaining observations" }),
+			).toBeInTheDocument();
+		});
+	}
+
+	it("keeps a newer compact live row reloadable when an earlier REST fallback settles", async () => {
+		selectedProjectId = PROJECT_ID;
+		let resolvePage!: (
+			page: Awaited<ReturnType<typeof getTraceDetail>>,
+		) => void;
+		mockedGetTraceDetail.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolvePage = resolve;
+			}),
+		);
+		renderAt(VALID_ID);
+		await waitFor(() => expect(handleByTraceId.has(VALID_ID)).toBe(true));
+		const callbacks = handleByTraceId.get(VALID_ID)!.callbacks!;
+		await act(async () =>
+			callbacks.onSnapshot({
+				observations: [makeObservation()],
+				detail_omitted: true,
+			}),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Load full trace details" }),
+		);
+		await act(async () => {
+			callbacks.onObservation({
+				observation: makeObservation({
+					observation_id: "newer",
+					name: "newer live row",
+				}),
+				detail_omitted: true,
+			});
+			resolvePage({
+				trace: { trace_id: VALID_ID } as TraceRow,
+				observations: [makeObservation() as unknown as ObservationRow],
+			});
+		});
+		expect(screen.getByTestId("span-tree")).toHaveTextContent("newer live row");
+		expect(
+			screen.getByRole("button", { name: "Load full trace details" }),
+		).toBeEnabled();
 	});
 
 	it("merges a reconnect snapshot with loaded continuations and live rows while refreshing its cursor", async () => {

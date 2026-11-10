@@ -28,7 +28,7 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 
 - Keep organizations and Projects isolated across reads, writes, search, exports, OTLP ingestion, events, worker work, and recovery.
 - Allow only currently authorized actors to use product data or perform governed, destructive, administrative, and recovery actions; revoke future effects when authority is removed.
-- Protect passwords, one-time setup/enrollment tokens, session cookies/CSRF values, Basic credentials, Project-scoped OTLP bearer credentials, database/cache credentials, and model-provider keys from unauthorized disclosure, logs, audits, URLs, browser storage, and untrusted reports. Session and CSRF values may be delivered to the intended authenticated browser client for protocol use; protect them from other clients and unintended recipients. Enrollment codes are intentionally returned once to an authorized provisioning/reset caller; never disclose them outside that one-time handoff or in lists, logs, audits, or URLs. Project-scoped OTLP secrets are returned only at create/rotate time, persisted as a one-way digest, and accepted only for trace ingestion.
+- Protect passwords, one-time setup/enrollment tokens, session cookies/CSRF values, Basic credentials, Project-scoped OTLP bearer credentials, database/cache credentials, and model-provider keys from unauthorized disclosure, logs, audits, URLs, browser storage, and untrusted reports. Session and CSRF values may be delivered to the intended authenticated browser client for protocol use; protect them from other clients and unintended recipients. Enrollment codes are intentionally returned once to an authorized provisioning/reset caller; never disclose them outside that one-time handoff or in lists, logs, audits, or URLs. Project-scoped OTLP secrets are returned only at create/rotate time, persisted as a one-way digest, and accepted only for trace, log and metric ingestion.
 - Preserve the confidentiality and integrity of prompts, trace input/output, dataset examples, feedback, evaluation definitions/results, and audit/provenance records.
 - Bound resource use and make asynchronous work, destructive operations, and failures recoverable without unsafe replay or cross-tenant effects.
 - Make security-sensitive behavior reviewable through typed contracts, migrations, safe audit evidence, and reproducible tests.
@@ -58,9 +58,11 @@ The native backup and restore scripts are trusted-host operator tools, not an AP
 
 **Goal:** read, write, stream, ingest into, export, mutate, or cause work in another tenant's data.
 
-**Expected control:** authentication establishes a trusted actor and Organization; a supplied `project_id` is only a resource selector. The API must authorize the operation against that actor and active Project, and bind both scopes in database/ClickHouse operations. Persisted tenant keys/FKs and authorization checks on worker/recovery/SSE paths reinforce this boundary. Cursor scope must be validated wherever cursors are used; any future cache must include the complete tenant/Project identity in its key and invalidation contract. OTLP payload metadata must not establish scope. Project-scoped OTLP bearer credentials derive organization and Project from the stored credential, are accepted only for `POST /v1/otel/v1/traces`, and must reject a missing or mismatched Project header; their management requires an organization Admin. See [authorization contract](07-project-workspace-authorization.md), [runbook](08-project-workspace-authorization-runbook.md), `apps/api/src/middleware/auth.ts`, `apps/api/src/tenancy.ts`, and `AGENTS.md`.
+**Expected control:** authentication establishes a trusted actor and Organization; a supplied `project_id` is only a resource selector. The API must authorize the operation against that actor and active Project, and bind both scopes in database/ClickHouse operations. Persisted tenant keys/FKs and authorization checks on worker/recovery/SSE paths reinforce this boundary. Cursor scope must be validated wherever cursors are used; any future cache must include the complete tenant/Project identity in its key and invalidation contract. OTLP payload metadata must not establish scope. Project-scoped OTLP bearer credentials derive organization and Project from the stored credential, are accepted only for `POST /v1/traces`, `POST /v1/logs`, and `POST /v1/metrics`, and must reject a missing or mismatched Project header; their management requires an organization Admin. Trace, log and metric GETs and trace detail/SSE remain product reads, with separate Project authorization and no OTLP bearer access. See [authorization contract](07-project-workspace-authorization.md), [runbook](08-project-workspace-authorization-runbook.md), `apps/api/src/middleware/auth.ts`, `apps/api/src/tenancy.ts`, and `AGENTS.md`.
 
 **Review focus:** IDOR through any route or alternate method; missing/ambiguous Project selectors; SQL predicates and composite references; cache/cursor/SSE leakage after switching Projects; archived/deleting Project behavior; stale or unscoped historical rows; and background actions that outlive the initiating request. Never infer tenant authority from UI visibility or a UUID's unguessability.
+
+Resource `glasshouse.project.id` selectors are validated before redaction: duplicates (even identical), malformed values and unknown attribute/AnyValue extensions reject the export, rather than being dropped to expose another selector. Missing resource selectors inherit the authorized header Project; valid conflicting selectors reject. Both persistence scope and the policy read bind the trusted authorized Project, never a post-redaction selector. Public HTTP + real PostgreSQL/ClickHouse regressions cover the malformed-first/foreign-second switch and zero writes/publications on rejection.
 
 **Organization usage aggregate exception:** `GET /v1/organization/usage` is intentionally available to every authenticated organization member, including Read-only actors, and exposes only Project identity/lifecycle metadata and aggregate retained-row counts. It must derive the organization from trusted authentication context, recheck active organization membership, enumerate only that organization's active/archived Projects, and filter both ClickHouse tables by the same organization and those Project IDs. It must not return payload columns or imply access to detail/query/export routes. This deliberately reveals organization-wide aggregate activity to every member; do not generalize the exception to other Project surfaces. Dependency health is a separate service-availability signal, not evidence of telemetry ingestion.
 
@@ -86,6 +88,8 @@ All local password operations, including login and current-password verification
 
 **Residual/deployment considerations:** Basic Auth remains an API/operator compatibility mechanism. SSO/MFA are not shipped. HTTPS, exact public-origin configuration, proxy header/body logging exclusions, secret storage/rotation, and edge rate limiting are deployment responsibilities. Do not put secrets in URLs, logs, issue text, screenshots, browser storage, or command output.
 
+The optional OTLP gRPC TraceService/LogsService/MetricsService listener is disabled unless an operator configures `OTLP_GRPC_PORT`; its host defaults to loopback and rejects public bind addresses. The optional production and snapshot Compose overlay resolves Docker's private `api` service address and publishes only a host-loopback port. Operators must still place remote access behind TLS and network policy. gRPC accepts only one authorization and one Project-selector metadata value, rejecting both repeated entries and comma-joined ambiguity before forwarding the original protobuf bytes through the corresponding HTTP authentication, Project authorization, reauthorization lock, provenance, redaction, and persistence path. Receive/decompression budgets bound message bytes; known-message depth is checked after protobuf decoding, so malformed recursive protobuf also relies on decoder failure being caught. Transport-level rate limits and TLS termination remain deployment responsibilities.
+
 The OTLP credential page keeps revealed secrets in component state, while shared query/mutation caches retain only credential metadata. Dismissal, replacement, and revocation clear the revealed secret; Project/authority changes and unmount invalidate pending reveals. Reveal eligibility is captured at submission, before an offline mutation can pause, so returning to the original Project cannot reauthorize its stale reveal on reconnect. This limits application retention, not access by someone controlling the browser or copies explicitly placed on the clipboard. Credential management requires current organization Admin authority, not creator identity. Bearer ingestion uses the creator Actor's current authority and enabled-account state, so an unrevoked credential marked Active can still be unusable. See [OTLP authentication](03-otel-ingest.md#authentication).
 
 On protected-page focus, the browser starts a fresh session request and fences older in-flight session responses, including when cross-tab storage invalidation is unavailable. It resets mounted query observers and refetches active queries, including `/v1/me`, so cached query results and prior role/capability flags are absent during refresh. To keep components whose routes remain mounted from losing local form state, the provider retains only the last selected Project as a non-authoritative read-only shell, with management/governance capabilities disabled; if `/v1/me` fails, organization authority remains unavailable and project capability remains least-privileged. The NewPromptPage composer has regression coverage. EditPromptPage retains a source snapshot scoped to its Project, prompt slug, and source version during a same-context query reset so the composer stays mounted; a changed Project, slug, or source version remounts the composer and discards its local draft. An error or authority failure still removes the editor rather than retaining private content. The complete protected subtree is immediately visually/accessibility-hidden and inert behind an opaque full-viewport modal in the browser's top layer, covering and inactivating portaled UI as well. Only the newest check may reveal content once its session request and active-query refresh both finish. Same-identity drafts reappear unchanged only in components that stayed mounted; a changed Actor, Organization, authentication kind, or username remounts the protected subtree while hidden to discard private drafts. The cached session expiry remains enforced during pending checks; invalid sessions clear workspace state and unavailable checks unmount protected content. Focus and storage events are browser freshness controls, not continuous revocation or a substitute for server-side authorization.
@@ -98,7 +102,86 @@ Ordinary navigation within the protected workspace reuses the verified in-memory
 
 **Goal:** persist or disclose credentials, PII, prompts, tool results, feedback, or customer data beyond its intended scope; poison evidence or manipulate evaluation outcomes.
 
-**Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence and governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
+**Expected control:** OTLP payloads are bounded and normalized; tenant scope comes from authentication plus an authorized Project selector, not payload attributes. Optional server-side redaction applies before new ingestion persistence, including configured keys nested in OTLP arrays and key-value lists; traversal is depth/node-bounded and drops a branch it cannot safely inspect. Governance policy can add stricter redaction. Trace text/metadata and events have size limits; audit records are designed to be content-free. Governance/retention currently covers only documented resource classes; it is not universal deletion. See [OTLP guide](03-otel-ingest.md), [governance runbook](09-governance-runbook.md), and `apps/api/src/db/redact.ts`.
+
+OTLP JSON null-valued fields are normalized as unset before validation and redaction; null elements in known repeated fields are rejected. Normalization traverses only known message fields, so ignored extension fields cannot invalidate an otherwise valid export. Known message objects and repeated-field arrays deeper than 32 levels below the request root reject the export before recursive schema validation or persistence; the guard never returns an unvalidated subtree. Nested AnyValue fields share the recursive wire schema for type validation. Unknown attribute fields remain visible to fail-closed redaction rather than being stripped by schema validation or repaired by null normalization. Retry identity hashes bounded, decompressed original bytes with a JSON/protobuf discriminator and trusted tenant/fallback Project scope; it never recursively serializes unknown extensions. Identical-byte retries preserve tokens across redaction changes, while differing bytes (even ignored or redacted data) remain distinct. Gzip is transport-only; protobuf media aliases and the gRPC bridge share identity. Only digests reach writer settings, not raw bodies, and digests are not a confidentiality control against payload guessing. Authorization and current redaction still run on every attempt; committed rows are not retroactively redacted. Earlier row-based tokens are not compatible across an algorithm upgrade. Retained-span identity requirements and trusted tenant provenance still apply. Each Trace/Observation insert has a 30-second wall-clock deadline that uses the pinned client's supported `AbortSignal` and awaits cancellation; timers are cleared on settlement. Deadline expiry and the client's exact uncoded native timeout are normalized only at this insert boundary to produce a retryable HTTP `503`/gRPC `UNAVAILABLE`; arbitrary timeout-like errors are not a general retry signal. Bun 1.3.14 loopback regressions verify request settlement and TCP closure before headers and during response-body draining, for both tables and HTTP/gRPC, including cancellation before the native socket timeout. Native-Node coverage retains the uncoded-error contract. These tests inject authorization/tenant dependencies; they do not prove authentication or remote ClickHouse cancellation. A storage timeout can leave an uncertain write outcome even after local I/O is aborted, and retry deduplication is bounded rather than an exactly-once guarantee. The per-insert deadline does not bound the entire request's authorization/lock acquisition.
+
+OTLP logs add a separately tenant-constrained ClickHouse table with exact UInt64
+event/observed/receipt timestamps and typed AnyValue JSON. Scope is trusted
+authentication plus the explicit Project header; every resource Project claim
+must agree. Current Actor and credential authority are fenced through write
+settlement. Body, record, resource and scope redaction uses bounded traversal and
+drops unknown/uninspectable branches; all-text mode replaces the whole body.
+The per-record retained ceiling is 64 KiB. A separate 4 MiB serialized retained
+export budget is accumulated after redaction, including expanded resource/scope
+copies, nested JSON-string escaping and row delimiters; either limit rejects
+the entire export before inserts with HTTP 413 / gRPC `RESOURCE_EXHAUSTED`.
+Only a bounded prefix of retained rows is accumulated before rejection. Product
+list pages stop at 256 KiB. New public log IDs HMAC the original-wire digest and
+record position using the authorized Project's durable PostgreSQL identity key
+from migration 90063, in a domain separate from metric series/point IDs. The
+unkeyed digest stays in the internal retry token and neither it nor the key is
+exposed by product reads/cursors, errors or application logs. Identical-wire
+retry tokens remain policy-independent and gzip/plain equivalent. Keys survive
+API restarts and must accompany ClickHouse backups on restore; earlier unkeyed
+log IDs are not rewritten. This prevents offline payload comparison without the
+key, not linkability or online guessing by actors able to both ingest and read.
+Log reads reject conflicting repeated Project query selectors. Log cursors bind
+Organization/Project/filters but are not authentication tokens;
+every read independently reauthorizes under Project and principal fences. The
+version-3 keyset uses a stored random UUIDv4 position, generated at the trusted
+writer per occurrence on every actual insert attempt and never accepted from
+caller/copied input. Wire retry tokens stay stable and a deduplicated retry
+preserves already committed UUIDs. Cursors expose no table-wide block counters;
+physical UUIDs are omitted from product items, not authorization proof. All rows
+and independent payloads remain retained; UUIDs survive merges, mutations and
+physical restore but do not establish a concurrent-read snapshot. Reads fail
+closed on invalid UUIDs or duplicates only within the fetched filtered page plus
+one lookahead row, checked before response-byte truncation. Copies outside that
+set can go undetected; no history-wide read-integrity scan or continuous global
+UUID uniqueness enforcement is performed. The exact filtered physical-row total
+ignores pagination and can still scan Project history under the Project fence.
+Old cursors fail validation and require fresh traversal. Logs protobuf decoding
+uses pinned upstream v1.11.1 wire definitions, including field-12 event names, on a private
+protobufjs root rather than the legacy trace exporter's generated schema. The
+Logs UI derives its detail only from the current Project query, discarding it
+on Project changes/errors. Log retention is explicitly opt-in in approved
+policies and selects at most 500 expired physical UUIDs under scoped predicates,
+including within larger public-ID duplicate groups. Under the Project write
+fence it verifies selected UUID format/uniqueness across the entire scoped set,
+including nonexpired copies, before deletion. Counts require synchronous
+mutation settlement and absence readback; a failed/uncertain effect can already
+have deleted rows without atomic PostgreSQL progress. Project deletion always replays
+scoped log cleanup before finalization, including older deletion-job checkpoints.
+Whole-database backups include sensitive log bodies; restore can reinstate them
+and previously valid credentials. Byte-identity deduplication has the same
+bounded/uncertain-outcome limits as trace ingestion. No log SSE, metrics receiver,
+or organization-wide log usage aggregate is implied by this slice.
+
+Additive ClickHouse 0012 backfills only zero-sentinel physical UUIDs and preserves
+preexisting materialized values on partial replay. Every active populated part
+must physically store the column before the runner records success. Existing
+unfinished log mutations are polled before submission/recovery; completed data
+is validated without another rewrite. The 0012 stage has a five-minute explicit
+abort deadline (operator-configurable up to one hour), including checks and the
+ledger write. Timeout fails startup while durable mutations can continue;
+restart recovery does not cancel them or replace stored UUIDs. Failed pending
+mutations require operator repair, and exact uniqueness validation still has
+table-wide I/O/memory cost. Existing
+installations fail startup unless an operator explicitly acknowledges drained
+writers with `GLASSHOUSE_LOG_UUID_MAINTENANCE=1`. This is an offline maintenance
+precondition, not an automatically proven state: the migration lock serializes
+runners but cannot drain old binaries, direct writers or already admitted
+ClickHouse effects. Operators must stop/drain all writers and asynchronous
+inserts through completion; falsely acknowledging maintenance is unsafe.
+The UUIDv4 storage CHECK rejects subsequent UUID-less/zero/non-v4 inserts by old
+binaries. No unique index prevents privileged administrative UUID duplication:
+reads detect it only within page plus lookahead, while retention verifies each
+selected UUID across the entire authorized Organization/Project before deletion.
+These are scoped detection controls, not continuous global uniqueness enforcement;
+direct operator writes can race the application fence. Physical restores must
+retain UUIDs into an empty target; new occurrences require new UUIDs. No control here
+protects against a malicious database administrator.
 
 The authenticated user audit-log route reads only an allowlisted projection of
 existing content-free PostgreSQL audit ledgers. Every query binds Organization
@@ -122,6 +205,68 @@ rows are physically removed by a later allocation. See the user audit-log
 section of the authorization contract for limits and restart behavior.
 
 **Residual:** redaction defaults off unless configured; redaction is not retroactive and cannot reliably identify every secret. Trace input/output, dataset examples, prompts, and model outputs may be sensitive. Evaluation/optimization can send configured input to a third-party LLM; treat that provider and configured endpoint as data recipients. Verify model/provider, endpoint, retention terms, and data approval before sending sensitive content. Prompt injection in a trace or dataset is untrusted content and can influence model output/score; never treat model output as authorization, code, or a trusted release decision. Review dataset curation, output handling, retention scope, and provider egress in every relevant change.
+
+OTLP event/link spans now retain redacted resource/scope/status/event/link context in the Observation's bounded `otlp` envelope. Attribute-key removal and bounded fail-closed recursive inspection cover every attribute collection; `all_text` additionally replaces free telemetry strings and bytes, including exception/status messages, scope names, trace state and schema URLs. Structural IDs, numeric values, times and attribute keys are retained and must not carry secrets. Links do not authorize navigation or reads. The envelope is limited to 32 KiB per row (also checked by ClickHouse), 8 MiB per export, 8 KiB per string, 32 levels and 4,096 values; truncation is visible separately from source dropped counts. It inherits Observation retention/deletion and authenticated detail/SSE scoping, is omitted from lists, and does not alter credential fences. Exact source times are nullable UInt64s exposed as decimal strings; legacy precision is never reconstructed. Unsafe JSON integer forms and invalid ranges fail before writes. Millisecond indexing/cursors remain compatible and span calendar times are restricted to 1970–2299; event uint64s retain their full range. The trace protobuf descriptor explicitly includes span/link flags; official Python HTTP/protobuf and gRPC readback tests guard against silent descriptor loss. Permanent exactly-once delivery remains unimplemented.
+
+The `all_text` structural exceptions are limited to recognized top-level OpenInference kind enums and an atomic, validated, generation-only prompt provenance tuple; explicit configured-key removal still takes precedence. Provenance is derived from original attributes so redaction cannot promote a malformed/duplicate tuple. Raw reserved prompt attributes remain stripped from metadata, OTLP detail and bus events. These client-reported identifiers/hashes can still carry sensitive identifiers or support guessing; they are not authority and must not contain secrets.
+
+When a single retained Observation exceeds the detail-SSE frame budget, a marked compact snapshot/live projection (`detail_omitted`) permits bounded delivery; full retained detail stays behind the separately authenticated Project-scoped REST trace read and its cursors. The UI explicitly starts that read from page one. This changes transport presentation, not storage retention, per-frame authorization or read authorization. Compact frames/queues still fail closed if they exceed configured limits.
+
+### OTLP metric boundary
+
+Metrics use a separate tenant-constrained ClickHouse table and the same trusted
+credential/Actor/Project locks as trace ingestion, with `ingest` authority
+rechecked before the insert. Product GETs bind both tenant keys and recheck
+`product_read` under the Project fence. All five metric kinds preserve original
+64-bit times/integers, temporality, distributions and bounded exemplars; invalid
+or oversized exports fail before persistence rather than truncating a histogram.
+Limits bound known recursive values, nodes, point/series counts per request,
+buckets, exemplars and retained/readback bytes. Unknown fields are discarded;
+recursive redaction covers every stored attribute context. Metric persistence
+errors log a content-free event, not raw storage errors or telemetry. Generic
+HTTP/gRPC error responses do not reveal tenant/credential state.
+
+Metric read predicates and cursor scope use the authorized canonical Project
+UUID, not its caller-selected spelling. Valid UUID case variants select the same
+Project; malformed tokens are rejected before authorization rather than repaired.
+The reader orders same-point copies by a stored physical UUIDv4, checks UUIDs
+within each fetched page and lookahead, and omits them from returned items.
+Cursor UUIDs are positions, not authorization; cursors are not immutable
+snapshots. Privileged administrative duplicate UUIDs outside a fetched page may
+remain undetected, because ClickHouse has no uniqueness constraint. Migration
+0013 validates historical scoped uniqueness and physical materialization under
+operator-enforced drained-writer maintenance. The acknowledgement flag is not
+a writer fence and rolling upgrades are unsupported. Old cursors retain their
+exclusive point boundary; restart traversal to recover its tied copies.
+
+Metric series IDs HMAC canonical original attributes before redaction to prevent
+label collapse; exposed point IDs also use a domain-separated HMAC. A random
+per-Project key (also used for separately domain-separated public log IDs) is
+backfilled/provisioned by PostgreSQL migration 90063, retained in PostgreSQL only
+and cascade-deleted with its Project. Exposed IDs do not allow
+offline dictionary comparison without the key, but retain linkability and allow
+online guessing by an actor who can both ingest and read in that Project. This
+is not anonymization; database operators and PostgreSQL backups are trusted with
+the keys. Earlier unkeyed IDs are not rewritten. `all_text` redacts attribute string/
+byte values and descriptions, not structural names, keys, units or schema URLs.
+Exemplar IDs are untrusted references, never proof of trace ownership. Retry
+identity uses bounded original wire bytes and trusted scope with a finite
+ClickHouse deduplication window; it is not an exactly-once ledger. Revocation
+cannot undo an already admitted remote write, and ClickHouse writes are not
+atomic with PostgreSQL. Metric retention is opt-in under an approved policy.
+It selects bounded physical part/offset pairs under the Project write fence,
+repeats both tenant keys and the expiry predicate in synchronous deletion, and
+reports the observed expired-row decrease. Identical point IDs may be split
+across runs. Merged-away parts match nothing; three zero-progress attempts fail
+without claiming selected rows as deleted. The fence excludes concurrent
+application writes, not direct operator mutations, and the row budget does not
+bound scan/rewrite I/O. An uncertain ClickHouse response or a crash before the
+PostgreSQL progress commit can still leave removals unrecorded and requires
+reconciliation. Project deletion synchronously clears metric rows before
+finalization, including on retries. Native database backups retain metrics and
+may resurrect deleted points and old credentials on restore. Network rate limits,
+lifetime cardinality quotas and storage capacity remain deployment responsibilities. See
+[metric limits and residual behavior](otlp-metrics.md).
 
 ### E. Ingestion, expensive work, and availability abuse (medium/high impact)
 
@@ -148,6 +293,10 @@ The optional GEPA worker receives a structured request over stdin and has bounde
 The disabled-by-default snapshot workflow checks private package metadata, authenticated bootstrap reads and anonymous denial before publication, but these probes do not establish effective package permissions, inheritance, or public-repository/fork isolation. A package administrator must review those controls and exclusive writer authority; compatibility of the organization package metadata endpoint with the Actions token is unverified. Exact source admission and registry writes refresh origin's main history, but the check and registry write are not atomic and rely on main protection. Bounded reconciliation persists a private checkpoint and verifies trusted-writer reservation evidence, image digests and SBOM hashes; a completed pair can be reconciled after CI evidence expires, but an incomplete pair cannot. GHCR tag and checkpoint writes are not compare-and-swap: deletion, rollback or another writer can defeat retry protection or forge the unsigned records. The private source/digest/SBOM verifier relies on the exclusive-writer boundary, not a signature. The scanner constructs bounded diagnostics containing allowlisted categories, CVEs and unsalted package-name SHA-256 fingerprints, but the publisher currently logs only the error class. If those diagnostics are exposed for troubleshooting, guessed names or low-entropy secrets in package names can be recovered by dictionary attack, and dependency relationships are disclosed. Live registry behavior remains unverified. Do not enable publication until the documented prerequisites are satisfied; see [snapshot publication security](snapshot-publication-security.md).
 
 The disabled publisher runs archived candidate integration code as the publisher's user while credentials may be available. Child environment scrubbing is not a same-user security boundary: candidate code and same-runner dependencies must be trusted with publisher authority, or execution must be isolated before enablement. Its Trivy image scans and SBOM generation use explicit empty configurations and fixed database mirrors rather than inherited Trivy settings; this does not protect against same-user interference or a compromised scanner or database. See the same-runner trust boundary in [snapshot publication security](snapshot-publication-security.md).
+
+The hosted OTLP SDK interoperability job uses generated high-entropy Compose project names, rejects all caller/Compose project overrides, checks project-labeled containers, networks, and volumes are absent before startup, and removes no volumes. Its cleanup requires a fresh inventory and matching project labels on every candidate container/network; an inventory or ownership failure leaves resources untouched. Before Compose builds, the job archives only allowlisted immutable `HEAD` source paths, refusing any tracked or assume-unchanged change and symlinked build input; working-tree paths, including a substituted symlink parent, cannot reach the Docker build context. The job uses synthetic credentials plus scrubbed child environments and a temporary Docker configuration to avoid carrying runner Compose/Docker/OTel overrides into the fixture. These controls reduce accidental interference with other Docker projects, but Docker-label inspection is not proof against a compromised Docker daemon or a concurrent actor able to create resources bearing the newly generated label. Docker-backed SDK execution is hosted-CI evidence, not a devcontainer guarantee.
+
+The same disposable job runs the real deep-extension public-authentication/persistence suite, both API signal-shutdown cases, trace fidelity, logs, logs readback, populated physical-UUID upgrade/replay and metrics sequentially in its existing full-dependency test service. A dedicated image target extends the API build stage with a hash-locked Python SDK interpreter; required official HTTP/protobuf and gRPC exporter cases cannot be skipped. Before each suite, the harness rechecks per-run/project/service identity and that the runner, API, PostgreSQL, ClickHouse, and Valkey containers each attach only to the same owned default network. A fixed allowlisted test environment disables dotenv loading and supplies only synthetic private-service configuration; it does not enable recovery-capable tests on an existing devcontainer stack. Every suite's JUnit verification fails closed on missing required cases/reports, duplicates, failures/errors, or skips, including either SIGTERM or SIGINT and the UUID/backfill/maintenance and retention-fault cases. The fidelity fixture additionally replaces inherited pub/sub configuration with an owned loopback TCP probe before setup, scrubs the override before creating the app, and resets bus clients/restores its environment on cleanup. This is CI coverage enforcement and fixture isolation, not additional application authorization or protection from a compromised daemon/concurrent same-authority runner actor.
 
 **Attacker:** malicious PR/dependency, compromised action/package/repository credential, unsafe self-hosted runner, or operator/deployment host compromise.
 

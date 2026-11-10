@@ -101,6 +101,41 @@ database backup, deploy the new image, and let startup migration complete. Confi
 proxy. Never edit an applied migration; rollback the application only when its
 schema contract supports the already-applied migrations.
 
+The log physical-UUID schema upgrade (`0012_logs_physical_uuid.sql`) explicitly
+rejects startup on existing installations without a drained-writer maintenance
+acknowledgement, even when logs are empty. Stop every old API replica and direct
+writer, drain in-flight/asynchronous inserts, and keep mutations stopped while
+running the new image's migration once. For the production Compose deployment,
+from the repository root with the new API image already built:
+
+```sh
+docker compose --project-directory . --env-file infra/.env -f infra/compose.production.yaml run --rm --no-deps -e GLASSHOUSE_LOG_UUID_MAINTENANCE=1 api bun run --cwd apps/api ch:migrate
+```
+
+The flag is injected only into this one-shot process; do not permanently enable
+it in deployment environment configuration. Failed/interrupted backfills require
+the same maintenance conditions on replay. The runner submits the backfill
+asynchronously and resumes pending work rather than enqueueing it on every
+restart. Its 0012 wall-clock deadline defaults to five minutes; inject
+`-e GLASSHOUSE_LOG_UUID_TIMEOUT_MS=900000` into the one-shot command if validation
+needs fifteen minutes (maximum one hour). Expiry leaves background work intact
+and startup closed; keep writers drained and rerun. Failed pending mutations
+require inspection/repair in `system.mutations`. Completed work is validated and
+ledgered without rewriting it again. Only restart UUID-aware binaries
+after completion: older UUID-less inserts fail the new storage CHECK. The flag
+is an operator attestation, not an automatic writer drain or a distributed lock.
+See [the full maintenance and replay contract](03-otel-ingest.md#physical-uuid-schema-upgrade-and-maintenance-gate).
+
+The metric UUID upgrade `0013_metrics_physical_uuid.sql` likewise requires
+stopping all old metric writers and draining in-flight/asynchronous inserts,
+retention and administrative mutations before migration, even for an empty table.
+Inject `-e GLASSHOUSE_METRIC_UUID_MAINTENANCE=1` into the one-shot command above;
+if both 0012 and 0013 are pending inject both flags. The same timeout override
+applies separately to both stages. Keep maintenance in force on interruption,
+replay the runner, and start only UUID-aware binaries after validation succeeds.
+The flag is not a writer fence and rolling upgrades are unsupported. See
+[metric UUID upgrade details](otlp-metrics.md#physical-metric-uuid-upgrade).
+
 Use the repository's [backup/restore tooling](backup-restore.md) and rehearse
 recovery on the selected versions. Retention, encryption, point-in-time recovery
 and installation-specific validation remain operator responsibilities. Valkey

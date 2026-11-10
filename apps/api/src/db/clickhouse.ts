@@ -1,5 +1,7 @@
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 
+export const CLICKHOUSE_REQUEST_TIMEOUT_MS = 30_000;
+
 let _client: ClickHouseClient | null = null;
 
 export function clickhouseUrl(): string {
@@ -16,6 +18,7 @@ export function ch(): ClickHouseClient {
 		database: process.env.CLICKHOUSE_DB ?? "glasshouse",
 		username: process.env.CLICKHOUSE_USER ?? "glasshouse",
 		password: process.env.CLICKHOUSE_PASSWORD ?? "",
+		request_timeout: CLICKHOUSE_REQUEST_TIMEOUT_MS,
 		clickhouse_settings: {
 			cancel_http_readonly_queries_on_client_close: 1,
 		},

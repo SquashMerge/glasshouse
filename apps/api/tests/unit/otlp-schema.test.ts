@@ -90,13 +90,13 @@ describe("ExportTraceServiceRequest Zod validation", () => {
 		expect(result.success).toBe(false);
 	});
 
-	it("rejects empty spans array inside scope_spans", () => {
+	it("accepts empty spans array inside scope_spans", () => {
 		const result = ExportTraceServiceRequest.safeParse({
 			resource_spans: [
 				{ resource: { attributes: [] }, scope_spans: [{ spans: [] }] },
 			],
 		});
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
 	});
 
 	it("rejects a request whose total span count exceeds the ingestion budget", () => {
@@ -129,17 +129,22 @@ describe("ExportTraceServiceRequest Zod validation", () => {
 		expect(result.success).toBe(false);
 	});
 
-	it("accepts end_time_unix_nano as a number (transforms to number)", () => {
+	it("accepts safe numeric nanoseconds and canonicalizes to strings", () => {
 		const result = ExportTraceServiceRequest.safeParse(
 			validPayload({
-				start_time_unix_nano: NOW_NS,
-				end_time_unix_nano: NOW_NS + 100,
+				start_time_unix_nano: 100,
+				end_time_unix_nano: 101,
 			}),
 		);
 		expect(result.success).toBe(true);
+		if (result.success)
+			expect(
+				result.data.resource_spans[0]?.scope_spans[0]?.spans[0]
+					?.end_time_unix_nano,
+			).toBe("101");
 	});
 
-	it("accepts end_time_unix_nano as a string (transforms to number)", () => {
+	it("accepts end_time_unix_nano as an exact decimal string", () => {
 		const result = ExportTraceServiceRequest.safeParse(
 			validPayload({ end_time_unix_nano: String(NOW_NS + 100) }),
 		);

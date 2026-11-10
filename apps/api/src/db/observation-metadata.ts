@@ -46,7 +46,12 @@ function isAttribute(value: unknown): value is OtlpAttribute {
 function attributeValue(
 	attribute: OtlpAttribute | undefined,
 ): Record<string, unknown> | undefined {
-	return isRecord(attribute?.value) ? attribute.value : undefined;
+	return attribute &&
+		Object.keys(attribute).every((key) => key === "key" || key === "value") &&
+		isRecord(attribute.value) &&
+		Object.keys(attribute.value).length === 1
+		? attribute.value
+		: undefined;
 }
 
 function isAttributeArray(value: unknown): value is OtlpAttribute[] {

@@ -172,7 +172,7 @@ describe("legacy pre-0006 trace payload upgrade", () => {
 
 		const retained = await fixture.query({
 			query:
-				"SELECT length(input_text) AS bytes, input_retained_truncated FROM observations WHERE trace_id = {trace_id: String}",
+				"SELECT toString(length(input_text)) AS bytes, input_retained_truncated FROM observations WHERE trace_id = {trace_id: String}",
 			query_params: { trace_id: traceId },
 			format: "JSONEachRow",
 		});

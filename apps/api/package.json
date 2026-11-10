@@ -30,7 +30,9 @@
   },
   "dependencies": {
     "@clickhouse/client": "1.24.1",
+    "@grpc/grpc-js": "1.14.5",
     "@hono/zod-openapi": "1.6.3",
+    "@opentelemetry/otlp-proto-exporter-base": "0.51.1",
     "@scalar/hono-api-reference": "0.12.11",
     "config": "5.0.1",
     "dotenv": "18.0.9",
@@ -41,6 +43,7 @@
     "mustache": "4.2.0",
     "node-pg-migrate": "9.0.0",
     "pg": "8.23.1",
+    "protobufjs": "7.6.6",
     "unicode-confusables": "0.1.1",
     "zod": "4.6.7"
   },

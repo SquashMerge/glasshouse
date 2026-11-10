@@ -66,7 +66,7 @@ LOGIN_RESP="$(curl -s -o /tmp/glasshouse_login.json -w '%{http_code}' -H "${AUTH
 grep -q '"ok":true' /tmp/glasshouse_login.json || fail "/v1/auth/login body missing { ok: true }"
 ok "POST /v1/auth/login returns 200 { ok: true }"
 
-step "AC1: POST /v1/otel/v1/traces with gen_ai.* attrs persists to ClickHouse"
+step "AC1: POST /v1/traces with gen_ai.* attrs persists to ClickHouse"
 OTLP_PAYLOAD=$(cat <<EOF
 {
   "resource_spans": [{
@@ -103,7 +103,7 @@ INGEST_RESP="$(curl -s -o /tmp/glasshouse_otlp.json -w '%{http_code}' \
   -H "Content-Type: application/json" \
   -H "${AUTH}" \
   -X POST --data "${OTLP_PAYLOAD}" \
-  "${BASE_API}/v1/otel/v1/traces")"
+  "${BASE_API}/v1/traces")"
 [ "${INGEST_RESP}" = "200" ] || { cat /tmp/glasshouse_otlp.json; fail "OTLP ingest returned ${INGEST_RESP}, expected 200"; }
 ok "OTLP ingest returned 200"
 
@@ -127,10 +127,10 @@ BAD_CODE="$(curl -s -o /tmp/glasshouse_otlp_bad.json -w '%{http_code}' \
   -H "Content-Type: application/json" \
   -H "${AUTH}" \
   -X POST --data 'not json' \
-  "${BASE_API}/v1/otel/v1/traces")"
+  "${BASE_API}/v1/traces")"
 [ "${BAD_CODE}" = "400" ] || fail "malformed OTLP body returned ${BAD_CODE}, expected 400"
-grep -q 'BAD_REQUEST' /tmp/glasshouse_otlp_bad.json || fail "malformed OTLP body missing BAD_REQUEST code"
-ok "malformed OTLP body returns 400 with BAD_REQUEST"
+python3 -c 'import json,sys; assert json.load(sys.stdin) == {"message": "Invalid trace export request"}' < /tmp/glasshouse_otlp_bad.json || fail "malformed OTLP body missing OTLP error message"
+ok "malformed OTLP body returns 400 with OTLP error message"
 
 step "AC2: dashboard renders with zero console errors (Playwright)"
 if [ -d "apps/web" ]; then
