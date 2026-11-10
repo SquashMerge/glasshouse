@@ -201,6 +201,31 @@ test("different original JSON requests never share identity just because retaine
 	expect(new Set(tokens).size).toBe(inputs.length);
 });
 
+test("trace handler rejects an overlong unknown varint without writing a valid preceding span", async () => {
+	let observations = 0;
+	let events = 0;
+	const { handler, rows } = capture({
+		insertObservations: async () => {
+			observations++;
+		},
+		publishSync: () => {
+			events++;
+		},
+	});
+	const body = Buffer.concat([
+		protobuf(),
+		Buffer.from(`a006${"80".repeat(10)}00`, "hex"),
+	]);
+	const response = await handler(
+		request(body, "application/x-protobuf"),
+		tenant,
+	);
+	expect(response.status).toBe(400);
+	expect(rows).toHaveLength(0);
+	expect(observations).toBe(0);
+	expect(events).toBe(0);
+});
+
 test("trace handler rejects a mismatched group without writing a valid preceding span", async () => {
 	let observations = 0;
 	let events = 0;

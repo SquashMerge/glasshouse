@@ -42,6 +42,30 @@ for (const [signal, decode] of [
 		expect(() => decode(Buffer.from("0b14", "hex"))).toThrow();
 	});
 
+	// Generated Python OTLP requests with protobuf 6.33.6 reject varints
+	// longer than ten bytes, including in unknown groups and nested messages.
+	for (const hex of [
+		`a006${"80".repeat(10)}00`,
+		`a306a806${"80".repeat(10)}00a406`,
+		`0a0da006${"80".repeat(10)}00`,
+		`08${"80".repeat(10)}00`, // known message field, wrong wire type
+		`a006${"80".repeat(10)}`, // unterminated at the ten-byte limit
+		"a00680", // truncated
+	]) {
+		test(`${signal} rejects overlong unknown varint ${hex}`, () => {
+			expect(() => decode(Buffer.from(hex, "hex"))).toThrow();
+		});
+	}
+	for (const hex of [
+		`a006${"ff".repeat(9)}01`, // 64-bit signed -1
+		`a006${"80".repeat(9)}02`, // protobuf accepts high bits in byte ten
+		`a306a806${"ff".repeat(9)}01a406`,
+	]) {
+		test(`${signal} accepts ten-byte unknown varint ${hex}`, () => {
+			expect(() => decode(Buffer.from(hex, "hex"))).not.toThrow();
+		});
+	}
+
 	// Oracle: opentelemetry-proto 1.39.1, google protobuf 6.33.6.
 	for (const hex of [
 		"0b0c", // known message field, wrong wire type, matching end
@@ -82,6 +106,21 @@ for (const [signal, decode] of [
 		expect(() => decode(group(20_000))).toThrow();
 	}, 1000);
 }
+
+test("official protobuf negative int64 fixtures preserve their signed value", () => {
+	const trace = decodeOtlpTraceExport(
+		Buffer.from("0a16121412124a100a016b120b18ffffffffffffffffff01", "hex"),
+	) as any;
+	const log = decodeLogExport(
+		Buffer.from("0a161214121232100a016b120b18ffffffffffffffffff01", "hex"),
+	) as any;
+	expect(
+		trace.resourceSpans[0].scopeSpans[0].spans[0].attributes[0].value.intValue,
+	).toBe("-1");
+	expect(
+		log.resourceLogs[0].scopeLogs[0].logRecords[0].attributes[0].value.intValue,
+	).toBe("-1");
+});
 
 for (const fixture of cases) {
 	test(`official protobuf oracle: ${fixture.name} for traces and logs`, () => {

@@ -5,6 +5,16 @@ import protobuf from "protobufjs";
 function skipField(reader: protobuf.Reader, tag: number, depth: number): void {
 	const wire = tag & 7;
 	if (wire === 4) throw new Error("Unexpected protobuf end group");
+	if (wire === 0) {
+		// protobufjs skipType scans to any terminating byte, even past the
+		// ten-byte protobuf varint limit. Keep full 64-bit signed encodings.
+		for (let i = 0; i < 10; i++) {
+			if (reader.pos >= reader.len)
+				throw new Error("Truncated protobuf varint");
+			if ((reader.buf[reader.pos++]! & 0x80) === 0) return;
+		}
+		throw new Error("Invalid protobuf varint");
+	}
 	if (wire !== 3) {
 		reader.skipType(wire);
 		return;
@@ -28,7 +38,7 @@ function skipField(reader: protobuf.Reader, tag: number, depth: number): void {
 					throw new Error("Mismatched protobuf end group");
 				break;
 			default:
-				reader.skipType(nested & 7);
+				skipField(reader, nested, depth + groups.length);
 				if (reader.pos > reader.len)
 					throw new Error("Invalid protobuf message length");
 		}
