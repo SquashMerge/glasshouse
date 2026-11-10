@@ -28,8 +28,21 @@ import { PageMessage } from "./prompts";
 
 export function GovernancePage() {
 	const { selectedProjectId } = useProjectSelection();
-	const selectedProjectIdRef = React.useRef(selectedProjectId);
-	selectedProjectIdRef.current = selectedProjectId;
+	// A fresh instance per selection prevents old drafts and async responses from
+	// crossing project switches, including A → B → A. Query caches stay shared.
+	return (
+		<GovernanceProject
+			key={JSON.stringify(selectedProjectId)}
+			selectedProjectId={selectedProjectId}
+		/>
+	);
+}
+
+function GovernanceProject({
+	selectedProjectId,
+}: {
+	selectedProjectId: string | null;
+}) {
 	const queryClient = useQueryClient();
 	const [traces, setTraces] = React.useState("30");
 	const [logs, setLogs] = React.useState("");
@@ -78,7 +91,6 @@ export function GovernancePage() {
 	const draft = useMutation({
 		mutationFn: createGovernancePolicyDraft,
 		onSuccess: (_, variables) => {
-			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(null);
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
@@ -89,7 +101,6 @@ export function GovernancePage() {
 	const approve = useMutation({
 		mutationFn: approveGovernancePolicy,
 		onSuccess: (_, variables) => {
-			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(null);
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
@@ -99,15 +110,13 @@ export function GovernancePage() {
 	});
 	const previewMutation = useMutation({
 		mutationFn: previewGovernanceRetention,
-		onSuccess: (result, projectId) => {
-			if (projectId !== selectedProjectIdRef.current) return;
+		onSuccess: (result) => {
 			setPreview(result.counts);
 			setPreviewedPolicyId(result.policy_version_id);
 			setPreviewId(result.preview_id);
 			setPreviewExpiresAt(result.preview_expires_at);
 		},
-		onError: (_error, projectId) => {
-			if (projectId !== selectedProjectIdRef.current) return;
+		onError: () => {
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
 			setPreviewExpiresAt(null);
@@ -116,15 +125,13 @@ export function GovernancePage() {
 	const run = useMutation({
 		mutationFn: runGovernanceRetention,
 		onSuccess: (result, variables) => {
-			if (variables.project_id !== selectedProjectIdRef.current) return;
 			setPreview(result.counts);
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
 			setPreviewExpiresAt(null);
 			refresh(variables.project_id);
 		},
-		onError: (_error, variables) => {
-			if (variables.project_id !== selectedProjectIdRef.current) return;
+		onError: () => {
 			setPreviewedPolicyId(null);
 			setPreviewId(null);
 			setPreviewExpiresAt(null);
@@ -148,23 +155,6 @@ export function GovernancePage() {
 		);
 		return () => window.clearTimeout(timeout);
 	}, [previewExpiresAt]);
-	React.useEffect(() => {
-		setTraces("30");
-		setLogs("");
-		setMetrics("");
-		setDatasets("90");
-		setFeedback("90");
-		setMode("none");
-		setKeys("");
-		setPreview(null);
-		setPreviewedPolicyId(null);
-		setPreviewId(null);
-		setPreviewExpiresAt(null);
-		draft.reset();
-		approve.reset();
-		previewMutation.reset();
-		run.reset();
-	}, [selectedProjectId]);
 	if (!selectedProjectId)
 		return (
 			<PageMessage title="Governance">
