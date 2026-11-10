@@ -149,8 +149,14 @@ export function GovernancePage() {
 		return () => window.clearTimeout(timeout);
 	}, [previewExpiresAt]);
 	React.useEffect(() => {
-		setPreview(null);
+		setTraces("30");
+		setLogs("");
 		setMetrics("");
+		setDatasets("90");
+		setFeedback("90");
+		setMode("none");
+		setKeys("");
+		setPreview(null);
 		setPreviewedPolicyId(null);
 		setPreviewId(null);
 		setPreviewExpiresAt(null);
