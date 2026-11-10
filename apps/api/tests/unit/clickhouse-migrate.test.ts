@@ -85,7 +85,7 @@ describe("ClickHouse migrations", () => {
 				!query.includes("glasshouse_schema_migrations") &&
 				!query.startsWith("INSERT INTO"),
 		);
-		expect(migrationStatements).toHaveLength(27);
+		expect(migrationStatements).toHaveLength(31);
 		expect(migrationStatements.every((query) => query.length > 0)).toBe(true);
 		expect(migrationStatements[0]).toContain(
 			"CREATE TABLE IF NOT EXISTS traces",
@@ -169,6 +169,7 @@ describe("ClickHouse migrations", () => {
 			"generateUUIDv4(), physical_row_id) WHERE 1 SETTINGS mutations_sync = 0",
 		);
 		expect(applied.has("0012_logs_physical_uuid.sql")).toBe(true);
+		expect(applied.has("0013_metrics_physical_uuid.sql")).toBe(true);
 
 		const commandsAfterFirstStartup = commands.length;
 		await applyClickHouseMigrations(client, withoutMigrationLock);
@@ -224,8 +225,8 @@ describe("ClickHouse migrations", () => {
 			applyClickHouseMigrations(client, serializedMigrationLock),
 		]);
 
-		expect(inserted).toBe(12);
-		expect(applied).toHaveLength(12);
+		expect(inserted).toBe(13);
+		expect(applied).toHaveLength(13);
 	});
 
 	it("rejects a published checksum mismatch before executing pending SQL", async () => {

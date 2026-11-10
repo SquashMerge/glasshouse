@@ -135,6 +135,25 @@ checks current authority and redaction. Semantically equivalent differently
 encoded exports can store additional points. Deletion does not clear the retry
 log, so an immediate identical-byte retry may still be suppressed.
 
+## Physical metric UUID upgrade
+
+ClickHouse migration `0013_metrics_physical_uuid.sql` assigns a stored UUIDv4
+per physical metric row, including historical copies sharing a point ID. The
+writer generates UUIDs independently of the existing retry token. Existing
+installations with migration 0010 recorded require offline maintenance even if
+metrics are empty: stop all API replicas, direct writers, retention and other
+mutations, drain asynchronous/in-flight inserts, back up, then run the new
+image's `ch:migrate` with `GLASSHOUSE_METRIC_UUID_MAINTENANCE=1` explicitly
+injected. If 0012 is also pending, inject its separate log maintenance flag too.
+Do not keep either acknowledgement enabled after the one-shot migration. Follow
+the [physical UUID maintenance procedure](03-otel-ingest.md#physical-uuid-schema-upgrade-and-maintenance-gate),
+including keeping writers stopped after an interruption. The same
+`GLASSHOUSE_LOG_UUID_TIMEOUT_MS` limit controls each UUID migration separately;
+replay waits for pending metric mutations, preserves assigned IDs, verifies
+scoped uniqueness and physical materialization, then records completion. The
+flag is an operator attestation, not an automatic writer fence; rolling upgrades
+are unsupported and old writers fail the new UUID CHECK.
+
 ## Readback, governance, and recovery
 
 The authenticated **Metrics** page (`/metrics`) displays exact points, metric
@@ -143,7 +162,12 @@ the exact-name filter, refresh, and older-page controls. The product API is
 `GET /v1/metrics?project_id=<uuid>&limit=50&name=<optional-exact-name>`; follow
 `next_cursor` until null. Cursors bind Organization, Project and name filter, and
 every read independently authorizes both tenant keys. They are pagination
-positions, not authorization proofs or immutable snapshots. No metric SSE,
+positions, not authorization proofs or immutable snapshots. A physical UUID
+breaks ties between retained copies of the same point; it is not included in
+items. Pre-upgrade cursors remain accepted with their old exclusive point boundary,
+so restart at page one to include any copies tied at that boundary. New cursors
+remain stable across ClickHouse merges; concurrent inserts or retention can still
+change the live result set between requests. No metric SSE,
 aggregation query language, charting or automatic exemplar trace navigation is
 provided by this slice. The organization usage dashboard still counts traces
 and Observations only.

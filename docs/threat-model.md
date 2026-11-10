@@ -229,6 +229,15 @@ HTTP/gRPC error responses do not reveal tenant/credential state.
 Metric read predicates and cursor scope use the authorized canonical Project
 UUID, not its caller-selected spelling. Valid UUID case variants select the same
 Project; malformed tokens are rejected before authorization rather than repaired.
+The reader orders same-point copies by a stored physical UUIDv4, checks UUIDs
+within each fetched page and lookahead, and omits them from returned items.
+Cursor UUIDs are positions, not authorization; cursors are not immutable
+snapshots. Privileged administrative duplicate UUIDs outside a fetched page may
+remain undetected, because ClickHouse has no uniqueness constraint. Migration
+0013 validates historical scoped uniqueness and physical materialization under
+operator-enforced drained-writer maintenance. The acknowledgement flag is not
+a writer fence and rolling upgrades are unsupported. Old cursors retain their
+exclusive point boundary; restart traversal to recover its tied copies.
 
 Metric series IDs HMAC canonical original attributes before redaction to prevent
 label collapse; exposed point IDs also use a domain-separated HMAC. A random

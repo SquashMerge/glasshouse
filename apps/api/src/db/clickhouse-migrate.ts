@@ -16,6 +16,7 @@ const migrationsDirectory = fileURLToPath(
 const migrationTable = "glasshouse_schema_migrations";
 const migrationLockName = "glasshouse.clickhouse-schema-migrations";
 const logsUuidMigration = "0012_logs_physical_uuid.sql";
+const metricsUuidMigration = "0013_metrics_physical_uuid.sql";
 
 function logsUuidTimeoutMs(
 	value: string | number | undefined = process.env
@@ -74,17 +75,21 @@ async function logsUuidQuery<T>(
 async function waitForLogMutations(
 	client: ClickHouseClient,
 	abort_signal: AbortSignal,
+	table: "logs" | "metrics" = "logs",
 ) {
 	while (true) {
 		const [state] = await logsUuidQuery<{ pending: string; failed: string }>(
 			client,
-			"SELECT count() AS pending, countIf(latest_fail_reason != '') AS failed FROM system.mutations WHERE database = currentDatabase() AND table = 'logs' AND is_done = 0",
+			`SELECT count() AS pending, countIf(latest_fail_reason != '') AS failed FROM system.mutations WHERE database = currentDatabase() AND table = '${table}' AND is_done = 0`,
 			abort_signal,
 		);
-		if (!state) throw new Error("Missing ClickHouse log mutation status");
+		if (!state)
+			throw new Error(
+				`Missing ClickHouse ${table === "logs" ? "log" : "metric"} mutation status`,
+			);
 		if (Number(state.failed) > 0)
 			throw new Error(
-				"Unfinished ClickHouse log mutation has failed. Keep writers drained, inspect system.mutations and repair before retrying 0012.",
+				`Unfinished ClickHouse ${table === "logs" ? "log" : "metric"} mutation has failed. Keep writers drained, inspect system.mutations and repair before retrying ${table === "logs" ? "0012" : "0013"}.`,
 			);
 		if (Number(state.pending) === 0) return;
 		await delay(1_000, undefined, { signal: abort_signal });
@@ -95,9 +100,12 @@ async function applyLogsUuidMigration(
 	client: ClickHouseClient,
 	statements: string[],
 	abort_signal: AbortSignal,
+	table: "logs" | "metrics" = "logs",
 ) {
 	if (statements.length !== 5)
-		throw new Error("Unexpected ClickHouse 0012 statement layout");
+		throw new Error(
+			`Unexpected ClickHouse ${table === "logs" ? "0012" : "0013"} statement layout`,
+		);
 	const [add, probe, backfill, logicalCheck, physicalCheck] = statements as [
 		string,
 		string,
@@ -108,7 +116,7 @@ async function applyLogsUuidMigration(
 	const command = (query: string) =>
 		logsUuidCommand(client, { query }, abort_signal);
 	// A timed-out request can leave a durable mutation running after lock release.
-	await waitForLogMutations(client, abort_signal);
+	await waitForLogMutations(client, abort_signal, table);
 	await command(add);
 	const rows = await logsUuidQuery<{ needs_backfill: number }>(
 		client,
@@ -116,10 +124,12 @@ async function applyLogsUuidMigration(
 		abort_signal,
 	);
 	if (rows.length !== 1 || ![0, 1].includes(rows[0]!.needs_backfill))
-		throw new Error("Invalid ClickHouse log UUID backfill status");
+		throw new Error(
+			`Invalid ClickHouse ${table === "logs" ? "log" : "metric"} UUID backfill status`,
+		);
 	if (rows[0]!.needs_backfill === 1) {
 		await command(backfill);
-		await waitForLogMutations(client, abort_signal);
+		await waitForLogMutations(client, abort_signal, table);
 	}
 	await command(logicalCheck);
 	await command(physicalCheck);
@@ -197,8 +207,14 @@ export async function applyClickHouseMigrations(
 		request_timeout: logsUuidTimeoutMs(),
 	}),
 	withMigrationLock: MigrationLock = withClickHouseMigrationLock,
-	options: { logsWriterMaintenance?: boolean; logsUuidTimeoutMs?: number } = {
+	options: {
+		logsWriterMaintenance?: boolean;
+		metricsWriterMaintenance?: boolean;
+		logsUuidTimeoutMs?: number;
+	} = {
 		logsWriterMaintenance: process.env.GLASSHOUSE_LOG_UUID_MAINTENANCE === "1",
+		metricsWriterMaintenance:
+			process.env.GLASSHOUSE_METRIC_UUID_MAINTENANCE === "1",
 	},
 ): Promise<void> {
 	try {
@@ -222,6 +238,14 @@ export async function applyClickHouseMigrations(
 					throw new Error(
 						"ClickHouse log UUID upgrade requires maintenance: stop and drain all log writers and in-flight inserts, then set GLASSHOUSE_LOG_UUID_MAINTENANCE=1 for this migration run. Rolling upgrades are unsupported.",
 					);
+				if (
+					file === metricsUuidMigration &&
+					applied.has("0010_otlp_metrics.sql") &&
+					!options.metricsWriterMaintenance
+				)
+					throw new Error(
+						"ClickHouse metric UUID upgrade requires maintenance: stop and drain all metric writers and in-flight inserts, then set GLASSHOUSE_METRIC_UUID_MAINTENANCE=1 for this migration run. Rolling upgrades are unsupported.",
+					);
 				const statements = source
 					.replace(/^--.*$/gm, "")
 					.split(";")
@@ -240,20 +264,28 @@ export async function applyClickHouseMigrations(
 							clickhouse_settings: { wait_end_of_query: 1 },
 						});
 				};
-				if (file === logsUuidMigration) {
+				if (file === logsUuidMigration || file === metricsUuidMigration) {
+					const table = file === logsUuidMigration ? "logs" : "metrics";
 					const timeout = logsUuidTimeoutMs(options.logsUuidTimeoutMs);
 					const controller = new AbortController();
 					const timer = setTimeout(
 						() =>
 							controller.abort(
 								new Error(
-									"ClickHouse 0012 deadline exceeded. Its mutation may continue in the background. Keep writers drained and rerun with GLASSHOUSE_LOG_UUID_MAINTENANCE=1 to resume.",
+									file === logsUuidMigration
+										? "ClickHouse 0012 deadline exceeded. Its mutation may continue in the background. Keep writers drained and rerun with GLASSHOUSE_LOG_UUID_MAINTENANCE=1 to resume."
+										: "ClickHouse 0013 deadline exceeded. Its mutation may continue in the background. Keep writers drained and rerun with GLASSHOUSE_METRIC_UUID_MAINTENANCE=1 to resume.",
 								),
 							),
 						timeout,
 					);
 					try {
-						await applyLogsUuidMigration(client, statements, controller.signal);
+						await applyLogsUuidMigration(
+							client,
+							statements,
+							controller.signal,
+							table,
+						);
 						await record(controller.signal);
 						controller.signal.throwIfAborted();
 					} catch (error) {

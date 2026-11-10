@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { type ClickHouseClient, createClient } from "@clickhouse/client";
@@ -499,6 +500,205 @@ test("exposed series and point IDs use the durable Project secret rather than an
 	);
 });
 
+test("metric pagination returns every physically retained copy across a page boundary", async () => {
+	const name = marker();
+	const payload = metricExport([gauge(name)]);
+	expect((await post(payload)).status).toBe(200);
+	expect((await post(payload)).status).toBe(200);
+	expect(await stored(name)).toHaveLength(1);
+	for (const description of ["copy-z", "copy-y"]) {
+		await clickhouse.command({
+			query:
+				"INSERT INTO metrics SELECT * REPLACE ({description:String} AS description, generateUUIDv4() AS physical_row_id) FROM metrics WHERE organization_id = {organization:String} AND project_id = {project:String} AND name = {name:String} LIMIT 1 SETTINGS insert_deduplicate = 0",
+			query_params: {
+				organization: organizationId,
+				project: projectId,
+				name,
+				description,
+			},
+		});
+	}
+	const copies = (await stored(name)) as (MetricRow & {
+		point_id: string;
+		time_unix_nano: string;
+	})[];
+	expect(copies).toHaveLength(3);
+	expect(new Set(copies.map((row) => row.point_id)).size).toBe(1);
+	expect(new Set(copies.map((row) => row.time_unix_nano)).size).toBe(1);
+	const sortedResult = await clickhouse.query({
+		query:
+			"SELECT description FROM metrics WHERE organization_id = {organization:String} AND project_id = {project:String} AND name = {name:String} ORDER BY physical_row_id DESC",
+		query_params: { organization: organizationId, project: projectId, name },
+		format: "JSONEachRow",
+	});
+	const sorted = (await sortedResult.json<{ description: string }>()).map(
+		(row) => row.description,
+	);
+	const url = `/v1/metrics?project_id=${projectId}&name=${name}&limit=1`;
+	const firstResponse = await product(url);
+	expect(firstResponse.status).toBe(200);
+	const first = (await firstResponse.json()) as {
+		items: { description: string }[];
+		next_cursor: string;
+	};
+	expect(first.items.map((row) => row.description)).toEqual([sorted[0]]);
+	expect(first.items[0]).not.toHaveProperty("physical_row_id");
+	expect(first.next_cursor).toBeString();
+	await clickhouse.command({ query: "OPTIMIZE TABLE metrics FINAL" });
+	// A newly retained copy sorts before the cursor but must not displace a
+	// previously retained, distinct copy from the continuation.
+	await clickhouse.command({
+		query:
+			"INSERT INTO metrics SELECT * REPLACE ('copy-zz' AS description, toUUID('ffffffff-ffff-4fff-bfff-ffffffffffff') AS physical_row_id) FROM metrics WHERE organization_id = {organization:String} AND project_id = {project:String} AND name = {name:String} LIMIT 1 SETTINGS insert_deduplicate = 0",
+		query_params: { organization: organizationId, project: projectId, name },
+	});
+	const secondResponse = await product(`${url}&cursor=${first.next_cursor}`);
+	expect(secondResponse.status).toBe(200);
+	const second = (await secondResponse.json()) as typeof first;
+	expect(second.items.map((row) => row.description)).toEqual([sorted[1]]);
+	const retry = await product(`${url}&cursor=${first.next_cursor}`);
+	expect(await retry.json()).toEqual(second);
+	const thirdResponse = await product(`${url}&cursor=${second.next_cursor}`);
+	expect(thirdResponse.status).toBe(200);
+	const third = (await thirdResponse.json()) as {
+		items: { description: string }[];
+		next_cursor: string | null;
+	};
+	expect(third.items.map((row) => row.description)).toEqual([sorted[2]]);
+	expect(third.next_cursor).toBeNull();
+});
+
+test("metric retry beyond the real ClickHouse deduplication window retains pageable copies", async () => {
+	const name = marker();
+	const payload = metricExport([gauge(name)]);
+	await clickhouse.command({
+		query:
+			"ALTER TABLE metrics MODIFY SETTING non_replicated_deduplication_window = 1",
+	});
+	try {
+		expect((await post(payload)).status).toBe(200);
+		expect((await post(payload)).status).toBe(200);
+		expect(await stored(name)).toHaveLength(1);
+		for (let i = 0; i < 5; i++)
+			expect((await post(metricExport([gauge(marker())]))).status).toBe(200);
+		expect((await post(payload)).status).toBe(200);
+		const rows = (await stored(name)) as (MetricRow & { point_id: string })[];
+		expect(rows).toHaveLength(2);
+		expect(rows[0]!.point_id).toBe(rows[1]!.point_id);
+		const url = `/v1/metrics?project_id=${projectId}&name=${name}&limit=1`;
+		const first = (await (await product(url)).json()) as {
+			items: unknown[];
+			next_cursor: string;
+		};
+		const second = (await (
+			await product(`${url}&cursor=${first.next_cursor}`)
+		).json()) as { items: unknown[]; next_cursor: string | null };
+		expect(first.items).toHaveLength(1);
+		expect(second.items).toHaveLength(1);
+		expect(second.next_cursor).toBeNull();
+	} finally {
+		await clickhouse.command({
+			query:
+				"ALTER TABLE metrics MODIFY SETTING non_replicated_deduplication_window = 100000",
+		});
+	}
+});
+
+test("metric UUID upgrade backfills real historical duplicates and requires maintenance", async () => {
+	const legacyDatabase = `otlp_extension_${randomUUID().replaceAll("-", "")}`;
+	const config = otlpDisposableDatastores(process.env, legacyDatabase);
+	const dir = resolve(import.meta.dir, "../../../../infra/db/clickhouse");
+	await chAdmin.command({ query: `CREATE DATABASE ${legacyDatabase}` });
+	const legacy = createClient(config.clickhouseOptions);
+	try {
+		await legacy.command({
+			query: readFileSync(resolve(dir, "0010_otlp_metrics.sql"), "utf8"),
+		});
+		await legacy.command({
+			query:
+				"CREATE TABLE glasshouse_schema_migrations (migration String, checksum String, applied_at DateTime DEFAULT now()) ENGINE = MergeTree ORDER BY migration",
+		});
+		const previous = readdirSync(dir)
+			.filter(
+				(file) =>
+					/^\d+_.+\.sql$/.test(file) && file < "0013_metrics_physical_uuid.sql",
+			)
+			.sort();
+		await legacy.insert({
+			table: "glasshouse_schema_migrations",
+			format: "JSONEachRow",
+			values: previous.map((migration) => ({
+				migration,
+				checksum: createHash("sha256")
+					.update(readFileSync(resolve(dir, migration), "utf8"))
+					.digest("hex"),
+			})),
+		});
+		await legacy.command({
+			query:
+				"INSERT INTO metrics (organization_id, project_id, point_id, time_unix_nano) SETTINGS insert_deduplicate=0 VALUES ('org', 'project', 'same', 123), ('org', 'project', 'same', 123)",
+		});
+		await expect(
+			applyClickHouseMigrations(
+				createClient(config.clickhouseOptions),
+				async (run) => run(),
+				{},
+			),
+		).rejects.toThrow("GLASSHOUSE_METRIC_UUID_MAINTENANCE=1");
+		const firstStatement = readFileSync(
+			resolve(dir, "0013_metrics_physical_uuid.sql"),
+			"utf8",
+		)
+			.replace(/^--.*$/gm, "")
+			.split(";")[0]!;
+		await legacy.command({ query: firstStatement });
+		await legacy.command({
+			query:
+				"ALTER TABLE metrics UPDATE physical_row_id = toUUID('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa') WHERE _part_offset = 0 SETTINGS mutations_sync = 1",
+		});
+		await applyClickHouseMigrations(
+			createClient(config.clickhouseOptions),
+			async (run) => run(),
+			{ metricsWriterMaintenance: true },
+		);
+		const readIds = async () => {
+			const result = await legacy.query({
+				query:
+					"SELECT toString(physical_row_id) AS id FROM metrics ORDER BY id",
+				format: "JSONEachRow",
+			});
+			return (await result.json<{ id: string }>()).map((row) => row.id);
+		};
+		const ids = await readIds();
+		expect(ids).toHaveLength(2);
+		expect(ids).toContain("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+		expect(new Set(ids).size).toBe(2);
+		await expect(
+			legacy.command({
+				query:
+					"INSERT INTO metrics (organization_id, project_id, point_id, time_unix_nano) VALUES ('org', 'project', 'old-writer', 123)",
+			}),
+		).rejects.toThrow("metrics_physical_row_id_v4");
+		expect(
+			ids.every(
+				(id) =>
+					/^[0-9a-f-]{36}$/.test(id) &&
+					id !== "00000000-0000-0000-0000-000000000000",
+			),
+		).toBe(true);
+		await legacy.command({ query: "OPTIMIZE TABLE metrics FINAL" });
+		await applyClickHouseMigrations(
+			createClient(config.clickhouseOptions),
+			async (run) => run(),
+			{},
+		);
+		expect(await readIds()).toEqual(ids);
+	} finally {
+		await legacy.close();
+		await chAdmin.command({ query: `DROP DATABASE ${legacyDatabase} SYNC` });
+	}
+}, 60_000);
+
 test("metrics pagination bounds every page and rejects cursors from another Project or filter", async () => {
 	const name = marker();
 	const payload = metricExport([
@@ -532,6 +732,31 @@ test("metrics pagination bounds every page and rejects cursors from another Proj
 	expect(next.status).toBe(200);
 	const second = (await next.json()) as typeof page;
 	expect(second.items).toHaveLength(2);
+	const legacy = JSON.parse(
+		Buffer.from(page.next_cursor, "base64url").toString(),
+	);
+	delete legacy.row;
+	const legacyCursor = Buffer.from(JSON.stringify(legacy)).toString(
+		"base64url",
+	);
+	const legacyResponse = await product(
+		`/v1/metrics?project_id=${projectId}&name=${name}&limit=2&cursor=${legacyCursor}`,
+	);
+	expect(legacyResponse.status).toBe(200);
+	expect(((await legacyResponse.json()) as typeof page).items).toEqual(
+		second.items,
+	);
+	legacy.row = "invalid";
+	const invalidCursor = Buffer.from(JSON.stringify(legacy)).toString(
+		"base64url",
+	);
+	expect(
+		(
+			await product(
+				`/v1/metrics?project_id=${projectId}&name=${name}&cursor=${invalidCursor}`,
+			)
+		).status,
+	).toBe(400);
 	expect(
 		new Set([...page.items, ...second.items].map((row) => row.point_id)).size,
 	).toBe(4);

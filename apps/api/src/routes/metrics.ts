@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
@@ -213,6 +213,7 @@ export async function handleMetricExport(
 						...redacted,
 						organization_id: tenant.organizationId,
 						project_id: tenant.projectId,
+						physical_row_id: randomUUID(),
 						series_id,
 						point_id: createHmac("sha256", key)
 							.update(`metrics-point-v2:${digest}:${index}`)
@@ -261,7 +262,10 @@ export async function handleMetricExport(
 type StoredMetric = Record<string, unknown> & {
 	point_id: string;
 	time_unix_nano: string;
+	physical_row_id: string;
 };
+const physicalMetricId =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export async function handleListMetrics(c: Context): Promise<Response> {
 	const projectId = c.req.query("project_id")!;
 	try {
@@ -279,6 +283,7 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 					name: string | null;
 					time: string;
 					id: string;
+					row?: string;
 			  }
 			| undefined;
 		if (c.req.query("cursor")) {
@@ -293,6 +298,9 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 					cursor.name !== (name ?? null) ||
 					typeof cursor.time !== "string" ||
 					typeof cursor.id !== "string" ||
+					(cursor.row !== undefined &&
+						(typeof cursor.row !== "string" ||
+							!physicalMetricId.test(cursor.row))) ||
 					!/^\d{1,20}$/.test(cursor.time) ||
 					BigInt(cursor.time) > (1n << 64n) - 1n ||
 					!/^[a-f0-9]{64}$/.test(cursor.id)
@@ -313,13 +321,14 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 				const timeout = setTimeout(() => controller.abort(), 10_000);
 				try {
 					const result = await ch().query({
-						query: `SELECT * FROM metrics WHERE organization_id = {organization:String} AND project_id = {project:String}${name === undefined ? "" : " AND name = {name:String}"}${cursor ? " AND (time_unix_nano, point_id) < ({time:UInt64}, {id:String})" : ""} ORDER BY time_unix_nano DESC, point_id DESC LIMIT {limit:UInt32}`,
+						query: `SELECT * FROM metrics WHERE organization_id = {organization:String} AND project_id = {project:String}${name === undefined ? "" : " AND name = {name:String}"}${cursor ? (cursor.row ? " AND (time_unix_nano, point_id, physical_row_id) < ({time:UInt64}, {id:String}, {row:UUID})" : " AND (time_unix_nano, point_id) < ({time:UInt64}, {id:String})") : ""} ORDER BY time_unix_nano DESC, point_id DESC, physical_row_id DESC LIMIT {limit:UInt32}`,
 						query_params: {
 							organization: tenant.organizationId,
 							project: tenant.projectId,
 							name,
 							time: cursor?.time,
 							id: cursor?.id,
+							row: cursor?.row,
 							limit: limit + 1,
 						},
 						format: "JSONEachRow",
@@ -332,9 +341,18 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 						abort_signal: controller.signal,
 					});
 					const rows = await result.json<StoredMetric>();
-					const items: StoredMetric[] = [];
+					const ids = rows.map((row) => row.physical_row_id);
+					if (
+						ids.some((id) => !physicalMetricId.test(id)) ||
+						new Set(ids).size !== ids.length
+					)
+						throw new Error(
+							"Metric reads require valid, unique page and lookahead UUIDs",
+						);
+					const items: Omit<StoredMetric, "physical_row_id">[] = [];
 					let bytes = 0;
-					for (const row of rows.slice(0, limit)) {
+					for (const stored of rows.slice(0, limit)) {
+						const { physical_row_id: _physicalRowId, ...row } = stored;
 						for (const key of [
 							"resource_attributes",
 							"scope_attributes",
@@ -361,6 +379,7 @@ export async function handleListMetrics(c: Context): Promise<Response> {
 										name: name ?? null,
 										time: last.time_unix_nano,
 										id: last.point_id,
+										row: ids[items.length - 1],
 									}),
 								).toString("base64url")
 							: null;

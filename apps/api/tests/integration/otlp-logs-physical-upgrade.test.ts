@@ -210,6 +210,7 @@ test("0012 bounds asynchronous waiting and resumes a delayed mutation without re
 		const upgrade = (timeout: number, maintenance = true) =>
 			applyClickHouseMigrations(createClient(options), async (run) => run(), {
 				logsWriterMaintenance: maintenance,
+				metricsWriterMaintenance: true,
 				logsUuidTimeoutMs: timeout,
 			});
 		await client.command({ query: "SYSTEM STOP MERGES logs" });
@@ -273,6 +274,7 @@ test("0012 recovers a lost asynchronous submission acknowledgement after backgro
 				await expect(
 					applyClickHouseMigrations(runner, async (run) => run(), {
 						logsWriterMaintenance: true,
+						metricsWriterMaintenance: true,
 					}),
 				).rejects.toThrow("lost asynchronous acknowledgement");
 			} finally {
@@ -288,7 +290,7 @@ test("0012 recovers a lost asynchronous submission acknowledgement after backgro
 			await applyClickHouseMigrations(
 				createClient(options),
 				async (run) => run(),
-				{ logsWriterMaintenance: true },
+				{ logsWriterMaintenance: true, metricsWriterMaintenance: true },
 			);
 			expect(await mutations(client)).toHaveLength(1);
 			expect(await snapshot(client)).toEqual(stored);
@@ -323,6 +325,7 @@ test("0012 refuses a failed pending mutation without recording success or submit
 			await expect(
 				applyClickHouseMigrations(createClient(options), async (run) => run(), {
 					logsWriterMaintenance: true,
+					metricsWriterMaintenance: true,
 				}),
 			).rejects.toThrow("Unfinished ClickHouse log mutation has failed");
 			expect(await mutations(client)).toHaveLength(1);
@@ -352,6 +355,7 @@ for (const invalid of ["non-v4", "duplicated"] as const) {
 			await expect(
 				applyClickHouseMigrations(createClient(options), async (run) => run(), {
 					logsWriterMaintenance: true,
+					metricsWriterMaintenance: true,
 				}),
 			).rejects.toThrow(
 				"Physical log UUID backfill is incomplete or contains duplicated scoped IDs",
@@ -423,6 +427,7 @@ for (const interruptedAt of [
 				await expect(
 					applyClickHouseMigrations(runner, async (run) => run(), {
 						logsWriterMaintenance: true,
+						metricsWriterMaintenance: true,
 					}),
 				).rejects.toThrow("synthetic migration interruption");
 			} finally {
@@ -455,7 +460,7 @@ for (const interruptedAt of [
 			await applyClickHouseMigrations(
 				createClient(options),
 				async (run) => run(),
-				{ logsWriterMaintenance: true },
+				{ logsWriterMaintenance: true, metricsWriterMaintenance: true },
 			);
 			const before = await snapshot(client);
 			expect(before).toHaveLength(6);
@@ -524,7 +529,7 @@ for (const partType of ["Compact", "Wide"] as const) {
 			await applyClickHouseMigrations(
 				createClient(options),
 				async (run) => run(),
-				{ logsWriterMaintenance: true },
+				{ logsWriterMaintenance: true, metricsWriterMaintenance: true },
 			);
 			const rows = await snapshot(client);
 			expect(rows).toHaveLength(7);
@@ -676,7 +681,7 @@ for (const partType of ["Compact", "Wide"] as const) {
 			await applyClickHouseMigrations(
 				createClient(options),
 				async (run) => run(),
-				{ logsWriterMaintenance: true },
+				{ logsWriterMaintenance: true, metricsWriterMaintenance: true },
 			);
 			expect(await snapshot(client)).toEqual(beforeReplay);
 			await expectStoredColumn();
