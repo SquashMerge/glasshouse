@@ -3,6 +3,7 @@ import common from "./otlp-proto/common.proto" with { type: "text" };
 import resource from "./otlp-proto/resource.proto" with { type: "text" };
 import logs from "./otlp-proto/logs.proto" with { type: "text" };
 import service from "./otlp-proto/logs_service.proto" with { type: "text" };
+import { mergeProtobufMessages } from "./protobuf-merge.js";
 import {
 	LOG_VALUE_KEYS,
 	type LogAnyValue,
@@ -16,7 +17,7 @@ const proto = root
 	.lookupType("opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest");
 
 export function decodeLogExport(bytes: Uint8Array): unknown {
-	return proto.toObject(proto.decode(bytes), {
+	return proto.toObject(proto.decode(mergeProtobufMessages(bytes, proto)), {
 		arrays: true,
 		bytes: Array,
 		enums: Number,

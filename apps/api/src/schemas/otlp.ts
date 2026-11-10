@@ -44,7 +44,7 @@ function expandInt64(value: unknown): unknown {
 	}
 	return match[1] + integer;
 }
-const Int64 = z.preprocess(
+export const Int64 = z.preprocess(
 	expandInt64,
 	z.union([
 		z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),

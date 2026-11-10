@@ -126,6 +126,43 @@ test("binary repeated message oneof occurrences merge values", () => {
 	});
 });
 
+test("binary duplicate enclosing value messages merge without losing wire history", () => {
+	const w = protobuf.Writer.create();
+	w.uint32(10).fork().uint32(18).fork().uint32(18).fork();
+	w.uint32(74).fork().uint32(10).string("key");
+	w.uint32(18)
+		.fork()
+		.uint32(42)
+		.fork()
+		.uint32(10)
+		.fork()
+		.uint32(10)
+		.string("first")
+		.ldelim()
+		.ldelim()
+		.ldelim();
+	w.uint32(18)
+		.fork()
+		.uint32(42)
+		.fork()
+		.uint32(10)
+		.fork()
+		.uint32(10)
+		.string("second")
+		.ldelim()
+		.ldelim()
+		.ldelim();
+	w.ldelim().ldelim().ldelim().ldelim();
+	const decoded = decodeOtlpTraceExport(w.finish()) as any;
+	expect(
+		decoded.resourceSpans[0].scopeSpans[0].spans[0].attributes[0].value,
+	).toEqual({
+		arrayValue: {
+			values: [{ stringValue: "first" }, { stringValue: "second" }],
+		},
+	});
+});
+
 test("trace int64 exponent notation stays exact", async () => {
 	const h = harness();
 	const payload = body();

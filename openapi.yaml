@@ -6931,9 +6931,10 @@ components:
               type: string
         intValue:
           anyOf:
-            - maxLength: 21
-              type: string
-            - type: number
+            - maximum: 9007199254740991
+              minimum: -9007199254740991
+              type: integer
+            - type: string
         kvlistValue:
           additionalProperties: {}
           properties:

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import protobuf from "protobufjs";
 import { logFilterNano } from "../../src/db/logs.js";
 import {
 	decodeLogExport,
@@ -16,6 +17,80 @@ const envelope = (
 	timeUnixNano: unknown = "18446744073709551615",
 ) => ({
 	resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano, body }] }] }],
+});
+
+test("binary log body selects the last oneof alternative in wire order", () => {
+	for (const [first, last, expected] of [
+		["string", "bool", { boolValue: false }],
+		["bool", "string", { stringValue: "last" }],
+	] as const) {
+		const writer = protobuf.Writer.create();
+		writer
+			.uint32(10)
+			.fork()
+			.uint32(18)
+			.fork()
+			.uint32(18)
+			.fork()
+			.uint32(42)
+			.fork();
+		for (const field of [first, last]) {
+			if (field === "string") writer.uint32(10).string("last");
+			else writer.uint32(16).bool(false);
+		}
+		writer.ldelim().ldelim().ldelim().ldelim();
+		const parsed = ExportLogsRequest.parse(
+			normalizeLogFields(decodeLogExport(writer.finish()), "request", 0, true),
+		);
+		expect(parsed.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body).toEqual(
+			expected,
+		);
+	}
+});
+
+test("wrong-wire known oneof fields are ignored like unknown protobuf fields", () => {
+	const writer = protobuf.Writer.create();
+	writer
+		.uint32(10)
+		.fork()
+		.uint32(18)
+		.fork()
+		.uint32(18)
+		.fork()
+		.uint32(42)
+		.fork();
+	writer
+		.uint32(10)
+		.string("keep")
+		.uint32(18)
+		.bytes(Buffer.from([0]));
+	writer.ldelim().ldelim().ldelim().ldelim();
+	const parsed = ExportLogsRequest.parse(
+		normalizeLogFields(decodeLogExport(writer.finish()), "request", 0, true),
+	);
+	expect(parsed.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body).toEqual({
+		stringValue: "keep",
+	});
+});
+
+test("quoted exponent log int64 values remain exact and bounded", () => {
+	for (const [input, expected] of [
+		["9.223372036854775807e18", "9223372036854775807"],
+		["-9.223372036854775808e18", "-9223372036854775808"],
+		["1.2e1", "12"],
+		["0e999999", "0"],
+	]) {
+		expect(LogValue.parse({ intValue: input })).toEqual({ intValue: expected });
+	}
+	for (const invalid of [
+		"1e999999999",
+		"1.5",
+		"9.223372036854775808e18",
+		"1e-9999999",
+		9007199254740992,
+	]) {
+		expect(LogValue.safeParse({ intValue: invalid }).success).toBe(false);
+	}
 });
 
 test("negative zero remains JSON-safe in log AnyValues", () => {
