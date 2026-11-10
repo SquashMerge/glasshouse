@@ -34,6 +34,55 @@ const cases = [
 		expected: { stringValue: "last" },
 	},
 ];
+for (const [signal, decode] of [
+	["trace", decodeOtlpTraceExport],
+	["log", decodeLogExport],
+] as const) {
+	test(`${signal} decoder rejects an unknown group with a mismatched end tag`, () => {
+		expect(() => decode(Buffer.from("0b14", "hex"))).toThrow();
+	});
+
+	// Oracle: opentelemetry-proto 1.39.1, google protobuf 6.33.6.
+	for (const hex of [
+		"0b0c", // known message field, wrong wire type, matching end
+		"0b13140c", // nested groups with distinct field numbers
+		"0b08010c", // varint within group
+		"a306ab06ac06a406", // multi-byte group field numbers
+		"a00601", // unknown non-group field
+	]) {
+		test(`${signal} accepts well-formed unknown field ${hex}`, () => {
+			expect(() => decode(Buffer.from(hex, "hex"))).not.toThrow();
+		});
+	}
+	for (const hex of [
+		"0b131c0c", // nested mismatch
+		"0b", // missing terminator
+		"0c", // stray end group
+		"0b0e0c", // invalid wire type in group
+		"0b000c", // invalid zero field number in group
+		"0b8c01", // field 1 start, field 17 end (same low tag byte)
+		"0a020b14", // mismatch inside a known message
+	]) {
+		test(`${signal} rejects malformed group ${hex}`, () => {
+			expect(() => decode(Buffer.from(hex, "hex"))).toThrow();
+		});
+	}
+	test(`${signal} rejects a group split across singular message occurrences`, () => {
+		expect(() => decode(Buffer.from("0a060a010b0a010c", "hex"))).toThrow();
+	});
+
+	test(`${signal} bounds group nesting`, () => {
+		const group = (depth: number) =>
+			Buffer.concat([
+				Buffer.from("a306".repeat(depth), "hex"),
+				Buffer.from("a406".repeat(depth), "hex"),
+			]);
+		expect(() => decode(group(64))).not.toThrow();
+		expect(() => decode(group(65))).toThrow();
+		expect(() => decode(group(20_000))).toThrow();
+	}, 1000);
+}
+
 for (const fixture of cases) {
 	test(`official protobuf oracle: ${fixture.name} for traces and logs`, () => {
 		const trace = decodeOtlpTraceExport(

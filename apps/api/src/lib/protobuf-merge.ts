@@ -1,5 +1,75 @@
 import protobuf from "protobufjs";
 
+// protobufjs skipType accepts any end-group tag and recursively skips without
+// matching field numbers or bounding nesting. Validate groups iteratively.
+function skipField(reader: protobuf.Reader, tag: number, depth: number): void {
+	const wire = tag & 7;
+	if (wire === 4) throw new Error("Unexpected protobuf end group");
+	if (wire !== 3) {
+		reader.skipType(wire);
+		return;
+	}
+	const groups = [tag >>> 3];
+	if (depth + groups.length > 64) throw new Error("Protobuf nesting limit");
+	while (groups.length) {
+		if (reader.pos >= reader.len)
+			throw new Error("Unterminated protobuf group");
+		const nested = reader.uint32();
+		const id = nested >>> 3;
+		if (!id) throw new Error("Invalid protobuf tag");
+		switch (nested & 7) {
+			case 3:
+				groups.push(id);
+				if (depth + groups.length > 64)
+					throw new Error("Protobuf nesting limit");
+				break;
+			case 4:
+				if (groups.pop() !== id)
+					throw new Error("Mismatched protobuf end group");
+				break;
+			default:
+				reader.skipType(nested & 7);
+				if (reader.pos > reader.len)
+					throw new Error("Invalid protobuf message length");
+		}
+	}
+}
+
+// Validate each length-delimited known message before singular occurrences are
+// concatenated: a group cannot start in one occurrence and end in another.
+function validateMessageBoundaries(
+	bytes: Uint8Array,
+	type: protobuf.Type,
+): void {
+	type.resolveAll();
+	const stack = [{ reader: protobuf.Reader.create(bytes), type, depth: 0 }];
+	while (stack.length) {
+		const current = stack[stack.length - 1]!;
+		const { reader, depth } = current;
+		if (reader.pos === reader.len) {
+			stack.pop();
+			continue;
+		}
+		const tag = reader.uint32();
+		const id = tag >>> 3;
+		if (!id) throw new Error("Invalid protobuf tag");
+		const field = current.type.fieldsById[id];
+		if ((tag & 7) === 2 && field?.resolvedType instanceof protobuf.Type) {
+			if (depth >= 64) throw new Error("Protobuf message nesting limit");
+			field.resolvedType.resolveAll();
+			stack.push({
+				reader: protobuf.Reader.create(reader.bytes()),
+				type: field.resolvedType,
+				depth: depth + 1,
+			});
+		} else {
+			skipField(reader, tag, depth);
+			if (reader.pos > reader.len)
+				throw new Error("Invalid protobuf message length");
+		}
+	}
+}
+
 // protobufjs decoders overwrite singular messages and retain conflicting oneof
 // properties. Canonicalize known message fields before decoding: concatenate
 // singular message occurrences in wire order, and discard earlier alternatives
@@ -10,6 +80,7 @@ export function mergeProtobufMessages(
 	depth = 0,
 ): Uint8Array {
 	if (depth > 64) throw new Error("Protobuf message nesting limit");
+	if (depth === 0) validateMessageBoundaries(bytes, type);
 	const reader = protobuf.Reader.create(bytes);
 	type.resolveAll();
 	type Entry = {
@@ -45,7 +116,7 @@ export function mergeProtobufMessages(
 		if (field && wire !== expected && !packed) {
 			// A known number with the wrong wire type is an unknown field, not
 			// a oneof selection. protobufjs itself does not check this.
-			reader.skipType(wire);
+			skipField(reader, tag, depth);
 			if (reader.pos > reader.len)
 				throw new Error("Invalid protobuf message length");
 			continue;
@@ -53,7 +124,7 @@ export function mergeProtobufMessages(
 		const message = field?.resolvedType instanceof protobuf.Type && wire === 2;
 		let part: Uint8Array | undefined;
 		if (message) part = reader.bytes();
-		else reader.skipType(tag & 7);
+		else skipField(reader, tag, depth);
 		if (reader.pos > reader.len)
 			throw new Error("Invalid protobuf message length");
 		let selection: { id: number; entries: Entry[] } | undefined;
