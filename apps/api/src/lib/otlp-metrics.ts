@@ -179,7 +179,7 @@ function anyValue(value: unknown, budget: Budget, depth: number): ObjectValue {
 			: text(child, 16_384);
 		if (
 			bytes.length > 16_384 ||
-			!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+			!/^(?:[A-Za-z0-9+/_-]{4})*(?:[A-Za-z0-9+/_-]{2}(?:==)?|[A-Za-z0-9+/_-]{3}=?)?$/.test(
 				bytes,
 			)
 		)

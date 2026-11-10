@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
 import type {
 	TenantScopedObservation,
 	TenantScopedTrace,
 } from "../../src/db/traces-writer.js";
+import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
 
 const tenant = {
 	actorId: "11111111-1111-4111-8111-111111111111",
@@ -15,6 +15,68 @@ const attr = (key: string, text: string) => ({
 	value: { stringValue: text },
 });
 const start = "1700000000000999999";
+
+test("malformed AnyValue oneofs reject the trace before persistence", async () => {
+	for (const value of [
+		{ stringValue: "a", boolValue: false },
+		{ arrayValue: { values: [{ intValue: "1", stringValue: "a" }] } },
+		{
+			kvlistValue: {
+				values: [
+					{ key: "nested", value: { stringValue: "a", boolValue: true } },
+				],
+			},
+		},
+	]) {
+		const h = harness();
+		const payload = body();
+		const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+		(span.attributes as unknown[]) = [{ key: "invalid", value }];
+		expect((await h.post(payload)).status).toBe(400);
+		expect(h.observations).toHaveLength(0);
+		expect(h.traces).toHaveLength(0);
+	}
+});
+
+test("quoted finite AnyValue doubles survive trace ingestion", async () => {
+	const h = harness();
+	const payload = body();
+	const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+	(span.attributes as unknown[]) = [
+		{ key: "measurement", value: { doubleValue: "-1.25e2" } },
+	];
+	expect((await h.post(payload)).status).toBe(200);
+	expect(JSON.stringify(h.observations)).toContain('"doubleValue":-125');
+});
+
+test("invalid quoted doubles reject traces and null oneof alternatives stay unset", async () => {
+	for (const invalid of [
+		"",
+		" ",
+		"0x10",
+		"nan",
+		"1e9999",
+		"1e",
+		"1".repeat(129),
+	]) {
+		const h = harness();
+		const payload = body();
+		const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+		(span.attributes as unknown[]) = [
+			{ key: "invalid", value: { doubleValue: invalid } },
+		];
+		expect((await h.post(payload)).status).toBe(400);
+		expect(h.observations).toHaveLength(0);
+	}
+	const h = harness();
+	const payload = body();
+	const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+	(span.attributes as unknown[]) = [
+		{ key: "valid", value: { doubleValue: "0.5", stringValue: null } },
+	];
+	expect((await h.post(payload)).status).toBe(200);
+	expect(JSON.stringify(h.observations)).toContain('"doubleValue":0.5');
+});
 function body() {
 	return {
 		resourceSpans: [

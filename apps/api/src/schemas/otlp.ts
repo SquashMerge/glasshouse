@@ -32,11 +32,17 @@ const Int64 = z.union([
 				BigInt(value) <= 9223372036854775807n,
 		),
 ]);
-const Double = z.union([
+export const ProtoJsonDouble = z.union([
 	z.number(),
 	z.literal("NaN"),
 	z.literal("Infinity"),
 	z.literal("-Infinity"),
+	z
+		.string()
+		.max(128)
+		.regex(/^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/)
+		.transform(Number)
+		.refine(Number.isFinite),
 ]);
 const SpanUnixNano = UnixNano.refine(
 	(value) => BigInt(value) <= 10413791999999999999n,
@@ -206,7 +212,7 @@ const WireAnyValue: z.ZodType<Record<string, unknown>> = z
 		stringValue: z.string().nullable().optional(),
 		boolValue: z.boolean().nullable().optional(),
 		intValue: Int64.nullable().optional(),
-		doubleValue: Double.nullable().optional(),
+		doubleValue: ProtoJsonDouble.nullable().optional(),
 		bytesValue: z.string().nullable().optional(),
 		arrayValue: z
 			.looseObject({
@@ -227,6 +233,18 @@ const WireAnyValue: z.ZodType<Record<string, unknown>> = z
 			.nullable()
 			.optional(),
 	})
+	.refine(
+		(value) =>
+			[
+				"stringValue",
+				"boolValue",
+				"intValue",
+				"doubleValue",
+				"bytesValue",
+				"arrayValue",
+				"kvlistValue",
+			].filter((key) => value[key] != null).length <= 1,
+	)
 	.openapi("OtlpWireAnyValue");
 
 const WireKeyValue = z

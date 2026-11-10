@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { ProtoJsonDouble } from "./otlp.js";
 
 function decimalInteger(signed: boolean) {
 	return z
@@ -41,9 +42,7 @@ export const LogValue: z.ZodType<LogAnyValue> = z
 		stringValue: z.string().optional(),
 		boolValue: z.boolean().optional(),
 		intValue: decimalInteger(true).optional(),
-		doubleValue: z
-			.union([z.number(), z.enum(["NaN", "Infinity", "-Infinity"])])
-			.optional(),
+		doubleValue: ProtoJsonDouble.optional(),
 		bytesValue: z
 			.string()
 			.regex(/^[A-Za-z0-9+/_-]*={0,2}$/)

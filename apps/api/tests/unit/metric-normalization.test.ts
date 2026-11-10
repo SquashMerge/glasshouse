@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { decodeOtlpMetricExport } from "../../src/lib/otlp-protobuf.js";
 import {
 	METRIC_LIMITS,
 	metricSeriesId,
 	normalizeMetricExport,
 	redactMetricPoint,
 } from "../../src/lib/otlp-metrics.js";
+import { decodeOtlpMetricExport } from "../../src/lib/otlp-protobuf.js";
 import {
 	gauge,
 	histogram,
@@ -17,6 +17,26 @@ import {
 } from "../fixtures/otlp-metrics.js";
 
 const identityKey = randomBytes(32);
+
+test("metric byte labels accept ProtoJSON base64 variants and canonicalize identity", () => {
+	const make = (bytesValue: string) =>
+		normalizeMetricExport(
+			metricExport([gauge("bytes", [{ key: "label", value: { bytesValue } }])]),
+		)[0]!;
+	const canonical = make("+/8=");
+	for (const variant of ["+/8", "-_8=", "-_8"]) {
+		const point = make(variant);
+		expect(point.data_point.attributes).toEqual(
+			canonical.data_point.attributes,
+		);
+		expect(metricSeriesId(point, "org", "project", identityKey)).toBe(
+			metricSeriesId(canonical, "org", "project", identityKey),
+		);
+	}
+	for (const invalid of ["A", "AA=", "AA===", "A A=", "AA$="]) {
+		expect(() => make(invalid)).toThrow();
+	}
+});
 
 test("all kinds preserve lossless values through recursive normalization", () => {
 	const rows = normalizeMetricExport(metricExport(metricKinds("test")));

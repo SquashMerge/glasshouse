@@ -6919,8 +6919,15 @@ components:
             - type: number
             - enum:
                 - NaN
+              type: string
+            - enum:
                 - Infinity
+              type: string
+            - enum:
                 - -Infinity
+              type: string
+            - maxLength: 128
+              pattern: ^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$
               type: string
         intValue:
           anyOf:
@@ -7568,6 +7575,9 @@ components:
               type: string
             - enum:
                 - -Infinity
+              type: string
+            - maxLength: 128
+              pattern: ^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$
               type: string
             - type: 'null'
         intValue:

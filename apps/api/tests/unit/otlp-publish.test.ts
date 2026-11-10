@@ -864,7 +864,7 @@ describe("OTLP ingest publishes events", () => {
 		else process.env.GLASSHOUSE_REDACT_KEYS = previousRedactKeys;
 	});
 
-	it("drops malformed nested AnyValues instead of retaining an unredacted branch", async () => {
+	it("rejects malformed nested AnyValues before retaining an unredacted branch", async () => {
 		const secret = "AMBIGUOUS_NESTED_ANYVALUE_SECRET";
 		const handler = createOtlpIngestHandler({
 			defaultClient,
@@ -917,10 +917,9 @@ describe("OTLP ingest publishes events", () => {
 			TENANT,
 		);
 
-		expect(res.status).toBe(200);
-		const persisted = JSON.stringify(insertObservations.mock.calls.at(-1)?.[1]);
-		expect(persisted).not.toContain(secret);
-		expect(persisted).toContain("retained");
+		expect(res.status).toBe(400);
+		expect(insertObservations).not.toHaveBeenCalled();
+		expect(insertTraces).not.toHaveBeenCalled();
 	});
 
 	it("does not resume recursive redaction after its node budget is exhausted", async () => {

@@ -1,17 +1,43 @@
 import { expect, test } from "bun:test";
-import { ExportLogsRequest, type LogAnyValue } from "../../src/schemas/logs.js";
+import { logFilterNano } from "../../src/db/logs.js";
 import {
 	decodeLogExport,
 	normalizeLogFields,
 	redactLogValue,
 } from "../../src/lib/otlp-logs.js";
-import { logFilterNano } from "../../src/db/logs.js";
+import {
+	ExportLogsRequest,
+	type LogAnyValue,
+	LogValue,
+} from "../../src/schemas/logs.js";
 
 const envelope = (
 	body: unknown,
 	timeUnixNano: unknown = "18446744073709551615",
 ) => ({
 	resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano, body }] }] }],
+});
+
+test("quoted finite AnyValue doubles normalize in logs", () => {
+	expect(LogValue.parse({ doubleValue: "-1.25e2" })).toEqual({
+		doubleValue: -125,
+	});
+	for (const invalid of [
+		"",
+		" ",
+		"0x10",
+		"nan",
+		"1e9999",
+		"1e",
+		"1".repeat(129),
+	]) {
+		expect(LogValue.safeParse({ doubleValue: invalid }).success).toBe(false);
+	}
+	expect(
+		ExportLogsRequest.parse(
+			normalizeLogFields(envelope({ doubleValue: "0.5", stringValue: null })),
+		).resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body,
+	).toEqual({ doubleValue: 0.5 });
 });
 
 test("official-schema LogRecord field 12 event_name survives protobuf decoding", () => {
