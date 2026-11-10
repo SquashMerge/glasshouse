@@ -51,6 +51,45 @@ message ExportTraceServiceRequest { repeated ResourceSpans resource_spans = 1; }
 `)
 	.root.lookupType("ExportTraceServiceRequest");
 
+// protobufjs' generated decoder assigns oneof fields independently. Intercept
+// assignments on this private descriptor so selection follows wire order. Same
+// message-member occurrences merge their repeated values, as required by proto.
+const traceAnyValue = traceExport.root.lookupType("AnyValue");
+const traceValueFields = [
+	"stringValue",
+	"boolValue",
+	"intValue",
+	"doubleValue",
+	"arrayValue",
+	"kvlistValue",
+	"bytesValue",
+] as const;
+for (const field of traceValueFields) {
+	Object.defineProperty(traceAnyValue.ctor.prototype, field, {
+		configurable: true,
+		set(this: Record<string, unknown>, initial: unknown) {
+			for (const other of traceValueFields) delete this[other];
+			let current = initial;
+			Object.defineProperty(this, field, {
+				configurable: true,
+				enumerable: true,
+				get: () => current,
+				set: (next: unknown) => {
+					if (
+						(field === "arrayValue" || field === "kvlistValue") &&
+						current &&
+						next
+					) {
+						const existing = (current as { values: unknown[] }).values;
+						for (const value of (next as { values: unknown[] }).values)
+							existing.push(value);
+					} else current = next;
+				},
+			});
+		},
+	});
+}
+
 export function decodeOtlpTraceExport(bytes: Uint8Array): unknown {
 	return traceExport.toObject(traceExport.decode(bytes), {
 		arrays: true,

@@ -837,7 +837,7 @@ function redactAttributeValue(
 				: null;
 		case "doubleValue":
 			return typeof anyValue.doubleValue === "number" ||
-				["NaN", "Infinity", "-Infinity"].includes(
+				["NaN", "Infinity", "-Infinity", "-0"].includes(
 					anyValue.doubleValue as string,
 				)
 				? { doubleValue: anyValue.doubleValue }

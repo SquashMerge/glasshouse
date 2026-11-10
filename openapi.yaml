@@ -7561,6 +7561,7 @@ components:
             - boolean
             - 'null'
         bytesValue:
+          pattern: ^[A-Za-z0-9+/_-]*={0,2}$
           type:
             - string
             - 'null'

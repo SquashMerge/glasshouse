@@ -18,6 +18,13 @@ const envelope = (
 	resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano, body }] }] }],
 });
 
+test("negative zero remains JSON-safe in log AnyValues", () => {
+	for (const value of ["-0", "-0.0e+3", -0]) {
+		const parsed = LogValue.parse({ doubleValue: value });
+		expect(JSON.stringify(parsed)).toBe('{"doubleValue":"-0"}');
+	}
+});
+
 test("quoted finite AnyValue doubles normalize in logs", () => {
 	expect(LogValue.parse({ doubleValue: "-1.25e2" })).toEqual({
 		doubleValue: -125,

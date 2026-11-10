@@ -3,7 +3,9 @@ import type {
 	TenantScopedObservation,
 	TenantScopedTrace,
 } from "../../src/db/traces-writer.js";
+import { decodeOtlpTraceExport } from "../../src/lib/otlp-protobuf.js";
 import { createOtlpIngestHandler } from "../../src/routes/otlp.js";
+import protobuf from "protobufjs";
 
 const tenant = {
 	actorId: "11111111-1111-4111-8111-111111111111",
@@ -36,6 +38,140 @@ test("malformed AnyValue oneofs reject the trace before persistence", async () =
 		expect(h.observations).toHaveLength(0);
 		expect(h.traces).toHaveLength(0);
 	}
+});
+
+test("binary AnyValue oneof uses true wire order", async () => {
+	const w = protobuf.Writer.create();
+	w.uint32(10)
+		.fork()
+		.uint32(18)
+		.fork()
+		.uint32(18)
+		.fork()
+		.uint32(10)
+		.bytes(Buffer.from("00112233445566778899aabbccddeeff", "hex"))
+		.uint32(18)
+		.bytes(Buffer.from("0011223344556677", "hex"))
+		.uint32(42)
+		.string("binary")
+		.uint32(57)
+		.fixed64("1700000000000999999")
+		.uint32(74)
+		.fork()
+		.uint32(10)
+		.string("key")
+		.uint32(18)
+		.fork()
+		.uint32(10)
+		.string("first")
+		.uint32(16)
+		.bool(true)
+		.uint32(10)
+		.string("last")
+		.ldelim()
+		.ldelim()
+		.ldelim()
+		.ldelim()
+		.ldelim();
+	const decoded = decodeOtlpTraceExport(w.finish()) as any;
+	expect(
+		decoded.resourceSpans[0].scopeSpans[0].spans[0].attributes[0].value,
+	).toEqual({ stringValue: "last" });
+	const h = harness();
+	expect((await h.postBytes(w.finish())).status).toBe(200);
+	expect(JSON.stringify(h.observations)).toContain('"stringValue":"last"');
+	expect(JSON.stringify(h.observations)).not.toContain('"boolValue":true');
+});
+
+test("binary repeated message oneof occurrences merge values", () => {
+	const w = protobuf.Writer.create();
+	w.uint32(10)
+		.fork()
+		.uint32(18)
+		.fork()
+		.uint32(18)
+		.fork()
+		.uint32(74)
+		.fork()
+		.uint32(10)
+		.string("key")
+		.uint32(18)
+		.fork()
+		.uint32(42)
+		.fork()
+		.uint32(10)
+		.fork()
+		.uint32(10)
+		.string("first")
+		.ldelim()
+		.ldelim()
+		.uint32(42)
+		.fork()
+		.uint32(10)
+		.fork()
+		.uint32(16)
+		.bool(true)
+		.ldelim()
+		.ldelim()
+		.ldelim()
+		.ldelim()
+		.ldelim()
+		.ldelim()
+		.ldelim();
+	const decoded = decodeOtlpTraceExport(w.finish()) as any;
+	expect(
+		decoded.resourceSpans[0].scopeSpans[0].spans[0].attributes[0].value,
+	).toEqual({
+		arrayValue: { values: [{ stringValue: "first" }, { boolValue: true }] },
+	});
+});
+
+test("trace int64 exponent notation stays exact", async () => {
+	const h = harness();
+	const payload = body();
+	const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+	(span.attributes as unknown[]) = [
+		{ key: "integer", value: { intValue: "9.223372036854775807e18" } },
+	];
+	expect((await h.post(payload)).status).toBe(200);
+	expect(JSON.stringify(h.observations)).toContain(
+		'"intValue":"9223372036854775807"',
+	);
+	for (const value of [
+		"1e999999999",
+		"1.5",
+		"9.223372036854775808e18",
+		"1e-9999999",
+	]) {
+		const invalid = harness();
+		(span.attributes as unknown[]) = [
+			{ key: "integer", value: { intValue: value } },
+		];
+		expect((await invalid.post(payload)).status).toBe(400);
+		expect(invalid.observations).toHaveLength(0);
+	}
+});
+
+test("invalid trace bytes reject before persistence", async () => {
+	const h = harness();
+	const payload = body();
+	const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+	(span.attributes as unknown[]) = [
+		{ key: "bytes", value: { bytesValue: "!!!" } },
+	];
+	expect((await h.post(payload)).status).toBe(400);
+	expect(h.observations).toHaveLength(0);
+});
+
+test("negative zero survives trace serialization", async () => {
+	const h = harness();
+	const payload = body();
+	const span = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+	(span.attributes as unknown[]) = [
+		{ key: "negative-zero", value: { doubleValue: "-0" } },
+	];
+	expect((await h.post(payload)).status).toBe(200);
+	expect(JSON.stringify(h.observations)).toContain('"doubleValue":"-0"');
 });
 
 test("quoted finite AnyValue doubles survive trace ingestion", async () => {
@@ -166,6 +302,15 @@ function harness(
 	return {
 		observations,
 		traces,
+		postBytes: (payload: Uint8Array) =>
+			handler(
+				new Request("http://localhost/v1/traces", {
+					method: "POST",
+					headers: { "content-type": "application/x-protobuf" },
+					body: Buffer.from(payload),
+				}),
+				tenant,
+			),
 		post: (payload: unknown) =>
 			handler(
 				new Request("http://localhost/v1/traces", {

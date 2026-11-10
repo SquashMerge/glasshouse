@@ -21,7 +21,7 @@ export type LogAnyValue = {
 	stringValue?: string;
 	boolValue?: boolean;
 	intValue?: string;
-	doubleValue?: number | "NaN" | "Infinity" | "-Infinity";
+	doubleValue?: number | "NaN" | "Infinity" | "-Infinity" | "-0";
 	bytesValue?: string;
 	arrayValue?: { values?: LogAnyValue[] };
 	kvlistValue?: { values?: LogAttribute[] };

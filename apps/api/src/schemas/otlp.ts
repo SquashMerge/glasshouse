@@ -21,19 +21,47 @@ export const UnixNano = z
 	])
 	.transform((value) => BigInt(value).toString());
 const UInt32 = z.number().int().min(0).max(4_294_967_295);
-const Int64 = z.union([
-	z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
-	z
-		.string()
-		.refine(
-			(value) =>
-				/^-?\d{1,19}$/.test(value) &&
-				BigInt(value) >= -9223372036854775808n &&
-				BigInt(value) <= 9223372036854775807n,
-		),
-]);
+// Expand quoted scientific notation without converting through binary64 or
+// allocating in proportion to an exporter-controlled exponent.
+function expandInt64(value: unknown): unknown {
+	if (typeof value !== "string" || /^-?\d+$/.test(value) || value.length > 128)
+		return value;
+	const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(value);
+	if (!match) return value;
+	const digits = (match[2]! + (match[3] ?? "")).replace(/^0+/, "");
+	if (!digits) return "0";
+	const scale = Number(match[4] ?? 0) - (match[3]?.length ?? 0);
+	if (!Number.isSafeInteger(scale)) return value;
+	let integer: string;
+	if (scale < 0) {
+		const count = -scale;
+		if (count > digits.length || !/^0*$/.test(digits.slice(-count)))
+			return value;
+		integer = digits.slice(0, -count) || "0";
+	} else {
+		if (digits.length + scale > 19) return value;
+		integer = digits + "0".repeat(scale);
+	}
+	return match[1] + integer;
+}
+const Int64 = z.preprocess(
+	expandInt64,
+	z.union([
+		z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
+		z
+			.string()
+			.refine(
+				(value) =>
+					/^-?\d{1,19}$/.test(value) &&
+					BigInt(value) >= -9223372036854775808n &&
+					BigInt(value) <= 9223372036854775807n,
+			),
+	]),
+);
 export const ProtoJsonDouble = z.union([
-	z.number(),
+	z
+		.number()
+		.transform((value) => (Object.is(value, -0) ? ("-0" as const) : value)),
 	z.literal("NaN"),
 	z.literal("Infinity"),
 	z.literal("-Infinity"),
@@ -42,7 +70,8 @@ export const ProtoJsonDouble = z.union([
 		.max(128)
 		.regex(/^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/)
 		.transform(Number)
-		.refine(Number.isFinite),
+		.refine(Number.isFinite)
+		.transform((value) => (Object.is(value, -0) ? ("-0" as const) : value)),
 ]);
 const SpanUnixNano = UnixNano.refine(
 	(value) => BigInt(value) <= 10413791999999999999n,
@@ -213,7 +242,18 @@ const WireAnyValue: z.ZodType<Record<string, unknown>> = z
 		boolValue: z.boolean().nullable().optional(),
 		intValue: Int64.nullable().optional(),
 		doubleValue: ProtoJsonDouble.nullable().optional(),
-		bytesValue: z.string().nullable().optional(),
+		bytesValue: z
+			.string()
+			.regex(/^[A-Za-z0-9+/_-]*={0,2}$/)
+			.refine((value) => {
+				const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+				return (
+					(value.length - padding) % 4 !== 1 &&
+					(!padding || value.length % 4 === 0)
+				);
+			})
+			.nullable()
+			.optional(),
 		arrayValue: z
 			.looseObject({
 				values: z
