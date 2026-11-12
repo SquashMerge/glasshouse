@@ -2,18 +2,22 @@ import Redis from "ioredis";
 
 let _valkey: Redis | null = null;
 
-export function valkeyUrl(): string {
-	return (
-		process.env.VALKEY_URL ??
-		`redis://:${process.env.VALKEY_PASSWORD ?? ""}@${process.env.VALKEY_HOST ?? "localhost"}:${process.env.VALKEY_PORT ?? "6379"}`
-	);
+export function valkeyConnection(url = process.env.VALKEY_URL): {
+	url: string;
+	password?: string;
+} {
+	if (url !== undefined) return { url };
+	return {
+		url: `redis://${process.env.VALKEY_HOST ?? "localhost"}:${process.env.VALKEY_PORT ?? "6379"}`,
+		password: process.env.VALKEY_PASSWORD ?? "",
+	};
 }
 
 export function valkey(): Redis {
 	if (_valkey) return _valkey;
-	// Fall back to component vars so a missing VALKEY_URL doesn't drop the password
-	// (which would NOAUTH-fail against a server started with --requirepass).
-	_valkey = new Redis(valkeyUrl(), {
+	const { url, password } = valkeyConnection();
+	_valkey = new Redis(url, {
+		...(password !== undefined ? { password } : {}),
 		enableOfflineQueue: false,
 		maxRetriesPerRequest: 3,
 		lazyConnect: true,

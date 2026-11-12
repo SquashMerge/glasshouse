@@ -1,5 +1,5 @@
 import Redis from "ioredis";
-import { valkeyUrl } from "./valkey.js";
+import { valkeyConnection } from "./valkey.js";
 
 const connectionHealthy = { publisher: true, subscriber: true };
 let _publisher: Redis | null = null;
@@ -75,7 +75,11 @@ export function subscribeToChannel(
 }
 
 function createClient(role: "publisher" | "subscriber"): Redis {
-	const client = new Redis(process.env.VALKEY_PUBSUB_URL ?? valkeyUrl(), {
+	const { url, password } = valkeyConnection(
+		process.env.VALKEY_PUBSUB_URL ?? process.env.VALKEY_URL,
+	);
+	const client = new Redis(url, {
+		...(password !== undefined ? { password } : {}),
 		enableOfflineQueue: role === "subscriber",
 		maxRetriesPerRequest: 3,
 		lazyConnect: role === "publisher",
