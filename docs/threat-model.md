@@ -46,6 +46,18 @@ Not shipped and therefore not assumed protected by this model: SSO/OIDC/SAML, SC
 | API ↔ GEPA worker / configured LLM provider | Inputs and outputs can contain sensitive prompt/dataset material. The provider is an external recipient. The worker is a subprocess, not a separately sandboxed security domain. |
 | Repository/CI/dependencies ↔ release/deployment | PR content and third-party packages are untrusted inputs to the build/review process. Deployment credentials or Docker access materially increase impact. |
 
+## GitHub Release trust boundary
+
+The release workflow builds and tests an exported application image with its
+Compose bundle before creating a draft. Only the tag job receives release-write
+authority; PR jobs are read-only. A maintainer must publish the draft. Repository
+rules, trusted maintainers and reviewed `main` are external prerequisites: anyone
+who can push an untrusted tag or modify its workflow can defeat workflow-level
+checks. SHA-256 checksums detect changes, not malicious content or publisher
+identity. Operators must obtain releases from a trusted source, protect runtime
+secrets, and back up persistent data before applying migrations. The workflow
+does not attest assets or enforce GitHub repository protections.
+
 ## Whole-instance backup boundary
 
 The native backup and restore scripts are trusted-host operator tools, not an API or Organization/Project administrator capability. They may expose all tenants and credential/session digests. Neither checksum verification nor `pg_restore --list` authenticates an artifact or makes arbitrary SQL safe. The operator must authenticate provenance independently and protect private artifacts and the local staging filesystem. Root, Docker administrators, and processes running as the operator remain trusted. Source-unavailable recovery requires authenticated source daemon and Compose-project metadata, exact operator attestations, and a separately provisioned empty target with exclusive local optionless named volumes; older artifacts missing metadata fail closed in this mode. Different daemon IDs and project names are not cryptographic proof of a distinct physical host or storage, and Docker inspection cannot establish isolation against aliases, hidden mounts, or concurrent changes. The operator must independently establish isolation and keep it throughout recovery. Restored PostgreSQL session records and credentials can regain validity; invalidate sessions and re-secure credentials before cutover. See [backup and restore](backup-restore.md).

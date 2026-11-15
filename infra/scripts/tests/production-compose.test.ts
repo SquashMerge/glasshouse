@@ -60,21 +60,15 @@ describe("production Compose API environment contract", () => {
 		expect(
 			environment.VALKEY_PASSWORD === syntheticEnvironment.VALKEY_PASSWORD,
 		).toBe(true);
-		expect(URL.canParse(environment.VALKEY_URL)).toBe(true);
-		expect(
-			new URL(environment.VALKEY_URL).password === environment.VALKEY_PASSWORD,
-		).toBe(true);
+		expect(environment.VALKEY_URL).toBeUndefined();
+		expect(environment.VALKEY_HOST).toBe("valkey");
 	});
 
-	it("rejects a missing Valkey password pass-through even with an authenticated URL", () => {
+	it("rejects a missing Valkey password pass-through", () => {
 		const mapping = { ...compose.services.api.environment };
 		delete mapping.VALKEY_PASSWORD;
 		const environment = renderApiEnvironment({}, mapping);
-		expect(URL.canParse(environment.VALKEY_URL)).toBe(true);
-		expect(
-			new URL(environment.VALKEY_URL).password ===
-				syntheticEnvironment.VALKEY_PASSWORD,
-		).toBe(true);
+		expect(environment.VALKEY_HOST).toBe("valkey");
 		expect(() => assertProductionConfiguration(environment)).toThrow(
 			"VALKEY_PASSWORD is required in production",
 		);

@@ -38,6 +38,9 @@ URL-unreserved ASCII characters in `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
 `POSTGRES_DB`, because Compose embeds them in `DATABASE_URL`; PostgreSQL user
 and database names must also be at most 63 ASCII characters. Generate
 `POSTGRES_PASSWORD` with an unreserved alphabet (for example, `openssl rand -hex 32`).
+Valkey's password is passed separately rather than interpolated into a URL; quote
+special characters appropriately in the Compose environment file (single-quoted
+values are literal). Production secret-strength requirements still apply.
 Start with:
 
 ```sh
