@@ -55,7 +55,10 @@ describe("release deployment bundle", () => {
 			"utf8",
 		);
 		const config = yaml.load(file) as {
-			services: Record<string, { image?: string; build?: unknown }>;
+			services: Record<
+				string,
+				{ image?: string; build?: unknown; pull_policy?: string }
+			>;
 		};
 		expect(Object.keys(config.services).sort()).toEqual([
 			"app",
@@ -64,6 +67,9 @@ describe("release deployment bundle", () => {
 			"valkey",
 		]);
 		expect(config.services.app.image).toContain("GLASSHOUSE_IMAGE");
+		expect(config.services.app.pull_policy).toBe("never");
+		for (const dependency of ["clickhouse", "postgres", "valkey"])
+			expect(config.services[dependency].pull_policy).not.toBe("never");
 		for (const service of Object.values(config.services))
 			expect(service.build).toBeUndefined();
 	});

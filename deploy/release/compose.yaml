@@ -64,6 +64,7 @@ services:
 
   app:
     image: ${GLASSHOUSE_IMAGE:?GLASSHOUSE_IMAGE is required}
+    pull_policy: never
     restart: unless-stopped
     logging: *default-logging
     environment:

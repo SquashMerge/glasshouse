@@ -80,20 +80,25 @@ Licensed under the [Business Source License 1.1](LICENSE) (SPDX identifier: `BUS
 
 Release assets support Linux amd64 and Docker Compose v2. Download the compressed image
 archive, Compose bundle, and `SHA256SUMS` from a trusted GitHub Release. Verify
-`sha256sum -c SHA256SUMS`, run `gzip -dc glasshouse-image.tar.gz | docker load`, and unpack
+`sha256sum -c SHA256SUMS` and stop if verification fails. Run
+`docker load --input glasshouse-image.tar.gz` and unpack
 `glasshouse-compose.tar.gz`; follow its README to configure secrets, HTTPS, and
-start the stack. The checksums detect corruption, not malicious release authors.
+start the stack. The bundle does not pull the application image from a registry.
+The checksums detect corruption, not malicious release authors.
 PostgreSQL, ClickHouse, and Valkey remain separate services with persistent data.
 Back up before upgrading and never delete existing volumes as a routine step.
 
-Maintainers: require reviewed, protected `main`, and restrict creation and
-updates of version tags to trusted maintainers in repository rules. Workflow
-code and tag creators are trust anchors; this workflow cannot enforce its own
+Maintainers: require reviewed, protected `main`, and use repository rules to
+restrict version-tag creation to trusted maintainers and prevent moving or
+deleting release tags. Workflow code and tag creators are trust anchors;
+this workflow cannot enforce its own
 protection against a malicious tagged workflow. After review and green CI, a
 trusted maintainer creates a version tag such as `v1.2.3` on reviewed `main`
 and pushes it deliberately. Tag pushes build once, test the exported/reloaded
 image using the bundled Compose files, and create a draft with generated notes.
-The workflow never overwrites an existing release. If an upload fails, inspect
+Both archives must still match their pre-test checksums, and the tag must still
+resolve to the tested commit when checked before draft creation. The workflow
+never overwrites an existing release. If an upload fails, inspect
 and resolve the incomplete draft before retrying. A human must inspect the
 assets and notes and explicitly publish the draft. Pull requests only build and
 test; they cannot create a release.

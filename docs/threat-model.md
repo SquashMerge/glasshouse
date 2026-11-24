@@ -53,9 +53,14 @@ Compose bundle before creating a draft. Only the tag job receives release-write
 authority; PR jobs are read-only. A maintainer must publish the draft. Repository
 rules, trusted maintainers and reviewed `main` are external prerequisites: anyone
 who can push an untrusted tag or modify its workflow can defeat workflow-level
-checks. SHA-256 checksums detect changes, not malicious content or publisher
-identity. Operators must obtain releases from a trusted source, protect runtime
-secrets, and back up persistent data before applying migrations. The workflow
+checks. The workflow verifies the archives against checksums calculated before
+integration and re-resolves the tag to the tested commit before creating the
+draft. That lookup is not atomic with release creation; repository rules must
+prevent tags from being moved or deleted. SHA-256 checksums detect changes,
+not malicious content or publisher identity. The bundle uses the locally
+loaded application image without a registry fallback. Operators must obtain
+releases from a trusted source, protect runtime secrets, and back up persistent
+data before applying migrations. The workflow
 does not attest assets or enforce GitHub repository protections.
 
 ## Whole-instance backup boundary

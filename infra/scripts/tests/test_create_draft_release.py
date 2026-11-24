@@ -7,10 +7,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "infra/scripts/create-draft-release.sh"
+TESTED_SHA = "a" * 40
 
 
 class CreateDraftReleaseTest(unittest.TestCase):
-    def run_script(self, api_mode):
+    def run_script(self, api_mode, tag_mode="matching"):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             bin_dir = directory / "bin"
@@ -21,6 +22,14 @@ class CreateDraftReleaseTest(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
                 "printf '%s\\n' \"$*\" >> \"$GH_CALLS\"\n"
+                "if [[ \"${1:-}\" == api && \"${2:-}\" == /repos/example/glasshouse/commits/refs%2Ftags%2Fv1.2.3 ]]; then\n"
+                "  case \"$GH_TAG_MODE\" in\n"
+                "    matching) printf '%s\\n' \"$TESTED_SHA\" ;;\n"
+                "    moved) printf '%040d\\n' 1 ;;\n"
+                "    missing) exit 1 ;;\n"
+                "  esac\n"
+                "  exit 0\n"
+                "fi\n"
                 "if [[ \"$1\" == api ]]; then\n"
                 "  case \"$GH_API_MODE\" in\n"
                 "    draft|published) printf 'v1.2.3\\n' ;;\n"
@@ -34,10 +43,12 @@ class CreateDraftReleaseTest(unittest.TestCase):
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "GH_CALLS": str(calls),
                 "GH_API_MODE": api_mode,
-                "GH_REPO": "dsarlo/astraea",
+                "GH_TAG_MODE": tag_mode,
+                "GH_REPO": "example/glasshouse",
+                "TESTED_SHA": TESTED_SHA,
             }
             result = subprocess.run(
-                ["bash", str(SCRIPT), "v1.2.3"],
+                ["bash", str(SCRIPT), "v1.2.3", TESTED_SHA],
                 cwd=directory,
                 env=environment,
                 capture_output=True,
@@ -64,6 +75,14 @@ class CreateDraftReleaseTest(unittest.TestCase):
         result, calls = self.run_script("absent")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("release create v1.2.3", calls)
+
+    def test_moved_or_missing_tag_prevents_draft_creation(self):
+        for tag_mode in ("moved", "missing"):
+            with self.subTest(tag_mode=tag_mode):
+                result, calls = self.run_script("absent", tag_mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("commits/refs%2Ftags%2Fv1.2.3", calls)
+                self.assertNotIn("release create", calls)
 
     def test_create_uses_the_compressed_checked_artifacts(self):
         source = SCRIPT.read_text()

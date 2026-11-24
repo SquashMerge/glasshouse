@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as yaml from "js-yaml";
 
 const workflowPath = new URL(
@@ -26,6 +34,49 @@ describe("release workflow", () => {
 		expect(commands).toContain("glasshouse-image.tar.gz");
 		expect(commands).toContain("test_create_draft_release");
 		expect(workflow.jobs.publish.needs).toContain("build");
+	});
+	test("rejects a changed Compose archive after testing instead of checksumming it for upload", () => {
+		const workflow = yaml.load(readFileSync(workflowPath, "utf8")) as any;
+		const commands = workflow.jobs.build.steps
+			.filter((step: any) =>
+				[
+					"Calculate checksums",
+					"Test exported image with the released bundle",
+				].includes(step.name),
+			)
+			.map((step: any) => `(set -euo pipefail\n${step.run}\n)`)
+			.join("\n");
+		const directory = mkdtempSync(
+			join(tmpdir(), "glasshouse-release-checksum-"),
+		);
+		try {
+			mkdirSync(join(directory, "release-output"));
+			mkdirSync(join(directory, "infra/scripts"), { recursive: true });
+			writeFileSync(
+				join(directory, "release-output/glasshouse-image.tar.gz"),
+				"image fixture",
+			);
+			writeFileSync(
+				join(directory, "release-output/glasshouse-compose.tar.gz"),
+				"bundle fixture",
+			);
+			const harness = join(directory, "infra/scripts/test-release-image.sh");
+			writeFileSync(harness, 'test -s "$1" && test -s "$2"\n');
+			const run = () =>
+				Bun.spawnSync(["bash", "-euc", commands], {
+					cwd: directory,
+					env: { ...process.env, RELEASE_VERSION: "test" },
+				});
+			expect(run().exitCode).toBe(0);
+			writeFileSync(harness, 'printf changed >> "$2"\n');
+			const changed = run();
+			expect(changed.exitCode).not.toBe(0);
+			expect(changed.stdout.toString()).toContain(
+				"glasshouse-compose.tar.gz: FAILED",
+			);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 	test("creates a draft using the existing verified tag without clobbering", () => {
 		const workflow = yaml.load(readFileSync(workflowPath, "utf8")) as any;
