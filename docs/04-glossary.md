@@ -26,10 +26,26 @@ One unit of work inside a Trace — one row per OTel span. Schema: `apps/api/src
 
 The four-way split is the Langfuse/LangSmith taxonomy, applied at OTLP ingest. Forward-compat: store one row shape, render off `type` later.
 
+Recognized top-level OpenInference kind enum values survive `all_text` for classification; explicit key redaction still takes precedence. Arbitrary kind strings have no structural exemption.
+
 > **Don't say "span" when you mean "observation".** "Span" is reserved for the UI label (the "Spans" tab) and for `observation.type === "span"` specifically.
 
 ### Trace cursor
 An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and is not transferable to another endpoint. Trace and Observation list cursors are Project-scoped (`start_time, id`); Trace-detail and detail-SSE cursors are both Project- and trace-scoped (`start_time, observation_id`).
+
+### OTLP detail
+The redacted, bounded `Observation.otlp` envelope exposed by authenticated trace detail/SSE and the inspector's Events, Links, Resource and Context tabs. Retains resource/scope context, schema URLs, attributes, status/message, kind, trace state, flags, source dropped counts, span events and links. Span events are embedded evidence, not extra Observation rows. `truncated` reports retention omissions independently of source dropped counts.
+
+### Compact trace SSE fallback
+`detail_omitted: true` on a trace-detail snapshot or live Observation means full detail exceeded its SSE frame budget and list projections were sent instead. Full retained detail is available from the first authorized Project-scoped REST trace page and its continuations; **Load full trace details** starts that traversal. This is separate from storage truncation and `snapshot_truncated` pagination.
+
+### Exact trace times
+`start_time_unix_nano`, `end_time_unix_nano`, and `duration_nano`: nullable decimal-string nanoseconds retained alongside compatible millisecond fields. Unknown legacy/internal precision remains null; BigInt comparisons/subtraction preserve source precision. Event `time_unix_nano` is also a decimal string. See `docs/03-otel-ingest.md` for bounds.
+
+### Metric point and series
+A Metric point is one retained typed OTLP Gauge, Sum, Histogram, ExponentialHistogram or Summary data point in ClickHouse `metrics`; it is separate from evaluation scores and Trace/Observation rows. `time_unix_nano` and OTLP-JSON `data_point` preserve exact 64-bit values. `series_id` HMACs trusted scope and canonical original typed resource/scope/point identity before redaction; it is linkable and not anonymization. `point_id` HMACs an original-wire export position for bounded retry/retention handling using a separate domain. A **Metric identity key** is the random per-Project secret in PostgreSQL `project_metric_identity_keys`, provisioned for existing/new Projects by migration 90063 and never returned by product APIs. The same durable key also signs new public log IDs in a distinct domain and must be preserved with the corresponding ClickHouse backup. It prevents offline dictionary comparison without the key, not online guessing by actors able to ingest and read. `GET /v1/metrics` is a product read; `POST /v1/metrics` is SDK ingestion; the authenticated `/metrics` page inspects points. Optional approved `retention.metrics` governs physical expired points. See [metrics](otlp-metrics.md).
+
+Metric read cursors bind the authorized Organization, canonical Project UUID and exact-name filter. Valid Project UUID case variants share that scope; invalid tokens are not repaired. Cursors are continuation positions, not authorization proof.
 
 ## Organization usage dashboard
 
@@ -39,11 +55,11 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 
 ## Observability UI
 
-- `/observability` — the second sidebar destination, directly after Dashboard, with a Traces tab + Spans tab. The "Spans" tab is really the observations table (all four types mixed); the label is a legacy holdover.
+- `/observability` — the second sidebar destination, directly after Dashboard, with Traces, Spans, and Logs tabs. The "Spans" tab is really the observations table (all four types mixed); the label is a legacy holdover.
 - `observabilityTabFocus` — browser history state recording the selected tab's focus intent so keyboard selection survives a protected-page remount during URL navigation. It carries no credentials or telemetry.
-- **Observability filters** — URL-backed Trace and Span filters. Debounced changes retain the current textbox and caret while rows reload; browser Back/Forward restores the saved filter values.
+- **Observability filters** — URL-backed Trace, Span, and Log filters. Debounced changes retain the current textbox and caret while rows reload; browser Back/Forward restores the saved filter values. The Logs **Body** search label maps to `logs.q` in the UI URL and `filter[q]` in the API.
 - `/observability/traces/$id` — Trace detail: tree of observations + detail panel. Trace and Observation feedback use thumbs-up/down icon buttons with accessible labels and hover titles.
-- **Trace timing** — observation start/end times displayed in UTC. Timelines accept public API ISO timestamps ending in `Z` and zone-less ClickHouse UTC timestamps; invalid calendar values remain unavailable rather than being inferred.
+- **Trace timing** — observation start/end times displayed in UTC. Timelines accept public API ISO timestamps ending in `Z` and zone-less ClickHouse UTC timestamps; invalid calendar values remain unavailable rather than being inferred. Bars, elapsed ruler and summary use one relative interval, combining exact source nanoseconds with existing legacy millisecond coordinates without subtracting rounded epoch numbers.
 
 ## Prompt UI
 
@@ -121,7 +137,7 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 - **Score** — numeric measurement on a trace or experiment item, keyed by `name`.
 - **Feedback** — immutable `human.feedback` Score plus mutable project-scoped review state; one new signal per authenticated durable Actor and trace or Observation. Historical unknown authors remain unknown. Negative `new` feedback appears in `/feedback` Needs review. Promotion appends a provenance-linked Dataset draft item rather than mutating a published Dataset. API: `/v1/feedback`; `/v1/feedback/mine` reads the current Actor's exact target.
 - **Governance policy version** — immutable project-scoped retention and ingress-redaction configuration. Each Project receives an audited automatically approved 30/90/90, no-redaction baseline; later Project-specific versions still require approval, and equivalent content is hash-idempotent. API/UI: `apps/api/src/routes/governance.ts`, `infra/db/migrations/0105_governance_policy_defaults.sql`, `/governance`.
-- **Retention run** — one bounded, project-scoped application of an approved governance policy. Its stored evidence has IDs, safe counts, status, and timings only; it never includes deleted source data. Summaries are available through `/v1/governance/retention/runs` and `/governance`. See `infra/db/migrations/0029_governance_policies.sql`.
+- **Retention run** — one bounded, project-scoped application of an approved governance policy. Metric batches budget physical rows, can split repeated point-ID groups, and report observed expired-row removals under the Project write fence. Its stored evidence has IDs, safe counts, status, and timings only; it never includes deleted source data. Summaries are available through `/v1/governance/retention/runs` and `/governance`. See `infra/db/migrations/0029_governance_policies.sql`.
 
 ## Storage roles
 
@@ -132,7 +148,13 @@ An opaque `next_cursor` that preserves an endpoint's stable keyset boundary and 
 
 ## Ingest
 
-- **OTLP** — `POST /v1/otel/v1/traces`. Accepts OTel + `gen_ai.*` + OpenInference attrs and generation-only prompt provenance (`glasshouse.prompt.id`, `.version`, `.content_hash`). Per span: classify, sanitize metadata, write to ClickHouse, publish to bus (`trace.created` / `observation.created`). See `docs/03-otel-ingest.md`.
+- **OTLP** — `POST /v1/traces` is the HTTP JSON/protobuf ingest operation; `GET /v1/traces` is the separately authorized product trace list. Accepts OTel + `gen_ai.*` + OpenInference attrs and generation-only prompt provenance (`glasshouse.prompt.id`, `.version`, `.content_hash`). Per span: classify, sanitize metadata, write to ClickHouse, publish to bus (`trace.created` / `observation.created`). See `docs/03-otel-ingest.md`.
+- **OTLP log record** — independently stored, Project-scoped telemetry accepted at `POST /v1/logs` or `LogsService/Export`, and read through `GET /v1/logs` / Observability → Logs. Preserves a typed AnyValue body, resource/scope/record attributes, severity, optional trace/span correlation, and exact decimal UInt64 event/observed times. It does not fabricate a Trace or Observation.
+- **Effective log time** — nonzero event nanoseconds, falling back to nonzero observed nanoseconds and then server receipt nanoseconds. Used for numeric ordering, keyset traversal, and opt-in `retention.logs`; original time fields remain unchanged.
+- **Physical log row** — one retained ClickHouse row, including retries outside bounded deduplication. New `log_id` values are domain-separated HMACs of the scoped original-wire digest and record index using the durable Project identity key, not unique physical keys or authorization proof. Earlier unkeyed IDs remain unchanged. `physical_row_id` is a stored random UUIDv4 assigned by the trusted writer per occurrence on each insert attempt, overriding copied input. Stable wire tokens deduplicate retries without replacing committed UUIDs. UUIDs survive merges, mutations and physical restores; new occurrences require fresh UUIDs. They distinguish equal public IDs/payloads for version-3 scoped cursors and bounded retention without exposing table-wide insert counters. They are omitted from public items and are not authorization proof. Reads fail closed on invalid UUIDs or duplicates only within the fetched filtered page plus lookahead; copies outside that set can go undetected. Selected retention UUIDs are separately verified across the entire authorized Organization/Project before deletion. ClickHouse has no UUID uniqueness index, and global uniqueness is not continuously enforced. Additive migration 0012 preserves already stored UUIDs on replay and requires an explicit drained-writer maintenance acknowledgement for existing installations; see [the upgrade gate](03-otel-ingest.md#physical-uuid-schema-upgrade-and-maintenance-gate).
+- **OTLP/gRPC receiver** — optional `TraceService/Export`, `LogsService/Export` and `MetricsService/Export` listener enabled by `OTLP_GRPC_PORT`; it is loopback/private-only plaintext transport intended for a TLS proxy or private network and uses the HTTP ingest authentication/project metadata contract. See `apps/api/src/lib/otlp-grpc.ts`.
+- **OTLP retry identity** — a table-namespaced insert token binding trusted Organization/Project scope and fallback Project to the encoding and original bounded, decompressed request bytes. It survives redaction-policy changes; distinct bytes are not merged merely because retained rows match. Gzip is transport-only, protobuf media aliases and gRPC share an identity, and JSON remains distinct. ClickHouse's deduplication history is bounded, and tokens do not bridge earlier row-based algorithms. See `docs/03-otel-ingest.md`.
+- **Transient OTLP storage failure** — a recognized temporary storage error returned as HTTP `503`/gRPC `UNAVAILABLE`. The Trace/Observation writer's aborting 30-second per-insert deadline and the pinned ClickHouse client's exact uncoded native timeout are normalized at the insert boundary; arbitrary timeout-like application errors remain internal. A retryable response does not prove a write did not occur; insert deduplication remains bounded. See `docs/03-otel-ingest.md`.
 
 ## Conventions
 

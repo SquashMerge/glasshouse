@@ -94,7 +94,7 @@ describe("normalizeSpan", () => {
 			span_id: HEX(16),
 			name: "x",
 			start_time_unix_nano: 1_700_000_000_000_000_000,
-			end_time_unix_nano: 1_700_000_000_250_000_000, // +250ms
+			end_time_unix_nano: "1700000000250000000",
 			attributes: [],
 		} as never);
 		expect(trace.duration_ms).toBe(250);

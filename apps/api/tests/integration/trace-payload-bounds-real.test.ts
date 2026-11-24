@@ -181,7 +181,7 @@ describe("real OTLP retained trace bounds", () => {
 			metadataSpan(traceIds[2]!, 200, false),
 			metadataSpan(traceIds[3]!, 300, true),
 		];
-		const ingest = await request("/v1/otel/v1/traces", {
+		const ingest = await request("/v1/traces", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -435,7 +435,7 @@ describe("real OTLP retained trace bounds", () => {
 				expect(observation.output_retained_truncated).toBe(true);
 			}
 
-			const liveIngest = await request("/v1/otel/v1/traces", {
+			const liveIngest = await request("/v1/traces", {
 				method: "POST",
 				headers: {
 					"content-type": "application/json",

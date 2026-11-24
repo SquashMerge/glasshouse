@@ -1,5 +1,5 @@
 import type { ClickHouseClient } from "@clickhouse/client";
-import { ch } from "./clickhouse.js";
+import { ch, CLICKHOUSE_REQUEST_TIMEOUT_MS } from "./clickhouse.js";
 import type { NormalizedObservation, NormalizedTrace } from "./gen-ai-attrs.js";
 import { observationToInsertRow } from "./observation-row.js";
 import { boundText } from "./trace-payload-bounds.js";
@@ -28,7 +28,14 @@ function traceToRow(t: TenantScopedTrace): ClickHouseRow {
 		name: t.name,
 		start_time: t.start_time,
 		end_time: t.end_time,
-		duration_ms: t.duration_ms,
+		duration_ms:
+			t.duration_ms === null
+				? null
+				: Math.min(4_294_967_295, Math.round(t.duration_ms)),
+		precise_duration_ms: t.duration_ms,
+		start_time_unix_nano: t.start_time_unix_nano ?? null,
+		end_time_unix_nano: t.end_time_unix_nano ?? null,
+		duration_nano: t.duration_nano ?? null,
 		status: t.status,
 		user_id: t.user_id,
 		session_id: t.session_id,
@@ -51,34 +58,80 @@ export async function insertTraces(
 	client: ClickHouseClient,
 	traces: TenantScopedTrace[],
 	deduplicationToken: string,
+	timeoutMs = CLICKHOUSE_REQUEST_TIMEOUT_MS,
 ): Promise<void> {
 	if (traces.length === 0) return;
-	await client.insert({
-		table: "traces",
-		values: traces.map(traceToRow),
-		format: "JSONEachRow",
-		clickhouse_settings: {
-			insert_deduplicate: 1,
-			insert_deduplication_token: deduplicationToken,
+	await insertWithDeadline(
+		client,
+		{
+			table: "traces",
+			values: traces.map(traceToRow),
+			format: "JSONEachRow",
+			clickhouse_settings: {
+				insert_deduplicate: 1,
+				insert_deduplication_token: deduplicationToken,
+			},
 		},
-	});
+		timeoutMs,
+	);
 }
 
 export async function insertObservations(
 	client: ClickHouseClient,
 	observations: TenantScopedObservation[],
 	deduplicationToken: string,
+	timeoutMs = CLICKHOUSE_REQUEST_TIMEOUT_MS,
 ): Promise<void> {
 	if (observations.length === 0) return;
-	await client.insert({
-		table: "observations",
-		values: observations.map(observationToInsertRow),
-		format: "JSONEachRow",
-		clickhouse_settings: {
-			insert_deduplicate: 1,
-			insert_deduplication_token: deduplicationToken,
+	await insertWithDeadline(
+		client,
+		{
+			table: "observations",
+			values: observations.map(observationToInsertRow),
+			format: "JSONEachRow",
+			clickhouse_settings: {
+				insert_deduplicate: 1,
+				insert_deduplication_token: deduplicationToken,
+			},
 		},
-	});
+		timeoutMs,
+	);
+}
+
+export async function insertWithDeadline(
+	client: ClickHouseClient,
+	params: Parameters<ClickHouseClient["insert"]>[0],
+	timeoutMs: number,
+): Promise<void> {
+	const controller = new AbortController();
+	// Bun can abort the socket without settling the client's socket-timeout path.
+	// Its supported signal also rejects the insert, including response-body drains.
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		await client.insert({ ...params, abort_signal: controller.signal });
+		controller.signal.throwIfAborted();
+	} catch (error) {
+		if (controller.signal.aborted)
+			throw Object.assign(new Error("ClickHouse insert timed out"), {
+				code: "ETIMEDOUT",
+			});
+		rethrowClickHouseInsertFailure(error);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function rethrowClickHouseInsertFailure(error: unknown): never {
+	// @clickhouse/client 1.24.1 emits this uncoded error for a socket timeout.
+	// Recognize it only at the insert boundary, never in generic error handling.
+	if (
+		error instanceof Error &&
+		error.name === "Error" &&
+		error.message === "Timeout error." &&
+		!("code" in error)
+	)
+		throw Object.assign(error, { code: "ETIMEDOUT" });
+	throw error;
 }
 
 export function defaultClient(): ClickHouseClient {

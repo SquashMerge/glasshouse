@@ -30,6 +30,43 @@ function observation(
 }
 
 describe("TraceHeader", () => {
+	it("uses the same 2 ns interval for bars, ruler and summary across a millisecond boundary", () => {
+		const observations = [
+			observation({
+				start_time: "2023-11-14T22:13:20.000Z",
+				end_time: "2023-11-14T22:13:20.001Z",
+				start_time_unix_nano: "1700000000000999999",
+				duration_nano: "2",
+				duration_ms: 0.000002,
+			}),
+			observation({
+				observation_id: "child",
+				parent_observation_id: "root",
+				start_time: "2023-11-14T22:13:20.001Z",
+				start_time_unix_nano: "1700000000001000000",
+				duration_nano: "1",
+				duration_ms: 0.000001,
+			}),
+		];
+		render(
+			<>
+				<TraceHeader traceId={TRACE_ID} observations={observations} />
+				<TraceWorkspace
+					observations={observations}
+					selectedObservationId="root"
+					onSelectObservation={vi.fn()}
+				/>
+			</>,
+		);
+		expect(screen.getAllByTestId("waterfall-bar")[1]).toHaveStyle({
+			left: "50%",
+			width: "50%",
+		});
+		expect(screen.getByTestId("timeline-ruler")).toHaveTextContent(
+			"0.000002ms",
+		);
+		expect(screen.getByTestId("trace-header")).toHaveTextContent("0.000002 ms");
+	});
 	it("summarizes the trace and exposes raw JSON without exposing the full id visually", () => {
 		render(
 			<TraceHeader
@@ -160,6 +197,69 @@ describe("TraceWorkspace", () => {
 });
 
 describe("ObservationDetailPanel", () => {
+	it("exposes retained OTLP context, exception events, links and exact times with honest truncation", () => {
+		render(
+			<ObservationDetailPanel
+				traceId={TRACE_ID}
+				observation={observation({
+					start_time_unix_nano: "1700000000000999999",
+					end_time_unix_nano: "1700000000001000001",
+					duration_nano: "2",
+					duration_ms: 0.000002,
+					otlp: {
+						schema_version: 1,
+						truncated: true,
+						resource: {
+							attributes: [
+								{ key: "service.name", value: { stringValue: "sdk-service" } },
+							],
+						},
+						scope: { name: "official.sdk", version: "1.44" },
+						resource_schema_url: "resource-schema",
+						scope_schema_url: "scope-schema",
+						flags: 769,
+						status: { code: 2, message: "synthetic failure" },
+						events: [
+							{
+								name: "exception",
+								time_unix_nano: "1700000000001000000",
+								attributes: [
+									{
+										key: "exception.message",
+										value: { stringValue: "synthetic exception" },
+									},
+								],
+							},
+						],
+						links: [{ trace_id: "linked-trace", span_id: "linked-span" }],
+					},
+				})}
+			/>,
+		);
+		expect(screen.getByTestId("detail-overview")).toHaveTextContent(
+			"1700000000000999999",
+		);
+		expect(screen.getByTestId("detail-overview")).toHaveTextContent("2 ns");
+		expect(screen.getByTestId("detail-overview")).toHaveTextContent(
+			"official.sdk @ 1.44",
+		);
+		expect(screen.getByText(/OTLP detail truncated/)).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("tab", { name: "Events" }));
+		expect(screen.getByTestId("detail-events")).toHaveTextContent(
+			"1700000000001000000",
+		);
+		fireEvent.click(screen.getByRole("tab", { name: "Links" }));
+		expect(screen.getByTestId("detail-links")).toHaveTextContent(
+			"linked-trace",
+		);
+		fireEvent.click(screen.getByRole("tab", { name: "Context" }));
+		expect(screen.getByTestId("detail-context")).toHaveTextContent(
+			"synthetic failure",
+		);
+		expect(screen.getByTestId("detail-context")).toHaveTextContent(
+			"scope-schema",
+		);
+	});
 	it("renders persisted kind, service/scope/events/links, input/output, structured attributes, and malformed metadata safely", () => {
 		const { rerender } = render(
 			<ObservationDetailPanel

@@ -14,6 +14,7 @@ import {
 	type Request,
 } from "@playwright/test";
 import { LOCAL_USER, fillLocalPassword } from "./local-auth";
+import { buildTracePayload, hex } from "../fixtures/otlp-traces";
 
 const USER = process.env.UI_USERNAME ?? "glasshouse";
 const PASS = process.env.UI_PASSWORD ?? "testpassword";
@@ -74,83 +75,6 @@ async function envReady(): Promise<boolean> {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// OTLP payload builders
-//
-// Schema (apps/api/src/schemas/otlp.ts):
-//   ExportTraceServiceRequest { resource_spans: ResourceSpans[] }
-//   ResourceSpans            { resource?, scope_spans: ScopeSpans[] }
-//   ScopeSpans               { scope?, spans: Span[] }
-//   Span                     { trace_id (32 hex), span_id (16 hex), name,
-//                             kind (0..5), start_time_unix_nano (int),
-//                             end_time_unix_nano?, status?, attributes? }
-// ---------------------------------------------------------------------------
-
-/** Random lowercase hex string of `bytes*2` chars. */
-function hex(bytes: number): string {
-	const chars = "0123456789abcdef";
-	let out = "";
-	for (let i = 0; i < bytes * 2; i += 1) {
-		out += chars[Math.floor(Math.random() * 16)];
-	}
-	return out;
-}
-
-/** Current time in unix nanos, with optional offset. */
-function nowNanos(offsetMs = 0): number {
-	return Date.now() * 1_000_000 + offsetMs * 1_000_000;
-}
-
-/**
- * Build an OTLP ExportTraceServiceRequest for a single trace with the given
- * number of spans. Every span shares `traceId`; the first span is the root
- * (no parent_span_id) and child spans reference `rootSpanId`.
- */
-function buildTracePayload(
-	traceId: string,
-	rootSpanId: string,
-	spanCount: number,
-	traceName: string,
-	startIndex = 0,
-): Record<string, unknown> {
-	const spans: Array<Record<string, unknown>> = [];
-	for (let i = 0; i < spanCount; i += 1) {
-		const index = startIndex + i;
-		spans.push({
-			trace_id: traceId,
-			span_id: index === 0 ? rootSpanId : hex(8),
-			parent_span_id: index === 0 ? null : rootSpanId,
-			name: index === 0 ? traceName : `${traceName}.child.${index}`,
-			kind: 1,
-			start_time_unix_nano: nowNanos(index * 50),
-			end_time_unix_nano: nowNanos(index * 50 + 100),
-			status: { code: 1 },
-			attributes: [],
-		});
-	}
-	return {
-		resource_spans: [
-			{
-				resource: {
-					attributes: [
-						{ key: "service.name", value: { stringValue: "glasshouse-e2e" } },
-						{
-							key: "glasshouse.project.id",
-							value: { stringValue: E2E_PROJECT_ID },
-						},
-					],
-				},
-				scope_spans: [
-					{
-						scope: { name: "glasshouse-e2e", version: "1.0.0" },
-						spans,
-					},
-				],
-			},
-		],
-	};
-}
-
 /** POST one trace payload and assert the API accepted it. */
 function eventStreamRequest(pathname: string) {
 	return (request: Request) => {
@@ -173,7 +97,7 @@ async function postTrace(
 	request: APIRequestContext,
 	payload: Record<string, unknown>,
 ): Promise<void> {
-	const res = await request.post(`${API_BASE}/v1/otel/v1/traces`, {
+	const res = await request.post(`${API_BASE}/v1/traces`, {
 		data: payload,
 		headers: {
 			"content-type": "application/json",
@@ -333,12 +257,18 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		// Ingest 5 distinct traces via OTLP HTTP/JSON. The first name is kept
 		// for a downstream text-content sanity check.
 		const firstName = `walkthrough-trace-${Date.now()}-0`;
-		await postTrace(request, buildTracePayload(hex(16), hex(8), 1, firstName));
+		await postTrace(
+			request,
+			buildTracePayload(E2E_PROJECT_ID, hex(16), hex(8), 1, firstName),
+		);
 		for (let i = 1; i < 5; i += 1) {
 			const traceId = hex(16);
 			const rootSpanId = hex(8);
 			const name = `walkthrough-trace-${Date.now()}-${i}`;
-			await postTrace(request, buildTracePayload(traceId, rootSpanId, 1, name));
+			await postTrace(
+				request,
+				buildTracePayload(E2E_PROJECT_ID, traceId, rootSpanId, 1, name),
+			);
 		}
 
 		// The list page merges streamed rows via SSE; rows carry
@@ -394,7 +324,7 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		const traceName = `walkthrough-spans-${Date.now()}`;
 		await postTrace(
 			request,
-			buildTracePayload(traceId, rootSpanId, 10, traceName),
+			buildTracePayload(E2E_PROJECT_ID, traceId, rootSpanId, 10, traceName),
 		);
 
 		// Wait for the spans to materialize via the SSE merge.
@@ -427,7 +357,13 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		const traceId = "0123456789abcdef0123456789abcdef";
 		await postTrace(
 			request,
-			buildTracePayload(traceId, "0123456789abcdef", 1, "toggle-trace"),
+			buildTracePayload(
+				E2E_PROJECT_ID,
+				traceId,
+				"0123456789abcdef",
+				1,
+				"toggle-trace",
+			),
 		);
 		await login(page);
 		await page.goto(`/observability/traces/${traceId}`);
@@ -468,7 +404,7 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		const traceName = `detail-sse-probe-${Date.now()}`;
 		await postTrace(
 			request,
-			buildTracePayload(traceId, rootSpanId, 1, traceName),
+			buildTracePayload(E2E_PROJECT_ID, traceId, rootSpanId, 1, traceName),
 		);
 		await login(page);
 		const detailStream = page.waitForRequest(
@@ -481,7 +417,7 @@ test.describe("SSE live pages — AC11 walkthrough", () => {
 		await expect(rows).toHaveCount(1, { timeout: 10_000 });
 		await postTrace(
 			request,
-			buildTracePayload(traceId, rootSpanId, 1, traceName, 1),
+			buildTracePayload(E2E_PROJECT_ID, traceId, rootSpanId, 1, traceName, 1),
 		);
 		await expect(rows).toHaveCount(2, { timeout: 10_000 });
 

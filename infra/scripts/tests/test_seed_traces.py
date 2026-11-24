@@ -121,7 +121,7 @@ class SeedTraceProjectRoutingTests(unittest.TestCase):
                 "http://localhost:3000", "Basic test-auth", None
             )
             status, _body = seed_traces.post_otlp(
-                "http://localhost:3000/v1/otel/v1/traces",
+                "http://localhost:3000/v1/traces",
                 "Basic test-auth",
                 {"resource_spans": []},
                 project_id,

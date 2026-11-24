@@ -36,12 +36,13 @@ import {
 	type TraceRow,
 } from "../lib/api";
 import { copyText } from "../lib/clipboard";
+import { LogsTab } from "./observability-logs";
 import {
 	parseObservabilitySearch,
 	serializeObservabilitySearch,
 } from "../lib/observability-search";
 
-type Tab = "traces" | "spans";
+type Tab = "traces" | "spans" | "logs";
 
 declare module "@tanstack/react-router" {
 	interface HistoryState {
@@ -49,7 +50,7 @@ declare module "@tanstack/react-router" {
 	}
 }
 
-const VALID_TABS = new Set<Tab>(["traces", "spans"]);
+const VALID_TABS = new Set<Tab>(["traces", "spans", "logs"]);
 
 export function ObservabilityPage() {
 	const navigate = useNavigate();
@@ -108,6 +109,12 @@ export function ObservabilityPage() {
 						<LuActivity className="h-3.5 w-3.5" />
 						Spans
 					</TabsTrigger>
+					<TabsTrigger
+						value="logs"
+						autoFocus={focusSelectedTab && tab === "logs"}
+					>
+						Logs
+					</TabsTrigger>
 				</TabsList>
 
 				<TabsContent value="traces">
@@ -115,6 +122,9 @@ export function ObservabilityPage() {
 				</TabsContent>
 				<TabsContent value="spans">
 					{tab === "spans" ? <SpansTab /> : null}
+				</TabsContent>
+				<TabsContent value="logs">
+					{tab === "logs" ? <LogsTab /> : null}
 				</TabsContent>
 			</Tabs>
 		</div>
@@ -677,8 +687,7 @@ export function TracesTab() {
 				noun={{ singular: "trace", plural: "traces" }}
 				emptyHint={
 					<>
-						No traces yet. Send one to <code>/v1/otel/v1/traces</code> to get
-						started.
+						No traces yet. Send one to <code>/v1/traces</code> to get started.
 					</>
 				}
 				noMatchMessage="No traces match the current filters."
@@ -1085,8 +1094,7 @@ export function SpansTab() {
 				noun={{ singular: "span", plural: "spans" }}
 				emptyHint={
 					<>
-						No spans yet. Send one to <code>/v1/otel/v1/traces</code> to get
-						started.
+						No spans yet. Send one to <code>/v1/traces</code> to get started.
 					</>
 				}
 				noMatchMessage="No spans match the current filters."

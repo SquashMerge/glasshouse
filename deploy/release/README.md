@@ -33,6 +33,11 @@ the Compose environment file as needed, especially values containing `#`, spaces
 or `$`; Compose single-quoted values are literal. Production secret-strength
 requirements still apply.
 
+For telemetry exports, use OTLP/HTTP with the application’s HTTPS origin.
+The signal paths are `/v1/traces`, `/v1/logs`, and `/v1/metrics`. Use the
+authorization and Project headers documented in the matching source revision's
+OTLP guide. This Compose bundle does not ship an OTLP/gRPC overlay.
+
 ## First browser Admin
 
 For a fresh installation, the bundle defaults to local bootstrap. The `UI_USERNAME`

@@ -195,6 +195,7 @@ export function ObservationDetailPanel({
 		() => parseMetadata(observation?.metadata),
 		[observation?.metadata],
 	);
+	const otlp = objectValue(observation, "otlp");
 	const promptProvenance = React.useMemo(
 		() =>
 			normalizeObservationMetadata(
@@ -204,11 +205,17 @@ export function ObservationDetailPanel({
 		[observation?.metadata, observation?.type],
 	);
 	const attributes = React.useMemo(() => {
-		const arrayAttributes = metadataAttributes(metadata);
+		const arrayAttributes = metadataAttributes(
+			parseMetadata(
+				objectValue(otlp, "attributes") ??
+					objectValue(metadata.value, "attributes") ??
+					metadata.value,
+			),
+		);
 		return arrayAttributes.length > 0
 			? arrayAttributes
 			: objectEntries(metadata.value);
-	}, [metadata]);
+	}, [metadata, otlp]);
 	const visibleAttributes = React.useMemo(() => {
 		const query = attributeQuery.trim().toLocaleLowerCase();
 		if (!query) return attributes;
@@ -261,6 +268,9 @@ export function ObservationDetailPanel({
 	const timing = observationTiming(observation);
 	const statusError = observation.status === "error";
 	const retainedFieldNotices = [
+		objectValue(otlp, "truncated") === true
+			? "OTLP detail truncated: some context, events, links or values were omitted or shortened. Source dropped counts are separate."
+			: null,
 		observation.input_retained_truncated === true
 			? "Input retained at 8 KiB"
 			: null,
@@ -274,30 +284,39 @@ export function ObservationDetailPanel({
 			? "Metadata retained at 16 KiB"
 			: null,
 	].filter((notice): notice is string => notice !== null);
-	const service = detailValue(observation, metadata.value, [
-		"service_name",
-		"service.name",
-	]);
-	const scopeName = detailValue(observation, metadata.value, [
-		"scope_name",
-		"scope.name",
-		"instrumentation_scope_name",
-	]);
-	const scopeVersion = detailValue(observation, metadata.value, [
-		"scope_version",
-		"scope.version",
-		"instrumentation_scope_version",
-	]);
-	const events = Array.isArray(eventEntries)
-		? eventEntries
-		: Array.isArray(objectValue(observation, "events"))
-			? objectValue(observation, "events")
-			: [];
-	const links = Array.isArray(linkEntries)
-		? linkEntries
-		: Array.isArray(objectValue(observation, "links"))
-			? objectValue(observation, "links")
-			: [];
+	const service =
+		telemetryValue(
+			metadataValue(objectValue(otlp, "resource"), "service.name"),
+		) ??
+		detailValue(observation, metadata.value, ["service_name", "service.name"]);
+	const scopeName =
+		telemetryValue(objectValue(objectValue(otlp, "scope"), "name")) ??
+		detailValue(observation, metadata.value, [
+			"scope_name",
+			"scope.name",
+			"instrumentation_scope_name",
+		]);
+	const scopeVersion =
+		telemetryValue(objectValue(objectValue(otlp, "scope"), "version")) ??
+		detailValue(observation, metadata.value, [
+			"scope_version",
+			"scope.version",
+			"instrumentation_scope_version",
+		]);
+	const events = Array.isArray(objectValue(otlp, "events"))
+		? objectValue(otlp, "events")
+		: Array.isArray(eventEntries)
+			? eventEntries
+			: Array.isArray(objectValue(observation, "events"))
+				? objectValue(observation, "events")
+				: [];
+	const links = Array.isArray(objectValue(otlp, "links"))
+		? objectValue(otlp, "links")
+		: Array.isArray(linkEntries)
+			? linkEntries
+			: Array.isArray(objectValue(observation, "links"))
+				? objectValue(observation, "links")
+				: [];
 
 	async function copy(value: string, label: string) {
 		const result = await copyText(value);
@@ -407,6 +426,7 @@ export function ObservationDetailPanel({
 					<TabsTrigger value="events">Events</TabsTrigger>
 					<TabsTrigger value="links">Links</TabsTrigger>
 					<TabsTrigger value="resource">Resource</TabsTrigger>
+					<TabsTrigger value="context">Context</TabsTrigger>
 					<TabsTrigger value="metadata">Metadata</TabsTrigger>
 				</TabsList>
 				<TabsContent
@@ -425,6 +445,23 @@ export function ObservationDetailPanel({
 							{ key: "Type", value: kind.label },
 							{ key: "Start", value: observation.start_time ?? "—" },
 							{ key: "End", value: observation.end_time ?? "—" },
+							{
+								key: "Exact start (Unix ns)",
+								value:
+									observation.start_time_unix_nano ??
+									"Unavailable (source precision unknown)",
+							},
+							{
+								key: "Exact end (Unix ns)",
+								value: observation.end_time_unix_nano ?? "Unavailable",
+							},
+							{
+								key: "Exact duration",
+								value:
+									typeof observation.duration_nano === "string"
+										? `${observation.duration_nano} ns`
+										: "Unavailable",
+							},
 							{
 								key: "Duration",
 								value:
@@ -510,7 +547,11 @@ export function ObservationDetailPanel({
 				<TabsContent value="events" data-testid="detail-events">
 					<MetadataList
 						values={detailEntries(events, "Event")}
-						emptyLabel="No events supplied."
+						emptyLabel={
+							otlp
+								? "No events retained (none supplied or omitted by retention limits)."
+								: "No events supplied."
+						}
 						onCopyValue={copyAttributeValue}
 						onCopyJsonValue={copyStructuredValue}
 						onCopyPath={copyStructuredPath}
@@ -520,7 +561,11 @@ export function ObservationDetailPanel({
 				<TabsContent value="links" data-testid="detail-links">
 					<MetadataList
 						values={detailEntries(links, "Link")}
-						emptyLabel="No links supplied."
+						emptyLabel={
+							otlp
+								? "No links retained (none supplied or omitted by retention limits)."
+								: "No links supplied."
+						}
 						onCopyValue={copyAttributeValue}
 						onCopyJsonValue={copyStructuredValue}
 						onCopyPath={copyStructuredPath}
@@ -529,8 +574,30 @@ export function ObservationDetailPanel({
 				</TabsContent>
 				<TabsContent value="resource">
 					<MetadataList
-						values={objectEntries(resource)}
+						values={objectEntries(objectValue(otlp, "resource") ?? resource)}
 						emptyLabel="No resource attributes supplied."
+						onCopyValue={copyAttributeValue}
+						onCopyJsonValue={copyStructuredValue}
+						onCopyPath={copyStructuredPath}
+						structuredValues
+					/>
+				</TabsContent>
+				<TabsContent
+					value="context"
+					data-testid="detail-context"
+					className="space-y-3"
+				>
+					<p className="text-xs text-muted-foreground">
+						Retained OTLP context includes instrumentation scope, schema URLs,
+						span status and message, trace state, flags, and source dropped
+						counts. Times in events are decimal Unix nanoseconds.
+					</p>
+					<MetadataList
+						values={objectEntries(otlp).filter(
+							({ key }) =>
+								!["events", "links", "resource", "attributes"].includes(key),
+						)}
+						emptyLabel="No OTLP context retained for this observation."
 						onCopyValue={copyAttributeValue}
 						onCopyJsonValue={copyStructuredValue}
 						onCopyPath={copyStructuredPath}

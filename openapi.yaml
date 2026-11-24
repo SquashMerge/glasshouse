@@ -2641,54 +2641,6 @@ components:
         - omissions
         - events
       type: object
-    AnyValue:
-      anyOf:
-        - properties:
-            stringValue:
-              type: string
-          required:
-            - stringValue
-          type: object
-        - properties:
-            boolValue:
-              type: boolean
-          required:
-            - boolValue
-          type: object
-        - properties:
-            intValue:
-              anyOf:
-                - type: integer
-                - type: string
-          required:
-            - intValue
-          type: object
-        - properties:
-            doubleValue:
-              type: number
-          required:
-            - doubleValue
-          type: object
-        - items:
-            properties:
-              stringValue:
-                type: string
-            required:
-              - stringValue
-            type: object
-          type: array
-        - properties:
-            kvlistValue:
-              $ref: '#/components/schemas/KvlistValue'
-          required:
-            - kvlistValue
-          type: object
-        - properties:
-            bytesValue:
-              type: string
-          required:
-            - bytesValue
-          type: object
     AuditEvent:
       additionalProperties: false
       properties:
@@ -6556,26 +6508,125 @@ components:
         - pass_rate
         - avg_duration_ms
       type: object
-    ExportTraceServiceRequest:
+    ExportLogsServiceRequest:
       properties:
-        resource_spans:
+        resourceLogs:
+          default: []
           items:
-            $ref: '#/components/schemas/ResourceSpans'
+            properties:
+              resource:
+                properties:
+                  attributes:
+                    default: []
+                    items:
+                      $ref: '#/components/schemas/LogAttribute'
+                    maxItems: 128
+                    type: array
+                  droppedAttributesCount:
+                    default: 0
+                    maximum: 4294967295
+                    minimum: 0
+                    type: integer
+                type: object
+              schemaUrl:
+                default: ''
+                maxLength: 2048
+                type: string
+              scopeLogs:
+                default: []
+                items:
+                  properties:
+                    logRecords:
+                      default: []
+                      items:
+                        properties:
+                          attributes:
+                            default: []
+                            items:
+                              $ref: '#/components/schemas/LogAttribute'
+                            maxItems: 128
+                            type: array
+                          body:
+                            $ref: '#/components/schemas/LogAnyValue'
+                          droppedAttributesCount:
+                            default: 0
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          eventName:
+                            default: ''
+                            maxLength: 1024
+                            type: string
+                          flags:
+                            default: 0
+                            maximum: 4294967295
+                            minimum: 0
+                            type: integer
+                          observedTimeUnixNano:
+                            anyOf:
+                              - maxLength: 21
+                                type: string
+                              - type: number
+                            default: '0'
+                          severityNumber:
+                            default: 0
+                            maximum: 24
+                            minimum: 0
+                            type: integer
+                          severityText:
+                            default: ''
+                            maxLength: 1024
+                            type: string
+                          spanId:
+                            pattern: ^(?:[0-9a-fA-F]{16})?$
+                            type: string
+                          timeUnixNano:
+                            anyOf:
+                              - maxLength: 21
+                                type: string
+                              - type: number
+                            default: '0'
+                          traceId:
+                            pattern: ^(?:[0-9a-fA-F]{32})?$
+                            type: string
+                        type: object
+                      maxItems: 512
+                      type: array
+                    schemaUrl:
+                      default: ''
+                      maxLength: 2048
+                      type: string
+                    scope:
+                      properties:
+                        attributes:
+                          default: []
+                          items:
+                            $ref: '#/components/schemas/LogAttribute'
+                          maxItems: 128
+                          type: array
+                        droppedAttributesCount:
+                          default: 0
+                          maximum: 4294967295
+                          minimum: 0
+                          type: integer
+                        name:
+                          default: ''
+                          maxLength: 1024
+                          type: string
+                        version:
+                          default: ''
+                          maxLength: 1024
+                          type: string
+                      type: object
+                  type: object
+                maxItems: 128
+                type: array
+            type: object
           maxItems: 128
-          minItems: 1
           type: array
-      required:
-        - resource_spans
       type: object
-    ExportTraceServiceResponse:
-      properties:
-        partial_success:
-          properties:
-            error_message:
-              type: string
-            rejected_spans:
-              type: integer
-          type: object
+    ExportLogsServiceResponse:
+      properties: {}
       type: object
     Feedback:
       additionalProperties: false
@@ -6788,23 +6839,6 @@ components:
         - status
         - checks
       type: object
-    KeyValue:
-      properties:
-        key:
-          maxLength: 256
-          minLength: 1
-          type: string
-        value:
-          $ref: '#/components/schemas/AnyValue'
-      required:
-        - key
-      type: object
-    KvlistValue:
-      properties:
-        values:
-          items: {}
-          type: array
-      type: object
     LocalAccount:
       additionalProperties: false
       properties:
@@ -6864,6 +6898,183 @@ components:
         - created_at
         - expires_at
       type: object
+    LogAnyValue:
+      additionalProperties: {}
+      properties:
+        arrayValue:
+          additionalProperties: {}
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/LogAnyValue'
+              type: array
+          type: object
+        boolValue:
+          type: boolean
+        bytesValue:
+          pattern: ^[A-Za-z0-9+/_-]*={0,2}$
+          type: string
+        doubleValue:
+          anyOf:
+            - type: number
+            - enum:
+                - NaN
+              type: string
+            - enum:
+                - Infinity
+              type: string
+            - enum:
+                - -Infinity
+              type: string
+            - maxLength: 128
+              pattern: ^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$
+              type: string
+        intValue:
+          anyOf:
+            - maximum: 9007199254740991
+              minimum: -9007199254740991
+              type: integer
+            - type: string
+        kvlistValue:
+          additionalProperties: {}
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/LogAttribute'
+              type: array
+          type: object
+        stringValue:
+          type: string
+      type: object
+    LogAttribute:
+      additionalProperties: {}
+      properties:
+        key:
+          maxLength: 256
+          type: string
+        value:
+          $ref: '#/components/schemas/LogAnyValue'
+      required:
+        - key
+      type: object
+    LogList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/LogRecord'
+          type: array
+        next_cursor:
+          type: string
+        response_truncated:
+          type: boolean
+        total:
+          type: integer
+      required:
+        - items
+        - total
+      type: object
+    LogRecord:
+      properties:
+        attributes:
+          items:
+            $ref: '#/components/schemas/LogAttribute'
+          type: array
+        body:
+          $ref: '#/components/schemas/LogAnyValue'
+        dropped_attributes_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        effective_time_unix_nano:
+          type: string
+        event_name:
+          type: string
+        flags:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        ingested_time_unix_nano:
+          type: string
+        log_id:
+          type: string
+        observed_time_unix_nano:
+          type: string
+        project_id:
+          format: uuid
+          type: string
+        resource:
+          properties:
+            attributes:
+              items:
+                $ref: '#/components/schemas/LogAttribute'
+              type: array
+            droppedAttributesCount:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+          required:
+            - attributes
+            - droppedAttributesCount
+          type: object
+        resource_schema_url:
+          type: string
+        scope:
+          properties:
+            attributes:
+              items:
+                $ref: '#/components/schemas/LogAttribute'
+              type: array
+            droppedAttributesCount:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+            name:
+              type: string
+            version:
+              type: string
+          required:
+            - name
+            - version
+            - attributes
+            - droppedAttributesCount
+          type: object
+        scope_schema_url:
+          type: string
+        severity_number:
+          type: integer
+        severity_text:
+          type: string
+        span_id:
+          type:
+            - string
+            - 'null'
+        time_unix_nano:
+          type: string
+        trace_id:
+          type:
+            - string
+            - 'null'
+      required:
+        - log_id
+        - project_id
+        - time_unix_nano
+        - observed_time_unix_nano
+        - ingested_time_unix_nano
+        - effective_time_unix_nano
+        - severity_number
+        - severity_text
+        - trace_id
+        - span_id
+        - flags
+        - dropped_attributes_count
+        - event_name
+        - body
+        - attributes
+        - resource
+        - scope
+        - resource_schema_url
+        - scope_schema_url
+      type: object
     NotImplementedError:
       allOf:
         - $ref: '#/components/schemas/ErrorEnvelope'
@@ -6877,10 +7088,22 @@ components:
       properties:
         duration_ms:
           type:
-            - integer
+            - number
+            - 'null'
+        duration_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
             - 'null'
         end_time:
           format: date-time
+          type:
+            - string
+            - 'null'
+        end_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
           type:
             - string
             - 'null'
@@ -6903,6 +7126,8 @@ components:
           type: string
         observation_id:
           type: string
+        otlp:
+          $ref: '#/components/schemas/OtlpDetail'
         output_excerpt_truncated:
           type: boolean
         output_retained_truncated:
@@ -6919,6 +7144,12 @@ components:
         start_time:
           format: date-time
           type: string
+        start_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
+            - 'null'
         status:
           $ref: '#/components/schemas/TraceStatus'
         trace_id:
@@ -7151,6 +7382,504 @@ components:
         - projects
         - totals
         - series
+      type: object
+    OtlpDetail:
+      additionalProperties: {}
+      description: Redacted OTLP resource/scope, schema URLs, attributes, kind, flags, trace_state, status, events, links and dropped counts. Event times are exact decimal nanosecond strings. Bounded to 32 KiB; truncated signals omitted or shortened content, distinct from source dropped counts. Only returned in trace detail/SSE, not lists.
+      properties:
+        attributes:
+          items:
+            properties:
+              key:
+                type: string
+              value:
+                additionalProperties: {}
+                type: object
+            type: object
+          type: array
+        dropped_attributes_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        dropped_events_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        dropped_links_count:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        events:
+          items:
+            properties:
+              attributes:
+                items:
+                  properties:
+                    key:
+                      type: string
+                    value:
+                      additionalProperties: {}
+                      type: object
+                  type: object
+                type: array
+              dropped_attributes_count:
+                maximum: 4294967295
+                minimum: 0
+                type: integer
+              name:
+                type: string
+              time_unix_nano:
+                description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+                pattern: ^\d{1,20}$
+                type:
+                  - string
+                  - 'null'
+            type: object
+          type: array
+        flags:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        kind:
+          maximum: 5
+          minimum: 0
+          type: integer
+        links:
+          items:
+            properties:
+              attributes:
+                items:
+                  properties:
+                    key:
+                      type: string
+                    value:
+                      additionalProperties: {}
+                      type: object
+                  type: object
+                type: array
+              dropped_attributes_count:
+                maximum: 4294967295
+                minimum: 0
+                type: integer
+              flags:
+                maximum: 4294967295
+                minimum: 0
+                type: integer
+              span_id:
+                type: string
+              trace_id:
+                type: string
+              trace_state:
+                type: string
+            type: object
+          type: array
+        resource:
+          properties:
+            attributes:
+              items:
+                properties:
+                  key:
+                    type: string
+                  value:
+                    additionalProperties: {}
+                    type: object
+                type: object
+              type: array
+            dropped_attributes_count:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+          type: object
+        resource_schema_url:
+          type: string
+        schema_version:
+          enum:
+            - 1
+          type: number
+        scope:
+          properties:
+            attributes:
+              items:
+                properties:
+                  key:
+                    type: string
+                  value:
+                    additionalProperties: {}
+                    type: object
+                type: object
+              type: array
+            dropped_attributes_count:
+              maximum: 4294967295
+              minimum: 0
+              type: integer
+            name:
+              type: string
+            version:
+              type: string
+          type: object
+        scope_schema_url:
+          type: string
+        status:
+          properties:
+            code:
+              maximum: 2
+              minimum: 0
+              type: integer
+            message:
+              type: string
+          type: object
+        trace_state:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - schema_version
+      type:
+        - object
+        - 'null'
+    OtlpError:
+      properties:
+        message:
+          type: string
+      type: object
+    OtlpWireAnyValue:
+      additionalProperties: {}
+      properties:
+        arrayValue:
+          additionalProperties: {}
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/OtlpWireAnyValue'
+              type:
+                - array
+                - 'null'
+          type:
+            - object
+            - 'null'
+        boolValue:
+          type:
+            - boolean
+            - 'null'
+        bytesValue:
+          pattern: ^[A-Za-z0-9+/_-]*={0,2}$
+          type:
+            - string
+            - 'null'
+        doubleValue:
+          anyOf:
+            - type: number
+            - enum:
+                - NaN
+              type: string
+            - enum:
+                - Infinity
+              type: string
+            - enum:
+                - -Infinity
+              type: string
+            - maxLength: 128
+              pattern: ^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$
+              type: string
+            - type: 'null'
+        intValue:
+          anyOf:
+            - maximum: 9007199254740991
+              minimum: -9007199254740991
+              type: integer
+            - type: string
+            - type: 'null'
+        kvlistValue:
+          additionalProperties: {}
+          properties:
+            values:
+              items:
+                $ref: '#/components/schemas/OtlpWireKeyValue'
+              type:
+                - array
+                - 'null'
+          type:
+            - object
+            - 'null'
+        stringValue:
+          type:
+            - string
+            - 'null'
+      type: object
+    OtlpWireKeyValue:
+      additionalProperties: {}
+      properties:
+        key:
+          maxLength: 256
+          minLength: 1
+          type: string
+        value:
+          anyOf:
+            - $ref: '#/components/schemas/OtlpWireAnyValue'
+            - type: 'null'
+      required:
+        - key
+      type: object
+    OtlpWireRequest:
+      properties:
+        resourceSpans:
+          items:
+            properties:
+              resource:
+                properties:
+                  attributes:
+                    items:
+                      $ref: '#/components/schemas/OtlpWireKeyValue'
+                    maxItems: 128
+                    type:
+                      - array
+                      - 'null'
+                  droppedAttributesCount:
+                    maximum: 4294967295
+                    minimum: 0
+                    type:
+                      - integer
+                      - 'null'
+                type:
+                  - object
+                  - 'null'
+              schemaUrl:
+                type:
+                  - string
+                  - 'null'
+              scopeSpans:
+                items:
+                  properties:
+                    schemaUrl:
+                      type:
+                        - string
+                        - 'null'
+                    scope:
+                      properties:
+                        attributes:
+                          items:
+                            $ref: '#/components/schemas/OtlpWireKeyValue'
+                          maxItems: 128
+                          type:
+                            - array
+                            - 'null'
+                        droppedAttributesCount:
+                          maximum: 4294967295
+                          minimum: 0
+                          type:
+                            - integer
+                            - 'null'
+                        name:
+                          type:
+                            - string
+                            - 'null'
+                        version:
+                          type:
+                            - string
+                            - 'null'
+                      type:
+                        - object
+                        - 'null'
+                    spans:
+                      items:
+                        properties:
+                          attributes:
+                            items:
+                              $ref: '#/components/schemas/OtlpWireKeyValue'
+                            maxItems: 128
+                            type:
+                              - array
+                              - 'null'
+                          droppedAttributesCount:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
+                          droppedEventsCount:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
+                          droppedLinksCount:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
+                          endTimeUnixNano:
+                            anyOf:
+                              - pattern: ^\d{1,20}$
+                                type: string
+                              - maximum: 9007199254740991
+                                minimum: 0
+                                type: integer
+                              - type: 'null'
+                          events:
+                            items:
+                              properties:
+                                attributes:
+                                  items:
+                                    $ref: '#/components/schemas/OtlpWireKeyValue'
+                                  maxItems: 128
+                                  type:
+                                    - array
+                                    - 'null'
+                                droppedAttributesCount:
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type:
+                                    - integer
+                                    - 'null'
+                                name:
+                                  type:
+                                    - string
+                                    - 'null'
+                                timeUnixNano:
+                                  anyOf:
+                                    - pattern: ^\d{1,20}$
+                                      type: string
+                                    - maximum: 9007199254740991
+                                      minimum: 0
+                                      type: integer
+                                    - type: 'null'
+                              type: object
+                            maxItems: 512
+                            type:
+                              - array
+                              - 'null'
+                          flags:
+                            maximum: 4294967295
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
+                          kind:
+                            maximum: 5
+                            minimum: 0
+                            type:
+                              - integer
+                              - 'null'
+                          links:
+                            items:
+                              properties:
+                                attributes:
+                                  items:
+                                    $ref: '#/components/schemas/OtlpWireKeyValue'
+                                  maxItems: 128
+                                  type:
+                                    - array
+                                    - 'null'
+                                droppedAttributesCount:
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type:
+                                    - integer
+                                    - 'null'
+                                flags:
+                                  maximum: 4294967295
+                                  minimum: 0
+                                  type:
+                                    - integer
+                                    - 'null'
+                                spanId:
+                                  pattern: ^[0-9a-fA-F]{16}$
+                                  type: string
+                                traceId:
+                                  pattern: ^[0-9a-fA-F]{32}$
+                                  type: string
+                                traceState:
+                                  maxLength: 512
+                                  type:
+                                    - string
+                                    - 'null'
+                              required:
+                                - traceId
+                                - spanId
+                              type: object
+                            maxItems: 512
+                            type:
+                              - array
+                              - 'null'
+                          name:
+                            maxLength: 256
+                            minLength: 1
+                            type: string
+                          parentSpanId:
+                            type:
+                              - string
+                              - 'null'
+                          spanId:
+                            pattern: ^[0-9a-fA-F]{16}$
+                            type: string
+                          startTimeUnixNano:
+                            anyOf:
+                              - pattern: ^\d{1,20}$
+                                type: string
+                              - maximum: 9007199254740991
+                                minimum: 0
+                                type: integer
+                          status:
+                            properties:
+                              code:
+                                anyOf:
+                                  - enum:
+                                      - 0
+                                    type: number
+                                  - enum:
+                                      - 1
+                                    type: number
+                                  - enum:
+                                      - 2
+                                    type: number
+                                  - type: 'null'
+                              message:
+                                type:
+                                  - string
+                                  - 'null'
+                            type:
+                              - object
+                              - 'null'
+                          traceId:
+                            pattern: ^[0-9a-fA-F]{32}$
+                            type: string
+                          traceState:
+                            type:
+                              - string
+                              - 'null'
+                        required:
+                          - traceId
+                          - spanId
+                          - name
+                          - startTimeUnixNano
+                        type: object
+                      maxItems: 512
+                      type:
+                        - array
+                        - 'null'
+                  type: object
+                maxItems: 128
+                type:
+                  - array
+                  - 'null'
+            type: object
+          maxItems: 128
+          type:
+            - array
+            - 'null'
+      type: object
+    OtlpWireResponse:
+      properties:
+        partialSuccess:
+          properties:
+            errorMessage:
+              type: string
+            rejectedSpans:
+              anyOf:
+                - type: string
+                - type: integer
+          type: object
       type: object
     Project:
       additionalProperties: false
@@ -7723,139 +8452,6 @@ components:
       required:
         - confirmation
       type: object
-    ResourceSpans:
-      properties:
-        resource:
-          properties:
-            attributes:
-              default: []
-              items:
-                $ref: '#/components/schemas/KeyValue'
-              maxItems: 128
-              type: array
-            dropped_attributes_count:
-              type: integer
-          type: object
-        scope_spans:
-          items:
-            $ref: '#/components/schemas/ScopeSpans'
-          maxItems: 128
-          minItems: 1
-          type: array
-      required:
-        - scope_spans
-      type: object
-    ScopeSpans:
-      properties:
-        scope:
-          properties:
-            attributes:
-              items:
-                $ref: '#/components/schemas/KeyValue'
-              maxItems: 128
-              type: array
-            name:
-              type: string
-            version:
-              type: string
-          type: object
-        spans:
-          items:
-            $ref: '#/components/schemas/Span'
-          maxItems: 512
-          minItems: 1
-          type: array
-      required:
-        - spans
-      type: object
-    Span:
-      properties:
-        attributes:
-          default: []
-          items:
-            $ref: '#/components/schemas/KeyValue'
-          maxItems: 128
-          type: array
-        end_time_unix_nano:
-          anyOf:
-            - type: number
-            - type: string
-        events:
-          items: {}
-          maxItems: 128
-          type: array
-        kind:
-          $ref: '#/components/schemas/SpanKind'
-        links:
-          items: {}
-          maxItems: 128
-          type: array
-        name:
-          maxLength: 256
-          minLength: 1
-          type: string
-        parent_span_id:
-          pattern: ^[0-9a-f]{16}$
-          type:
-            - string
-            - 'null'
-        span_id:
-          pattern: ^[0-9a-f]{16}$
-          type: string
-        start_time_unix_nano:
-          anyOf:
-            - type: number
-            - type: string
-        status:
-          $ref: '#/components/schemas/SpanStatus'
-        trace_id:
-          pattern: ^[0-9a-f]{32}$
-          type: string
-        trace_state:
-          maxLength: 512
-          type: string
-      required:
-        - trace_id
-        - span_id
-        - name
-        - start_time_unix_nano
-      type: object
-    SpanKind:
-      anyOf:
-        - enum:
-            - 0
-          type: number
-        - enum:
-            - 1
-          type: number
-        - enum:
-            - 2
-          type: number
-        - enum:
-            - 3
-          type: number
-        - enum:
-            - 4
-          type: number
-        - enum:
-            - 5
-          type: number
-    SpanStatus:
-      properties:
-        code:
-          anyOf:
-            - enum:
-                - 0
-              type: number
-            - enum:
-                - 1
-              type: number
-            - enum:
-                - 2
-              type: number
-        message:
-          type: string
-      type: object
     StoredAgentIntrospectionReportV1:
       additionalProperties: false
       properties:
@@ -7942,10 +8538,22 @@ components:
           type: string
         duration_ms:
           type:
-            - integer
+            - number
+            - 'null'
+        duration_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
             - 'null'
         end_time:
           format: date-time
+          type:
+            - string
+            - 'null'
+        end_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
           type:
             - string
             - 'null'
@@ -7975,6 +8583,12 @@ components:
         start_time:
           format: date-time
           type: string
+        start_time_unix_nano:
+          description: Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.
+          pattern: ^\d{1,20}$
+          type:
+            - string
+            - 'null'
         status:
           $ref: '#/components/schemas/TraceStatus'
         tags:
@@ -8021,7 +8635,7 @@ components:
       scheme: basic
       type: http
     bearerAuth:
-      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/otel/v1/traces.
+      description: Project-scoped OTLP ingest credential, accepted only for POST /v1/traces, POST /v1/logs, and POST /v1/metrics.
       scheme: bearer
       type: http
     csrfHeader:
@@ -14692,6 +15306,14 @@ paths:
                             maximum: 3650
                             minimum: 1
                             type: integer
+                          logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          metrics:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
                           traces:
                             maximum: 3650
                             minimum: 1
@@ -14791,6 +15413,14 @@ paths:
                       maximum: 3650
                       minimum: 1
                       type: integer
+                    logs:
+                      maximum: 3650
+                      minimum: 1
+                      type: integer
+                    metrics:
+                      maximum: 3650
+                      minimum: 1
+                      type: integer
                     traces:
                       maximum: 3650
                       minimum: 1
@@ -14857,6 +15487,14 @@ paths:
                             minimum: 1
                             type: integer
                           feedback:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          metrics:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -14937,6 +15575,14 @@ paths:
                             minimum: 1
                             type: integer
                           feedback:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          metrics:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -15064,6 +15710,14 @@ paths:
                               minimum: 1
                               type: integer
                             feedback:
+                              maximum: 3650
+                              minimum: 1
+                              type: integer
+                            logs:
+                              maximum: 3650
+                              minimum: 1
+                              type: integer
+                            metrics:
                               maximum: 3650
                               minimum: 1
                               type: integer
@@ -15196,6 +15850,14 @@ paths:
                             minimum: 1
                             type: integer
                           feedback:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          logs:
+                            maximum: 3650
+                            minimum: 1
+                            type: integer
+                          metrics:
                             maximum: 3650
                             minimum: 1
                             type: integer
@@ -15540,6 +16202,232 @@ paths:
       summary: Health check (Postgres + ClickHouse + Valkey)
       tags:
         - health
+  /v1/logs:
+    get:
+      description: Typed AnyValue physical log rows, ordered by effective nanosecond time DESC, log_id DESC, then stored physical UUID DESC. Duplicate public IDs and independent payloads remain separate rows. Effective time uses event time, then observed time, then receipt time; original times remain unchanged. Pages are capped at 256 KiB and carry a scope/filter-bound version-3 keyset continuation containing a random UUIDv4 position, never table-wide insert counters. Older cursors require a fresh traversal. Physical UUIDs are omitted from items; invalid or duplicate UUIDs fail the read only when found within the fetched page plus one lookahead row. Copies outside that set are not detected, and global UUID uniqueness is not continuously enforced. The exact filtered physical-row total ignores pagination and may scan Project history under the Project fence. Bearer ingestion credentials cannot read logs.
+      parameters:
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 200
+            minimum: 1
+            type: integer
+        - in: query
+          name: offset
+          required: false
+          schema:
+            default: 0
+            maximum: 1000000
+            minimum: 0
+            type:
+              - integer
+              - 'null'
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            type: string
+        - in: query
+          name: filter[severity_number]
+          required: false
+          schema:
+            maximum: 24
+            minimum: 0
+            type:
+              - integer
+              - 'null'
+        - in: query
+          name: filter[severity_text]
+          required: false
+          schema:
+            maxLength: 1024
+            type: string
+        - in: query
+          name: filter[trace_id]
+          required: false
+          schema:
+            pattern: ^[0-9a-fA-F]{32}$
+            type: string
+        - in: query
+          name: filter[q]
+          required: false
+          schema:
+            maxLength: 256
+            type: string
+        - in: query
+          name: filter[time.from]
+          required: false
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: filter[time.to]
+          required: false
+          schema:
+            format: date-time
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogList'
+          description: Project logs
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Invalid filters or cursor
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Project unavailable
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          description: Query failed
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: List Project logs
+      tags:
+        - logs
+    post:
+      description: Accepts JSON/protobuf, optionally gzip. Exports are atomic on validation, limited to 2,000 records, 512 per scope, 128 attributes per record, 32 known-message nesting levels, 64 KiB per retained record and 4 MiB per serialized retained export after redaction. Decimal nanosecond timestamps and AnyValue types are preserved. Requires an explicit Project header; payload provenance cannot override it.
+      parameters:
+        - in: header
+          name: x-glasshouse-project-id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportLogsServiceRequest'
+          application/protobuf:
+            schema:
+              format: binary
+              type: string
+          application/x-protobuf:
+            schema:
+              format: binary
+              type: string
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportLogsServiceResponse'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Logs accepted
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Invalid log export
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Origin or CSRF rejected
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Project unavailable
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Export exceeds byte limit
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Unsupported media or encoding
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Log export failed
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Log export temporarily unavailable
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+        - bearerAuth: []
+      summary: OTLP HTTP log ingest
+      tags:
+        - otlp
   /v1/me:
     get:
       responses:
@@ -15590,6 +16478,135 @@ paths:
         - basicAuth: []
       tags:
         - projects
+  /v1/metrics:
+    get:
+      description: Project-authorized product read, newest nanosecond timestamp first. Attributes and data_point are typed OTLP JSON; integers are decimal strings. Pages are capped at 200 points and 256 KiB; follow next_cursor. No aggregation or temporality conversion is performed.
+      parameters:
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 50
+            maximum: 200
+            minimum: 1
+            type: integer
+        - in: query
+          name: name
+          required: false
+          schema:
+            maxLength: 1024
+            type: string
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            maxLength: 2048
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  items:
+                    items:
+                      additionalProperties: {}
+                      type: object
+                    type: array
+                  next_cursor:
+                    type:
+                      - string
+                      - 'null'
+                required:
+                  - items
+                  - next_cursor
+                type: object
+          description: Retained points
+        '400':
+          description: Invalid query
+        '401':
+          description: Authentication required
+        '404':
+          description: Project unavailable
+        '500':
+          description: Read failed
+      security:
+        - sessionCookie: []
+        - basicAuth: []
+      summary: List retained metric points
+      tags:
+        - metrics
+    post:
+      description: 'OTLP JSON or protobuf, optionally gzip. Gauge, Sum, Histogram, ExponentialHistogram and Summary are validated atomically before persistence. Decimal strings preserve 64-bit values and nanoseconds. Limits: 2,000 metrics/points per export, 128 attributes per record, 4,096 buckets, 32 exemplars, 1,024 quantiles per point, 32 nesting levels and 100,000 inspected nodes. Oversized or invalid distributions reject the whole export; no truncation or synthetic aggregation.'
+      parameters:
+        - in: header
+          name: x-glasshouse-project-id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                resourceMetrics:
+                  items:
+                    additionalProperties: {}
+                    type: object
+                  type:
+                    - array
+                    - 'null'
+              type: object
+          application/protobuf:
+            schema:
+              format: binary
+              type: string
+          application/x-protobuf:
+            schema:
+              format: binary
+              type: string
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties: {}
+                type: object
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: All points stored (or identical-byte retry deduplicated)
+        '400':
+          description: Invalid metrics export
+        '401':
+          description: Authentication required
+        '404':
+          description: Project unavailable or resource provenance conflicts
+        '413':
+          description: Export exceeds limits
+        '415':
+          description: Unsupported encoding
+        '500':
+          description: Storage failure
+        '503':
+          description: Retryable storage failure
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+        - bearerAuth: []
+      summary: OTLP metrics export
+      tags:
+        - metrics
   /v1/observations:
     get:
       description: Returns a project-scoped page sorted by start_time DESC, observation_id DESC. limit defaults to 50, accepts zero, and clamps values above 200; malformed, fractional, or negative limits return 400. v1 offset pagination remains supported; use the opaque next_cursor keyset continuation for new clients and do not combine it with a positive offset. The raw UTF-8 JSON body is capped at 256 KiB; a byte-truncated page carries response_truncated and next_cursor. Input and output excerpts are limited to 200 Unicode code points; the retained and excerpt truncation flags distinguish storage clipping from list presentation.
@@ -15807,51 +16824,6 @@ paths:
         - basicAuth: []
       tags:
         - projects
-  /v1/otel/v1/traces:
-    post:
-      description: Accepts an ExportTraceServiceRequest (OTLP 1.4.x HTTP/JSON), validates with Zod, normalizes each span (gen_ai.* first, OpenInference fallback), and batch-inserts to ClickHouse `traces` and `observations`. Returns an empty ExportTraceServiceResponse on success.
-      parameters:
-        - description: Project selector, verified against the authenticated organization
-          in: header
-          name: x-glasshouse-project-id
-          required: true
-          schema:
-            description: Project selector, verified against the authenticated organization
-            format: uuid
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExportTraceServiceRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExportTraceServiceResponse'
-          description: Traces accepted
-        '400':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-          description: Malformed request body or conflicting project provenance for a trace
-        '404':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-          description: The OTLP project selector or resource provenance is unavailable to the authenticated organization
-      security:
-        - csrfHeader: []
-          sessionCookie: []
-        - basicAuth: []
-        - bearerAuth: []
-      summary: OTLP HTTP/JSON trace ingest
-      tags:
-        - otlp
   /v1/projects:
     get:
       parameters:
@@ -18701,6 +19673,110 @@ paths:
       summary: List traces
       tags:
         - traces
+    post:
+      description: Accepts OTLP JSON or protobuf trace exports, with at most 2,000 spans per request and 512 events/links per span. Known message objects and repeated-field arrays may nest at most 32 levels below the request root. JSON null fields are treated as unset; null repeated elements are invalid. Resource glasshouse.project.id must occur at most once, contain only a UUID string value with no unknown fields, and match the authorized Project header; missing resource selectors inherit that Project. Spans require valid IDs, a name, and an exact uint64 start time (unsafe JSON numbers are rejected; use decimal strings). Events, links and resource/scope/status context are redacted and retained in bounded OTLP detail (32 KiB per span, 8 MiB per export); truncation is explicit on readback.
+      parameters:
+        - description: Project selector, verified against the authenticated organization
+          in: header
+          name: x-glasshouse-project-id
+          required: true
+          schema:
+            description: Project selector, verified against the authenticated organization
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtlpWireRequest'
+          application/protobuf:
+            schema:
+              format: binary
+              type: string
+          application/x-protobuf:
+            schema:
+              format: binary
+              type: string
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpWireResponse'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Traces accepted, possibly with partial success
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Malformed request or conflicting provenance
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Project unavailable to the authenticated organization
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Request exceeds the configured limit
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Unsupported media type or content encoding
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Trace export failed
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtlpError'
+            application/x-protobuf:
+              schema:
+                format: binary
+                type: string
+          description: Trace export temporarily unavailable
+      security:
+        - csrfHeader: []
+          sessionCookie: []
+        - basicAuth: []
+        - bearerAuth: []
+      summary: OTLP HTTP trace ingest
+      tags:
+        - otlp
   /v1/traces/events:
     get:
       description: 'Subscribes to the `trace.created` bus event and emits one `event: trace` SSE frame per published trace. Its trace payload uses the Trace list projection: no organization_id, input/output excerpts limited to 200 Unicode code points, and retained/excerpt truncation flags. Sends an `:ok` comment immediately on connect, a `:heartbeat` comment every `SSE_HEARTBEAT_MS` (default 15s), and cleans up the bus subscription on client disconnect.'
@@ -18814,7 +19890,7 @@ paths:
   /v1/traces/{id}/events:
     get:
       description: |-
-        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`, then forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
+        Validates the trace exists (404 short-circuits BEFORE the SSE upgrade), subscribes to `observation.created` BEFORE writing the snapshot (so any observation created in the gap is delivered as a live event), writes an `event: snapshot` frame with existing observations capped by the raw UTF-8 event/data SSE frame budget (the smaller of 256 KiB and `SSE_MAX_PENDING_BYTES`); a partial snapshot has `snapshot_truncated: true` and a project- and trace-scoped `next_cursor`. If even one detailed row cannot fit, the snapshot uses list projections with `detail_omitted: true`. Oversized live rows likewise use the list projection with `detail_omitted: true`; fetch full retained detail from the first Project-scoped REST trace page and follow its cursors. It forwards matching observations (`observation.trace_id === id` and matching project provenance) as `event: observation` frames. Each matching observation resets a `TRACE_COMPLETE_GRACE_MS` default-30s timer; on the timer's fire the server writes `event: status
         data: {"status":"complete"}` and closes the stream.
       parameters:
         - in: path

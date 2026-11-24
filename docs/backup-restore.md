@@ -4,7 +4,30 @@ These commands are repository-supported operator tooling for the durable Glassho
 
 ClickHouse's local `File()` backup backend requires both `backups.allowed_disk` and `backups.allowed_path`. The development Compose files mount `infra/clickhouse/backup.xml`, which confines backup files to `/var/lib/clickhouse/backup/` inside the ClickHouse data volume. Custom Compose deployments must mount equivalent ClickHouse server configuration before starting the service; restarting ClickHouse is required for a changed server config to take effect.
 
+Whole-database ClickHouse backups include OTLP `logs`, their stored `physical_row_id` UUIDs and migration bookkeeping through `0012_logs_physical_uuid.sql` alongside traces/observations. Preserve physical UUIDs exactly on restore; do not regenerate them through the live ingestion writer or copy them back into an already populated scope. The application restore fixture checks log Organization/Project scope, the exact seeded physical UUID, event/observed nanoseconds and nested int64 AnyValue bodies before replaying the migration runners. A scoped administrative row restore must explicitly retain UUID and tenant columns into an empty target; a new occurrence instead needs a fresh UUID. The normal writer always replaces supplied UUIDs. For any supported application schema upgrade still requiring 0012 after restore, keep all writers stopped and use its [explicit maintenance gate](03-otel-ingest.md#physical-uuid-schema-upgrade-and-maintenance-gate). This fixture must be run through the existing isolated restore drill to establish actual backup/restore evidence; seeding and verifying a single database alone is not a restore drill.
+
 ## Backup
+
+The native `BACKUP DATABASE` includes the `metrics` table and ClickHouse migration
+bookkeeping alongside traces and Observations. Metric integers/nanoseconds and
+typed histogram/exemplar data are restored from their original stored values;
+there is no separate metrics artifact. Pause HTTP/gRPC metric exporters along
+with trace ingestion when establishing a recovery point. After isolated restore,
+check scoped metric counts and exact typed values with `GET /v1/metrics` before
+cutover. An older artifact predating metrics receives the empty table through
+additive migration `0010_otlp_metrics.sql` during normal startup. Retention and
+Project deletion affect live stores, not already-created backup artifacts.
+
+PostgreSQL backups also contain the secret per-Project identity keys for metrics
+and public log IDs from
+`90063_metric_identity_keys.sql`. Preserve those keys with the corresponding
+ClickHouse data to keep new points in the same series and reproduce log IDs
+after recovery. Restoring ClickHouse alone or replacing keys splits future
+identities; neither action rewrites old IDs. The application restore fixture
+recomputes its seeded log ID using the restored Project key in a fresh process
+and after migration replay. Treat the PostgreSQL dump as secret-bearing:
+possession of a key permits offline guesses against that Project's pre-redaction
+identities.
 
 Install the client/runtime prerequisites used by the operator host: Bash, Docker Compose v2, `python3`, `sha256sum`, and a running stack; other examples use GNU Make. The Compose service containers provide `pg_dump`, `psql`, and `clickhouse-client`; PostgreSQL credentials are passed through the Compose exec environment, while ClickHouse uses a private mode-0600 client config that is removed after the command. Command output never includes credential values.
 

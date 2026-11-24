@@ -50,6 +50,10 @@ describe("ClickHouse schema integration", () => {
 			"metadata",
 			"input_retained_truncated",
 			"output_retained_truncated",
+			"start_time_unix_nano",
+			"end_time_unix_nano",
+			"duration_nano",
+			"precise_duration_ms",
 		]);
 
 		const observationColumns = await values(
@@ -73,6 +77,11 @@ describe("ClickHouse schema integration", () => {
 			"metadata",
 			"input_retained_truncated",
 			"output_retained_truncated",
+			"start_time_unix_nano",
+			"end_time_unix_nano",
+			"duration_nano",
+			"precise_duration_ms",
+			"otlp",
 		]);
 	});
 

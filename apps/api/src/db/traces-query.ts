@@ -3,7 +3,13 @@ import { clickHouseDateTime } from "./clickhouse-datetime.js";
 import { ch } from "./clickhouse.js";
 import type { TraceCursor } from "./trace-cursor.js";
 
-export interface TraceRow {
+interface ExactTimes {
+	start_time_unix_nano?: string | null;
+	end_time_unix_nano?: string | null;
+	duration_nano?: string | null;
+}
+
+export interface TraceRow extends ExactTimes {
 	trace_id: string;
 	organization_id: string;
 	project_id: string;
@@ -27,7 +33,8 @@ export interface TraceRow {
 	output_excerpt_truncated?: boolean;
 }
 
-export interface ObservationRow {
+export interface ObservationRow extends ExactTimes {
+	otlp?: string;
 	observation_id: string;
 	trace_id: string;
 	organization_id: string;
@@ -89,6 +96,12 @@ const OBSERVATION_FULL_COLUMNS =
 	"observation_id, trace_id, organization_id, project_id, parent_observation_id, type, name, start_time, end_time, duration_ms, status, model, if(length(observations.input_text) > 8192, substringUTF8(observations.input_text, 1, 2048), observations.input_text) AS input_text, if(length(observations.output_text) > 8192, substringUTF8(observations.output_text, 1, 2048), observations.output_text) AS output_text, input_retained_truncated OR length(observations.input_text) > 8192 AS input_retained_truncated, output_retained_truncated OR length(observations.output_text) > 8192 AS output_retained_truncated, if(length(metadata) <= 16384, metadata, '') AS metadata, length(metadata) > 16384 AS metadata_truncated";
 
 export const MAX_TRACE_DETAIL_OBSERVATIONS = 7;
+
+const EXACT_COLUMNS =
+	"toString(start_time_unix_nano) AS start_time_unix_nano, toString(end_time_unix_nano) AS end_time_unix_nano, toString(duration_nano) AS duration_nano";
+const traceColumns = `${LIST_COLUMNS.replace("duration_ms", "coalesce(precise_duration_ms, traces.duration_ms) AS duration_ms")}, ${EXACT_COLUMNS}`;
+const observationColumns = `${OBSERVATION_COLUMNS.replace("duration_ms", "coalesce(precise_duration_ms, observations.duration_ms) AS duration_ms")}, ${EXACT_COLUMNS}`;
+const observationFullColumns = `${OBSERVATION_FULL_COLUMNS.replace("duration_ms", "coalesce(precise_duration_ms, observations.duration_ms) AS duration_ms")}, ${EXACT_COLUMNS}, if(length(otlp) <= 32768, otlp, '{"schema_version":1,"truncated":true}') AS otlp`;
 
 type ClickHouseBooleanFlags = {
 	input_retained_truncated?: boolean | number;
@@ -172,7 +185,9 @@ function buildWhere(
 			const op = m[1] ?? "=";
 			const num = Number(m[2]);
 			const safeOp = op === "=" ? "=" : op; // ClickHouse accepts all four
-			where.push(`duration_ms ${safeOp} {duration_ms: UInt32}`);
+			where.push(
+				`coalesce(precise_duration_ms, traces.duration_ms) ${safeOp} {duration_ms: Float64}`,
+			);
 			params.duration_ms = num;
 		}
 	}
@@ -213,7 +228,7 @@ export async function listTraces(
 	}
 
 	const itemsResult = await client.query({
-		query: `SELECT ${LIST_COLUMNS} FROM traces ${whereClause}${cursorClause} ORDER BY start_time DESC, trace_id DESC LIMIT {limit: UInt32}${offsetClause}`,
+		query: `SELECT ${traceColumns} FROM traces ${whereClause}${cursorClause} ORDER BY start_time DESC, trace_id DESC LIMIT {limit: UInt32}${offsetClause}`,
 		query_params: params,
 		format: "JSONEachRow",
 	});
@@ -261,7 +276,7 @@ export async function getTrace(
 		limit: MAX_TRACE_DETAIL_OBSERVATIONS + 1,
 	};
 	const traceResult = await client.query({
-		query: `SELECT ${LIST_COLUMNS} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} LIMIT 1`,
+		query: `SELECT ${traceColumns} FROM traces WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String} LIMIT 1`,
 		query_params,
 		format: "JSONEachRow",
 		abort_signal: signal,
@@ -282,7 +297,7 @@ export async function getTrace(
 		? " AND (start_time, observation_id) > ({cursor_start_time: DateTime64(3)}, {cursor_id: String})"
 		: "";
 	const obsResult = await client.query({
-		query: `SELECT ${OBSERVATION_FULL_COLUMNS} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String}${cursorClause} ORDER BY start_time ASC, observation_id ASC LIMIT {limit: UInt32}`,
+		query: `SELECT ${observationFullColumns} FROM observations WHERE organization_id = {organization_id: String} AND trace_id = {trace_id: String} AND project_id = {project_id: String}${cursorClause} ORDER BY start_time ASC, observation_id ASC LIMIT {limit: UInt32}`,
 		query_params,
 		format: "JSONEachRow",
 		abort_signal: signal,
@@ -351,7 +366,9 @@ function buildObservationWhere(
 		if (m) {
 			const op = m[1] ?? "=";
 			const num = Number(m[2]);
-			where.push(`duration_ms ${op} {duration_ms: UInt32}`);
+			where.push(
+				`coalesce(precise_duration_ms, observations.duration_ms) ${op} {duration_ms: Float64}`,
+			);
 			params.duration_ms = num;
 		}
 	}
@@ -394,7 +411,7 @@ export async function listObservations(
 	}
 
 	const itemsResult = await client.query({
-		query: `SELECT ${OBSERVATION_COLUMNS} FROM observations ${whereClause}${cursorClause} ORDER BY start_time DESC, observation_id DESC LIMIT {limit: UInt32}${offsetClause}`,
+		query: `SELECT ${observationColumns} FROM observations ${whereClause}${cursorClause} ORDER BY start_time DESC, observation_id DESC LIMIT {limit: UInt32}${offsetClause}`,
 		query_params: params,
 		format: "JSONEachRow",
 	});

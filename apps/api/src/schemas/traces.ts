@@ -33,15 +33,88 @@ const TraceDetailCursorQuery = z
 	});
 
 export const TraceStatus = z.enum(["ok", "error"]).openapi("TraceStatus");
+const ExactTime = z
+	.string()
+	.regex(/^\d{1,20}$/)
+	.nullable()
+	.optional()
+	.openapi({
+		description:
+			"Exact source nanoseconds as a decimal string; null for legacy/internal rows without source precision.",
+	});
+const RetainedCount = z.number().int().min(0).max(4_294_967_295).optional();
+const RetainedAttributes = z
+	.array(
+		z.object({
+			key: z.string().optional(),
+			value: z.record(z.string(), z.unknown()).optional(),
+		}),
+	)
+	.optional();
+const RetainedContext = z.object({
+	attributes: RetainedAttributes,
+	dropped_attributes_count: RetainedCount,
+});
+export const OtlpDetail = z
+	.object({
+		schema_version: z.literal(1),
+		truncated: z.boolean().optional(),
+		resource: RetainedContext.optional(),
+		resource_schema_url: z.string().optional(),
+		scope: RetainedContext.extend({
+			name: z.string().optional(),
+			version: z.string().optional(),
+		}).optional(),
+		scope_schema_url: z.string().optional(),
+		kind: z.number().int().min(0).max(5).optional(),
+		flags: RetainedCount,
+		trace_state: z.string().optional(),
+		dropped_attributes_count: RetainedCount,
+		dropped_events_count: RetainedCount,
+		dropped_links_count: RetainedCount,
+		status: z
+			.object({
+				code: z.number().int().min(0).max(2).optional(),
+				message: z.string().optional(),
+			})
+			.optional(),
+		attributes: RetainedAttributes,
+		events: z
+			.array(
+				RetainedContext.extend({
+					name: z.string().optional(),
+					time_unix_nano: ExactTime,
+				}),
+			)
+			.optional(),
+		links: z
+			.array(
+				RetainedContext.extend({
+					trace_id: z.string().optional(),
+					span_id: z.string().optional(),
+					trace_state: z.string().optional(),
+					flags: RetainedCount,
+				}),
+			)
+			.optional(),
+	})
+	.catchall(z.unknown())
+	.openapi("OtlpDetail", {
+		description:
+			"Redacted OTLP resource/scope, schema URLs, attributes, kind, flags, trace_state, status, events, links and dropped counts. Event times are exact decimal nanosecond strings. Bounded to 32 KiB; truncated signals omitted or shortened content, distinct from source dropped counts. Only returned in trace detail/SSE, not lists.",
+	});
 
 export const Trace = z
 	.object({
 		trace_id: z.string(),
+		start_time_unix_nano: ExactTime,
+		end_time_unix_nano: ExactTime,
+		duration_nano: ExactTime,
 		project_id: z.string(),
 		name: z.string(),
 		start_time: z.string().datetime(),
 		end_time: z.string().datetime().nullable().optional(),
-		duration_ms: z.number().int().nullable().optional(),
+		duration_ms: z.number().nullable().optional(),
 		status: TraceStatus,
 		user_id: z.string().default(""),
 		session_id: z.string().default(""),
@@ -146,6 +219,10 @@ export const ObservationMetadata = z
 export const Observation = z
 	.object({
 		observation_id: z.string(),
+		start_time_unix_nano: ExactTime,
+		end_time_unix_nano: ExactTime,
+		duration_nano: ExactTime,
+		otlp: OtlpDetail.nullable().optional(),
 		trace_id: z.string(),
 		project_id: z.string(),
 		parent_observation_id: z.string().nullable().optional(),
@@ -153,7 +230,7 @@ export const Observation = z
 		name: z.string(),
 		start_time: z.string().datetime(),
 		end_time: z.string().datetime().nullable().optional(),
-		duration_ms: z.number().int().nullable().optional(),
+		duration_ms: z.number().nullable().optional(),
 		status: TraceStatus,
 		model: z.string().nullable().optional(),
 		input_text: z.string().default(""),

@@ -1,5 +1,10 @@
 import type { ObservationMetadata } from "./observation-metadata.js";
 import {
+	parseOtlpDetail,
+	boundOtlpDetail,
+	type OtlpDetail,
+} from "./otlp-detail.js";
+import {
 	boundListExcerpt,
 	MAX_LIST_METADATA_BYTES,
 	utf8ByteLength,
@@ -14,6 +19,7 @@ type PublicTraceSource = {
 type PublicObservationSource = PublicTraceSource & {
 	type: string;
 	metadata: string | ObservationMetadata;
+	otlp?: string | OtlpDetail;
 };
 
 function presentTimestamp(value: string): string {
@@ -93,6 +99,7 @@ export function presentObservation<T extends PublicObservationSource>(
 		end_time,
 		type,
 		metadata,
+		otlp,
 		...rest
 	} = observation;
 	return {
@@ -101,6 +108,14 @@ export function presentObservation<T extends PublicObservationSource>(
 		start_time: presentTimestamp(start_time),
 		end_time: end_time ? presentTimestamp(end_time) : null,
 		metadata: presentMetadata(metadata, type === "generation"),
+		...(otlp === undefined
+			? {}
+			: {
+					otlp:
+						typeof otlp === "string"
+							? parseOtlpDetail(otlp)
+							: boundOtlpDetail(otlp),
+				}),
 	};
 }
 
@@ -143,6 +158,7 @@ export function presentListObservation<
 			...presentObservation(
 				{
 					...observation,
+					otlp: undefined,
 					metadata,
 					input_text: input.value,
 					output_text: output.value,

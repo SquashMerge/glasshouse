@@ -30,7 +30,7 @@
 ```bash
 # Current Glasshouse receiver configuration; replace these placeholders for your deployment.
 AUTH=$(printf '%s:%s' "$UI_USERNAME" "$UI_PASSWORD" | base64)
-export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com/v1/otel"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.example.com"
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $AUTH,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 python my_agent.py    # works for any framework that emits OTel
@@ -272,7 +272,7 @@ LICENSE:
   Sealed `enterprise/` wheel under custom EULA (LiteLLM + tldraw pattern)
 
 WIRE FORMATS:
-  OTLP/HTTP at /v1/otel/v1/traces   (primary ingest)
+  OTLP HTTP/JSON at POST /v1/traces   (primary ingest)
   OpenAI-compat at /v1/chat/completions   (gateway mode)
   REST everywhere else   (/v1/agents, /v1/experiments, /v1/traces, /v1/prompts)
   SSE at /v1/experiments/{id}/events and /v1/traces/stream   (live updates)
@@ -438,7 +438,7 @@ GET    /v1/agents/{id}/drift/stream
 GET    /v1/prompts/{id}/stream
 
 # Non-REST protocol endpoints (stay separate)
-POST   /v1/otel/v1/traces              # OTLP ingest
+POST   /v1/traces                      # OTLP JSON ingest
 POST   /v1/chat/completions            # OpenAI-compat proxy
 POST   /v1/webhooks/{provider}
 POST   /v1/files/upload

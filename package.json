@@ -24,7 +24,7 @@
     "codegen": "bun run openapi:snapshot && bun --filter @glasshouse/api codegen:ts && bun --filter @glasshouse/api codegen:py",
     "format": "bun --filter '*' format",
     "format:check": "bun --filter '*' format:check",
-    "test:supply-chain": "bun test infra/scripts/tests/verify-dependency-release-age.test.ts infra/scripts/tests/verify-startup-migrations-ci.test.ts infra/scripts/tests/verify-migration-locks.test.ts",
+    "test:supply-chain": "bun test infra/scripts/tests/verify-dependency-release-age.test.ts infra/scripts/tests/verify-startup-migrations-ci.test.ts infra/scripts/tests/verify-migration-locks.test.ts infra/scripts/tests/verify-otlp-ci.test.ts",
     "test:infra-security": "bun test infra/scripts/tests/production-compose.test.ts infra/scripts/tests/image-compose.test.ts infra/scripts/tests/worker-install.test.ts infra/scripts/tests/datastore-versions.test.ts && python3 -m unittest discover -s infra/scripts/tests -p 'test_*.py'",
     "verify:dependency-release-age": "bun run infra/scripts/verify-dependency-release-age.ts"
   },

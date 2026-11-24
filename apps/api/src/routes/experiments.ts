@@ -332,7 +332,7 @@ export function createProductionTrace(
 		if (!organizationId) return;
 		const payload = createEvaluationTracePayload(input);
 		const response = await ingest(
-			new Request("http://internal/v1/otel/v1/traces", {
+			new Request("http://internal/v1/traces", {
 				method: "POST",
 				body: JSON.stringify(payload),
 				headers: { "content-type": "application/json" },

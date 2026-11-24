@@ -111,10 +111,7 @@ export function TraceHeader({
 	).length;
 	const status = errorCount > 0 ? "error" : "ok";
 	const start = formatStart(timeline.startMs);
-	const duration =
-		timeline.startMs !== null && timeline.endMs !== null
-			? timeline.endMs - timeline.startMs
-			: null;
+	const duration = timeline.durationMs;
 	const rawPayload = React.useMemo(
 		() => ({ trace, observations }),
 		[trace, observations],

@@ -1,4 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import {
+	isOtlpIngestRequest,
+	otlpErrorResponse,
+} from "../lib/otlp-response.js";
 import { authenticateOtlpCredential } from "../db/otlp-credentials.js";
 import {
 	BASIC_AUTH_PROVIDER_NAMESPACE,
@@ -344,7 +348,7 @@ export function authenticationMiddleware(
 					actorId: basicCredential.actorId,
 					organizationId: basicCredential.organizationId,
 				};
-			else if (c.req.method === "POST" && c.req.path === "/v1/otel/v1/traces") {
+			else if (isOtlpIngestRequest(c.req.method, c.req.path)) {
 				const header = c.req.header("authorization");
 				const match =
 					header && header.length <= 256
@@ -375,6 +379,8 @@ export function authenticationMiddleware(
 		}
 		if (!principal) {
 			c.header("WWW-Authenticate", 'Basic realm="glasshouse", charset="UTF-8"');
+			if (isOtlpIngestRequest(c.req.method, c.req.path))
+				return otlpErrorResponse(c.req.raw, 401);
 			return c.json(
 				{ code: "UNAUTHORIZED", message: "Authentication required" },
 				401,
@@ -385,11 +391,14 @@ export function authenticationMiddleware(
 			(!trustedRequestOrigin(c) ||
 				(token !== undefined &&
 					!validSessionCsrf(token, c.req.header(CSRF_HEADER))))
-		)
+		) {
+			if (isOtlpIngestRequest(c.req.method, c.req.path))
+				return otlpErrorResponse(c.req.raw, 403);
 			return c.json(
 				{ code: "FORBIDDEN", message: "Request origin verification failed" },
 				403,
 			);
+		}
 		c.set(TRUSTED_ACTOR_CONTEXT_KEY, principal.actor);
 		c.set(TRUSTED_TENANT_CONTEXT_KEY, principal);
 		if (token !== undefined) c.set(AUTH_SESSION_TOKEN_CONTEXT_KEY, token);
@@ -421,11 +430,14 @@ export function authenticationMiddleware(
 			await client.query("COMMIT");
 		} catch (cause) {
 			await client.query("ROLLBACK");
-			if (cause instanceof AuthenticationError)
+			if (cause instanceof AuthenticationError) {
+				if (isOtlpIngestRequest(c.req.method, c.req.path))
+					return otlpErrorResponse(c.req.raw, 401);
 				return c.json(
 					{ code: "UNAUTHORIZED", message: "Authentication required" },
 					401,
 				);
+			}
 			throw cause;
 		} finally {
 			client.release();

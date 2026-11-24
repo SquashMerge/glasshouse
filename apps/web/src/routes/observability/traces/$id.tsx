@@ -144,6 +144,8 @@ function TraceDetailPageContent({
 	const [receivedSnapshot, setReceivedSnapshot] = React.useState(false);
 	const [snapshotTimedOut, setSnapshotTimedOut] = React.useState(false);
 	const [snapshotTruncated, setSnapshotTruncated] = React.useState(false);
+	const [detailOmitted, setDetailOmitted] = React.useState(false);
+	const detailRefreshVersion = React.useRef(0);
 	const [nextCursor, setNextCursor] = React.useState<string | null>(null);
 	const [loadingMore, setLoadingMore] = React.useState(false);
 	const [loadMoreError, setLoadMoreError] = React.useState<string | null>(null);
@@ -183,6 +185,7 @@ function TraceDetailPageContent({
 				observations: ObservationRowLike[];
 				snapshot_truncated?: boolean;
 				next_cursor?: string;
+				detail_omitted?: boolean;
 			}) => {
 				const reconnectSnapshot = receivedSnapshotRef.current;
 				receivedSnapshotRef.current = true;
@@ -190,8 +193,15 @@ function TraceDetailPageContent({
 				setSnapshotTimedOut(false);
 				setNotFound(false);
 				setRecordingStatus("recording");
-				setSnapshotTruncated(snapshot.snapshot_truncated === true);
-				setNextCursor(snapshot.next_cursor ?? null);
+				detailRefreshVersion.current += 1;
+				setDetailOmitted(snapshot.detail_omitted === true);
+				setSnapshotTruncated(
+					snapshot.snapshot_truncated === true ||
+						snapshot.detail_omitted === true,
+				);
+				setNextCursor(
+					snapshot.detail_omitted ? "" : (snapshot.next_cursor ?? null),
+				);
 				setLoadMoreError(null);
 				const snapshotObservations = snapshot.observations.map(
 					normalizeStreamObservation,
@@ -210,7 +220,19 @@ function TraceDetailPageContent({
 					setHighlightVersions(highlightVersionsRef.current);
 				}
 			},
-			onObservation: ({ observation }: { observation: ObservationRowLike }) => {
+			onObservation: ({
+				observation,
+				detail_omitted,
+			}: {
+				observation: ObservationRowLike;
+				detail_omitted?: boolean;
+			}) => {
+				if (detail_omitted) {
+					detailRefreshVersion.current += 1;
+					setDetailOmitted(true);
+					setSnapshotTruncated(true);
+					setNextCursor("");
+				}
 				setRecordingStatus("recording");
 				const normalizedObservation = normalizeStreamObservation(observation);
 				const observationId = canonicalObservationId(
@@ -250,13 +272,14 @@ function TraceDetailPageContent({
 	);
 	const stream = useTraceStream(id, handlers, projectId);
 	const loadNextPage = React.useCallback(async () => {
-		if (!projectId || !nextCursor || loadingMore) return;
+		if (!projectId || nextCursor === null || loadingMore) return;
+		const version = detailRefreshVersion.current;
 		setLoadingMore(true);
 		setLoadMoreError(null);
 		try {
 			const page = await getTraceDetail(id, {
 				project_id: projectId,
-				cursor: nextCursor,
+				cursor: nextCursor || undefined,
 			});
 			setModel((current) =>
 				createTraceModel({
@@ -267,10 +290,13 @@ function TraceDetailPageContent({
 					],
 				}),
 			);
-			setNextCursor(page.next_cursor ?? null);
-			setSnapshotTruncated(
-				page.response_truncated === true || page.next_cursor !== undefined,
-			);
+			if (version === detailRefreshVersion.current) {
+				setDetailOmitted(false);
+				setNextCursor(page.next_cursor ?? null);
+				setSnapshotTruncated(
+					page.response_truncated === true || page.next_cursor !== undefined,
+				);
+			}
 		} catch {
 			setLoadMoreError("Unable to load the next observation page. Try again.");
 		} finally {
@@ -407,12 +433,15 @@ function TraceDetailPageContent({
 					role="status"
 				>
 					<div>
-						This live snapshot is safely limited to a bounded first page.
-						{nextCursor
-							? " Load later pages to inspect the complete retained trace."
-							: " No later page is currently available."}
+						{detailOmitted
+							? "Large live trace details are omitted from this bounded stream. Load the retained details over a separate authorized read."
+							: "This live snapshot is safely limited to a bounded first page."}
+						{!detailOmitted &&
+							(nextCursor !== null
+								? " Load later pages to inspect the complete retained trace."
+								: " No later page is currently available.")}
 					</div>
-					{nextCursor && (
+					{nextCursor !== null && (
 						<Button
 							type="button"
 							variant="outline"
@@ -422,7 +451,9 @@ function TraceDetailPageContent({
 						>
 							{loadingMore
 								? "Loading observations…"
-								: "Load remaining observations"}
+								: detailOmitted
+									? "Load full trace details"
+									: "Load remaining observations"}
 						</Button>
 					)}
 					{loadMoreError && <div role="alert">{loadMoreError}</div>}

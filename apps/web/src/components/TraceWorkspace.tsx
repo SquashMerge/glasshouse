@@ -469,8 +469,8 @@ export function TraceWorkspace({
 					<span className="flex justify-between">
 						<span>0 ms</span>
 						<span>
-							{timeline.startMs !== null && timeline.endMs !== null
-								? formatDuration(timeline.endMs - timeline.startMs)
+							{timeline.durationMs !== null
+								? formatDuration(timeline.durationMs)
 								: "Timing unavailable"}
 						</span>
 					</span>

@@ -8,6 +8,11 @@
 
 See the [supported datastore contract](docs/datastore-upgrades.md) for version sources and verification. Backup/restore supports the current versions; legacy datastore migration and cross-version restore are unsupported.
 
+OTLP metrics support HTTP JSON/protobuf/gzip and the optional gRPC MetricsService,
+all five metric kinds, exact timestamps/integers, authenticated point readback and
+opt-in governed retention. See [metrics ingestion and limits](docs/otlp-metrics.md)
+and the authenticated **Metrics** page.
+
 For the separate self-hosted production path, use [`docs/self-hosted-production.md`](docs/self-hosted-production.md) and `infra/compose.production.yaml`. The other Compose files and `make dev` are development-only.
 
 The Compose files use Glasshouse logical volume keys while keeping the established physical data-volume IDs for PostgreSQL, ClickHouse, and Valkey, so this branding change does not orphan existing stores.
@@ -199,12 +204,34 @@ For concurrent AI-assisted development, Glasshouse provides a Compose-based devc
 | http://localhost:5173/enroll | First password or re-enrollment using an Admin-provided code |
 | http://localhost:5173/access | Admin local accounts, existing roles and Project grants |
 | http://localhost:5173 | Dashboard (auth-gated; fresh setup or sign-in redirect) |
-| http://localhost:5173/observability | Trace and observation lists (auth-gated) |
+| http://localhost:5173/observability | Trace, observation, and log lists (auth-gated) |
 | http://localhost:5173/observability/traces/:id | Trace detail with observation tree (auth-gated) |
-| http://localhost:3000/v1/otel/v1/traces | OTLP HTTP/JSON trace ingest (auth-gated; OTel SDK target) |
+| http://localhost:3000/v1/traces | OTLP HTTP/JSON trace ingest (POST; auth-gated) and product trace list (GET) |
+| http://localhost:3000/v1/logs | OTLP HTTP JSON/protobuf log ingest (POST; auth-gated) and typed product log list (GET) |
 | http://localhost:3000/reference | Scalar UI for the typed OpenAPI contract (auth-gated) |
 | http://localhost:3000/health | Backend health check (public; no auth) |
 | http://localhost:3000/openapi.json | OpenAPI 3.1 JSON document (auth-gated) |
+
+### Optional OTLP/gRPC receiver
+
+Set `OTLP_GRPC_PORT` to enable the native OTLP endpoints at
+`opentelemetry.proto.collector.trace.v1.TraceService/Export`,
+`opentelemetry.proto.collector.logs.v1.LogsService/Export`, and
+`opentelemetry.proto.collector.metrics.v1.MetricsService/Export`. It defaults to a
+loopback bind and accepts only loopback or private addresses. The listener is
+plaintext, so expose it only through a TLS-terminating gRPC proxy or an
+operator-controlled private network. Add the same `authorization` and
+`x-glasshouse-project-id` metadata used by HTTP exporters. Logs preserve typed bodies and exact
+nanoseconds; see [OTLP logs](docs/03-otel-ingest.md#logs) for limits, readback,
+opt-in governance retention, and the separate Logs tab. See [OTLP metrics](docs/otlp-metrics.md)
+for supported instruments and readback.
+
+For production or an image-only snapshot, add `-f infra/compose.otlp-grpc.yaml`
+or `-f deploy/snapshot/compose.otlp-grpc.yaml` to the relevant Compose command.
+The optional overlay resolves the listener's private Docker service address and
+publishes its port on host loopback only; a remote exporter still needs an
+operator-managed TLS proxy. The GitHub Release Compose bundle ships with HTTP
+ingestion only and does not include either gRPC overlay.
 
 ### Local credential foundation
 
@@ -308,17 +335,17 @@ Codex's ChatGPT subscription OAuth remains in the local CLI credential store and
 
 ### Sending traces from your agent
 
-Set these five env vars on your instrumented agent. `GLASSHOUSE_PROJECT_ID` must be the UUID of a project that belongs to the authenticated user's organization:
+For an OTLP HTTP/JSON sender, configure the following. `GLASSHOUSE_PROJECT_ID` must be the UUID of a project that belongs to the authenticated user's organization:
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000/v1/otel"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3000"
 export GLASSHOUSE_PROJECT_ID="YOUR_PROJECT_UUID"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic $(printf '%s' 'glasshouse:YOUR_PASSWORD' | base64),x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME="my-agent"
 export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
 ```
 
-See [`docs/03-otel-ingest.md`](docs/03-otel-ingest.md) for Python and Node.js examples.
+The receiver supports OTLP/HTTP JSON and protobuf, plus an optional OTLP/gRPC listener. This is a breaking migration: update clients previously using `/v1/otel/v1/traces`. See [`docs/03-otel-ingest.md`](docs/03-otel-ingest.md) for details and limitations.
 
 ### Client code generation
 

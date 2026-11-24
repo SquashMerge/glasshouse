@@ -1696,7 +1696,9 @@ export async function reviewFeedback(input: {
 export interface GovernancePolicyVersion {
 	id: string;
 	version: number;
-	retention: Partial<Record<"traces" | "datasets" | "feedback", number>>;
+	retention: Partial<
+		Record<"traces" | "metrics" | "datasets" | "feedback" | "logs", number>
+	>;
 	redaction: { mode: "none" | "all_text"; keys: string[] };
 	content_hash: string;
 	created_by: string;
@@ -2398,6 +2400,9 @@ export async function getPromptProvenance(input: {
 }
 
 export interface TraceRow {
+	start_time_unix_nano?: string | null;
+	end_time_unix_nano?: string | null;
+	duration_nano?: string | null;
 	trace_id: string;
 	project_id: string;
 	name: string;
@@ -2538,6 +2543,12 @@ function sanitizeMetadataAttributes(
 
 /** Canonical observation row from REST and SSE endpoints. */
 export interface ObservationRow {
+	start_time_unix_nano?: string | null;
+	end_time_unix_nano?: string | null;
+	duration_nano?: string | null;
+	otlp?:
+		| ({ schema_version: 1; truncated?: boolean } & Record<string, unknown>)
+		| null;
 	observation_id: string;
 	trace_id: string;
 	project_id: string;
@@ -2642,6 +2653,76 @@ export interface ListTracesParams {
 	input_text?: string;
 	time_from?: string;
 	time_to?: string;
+}
+
+export interface LogAnyValue {
+	stringValue?: string;
+	boolValue?: boolean;
+	intValue?: string;
+	doubleValue?: number | "NaN" | "Infinity" | "-Infinity";
+	bytesValue?: string;
+	arrayValue?: { values?: LogAnyValue[] };
+	kvlistValue?: { values?: LogAttribute[] };
+}
+export interface LogAttribute {
+	key: string;
+	value?: LogAnyValue;
+}
+export interface LogRecord {
+	log_id: string;
+	project_id: string;
+	time_unix_nano: string;
+	observed_time_unix_nano: string;
+	ingested_time_unix_nano: string;
+	effective_time_unix_nano: string;
+	severity_number: number;
+	severity_text: string;
+	trace_id: string | null;
+	span_id: string | null;
+	flags: number;
+	dropped_attributes_count: number;
+	event_name: string;
+	body: LogAnyValue;
+	attributes: LogAttribute[];
+	resource: { attributes: LogAttribute[]; droppedAttributesCount: number };
+	scope: {
+		name: string;
+		version: string;
+		attributes: LogAttribute[];
+		droppedAttributesCount: number;
+	};
+	resource_schema_url: string;
+	scope_schema_url: string;
+}
+export interface ListLogsParams {
+	project_id: string;
+	cursor?: string;
+	limit?: number;
+	severity_number?: number;
+	severity_text?: string;
+	trace_id?: string;
+	q?: string;
+	time_from?: string;
+	time_to?: string;
+}
+export async function listLogs(params: ListLogsParams): Promise<{
+	items: LogRecord[];
+	total: number;
+	next_cursor?: string;
+	response_truncated?: boolean;
+}> {
+	const qs = buildQs({
+		project_id: params.project_id,
+		cursor: params.cursor,
+		limit: params.limit,
+		"filter[severity_number]": params.severity_number,
+		"filter[severity_text]": params.severity_text,
+		"filter[trace_id]": params.trace_id,
+		"filter[q]": params.q,
+		"filter[time.from]": params.time_from,
+		"filter[time.to]": params.time_to,
+	});
+	return responseJson(await authedFetch(`/v1/logs${qs}`), "List logs");
 }
 
 export async function listTraces(
@@ -2799,7 +2880,7 @@ export async function seedRandomTrace(projectId: string): Promise<{
 	};
 	const spans = [...childSpans, rootSpan];
 
-	const res = await authedFetch("/v1/otel/v1/traces", {
+	const res = await authedFetch("/v1/traces", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",

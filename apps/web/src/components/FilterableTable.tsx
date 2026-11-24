@@ -29,6 +29,7 @@ export interface ColumnDef<TRow> {
 
 export interface FilterFieldDef {
 	key: string;
+	label?: string;
 	placeholder: string;
 	className?: string;
 	validate?: (value: string) => string | undefined;
@@ -336,9 +337,11 @@ function FilterBar({
 				Filters
 			</legend>
 			{filterFields.map((field) => {
-				const label = field.key
-					.replaceAll("_", " ")
-					.replace(/\b\w/g, (character) => character.toUpperCase());
+				const label =
+					field.label ??
+					field.key
+						.replaceAll("_", " ")
+						.replace(/\b\w/g, (character) => character.toUpperCase());
 				const error = field.validate?.(filters[field.key] ?? "");
 				const errorId = `${id}-${field.key}-error`;
 				return (

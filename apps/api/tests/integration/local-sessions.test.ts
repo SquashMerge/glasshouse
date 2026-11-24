@@ -934,7 +934,7 @@ test("raw OTLP accepts the trusted local principal and denies tenant, CSRF and c
 	});
 	const signed = await f.signedIn();
 	const request = (headers: Record<string, string>) =>
-		api.request("/v1/otel/v1/traces", {
+		api.request("/v1/traces", {
 			method: "POST",
 			headers,
 			body: JSON.stringify({ resource_spans: [] }),
@@ -1073,7 +1073,7 @@ test("project-scoped OTLP bearers reject missing and mismatched Project selector
 		},
 	});
 	const request = (projectId?: string) =>
-		api.request("/v1/otel/v1/traces", {
+		api.request("/v1/traces", {
 			method: "POST",
 			headers: {
 				authorization: `Bearer ${created.secret}`,
@@ -1085,6 +1085,30 @@ test("project-scoped OTLP bearers reject missing and mismatched Project selector
 	expect((await request(f.projectId)).status).toBe(200);
 	expect((await request()).status).toBe(404);
 	expect((await request(randomUUID())).status).toBe(404);
+	const bearer = { authorization: `Bearer ${created.secret}` };
+	expect(
+		(
+			await api.request(`/v1/traces?project_id=${f.projectId}`, {
+				headers: bearer,
+			})
+		).status,
+	).toBe(401);
+	expect(
+		(
+			await api.request(`/v1/traces/events?project_id=${f.projectId}`, {
+				headers: bearer,
+			})
+		).status,
+	).toBe(401);
+	expect(
+		(
+			await api.request(`/v1/otel/v1/traces?project_id=${f.projectId}`, {
+				method: "POST",
+				headers: { ...bearer, "x-glasshouse-project-id": f.projectId },
+				body: JSON.stringify({ resource_spans: [] }),
+			})
+		).status,
+	).toBe(401);
 	expect(writes).toBe(1);
 });
 

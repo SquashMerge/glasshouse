@@ -28,7 +28,7 @@ const formatCount = (count: number) => numberFormat.format(count);
 type UsageBucket = OrganizationUsageDashboard["series"][number];
 
 function otlpSetup(projectId: string | null): string {
-	return `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000/v1/otel
+	return `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:3000
 export GLASSHOUSE_PROJECT_ID="${projectId ?? "<project-uuid>"}"
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Basic <base64(username:password)>,x-glasshouse-project-id=$GLASSHOUSE_PROJECT_ID"
 export OTEL_SERVICE_NAME=my-agent`;
