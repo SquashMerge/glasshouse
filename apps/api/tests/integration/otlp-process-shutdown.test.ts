@@ -35,16 +35,20 @@ function disposableEnvironment(env: NodeJS.ProcessEnv): boolean {
 
 function sanitizedChildEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const child = Object.fromEntries(
-		Object.entries(env).filter(([key]) => !key.startsWith("PG")),
+		Object.entries(env).filter(
+			([key]) =>
+				!key.startsWith("PG") &&
+				key !== "VALKEY_URL" &&
+				key !== "VALKEY_PUBSUB_URL",
+		),
 	);
 	const database = new URL("postgresql://postgres:5432");
 	database.username = env.POSTGRES_USER ?? "postgres";
 	database.password = env.POSTGRES_PASSWORD ?? "postgres";
 	database.pathname = `/${encodeURIComponent(env.POSTGRES_DB ?? "postgres")}`;
 	child.DATABASE_URL = database.toString();
-	const valkey = new URL("redis://valkey:6379");
-	valkey.password = env.VALKEY_PASSWORD ?? "";
-	child.VALKEY_URL = valkey.toString();
+	child.VALKEY_HOST = "valkey";
+	child.VALKEY_PORT = "6379";
 	return child;
 }
 
@@ -105,20 +109,28 @@ test("shutdown child resolves its PostgreSQL target without inherited PG setting
 test("shutdown child pins Valkey despite a URL-like password", () => {
 	const env = sanitizedChildEnvironment({
 		VALKEY_PASSWORD: "x@unsafe-example.invalid:6379/#",
-		VALKEY_HOST: "valkey",
-		VALKEY_PORT: "6379",
+		VALKEY_HOST: "unsafe-example.invalid",
+		VALKEY_PORT: "1234",
+		VALKEY_URL: "redis://unsafe-example.invalid:1234",
+		VALKEY_PUBSUB_URL: "redis://unsafe-example.invalid:1234",
 	});
+	expect(env.VALKEY_URL).toBeUndefined();
+	expect(env.VALKEY_PUBSUB_URL).toBeUndefined();
 	const result = Bun.spawnSync(
 		[
 			process.execPath,
 			"--no-env-file",
 			"-e",
-			'import Redis from "ioredis"; import { valkeyUrl } from "./src/db/valkey.ts"; const client = new Redis(valkeyUrl(), { lazyConnect: true }); console.log(client.options.host); client.disconnect();',
+			'import { valkey } from "./src/db/valkey.ts"; const client = valkey(); const { host, port, password } = client.options; console.log(JSON.stringify({ host, port, passwordPreserved: password === process.env.VALKEY_PASSWORD })); client.disconnect();',
 		],
 		{ cwd: import.meta.dir + "/../..", env },
 	);
 	expect(result.exitCode).toBe(0);
-	expect(result.stdout.toString().trim()).toBe("valkey");
+	expect(JSON.parse(result.stdout.toString())).toEqual({
+		host: "valkey",
+		port: 6379,
+		passwordPreserved: true,
+	});
 });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
