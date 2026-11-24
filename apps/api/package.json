@@ -29,15 +29,15 @@
     "codegen:py": "cd ../.. && mkdir -p clients && uvx --from openapi-python-client==0.29.0 openapi-python-client generate --path openapi.yaml --config infra/codegen/openapi-python-client.config.yaml --output-path clients/python --overwrite --no-fail-on-warning"
   },
   "dependencies": {
-    "@clickhouse/client": "1.24.1",
+    "@clickhouse/client": "1.25.0",
     "@grpc/grpc-js": "1.14.5",
     "@hono/zod-openapi": "1.6.3",
     "@opentelemetry/otlp-proto-exporter-base": "0.51.1",
-    "@scalar/hono-api-reference": "0.12.11",
+    "@scalar/hono-api-reference": "0.12.17",
     "config": "5.0.1",
-    "dotenv": "18.0.9",
+    "dotenv": "18.0.10",
     "dotenv-expand": "1000.0.0",
-    "hono": "4.13.13",
+    "hono": "4.13.16",
     "ioredis": "6.0.0",
     "js-yaml": "5.5.0",
     "mustache": "4.2.0",
@@ -49,7 +49,7 @@
   },
   "devDependencies": {
     "@types/bun": "1.4.4",
-    "@types/node": "26.6.5",
+    "@types/node": "26.6.6",
     "@types/pg": "8.23.1",
     "ajv": "8.20.0",
     "typescript": "7.0.2"
